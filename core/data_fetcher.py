@@ -30,7 +30,7 @@ api_retry_configured = exponential_backoff_retry(
 
 @yfinance_circuit_breaker
 @api_retry_configured
-def fetch_ohlcv_yf(ticker, days=365):
+def fetch_ohlcv_yf(ticker, days=365, interval='1d'):
     end = datetime.now()
     start = end - timedelta(days=days + 5)
 
@@ -41,6 +41,7 @@ def fetch_ohlcv_yf(ticker, days=365):
             ticker,
             start=start.strftime("%Y-%m-%d"),
             end=end.strftime("%Y-%m-%d"),
+            interval=interval,
             progress=False,
             auto_adjust=True
         )
@@ -65,13 +66,14 @@ def fetch_ohlcv_yf(ticker, days=365):
         df.index = pd.to_datetime(df.index)
         df = df.reset_index().rename(columns={'index': 'date'})
         
-        # Additional validation
-        if len(df) < 20:  # Need at least 20 days for indicators
-            error_msg = f"Insufficient data for {ticker}: only {len(df)} rows"
+        # Additional validation - different requirements for different intervals
+        min_required = 50 if interval == '1wk' else 30  # Weekly needs more history, daily needs 30
+        if len(df) < min_required:
+            error_msg = f"Insufficient data for {ticker} [{interval}]: only {len(df)} rows (need {min_required})"
             logger.warning(error_msg)
             raise ValueError(error_msg)
         
-        logger.debug(f"Successfully processed data for {ticker}: {len(df)} rows")
+        logger.debug(f"Successfully processed data for {ticker} [{interval}]: {len(df)} rows")
         return df
 
     except ValueError as e:
@@ -81,3 +83,37 @@ def fetch_ohlcv_yf(ticker, days=365):
         error_msg = f"Unexpected error fetching data for {ticker}: {type(e).__name__}: {e}"
         logger.error(error_msg)
         raise Exception(error_msg) from e
+
+
+def fetch_multi_timeframe_data(ticker, days=365):
+    """
+    Fetch data for multiple timeframes (daily and weekly)
+    Returns dict with 'daily' and 'weekly' dataframes
+    """
+    try:
+        # Fetch daily data first
+        try:
+            daily_data = fetch_ohlcv_yf(ticker, days=days, interval='1d')
+        except Exception as e:
+            logger.warning(f"Failed to fetch daily data for {ticker}: {e}")
+            return None
+        
+        # Fetch weekly data (need more days for sufficient weekly candles)
+        try:
+            weekly_days = max(days * 3, 1095)  # At least 3 years for weekly analysis
+            weekly_data = fetch_ohlcv_yf(ticker, days=weekly_days, interval='1wk')
+        except Exception as e:
+            logger.warning(f"Failed to fetch weekly data for {ticker}: {e}")
+            # Return with daily data only, weekly will be None
+            return {
+                'daily': daily_data,
+                'weekly': None
+            }
+        
+        return {
+            'daily': daily_data,
+            'weekly': weekly_data
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch multi-timeframe data for {ticker}: {e}")
+        return None
