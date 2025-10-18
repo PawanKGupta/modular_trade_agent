@@ -1,0 +1,8 @@
+pandas
+yfinance
+pandas_ta
+python-dotenv
+requests
+selenium
+webdriver_manager
+pyperclip

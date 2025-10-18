@@ -1,0 +1,481 @@
+2025-10-18 18:30:56 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.77), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 18:30:57 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.35), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 18:30:57 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(35.56), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2346.8)}
+2025-10-18 18:30:59 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.59), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(3116.7)}
+2025-10-18 18:31:00 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(19.19), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 18:31:00 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(23.99), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 18:31:03 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.36), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 18:31:04 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.66), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 18:31:05 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.53), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2954.4)}
+2025-10-18 18:31:05 — INFO — trade_agent — No buy candidates today.
+2025-10-18 21:46:01 — INFO — scrapping — Copied Data: NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU
+2025-10-18 21:46:06 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.77), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 21:46:07 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.35), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 21:46:07 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'status': 'indicator_error'}
+2025-10-18 21:46:09 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(35.56), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2346.8)}
+2025-10-18 21:46:10 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.59), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(3116.7)}
+2025-10-18 21:46:11 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(19.19), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 21:46:12 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(23.99), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 21:46:13 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.36), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 21:46:15 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.66), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 21:46:16 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.53), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2954.4)}
+2025-10-18 21:46:16 — INFO — trade_agent — No buy candidates today.
+2025-10-18 21:48:30 — INFO — scrapping — Copied Data: NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU
+2025-10-18 21:48:33 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.77), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 21:48:34 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.35), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 21:48:35 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'status': 'indicator_error'}
+2025-10-18 21:48:36 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(35.56), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2346.8)}
+2025-10-18 21:48:37 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.59), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(3116.7)}
+2025-10-18 21:48:38 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(19.19), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 21:48:39 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(23.99), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 21:48:41 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.36), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 21:48:42 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.66), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 21:48:43 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.53), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2954.4)}
+2025-10-18 21:48:43 — INFO — trade_agent — No buy candidates today.
+2025-10-18 21:49:53 — INFO — scrapping — Copied Data: NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU
+2025-10-18 21:49:58 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.77), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 21:50:00 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.35), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 21:50:00 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'status': 'indicator_error'}
+2025-10-18 21:50:01 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(35.56), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2346.8)}
+2025-10-18 21:50:03 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.59), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(3116.7)}
+2025-10-18 21:50:04 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(19.19), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 21:50:05 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(23.99), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 21:50:06 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.36), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 21:50:08 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.66), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 21:50:09 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.53), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2954.4)}
+2025-10-18 21:50:09 — INFO — trade_agent — No buy candidates today.
+2025-10-18 21:50:36 — INFO — scrapping — Copied Data: NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU
+2025-10-18 21:50:39 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.77), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 21:50:41 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.35), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 21:50:41 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'status': 'indicator_error'}
+2025-10-18 21:50:42 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(35.56), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2346.8)}
+2025-10-18 21:50:44 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.59), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(3116.7)}
+2025-10-18 21:50:45 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(19.19), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 21:50:46 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(23.99), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 21:50:48 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.36), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 21:50:49 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.66), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 21:50:51 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.53), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2954.4)}
+2025-10-18 21:50:51 — INFO — trade_agent — No buy candidates today.
+2025-10-18 21:52:36 — INFO — scrapping — Copied Data: NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU
+2025-10-18 21:52:41 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.77), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 21:52:43 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.35), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 21:52:43 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'status': 'indicator_error'}
+2025-10-18 21:52:44 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(35.56), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2346.8)}
+2025-10-18 21:52:46 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.59), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(3116.7)}
+2025-10-18 21:52:47 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(19.19), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 21:52:48 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(23.99), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 21:52:50 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.36), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 21:52:51 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.66), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 21:52:52 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.53), 'avg_vol': 48908, 'today_vol': 53413, 'pe': None, 'pb': None, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2954.4)}
+2025-10-18 21:52:52 — INFO — trade_agent — No buy candidates today.
+2025-10-18 21:53:19 — INFO — scrapping — Copied Data: NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU
+2025-10-18 21:53:23 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.77), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 21:53:24 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.35), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 21:53:24 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 15, in compute_indicators
+    df['adx'] = ta.adx(df['high'], df['low'], df['close'], length=14)['ADX_14']
+                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+TypeError: 'NoneType' object is not subscriptable
+2025-10-18 21:53:24 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'status': 'indicator_error'}
+2025-10-18 21:53:25 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(35.56), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2346.8)}
+2025-10-18 21:53:27 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.59), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(3116.7)}
+2025-10-18 21:53:28 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(19.19), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 21:53:30 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(23.99), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 21:53:31 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.36), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 21:53:32 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.66), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 21:53:33 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.53), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2954.4)}
+2025-10-18 21:53:33 — INFO — trade_agent — No buy candidates today.
+2025-10-18 22:07:38 — INFO — scrapping — Copied Data: NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU
+2025-10-18 22:07:41 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 18, in compute_indicators
+    df['adx'] = adx.adx()
+                ^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 807, in adx
+    adx_series[self._window] = directional_index[0 : self._window].mean()
+    ~~~~~~~~~~^^^^^^^^^^^^^^
+IndexError: index 14 is out of bounds for axis 0 with size 11
+2025-10-18 22:07:41 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'status': 'indicator_error'}
+2025-10-18 22:07:42 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 18, in compute_indicators
+    df['adx'] = adx.adx()
+                ^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 807, in adx
+    adx_series[self._window] = directional_index[0 : self._window].mean()
+    ~~~~~~~~~~^^^^^^^^^^^^^^
+IndexError: index 14 is out of bounds for axis 0 with size 11
+2025-10-18 22:07:42 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'status': 'indicator_error'}
+2025-10-18 22:07:42 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 17, in compute_indicators
+    adx = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 716, in __init__
+    self._run()
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 730, in _run
+    self._trs = np.zeros(len(self._close) - (self._window - 1))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: negative dimensions are not allowed
+2025-10-18 22:07:42 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'status': 'indicator_error'}
+2025-10-18 22:07:42 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 18, in compute_indicators
+    df['adx'] = adx.adx()
+                ^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 807, in adx
+    adx_series[self._window] = directional_index[0 : self._window].mean()
+    ~~~~~~~~~~^^^^^^^^^^^^^^
+IndexError: index 14 is out of bounds for axis 0 with size 11
+2025-10-18 22:07:42 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'status': 'indicator_error'}
+2025-10-18 22:07:42 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 18, in compute_indicators
+    df['adx'] = adx.adx()
+                ^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 807, in adx
+    adx_series[self._window] = directional_index[0 : self._window].mean()
+    ~~~~~~~~~~^^^^^^^^^^^^^^
+IndexError: index 14 is out of bounds for axis 0 with size 11
+2025-10-18 22:07:42 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'status': 'indicator_error'}
+2025-10-18 22:07:43 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 18, in compute_indicators
+    df['adx'] = adx.adx()
+                ^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 807, in adx
+    adx_series[self._window] = directional_index[0 : self._window].mean()
+    ~~~~~~~~~~^^^^^^^^^^^^^^
+IndexError: index 14 is out of bounds for axis 0 with size 11
+2025-10-18 22:07:43 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'status': 'indicator_error'}
+2025-10-18 22:07:43 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 18, in compute_indicators
+    df['adx'] = adx.adx()
+                ^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 807, in adx
+    adx_series[self._window] = directional_index[0 : self._window].mean()
+    ~~~~~~~~~~^^^^^^^^^^^^^^
+IndexError: index 14 is out of bounds for axis 0 with size 11
+2025-10-18 22:07:43 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'status': 'indicator_error'}
+2025-10-18 22:07:43 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 18, in compute_indicators
+    df['adx'] = adx.adx()
+                ^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 807, in adx
+    adx_series[self._window] = directional_index[0 : self._window].mean()
+    ~~~~~~~~~~^^^^^^^^^^^^^^
+IndexError: index 14 is out of bounds for axis 0 with size 11
+2025-10-18 22:07:43 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'status': 'indicator_error'}
+2025-10-18 22:07:43 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 18, in compute_indicators
+    df['adx'] = adx.adx()
+                ^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 807, in adx
+    adx_series[self._window] = directional_index[0 : self._window].mean()
+    ~~~~~~~~~~^^^^^^^^^^^^^^
+IndexError: index 14 is out of bounds for axis 0 with size 11
+2025-10-18 22:07:43 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'status': 'indicator_error'}
+2025-10-18 22:07:44 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 18, in compute_indicators
+    df['adx'] = adx.adx()
+                ^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 807, in adx
+    adx_series[self._window] = directional_index[0 : self._window].mean()
+    ~~~~~~~~~~^^^^^^^^^^^^^^
+IndexError: index 14 is out of bounds for axis 0 with size 11
+2025-10-18 22:07:44 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'status': 'indicator_error'}
+2025-10-18 22:07:44 — INFO — trade_agent — No buy candidates today.
+2025-10-18 22:09:39 — INFO — scrapping — Copied Data: NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU
+2025-10-18 22:09:42 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.77), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 22:09:43 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.35), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 22:09:43 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 18, in compute_indicators
+    df['adx'] = adx.adx()
+                ^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 807, in adx
+    adx_series[self._window] = directional_index[0 : self._window].mean()
+    ~~~~~~~~~~^^^^^^^^^^^^^^
+IndexError: index 10 is out of bounds for axis 0 with size 2
+2025-10-18 22:09:43 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'status': 'indicator_error'}
+2025-10-18 22:09:44 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(35.56), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2346.8)}
+2025-10-18 22:09:45 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.59), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(3116.7)}
+2025-10-18 22:09:46 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(19.19), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 22:09:48 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(23.99), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 22:09:49 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.36), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 22:09:50 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.66), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 22:09:52 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.53), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2954.4)}
+2025-10-18 22:09:52 — INFO — trade_agent — No buy candidates today.
+2025-10-18 22:10:31 — INFO — scrapping — Copied Data: NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU
+2025-10-18 22:10:34 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.77), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 22:10:36 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.35), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 22:10:37 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(9.3), 'avg_vol': 14541, 'today_vol': 8481, 'pe': 17.583334, 'pb': 9.42088, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(143.48)}
+2025-10-18 22:10:39 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(35.56), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2346.8)}
+2025-10-18 22:10:40 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.59), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(3116.7)}
+2025-10-18 22:10:41 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(19.19), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 22:10:42 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(23.99), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 22:10:44 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(16.36), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 22:10:45 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.66), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 22:10:47 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'avoid', 'signals': [], 'rsi': np.float64(34.53), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': None, 'target': None, 'stop': None, 'justification': [], 'last_close': np.float64(2954.4)}
+2025-10-18 22:10:47 — INFO — trade_agent — No buy candidates today.
+2025-10-18 23:31:36 — INFO — scrapping — Copied Data: NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU
+2025-10-18 23:34:53 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(25.08), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 23:35:00 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(24.0), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 23:38:43 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(9.3), 'avg_vol': 14541, 'today_vol': 8481, 'pe': 17.583334, 'pb': 9.42088, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(143.48)}
+2025-10-18 23:38:48 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'buy', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.87), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': (np.float64(2335.07), np.float64(2370.27)), 'target': np.float64(2722.28), 'stop': np.float64(2159.06), 'justification': ['pattern:rsi_oversold', 'volume_strong', 'rsi:28.9'], 'last_close': np.float64(2346.8)}
+2025-10-18 23:38:49 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.39), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(3116.7)}
+2025-10-18 23:38:50 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(26.09), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 23:38:51 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.25), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 23:38:52 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(18.97), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 23:38:53 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(25.61), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 23:38:53 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'buy', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.06), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': (np.float64(2939.63), np.float64(2983.94)), 'target': np.float64(3427.1), 'stop': np.float64(2718.05), 'justification': ['pattern:rsi_oversold', 'rsi:29.1'], 'last_close': np.float64(2954.4)}
+2025-10-18 23:38:55 — INFO — telegram — Telegram message sent successfully.
+2025-10-18 23:41:36 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(25.08), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 23:41:37 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(24.0), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 23:41:37 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 16, in compute_indicators
+    df['adx'] = ta.adx(df['high'], df['low'], df['close'], length=14)['ADX_14']
+                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+TypeError: 'NoneType' object is not subscriptable
+2025-10-18 23:41:37 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'status': 'indicator_error'}
+2025-10-18 23:41:38 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'buy', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.87), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': (np.float64(2335.07), np.float64(2370.27)), 'target': np.float64(2722.28), 'stop': np.float64(2159.06), 'justification': ['pattern:rsi_oversold', 'volume_strong', 'rsi:28.9'], 'last_close': np.float64(2346.8)}
+2025-10-18 23:41:39 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.39), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(3116.7)}
+2025-10-18 23:41:40 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(26.09), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 23:41:40 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.25), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 23:41:41 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(18.97), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 23:41:42 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(25.61), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 23:41:43 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'buy', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.06), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': (np.float64(2939.63), np.float64(2983.94)), 'target': np.float64(3427.1), 'stop': np.float64(2718.05), 'justification': ['pattern:rsi_oversold', 'rsi:29.1'], 'last_close': np.float64(2954.4)}
+2025-10-18 23:41:44 — INFO — telegram — Telegram message sent successfully.
+2025-10-18 23:42:16 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(25.08), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 23:42:17 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(24.0), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 23:42:17 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 16, in compute_indicators
+    df['adx'] = ta.adx(df['high'], df['low'], df['close'], window=14)['ADX_14']
+                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+TypeError: 'NoneType' object is not subscriptable
+2025-10-18 23:42:17 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'status': 'indicator_error'}
+2025-10-18 23:42:18 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'buy', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.87), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': (np.float64(2335.07), np.float64(2370.27)), 'target': np.float64(2722.28), 'stop': np.float64(2159.06), 'justification': ['pattern:rsi_oversold', 'volume_strong', 'rsi:28.9'], 'last_close': np.float64(2346.8)}
+2025-10-18 23:42:19 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.39), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(3116.7)}
+2025-10-18 23:42:20 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(26.09), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 23:42:20 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.25), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 23:42:21 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(18.97), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 23:42:22 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(25.61), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 23:42:23 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'buy', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.06), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': (np.float64(2939.63), np.float64(2983.94)), 'target': np.float64(3427.1), 'stop': np.float64(2718.05), 'justification': ['pattern:rsi_oversold', 'rsi:29.1'], 'last_close': np.float64(2954.4)}
+2025-10-18 23:42:34 — INFO — telegram — Telegram message sent successfully.
+2025-10-18 23:45:42 — DEBUG — trade_agent — {'ticker': 'NAVA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(25.08), 'avg_vol': 345014, 'today_vol': 160591, 'pe': 16.89394, 'pb': 2.280189, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(613.25)}
+2025-10-18 23:45:44 — DEBUG — trade_agent — {'ticker': 'GLENMARK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(24.0), 'avg_vol': 602787, 'today_vol': 247430, 'pe': 69.91739, 'pb': 6.114674, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1861.9)}
+2025-10-18 23:45:44 — ERROR — indicators — Error computing indicators
+Traceback (most recent call last):
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\core\indicators.py", line 17, in compute_indicators
+    adx = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 716, in __init__
+    self._run()
+  File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\ta\trend.py", line 730, in _run
+    self._trs = np.zeros(len(self._close) - (self._window - 1))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: negative dimensions are not allowed
+2025-10-18 23:45:44 — DEBUG — trade_agent — {'ticker': 'VGL.NS', 'status': 'indicator_error'}
+2025-10-18 23:45:45 — DEBUG — trade_agent — {'ticker': 'HYUNDAI.NS', 'verdict': 'buy', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.87), 'avg_vol': 1080192, 'today_vol': 1594803, 'pe': 34.603363, 'pb': 11.699896, 'buy_range': (np.float64(2335.07), np.float64(2370.27)), 'target': np.float64(2722.28), 'stop': np.float64(2159.06), 'justification': ['pattern:rsi_oversold', 'volume_strong', 'rsi:28.9'], 'last_close': np.float64(2346.8)}
+2025-10-18 23:45:46 — DEBUG — trade_agent — {'ticker': 'ENRIN.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.39), 'avg_vol': 575061, 'today_vol': 208531, 'pe': None, 'pb': 28.772284, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(3116.7)}
+2025-10-18 23:45:47 — DEBUG — trade_agent — {'ticker': 'OLECTRA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(26.09), 'avg_vol': 464846, 'today_vol': 302967, 'pe': 83.34696, 'pb': 11.156633, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1426.9)}
+2025-10-18 23:45:48 — DEBUG — trade_agent — {'ticker': 'DDEVPLSTIK.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(28.25), 'avg_vol': 159485, 'today_vol': 82336, 'pe': 16.102278, 'pb': 3.7660666, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(303.85)}
+2025-10-18 23:45:49 — DEBUG — trade_agent — {'ticker': 'CURAA.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(18.97), 'avg_vol': 646, 'today_vol': 248, 'pe': None, 'pb': 4.6638737, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(170.32)}
+2025-10-18 23:45:50 — DEBUG — trade_agent — {'ticker': 'SUDARSCHEM.NS', 'verdict': 'watch', 'signals': ['rsi_oversold'], 'rsi': np.float64(25.61), 'avg_vol': 147011, 'today_vol': 76339, 'pe': 129.91623, 'pb': 2.8338387, 'buy_range': None, 'target': None, 'stop': None, 'justification': ['signals:rsi_oversold'], 'last_close': np.float64(1240.7)}
+2025-10-18 23:45:51 — DEBUG — trade_agent — {'ticker': 'SMLISUZU.NS', 'verdict': 'buy', 'signals': ['rsi_oversold'], 'rsi': np.float64(29.06), 'avg_vol': 48908, 'today_vol': 53413, 'pe': 30.030495, 'pb': 11.169669, 'buy_range': (np.float64(2939.63), np.float64(2983.94)), 'target': np.float64(3427.1), 'stop': np.float64(2718.05), 'justification': ['pattern:rsi_oversold', 'rsi:29.1'], 'last_close': np.float64(2954.4)}
+2025-10-18 23:45:52 — INFO — telegram — Telegram message sent successfully.
+2025-10-19 00:15:01 — INFO — circuit_breaker — Circuit breaker 'YFinance_API' initialized with threshold=3, timeout=60.0s
+2025-10-19 00:15:02 — INFO — trade_agent — No buy candidates today.
+2025-10-19 00:15:49 — INFO — circuit_breaker — Circuit breaker 'YFinance_API' initialized with threshold=3, timeout=60.0s
+2025-10-19 00:15:49 — DEBUG — analysis — Starting analysis for NAVA.NS
+2025-10-19 00:15:49 — DEBUG — data_fetcher — Fetching data for NAVA.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:15:50 — DEBUG — data_fetcher — Downloaded data shape for NAVA.NS: (253, 5)
+2025-10-19 00:15:50 — DEBUG — data_fetcher — Successfully processed data for NAVA.NS: 253 rows
+2025-10-19 00:15:50 — DEBUG — analysis — Fetching fundamental data for NAVA.NS
+2025-10-19 00:15:50 — DEBUG — analysis — Fundamental data for NAVA.NS: PE=16.89394, PB=2.280189
+2025-10-19 00:15:50 — DEBUG — analysis — Analysis completed successfully for NAVA.NS: watch
+2025-10-19 00:15:50 — DEBUG — trade_agent — SUCCESS NAVA.NS: watch
+2025-10-19 00:15:50 — DEBUG — analysis — Starting analysis for GLENMARK.NS
+2025-10-19 00:15:50 — DEBUG — data_fetcher — Fetching data for GLENMARK.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:15:50 — DEBUG — data_fetcher — Downloaded data shape for GLENMARK.NS: (253, 5)
+2025-10-19 00:15:50 — DEBUG — data_fetcher — Successfully processed data for GLENMARK.NS: 253 rows
+2025-10-19 00:15:50 — DEBUG — analysis — Fetching fundamental data for GLENMARK.NS
+2025-10-19 00:15:51 — DEBUG — analysis — Fundamental data for GLENMARK.NS: PE=69.91739, PB=6.114674
+2025-10-19 00:15:51 — DEBUG — analysis — Analysis completed successfully for GLENMARK.NS: watch
+2025-10-19 00:15:51 — DEBUG — trade_agent — SUCCESS GLENMARK.NS: watch
+2025-10-19 00:15:51 — DEBUG — analysis — Starting analysis for VGL.NS
+2025-10-19 00:15:51 — DEBUG — data_fetcher — Fetching data for VGL.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:15:51 — DEBUG — data_fetcher — Downloaded data shape for VGL.NS: (11, 5)
+2025-10-19 00:15:51 — WARNING — data_fetcher — Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:15:51 — WARNING — retry_handler — Attempt 1 failed for fetch_ohlcv_yf: Insufficient data for VGL.NS: only 11 rows. Retrying in 0.51s...
+2025-10-19 00:15:52 — DEBUG — data_fetcher — Fetching data for VGL.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:15:52 — DEBUG — data_fetcher — Downloaded data shape for VGL.NS: (11, 5)
+2025-10-19 00:15:52 — WARNING — data_fetcher — Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:15:52 — WARNING — retry_handler — Attempt 2 failed for fetch_ohlcv_yf: Insufficient data for VGL.NS: only 11 rows. Retrying in 1.68s...
+2025-10-19 00:15:54 — DEBUG — data_fetcher — Fetching data for VGL.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:15:54 — DEBUG — data_fetcher — Downloaded data shape for VGL.NS: (11, 5)
+2025-10-19 00:15:54 — WARNING — data_fetcher — Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:15:54 — WARNING — retry_handler — Attempt 3 failed for fetch_ohlcv_yf: Insufficient data for VGL.NS: only 11 rows. Retrying in 2.13s...
+2025-10-19 00:15:56 — DEBUG — data_fetcher — Fetching data for VGL.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:15:56 — DEBUG — data_fetcher — Downloaded data shape for VGL.NS: (11, 5)
+2025-10-19 00:15:56 — WARNING — data_fetcher — Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:15:56 — ERROR — retry_handler — Function fetch_ohlcv_yf failed after 3 retries. Last error: Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:15:56 — ERROR — analysis — Data fetching/processing failed for VGL.NS: ValueError: Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:15:56 — WARNING — trade_agent — WARNING VGL.NS: data_error - Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:15:56 — DEBUG — analysis — Starting analysis for HYUNDAI.NS
+2025-10-19 00:15:56 — DEBUG — data_fetcher — Fetching data for HYUNDAI.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:15:56 — DEBUG — data_fetcher — Downloaded data shape for HYUNDAI.NS: (247, 5)
+2025-10-19 00:15:56 — DEBUG — data_fetcher — Successfully processed data for HYUNDAI.NS: 247 rows
+2025-10-19 00:15:56 — DEBUG — analysis — Fetching fundamental data for HYUNDAI.NS
+2025-10-19 00:15:57 — DEBUG — analysis — Fundamental data for HYUNDAI.NS: PE=34.603363, PB=11.699896
+2025-10-19 00:15:57 — DEBUG — analysis — Analysis completed successfully for HYUNDAI.NS: buy
+2025-10-19 00:15:57 — DEBUG — trade_agent — SUCCESS HYUNDAI.NS: buy
+2025-10-19 00:15:57 — DEBUG — analysis — Starting analysis for ENRIN.NS
+2025-10-19 00:15:57 — DEBUG — data_fetcher — Fetching data for ENRIN.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:15:58 — DEBUG — data_fetcher — Downloaded data shape for ENRIN.NS: (84, 5)
+2025-10-19 00:15:58 — DEBUG — data_fetcher — Successfully processed data for ENRIN.NS: 84 rows
+2025-10-19 00:15:58 — DEBUG — analysis — Fetching fundamental data for ENRIN.NS
+2025-10-19 00:15:59 — DEBUG — analysis — Fundamental data for ENRIN.NS: PE=None, PB=28.772284
+2025-10-19 00:15:59 — DEBUG — analysis — Analysis completed successfully for ENRIN.NS: watch
+2025-10-19 00:15:59 — DEBUG — trade_agent — SUCCESS ENRIN.NS: watch
+2025-10-19 00:15:59 — DEBUG — analysis — Starting analysis for OLECTRA.NS
+2025-10-19 00:15:59 — DEBUG — data_fetcher — Fetching data for OLECTRA.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:15:59 — DEBUG — data_fetcher — Downloaded data shape for OLECTRA.NS: (253, 5)
+2025-10-19 00:15:59 — DEBUG — data_fetcher — Successfully processed data for OLECTRA.NS: 253 rows
+2025-10-19 00:15:59 — DEBUG — analysis — Fetching fundamental data for OLECTRA.NS
+2025-10-19 00:16:00 — DEBUG — analysis — Fundamental data for OLECTRA.NS: PE=83.34696, PB=11.156633
+2025-10-19 00:16:00 — DEBUG — analysis — Analysis completed successfully for OLECTRA.NS: watch
+2025-10-19 00:16:00 — DEBUG — trade_agent — SUCCESS OLECTRA.NS: watch
+2025-10-19 00:16:00 — DEBUG — analysis — Starting analysis for DDEVPLSTIK.NS
+2025-10-19 00:16:00 — DEBUG — data_fetcher — Fetching data for DDEVPLSTIK.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:00 — DEBUG — data_fetcher — Downloaded data shape for DDEVPLSTIK.NS: (189, 5)
+2025-10-19 00:16:00 — DEBUG — data_fetcher — Successfully processed data for DDEVPLSTIK.NS: 189 rows
+2025-10-19 00:16:00 — DEBUG — analysis — Fetching fundamental data for DDEVPLSTIK.NS
+2025-10-19 00:16:01 — DEBUG — analysis — Fundamental data for DDEVPLSTIK.NS: PE=16.102278, PB=3.7660666
+2025-10-19 00:16:01 — DEBUG — analysis — Analysis completed successfully for DDEVPLSTIK.NS: watch
+2025-10-19 00:16:01 — DEBUG — trade_agent — SUCCESS DDEVPLSTIK.NS: watch
+2025-10-19 00:16:01 — DEBUG — analysis — Starting analysis for CURAA.NS
+2025-10-19 00:16:01 — DEBUG — data_fetcher — Fetching data for CURAA.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:01 — DEBUG — data_fetcher — Downloaded data shape for CURAA.NS: (253, 5)
+2025-10-19 00:16:01 — DEBUG — data_fetcher — Successfully processed data for CURAA.NS: 253 rows
+2025-10-19 00:16:01 — DEBUG — analysis — Fetching fundamental data for CURAA.NS
+2025-10-19 00:16:02 — DEBUG — analysis — Fundamental data for CURAA.NS: PE=None, PB=4.6638737
+2025-10-19 00:16:02 — DEBUG — analysis — Analysis completed successfully for CURAA.NS: watch
+2025-10-19 00:16:02 — DEBUG — trade_agent — SUCCESS CURAA.NS: watch
+2025-10-19 00:16:02 — DEBUG — analysis — Starting analysis for SUDARSCHEM.NS
+2025-10-19 00:16:02 — DEBUG — data_fetcher — Fetching data for SUDARSCHEM.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:02 — DEBUG — data_fetcher — Downloaded data shape for SUDARSCHEM.NS: (253, 5)
+2025-10-19 00:16:02 — DEBUG — data_fetcher — Successfully processed data for SUDARSCHEM.NS: 253 rows
+2025-10-19 00:16:02 — DEBUG — analysis — Fetching fundamental data for SUDARSCHEM.NS
+2025-10-19 00:16:03 — DEBUG — analysis — Fundamental data for SUDARSCHEM.NS: PE=129.91623, PB=2.8338387
+2025-10-19 00:16:03 — DEBUG — analysis — Analysis completed successfully for SUDARSCHEM.NS: watch
+2025-10-19 00:16:03 — DEBUG — trade_agent — SUCCESS SUDARSCHEM.NS: watch
+2025-10-19 00:16:03 — DEBUG — analysis — Starting analysis for SMLISUZU.NS
+2025-10-19 00:16:03 — DEBUG — data_fetcher — Fetching data for SMLISUZU.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:03 — DEBUG — data_fetcher — Downloaded data shape for SMLISUZU.NS: (253, 5)
+2025-10-19 00:16:03 — DEBUG — data_fetcher — Successfully processed data for SMLISUZU.NS: 253 rows
+2025-10-19 00:16:03 — DEBUG — analysis — Fetching fundamental data for SMLISUZU.NS
+2025-10-19 00:16:04 — DEBUG — analysis — Fundamental data for SMLISUZU.NS: PE=30.030495, PB=11.169669
+2025-10-19 00:16:04 — DEBUG — analysis — Analysis completed successfully for SMLISUZU.NS: buy
+2025-10-19 00:16:04 — DEBUG — trade_agent — SUCCESS SMLISUZU.NS: buy
+2025-10-19 00:16:06 — INFO — telegram — Telegram message sent successfully.
+2025-10-19 00:16:23 — INFO — circuit_breaker — Circuit breaker 'YFinance_API' initialized with threshold=3, timeout=60.0s
+2025-10-19 00:16:23 — DEBUG — analysis — Starting analysis for NAVA.NS
+2025-10-19 00:16:23 — DEBUG — data_fetcher — Fetching data for NAVA.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:24 — DEBUG — data_fetcher — Downloaded data shape for NAVA.NS: (253, 5)
+2025-10-19 00:16:24 — DEBUG — data_fetcher — Successfully processed data for NAVA.NS: 253 rows
+2025-10-19 00:16:24 — DEBUG — analysis — Fetching fundamental data for NAVA.NS
+2025-10-19 00:16:24 — DEBUG — analysis — Fundamental data for NAVA.NS: PE=16.89394, PB=2.280189
+2025-10-19 00:16:24 — DEBUG — analysis — Analysis completed successfully for NAVA.NS: watch
+2025-10-19 00:16:24 — DEBUG — trade_agent — SUCCESS NAVA.NS: watch
+2025-10-19 00:16:24 — DEBUG — analysis — Starting analysis for GLENMARK.NS
+2025-10-19 00:16:24 — DEBUG — data_fetcher — Fetching data for GLENMARK.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:25 — DEBUG — data_fetcher — Downloaded data shape for GLENMARK.NS: (253, 5)
+2025-10-19 00:16:25 — DEBUG — data_fetcher — Successfully processed data for GLENMARK.NS: 253 rows
+2025-10-19 00:16:25 — DEBUG — analysis — Fetching fundamental data for GLENMARK.NS
+2025-10-19 00:16:25 — DEBUG — analysis — Fundamental data for GLENMARK.NS: PE=69.91739, PB=6.114674
+2025-10-19 00:16:25 — DEBUG — analysis — Analysis completed successfully for GLENMARK.NS: watch
+2025-10-19 00:16:25 — DEBUG — trade_agent — SUCCESS GLENMARK.NS: watch
+2025-10-19 00:16:25 — DEBUG — analysis — Starting analysis for VGL.NS
+2025-10-19 00:16:25 — DEBUG — data_fetcher — Fetching data for VGL.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:25 — DEBUG — data_fetcher — Downloaded data shape for VGL.NS: (11, 5)
+2025-10-19 00:16:25 — WARNING — data_fetcher — Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:16:25 — WARNING — retry_handler — Attempt 1 failed for fetch_ohlcv_yf: Insufficient data for VGL.NS: only 11 rows. Retrying in 0.66s...
+2025-10-19 00:16:26 — DEBUG — data_fetcher — Fetching data for VGL.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:26 — DEBUG — data_fetcher — Downloaded data shape for VGL.NS: (11, 5)
+2025-10-19 00:16:26 — WARNING — data_fetcher — Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:16:26 — WARNING — retry_handler — Attempt 2 failed for fetch_ohlcv_yf: Insufficient data for VGL.NS: only 11 rows. Retrying in 1.80s...
+2025-10-19 00:16:28 — DEBUG — data_fetcher — Fetching data for VGL.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:28 — DEBUG — data_fetcher — Downloaded data shape for VGL.NS: (11, 5)
+2025-10-19 00:16:28 — WARNING — data_fetcher — Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:16:28 — WARNING — retry_handler — Attempt 3 failed for fetch_ohlcv_yf: Insufficient data for VGL.NS: only 11 rows. Retrying in 2.87s...
+2025-10-19 00:16:31 — DEBUG — data_fetcher — Fetching data for VGL.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:31 — DEBUG — data_fetcher — Downloaded data shape for VGL.NS: (11, 5)
+2025-10-19 00:16:31 — WARNING — data_fetcher — Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:16:31 — ERROR — retry_handler — Function fetch_ohlcv_yf failed after 3 retries. Last error: Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:16:31 — ERROR — analysis — Data fetching/processing failed for VGL.NS: ValueError: Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:16:31 — WARNING — trade_agent — WARNING VGL.NS: data_error - Insufficient data for VGL.NS: only 11 rows
+2025-10-19 00:16:31 — DEBUG — analysis — Starting analysis for HYUNDAI.NS
+2025-10-19 00:16:31 — DEBUG — data_fetcher — Fetching data for HYUNDAI.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:32 — DEBUG — data_fetcher — Downloaded data shape for HYUNDAI.NS: (247, 5)
+2025-10-19 00:16:32 — DEBUG — data_fetcher — Successfully processed data for HYUNDAI.NS: 247 rows
+2025-10-19 00:16:32 — DEBUG — analysis — Fetching fundamental data for HYUNDAI.NS
+2025-10-19 00:16:33 — DEBUG — analysis — Fundamental data for HYUNDAI.NS: PE=34.603363, PB=11.699896
+2025-10-19 00:16:33 — DEBUG — analysis — Analysis completed successfully for HYUNDAI.NS: buy
+2025-10-19 00:16:33 — DEBUG — trade_agent — SUCCESS HYUNDAI.NS: buy
+2025-10-19 00:16:33 — DEBUG — analysis — Starting analysis for ENRIN.NS
+2025-10-19 00:16:33 — DEBUG — data_fetcher — Fetching data for ENRIN.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:33 — DEBUG — data_fetcher — Downloaded data shape for ENRIN.NS: (84, 5)
+2025-10-19 00:16:33 — DEBUG — data_fetcher — Successfully processed data for ENRIN.NS: 84 rows
+2025-10-19 00:16:33 — DEBUG — analysis — Fetching fundamental data for ENRIN.NS
+2025-10-19 00:16:34 — DEBUG — analysis — Fundamental data for ENRIN.NS: PE=None, PB=28.772284
+2025-10-19 00:16:34 — DEBUG — analysis — Analysis completed successfully for ENRIN.NS: watch
+2025-10-19 00:16:34 — DEBUG — trade_agent — SUCCESS ENRIN.NS: watch
+2025-10-19 00:16:34 — DEBUG — analysis — Starting analysis for OLECTRA.NS
+2025-10-19 00:16:34 — DEBUG — data_fetcher — Fetching data for OLECTRA.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:34 — DEBUG — data_fetcher — Downloaded data shape for OLECTRA.NS: (253, 5)
+2025-10-19 00:16:34 — DEBUG — data_fetcher — Successfully processed data for OLECTRA.NS: 253 rows
+2025-10-19 00:16:34 — DEBUG — analysis — Fetching fundamental data for OLECTRA.NS
+2025-10-19 00:16:35 — DEBUG — analysis — Fundamental data for OLECTRA.NS: PE=83.34696, PB=11.156633
+2025-10-19 00:16:35 — DEBUG — analysis — Analysis completed successfully for OLECTRA.NS: watch
+2025-10-19 00:16:35 — DEBUG — trade_agent — SUCCESS OLECTRA.NS: watch
+2025-10-19 00:16:35 — DEBUG — analysis — Starting analysis for DDEVPLSTIK.NS
+2025-10-19 00:16:35 — DEBUG — data_fetcher — Fetching data for DDEVPLSTIK.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:35 — DEBUG — data_fetcher — Downloaded data shape for DDEVPLSTIK.NS: (189, 5)
+2025-10-19 00:16:35 — DEBUG — data_fetcher — Successfully processed data for DDEVPLSTIK.NS: 189 rows
+2025-10-19 00:16:35 — DEBUG — analysis — Fetching fundamental data for DDEVPLSTIK.NS
+2025-10-19 00:16:36 — DEBUG — analysis — Fundamental data for DDEVPLSTIK.NS: PE=16.102278, PB=3.7660666
+2025-10-19 00:16:36 — DEBUG — analysis — Analysis completed successfully for DDEVPLSTIK.NS: watch
+2025-10-19 00:16:36 — DEBUG — trade_agent — SUCCESS DDEVPLSTIK.NS: watch
+2025-10-19 00:16:36 — DEBUG — analysis — Starting analysis for CURAA.NS
+2025-10-19 00:16:36 — DEBUG — data_fetcher — Fetching data for CURAA.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:36 — DEBUG — data_fetcher — Downloaded data shape for CURAA.NS: (253, 5)
+2025-10-19 00:16:36 — DEBUG — data_fetcher — Successfully processed data for CURAA.NS: 253 rows
+2025-10-19 00:16:36 — DEBUG — analysis — Fetching fundamental data for CURAA.NS
+2025-10-19 00:16:37 — DEBUG — analysis — Fundamental data for CURAA.NS: PE=None, PB=4.6638737
+2025-10-19 00:16:37 — DEBUG — analysis — Analysis completed successfully for CURAA.NS: watch
+2025-10-19 00:16:37 — DEBUG — trade_agent — SUCCESS CURAA.NS: watch
+2025-10-19 00:16:37 — DEBUG — analysis — Starting analysis for SUDARSCHEM.NS
+2025-10-19 00:16:37 — DEBUG — data_fetcher — Fetching data for SUDARSCHEM.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:37 — DEBUG — data_fetcher — Downloaded data shape for SUDARSCHEM.NS: (253, 5)
+2025-10-19 00:16:37 — DEBUG — data_fetcher — Successfully processed data for SUDARSCHEM.NS: 253 rows
+2025-10-19 00:16:37 — DEBUG — analysis — Fetching fundamental data for SUDARSCHEM.NS
+2025-10-19 00:16:38 — DEBUG — analysis — Fundamental data for SUDARSCHEM.NS: PE=129.91623, PB=2.8338387
+2025-10-19 00:16:38 — DEBUG — analysis — Analysis completed successfully for SUDARSCHEM.NS: watch
+2025-10-19 00:16:38 — DEBUG — trade_agent — SUCCESS SUDARSCHEM.NS: watch
+2025-10-19 00:16:38 — DEBUG — analysis — Starting analysis for SMLISUZU.NS
+2025-10-19 00:16:38 — DEBUG — data_fetcher — Fetching data for SMLISUZU.NS from 2024-10-14 to 2025-10-19
+2025-10-19 00:16:38 — DEBUG — data_fetcher — Downloaded data shape for SMLISUZU.NS: (253, 5)
+2025-10-19 00:16:38 — DEBUG — data_fetcher — Successfully processed data for SMLISUZU.NS: 253 rows
+2025-10-19 00:16:38 — DEBUG — analysis — Fetching fundamental data for SMLISUZU.NS
+2025-10-19 00:16:39 — DEBUG — analysis — Fundamental data for SMLISUZU.NS: PE=30.030495, PB=11.169669
+2025-10-19 00:16:39 — DEBUG — analysis — Analysis completed successfully for SMLISUZU.NS: buy
+2025-10-19 00:16:39 — DEBUG — trade_agent — SUCCESS SMLISUZU.NS: buy
+2025-10-19 00:16:41 — INFO — telegram — Telegram message sent successfully.
