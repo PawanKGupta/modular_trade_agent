@@ -52,8 +52,10 @@ class BacktestEngine:
         self.data = None
         self.results = {}
         
-        # State tracking
+        # State tracking for RSI reset conditions
         self.last_rsi_above_30_date = None
+        self.rsi_10_trade_made = False  # Track if RSI < 10 trade was made
+        self.rsi_20_trade_made = False  # Track if RSI < 20 trade was made
         self.first_entry_made = False
         
         # Load and prepare data
@@ -160,42 +162,68 @@ class BacktestEngine:
         if pd.isna(rsi) or pd.isna(ema200):
             return False, "Missing indicator data"
             
-        # Basic entry condition: Price > EMA200 AND RSI < 30
-        if close_price <= ema200:
-            return False, "Price below EMA200"
-            
         if not self.first_entry_made:
-            # First entry: RSI < 30
+            # Initial entry condition: Price > EMA200 AND RSI < 30
+            if close_price <= ema200:
+                return False, "Price below EMA200"
+                
             if rsi < self.config.RSI_OVERSOLD_LEVEL_1:
                 return True, f"Initial entry: RSI {rsi:.1f} < 30"
             return False, f"RSI {rsi:.1f} not oversold enough for initial entry"
             
         else:
-            # Pyramiding conditions
+            # Pyramiding conditions - NO EMA200 check for re-entries (averaging down)
             open_positions = len(self.position_manager.get_open_positions())
             
             if open_positions >= self.config.MAX_POSITIONS:
                 return False, "Maximum positions reached"
             
-            # Check pyramiding conditions
+            # Check pyramiding conditions with proper averaging logic (no EMA200 requirement)
+            # First time at RSI level = immediate trade
+            # Subsequent times at RSI level = need RSI > 30 reset first
+            
             if rsi < self.config.RSI_OVERSOLD_LEVEL_3:  # RSI < 10
-                return True, f"Pyramiding: Extreme RSI {rsi:.1f} < 10"
-            elif rsi < self.config.RSI_OVERSOLD_LEVEL_2:  # RSI < 20  
-                return True, f"Pyramiding: High RSI {rsi:.1f} < 20"
+                if not self.rsi_10_trade_made:
+                    # First time RSI reaches < 10, execute immediately
+                    self.rsi_10_trade_made = True
+                    return True, f"Pyramiding: Extreme RSI {rsi:.1f} < 10 (first time)"
+                elif self.last_rsi_above_30_date is not None:
+                    # Subsequent times, need RSI > 30 reset first
+                    self.last_rsi_above_30_date = None
+                    self.rsi_10_trade_made = True
+                    return True, f"Pyramiding: Extreme RSI {rsi:.1f} < 10 (after reset)"
+                return False, f"RSI {rsi:.1f} < 10 but already traded at this level (need RSI > 30 reset)"
+                
+            elif rsi < self.config.RSI_OVERSOLD_LEVEL_2:  # RSI < 20
+                if not self.rsi_20_trade_made:
+                    # First time RSI reaches < 20, execute immediately
+                    self.rsi_20_trade_made = True
+                    return True, f"Pyramiding: High RSI {rsi:.1f} < 20 (first time)"
+                elif self.last_rsi_above_30_date is not None:
+                    # Subsequent times, need RSI > 30 reset first
+                    self.last_rsi_above_30_date = None
+                    self.rsi_20_trade_made = True
+                    return True, f"Pyramiding: High RSI {rsi:.1f} < 20 (after reset)"
+                return False, f"RSI {rsi:.1f} < 20 but already traded at this level (need RSI > 30 reset)"
+                
             elif rsi < self.config.RSI_OVERSOLD_LEVEL_1:  # RSI < 30
-                # Only if RSI was above 30 and came back below 30
+                # RSI < 30 always needs reset (since initial entry was already at RSI < 30)
                 if self.last_rsi_above_30_date is not None:
-                    return True, f"Pyramiding: RSI {rsi:.1f} re-entry after being > 30"
-                return False, f"RSI {rsi:.1f} < 30 but no re-entry signal"
+                    self.last_rsi_above_30_date = None
+                    return True, f"Pyramiding: RSI {rsi:.1f} < 30 (after reset)"
+                return False, f"RSI {rsi:.1f} < 30 but no reset signal (need RSI > 30 first)"
                 
         return False, "No entry conditions met"
         
     def _update_rsi_state(self, rsi: float, current_date: pd.Timestamp):
-        """Update RSI state tracking for re-entry logic"""
+        """Update RSI state tracking - only track RSI > 30 for reset"""
+        # Track RSI > 30 transitions (this resets all trade flags)
         if rsi > self.config.RSI_OVERSOLD_LEVEL_1:  # RSI > 30
-            if self.last_rsi_above_30_date is None or \
-               (current_date - self.last_rsi_above_30_date).days > 1:
+            if self.last_rsi_above_30_date is None:
                 self.last_rsi_above_30_date = current_date
+                # Reset trade flags when RSI goes above 30
+                self.rsi_10_trade_made = False
+                self.rsi_20_trade_made = False
                 
     def _execute_trade(self, entry_date: pd.Timestamp, entry_reason: str) -> bool:
         """
