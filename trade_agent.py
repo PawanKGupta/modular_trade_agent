@@ -7,8 +7,8 @@ from core.csv_exporter import CSVExporter
 from utils.logger import logger
 
 def get_stocks():
-    # stocks = get_stock_list()
-    stocks = "NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU"
+    stocks = get_stock_list()
+    # stocks = "NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU"
     return [s.strip().upper() + ".NS" for s in stocks.split(",")]
 
 def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
