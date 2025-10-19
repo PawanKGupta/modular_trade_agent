@@ -7,8 +7,8 @@ from core.csv_exporter import CSVExporter
 from utils.logger import logger
 
 def get_stocks():
-    stocks = get_stock_list()
-    # stocks = "NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU"
+    # stocks = get_stock_list()
+    stocks = "NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU"
     return [s.strip().upper() + ".NS" for s in stocks.split(",")]
 
 def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
@@ -90,12 +90,46 @@ def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
             volume_info = f" Vol:{vol_ratio:.1f}x"
         elif vol_ratio < 0.6:
             volume_info = f" Vol:{vol_ratio:.1f}x"
+
+        # News sentiment (if available)
+        sentiment_info = ""
+        s = stock_data.get('news_sentiment')
+        if s and s.get('enabled'):
+            used = int(s.get('used', 0))
+            label = s.get('label', 'neutral')
+            score = float(s.get('score', 0.0))
+            label_short = 'Pos' if label == 'positive' else 'Neg' if label == 'negative' else 'Neu'
+            sentiment_info = f" News:{label_short} {score:+.2f} ({used})"
+        else:
+            sentiment_info = " News:NA"
         
-        # Build clean message
-        msg = f"{rank}. *{ticker}*: Buy ({buy_low:.2f}-{buy_high:.2f})\n"
-        msg += f"   Target {target:.2f} (+{potential_gain:.1f}%) | Stop {stop:.2f} (-{potential_loss:.1f}%)\n"
-        msg += f"   RSI:{rsi}{mtf_info} RR:{risk_reward:.1f}x{setup_details}{fundamental_info}{volume_info}\n\n"
+        # Build clean multi-line message
+        lines = []
+        lines.append(f"{rank}. {ticker}:")
+        lines.append(f"\tBuy ({buy_low:.2f}-{buy_high:.2f})")
+        lines.append(f"\tTarget {target:.2f} (+{potential_gain:.1f}%)")
+        lines.append(f"\tStop {stop:.2f} (-{potential_loss:.1f}%)")
+        lines.append(f"\tRSI:{rsi}")
+        # MTF on its own line if available
+        if stock_data.get('timeframe_analysis'):
+            lines.append(f"\tMTF:{score}/10")
+        # Risk-reward
+        lines.append(f"\tRR:{risk_reward:.1f}x")
+        # Setup quality indicators (space-separated)
+        if setup_details:
+            # setup_details currently like " | tokens"; extract tokens only
+            tokens = setup_details.replace('|', '').strip()
+            if tokens:
+                lines.append(f"\t{tokens}")
+        # Fundamentals (PE)
+        if pe is not None and pe > 0:
+            lines.append(f"\tPE:{pe:.1f}")
+        # Volume ratio (always print)
+        lines.append(f"\tVol:{vol_ratio:.1f}x")
+        # News sentiment (always print)
+        lines.append(f"\t{sentiment_info.strip()}")
         
+        msg = "\n".join(lines) + "\n\n"
         return msg
         
     except Exception as e:

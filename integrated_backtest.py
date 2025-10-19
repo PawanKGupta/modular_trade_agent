@@ -141,12 +141,27 @@ def trade_agent(stock_name: str, buy_date: str) -> SignalResult:
 
         buy_px = (buy_range[0] + buy_range[1]) / 2 if buy_range else last_close
 
+        sentiment = analysis_result.get('news_sentiment')
+        def _print_sentiment_info(s: dict):
+            if not s or not s.get('enabled'):
+                return
+            lbl = s.get('label', 'neutral')
+            sc = s.get('score', 0.0)
+            used = s.get('used', 0)
+            print(f"   📰 News sentiment: {lbl} ({sc:+.2f}) from {used} recent articles")
+
         if verdict in ['buy', 'strong_buy']:
             confidence = 'high' if verdict == 'strong_buy' else 'medium'
+
+            if sentiment:
+                _print_sentiment_info(sentiment)
+
             print(f"✅ Trade Agent: BUY signal (confidence: {confidence})")
             print(f"   Buy Price: {buy_px:.2f}, Target: {target:.2f}, Stop: {stop:.2f}")
             return SignalResult("BUY", buy_px, target, confidence, stop)
         else:
+            if sentiment:
+                _print_sentiment_info(sentiment)
             print(f"⏸️ Trade Agent: WATCH signal (verdict: {verdict})")
             return SignalResult("WATCH", buy_px or last_close, (buy_px or last_close) * 1.05, "low")
 

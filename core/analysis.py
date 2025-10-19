@@ -7,6 +7,12 @@ from core.patterns import is_hammer, is_bullish_engulfing, bullish_divergence
 from core.timeframe_analysis import TimeframeAnalysis
 from core.csv_exporter import CSVExporter
 from config.settings import RSI_OVERSOLD, MIN_VOLUME_MULTIPLIER, VOLUME_MULTIPLIER_FOR_STRONG
+from config.settings import (
+    NEWS_SENTIMENT_ENABLED,
+    NEWS_SENTIMENT_POS_THRESHOLD,
+    NEWS_SENTIMENT_NEG_THRESHOLD,
+)
+from core.news_sentiment import analyze_news_sentiment
 from utils.logger import logger
 
 def avg_volume(df, lookback=20):
@@ -362,6 +368,13 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
         return {"ticker": ticker, "status": "data_access_error"}
 
     signals = []
+
+    # Optional news sentiment (as-of date aware)
+    news_sentiment = None
+    try:
+        news_sentiment = analyze_news_sentiment(ticker, as_of_date=as_of_date)
+    except Exception as _e:
+        news_sentiment = None
     
     # Multi-timeframe confirmation analysis for dip-buying
     timeframe_confirmation = None
@@ -480,6 +493,14 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
     target = None
     stop = None
 
+    # Apply news sentiment adjustment (downgrade on negative news)
+    if news_sentiment and news_sentiment.get('enabled') and verdict in ["buy", "strong_buy"]:
+        sc = float(news_sentiment.get('score', 0.0))
+        used = int(news_sentiment.get('used', 0))
+        if used >= 1 and sc <= NEWS_SENTIMENT_NEG_THRESHOLD:
+            verdict = "watch"
+            justification.append("news_negative")
+
     if verdict in ["buy", "strong_buy"]:
         current_price = last['close']
         
@@ -511,6 +532,7 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
             "justification": justification,
             "last_close": round(last['close'], 2),
             "timeframe_analysis": timeframe_confirmation,
+            "news_sentiment": news_sentiment,
             "status": "success"
         }
         
