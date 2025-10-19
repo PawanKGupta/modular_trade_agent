@@ -9,3 +9,4 @@ __pycache__/
 .vscode/
 cred.env
 analysis_results/
+logs/

@@ -16,8 +16,18 @@ console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)  # Info+ to console
 console_handler.setFormatter(formatter)
 
-# Optional: File handler (uncomment if you want to log to a file)
-file_handler = logging.FileHandler("logs/trade_agent.log")
+# Date-based file handler for better log management
+from datetime import datetime
+import os
+
+# Create logs directory if it doesn't exist
+os.makedirs('logs', exist_ok=True)
+
+# Use date-based log filename
+today = datetime.now().strftime('%Y%m%d')
+log_filename = f"logs/trade_agent_{today}.log"
+
+file_handler = logging.FileHandler(log_filename)
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(formatter)
 
