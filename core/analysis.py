@@ -1,5 +1,6 @@
 import math
 import yfinance as yf
+import pandas as pd
 from core.data_fetcher import fetch_ohlcv_yf, fetch_multi_timeframe_data
 from core.indicators import compute_indicators
 from core.patterns import is_hammer, is_bullish_engulfing, bullish_divergence
@@ -312,7 +313,7 @@ def calculate_smart_target(current_price, stop_price, verdict, timeframe_confirm
         # Fallback to simple calculation
         return round(current_price * 1.10, 2)
 
-def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv_exporter=None):
+def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv_exporter=None, as_of_date=None):
     try:
         logger.debug(f"Starting analysis for {ticker}")
         
@@ -321,13 +322,13 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
         
         # Fetch data - multi-timeframe if enabled, single timeframe otherwise
         if enable_multi_timeframe:
-            multi_data = fetch_multi_timeframe_data(ticker)
+            multi_data = fetch_multi_timeframe_data(ticker, end_date=as_of_date)
             if multi_data is None or multi_data.get('daily') is None:
                 logger.warning(f"No multi-timeframe data available for {ticker}")
                 return {"ticker": ticker, "status": "no_data"}
             df = multi_data['daily']
         else:
-            df = fetch_ohlcv_yf(ticker)
+            df = fetch_ohlcv_yf(ticker, end_date=as_of_date)
             if df is None or df.empty:
                 logger.warning(f"No data available for {ticker}")
                 return {"ticker": ticker, "status": "no_data"}
@@ -337,6 +338,17 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
         if df is None or df.empty:
             logger.error(f"Failed to compute indicators for {ticker}")
             return {"ticker": ticker, "status": "indicator_error"}
+        
+        # Clip to as_of_date if provided (ensure no future data leaks)
+        if as_of_date is not None:
+            try:
+                asof_ts = pd.to_datetime(as_of_date)
+                if 'date' in df.columns:
+                    df = df[df['date'] <= asof_ts]
+                else:
+                    df = df.loc[df.index <= asof_ts]
+            except Exception as _:
+                pass
             
     except Exception as e:
         logger.error(f"Data fetching/processing failed for {ticker}: {type(e).__name__}: {e}")

@@ -30,12 +30,23 @@ api_retry_configured = exponential_backoff_retry(
 
 @yfinance_circuit_breaker
 @api_retry_configured
-def fetch_ohlcv_yf(ticker, days=365, interval='1d'):
-    end = datetime.now()
+def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None):
+    # Determine end date (exclusive in yfinance); include the requested day by adding 1 day
+    if end_date is None:
+        end = datetime.now()
+    else:
+        if isinstance(end_date, str):
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+        elif isinstance(end_date, datetime):
+            end = end_date
+        else:
+            raise ValueError("end_date must be None, str YYYY-MM-DD, or datetime")
+        end = end + timedelta(days=1)
+
     start = end - timedelta(days=days + 5)
 
     try:
-        logger.debug(f"Fetching data for {ticker} from {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}")
+        logger.debug(f"Fetching data for {ticker} from {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')} [{interval}]")
         
         df = yf.download(
             ticker,
@@ -85,7 +96,7 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d'):
         raise Exception(error_msg) from e
 
 
-def fetch_multi_timeframe_data(ticker, days=365):
+def fetch_multi_timeframe_data(ticker, days=365, end_date=None):
     """
     Fetch data for multiple timeframes (daily and weekly)
     Returns dict with 'daily' and 'weekly' dataframes
@@ -93,7 +104,7 @@ def fetch_multi_timeframe_data(ticker, days=365):
     try:
         # Fetch daily data first
         try:
-            daily_data = fetch_ohlcv_yf(ticker, days=days, interval='1d')
+            daily_data = fetch_ohlcv_yf(ticker, days=days, interval='1d', end_date=end_date)
         except Exception as e:
             logger.warning(f"Failed to fetch daily data for {ticker}: {e}")
             return None
@@ -101,7 +112,7 @@ def fetch_multi_timeframe_data(ticker, days=365):
         # Fetch weekly data (need more days for sufficient weekly candles)
         try:
             weekly_days = max(days * 3, 1095)  # At least 3 years for weekly analysis
-            weekly_data = fetch_ohlcv_yf(ticker, days=weekly_days, interval='1wk')
+            weekly_data = fetch_ohlcv_yf(ticker, days=weekly_days, interval='1wk', end_date=end_date)
         except Exception as e:
             logger.warning(f"Failed to fetch weekly data for {ticker}: {e}")
             # Return with daily data only, weekly will be None
