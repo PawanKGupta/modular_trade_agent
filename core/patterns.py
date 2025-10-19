@@ -33,9 +33,9 @@ def bullish_divergence(df):
     if price_ll >= price_prev_min:
         return False
 
-    rsi_now = sub.loc[idx_price_ll, 'rsi14']
+    rsi_now = sub.loc[idx_price_ll, 'rsi10']
     earlier_idx = prev_window['low'].idxmin()
-    rsi_earlier = prev_window.loc[earlier_idx, 'rsi14']
+    rsi_earlier = prev_window.loc[earlier_idx, 'rsi10']
 
     if np.isnan(rsi_now) or np.isnan(rsi_earlier):
         return False

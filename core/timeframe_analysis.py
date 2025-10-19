@@ -57,7 +57,7 @@ class TimeframeAnalysis:
                 'selling_pressure': selling_pressure,
                 'reversion_setup': reversion_setup,
                 'current_price': round(last['close'], 2),
-                'rsi': round(last['rsi14'], 2) if not pd.isna(last['rsi14']) else None
+                'rsi': round(last['rsi10'], 2) if not pd.isna(last['rsi10']) else None
             }
             
         except Exception as e:
@@ -160,7 +160,7 @@ class TimeframeAnalysis:
         """Analyze oversold conditions for mean reversion opportunities"""
         try:
             last = df.iloc[-1]
-            current_rsi = last['rsi14']
+            current_rsi = last['rsi10']
             
             if pd.isna(current_rsi):
                 return {'condition': 'unknown', 'severity': 'none', 'duration': 0}
@@ -183,7 +183,7 @@ class TimeframeAnalysis:
                 severity = 'none'
             
             # Duration of oversold condition
-            rsi_series = df['rsi14'].tail(10).dropna()
+            rsi_series = df['rsi10'].tail(10).dropna()
             oversold_duration = 0
             if len(rsi_series) > 0:
                 # Convert to list for safe iteration
@@ -197,7 +197,7 @@ class TimeframeAnalysis:
             # RSI divergence check (price making new lows while RSI doesn't)
             if len(df) >= 10:
                 recent_prices = df['close'].tail(10)
-                recent_rsi = df['rsi14'].tail(10).dropna()
+                recent_rsi = df['rsi10'].tail(10).dropna()
                 
                 if len(recent_rsi) >= 5:
                     price_new_low = recent_prices.iloc[-1] <= recent_prices.iloc[-5:].min()
@@ -348,7 +348,7 @@ class TimeframeAnalysis:
         try:
             current_data = df.iloc[-1]
             current_price = current_data['close']
-            current_rsi = current_data['rsi14']
+            current_rsi = current_data['rsi10']
             
             if pd.isna(current_rsi):
                 return {'quality': 'poor', 'score': 0, 'reasons': []}
