@@ -369,7 +369,7 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
     if prev is not None and is_bullish_engulfing(prev, last):
         signals.append("bullish_engulfing")
 
-    if last['rsi14'] is not None and last['rsi14'] < RSI_OVERSOLD:
+    if last['rsi10'] is not None and last['rsi10'] < RSI_OVERSOLD:
         signals.append("rsi_oversold")
 
     if bullish_divergence(df):
@@ -416,7 +416,7 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
             alignment_score = timeframe_confirmation.get('alignment_score', 0) if timeframe_confirmation else 0
             
             # Additional quality filters for best setups
-            fundamental_quality = assess_fundamental_quality(pe, pb, last['rsi14'])
+            fundamental_quality = assess_fundamental_quality(pe, pb, last['rsi10'])
             volume_quality = assess_volume_quality(vol_strong, last['volume'], avg_vol)
             setup_quality = assess_setup_quality(timeframe_confirmation, signals)
             
@@ -453,8 +453,8 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
                 
             if vol_strong:
                 justification.append("volume_strong")
-            if last['rsi14'] is not None:
-                justification.append(f"rsi:{round(last['rsi14'],1)}")
+            if last['rsi10'] is not None:
+                justification.append(f"rsi:{round(last['rsi10'],1)}")
         else:
             verdict = "watch"
             justification.append("fundamental_red_flag")
@@ -482,7 +482,7 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
 
     # Final result compilation with error handling
     try:
-        rsi_value = None if math.isnan(last['rsi14']) else round(last['rsi14'], 2)
+        rsi_value = None if math.isnan(last['rsi10']) else round(last['rsi10'], 2)
         
         result = {
             "ticker": ticker,
