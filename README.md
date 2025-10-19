@@ -2,6 +2,10 @@
 
 A professional-grade automated trading system for Indian stock markets (NSE) that specializes in **uptrend dip-buying** using multi-timeframe analysis. The system identifies high-probability oversold bounces in strong uptrending stocks and delivers institutional-quality trade alerts via Telegram.
 
+## 🎯 **NEW: Advanced Backtesting Module**
+
+The system now includes a comprehensive backtesting framework that implements the **EMA200 + RSI10 Pyramiding Strategy** with perfect accuracy matching TradingView calculations. Test historical performance, validate strategies, and optimize parameters with institutional-grade analytics.
+
 ## 🚀 Key Features
 
 ### 📊 **Multi-Timeframe Analysis (MTF)**
@@ -39,6 +43,7 @@ A professional-grade automated trading system for Indian stock markets (NSE) tha
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
+- [Backtesting Module](#backtesting-module)
 - [Project Structure](#project-structure)
 - [Technical Indicators](#technical-indicators)
 - [Signal Types](#signal-types)
@@ -175,10 +180,111 @@ result = analyze_ticker("RELIANCE.NS")
 print(result)
 ```
 
+## 🔬 Backtesting Module
+
+The system includes a sophisticated backtesting framework for evaluating the **EMA200 + RSI10 Pyramiding Strategy**.
+
+### 🎥 Quick Start
+
+```bash
+# Basic backtest
+python run_backtest.py RELIANCE.NS 2022-01-01 2023-12-31
+
+# With detailed analysis
+python run_backtest.py ORIENTCEM.NS 2025-01-15 2025-06-15 --export-trades --generate-report
+
+# Custom capital per position
+python run_backtest.py TCS.NS 2023-01-01 2024-12-31 --capital 200000
+```
+
+### 📋 Strategy Rules
+
+The backtesting module implements a precise **pyramiding averaging-down strategy**:
+
+#### **Initial Entry**
+- ✅ **Price > EMA200** AND **RSI10 < 30**
+- 💰 **Capital**: ₹100,000 per position
+- 🗺 **Execution**: Next day's opening price
+
+#### **Pyramiding Entries** (No EMA200 Check)
+1. **RSI < 10**: First time immediate, subsequent times need RSI > 30 reset
+2. **RSI < 20**: First time immediate, subsequent times need RSI > 30 reset
+3. **RSI < 30**: Always needs RSI > 30 reset (after initial entry)
+
+#### **Key Features**
+- 📈 **TradingView-Accurate RSI**: Perfect match with TradingView calculations
+- 🔄 **Smart Reset Logic**: Prevents over-trading with proper cycle detection
+- 🗺 **Auto Data Adjustment**: Automatically extends data period for reliable EMA200
+- 📏 **Maximum 10 Positions**: Controlled risk with position limits
+
+### 📈 Performance Analytics
+
+```python
+from backtest import BacktestEngine, PerformanceAnalyzer
+
+# Run backtest
+engine = BacktestEngine("RELIANCE.NS", "2022-01-01", "2023-12-31")
+results = engine.run_backtest()
+
+# Detailed analysis
+analyzer = PerformanceAnalyzer(engine)
+report = analyzer.generate_report(save_to_file=True)
+trades_csv = analyzer.export_trades_to_csv()
+```
+
+### 📄 Sample Results
+
+```
+============================================================
+BACKTEST SUMMARY - ORIENTCEM.NS
+============================================================
+Period: 2025-01-15 to 2025-06-15
+Total Trades: 5
+Total Return: -9.89%
+Win Rate: 0.0% (challenging market period)
+Strategy vs Buy & Hold: +3.58%
+🎉 Strategy OUTPERFORMED buy & hold!
+============================================================
+```
+
+### 🗂 Available Commands
+
+```bash
+# Run examples with multiple scenarios
+python backtest_example.py
+
+# Command line options
+python run_backtest.py SYMBOL START END [OPTIONS]
+  --capital AMOUNT         Capital per position (default: 100000)
+  --rsi-period PERIOD      RSI period (default: 10)
+  --ema-period PERIOD      EMA period (default: 200)
+  --max-positions MAX      Maximum positions (default: 10)
+  --no-pyramiding          Disable pyramiding
+  --export-trades          Export trades to CSV
+  --generate-report        Generate performance report
+  --save-report            Save report to file
+```
+
+### 🎯 Advanced Features
+
+- **Risk Metrics**: Maximum drawdown, Sharpe ratio, VaR analysis
+- **Trade Statistics**: Win rates, holding periods, consecutive trades
+- **Time Analysis**: Monthly performance, seasonal patterns
+- **CSV Export**: Detailed trade-by-trade data for further analysis
+- **Automated Recommendations**: Strategy optimization suggestions
+- **Multi-Stock Comparison**: Compare performance across different stocks
+
 ## 📁 Project Structure
 
 ```
 modular_trade_agent/
+├── backtest/                # 🆕 Advanced Backtesting Framework
+│   ├── __init__.py          # Package initialization
+│   ├── backtest_config.py   # Backtesting configuration settings
+│   ├── backtest_engine.py   # Core backtesting logic with pyramiding
+│   ├── position_manager.py  # Position tracking and trade management
+│   ├── performance_analyzer.py # Advanced analytics and reporting
+│   └── README.md           # Detailed backtesting documentation
 ├── config/
 │   ├── __init__.py
 │   └── settings.py          # Configuration parameters
@@ -199,14 +305,18 @@ modular_trade_agent/
 │   ├── logger.py            # Logging configuration
 │   └── retry_handler.py     # Retry logic with exponential backoff
 ├── Test/
-│   ├── backtesting.py      # Backtesting utilities
+│   ├── backtesting.py      # Legacy backtesting utilities
 │   ├── backtest_stocks.py  # Stock backtesting
 │   ├── debug_test.py       # Debug utilities
 │   └── volume_analysis.py  # Volume analysis
+├── backtest_reports/       # 🆕 Generated backtest reports
+├── backtest_exports/       # 🆕 Exported trade data (CSV)
 ├── logs/                   # Log files
 ├── cred.env               # Environment variables (create this)
 ├── requirements.txt       # Python dependencies
 ├── trade_agent.py        # Main execution script
+├── run_backtest.py       # 🆕 Backtesting command-line interface
+├── backtest_example.py   # 🆕 Backtesting examples and demonstrations
 └── README.md            # This file
 ```
 
@@ -360,6 +470,43 @@ high_quality = df[df['mtf_alignment_score'] >= 8]
 
 # Export filtered results
 strong_buys.to_csv('filtered_strong_buys.csv', index=False)
+```
+
+## 🚀 Getting Started
+
+### Live Trading Signals
+```bash
+# Run the main trading system
+python trade_agent.py
+
+# With custom options
+python trade_agent.py --no-csv --no-mtf
+```
+
+### Strategy Backtesting
+```bash
+# Quick backtest
+python run_backtest.py RELIANCE.NS 2022-01-01 2023-12-31
+
+# Comprehensive analysis
+python run_backtest.py ORIENTCEM.NS 2025-01-15 2025-06-15 --export-trades --generate-report
+
+# Try multiple examples
+python backtest_example.py
+```
+
+### Programmatic Usage
+```python
+# Live analysis
+from core.analysis import analyze_ticker
+result = analyze_ticker("RELIANCE.NS")
+
+# Backtesting
+from backtest import BacktestEngine, PerformanceAnalyzer
+engine = BacktestEngine("RELIANCE.NS", "2022-01-01", "2023-12-31")
+results = engine.run_backtest()
+analyzer = PerformanceAnalyzer(engine)
+report = analyzer.generate_report(save_to_file=True)
 ```
 
 ## 🔧 Troubleshooting
