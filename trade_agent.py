@@ -211,8 +211,20 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
         results.sort(key=lambda x: -compute_strength_score(x))
 
     # Include both 'buy' and 'strong_buy' candidates, but exclude failed analysis
-    buys = [r for r in results if r.get('verdict') in ['buy', 'strong_buy'] and r.get('status') == 'success']
-    strong_buys = [r for r in results if r.get('verdict') == 'strong_buy' and r.get('status') == 'success']
+    # Use final_verdict if backtest scoring was enabled, otherwise use original verdict
+    if enable_backtest_scoring:
+        # Apply stricter filtering with combined score threshold
+        buys = [r for r in results if 
+                r.get('final_verdict') in ['buy', 'strong_buy'] and 
+                r.get('status') == 'success' and
+                r.get('combined_score', 0) >= 35]  # Minimum combined score
+        strong_buys = [r for r in results if 
+                      r.get('final_verdict') == 'strong_buy' and 
+                      r.get('status') == 'success' and
+                      r.get('combined_score', 0) >= 35]
+    else:
+        buys = [r for r in results if r.get('verdict') in ['buy', 'strong_buy'] and r.get('status') == 'success']
+        strong_buys = [r for r in results if r.get('verdict') == 'strong_buy' and r.get('status') == 'success']
 
     # Send Telegram notification with final results (after backtest scoring if enabled)
     if buys:
@@ -228,8 +240,13 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
                 enhanced_info = get_enhanced_stock_info(b, i)
                 msg += enhanced_info
         
-        # Regular buys
-        regular_buys = [r for r in buys if r.get('verdict') == 'buy']
+        # Regular buys (exclude stocks already in strong_buys to avoid duplicates)
+        strong_buy_tickers = {r.get('ticker') for r in strong_buys}
+        if enable_backtest_scoring:
+            regular_buys = [r for r in buys if r.get('final_verdict') == 'buy' and r.get('ticker') not in strong_buy_tickers]
+        else:
+            regular_buys = [r for r in buys if r.get('verdict') == 'buy' and r.get('ticker') not in strong_buy_tickers]
+        
         if regular_buys:
             msg += "\n📈 *BUY* candidates:\n"
             for i, b in enumerate(regular_buys, 1):

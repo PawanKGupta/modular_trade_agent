@@ -50,26 +50,58 @@ def calculate_backtest_score(backtest_results: Dict) -> float:
         return 0.0
     
     try:
-        # Component 1: Total Return (40% weight)
+        # Calculate annualized return based on actual trading days
         total_return = backtest_results.get('total_return_pct', 0)
-        return_score = min(max(total_return, 0), 100) * 0.4  # Cap at 100%
+        total_trades = backtest_results.get('total_trades', 0)
         
-        # Component 2: Win Rate (30% weight)  
+        # Estimate average holding period (assume 15 days if no position data available)
+        avg_holding_days = 15  # Default assumption
+        if 'full_results' in backtest_results and backtest_results['full_results'].get('positions'):
+            positions = backtest_results['full_results']['positions']
+            if positions:
+                total_days = 0
+                valid_positions = 0
+                for pos in positions:
+                    if pos.get('entry_date') and pos.get('exit_date'):
+                        from datetime import datetime
+                        entry = datetime.strptime(pos['entry_date'], '%Y-%m-%d')
+                        exit = datetime.strptime(pos['exit_date'], '%Y-%m-%d')
+                        days = (exit - entry).days
+                        total_days += days
+                        valid_positions += 1
+                if valid_positions > 0:
+                    avg_holding_days = total_days / valid_positions
+        
+        # Calculate annualized return
+        if avg_holding_days > 0 and total_return != 0:
+            periods_per_year = 365 / avg_holding_days
+            annualized_return = ((1 + total_return/100) ** periods_per_year - 1) * 100
+        else:
+            annualized_return = total_return
+        
+        # Component 1: Annualized Return (35% weight)
+        # Scale: 0-20% -> 0-50 points, 20%+ -> 50-100 points  
+        if annualized_return <= 20:
+            return_score = (annualized_return / 20) * 50 * 0.35
+        else:
+            return_score = (50 + min((annualized_return - 20) * 1.25, 50)) * 0.35
+        
+        # Component 2: Win Rate (35% weight) - High importance
         win_rate = backtest_results.get('win_rate', 0)
-        win_score = win_rate * 0.3
+        win_score = win_rate * 0.35
         
         # Component 3: Strategy vs Buy & Hold (20% weight)
         vs_buyhold = backtest_results.get('strategy_vs_buy_hold', 0)
-        alpha_score = min(max(vs_buyhold + 50, 0), 100) * 0.2  # Normalize around 50
+        alpha_score = min(max(vs_buyhold + 50, 0), 100) * 0.2
         
-        # Component 4: Trade Execution Rate (10% weight)
-        execution_rate = backtest_results.get('trade_agent_accuracy', 0)
-        execution_score = execution_rate * 0.1
+        # Component 4: Trade Frequency (10% weight) - Rewards more opportunities
+        trade_frequency_score = min(total_trades * 8, 100) * 0.1  # 8 points per trade, max 12.5 trades
         
-        total_score = return_score + win_score + alpha_score + execution_score
+        total_score = return_score + win_score + alpha_score + trade_frequency_score
         
-        logger.debug(f"Backtest score breakdown: Return={return_score:.1f}, Win={win_score:.1f}, "
-                    f"Alpha={alpha_score:.1f}, Exec={execution_score:.1f}, Total={total_score:.1f}")
+        logger.debug(f"Backtest score breakdown: Annualized Return={annualized_return:.1f}% ({return_score:.1f}), "
+                    f"Win={win_rate:.1f}% ({win_score:.1f}), Alpha={alpha_score:.1f}, "
+                    f"Trades={total_trades} ({trade_frequency_score:.1f}), Total={total_score:.1f}")
         
         return min(total_score, 100.0)  # Cap at 100
         
@@ -326,7 +358,23 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2) -> 
             
             stock_result['combined_score'] = combined_score
             
-            logger.info(f"  {ticker}: Current={current_score:.1f}, Backtest={backtest_score:.1f}, Combined={combined_score:.1f}")
+            # Re-classify based on combined score and key metrics
+            mtf_score = 0
+            if stock_result.get('timeframe_analysis'):
+                mtf_score = stock_result['timeframe_analysis'].get('alignment_score', 0)
+            
+            # Reclassify based on combined criteria (more balanced approach)
+            # Strong Buy: High backtest + decent combined score OR high combined score
+            if (backtest_score >= 65 and combined_score >= 30) or combined_score >= 55:
+                stock_result['final_verdict'] = 'strong_buy'
+            # Buy: Good backtest + some combined score OR decent combined score  
+            elif (backtest_score >= 45 and combined_score >= 20) or combined_score >= 35:
+                stock_result['final_verdict'] = 'buy'
+            # Watch: Everything else
+            else:
+                stock_result['final_verdict'] = 'watch'
+            
+            logger.info(f"  {ticker}: Current={current_score:.1f}, Backtest={backtest_score:.1f}, Combined={combined_score:.1f}, Final={stock_result['final_verdict']}")
             
             enhanced_results.append(stock_result)
             
