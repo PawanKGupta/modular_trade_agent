@@ -56,9 +56,9 @@ jobs:
         CHROME_BIN: /usr/bin/google-chrome
         CHROMEDRIVER_PATH: /usr/local/bin/chromedriver
       run: |
-        # Install xvfb and window manager for full GUI support
+        # Install xvfb, window manager, and clipboard utilities for full GUI support
         sudo apt-get update
-        sudo apt-get install -y xvfb fluxbox x11vnc
+        sudo apt-get install -y xvfb fluxbox x11vnc xclip xsel
         
         # Start virtual display with larger resolution
         export DISPLAY=:99
