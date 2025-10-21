@@ -72,6 +72,10 @@ jobs:
         # Verify display is working
         echo "Virtual display started on $DISPLAY"
         
+        # Test Telegram connection first
+        echo "Testing Telegram connection..."
+        python test_telegram.py
+        
         # Run the trading agent (Chrome will run in non-headless mode)
         python trade_agent.py
     
