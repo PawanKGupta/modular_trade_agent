@@ -1,8 +1,8 @@
 pandas
 yfinance
-pandas_ta
+pandas-ta
 python-dotenv
 requests
 selenium
-webdriver_manager
+webdriver-manager
 pyperclip
