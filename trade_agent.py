@@ -210,12 +210,16 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
     else:
         results.sort(key=lambda x: -compute_strength_score(x))
 
-    # Include both 'buy' and 'strong_buy' candidates
-    buys = [r for r in results if r.get('verdict') in ['buy', 'strong_buy']]
-    strong_buys = [r for r in results if r.get('verdict') == 'strong_buy']
+    # Include both 'buy' and 'strong_buy' candidates, but exclude failed analysis
+    buys = [r for r in results if r.get('verdict') in ['buy', 'strong_buy'] and r.get('status') == 'success']
+    strong_buys = [r for r in results if r.get('verdict') == 'strong_buy' and r.get('status') == 'success']
 
+    # Send Telegram notification with final results (after backtest scoring if enabled)
     if buys:
-        msg = "*Reversal Buy Candidates (today)*\n"
+        msg_prefix = "*Reversal Buy Candidates (today)*"
+        if enable_backtest_scoring:
+            msg_prefix += " *with Backtest Scoring*"
+        msg = msg_prefix + "\n"
         
         # Highlight strong buys first
         if strong_buys:
@@ -233,7 +237,8 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
                 msg += enhanced_info
         
         send_telegram(msg)
-        logger.info(f"Sent Telegram alert for {len(buys)} buy candidates ({len(strong_buys)} strong buys)")
+        scoring_info = " (with backtest scoring)" if enable_backtest_scoring else ""
+        logger.info(f"Sent Telegram alert for {len(buys)} buy candidates ({len(strong_buys)} strong buys){scoring_info}")
     else:
         logger.info("No buy candidates today.")
 
