@@ -45,9 +45,10 @@ jobs:
     
     - name: Run trading agent
       env:
-        # Add any environment variables your script needs here
-        # TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        # Telegram credentials from GitHub Secrets
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        # Add other API keys as needed
         # API_KEY: ${{ secrets.API_KEY }}
         TZ: 'UTC'  # Set timezone if needed
         # Chrome/Selenium configuration for NON-HEADLESS mode
