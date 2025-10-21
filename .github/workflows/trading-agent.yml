@@ -31,7 +31,7 @@ jobs:
       uses: nanasess/setup-chromedriver@v2
     
     - name: Cache pip dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cache/pip
         key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
@@ -75,7 +75,7 @@ jobs:
         python trade_agent.py
     
     - name: Upload results (optional)
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()  # Upload even if the script fails
       with:
         name: trading-results-${{ github.run_number }}
