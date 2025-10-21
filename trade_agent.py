@@ -4,6 +4,7 @@ from core.scoring import compute_strength_score
 from core.telegram import send_telegram
 from core.scrapping import get_stock_list
 from core.csv_exporter import CSVExporter
+from core.backtest_scoring import add_backtest_scores_to_results
 from utils.logger import logger
 
 def get_stocks():
@@ -134,6 +135,20 @@ def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
         # News sentiment (always print)
         lines.append(f"\t{sentiment_info.strip()}")
         
+        # Backtest information (if available)
+        backtest = stock_data.get('backtest')
+        if backtest and backtest.get('score', 0) > 0:
+            bt_score = backtest.get('score', 0)
+            bt_return = backtest.get('total_return_pct', 0)
+            bt_winrate = backtest.get('win_rate', 0)
+            bt_trades = backtest.get('total_trades', 0)
+            lines.append(f"\tBacktest: {bt_score:.0f}/100 ({bt_return:+.1f}% return, {bt_winrate:.0f}% win, {bt_trades} trades)")
+        
+        # Combined score (if available)
+        combined_score = stock_data.get('combined_score')
+        if combined_score is not None:
+            lines.append(f"\tCombined Score: {combined_score:.1f}/100")
+        
         msg = "\n".join(lines) + "\n\n"
         return msg
         
@@ -147,7 +162,7 @@ def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
         rsi = stock_data.get('rsi', 0)
         return f"{ticker}: Buy ({buy_low:.2f}, {buy_high:.2f}) Target {target:.2f} Stop {stop:.2f} (rsi={rsi})\n"
 
-def main(export_csv=True, enable_multi_timeframe=True):
+def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=False):
     tickers = get_stocks()
     
     if not tickers:
@@ -186,7 +201,14 @@ def main(export_csv=True, enable_multi_timeframe=True):
                 logger.error(f"ERROR Unexpected error analyzing {t}: {e}")
                 results.append({"ticker": t, "status": "fatal_error", "error": str(e)})
 
-    results.sort(key=lambda x: -compute_strength_score(x))
+    # Add backtest scoring if enabled
+    if enable_backtest_scoring:
+        logger.info("Running backtest scoring analysis...")
+        results = add_backtest_scores_to_results(results, years_back=2)
+        # Re-sort by combined score if backtest scoring was added
+        results.sort(key=lambda x: -x.get('combined_score', compute_strength_score(x)))
+    else:
+        results.sort(key=lambda x: -compute_strength_score(x))
 
     # Include both 'buy' and 'strong_buy' candidates
     buys = [r for r in results if r.get('verdict') in ['buy', 'strong_buy']]
@@ -221,10 +243,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Stock Analysis with Multi-timeframe Confirmation')
     parser.add_argument('--no-csv', action='store_true', help='Disable CSV export')
     parser.add_argument('--no-mtf', action='store_true', help='Disable multi-timeframe analysis')
+    parser.add_argument('--backtest', action='store_true', help='Enable backtest scoring (slower but more accurate)')
     
     args = parser.parse_args()
     
     main(
         export_csv=not args.no_csv,
-        enable_multi_timeframe=not args.no_mtf
+        enable_multi_timeframe=not args.no_mtf,
+        enable_backtest_scoring=args.backtest
     )
