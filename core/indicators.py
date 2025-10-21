@@ -1,5 +1,6 @@
-import pandas_ta as ta
-from ta.trend  import ADXIndicator
+import pandas as pd
+import numpy as np
+from ta.trend import ADXIndicator
 
 from utils.logger import logger
 
@@ -33,9 +34,9 @@ def compute_indicators(df):
         
         # Use Wilder's RSI method (matches TradingView)
         df['rsi10'] = wilder_rsi(df[close_col], period=10)
-        df['ema20'] = ta.ema(df[close_col], length=20)
-        df['ema50'] = ta.ema(df[close_col], length=50)
-        df['ema200'] = ta.ema(df[close_col], length=200)  # For uptrend confirmation
+        df['ema20'] = df[close_col].ewm(span=20).mean()
+        df['ema50'] = df[close_col].ewm(span=50).mean()
+        df['ema200'] = df[close_col].ewm(span=200).mean()  # For uptrend confirmation
         # df['adx'] = ta.adx(df[high_col], df[low_col], df[close_col], length=14)['ADX_14']
         # adx = ADXIndicator(high=df[high_col], low=df[low_col], close=df[close_col], window=14)
         # df['adx'] = adx.adx()
