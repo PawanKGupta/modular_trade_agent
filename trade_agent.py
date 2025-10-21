@@ -8,7 +8,12 @@ from utils.logger import logger
 
 def get_stocks():
     stocks = get_stock_list()
-    # stocks = "NAVA, GLENMARK, VGL, HYUNDAI, ENRIN, OLECTRA, DDEVPLSTIK, CURAA, SUDARSCHEM, SMLISUZU"
+    
+    # Check if scraping failed
+    if stocks is None or stocks.strip() == "":
+        logger.error("Stock scraping failed, no stocks to analyze")
+        return []
+    
     return [s.strip().upper() + ".NS" for s in stocks.split(",")]
 
 def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
@@ -144,6 +149,10 @@ def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
 
 def main(export_csv=True, enable_multi_timeframe=True):
     tickers = get_stocks()
+    
+    if not tickers:
+        logger.error("No stocks to analyze. Exiting.")
+        return
     
     logger.info(f"Starting analysis for {len(tickers)} stocks (Multi-timeframe: {enable_multi_timeframe}, CSV Export: {export_csv})")
     
