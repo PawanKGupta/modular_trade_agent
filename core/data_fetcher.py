@@ -96,15 +96,16 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None):
         raise Exception(error_msg) from e
 
 
-def fetch_multi_timeframe_data(ticker, days=365, end_date=None):
+def fetch_multi_timeframe_data(ticker, days=800, end_date=None):  # Increased for accurate EMA200
     """
     Fetch data for multiple timeframes (daily and weekly)
     Returns dict with 'daily' and 'weekly' dataframes
     """
     try:
-        # Fetch daily data first
+        # Fetch daily data first (ensure enough history for EMA200)
         try:
-            daily_data = fetch_ohlcv_yf(ticker, days=days, interval='1d', end_date=end_date)
+            daily_days = max(days, 800)  # Minimum 800 days for accurate EMA200
+            daily_data = fetch_ohlcv_yf(ticker, days=daily_days, interval='1d', end_date=end_date)
         except Exception as e:
             logger.warning(f"Failed to fetch daily data for {ticker}: {e}")
             return None

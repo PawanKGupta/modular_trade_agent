@@ -431,63 +431,77 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
     verdict = "avoid"
     justification = []
     
-    # Enhanced decision logic for uptrend dip-buying with MTF confirmation
-    has_pattern_signals = any(s in signals for s in ["bullish_engulfing", "hammer", "bullish_divergence", "rsi_oversold"])
-    has_uptrend_dip_signals = any(s in signals for s in ["excellent_uptrend_dip", "good_uptrend_dip", "fair_uptrend_dip"])
+    # Simplified decision logic for reversal strategy - focus on core signals
+    # Core reversal conditions (matching backtest criteria)
+    rsi_oversold = pd.notna(last['rsi10']) and last['rsi10'] < RSI_OVERSOLD  # RSI < 30
+    above_trend = pd.notna(last['ema200']) and last['close'] > last['ema200']  # Above EMA200
+    decent_volume = last['volume'] >= avg_vol * 0.8  # Minimum volume threshold
     
-    if (has_pattern_signals and vol_ok) or has_uptrend_dip_signals:
-        if not (pe is not None and pe < 0):
-            # Determine verdict strength based on uptrend dip quality and alignment score
-            alignment_score = timeframe_confirmation.get('alignment_score', 0) if timeframe_confirmation else 0
-            
-            # Additional quality filters for best setups
-            fundamental_quality = assess_fundamental_quality(pe, pb, last['rsi10'])
-            volume_quality = assess_volume_quality(vol_strong, last['volume'], avg_vol)
-            setup_quality = assess_setup_quality(timeframe_confirmation, signals)
-            
-            # Enhanced verdict logic with quality filters + support proximity
-            support_proximity_quality = assess_support_proximity(timeframe_confirmation)
-            
-            if ("excellent_uptrend_dip" in signals or alignment_score >= 9) and fundamental_quality >= 2 and support_proximity_quality >= 2:
-                verdict = "strong_buy"  # Only best setups with good fundamentals AND near support
-            elif alignment_score >= 8 and (fundamental_quality >= 1 or volume_quality >= 2) and support_proximity_quality >= 1:
-                verdict = "strong_buy"  # High MTF + (decent fundamentals OR strong volume) + reasonable support distance
-            elif alignment_score >= 7 and fundamental_quality >= 1 and setup_quality >= 2 and support_proximity_quality >= 1:
-                verdict = "buy"  # Good MTF + fundamentals + setup quality + near support
-            elif "good_uptrend_dip" in signals and alignment_score >= 6 and volume_quality >= 1 and support_proximity_quality >= 2:
-                verdict = "buy"  # Good dip + volume + very close to support
-            elif alignment_score >= 8 and support_proximity_quality >= 1:  # Very high MTF can override some factors but need reasonable support
-                verdict = "buy"  # High confidence technical setup + support proximity
-            elif alignment_score >= 6 and setup_quality >= 2 and support_proximity_quality >= 2:
-                verdict = "watch"  # Moderate setups need to be very close to support
-            else:
-                verdict = "watch"  # Lower quality setups
-                
-            # Build justification excluding MTF signals from pattern list
-            pattern_signals = [s for s in signals if s not in ["excellent_uptrend_dip", "good_uptrend_dip", "fair_uptrend_dip"]]
-            if pattern_signals:
-                justification.append("pattern:" + ",".join(pattern_signals))
-            
-            # Add MTF uptrend dip confirmation to justification
-            if "excellent_uptrend_dip" in signals:
-                justification.append("excellent_uptrend_dip_confirmation")
-            elif "good_uptrend_dip" in signals:
-                justification.append("good_uptrend_dip_confirmation")
-            elif "fair_uptrend_dip" in signals:
-                justification.append("fair_uptrend_dip_confirmation")
-                
-            if vol_strong:
-                justification.append("volume_strong")
-            if last['rsi10'] is not None:
-                justification.append(f"rsi:{round(last['rsi10'],1)}")
+    # Avoid stocks with negative earnings (fundamental red flag)
+    fundamental_ok = not (pe is not None and pe < 0)
+    
+    if rsi_oversold and above_trend and decent_volume and fundamental_ok:
+        # Simple quality-based classification using MTF and patterns
+        alignment_score = timeframe_confirmation.get('alignment_score', 0) if timeframe_confirmation else 0
+        
+        # Strong Buy: Excellent MTF alignment OR excellent uptrend dip pattern
+        if alignment_score >= 8 or "excellent_uptrend_dip" in signals:
+            verdict = "strong_buy"
+        
+        # Buy: Good MTF alignment OR good patterns OR strong volume
+        elif (alignment_score >= 5 or 
+              any(s in signals for s in ["good_uptrend_dip", "fair_uptrend_dip", "hammer", "bullish_engulfing"]) or
+              vol_strong):
+            verdict = "buy"
+        
+        # Buy: Basic reversal setup (meets core criteria)
         else:
-            verdict = "watch"
-            justification.append("fundamental_red_flag")
-    elif len(signals) > 0:
+            verdict = "buy"  # Default for valid reversal conditions
+    
+    elif rsi_oversold and decent_volume and fundamental_ok:
+        # RSI oversold with volume but may not be above EMA200 or other issues
         verdict = "watch"
-        justification.append("signals:" + ",".join(signals))
+    
+    elif len(signals) > 0 and vol_ok:
+        # Has some signals and volume but not core reversal conditions
+        verdict = "watch"
+    
     else:
+        # No significant signals
         verdict = "avoid"
+    
+    # Build justification based on what was found
+    if verdict in ["buy", "strong_buy"]:
+        # Add core reversal justification
+        if rsi_oversold:
+            justification.append(f"rsi:{round(last['rsi10'], 1)}")
+        
+        # Add pattern signals (excluding MTF signals)
+        pattern_signals = [s for s in signals if s not in ["excellent_uptrend_dip", "good_uptrend_dip", "fair_uptrend_dip"]]
+        if pattern_signals:
+            justification.append("pattern:" + ",".join(pattern_signals))
+        
+        # Add MTF uptrend dip confirmation
+        if "excellent_uptrend_dip" in signals:
+            justification.append("excellent_uptrend_dip_confirmation")
+        elif "good_uptrend_dip" in signals:
+            justification.append("good_uptrend_dip_confirmation")
+        elif "fair_uptrend_dip" in signals:
+            justification.append("fair_uptrend_dip_confirmation")
+        
+        # Add volume information
+        if vol_strong:
+            justification.append("volume_strong")
+        elif decent_volume:
+            justification.append("volume_adequate")
+            
+    elif verdict == "watch":
+        if not fundamental_ok:
+            justification.append("fundamental_red_flag")
+        elif len(signals) > 0:
+            justification.append("signals:" + ",".join(signals))
+        else:
+            justification.append("partial_reversal_setup")
 
     buy_range = None
     target = None

@@ -72,8 +72,8 @@ jobs:
         # Verify display is working
         echo "Virtual display started on $DISPLAY"
         
-        # Run the trading agent (Chrome will run in non-headless mode)
-        python trade_agent.py
+        # Run the trading agent with backtest scoring (Chrome will run in non-headless mode)
+        python trade_agent.py --backtest
     
     - name: Upload results (optional)
       uses: actions/upload-artifact@v4

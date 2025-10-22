@@ -1,12 +1,28 @@
 # Modular Trade Agent
 
-A professional-grade automated trading system for Indian stock markets (NSE) that specializes in **uptrend dip-buying** using multi-timeframe analysis. The system identifies high-probability oversold bounces in strong uptrending stocks and delivers institutional-quality trade alerts via Telegram.
+A professional-grade **cloud-automated trading system** for Indian stock markets (NSE) that specializes in **core reversal strategy** using multi-timeframe analysis with **historical backtesting validation**. The system runs automatically on GitHub Actions, identifies high-probability oversold bounces in strong uptrending stocks with simplified decision logic, validates them against 2-year historical performance, and delivers institutional-quality trade alerts via Telegram.
 
-## 🎯 **NEW: Advanced Backtesting Module**
+## ✨ **NEW: Cloud Automation & Intelligent Backtesting**
 
-The system now includes a comprehensive backtesting framework that implements the **EMA200 + RSI10 Pyramiding Strategy** with perfect accuracy matching TradingView calculations. Test historical performance, validate strategies, and optimize parameters with institutional-grade analytics.
+🚀 **GitHub Actions Integration**: Fully automated cloud execution at 4PM IST weekdays - no laptop required!
+
+🧠 **Intelligent Backtesting Scoring**: Every stock candidate is validated against 2 years of historical performance using the same RSI10 strategy, providing a **Combined Score** (50% current analysis + 50% historical performance) for superior trade selection.
+
+📊 **Enhanced Risk Management**: Stocks with poor historical track records or insufficient data are automatically filtered out, preventing false signals and improving overall system reliability.
 
 ## 🚀 Key Features
+
+### ☁️ **Cloud Automation**
+- **GitHub Actions Integration**: Runs automatically at 4PM IST weekdays
+- **Zero Maintenance**: No laptop/server maintenance required
+- **Chrome/Selenium Support**: Full web scraping capabilities in the cloud
+- **Telegram Integration**: Instant notifications with comprehensive trade data
+
+### 🧠 **Intelligent Backtesting**
+- **2-Year Historical Validation**: Every stock tested against historical performance
+- **Combined Scoring System**: 50% current analysis + 50% backtest performance
+- **RSI10 Strategy Validation**: Uses same strategy rules for consistency
+- **Automatic Filtering**: Stocks with poor history or insufficient data excluded
 
 ### 📊 **Multi-Timeframe Analysis (MTF)**
 - **Daily + Weekly Confirmation**: Analyzes both timeframes for maximum probability
@@ -14,11 +30,12 @@ The system now includes a comprehensive backtesting framework that implements th
 - **Smart Alignment Scoring**: 0-10 scoring system for setup quality assessment
 - **Support Level Analysis**: Identifies and tracks key support/resistance levels
 
-### 🎯 **Professional Entry Strategy**
-- **RSI < 30 Oversold Filtering**: Only considers truly oversold conditions
-- **EMA200 Uptrend Confirmation**: Ensures stocks are above long-term moving average
-- **Support Proximity Filtering**: Prioritizes entries very close to support levels (0-2% away)
-- **Volume Exhaustion Analysis**: Detects selling pressure weakening
+### 🎯 **Simplified Core Reversal Strategy**
+- **RSI < 30 Oversold Filtering**: Only considers truly oversold conditions (RSI10 period)
+- **EMA200 Uptrend Confirmation**: Ensures stocks are above long-term moving average (800+ days data for accuracy)
+- **Volume Quality Filter**: Minimum 80% of average volume (20-day) for liquidity assurance
+- **Fundamental Safety Check**: Avoids stocks with negative earnings (PE < 0)
+- **TradingView-Accurate EMA200**: Enhanced data fetching ensures calculation matches TradingView within 0.2%
 
 ### 💰 **Advanced Risk Management**
 - **Support-Based Stop Losses**: Stops placed just below key support levels (5-6% typical)
@@ -26,11 +43,13 @@ The system now includes a comprehensive backtesting framework that implements th
 - **Dynamic Buy Ranges**: Tight 0.6% entry ranges for precise execution
 - **Risk-Reward Optimization**: Targets 2-4x risk-reward ratios
 
-### 📱 **Professional Trade Alerts**
-- **Comprehensive Telegram Messages**: All critical trade parameters in one alert
-- **Priority Ranking**: Stocks ranked by setup quality (🥇🥈🥉)
-- **Setup Quality Indicators**: Support distance, RSI severity, volume analysis
-- **Fundamental Context**: PE ratios and valuation assessments
+### 📱 **Enhanced Trade Alerts**
+- **Backtest-Enhanced Messages**: Includes 2-year historical performance data
+- **Combined Scoring**: Stocks ranked by current analysis + historical performance
+- **Performance Metrics**: Win rate, total returns, trade count from backtesting
+- **Quality Indicators**: Support distance, RSI severity, volume analysis
+- **Fundamental Context**: PE ratios, news sentiment, and valuation assessments
+- **Smart Filtering**: Only sends alerts for stocks that pass all validation checks
 
 ### 🔧 **Enhanced System Features**
 - **CSV Export System**: Complete analysis data export for record-keeping
@@ -139,26 +158,42 @@ python trade_agent.py
 # Standard run with all features
 python trade_agent.py
 
+# Enable backtest scoring (slower but more accurate)
+python trade_agent.py --backtest
+
 # Disable CSV export (faster execution)
 python trade_agent.py --no-csv
 
 # Disable multi-timeframe analysis (single timeframe only)
 python trade_agent.py --no-mtf
 
+# Enable dip-buying mode with more permissive thresholds
+python trade_agent.py --dip-mode
+
 # Minimal run (no CSV, no MTF)
 python trade_agent.py --no-csv --no-mtf
+
+# Complete analysis with backtest validation
+python trade_agent.py --backtest
+
+# Complete analysis with backtest validation and dip-buying mode
+python trade_agent.py --backtest --dip-mode
 ```
 
 ### System Process
 
 The system will:
-1. **Data Fetching**: Download daily and weekly OHLCV data for all stocks
-2. **Multi-Timeframe Analysis**: Analyze daily + weekly trends for alignment
-3. **Support/Resistance Analysis**: Identify key levels and proximity
-4. **Quality Filtering**: Apply fundamental, volume, and setup filters
-5. **Signal Generation**: Create STRONG BUY/BUY/WATCH recommendations
-6. **CSV Export**: Save complete analysis data for record-keeping
-7. **Telegram Alerts**: Send professional trade alerts with all parameters
+1. **Stock Scraping**: Automatically fetch current stock list from ChartInk screener
+2. **Data Fetching**: Download daily and weekly OHLCV data for all stocks
+3. **Multi-Timeframe Analysis**: Analyze daily + weekly trends for alignment
+4. **Support/Resistance Analysis**: Identify key levels and proximity
+5. **Quality Filtering**: Apply fundamental, volume, and setup filters
+6. **Signal Generation**: Create STRONG BUY/BUY/WATCH recommendations
+7. **Historical Validation**: Run 2-year backtests on each candidate (if enabled)
+8. **Combined Scoring**: Merge current analysis with historical performance
+9. **Smart Filtering**: Exclude stocks with data issues or poor track records
+10. **CSV Export**: Save complete analysis data for record-keeping
+11. **Enhanced Telegram Alerts**: Send trade alerts with backtest performance data
 
 ### Custom Stock List
 
@@ -278,6 +313,9 @@ python run_backtest.py SYMBOL START END [OPTIONS]
 
 ```
 modular_trade_agent/
+├── .github/                 # ✨ GitHub Actions Workflow
+│   └── workflows/
+│       └── trading-agent.yml    # Automated cloud execution at 4PM IST
 ├── backtest/                # 🆕 Advanced Backtesting Framework
 │   ├── __init__.py          # Package initialization
 │   ├── backtest_config.py   # Backtesting configuration settings
@@ -291,12 +329,13 @@ modular_trade_agent/
 ├── core/
 │   ├── __init__.py
 │   ├── analysis.py          # Main analysis logic with enhanced filters
+│   ├── backtest_scoring.py  # ✨ Historical backtest scoring integration
 │   ├── csv_exporter.py      # CSV export system for analysis data
 │   ├── data_fetcher.py      # Multi-timeframe data retrieval with retry logic
 │   ├── indicators.py        # Technical indicators (RSI, EMA, etc.)
 │   ├── patterns.py          # Candlestick patterns
 │   ├── scoring.py           # Signal strength scoring
-│   ├── scrapping.py         # Web scraping utilities
+│   ├── scrapping.py         # Web scraping utilities with ChartInk integration
 │   ├── telegram.py          # Enhanced Telegram messaging
 │   └── timeframe_analysis.py # Multi-timeframe dip-buying analysis engine
 ├── utils/
@@ -314,7 +353,10 @@ modular_trade_agent/
 ├── logs/                   # Log files
 ├── cred.env               # Environment variables (create this)
 ├── requirements.txt       # Python dependencies
-├── trade_agent.py        # Main execution script
+├── trade_agent.py        # Main execution script with backtest integration
+├── test_telegram.py      # ✨ Telegram connection testing
+├── test_backtest_integration.py # ✨ Backtest integration testing
+├── integrated_backtest.py # ✨ Comprehensive backtest workflow
 ├── run_backtest.py       # 🆕 Backtesting command-line interface
 ├── backtest_example.py   # 🆕 Backtesting examples and demonstrations
 └── README.md            # This file
@@ -325,8 +367,9 @@ modular_trade_agent/
 The system uses advanced multi-timeframe technical analysis:
 
 ### **Core Indicators**
-- **RSI (14-period)**: Identifies oversold conditions (RSI < 30 for entries)
-- **EMA 200**: Long-term uptrend confirmation (price must be > EMA200)
+- **RSI (10-period)**: Identifies oversold conditions (RSI < 30 for entries)
+- **EMA 200**: Long-term uptrend confirmation (price must be > EMA200, calculated with 800+ days for accuracy)
+- **Volume Quality**: 80% of 20-day average volume minimum for entry signals
 - **Support/Resistance Levels**: Dynamic identification of key price levels
 - **Volume Exhaustion**: Analyzes selling pressure and volume patterns
 
@@ -336,36 +379,37 @@ The system uses advanced multi-timeframe technical analysis:
 - **Alignment Scoring**: 0-10 score measuring daily+weekly trend agreement
 - **Confluence Factors**: Support level agreement across timeframes
 
-## 🎯 Signal Classification
+## 🎯 Signal Classification (Simplified Core Strategy)
 
 ### 🔥 STRONG BUY Signals
-Generated when:
-- ✅ **Excellent uptrend dip** (MTF score 8-9/10) + good fundamentals (PE < 25)
-- ✅ **Very close to strong support** (0-1% distance)
-- ✅ **Extreme/High oversold** (RSI < 30, preferably < 25)
-- ✅ **Volume exhaustion signs** (selling pressure weakening)
-- ✅ **Strong uptrend confirmation** (Price > EMA200 + weekly alignment)
+Generated when **ALL core conditions met** PLUS:
+- ✅ **Core Conditions**: RSI10 < 30 + Price > EMA200 + Volume ≥ 80% avg + No negative earnings
+- ✅ **Excellent MTF alignment** (score ≥ 8/10) OR excellent uptrend dip pattern
+- ✅ **Strong volume confirmation** or pattern signals (hammer, bullish engulfing)
 
 ### 📈 BUY Signals  
-Generated when:
-- ✅ **Good uptrend dip** (MTF score 6-7/10)
-- ✅ **Close to support** (0-2% distance from strong support)
-- ✅ **RSI oversold** (RSI < 30)
-- ✅ **Reasonable fundamentals** or volume confirmation
-- ✅ **Uptrend context** (Price > EMA200)
+Generated when **ALL core conditions met** PLUS:
+- ✅ **Core Conditions**: RSI10 < 30 + Price > EMA200 + Volume ≥ 80% avg + No negative earnings
+- ✅ **Good MTF alignment** (score ≥ 5/10) OR pattern confirmation
+- ✅ **Default for valid reversal setups** meeting core criteria
 
 ### 👀 WATCH Signals
 Generated when:
-- ⚠️ **Moderate setups** missing key confirmation factors
-- ⚠️ **Too far from support** (>4% away from support levels)
-- ⚠️ **Weak fundamental quality** or poor volume patterns
-- ⚠️ **Lower MTF alignment** (score < 6/10)
+- ⚠️ **Partial reversal setup**: RSI < 30 + Volume ≥ 80% but may not be above EMA200
+- ⚠️ **Pattern signals present** with adequate volume but missing core criteria
+- ⚠️ **Fundamental red flags** (negative earnings) but otherwise valid
 
-### ❌ No Signal Generated When:
-- Stock not in uptrend (Price < EMA200)
-- RSI not oversold (RSI > 30)
-- Very poor MTF alignment (score < 3/10)
-- Insufficient data for analysis
+### ❌ AVOID Signals Generated When:
+- Stock not in uptrend (Price ≤ EMA200) AND RSI not oversold
+- Insufficient volume (< 80% of 20-day average) 
+- No significant technical signals detected
+- Data quality issues or calculation errors
+
+### 🎯 **Key Improvements**:
+- **Simplified Logic**: Removed overly complex quality assessments that were blocking valid signals
+- **Core Focus**: Emphasizes the three pillars - oversold (RSI < 30), uptrend (> EMA200), liquidity (volume)
+- **Volume Protection**: 80% threshold prevents entries during poor participation days
+- **TradingView Accuracy**: EMA200 calculation now matches TradingView within 0.2%
 
 ## 🛡 Error Handling
 
@@ -407,33 +451,53 @@ Comprehensive logging system:
 2025-10-19 00:15:54 — INFO — telegram — Telegram message sent successfully
 ```
 
-### Enhanced Telegram Alert
+### Enhanced Telegram Alert with Backtest Data
 ```
-Reversal Buy Candidates (today)
+Reversal Buy Candidates (today) with Backtest Scoring
 
 🔥 STRONG BUY (Multi-timeframe confirmed):
-1. NAVA.NS: Buy (603.68-607.32)
-   Target 717.07 (+16.9%) | Stop 576.45 (-6.0%)
-   RSI:25.08 MTF:9/10 RR:2.8x | StrongSupp:1.3% HighRSI CloseSupport PE:16.9
+1. NAVA.NS:
+	Buy (603.68-607.32)
+	Target 713.05 (+17.2%)
+	Stop 571.76 (-6.0%)
+	RSI:22.97
+	MTF:8/10
+	RR:2.9x
+	StrongSupp:0.5% HighRSI NearSupport
+	PE:16.8
+	Vol:0.9x
+	News:Neu +0.00 (0)
+	Backtest: 35/100 (+4.2% return, 100% win, 3 trades)
+	Combined Score: 67.3/100
 
 📈 BUY candidates:
-1. GLENMARK.NS: Buy (1849.83-1860.97)
-   Target 2073.97 (+11.4%) | Stop 1750.19 (-6.0%)
-   RSI:24.0 MTF:8/10 RR:1.9x | StrongSupp:0.3% HighRSI VolExh NearSupport PE:69.9
-
-2. CURAA.NS: Buy (169.81-170.83)
-   Target 211.20 (+24.0%) | Stop 160.10 (-6.0%)
-   RSI:18.97 MTF:9/10 RR:4.0x | StrongSupp:0.0% ExtremeRSI NearSupport
+1. GLENMARK.NS:
+	Buy (1849.83-1860.97)
+	Target 2073.97 (+11.4%)
+	Stop 1750.19 (-6.0%)
+	RSI:24.0
+	MTF:8/10
+	RR:1.9x
+	StrongSupp:0.3% HighRSI VolExh NearSupport
+	PE:69.9
+	Vol:1.2x
+	News:Pos +0.15 (2)
+	Backtest: 36/100 (+9.4% return, 100% win, 2 trades)
+	Combined Score: 68.1/100
 ```
 
 ### Terms Explanation
-- **MTF:9/10**: Multi-timeframe alignment score (daily+weekly trend agreement)
-- **RR:2.8x**: Risk-reward ratio (potential gain ÷ potential loss)
-- **StrongSupp:1.3%**: Distance to strong support level
+- **MTF:8/10**: Multi-timeframe alignment score (daily+weekly trend agreement)
+- **RR:2.9x**: Risk-reward ratio (potential gain ÷ potential loss)
+- **StrongSupp:0.5%**: Distance to strong support level
 - **HighRSI/ExtremeRSI**: Oversold severity (High: RSI 20-30, Extreme: RSI <20)
 - **NearSupport/CloseSupport**: Proximity to support (Near: <1%, Close: <2%)
 - **VolExh**: Volume exhaustion detected (selling pressure weakening)
-- **PE:16.9**: Price-to-earnings ratio for valuation context
+- **PE:16.8**: Price-to-earnings ratio for valuation context
+- **Vol:0.9x**: Volume ratio vs average (above 1.5x = high, below 0.6x = low)
+- **News:Neu +0.00 (0)**: News sentiment (Pos/Neg/Neu, score, article count)
+- **Backtest:35/100**: Historical performance score over 2 years
+- **Combined Score:67.3/100**: Final ranking (50% current + 50% historical)
 
 ## 📄 CSV Export & Analysis Data
 
@@ -479,8 +543,14 @@ strong_buys.to_csv('filtered_strong_buys.csv', index=False)
 # Run the main trading system
 python trade_agent.py
 
-# With custom options
+# With custom options  
 python trade_agent.py --no-csv --no-mtf
+
+# Enable dip-buying mode for more permissive signals
+python trade_agent.py --dip-mode
+
+# Complete analysis with backtest scoring and dip mode
+python trade_agent.py --backtest --dip-mode
 ```
 
 ### Strategy Backtesting
@@ -525,20 +595,40 @@ Enable debug logging in `utils/logger.py`:
 logger.setLevel(logging.DEBUG)
 ```
 
-## 🚦 Running in Production
+## 🚀 Cloud Deployment (Recommended)
 
-### Automation
-Set up scheduled execution using:
+### GitHub Actions Automation
+
+The system is **pre-configured** to run automatically on GitHub Actions:
+
+1. **Fork/Clone this repository** to your GitHub account
+2. **Set up Secrets** in your repository:
+   - Go to Settings → Secrets and variables → Actions
+   - Add `TELEGRAM_BOT_TOKEN` with your bot token
+   - Add `TELEGRAM_CHAT_ID` with your chat ID
+3. **Enable GitHub Actions** (usually enabled by default)
+4. **Done!** The system will run automatically at 4PM IST weekdays
+
+**Benefits of Cloud Automation:**
+- ✅ **Zero Maintenance**: No laptop/server management
+- ✅ **Always Running**: Never miss market opportunities
+- ✅ **Free Execution**: GitHub provides free Actions minutes
+- ✅ **Full Chrome Support**: Web scraping works perfectly
+- ✅ **Reliable Notifications**: Telegram alerts always delivered
+
+### Local Automation (Alternative)
+
+If you prefer running locally:
 
 **Windows Task Scheduler**:
 ```batch
 cd C:\path\to\modular_trade_agent
-.venv\Scripts\python.exe trade_agent.py
+.venv\Scripts\python.exe trade_agent.py --backtest
 ```
 
 **Linux Cron**:
 ```bash
-0 9 * * 1-5 cd /path/to/modular_trade_agent && .venv/bin/python trade_agent.py
+30 10 * * 1-5 cd /path/to/modular_trade_agent && .venv/bin/python trade_agent.py --backtest
 ```
 
 ### Monitoring
