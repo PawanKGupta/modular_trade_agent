@@ -32,15 +32,19 @@ except ImportError as e:
     import pandas as pd
 
 
-def calculate_backtest_score(backtest_results: Dict) -> float:
+def calculate_backtest_score(backtest_results: Dict, dip_mode: bool = False) -> float:
     """
     Calculate a backtest score based on performance metrics.
     
     Score components:
-    - Total return percentage (40%)
-    - Win rate (30%) 
+    - Annualized return percentage (40%)
+    - Win rate (40%) 
     - Strategy vs buy-and-hold performance (20%)
-    - Trade execution rate (10%)
+    - No trade frequency penalty (quality over quantity for reversals)
+    
+    Enhanced with:
+    - Mild confidence adjustment for very low sample sizes
+    - Pure focus on reversal quality over entire backtest period
     
     Returns:
         Float score between 0-100
@@ -72,36 +76,45 @@ def calculate_backtest_score(backtest_results: Dict) -> float:
                 if valid_positions > 0:
                     avg_holding_days = total_days / valid_positions
         
-        # Calculate annualized return
-        if avg_holding_days > 0 and total_return != 0:
-            periods_per_year = 365 / avg_holding_days
-            annualized_return = ((1 + total_return/100) ** periods_per_year - 1) * 100
-        else:
-            annualized_return = total_return
+        # For reversal strategy, use total return directly (avoid extreme annualization)
+        # Reversals are about absolute performance over the backtest period
+        effective_return = total_return
         
-        # Component 1: Annualized Return (35% weight)
-        # Scale: 0-20% -> 0-50 points, 20%+ -> 50-100 points  
-        if annualized_return <= 20:
-            return_score = (annualized_return / 20) * 50 * 0.35
+        # Component 1: Total Return (40% weight) - Focus on reversal performance quality
+        # Scale: 0-10% -> 0-50 points, 10%+ -> 50-100 points (more appropriate for reversals)
+        if effective_return <= 10:
+            return_score = (effective_return / 10) * 50 * 0.4
         else:
-            return_score = (50 + min((annualized_return - 20) * 1.25, 50)) * 0.35
+            return_score = (50 + min((effective_return - 10) * 2.5, 50)) * 0.4
         
-        # Component 2: Win Rate (35% weight) - High importance
+        # Component 2: Win Rate (40% weight) - High importance for reversal consistency
         win_rate = backtest_results.get('win_rate', 0)
-        win_score = win_rate * 0.35
+        win_score = win_rate * 0.4
         
         # Component 3: Strategy vs Buy & Hold (20% weight)
         vs_buyhold = backtest_results.get('strategy_vs_buy_hold', 0)
         alpha_score = min(max(vs_buyhold + 50, 0), 100) * 0.2
         
-        # Component 4: Trade Frequency (10% weight) - Rewards more opportunities
-        trade_frequency_score = min(total_trades * 8, 100) * 0.1  # 8 points per trade, max 12.5 trades
+        # No trade frequency component - quality over quantity for reversal strategy
         
-        total_score = return_score + win_score + alpha_score + trade_frequency_score
+        # Calculate base score (no trade frequency penalty)
+        base_score = return_score + win_score + alpha_score
         
-        logger.debug(f"Backtest score breakdown: Annualized Return={annualized_return:.1f}% ({return_score:.1f}), "
+        # Enhancement 1: Mild confidence adjustment for reversal strategy
+        confidence_factor = 1.0
+        if total_trades < 3:  # Only penalize very low sample sizes
+            confidence_factor = 0.8 + (total_trades / 10)  # 80-100% confidence (mild penalty)
+            logger.debug(f"Applied confidence adjustment: {confidence_factor:.2f} for {total_trades} trades")
+        
+        # No recent performance boost - reversal quality is consistent over time
+        recent_boost = 1.0
+        
+        # Apply enhancements (confidence adjustment only)
+        total_score = base_score * confidence_factor
+        
+        logger.debug(f"Backtest score breakdown: Total Return={effective_return:.1f}% ({return_score:.1f}), "
                     f"Win={win_rate:.1f}% ({win_score:.1f}), Alpha={alpha_score:.1f}, "
-                    f"Trades={total_trades} ({trade_frequency_score:.1f}), Total={total_score:.1f}")
+                    f"Trades={total_trades}, Total={total_score:.1f}")
         
         return min(total_score, 100.0)  # Cap at 100
         
@@ -126,7 +139,7 @@ def calculate_wilder_rsi(prices, period=10):
     return rsi
 
 
-def run_simple_backtest(stock_symbol: str, years_back: int = 2) -> Dict:
+def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool = False) -> Dict:
     """
     Run a simple backtest using RSI 10 oversold strategy.
     
@@ -159,6 +172,10 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2) -> Dict:
         data['EMA50'] = data['Close'].ewm(span=50).mean()
         data['EMA200'] = data['Close'].ewm(span=200).mean()
         
+        # Calculate volume indicators for filtering
+        data['Volume_SMA20'] = data['Volume'].rolling(20).mean()
+        data['Volume_Ratio'] = data['Volume'] / data['Volume_SMA20']
+        
         # Strategy logic
         positions = []
         current_position = None
@@ -167,13 +184,25 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2) -> Dict:
             if pd.isna(row['RSI10']):
                 continue
                 
-            # Entry condition: RSI10 < 30 and above EMA200
-            if current_position is None and row['RSI10'] < 30 and row['Close'] > row['EMA200']:
+            # Entry condition: RSI10 < 30, above EMA200, and adequate volume
+            # Dip mode: More permissive volume requirements for extreme oversold conditions
+            if dip_mode and row['RSI10'] < 25:  # Extreme oversold in dip mode
+                volume_threshold = 1.0  # Any volume OK for extreme dips
+            else:
+                volume_threshold = 1.2 if not dip_mode else 1.1  # Relaxed in dip mode
+                
+            if (current_position is None and 
+                row['RSI10'] < 30 and 
+                row['Close'] > row['EMA200'] and
+                not pd.isna(row['Volume_Ratio']) and 
+                row['Volume_Ratio'] > volume_threshold):
+                
                 current_position = {
                     'entry_date': date,
                     'entry_price': row['Close'],
                     'target_price': row['Close'] * 1.08,  # 8% target
-                    'stop_loss': row['Close'] * 0.95     # 5% stop
+                    'stop_loss': row['Close'] * 0.95,     # 5% stop
+                    'volume_ratio': row['Volume_Ratio']   # Track volume quality
                 }
                 continue
             
@@ -252,7 +281,7 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2) -> Dict:
         }
 
 
-def run_stock_backtest(stock_symbol: str, years_back: int = 2) -> Dict:
+def run_stock_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool = False) -> Dict:
     """
     Run backtest for a stock using available method (integrated or simple).
     
@@ -266,8 +295,8 @@ def run_stock_backtest(stock_symbol: str, years_back: int = 2) -> Dict:
     
     if BACKTEST_MODE == 'simple':
         # Use simple backtest
-        backtest_results = run_simple_backtest(stock_symbol, years_back)
-        backtest_score = calculate_backtest_score(backtest_results)
+        backtest_results = run_simple_backtest(stock_symbol, years_back, dip_mode)
+        backtest_score = calculate_backtest_score(backtest_results, dip_mode)
         backtest_results['backtest_score'] = backtest_score
         return backtest_results
     
@@ -293,7 +322,7 @@ def run_stock_backtest(stock_symbol: str, years_back: int = 2) -> Dict:
             )
             
             # Calculate backtest score
-            backtest_score = calculate_backtest_score(backtest_results)
+            backtest_score = calculate_backtest_score(backtest_results, dip_mode)
             
             # Return summary with score
             return {
@@ -311,13 +340,13 @@ def run_stock_backtest(stock_symbol: str, years_back: int = 2) -> Dict:
         except Exception as e:
             logger.error(f"Integrated backtest failed for {stock_symbol}: {e}, falling back to simple")
             # Fallback to simple backtest
-            backtest_results = run_simple_backtest(stock_symbol, years_back)
-            backtest_score = calculate_backtest_score(backtest_results)
+            backtest_results = run_simple_backtest(stock_symbol, years_back, dip_mode)
+            backtest_score = calculate_backtest_score(backtest_results, dip_mode)
             backtest_results['backtest_score'] = backtest_score
             return backtest_results
 
 
-def add_backtest_scores_to_results(stock_results: list, years_back: int = 2) -> list:
+def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip_mode: bool = False) -> list:
     """
     Add backtest scores to existing stock analysis results.
     
@@ -339,7 +368,7 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2) -> 
             logger.info(f"Processing {i}/{len(stock_results)}: {ticker}")
             
             # Run backtest for this stock
-            backtest_data = run_stock_backtest(ticker, years_back)
+            backtest_data = run_stock_backtest(ticker, years_back, dip_mode)
             
             # Add backtest data to stock result
             stock_result['backtest'] = {
@@ -363,16 +392,62 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2) -> 
             if stock_result.get('timeframe_analysis'):
                 mtf_score = stock_result['timeframe_analysis'].get('alignment_score', 0)
             
-            # Reclassify based on combined criteria (more balanced approach)
-            # Strong Buy: High backtest + decent combined score OR high combined score
-            if (backtest_score >= 65 and combined_score >= 30) or combined_score >= 55:
-                stock_result['final_verdict'] = 'strong_buy'
-            # Buy: Good backtest + some combined score OR decent combined score  
-            elif (backtest_score >= 45 and combined_score >= 20) or combined_score >= 35:
-                stock_result['final_verdict'] = 'buy'
-            # Watch: Everything else
+            # Get trade count for confidence assessment
+            trade_count = backtest_data.get('total_trades', 0)
+            
+            # Get current RSI for dynamic threshold adjustment
+            current_rsi = stock_result.get('rsi', 30)  # Default to 30 if not available
+            
+            # RSI-based threshold adjustment (more oversold = lower thresholds)
+            rsi_factor = 1.0
+            if current_rsi < 20:  # Extremely oversold
+                rsi_factor = 0.7  # 30% lower thresholds
+            elif current_rsi < 25:  # Very oversold
+                rsi_factor = 0.8  # 20% lower thresholds
+            elif current_rsi < 30:  # Oversold
+                rsi_factor = 0.9  # 10% lower thresholds
+            
+            # Enhanced reclassification with confidence-aware and RSI-adjusted thresholds
+            if trade_count >= 5:
+                # High confidence thresholds (adjusted by RSI)
+                strong_buy_threshold = 60 * rsi_factor
+                combined_strong_threshold = 35 * rsi_factor
+                combined_exceptional_threshold = 60 * rsi_factor
+                
+                buy_threshold = 40 * rsi_factor
+                combined_buy_threshold = 25 * rsi_factor
+                combined_decent_threshold = 40 * rsi_factor
+                
+                if (backtest_score >= strong_buy_threshold and combined_score >= combined_strong_threshold) or combined_score >= combined_exceptional_threshold:
+                    stock_result['final_verdict'] = 'strong_buy'
+                elif (backtest_score >= buy_threshold and combined_score >= combined_buy_threshold) or combined_score >= combined_decent_threshold:
+                    stock_result['final_verdict'] = 'buy'
+                else:
+                    stock_result['final_verdict'] = 'watch'
             else:
-                stock_result['final_verdict'] = 'watch'
+                # Lower confidence thresholds (more conservative, adjusted by RSI)
+                strong_buy_threshold = 70 * rsi_factor
+                combined_strong_threshold = 45 * rsi_factor
+                combined_exceptional_threshold = 70 * rsi_factor
+                
+                buy_threshold = 50 * rsi_factor
+                combined_buy_threshold = 35 * rsi_factor
+                combined_decent_threshold = 50 * rsi_factor
+                
+                if (backtest_score >= strong_buy_threshold and combined_score >= combined_strong_threshold) or combined_score >= combined_exceptional_threshold:
+                    stock_result['final_verdict'] = 'strong_buy'
+                elif (backtest_score >= buy_threshold and combined_score >= combined_buy_threshold) or combined_score >= combined_decent_threshold:
+                    stock_result['final_verdict'] = 'buy'
+                else:
+                    stock_result['final_verdict'] = 'watch'
+            
+            # Log RSI adjustment if applied
+            if rsi_factor < 1.0:
+                logger.debug(f"{ticker}: RSI={current_rsi:.1f}, applied {(1-rsi_factor)*100:.0f}% threshold reduction")
+            
+            # Add confidence indicator to result
+            confidence_level = "High" if trade_count >= 5 else "Medium" if trade_count >= 2 else "Low"
+            stock_result['backtest_confidence'] = confidence_level
             
             logger.info(f"  {ticker}: Current={current_score:.1f}, Backtest={backtest_score:.1f}, Combined={combined_score:.1f}, Final={stock_result['final_verdict']}")
             

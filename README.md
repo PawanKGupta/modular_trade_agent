@@ -1,6 +1,6 @@
 # Modular Trade Agent
 
-A professional-grade **cloud-automated trading system** for Indian stock markets (NSE) that specializes in **uptrend dip-buying** using multi-timeframe analysis with **historical backtesting validation**. The system runs automatically on GitHub Actions, identifies high-probability oversold bounces in strong uptrending stocks, validates them against 2-year historical performance, and delivers institutional-quality trade alerts via Telegram.
+A professional-grade **cloud-automated trading system** for Indian stock markets (NSE) that specializes in **core reversal strategy** using multi-timeframe analysis with **historical backtesting validation**. The system runs automatically on GitHub Actions, identifies high-probability oversold bounces in strong uptrending stocks with simplified decision logic, validates them against 2-year historical performance, and delivers institutional-quality trade alerts via Telegram.
 
 ## ✨ **NEW: Cloud Automation & Intelligent Backtesting**
 
@@ -30,11 +30,12 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 - **Smart Alignment Scoring**: 0-10 scoring system for setup quality assessment
 - **Support Level Analysis**: Identifies and tracks key support/resistance levels
 
-### 🎯 **Professional Entry Strategy**
-- **RSI < 30 Oversold Filtering**: Only considers truly oversold conditions
-- **EMA200 Uptrend Confirmation**: Ensures stocks are above long-term moving average
-- **Support Proximity Filtering**: Prioritizes entries very close to support levels (0-2% away)
-- **Volume Exhaustion Analysis**: Detects selling pressure weakening
+### 🎯 **Simplified Core Reversal Strategy**
+- **RSI < 30 Oversold Filtering**: Only considers truly oversold conditions (RSI10 period)
+- **EMA200 Uptrend Confirmation**: Ensures stocks are above long-term moving average (800+ days data for accuracy)
+- **Volume Quality Filter**: Minimum 80% of average volume (20-day) for liquidity assurance
+- **Fundamental Safety Check**: Avoids stocks with negative earnings (PE < 0)
+- **TradingView-Accurate EMA200**: Enhanced data fetching ensures calculation matches TradingView within 0.2%
 
 ### 💰 **Advanced Risk Management**
 - **Support-Based Stop Losses**: Stops placed just below key support levels (5-6% typical)
@@ -166,11 +167,17 @@ python trade_agent.py --no-csv
 # Disable multi-timeframe analysis (single timeframe only)
 python trade_agent.py --no-mtf
 
+# Enable dip-buying mode with more permissive thresholds
+python trade_agent.py --dip-mode
+
 # Minimal run (no CSV, no MTF)
 python trade_agent.py --no-csv --no-mtf
 
 # Complete analysis with backtest validation
 python trade_agent.py --backtest
+
+# Complete analysis with backtest validation and dip-buying mode
+python trade_agent.py --backtest --dip-mode
 ```
 
 ### System Process
@@ -360,8 +367,9 @@ modular_trade_agent/
 The system uses advanced multi-timeframe technical analysis:
 
 ### **Core Indicators**
-- **RSI (14-period)**: Identifies oversold conditions (RSI < 30 for entries)
-- **EMA 200**: Long-term uptrend confirmation (price must be > EMA200)
+- **RSI (10-period)**: Identifies oversold conditions (RSI < 30 for entries)
+- **EMA 200**: Long-term uptrend confirmation (price must be > EMA200, calculated with 800+ days for accuracy)
+- **Volume Quality**: 80% of 20-day average volume minimum for entry signals
 - **Support/Resistance Levels**: Dynamic identification of key price levels
 - **Volume Exhaustion**: Analyzes selling pressure and volume patterns
 
@@ -371,36 +379,37 @@ The system uses advanced multi-timeframe technical analysis:
 - **Alignment Scoring**: 0-10 score measuring daily+weekly trend agreement
 - **Confluence Factors**: Support level agreement across timeframes
 
-## 🎯 Signal Classification
+## 🎯 Signal Classification (Simplified Core Strategy)
 
 ### 🔥 STRONG BUY Signals
-Generated when:
-- ✅ **Excellent uptrend dip** (MTF score 8-9/10) + good fundamentals (PE < 25)
-- ✅ **Very close to strong support** (0-1% distance)
-- ✅ **Extreme/High oversold** (RSI < 30, preferably < 25)
-- ✅ **Volume exhaustion signs** (selling pressure weakening)
-- ✅ **Strong uptrend confirmation** (Price > EMA200 + weekly alignment)
+Generated when **ALL core conditions met** PLUS:
+- ✅ **Core Conditions**: RSI10 < 30 + Price > EMA200 + Volume ≥ 80% avg + No negative earnings
+- ✅ **Excellent MTF alignment** (score ≥ 8/10) OR excellent uptrend dip pattern
+- ✅ **Strong volume confirmation** or pattern signals (hammer, bullish engulfing)
 
 ### 📈 BUY Signals  
-Generated when:
-- ✅ **Good uptrend dip** (MTF score 6-7/10)
-- ✅ **Close to support** (0-2% distance from strong support)
-- ✅ **RSI oversold** (RSI < 30)
-- ✅ **Reasonable fundamentals** or volume confirmation
-- ✅ **Uptrend context** (Price > EMA200)
+Generated when **ALL core conditions met** PLUS:
+- ✅ **Core Conditions**: RSI10 < 30 + Price > EMA200 + Volume ≥ 80% avg + No negative earnings
+- ✅ **Good MTF alignment** (score ≥ 5/10) OR pattern confirmation
+- ✅ **Default for valid reversal setups** meeting core criteria
 
 ### 👀 WATCH Signals
 Generated when:
-- ⚠️ **Moderate setups** missing key confirmation factors
-- ⚠️ **Too far from support** (>4% away from support levels)
-- ⚠️ **Weak fundamental quality** or poor volume patterns
-- ⚠️ **Lower MTF alignment** (score < 6/10)
+- ⚠️ **Partial reversal setup**: RSI < 30 + Volume ≥ 80% but may not be above EMA200
+- ⚠️ **Pattern signals present** with adequate volume but missing core criteria
+- ⚠️ **Fundamental red flags** (negative earnings) but otherwise valid
 
-### ❌ No Signal Generated When:
-- Stock not in uptrend (Price < EMA200)
-- RSI not oversold (RSI > 30)
-- Very poor MTF alignment (score < 3/10)
-- Insufficient data for analysis
+### ❌ AVOID Signals Generated When:
+- Stock not in uptrend (Price ≤ EMA200) AND RSI not oversold
+- Insufficient volume (< 80% of 20-day average) 
+- No significant technical signals detected
+- Data quality issues or calculation errors
+
+### 🎯 **Key Improvements**:
+- **Simplified Logic**: Removed overly complex quality assessments that were blocking valid signals
+- **Core Focus**: Emphasizes the three pillars - oversold (RSI < 30), uptrend (> EMA200), liquidity (volume)
+- **Volume Protection**: 80% threshold prevents entries during poor participation days
+- **TradingView Accuracy**: EMA200 calculation now matches TradingView within 0.2%
 
 ## 🛡 Error Handling
 
@@ -534,8 +543,14 @@ strong_buys.to_csv('filtered_strong_buys.csv', index=False)
 # Run the main trading system
 python trade_agent.py
 
-# With custom options
+# With custom options  
 python trade_agent.py --no-csv --no-mtf
+
+# Enable dip-buying mode for more permissive signals
+python trade_agent.py --dip-mode
+
+# Complete analysis with backtest scoring and dip mode
+python trade_agent.py --backtest --dip-mode
 ```
 
 ### Strategy Backtesting

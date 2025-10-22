@@ -149,6 +149,12 @@ def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
         if combined_score is not None:
             lines.append(f"\tCombined Score: {combined_score:.1f}/100")
         
+        # Confidence level (if available)
+        confidence = stock_data.get('backtest_confidence')
+        if confidence:
+            confidence_emoji = {"High": "🟢", "Medium": "🟡", "Low": "🟠"}.get(confidence, "⚪")
+            lines.append(f"\tConfidence: {confidence_emoji} {confidence}")
+        
         msg = "\n".join(lines) + "\n\n"
         return msg
         
@@ -162,7 +168,7 @@ def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
         rsi = stock_data.get('rsi', 0)
         return f"{ticker}: Buy ({buy_low:.2f}, {buy_high:.2f}) Target {target:.2f} Stop {stop:.2f} (rsi={rsi})\n"
 
-def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=False):
+def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=False, dip_mode=False):
     tickers = get_stocks()
     
     if not tickers:
@@ -201,10 +207,16 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
                 logger.error(f"ERROR Unexpected error analyzing {t}: {e}")
                 results.append({"ticker": t, "status": "fatal_error", "error": str(e)})
 
+    # Calculate strength scores for all results (needed for backtest scoring)
+    for result in results:
+        if result.get('status') == 'success':
+            result['strength_score'] = compute_strength_score(result)
+    
     # Add backtest scoring if enabled
     if enable_backtest_scoring:
-        logger.info("Running backtest scoring analysis...")
-        results = add_backtest_scores_to_results(results, years_back=2)
+        mode_info = " (DIP MODE)" if dip_mode else ""
+        logger.info(f"Running backtest scoring analysis{mode_info}...")
+        results = add_backtest_scores_to_results(results, years_back=2, dip_mode=dip_mode)
         # Re-sort by combined score if backtest scoring was added
         results.sort(key=lambda x: -x.get('combined_score', compute_strength_score(x)))
     else:
@@ -266,11 +278,13 @@ if __name__ == "__main__":
     parser.add_argument('--no-csv', action='store_true', help='Disable CSV export')
     parser.add_argument('--no-mtf', action='store_true', help='Disable multi-timeframe analysis')
     parser.add_argument('--backtest', action='store_true', help='Enable backtest scoring (slower but more accurate)')
+    parser.add_argument('--dip-mode', action='store_true', help='Enable dip-buying mode with more permissive thresholds')
     
     args = parser.parse_args()
     
     main(
         export_csv=not args.no_csv,
         enable_multi_timeframe=not args.no_mtf,
-        enable_backtest_scoring=args.backtest
+        enable_backtest_scoring=args.backtest,
+        dip_mode=getattr(args, 'dip_mode', False)
     )
