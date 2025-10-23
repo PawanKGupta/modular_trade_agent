@@ -69,10 +69,11 @@ def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dic
     result_neutral = {
         'enabled': bool(NEWS_SENTIMENT_ENABLED),
         'score': 0.0,
-        'articles': 0,
+        'articles': [],  # Should be list of articles, not int
         'used': 0,
         'confidence': 0.0,
         'label': 'neutral',
+        'total': 0,  # Add total count for backward compatibility
     }
 
     if not NEWS_SENTIMENT_ENABLED:
@@ -88,11 +89,11 @@ def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dic
     news = get_recent_news(ticker)
     if not news:
         res = result_neutral.copy()
-        res['reason'] = 'no_news'
+        res.update({'reason': 'no_news', 'total': 0})
         _cache[key] = (now, res)
         return res
 
-    # Determine time window
+    # Determine time window (use UTC for consistency with news timestamps)
     if as_of_date:
         end_dt = datetime.strptime(as_of_date, '%Y-%m-%d')
     else:
@@ -100,27 +101,55 @@ def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dic
     start_dt = end_dt - timedelta(days=NEWS_SENTIMENT_LOOKBACK_DAYS)
 
     used_scores: List[float] = []
+    used_articles: List[dict] = []
     used_count = 0
     for item in news:
-        # yfinance provides providerPublishTime (epoch seconds)
-        ts = item.get('providerPublishTime') or item.get('time')
+        # Handle both old and new yfinance API structure
+        content = item.get('content', item)  # New API has nested content
+        
+        # Try different timestamp fields (both old numeric and new string formats)
+        ts = (item.get('providerPublishTime') or 
+              item.get('time') or 
+              content.get('publishTime') or
+              content.get('providerPublishTime') or
+              content.get('pubDate') or
+              content.get('displayTime'))
+        
         if ts is None:
             continue
+            
         try:
-            dt = datetime.utcfromtimestamp(int(ts))
+            # Handle both numeric timestamps and ISO string timestamps
+            if isinstance(ts, str):
+                # Parse ISO 8601 string format: "2025-09-24T10:58:31Z"
+                if ts.endswith('Z'):
+                    dt = datetime.strptime(ts[:-1], '%Y-%m-%dT%H:%M:%S')
+                else:
+                    dt = datetime.fromisoformat(ts.replace('Z', '+00:00')).replace(tzinfo=None)
+            elif ts > 1e10:  # Milliseconds timestamp
+                dt = datetime.utcfromtimestamp(ts / 1000)
+            else:  # Seconds timestamp
+                dt = datetime.utcfromtimestamp(int(ts))
         except Exception:
             continue
+            
         if not (start_dt <= dt <= end_dt):
             continue
-        title = item.get('title', '')
+            
+        # Get title from content or root level
+        title = content.get('title') or item.get('title', '')
+        if not title:
+            continue
+            
         score = _token_score(title)
         used_scores.append(score)
+        used_articles.append(item)  # Store the article
         used_count += 1
 
     total_articles = len(news)
     if used_count == 0:
         res = result_neutral.copy()
-        res.update({'articles': total_articles, 'reason': 'no_recent_news'})
+        res.update({'articles': [], 'total': total_articles, 'reason': 'no_recent_news'})
         _cache[key] = (now, res)
         return res
 
@@ -131,7 +160,8 @@ def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dic
     res = {
         'enabled': True,
         'score': round(avg_score, 3),
-        'articles': total_articles,
+        'articles': used_articles,  # List of articles used
+        'total': total_articles,    # Total count of articles
         'used': used_count,
         'confidence': round(confidence, 3),
         'label': label,
