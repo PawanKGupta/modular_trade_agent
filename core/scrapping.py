@@ -73,7 +73,10 @@ def get_stock_list():
 
     except Exception as e:
         logger.error(f"An error occurred: {e}")
+        return None
 
     finally:
         # Close the browser window
         driver.quit()
+    
+    return None
