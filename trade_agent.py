@@ -118,7 +118,9 @@ def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
         lines.append(f"\tRSI:{rsi}")
         # MTF on its own line if available
         if stock_data.get('timeframe_analysis'):
-            lines.append(f"\tMTF:{score}/10")
+            tf_analysis = stock_data['timeframe_analysis']
+            mtf_score = tf_analysis.get('alignment_score', 0)
+            lines.append(f"\tMTF:{mtf_score}/10")
         # Risk-reward
         lines.append(f"\tRR:{risk_reward:.1f}x")
         # Setup quality indicators (space-separated)

@@ -106,7 +106,7 @@ def _append_current_day_data(df, live_data):
 
 @yfinance_circuit_breaker
 @api_retry_configured
-def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None):
+def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None, add_current_day=True):
     # Determine end date (exclusive in yfinance); include the requested day by adding 1 day
     if end_date is None:
         end = datetime.now()
@@ -166,20 +166,21 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None):
         # Reset index to create date column
         df = df.reset_index().rename(columns={'Date': 'date'})
         
-        # Try to get current day volume from live ticker data if missing
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        latest_date_str = df['date'].iloc[-1].strftime('%Y-%m-%d')
-        
-        if latest_date_str < today_str and interval == '1d':
-            logger.warning(f"Historical data for {ticker} is outdated (latest: {latest_date_str}, today: {today_str})")
-            try:
-                # Try to get current day data from live ticker
-                live_data = _get_current_day_data(ticker)
-                if live_data is not None:
-                    df = _append_current_day_data(df, live_data)
-                    logger.info(f"Added current day data for {ticker} from live ticker")
-            except Exception as e:
-                logger.warning(f"Failed to get current day data for {ticker}: {e}")
+        # Only add current day data if explicitly requested (avoid data leakage in backtests)
+        if add_current_day:
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            latest_date_str = df['date'].iloc[-1].strftime('%Y-%m-%d')
+            
+            if latest_date_str < today_str and interval == '1d':
+                logger.debug(f"Historical data for {ticker} is outdated (latest: {latest_date_str}, today: {today_str})")
+                try:
+                    # Try to get current day data from live ticker
+                    live_data = _get_current_day_data(ticker)
+                    if live_data is not None:
+                        df = _append_current_day_data(df, live_data)
+                        logger.debug(f"Added current day data for {ticker} from live ticker")
+                except Exception as e:
+                    logger.warning(f"Failed to get current day data for {ticker}: {e}")
         
         # Additional validation - different requirements for different intervals
         min_required = 50 if interval == '1wk' else 30  # Weekly needs more history, daily needs 30
@@ -200,7 +201,7 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None):
         raise Exception(error_msg) from e
 
 
-def fetch_multi_timeframe_data(ticker, days=800, end_date=None):  # Increased for accurate EMA200
+def fetch_multi_timeframe_data(ticker, days=800, end_date=None, add_current_day=True):  # Increased for accurate EMA200
     """
     Fetch data for multiple timeframes (daily and weekly)
     Returns dict with 'daily' and 'weekly' dataframes
@@ -209,7 +210,7 @@ def fetch_multi_timeframe_data(ticker, days=800, end_date=None):  # Increased fo
         # Fetch daily data first (ensure enough history for EMA200)
         try:
             daily_days = max(days, 800)  # Minimum 800 days for accurate EMA200
-            daily_data = fetch_ohlcv_yf(ticker, days=daily_days, interval='1d', end_date=end_date)
+            daily_data = fetch_ohlcv_yf(ticker, days=daily_days, interval='1d', end_date=end_date, add_current_day=add_current_day)
         except Exception as e:
             logger.warning(f"Failed to fetch daily data for {ticker}: {e}")
             return None
@@ -217,7 +218,7 @@ def fetch_multi_timeframe_data(ticker, days=800, end_date=None):  # Increased fo
         # Fetch weekly data (need more days for sufficient weekly candles)
         try:
             weekly_days = max(days * 3, 1095)  # At least 3 years for weekly analysis
-            weekly_data = fetch_ohlcv_yf(ticker, days=weekly_days, interval='1wk', end_date=end_date)
+            weekly_data = fetch_ohlcv_yf(ticker, days=weekly_days, interval='1wk', end_date=end_date, add_current_day=add_current_day)
         except Exception as e:
             logger.warning(f"Failed to fetch weekly data for {ticker}: {e}")
             # Return with daily data only, weekly will be None

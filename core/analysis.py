@@ -327,15 +327,19 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
         # Initialize timeframe analyzer
         tf_analyzer = TimeframeAnalysis() if enable_multi_timeframe else None
         
+        # Disable current day data addition during backtesting (when as_of_date is provided)
+        add_current_day = as_of_date is None  # Only add current day for live analysis
+        
         # Fetch data - multi-timeframe if enabled, single timeframe otherwise
+        multi_data = None  # Initialize to prevent NameError
         if enable_multi_timeframe:
-            multi_data = fetch_multi_timeframe_data(ticker, end_date=as_of_date)
+            multi_data = fetch_multi_timeframe_data(ticker, end_date=as_of_date, add_current_day=add_current_day)
             if multi_data is None or multi_data.get('daily') is None:
                 logger.warning(f"No multi-timeframe data available for {ticker}")
                 return {"ticker": ticker, "status": "no_data"}
             df = multi_data['daily']
         else:
-            df = fetch_ohlcv_yf(ticker, end_date=as_of_date)
+            df = fetch_ohlcv_yf(ticker, end_date=as_of_date, add_current_day=add_current_day)
             if df is None or df.empty:
                 logger.warning(f"No data available for {ticker}")
                 return {"ticker": ticker, "status": "no_data"}
