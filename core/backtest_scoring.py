@@ -26,10 +26,12 @@ except ImportError as e:
     logger.warning(f"Integrated backtest not available: {e}, using simple backtest")
     run_integrated_backtest = None
     BACKTEST_MODE = 'simple'
-    
-    import yfinance as yf
-    import numpy as np
-    import pandas as pd
+
+# Always import these for simple backtest fallback
+import yfinance as yf
+import numpy as np
+import pandas as pd
+from datetime import datetime, timedelta
 
 
 def calculate_backtest_score(backtest_results: Dict, dip_mode: bool = False) -> float:

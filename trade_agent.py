@@ -23,7 +23,7 @@ def compute_trading_priority_score(stock_data):
     Higher score = higher priority for trading
     """
     try:
-        if stock_data is None:
+        if stock_data is None or not isinstance(stock_data, dict):
             return 0
         priority_score = 0
         
@@ -97,14 +97,25 @@ def compute_trading_priority_score(stock_data):
 def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
     """Generate enhanced stock information for Telegram message"""
     try:
-        ticker = stock_data['ticker']
-        buy_low, buy_high = stock_data['buy_range']
-        target = stock_data['target']
-        stop = stock_data['stop']
-        rsi = stock_data['rsi']
-        last_close = stock_data['last_close']
+        ticker = stock_data.get('ticker', 'N/A')
+        buy_range = stock_data.get('buy_range', [0, 0])
+        if buy_range and len(buy_range) >= 2:
+            buy_low, buy_high = buy_range
+        else:
+            buy_low, buy_high = 0, 0
+        target = stock_data.get('target', 0)
+        stop = stock_data.get('stop', 0)
+        rsi = stock_data.get('rsi', 0)
+        last_close = stock_data.get('last_close', 0)
         
-        # Calculate potential returns
+        # Calculate potential returns with None checks
+        if target is None:
+            target = 0
+        if stop is None:
+            stop = 0
+        if last_close is None or last_close == 0:
+            last_close = 1  # Avoid division by zero
+            
         potential_gain = ((target - last_close) / last_close) * 100
         potential_loss = ((last_close - stop) / last_close) * 100
         risk_reward = potential_gain / potential_loss if potential_loss > 0 else 0
@@ -297,9 +308,11 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
         logger.info(f"Running backtest scoring analysis{mode_info}...")
         results = add_backtest_scores_to_results(results, years_back=2, dip_mode=dip_mode)
         # Re-sort by priority score for better trading decisions
-        results.sort(key=lambda x: -compute_trading_priority_score(x) if x is not None else 0)
+        results = [r for r in results if r is not None]  # Filter out None values
+        results.sort(key=lambda x: -compute_trading_priority_score(x))
     else:
-        results.sort(key=lambda x: -compute_trading_priority_score(x) if x is not None else 0)
+        results = [r for r in results if r is not None]  # Filter out None values  
+        results.sort(key=lambda x: -compute_trading_priority_score(x))
 
     # Include both 'buy' and 'strong_buy' candidates, but exclude failed analysis
     # Use final_verdict if backtest scoring was enabled, otherwise use original verdict
@@ -326,7 +339,8 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
         
         # Highlight strong buys first (sorted by priority)
         if strong_buys:
-            strong_buys.sort(key=lambda x: -compute_trading_priority_score(x) if x is not None else 0)  # Sort by priority
+            strong_buys = [r for r in strong_buys if r is not None]  # Filter out None values
+            strong_buys.sort(key=lambda x: -compute_trading_priority_score(x))  # Sort by priority
             msg += "\n🔥 *STRONG BUY* (Multi-timeframe confirmed):\n"
             for i, b in enumerate(strong_buys, 1):
                 enhanced_info = get_enhanced_stock_info(b, i)
@@ -340,7 +354,8 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
             regular_buys = [r for r in buys if r.get('verdict') == 'buy' and r.get('ticker') not in strong_buy_tickers]
         
         if regular_buys:
-            regular_buys.sort(key=lambda x: -compute_trading_priority_score(x) if x is not None else 0)  # Sort by priority
+            regular_buys = [r for r in regular_buys if r is not None]  # Filter out None values
+            regular_buys.sort(key=lambda x: -compute_trading_priority_score(x))  # Sort by priority
             msg += "\n📈 *BUY* candidates:\n"
             for i, b in enumerate(regular_buys, 1):
                 enhanced_info = get_enhanced_stock_info(b, i, is_strong_buy=False)
