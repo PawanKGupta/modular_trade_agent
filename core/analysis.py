@@ -6,6 +6,7 @@ from core.indicators import compute_indicators
 from core.patterns import is_hammer, is_bullish_engulfing, bullish_divergence
 from core.timeframe_analysis import TimeframeAnalysis
 from core.csv_exporter import CSVExporter
+from core.volume_analysis import assess_volume_quality_intelligent, get_volume_verdict, analyze_volume_pattern
 from config.settings import RSI_OVERSOLD, MIN_VOLUME_MULTIPLIER, VOLUME_MULTIPLIER_FOR_STRONG
 from config.settings import (
     NEWS_SENTIMENT_ENABLED,
@@ -411,8 +412,18 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
             signals.append("fair_uptrend_dip")
 
     avg_vol = avg_volume(df, 20)
-    vol_ok = last['volume'] >= avg_vol * MIN_VOLUME_MULTIPLIER
-    vol_strong = last['volume'] >= avg_vol * VOLUME_MULTIPLIER_FOR_STRONG
+    
+    # Intelligent volume analysis with time-awareness
+    volume_analysis = assess_volume_quality_intelligent(
+        current_volume=last['volume'],
+        avg_volume=avg_vol,
+        enable_time_adjustment=True
+    )
+    
+    vol_ok, vol_strong, volume_description = get_volume_verdict(volume_analysis)
+    
+    # Additional volume pattern context
+    volume_pattern = analyze_volume_pattern(df)
 
     recent_low = df['low'].tail(20).min()
     recent_high = df['high'].tail(20).max()
@@ -435,7 +446,7 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
     # Core reversal conditions (matching backtest criteria)
     rsi_oversold = pd.notna(last['rsi10']) and last['rsi10'] < RSI_OVERSOLD  # RSI < 30
     above_trend = pd.notna(last['ema200']) and last['close'] > last['ema200']  # Above EMA200
-    decent_volume = last['volume'] >= avg_vol * 0.8  # Minimum volume threshold
+    decent_volume = vol_ok  # Use intelligent volume analysis
     
     # Avoid stocks with negative earnings (fundamental red flag)
     fundamental_ok = not (pe is not None and pe < 0)
@@ -489,11 +500,15 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
         elif "fair_uptrend_dip" in signals:
             justification.append("fair_uptrend_dip_confirmation")
         
-        # Add volume information
+        # Add volume information with intelligent analysis
         if vol_strong:
-            justification.append("volume_strong")
+            justification.append(f"volume_strong({volume_analysis['ratio']}x)")
         elif decent_volume:
-            justification.append("volume_adequate")
+            justification.append(f"volume_adequate({volume_analysis['ratio']}x)")
+            
+        # Add time adjustment info if applicable
+        if volume_analysis.get('time_adjusted'):
+            justification.append(f"intraday_adjusted(h{volume_analysis.get('current_hour')})")
             
     elif verdict == "watch":
         if not fundamental_ok:
@@ -547,6 +562,9 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
             "last_close": round(last['close'], 2),
             "timeframe_analysis": timeframe_confirmation,
             "news_sentiment": news_sentiment,
+            "volume_analysis": volume_analysis,
+            "volume_pattern": volume_pattern,
+            "volume_description": volume_description,
             "status": "success"
         }
         

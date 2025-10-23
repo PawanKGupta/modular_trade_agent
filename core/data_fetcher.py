@@ -27,6 +27,82 @@ api_retry_configured = exponential_backoff_retry(
     exceptions=(Exception,)
 )
 
+def _get_current_day_data(ticker):
+    """
+    Get current day trading data from live ticker info
+    Returns dict with current day OHLCV data or None if not available
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        hist = stock.history(period="2d")  # Get last 2 days to find today's data
+        
+        # Check if we have today's data in history
+        today = datetime.now().date()
+        if not hist.empty and hist.index[-1].date() == today:
+            # Use today's data from history
+            latest = hist.iloc[-1]
+            return {
+                'date': today,
+                'open': latest['Open'],
+                'high': latest['High'], 
+                'low': latest['Low'],
+                'close': latest['Close'],
+                'volume': latest['Volume']
+            }
+        
+        # Fallback: construct current day data from live info
+        current_price = info.get('currentPrice')
+        prev_close = info.get('previousClose')
+        volume = info.get('volume')
+        
+        if current_price and prev_close and volume:
+            # Estimate OHLC from available data
+            day_high = info.get('dayHigh', current_price)
+            day_low = info.get('dayLow', current_price)
+            
+            return {
+                'date': today,
+                'open': prev_close,  # Approximate - actual open not always available
+                'high': day_high,
+                'low': day_low,
+                'close': current_price,
+                'volume': volume
+            }
+        
+        return None
+        
+    except Exception as e:
+        logger.debug(f"Error getting current day data for {ticker}: {e}")
+        return None
+
+def _append_current_day_data(df, live_data):
+    """
+    Append current day data to historical dataframe
+    """
+    try:
+        # Create new row with current day data
+        new_row = pd.DataFrame([{
+            'date': pd.to_datetime(live_data['date']),
+            'open': live_data['open'],
+            'high': live_data['high'],
+            'low': live_data['low'], 
+            'close': live_data['close'],
+            'volume': live_data['volume']
+        }])
+        
+        # Append to existing dataframe
+        df_updated = pd.concat([df, new_row], ignore_index=True)
+        
+        # Sort by date to ensure proper order
+        df_updated = df_updated.sort_values('date').reset_index(drop=True)
+        
+        return df_updated
+        
+    except Exception as e:
+        logger.warning(f"Error appending current day data: {e}")
+        return df  # Return original df if append fails
+
 
 @yfinance_circuit_breaker
 @api_retry_configured
@@ -64,18 +140,46 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None):
             logger.error(error_msg)
             raise ValueError(error_msg)
 
+        # Handle multi-index columns properly
         if isinstance(df.columns, pd.MultiIndex):
+            # Flatten multi-index columns - take first level
             df.columns = df.columns.get_level_values(0)
-
+        
+        # Ensure we have the required columns
         required_cols = {'Open', 'High', 'Low', 'Close', 'Volume'}
-        if not required_cols.issubset(df.columns):
-            error_msg = f"Missing required columns for {ticker}: got {df.columns.tolist()}, need {list(required_cols)}"
+        available_cols = set(df.columns)
+        
+        if not required_cols.issubset(available_cols):
+            error_msg = f"Missing required columns for {ticker}: got {list(available_cols)}, need {list(required_cols)}"
             logger.error(error_msg)
             raise ValueError(error_msg)
 
+        # Select and rename columns
         df = df[['Open', 'High', 'Low', 'Close', 'Volume']].rename(columns=str.lower)
+        
+        # Ensure index is datetime and handle timezone properly
         df.index = pd.to_datetime(df.index)
-        df = df.reset_index().rename(columns={'index': 'date'})
+        if df.index.tz is not None:
+            # Convert timezone-aware to timezone-naive (local time)
+            df.index = df.index.tz_convert('UTC').tz_localize(None)
+        
+        # Reset index to create date column
+        df = df.reset_index().rename(columns={'Date': 'date'})
+        
+        # Try to get current day volume from live ticker data if missing
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        latest_date_str = df['date'].iloc[-1].strftime('%Y-%m-%d')
+        
+        if latest_date_str < today_str and interval == '1d':
+            logger.warning(f"Historical data for {ticker} is outdated (latest: {latest_date_str}, today: {today_str})")
+            try:
+                # Try to get current day data from live ticker
+                live_data = _get_current_day_data(ticker)
+                if live_data is not None:
+                    df = _append_current_day_data(df, live_data)
+                    logger.info(f"Added current day data for {ticker} from live ticker")
+            except Exception as e:
+                logger.warning(f"Failed to get current day data for {ticker}: {e}")
         
         # Additional validation - different requirements for different intervals
         min_required = 50 if interval == '1wk' else 30  # Weekly needs more history, daily needs 30

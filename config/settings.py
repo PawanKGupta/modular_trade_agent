@@ -10,6 +10,14 @@ RSI_OVERSOLD = 30
 RSI_NEAR_OVERSOLD = 40
 VOLUME_MULTIPLIER_FOR_STRONG = 1.2
 
+# Volume analysis configuration
+VOLUME_INTRADAY_MULTIPLIER = 0.6  # Lower threshold for intraday analysis
+VOLUME_MARKET_CLOSE_HOUR = 15.5   # 3:30 PM IST (Indian market close)
+VOLUME_FLEXIBLE_THRESHOLD = 0.4   # Minimum acceptable volume ratio
+VOLUME_QUALITY_EXCELLENT = 1.5    # Excellent volume threshold
+VOLUME_QUALITY_GOOD = 1.0         # Good volume threshold
+VOLUME_QUALITY_FAIR = 0.6         # Fair volume threshold
+
 # News/Sentiment configuration
 NEWS_SENTIMENT_ENABLED = os.getenv("NEWS_SENTIMENT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 NEWS_SENTIMENT_LOOKBACK_DAYS = int(os.getenv("NEWS_SENTIMENT_LOOKBACK_DAYS", "3"))

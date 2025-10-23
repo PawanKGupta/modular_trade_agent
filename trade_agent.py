@@ -225,15 +225,15 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
     # Include both 'buy' and 'strong_buy' candidates, but exclude failed analysis
     # Use final_verdict if backtest scoring was enabled, otherwise use original verdict
     if enable_backtest_scoring:
-        # Apply stricter filtering with combined score threshold
+        # Apply filtering with reasonable combined score threshold
         buys = [r for r in results if 
                 r.get('final_verdict') in ['buy', 'strong_buy'] and 
                 r.get('status') == 'success' and
-                r.get('combined_score', 0) >= 35]  # Minimum combined score
+                r.get('combined_score', 0) >= 25]  # Minimum combined score (lowered from 35)
         strong_buys = [r for r in results if 
                       r.get('final_verdict') == 'strong_buy' and 
                       r.get('status') == 'success' and
-                      r.get('combined_score', 0) >= 35]
+                      r.get('combined_score', 0) >= 25]
     else:
         buys = [r for r in results if r.get('verdict') in ['buy', 'strong_buy'] and r.get('status') == 'success']
         strong_buys = [r for r in results if r.get('verdict') == 'strong_buy' and r.get('status') == 'success']
