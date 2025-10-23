@@ -17,7 +17,84 @@ def get_stocks():
     
     return [s.strip().upper() + ".NS" for s in stocks.split(",")]
 
-def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
+def compute_trading_priority_score(stock_data):
+    """
+    Compute trading priority score based on key metrics for better buy candidate sorting.
+    Higher score = higher priority for trading
+    """
+    try:
+        if stock_data is None:
+            return 0
+        priority_score = 0
+        
+        # 1. Risk-Reward Ratio (most important for profitability)
+        risk_reward = stock_data.get('risk_reward_ratio', 0)
+        if risk_reward >= 4.0:
+            priority_score += 40
+        elif risk_reward >= 3.0:
+            priority_score += 30
+        elif risk_reward >= 2.0:
+            priority_score += 20
+        elif risk_reward >= 1.5:
+            priority_score += 10
+        
+        # 2. RSI Oversold Level (lower = better for dip buying)
+        rsi = stock_data.get('rsi', 50)
+        if rsi <= 15:
+            priority_score += 25  # Extremely oversold
+        elif rsi <= 20:
+            priority_score += 20  # Very oversold
+        elif rsi <= 25:
+            priority_score += 15  # Oversold
+        elif rsi <= 30:
+            priority_score += 10  # Near oversold
+        
+        # 3. Volume Strength (higher = more conviction)
+        volume_multiplier = stock_data.get('volume_multiplier', 1.0)
+        if volume_multiplier >= 4.0:
+            priority_score += 20
+        elif volume_multiplier >= 2.0:
+            priority_score += 15
+        elif volume_multiplier >= 1.5:
+            priority_score += 10
+        elif volume_multiplier >= 1.2:
+            priority_score += 5
+        
+        # 4. MTF Alignment Score
+        timeframe_analysis = stock_data.get('timeframe_analysis', {})
+        alignment_score = timeframe_analysis.get('alignment_score', 0)
+        priority_score += min(alignment_score, 10)  # Cap at 10 points
+        
+        # 5. PE Ratio (lower = better value, but cap the bonus)
+        pe = stock_data.get('pe', 100)
+        if pe and pe > 0:
+            if pe <= 15:
+                priority_score += 10
+            elif pe <= 25:
+                priority_score += 5
+            elif pe <= 35:
+                priority_score += 2
+            elif pe >= 50:
+                priority_score -= 5  # Penalty for expensive stocks
+        
+        # 6. Backtest Performance (if available)
+        backtest_score = stock_data.get('backtest_score', 0)
+        if backtest_score >= 40:
+            priority_score += 15
+        elif backtest_score >= 30:
+            priority_score += 10
+        elif backtest_score >= 20:
+            priority_score += 5
+        
+        return priority_score
+        
+    except Exception as e:
+        logger.warning(f"Error computing priority score: {e}")
+        if stock_data is None:
+            return 0
+        return stock_data.get('combined_score', stock_data.get('strength_score', 0))
+
+def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
     """Generate enhanced stock information for Telegram message"""
     try:
         ticker = stock_data['ticker']
@@ -111,7 +188,7 @@ def get_enhanced_stock_info(stock_data, rank, is_strong_buy=True):
         
         # Build clean multi-line message
         lines = []
-        lines.append(f"{rank}. {ticker}:")
+        lines.append(f"{index}. {ticker}:")
         lines.append(f"\tBuy ({buy_low:.2f}-{buy_high:.2f})")
         lines.append(f"\tTarget {target:.2f} (+{potential_gain:.1f}%)")
         lines.append(f"\tStop {stop:.2f} (-{potential_loss:.1f}%)")
@@ -219,10 +296,10 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
         mode_info = " (DIP MODE)" if dip_mode else ""
         logger.info(f"Running backtest scoring analysis{mode_info}...")
         results = add_backtest_scores_to_results(results, years_back=2, dip_mode=dip_mode)
-        # Re-sort by combined score if backtest scoring was added
-        results.sort(key=lambda x: -x.get('combined_score', compute_strength_score(x)))
+        # Re-sort by priority score for better trading decisions
+        results.sort(key=lambda x: -compute_trading_priority_score(x) if x is not None else 0)
     else:
-        results.sort(key=lambda x: -compute_strength_score(x))
+        results.sort(key=lambda x: -compute_trading_priority_score(x) if x is not None else 0)
 
     # Include both 'buy' and 'strong_buy' candidates, but exclude failed analysis
     # Use final_verdict if backtest scoring was enabled, otherwise use original verdict
@@ -247,8 +324,9 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
             msg_prefix += " *with Backtest Scoring*"
         msg = msg_prefix + "\n"
         
-        # Highlight strong buys first
+        # Highlight strong buys first (sorted by priority)
         if strong_buys:
+            strong_buys.sort(key=lambda x: -compute_trading_priority_score(x) if x is not None else 0)  # Sort by priority
             msg += "\n🔥 *STRONG BUY* (Multi-timeframe confirmed):\n"
             for i, b in enumerate(strong_buys, 1):
                 enhanced_info = get_enhanced_stock_info(b, i)
@@ -262,6 +340,7 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
             regular_buys = [r for r in buys if r.get('verdict') == 'buy' and r.get('ticker') not in strong_buy_tickers]
         
         if regular_buys:
+            regular_buys.sort(key=lambda x: -compute_trading_priority_score(x) if x is not None else 0)  # Sort by priority
             msg += "\n📈 *BUY* candidates:\n"
             for i, b in enumerate(regular_buys, 1):
                 enhanced_info = get_enhanced_stock_info(b, i, is_strong_buy=False)
