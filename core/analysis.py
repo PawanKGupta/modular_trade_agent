@@ -7,6 +7,7 @@ from core.patterns import is_hammer, is_bullish_engulfing, bullish_divergence
 from core.timeframe_analysis import TimeframeAnalysis
 from core.csv_exporter import CSVExporter
 from core.volume_analysis import assess_volume_quality_intelligent, get_volume_verdict, analyze_volume_pattern
+from core.candle_analysis import analyze_recent_candle_quality, should_downgrade_signal, get_candle_quality_summary
 from config.settings import RSI_OVERSOLD, MIN_VOLUME_MULTIPLIER, VOLUME_MULTIPLIER_FOR_STRONG
 from config.settings import (
     NEWS_SENTIMENT_ENABLED,
@@ -522,6 +523,24 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
         else:
             justification.append("partial_reversal_setup")
 
+    # Candle quality analysis - check for large red bodies that reduce reversal probability
+    candle_analysis = None
+    if verdict in ["buy", "strong_buy"]:
+        try:
+            candle_analysis = analyze_recent_candle_quality(df, lookback_candles=3)
+            candle_summary = get_candle_quality_summary(candle_analysis, use_emojis=False)  # No emojis for console logging
+            logger.debug(f"{ticker} - Candle Quality: {candle_summary}")
+            
+            # Apply candle-based verdict downgrade if needed
+            original_verdict = verdict
+            verdict, downgrade_reason = should_downgrade_signal(candle_analysis, verdict)
+            if downgrade_reason:
+                logger.info(f"{ticker}: {downgrade_reason}")
+                justification.append(f"candle_downgrade:{original_verdict}_to_{verdict}")
+                
+        except Exception as e:
+            logger.warning(f"Candle quality analysis failed for {ticker}: {e}")
+
     buy_range = None
     target = None
     stop = None
@@ -569,6 +588,7 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
             "volume_analysis": volume_analysis,
             "volume_pattern": volume_pattern,
             "volume_description": volume_description,
+            "candle_analysis": candle_analysis,
             "status": "success"
         }
         
