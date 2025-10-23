@@ -2,11 +2,17 @@
 
 A professional-grade **cloud-automated trading system** for Indian stock markets (NSE) that specializes in **core reversal strategy** using multi-timeframe analysis with **historical backtesting validation**. The system runs automatically on GitHub Actions, identifies high-probability oversold bounces in strong uptrending stocks with simplified decision logic, validates them against 2-year historical performance, and delivers institutional-quality trade alerts via Telegram.
 
-## ✨ **NEW: Cloud Automation & Intelligent Backtesting**
+## ✨ **NEW: Intelligent Priority Ranking & Enhanced Data Quality**
 
 🚀 **GitHub Actions Integration**: Fully automated cloud execution at 4PM IST weekdays - no laptop required!
 
 🧠 **Intelligent Backtesting Scoring**: Every stock candidate is validated against 2 years of historical performance using the same RSI10 strategy, providing a **Combined Score** (50% current analysis + 50% historical performance) for superior trade selection.
+
+🎯 **Smart Priority Ranking**: Stocks are now ranked by trading priority within each category (Strong Buy, Buy) based on risk-reward ratio, RSI oversold levels, volume strength, and MTF alignment - ensuring the best trading opportunities appear first.
+
+📈 **Enhanced News Sentiment**: Expanded news lookback period from 3 to 30 days for Indian stocks, providing meaningful sentiment analysis instead of zero values.
+
+🛡️ **Data Leakage Prevention**: Backtesting now properly excludes current-day data to ensure accurate historical validation and prevent look-ahead bias.
 
 📊 **Enhanced Risk Management**: Stocks with poor historical track records or insufficient data are automatically filtered out, preventing false signals and improving overall system reliability.
 
@@ -44,11 +50,13 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 - **Risk-Reward Optimization**: Targets 2-4x risk-reward ratios
 
 ### 📱 **Enhanced Trade Alerts**
-- **Backtest-Enhanced Messages**: Includes 2-year historical performance data
+- **Smart Priority Ranking**: Stocks sorted by trading priority within each category using multi-factor scoring
+- **Priority Factors**: Risk-reward ratio (40pts), RSI oversold levels (25pts), volume strength (20pts), MTF alignment (10pts)
+- **Backtest-Enhanced Messages**: Includes 2-year historical performance data with win rates and returns
 - **Combined Scoring**: Stocks ranked by current analysis + historical performance
-- **Performance Metrics**: Win rate, total returns, trade count from backtesting
-- **Quality Indicators**: Support distance, RSI severity, volume analysis
-- **Fundamental Context**: PE ratios, news sentiment, and valuation assessments
+- **Quality Indicators**: Support distance, RSI severity, volume exhaustion analysis
+- **Enhanced News Sentiment**: 30-day lookback for meaningful sentiment analysis on Indian stocks
+- **Fundamental Context**: PE ratios, earnings quality, and valuation assessments
 - **Smart Filtering**: Only sends alerts for stocks that pass all validation checks
 
 ### 🔧 **Enhanced System Features**
@@ -126,6 +134,13 @@ RETRY_BACKOFF_MULTIPLIER=2.0
 CIRCUITBREAKER_FAILURE_THRESHOLD=3
 CIRCUITBREAKER_RECOVERY_TIMEOUT=60.0
 
+# News Sentiment Configuration
+NEWS_SENTIMENT_ENABLED=true
+NEWS_SENTIMENT_LOOKBACK_DAYS=30
+NEWS_SENTIMENT_MIN_ARTICLES=2
+NEWS_SENTIMENT_POS_THRESHOLD=0.25
+NEWS_SENTIMENT_NEG_THRESHOLD=-0.25
+
 # Telegram Configuration
 TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_CHAT_ID=your_chat_id
@@ -184,16 +199,17 @@ python trade_agent.py --backtest --dip-mode
 
 The system will:
 1. **Stock Scraping**: Automatically fetch current stock list from ChartInk screener
-2. **Data Fetching**: Download daily and weekly OHLCV data for all stocks
+2. **Data Fetching**: Download daily and weekly OHLCV data for all stocks (with data leakage prevention)
 3. **Multi-Timeframe Analysis**: Analyze daily + weekly trends for alignment
 4. **Support/Resistance Analysis**: Identify key levels and proximity
 5. **Quality Filtering**: Apply fundamental, volume, and setup filters
 6. **Signal Generation**: Create STRONG BUY/BUY/WATCH recommendations
 7. **Historical Validation**: Run 2-year backtests on each candidate (if enabled)
 8. **Combined Scoring**: Merge current analysis with historical performance
-9. **Smart Filtering**: Exclude stocks with data issues or poor track records
-10. **CSV Export**: Save complete analysis data for record-keeping
-11. **Enhanced Telegram Alerts**: Send trade alerts with backtest performance data
+9. **Priority Ranking**: Sort stocks by trading priority using multi-factor scoring system
+10. **Smart Filtering**: Exclude stocks with data issues or poor track records
+11. **CSV Export**: Save complete analysis data for record-keeping
+12. **Enhanced Telegram Alerts**: Send prioritized trade alerts with backtest performance data
 
 ### Custom Stock List
 
@@ -328,16 +344,18 @@ modular_trade_agent/
 │   └── settings.py          # Configuration parameters
 ├── core/
 │   ├── __init__.py
-│   ├── analysis.py          # Main analysis logic with enhanced filters
+│   ├── analysis.py          # Main analysis logic with enhanced filters and data leakage prevention
 │   ├── backtest_scoring.py  # ✨ Historical backtest scoring integration
 │   ├── csv_exporter.py      # CSV export system for analysis data
-│   ├── data_fetcher.py      # Multi-timeframe data retrieval with retry logic
+│   ├── data_fetcher.py      # Multi-timeframe data retrieval with retry logic and backtesting support
 │   ├── indicators.py        # Technical indicators (RSI, EMA, etc.)
+│   ├── news_sentiment.py    # ✨ Enhanced news sentiment analysis with 30-day lookback
 │   ├── patterns.py          # Candlestick patterns
 │   ├── scoring.py           # Signal strength scoring
 │   ├── scrapping.py         # Web scraping utilities with ChartInk integration
-│   ├── telegram.py          # Enhanced Telegram messaging
-│   └── timeframe_analysis.py # Multi-timeframe dip-buying analysis engine
+│   ├── telegram.py          # Enhanced Telegram messaging with priority ranking
+│   ├── timeframe_analysis.py # Multi-timeframe dip-buying analysis engine
+│   └── volume_analysis.py   # ✨ Intelligent volume quality assessment and pattern analysis
 ├── utils/
 │   ├── __init__.py
 │   ├── circuit_breaker.py   # Circuit breaker implementation
@@ -451,53 +469,55 @@ Comprehensive logging system:
 2025-10-19 00:15:54 — INFO — telegram — Telegram message sent successfully
 ```
 
-### Enhanced Telegram Alert with Backtest Data
+### Enhanced Telegram Alert with Priority Ranking & Backtest Data
 ```
 Reversal Buy Candidates (today) with Backtest Scoring
 
-🔥 STRONG BUY (Multi-timeframe confirmed):
-1. NAVA.NS:
-	Buy (603.68-607.32)
-	Target 713.05 (+17.2%)
-	Stop 571.76 (-6.0%)
-	RSI:22.97
+📈 BUY candidates (sorted by priority):
+1. GALLANTT.NS:
+	Buy (533.72-541.78)
+	Target 666.83 (+24.0%)
+	Stop 505.48 (-6.0%)
+	RSI:15.36
 	MTF:8/10
-	RR:2.9x
-	StrongSupp:0.5% HighRSI NearSupport
-	PE:16.8
-	Vol:0.9x
-	News:Neu +0.00 (0)
-	Backtest: 35/100 (+4.2% return, 100% win, 3 trades)
-	Combined Score: 67.3/100
+	RR:4.0x
+	ModSupp:2.6% ExtremeRSI
+	PE:28.7
+	Vol:4.9x
+	News:Neu +0.00 (1)
+	Backtest: 33/100 (+4.6% return, 80% win, 5 trades)
+	Combined Score: 29.0/100
+	Priority Score: 100 ✅ HIGHEST PRIORITY
 
-📈 BUY candidates:
-1. GLENMARK.NS:
-	Buy (1849.83-1860.97)
-	Target 2073.97 (+11.4%)
-	Stop 1750.19 (-6.0%)
-	RSI:24.0
-	MTF:8/10
-	RR:1.9x
-	StrongSupp:0.3% HighRSI VolExh NearSupport
-	PE:69.9
+2. GLENMARK.NS:
+	Buy (1839.37-1850.43)
+	Target 2008.88 (+8.6%)
+	Stop 1739.56 (-6.0%)
+	RSI:23.18
+	MTF:9/10
+	RR:1.4x
+	StrongSupp:0.3% HighRSI NearSupport
+	PE:69.3
 	Vol:1.2x
-	News:Pos +0.15 (2)
-	Backtest: 36/100 (+9.4% return, 100% win, 2 trades)
-	Combined Score: 68.1/100
+	News:Neu +0.00 (1)
+	Backtest: 43/100 (+6.7% return, 100% win, 2 trades)
+	Combined Score: 33.8/100
+	Priority Score: 39
 ```
 
 ### Terms Explanation
 - **MTF:8/10**: Multi-timeframe alignment score (daily+weekly trend agreement)
-- **RR:2.9x**: Risk-reward ratio (potential gain ÷ potential loss)
-- **StrongSupp:0.5%**: Distance to strong support level
+- **RR:4.0x**: Risk-reward ratio (potential gain ÷ potential loss) - higher is better
+- **StrongSupp:0.5%/ModSupp:2.6%**: Distance to support level (Strong/Moderate/Weak quality)
 - **HighRSI/ExtremeRSI**: Oversold severity (High: RSI 20-30, Extreme: RSI <20)
 - **NearSupport/CloseSupport**: Proximity to support (Near: <1%, Close: <2%)
 - **VolExh**: Volume exhaustion detected (selling pressure weakening)
-- **PE:16.8**: Price-to-earnings ratio for valuation context
-- **Vol:0.9x**: Volume ratio vs average (above 1.5x = high, below 0.6x = low)
-- **News:Neu +0.00 (0)**: News sentiment (Pos/Neg/Neu, score, article count)
-- **Backtest:35/100**: Historical performance score over 2 years
-- **Combined Score:67.3/100**: Final ranking (50% current + 50% historical)
+- **PE:28.7**: Price-to-earnings ratio for valuation context (lower usually better)
+- **Vol:4.9x**: Volume ratio vs average (above 1.5x = high, below 0.6x = low)
+- **News:Neu +0.00 (1)**: News sentiment with 30-day lookback (Pos/Neg/Neu, score, article count)
+- **Backtest:33/100**: Historical performance score over 2 years (win rate, returns, trades)
+- **Combined Score:29.0/100**: Final ranking (50% current + 50% historical)
+- **Priority Score:100**: Trading priority ranking (risk-reward + RSI + volume + MTF factors)
 
 ## 📄 CSV Export & Analysis Data
 
