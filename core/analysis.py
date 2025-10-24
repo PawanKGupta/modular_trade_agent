@@ -447,35 +447,46 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
     justification = []
     
     # Simplified decision logic for reversal strategy - focus on core signals
-    # Core reversal conditions (matching backtest criteria)
-    rsi_oversold = pd.notna(last['rsi10']) and last['rsi10'] < RSI_OVERSOLD  # RSI < 30
+    # Adaptive RSI threshold based on EMA200 position
     above_trend = pd.notna(last['ema200']) and last['close'] > last['ema200']  # Above EMA200
+    
+    # Smart RSI threshold: Stricter when below EMA200 (more risk)
+    if above_trend:
+        rsi_threshold = RSI_OVERSOLD  # 30 - Standard oversold in uptrend
+    else:
+        rsi_threshold = 20  # Extreme oversold required when below trend
+        
+    rsi_oversold = pd.notna(last['rsi10']) and last['rsi10'] < rsi_threshold
     decent_volume = vol_ok  # Use intelligent volume analysis
     
     # Avoid stocks with negative earnings (fundamental red flag)
     fundamental_ok = not (pe is not None and pe < 0)
     
-    if rsi_oversold and above_trend and decent_volume and fundamental_ok:
+    # Entry logic: Works for both above and below EMA200 with appropriate RSI thresholds
+    if rsi_oversold and decent_volume and fundamental_ok:
         # Simple quality-based classification using MTF and patterns
         alignment_score = timeframe_confirmation.get('alignment_score', 0) if timeframe_confirmation else 0
         
-        # Strong Buy: Excellent MTF alignment OR excellent uptrend dip pattern
-        if alignment_score >= 8 or "excellent_uptrend_dip" in signals:
-            verdict = "strong_buy"
-        
-        # Buy: Good MTF alignment OR good patterns OR strong volume
-        elif (alignment_score >= 5 or 
-              any(s in signals for s in ["good_uptrend_dip", "fair_uptrend_dip", "hammer", "bullish_engulfing"]) or
-              vol_strong):
-            verdict = "buy"
-        
-        # Buy: Basic reversal setup (meets core criteria)
+        # Determine signal strength based on EMA200 position and RSI level
+        if above_trend:
+            # Above EMA200: Standard uptrend dip buying (RSI < 30)
+            if alignment_score >= 8 or "excellent_uptrend_dip" in signals:
+                verdict = "strong_buy"
+            elif (alignment_score >= 5 or 
+                  any(s in signals for s in ["good_uptrend_dip", "fair_uptrend_dip", "hammer", "bullish_engulfing"]) or
+                  vol_strong):
+                verdict = "buy"
+            else:
+                verdict = "buy"  # Default for valid uptrend reversal conditions
         else:
-            verdict = "buy"  # Default for valid reversal conditions
-    
-    elif rsi_oversold and decent_volume and fundamental_ok:
-        # RSI oversold with volume but may not be above EMA200 or other issues
-        verdict = "watch"
+            # Below EMA200: Extreme oversold reversal (RSI < 20)
+            # More conservative - only buy with strong confirmation
+            if (alignment_score >= 6 or 
+                any(s in signals for s in ["hammer", "bullish_engulfing", "bullish_divergence"]) or
+                vol_strong):
+                verdict = "buy"  # Require stronger signals when below trend
+            else:
+                verdict = "watch"  # Default to watch for below-trend stocks
     
     elif len(signals) > 0 and vol_ok:
         # Has some signals and volume but not core reversal conditions
@@ -487,9 +498,11 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
     
     # Build justification based on what was found
     if verdict in ["buy", "strong_buy"]:
-        # Add core reversal justification
+        # Add core reversal justification with adaptive threshold info
         if rsi_oversold:
-            justification.append(f"rsi:{round(last['rsi10'], 1)}")
+            rsi_value = round(last['rsi10'], 1)
+            trend_status = "above_ema200" if above_trend else "below_ema200"
+            justification.append(f"rsi:{rsi_value}({trend_status})")
         
         # Add pattern signals (excluding MTF signals)
         pattern_signals = [s for s in signals if s not in ["excellent_uptrend_dip", "good_uptrend_dip", "fair_uptrend_dip"]]

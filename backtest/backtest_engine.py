@@ -163,13 +163,19 @@ class BacktestEngine:
             return False, "Missing indicator data"
             
         if not self.first_entry_made:
-            # Initial entry condition: Price > EMA200 AND RSI < 30
-            if close_price <= ema200:
-                return False, "Price below EMA200"
-                
-            if rsi < self.config.RSI_OVERSOLD_LEVEL_1:
-                return True, f"Initial entry: RSI {rsi:.1f} < 30"
-            return False, f"RSI {rsi:.1f} not oversold enough for initial entry"
+            # Adaptive initial entry condition based on EMA200 position
+            # Above EMA200: RSI < 30, Below EMA200: RSI < 20 (more selective)
+            
+            if close_price > ema200:
+                # Above EMA200: Standard uptrend dip buying (RSI < 30)
+                if rsi < self.config.RSI_OVERSOLD_LEVEL_1:  # RSI < 30
+                    return True, f"Initial entry: RSI {rsi:.1f} < 30 (above EMA200)"
+                return False, f"RSI {rsi:.1f} not oversold enough for uptrend dip (need < 30)"
+            else:
+                # Below EMA200: Extreme oversold required (RSI < 20)
+                if rsi < self.config.RSI_OVERSOLD_LEVEL_2:  # RSI < 20
+                    return True, f"Initial entry: RSI {rsi:.1f} < 20 (below EMA200 - extreme oversold)"
+                return False, f"RSI {rsi:.1f} not extreme oversold for below-trend entry (need < 20)"
             
         else:
             # Pyramiding conditions - NO EMA200 check for re-entries (averaging down)
