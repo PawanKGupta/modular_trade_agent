@@ -23,10 +23,11 @@ This writes `analysis_results/bulk_analysis_final_<timestamp>.csv` (includes `fi
 
 2) Place AMO orders from the final CSV:
 ```
-.venv\Scripts\python.exe -m modules.kotak_neo_auto_trader.run_place_amo \
-  --env modules\kotak_neo_auto_trader\kotak_neo.env \
-  --csv analysis_results\bulk_analysis_final_*.csv
+.venv\\Scripts\\python.exe -m modules.kotak_neo_auto_trader.run_place_amo \\
+  --env modules\\kotak_neo_auto_trader\\kotak_neo.env \\
+  --csv analysis_results\\bulk_analysis_final_*.csv
 ```
+- Sessions are kept by default; add `--logout` if you want to end the session.
 - Omit `--csv` to auto-pick the newest file in `analysis_results/`.
 
 ## Configuration

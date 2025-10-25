@@ -35,48 +35,94 @@ class KotakNeoPortfolio:
     
     def get_holdings(self) -> Optional[Dict]:
         """
-        Get portfolio holdings (stocks owned)
-        
-        Returns:
-            Dict: Holdings data or None if failed
+        Get portfolio holdings (stocks owned) with fallbacks and raw logging.
         """
         client = self.auth.get_client()
         if not client:
             return None
         
+        def _call_any(method_names):
+            for name in method_names:
+                try:
+                    if hasattr(client, name):
+                        return getattr(client, name)()
+                except Exception:
+                    continue
+            return None
+        
         try:
             logger.info(" Retrieving portfolio holdings...")
-            holdings = client.holdings()
+            holdings = _call_any(["holdings", "get_holdings", "portfolio_holdings", "getPortfolioHoldings"]) or {}
             
-            if "error" in holdings:
-                logger.error(" Failed to get holdings: {holdings['error'][0]['message']}")
+            if isinstance(holdings, dict) and "error" in holdings:
+                logger.error(f" Failed to get holdings: {holdings['error']}")
                 return None
             
             # Process and display holdings
-            if 'data' in holdings and holdings['data']:
+            if isinstance(holdings, dict) and 'data' in holdings and holdings['data']:
                 holdings_data = holdings['data']
-                logger.info(" Found {len(holdings_data)} holdings in portfolio")
+                logger.info(f" Found {len(holdings_data)} holdings in portfolio")
                 
-                # Display summary
-                total_value = 0
+                # Display summary (with robust field mapping and fallbacks)
+                def _num(x):
+                    try:
+                        return float(x)
+                    except Exception:
+                        return 0.0
+                total_value = 0.0
                 for holding in holdings_data:
-                    stock_name = holding.get('tradingSymbol', 'N/A')
-                    quantity = holding.get('quantity', 0)
-                    ltp = holding.get('ltp', 0)
-                    market_value = holding.get('marketValue', 0)
-                    pnl = holding.get('pnl', 0)
-                    
-                    logger.info(f"📈 {stock_name}: Qty={quantity}, LTP=₹{ltp}, Value=₹{market_value}, P&L=₹{pnl}")
+                    stock_name = (
+                        holding.get('tradingSymbol') or
+                        holding.get('symbol') or
+                        holding.get('instrumentName') or
+                        holding.get('securitySymbol') or
+                        holding.get('securityname') or
+                        'N/A'
+                    )
+                    quantity = int(
+                        holding.get('quantity') or
+                        holding.get('qty') or
+                        holding.get('netQuantity') or
+                        holding.get('holdingsQuantity') or 0
+                    )
+                    ltp = _num(
+                        holding.get('ltp') or
+                        holding.get('lastPrice') or
+                        holding.get('lastTradedPrice') or
+                        holding.get('ltpPrice') or 0
+                    )
+                    avg_price = _num(
+                        holding.get('avgPrice') or
+                        holding.get('averagePrice') or
+                        holding.get('buyAvg') or
+                        holding.get('buyAvgPrice') or 0
+                    )
+                    market_value = _num(
+                        holding.get('marketValue') or
+                        holding.get('market_value') or 0
+                    )
+                    if market_value == 0 and quantity > 0:
+                        # Compute value when missing using LTP, else avg_price
+                        ref = ltp if ltp > 0 else avg_price
+                        market_value = ref * quantity
+                    pnl = _num(
+                        holding.get('pnl') or
+                        holding.get('unrealizedPnl') or
+                        holding.get('unrealisedPNL') or 0
+                    )
+                    if pnl == 0 and quantity > 0 and avg_price > 0 and ltp > 0:
+                        pnl = (ltp - avg_price) * quantity
+                    logger.info(f"📈 {stock_name}: Qty={quantity}, LTP=₹{ltp:.2f}, Value=₹{market_value:.2f}, P&L=₹{pnl:.2f}")
                     total_value += market_value
-                
-                logger.info(f"💰 Total Portfolio Value: ₹{total_value}")
+                logger.info(f"💰 Total Portfolio Value: ₹{total_value:.2f}")
             else:
-                logger.info(" No holdings found in portfolio")
+                preview = str(holdings)[:300]
+                logger.info(f" No holdings found in portfolio (raw preview: {preview})")
             
             return holdings
             
         except Exception as e:
-            logger.error(" Error getting holdings: {e}")
+            logger.error(f" Error getting holdings: {e}")
             return None
     
     def get_positions(self) -> Optional[Dict]:

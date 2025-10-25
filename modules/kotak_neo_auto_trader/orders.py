@@ -254,28 +254,32 @@ class KotakNeoOrders:
 
     # -------------------- Retrieval --------------------
     def get_orders(self) -> Optional[Dict]:
-        """
-        Get all existing orders
-        
-        Returns:
-            Dict: Orders data or None if failed
-        """
+        """Get all existing regular orders (not GTT) with fallbacks and raw logging."""
         client = self.auth.get_client()
         if not client:
             return None
         
+        def _call_any(method_names):
+            for name in method_names:
+                try:
+                    if hasattr(client, name):
+                        return getattr(client, name)()
+                except Exception:
+                    continue
+            return None
+        
         try:
             logger.info(" Retrieving existing orders...")
-            orders = client.order_report()
+            orders = _call_any(["order_report", "get_order_report", "orderBook", "orders", "order_book"]) or {}
             
-            if "error" in orders:
-                logger.error(" Failed to get orders: {orders['error'][0]['message']}")
+            if isinstance(orders, dict) and "error" in orders:
+                logger.error(f" Failed to get orders: {orders['error']}")
                 return None
             
             # Process and display orders
-            if 'data' in orders and orders['data']:
+            if isinstance(orders, dict) and 'data' in orders and orders['data']:
                 orders_data = orders['data']
-                logger.info(" Found {len(orders_data)} orders")
+                logger.info(f" Found {len(orders_data)} orders")
                 
                 # Group orders by status
                 order_stats = {}
@@ -293,14 +297,15 @@ class KotakNeoOrders:
                     # Count by status
                     order_stats[status] = order_stats.get(status, 0) + 1
                 
-                logger.info(" Order Summary: {order_stats}")
+                logger.info(f" Order Summary: {order_stats}")
             else:
-                logger.info(" No orders found")
+                preview = str(orders)[:300]
+                logger.info(f" No orders found (raw preview: {preview})")
             
             return orders
             
         except Exception as e:
-            logger.error(" Error getting orders: {e}")
+            logger.error(f" Error getting orders: {e}")
             return None
     
     def get_order_history(self, order_id: str = None) -> Optional[Dict]:
@@ -351,10 +356,7 @@ class KotakNeoOrders:
             logger.error(" Error getting order history: {e}")
             return None
     
-    def get_gtt_orders(self) -> Optional[Dict]:
-        """Disabled: Kotak Neo API does not support GTT in this integration."""
-        logger.info("GTT orders are not supported by Kotak Neo API; returning empty list.")
-        return {"data": [], "message": "GTT not supported"}
+    # GTT retrieval not supported; rely only on open orders via get_orders/get_pending_orders
     
     def get_pending_orders(self) -> Optional[List[Dict]]:
         """
@@ -430,8 +432,7 @@ class KotakNeoOrders:
         summary = {
             "all_orders": self.get_orders(),
             "pending_orders": self.get_pending_orders(),
-            "executed_orders": self.get_executed_orders(),
-            "gtt_orders": self.get_gtt_orders()
+            "executed_orders": self.get_executed_orders()
         }
         
         print("="*50)

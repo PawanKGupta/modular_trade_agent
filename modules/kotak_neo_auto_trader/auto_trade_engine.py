@@ -219,19 +219,39 @@ class AutoTradeEngine:
         self.auth.logout()
 
     # ---------------------- Portfolio helpers ----------------------
-    def current_symbols_in_portfolio(self) -> List[str]:
+    def _response_requires_2fa(self, resp) -> bool:
+        try:
+            s = str(resp)
+            return '2fa' in s.lower() or 'complete the 2fa' in s.lower()
+        except Exception:
+            return False
+
+    def _fetch_holdings_symbols(self) -> List[str]:
         symbols = set()
         if not self.portfolio:
             return []
-        holdings = self.portfolio.get_holdings() or {}
-        for h in holdings.get('data', []) or []:
-            sym = str(h.get('tradingSymbol') or '').upper()
+        # First attempt
+        h = self.portfolio.get_holdings()
+        # If 2FA gating detected, force re-login and retry once
+        if self._response_requires_2fa(h) and hasattr(self.auth, 'force_relogin'):
+            try:
+                if self.auth.force_relogin():
+                    h = self.portfolio.get_holdings()
+            except Exception:
+                pass
+        data = (h or {}).get('data') if isinstance(h, dict) else None
+        for item in (data or []):
+            sym = str(item.get('tradingSymbol') or '').upper()
             if sym:
                 symbols.add(sym)
+        return sorted(symbols)
+
+    def current_symbols_in_portfolio(self) -> List[str]:
+        symbols = set(self._fetch_holdings_symbols())
         # Include pending BUY orders too
         pend = self.orders.get_pending_orders() if self.orders else []
         for o in pend or []:
-            if str(o.get('transactionType', '')).upper() == 'BUY':
+            if str(o.get('transactionType', '')).upper().startswith('B'):
                 sym = str(o.get('tradingSymbol') or '').upper()
                 if sym:
                     symbols.add(sym)
@@ -341,8 +361,13 @@ class AutoTradeEngine:
             return summary
         # No longer using history for duplicate skip; rely on live holdings and active orders
         for rec in recommendations:
-            if self.portfolio_size() >= config.MAX_PORTFOLIO_SIZE:
-                logger.info("Portfolio limit reached; skipping further entries")
+            # Enforce hard portfolio cap before any balance checks
+            try:
+                current_count = len(self.current_symbols_in_portfolio())
+            except Exception:
+                current_count = self.portfolio_size()
+            if current_count >= config.MAX_PORTFOLIO_SIZE:
+                logger.info(f"Portfolio limit reached ({current_count}/{config.MAX_PORTFOLIO_SIZE}); skipping further entries")
                 summary["skipped_portfolio_limit"] += 1
                 break
             summary["attempted"] += 1
@@ -526,7 +551,7 @@ class AutoTradeEngine:
         return summary
 
     # ---------------------- Orchestrator ----------------------
-    def run(self):
+    def run(self, keep_session: bool = True):
         if not self.is_trading_weekday():
             logger.info("Non-trading weekday; skipping auto trade run")
             return
@@ -550,4 +575,7 @@ class AutoTradeEngine:
                 f"Re/Exits: reentries={re_summary['reentries']}, exits={re_summary['exits']}, symbols={re_summary['symbols_evaluated']}"
             )
         finally:
-            self.logout()
+            if not keep_session:
+                self.logout()
+            else:
+                logger.info("Keeping session active (no logout)")

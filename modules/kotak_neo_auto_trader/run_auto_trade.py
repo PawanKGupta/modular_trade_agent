@@ -18,12 +18,13 @@ def main():
     parser = argparse.ArgumentParser(description="Kotak Neo Auto Trader Runner")
     parser.add_argument("--env", default="kotak_neo.env", help="Path to env file for Kotak Neo credentials")
     parser.add_argument("--csv", default=None, help="Path to the recommendations CSV to use")
+    parser.add_argument("--logout", action="store_true", help="Logout at end (by default session is kept)")
     args = parser.parse_args()
 
     engine = AutoTradeEngine(env_file=args.env)
     # Stash custom CSV path on engine for this run
     engine._custom_csv_path = args.csv
-    engine.run()
+    engine.run(keep_session=not args.logout)
     logger.info("Auto trade run complete")
 
 

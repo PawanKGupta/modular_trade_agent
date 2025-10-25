@@ -5,7 +5,6 @@ Handles login, logout, and session management
 
 import os
 import json
-import pyotp
 from dotenv import load_dotenv
 from typing import Optional, Tuple
 from datetime import datetime, timedelta
@@ -24,11 +23,11 @@ class KotakNeoAuth:
     """
     Authentication handler for Kotak Neo API
     """
-    
+
     def __init__(self, config_file: str = "kotak_neo.env"):
         """
         Initialize authentication module
-        
+
         Args:
             config_file (str): Path to environment configuration file
         """
@@ -36,21 +35,21 @@ class KotakNeoAuth:
         self.client = None
         self.session_token = None
         self.is_logged_in = False
-        
+
         # Use existing project logger
         self.logger = logger
-        
+
         # Load credentials
         self._load_credentials()
-        
+
         self.logger.info(f"KotakNeoAuth initialized with environment: {self.environment}")
         # Session cache path (persist token for the day)
         self.session_cache_path = Path(__file__).with_name("session_cache.json")
-    
+
     def _load_credentials(self):
         """Load credentials from environment file"""
         load_dotenv(self.config_file)
-        
+
         self.consumer_key = os.getenv("KOTAK_CONSUMER_KEY", "")
         self.consumer_secret = os.getenv("KOTAK_CONSUMER_SECRET", "")
         self.mobile_number = os.getenv("KOTAK_MOBILE_NUMBER", "")
@@ -58,64 +57,71 @@ class KotakNeoAuth:
         self.totp_secret = os.getenv("KOTAK_TOTP_SECRET", "")
         self.mpin = os.getenv("KOTAK_MPIN", "")
         self.environment = os.getenv("KOTAK_ENVIRONMENT", "prod")
-        
+
         # Validate required credentials (TOTP or MPIN accepted for 2FA)
         required_fields = [
-            self.consumer_key, self.consumer_secret, 
+            self.consumer_key, self.consumer_secret,
             self.mobile_number, self.password
         ]
-        
+
         if not all(required_fields) or (not self.totp_secret and not self.mpin):
             missing = [name for field, name in zip(required_fields + [self.totp_secret or self.mpin], [
-                "KOTAK_CONSUMER_KEY", "KOTAK_CONSUMER_SECRET", 
+                "KOTAK_CONSUMER_KEY", "KOTAK_CONSUMER_SECRET",
                 "KOTAK_MOBILE_NUMBER", "KOTAK_PASSWORD", "KOTAK_TOTP_SECRET or KOTAK_MPIN"
             ]) if not field]
             raise ValueError(f"Missing credentials: {', '.join(missing)}")
-    
+
     def login(self) -> bool:
         """
         Perform complete login process with daily token caching.
         """
         try:
             from neo_api_client import NeoAPI
-            
+
             self.logger.info("Starting Kotak Neo API login process...")
             self.logger.info(f"Mobile: {self.mobile_number}")
             self.logger.info(f"Environment: {self.environment}")
-            
+
             # Initialize client
             self.client = self._initialize_client()
             if not self.client:
                 return False
-            
+
             # Try cached session first (valid for the day)
             if self._try_use_cached_session():
+                # Always attempt 2FA on cached token to enable holdings/orders
+                ok2fa = self._complete_2fa()
+                if not ok2fa:
+                    self.logger.info("Cached session 2FA refresh failed; proceeding with cached token")
+                else:
+                    # Optional: persist refreshed token (if any)
+                    self._save_session_cache()
                 self.is_logged_in = True
                 self.logger.info("Reused cached session token (daily cache)")
                 return True
-            
+
             # Perform login + 2FA
             if not self._perform_login():
                 return False
             if not self._complete_2fa():
                 return False
-            
+
             # Cache session for the day
             self._save_session_cache()
-            
+
             self.is_logged_in = True
             self.logger.info("Login completed successfully!")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Login failed with exception: {e}")
             return False
-    
+
     def _initialize_client(self):
         """Initialize NeoAPI client"""
         try:
             from neo_api_client import NeoAPI
-            
+
             client = NeoAPI(
                 consumer_key=self.consumer_key,
                 consumer_secret=self.consumer_secret,
@@ -124,11 +130,11 @@ class KotakNeoAuth:
             )
             self.logger.info("NeoAPI client initialized successfully")
             return client
-            
+
         except Exception as init_error:
             self.logger.warning(f"Client initialization warning: {init_error}")
             self.logger.info("Attempting to continue with login...")
-            
+
             # Create client anyway - sometimes it still works
             from neo_api_client import NeoAPI
             return NeoAPI(
@@ -137,7 +143,7 @@ class KotakNeoAuth:
                 environment=self.environment,
                 neo_fin_key="neotradeapi"
             )
-    
+
     def _perform_login(self) -> bool:
         """Perform username/password login"""
         try:
@@ -146,47 +152,76 @@ class KotakNeoAuth:
                 mobilenumber=self.mobile_number,
                 password=self.password
             )
-            
+
             if "error" in login_response:
                 self.logger.error(f"Login failed: {login_response['error'][0]['message']}")
                 return False
-            
+
             self.logger.info("Login successful, proceeding with 2FA...")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Login error: {e}")
             return False
-    
+
     def _complete_2fa(self) -> bool:
-        """Complete 2FA authentication"""
+        """Complete 2FA authentication using MPIN from env (recommended by Kotak Neo)."""
+        if not self.mpin:
+            self.logger.error("MPIN not configured; set KOTAK_MPIN in kotak_neo.env for 2FA")
+            return False
         try:
-            if self.mpin:
-                self.logger.info("Using MPIN for 2FA")
-                session_response = self.client.session_2fa(OTP=self.mpin)
-            else:
-                # Generate TOTP (do not log actual OTP to console)
-                totp = pyotp.TOTP(self.totp_secret)
-                current_otp = totp.now()
-                self.logger.info("Generated TOTP for 2FA")
-                session_response = self.client.session_2fa(OTP=current_otp)
-            
-            if "error" in session_response:
-                self.logger.error(f"2FA failed: {session_response['error'][0]['message']}")
+            self.logger.info("Using MPIN for 2FA")
+            session_response = self.client.session_2fa(OTP=self.mpin)
+            # Handle SDK error shape
+            if isinstance(session_response, dict) and session_response.get('error'):
+                err = session_response.get('error')
+                try:
+                    msg = err[0]['message'] if isinstance(err, list) and err else str(err)
+                except Exception:
+                    msg = str(err)
+                self.logger.error(f"2FA failed: {msg}")
                 return False
-            
-            # Extract session token
+            # Extract session token when present
             if hasattr(session_response, 'data') and hasattr(session_response.data, 'token'):
                 self.session_token = session_response.data.token
             elif isinstance(session_response, dict) and 'data' in session_response:
-                self.session_token = session_response['data'].get('token')
-            
+                self.session_token = (session_response.get('data') or {}).get('token')
             return True
-            
         except Exception as e:
             self.logger.error(f"2FA error: {e}")
             return False
-    
+
+    def _refresh_2fa_if_possible(self) -> None:
+        """Attempt a quick 2FA refresh on the current client if credentials are available."""
+        try:
+            if self.mpin or self.totp_secret:
+                self._complete_2fa()
+        except Exception:
+            pass
+
+    def force_relogin(self) -> bool:
+        """Force a fresh login + 2FA and persist session cache."""
+        try:
+            if not self.client:
+                self.client = self._initialize_client()
+            if not self._perform_login():
+                return False
+            if not self._complete_2fa():
+                return False
+            self._save_session_cache()
+            self.is_logged_in = True
+            return True
+        except Exception as e:
+            self.logger.error(f"Force re-login failed: {e}")
+            return False
+
+    def _response_requires_2fa(self, resp) -> bool:
+        try:
+            s = str(resp)
+            return '2fa' in s.lower() or 'complete the 2fa' in s.lower()
+        except Exception:
+            return False
+
     def _try_use_cached_session(self) -> bool:
         """Attempt to reuse a cached session token for the current day."""
         try:
@@ -267,29 +302,29 @@ class KotakNeoAuth:
     def logout(self) -> bool:
         """
         Logout from the session
-        
+
         Returns:
             bool: True if logout successful, False otherwise
         """
         if not self.client:
             self.logger.warning("No active session to logout")
             return False
-        
+
         try:
             logout_response = self.client.logout()
             self.is_logged_in = False
             self.session_token = None
             self.logger.info("Logout successful")
             return True
-            
+
         except Exception as e:
             self.logger.warning(f"Logout failed: {e}")
             return False
-    
+
     def get_client(self):
         """
         Get the authenticated client instance
-        
+
         Returns:
             NeoAPI client or None if not logged in
         """
@@ -297,20 +332,20 @@ class KotakNeoAuth:
             self.logger.error("Not logged in. Please login first.")
             return None
         return self.client
-    
+
     def get_session_token(self) -> Optional[str]:
         """
         Get current session token
-        
+
         Returns:
             str: Session token or None if not logged in
         """
         return self.session_token if self.is_logged_in else None
-    
+
     def is_authenticated(self) -> bool:
         """
         Check if currently authenticated
-        
+
         Returns:
             bool: True if authenticated, False otherwise
         """
