@@ -10,6 +10,9 @@ import yfinance as yf
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
 import warnings
+import os
+import json
+import csv
 warnings.filterwarnings('ignore')
 
 from .backtest_config import BacktestConfig
@@ -17,6 +20,59 @@ from .position_manager import PositionManager
 from core.indicators import wilder_rsi
 import pandas_ta as ta
 
+
+# Shared per-run CSV logger
+BACKTEST_RUN_ID = os.environ.get('BACKTEST_RUN_ID')
+if not BACKTEST_RUN_ID:
+    BACKTEST_RUN_ID = datetime.now().strftime('%Y%m%d_%H%M%S')
+    os.environ['BACKTEST_RUN_ID'] = BACKTEST_RUN_ID
+
+CSV_DIR = os.path.join('logs', 'backtest')
+CSV_COLUMNS = [
+    'run_id','date','symbol','event','reason','execution_price','quantity','capital',
+    'target_price','stop_loss','new_avg_entry','new_target','exit_price','entry_price','pnl','return_pct'
+]
+CSV_SUMMARY_COLUMNS = [
+    'run_id','symbol','entry_date','exit_date','entry_price','exit_price','quantity',
+    'pnl','pnl_pct','entry_condition','exit_condition','average_price','is_reentry','reentry_date','comments'
+]
+
+def _get_backtest_csv_path() -> str:
+    os.makedirs(CSV_DIR, exist_ok=True)
+    return os.path.join(CSV_DIR, f"backtest_{BACKTEST_RUN_ID}.csv")
+
+def _write_backtest_csv_row(row: dict):
+    try:
+        path = _get_backtest_csv_path()
+        file_exists = os.path.isfile(path)
+        # Ensure all columns exist
+        full_row = {col: row.get(col) for col in CSV_COLUMNS}
+        with open(path, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(full_row)
+    except Exception:
+        # Silent fail to avoid interrupting backtest flow
+        pass
+
+def _get_summary_csv_path() -> str:
+    os.makedirs(CSV_DIR, exist_ok=True)
+    return os.path.join(CSV_DIR, f"backtest_summary_{BACKTEST_RUN_ID}.csv")
+
+def _write_summary_csv_rows(rows: list[dict]):
+    try:
+        path = _get_summary_csv_path()
+        file_exists = os.path.isfile(path)
+        with open(path, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_SUMMARY_COLUMNS)
+            if not file_exists:
+                writer.writeheader()
+            for r in rows:
+                full_row = {col: r.get(col) for col in CSV_SUMMARY_COLUMNS}
+                writer.writerow(full_row)
+    except Exception:
+        pass
 
 class BacktestEngine:
     """
@@ -259,6 +315,7 @@ class BacktestEngine:
             )
             
             if position:
+                entry_type = "reentry" if self.first_entry_made else "entry"
                 self.first_entry_made = True
                 if self.config.DETAILED_LOGGING:
                     print(f"🟢 TRADE EXECUTED: {next_day.date()} | "
@@ -266,6 +323,16 @@ class BacktestEngine:
                           f"Quantity: {position.quantity} | "
                           f"Capital: {position.capital:.0f} | "
                           f"Reason: {entry_reason}")
+                _write_backtest_csv_row({
+                    'run_id': BACKTEST_RUN_ID,
+                    'date': pd.to_datetime(next_day).strftime('%Y-%m-%d'),
+                    'symbol': self.symbol,
+                    'event': entry_type,
+                    'reason': entry_reason,
+                    'execution_price': float(entry_price),
+                    'quantity': int(position.quantity),
+                    'capital': float(position.capital)
+                })
                 return True
             else:
                 print(f"Failed to add position on {next_day.date()}")
@@ -314,9 +381,50 @@ class BacktestEngine:
                     exit_price=final_price,
                     exit_reason="End of backtest period"
                 )
+                # Log exits for all positions closed at period end
+                for p in self.position_manager.get_closed_positions():
+                    if p.exit_date is not None:
+                        _write_backtest_csv_row({
+                            'run_id': BACKTEST_RUN_ID,
+                            'date': pd.to_datetime(p.exit_date).strftime('%Y-%m-%d'),
+                            'symbol': self.symbol,
+                            'event': 'exit',
+                            'reason': p.exit_reason or 'End of backtest period',
+                            'exit_price': float(p.exit_price),
+                            'entry_price': float(p.entry_price),
+                            'pnl': float(p.get_pnl()),
+                            'return_pct': float(p.get_pnl_pct())
+                        })
                 
             # Generate results
             self.results = self._generate_results()
+
+            # Write human-friendly summary CSV (one row per position)
+            summary_rows = []
+            for p in self.position_manager.positions:
+                entry_reason = getattr(p, 'entry_reason', '') or ''
+                is_reentry = entry_reason.startswith('Pyramiding')
+                reentry_date = p.entry_date.strftime('%Y-%m-%d') if is_reentry else ''
+                exit_date_str = p.exit_date.strftime('%Y-%m-%d') if p.exit_date else ''
+                summary_rows.append({
+                    'run_id': BACKTEST_RUN_ID,
+                    'symbol': self.symbol,
+                    'entry_date': p.entry_date.strftime('%Y-%m-%d'),
+                    'exit_date': exit_date_str,
+                    'entry_price': float(p.entry_price),
+                    'exit_price': float(p.exit_price) if p.exit_price is not None else '',
+                    'quantity': int(p.quantity),
+                    'pnl': float(p.get_pnl()),
+                    'pnl_pct': float(p.get_pnl_pct()),
+                    'entry_condition': entry_reason,
+                    'exit_condition': p.exit_reason or '',
+                    'average_price': float(p.entry_price),
+                    'is_reentry': is_reentry,
+                    'reentry_date': reentry_date,
+                    'comments': ''
+                })
+            if summary_rows:
+                _write_summary_csv_rows(summary_rows)
             
             print("-" * 50)
             print(f"Backtest completed!")

@@ -16,6 +16,7 @@ Key Features:
 
 import sys
 import os
+import csv
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -44,6 +45,57 @@ class SignalResult:
     def __repr__(self):
         return f"SignalResult(type={self.signal_type}, buy={self.buy_price}, target={self.target_price})"
 
+
+# Shared per-run CSV logger (aligned with backtest_engine)
+BACKTEST_RUN_ID = os.environ.get('BACKTEST_RUN_ID')
+if not BACKTEST_RUN_ID:
+    BACKTEST_RUN_ID = datetime.now().strftime('%Y%m%d_%H%M%S')
+    os.environ['BACKTEST_RUN_ID'] = BACKTEST_RUN_ID
+
+CSV_DIR = os.path.join('logs', 'backtest')
+CSV_COLUMNS = [
+    'run_id','date','symbol','event','reason','execution_price','quantity','capital',
+    'target_price','stop_loss','new_avg_entry','new_target','exit_price','entry_price','pnl','return_pct'
+]
+CSV_SUMMARY_COLUMNS = [
+    'run_id','symbol','entry_date','exit_date','entry_price','exit_price','quantity',
+    'pnl','pnl_pct','entry_condition','exit_condition','average_price','is_reentry','reentry_date','comments'
+]
+
+def _get_backtest_csv_path() -> str:
+    os.makedirs(CSV_DIR, exist_ok=True)
+    return os.path.join(CSV_DIR, f"backtest_{BACKTEST_RUN_ID}.csv")
+
+def _write_backtest_csv_row(row: dict):
+    try:
+        path = _get_backtest_csv_path()
+        file_exists = os.path.isfile(path)
+        full_row = {col: row.get(col) for col in CSV_COLUMNS}
+        with open(path, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(full_row)
+    except Exception:
+        pass
+
+def _get_summary_csv_path() -> str:
+    os.makedirs(CSV_DIR, exist_ok=True)
+    return os.path.join(CSV_DIR, f"backtest_summary_{BACKTEST_RUN_ID}.csv")
+
+def _write_summary_csv_rows(rows: list[dict]):
+    try:
+        path = _get_summary_csv_path()
+        file_exists = os.path.isfile(path)
+        with open(path, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_SUMMARY_COLUMNS)
+            if not file_exists:
+                writer.writeheader()
+            for r in rows:
+                full_row = {col: r.get(col) for col in CSV_SUMMARY_COLUMNS}
+                writer.writerow(full_row)
+    except Exception:
+        pass
 
 def run_backtest(stock_name: str, date_range: Tuple[str, str]) -> List[Dict]:
     """
@@ -192,6 +244,11 @@ class IntegratedPosition:
         self.exit_price = None
         self.exit_reason = None
         self.is_closed = False
+        # Track the last date we have processed candles for (avoid retroactive exits on re-entry)
+        self.last_tracked_date = self.entry_date
+        
+    def get_last_fill_date(self) -> pd.Timestamp:
+        return max(f['date'] for f in self.fills) if self.fills else self.entry_date
         
     def add_reentry(self, add_date: str, add_price: float, add_capital: float, new_target: float):
         """Add a re-entry fill and recompute average entry and target"""
@@ -208,12 +265,16 @@ class IntegratedPosition:
         # Update target to latest EMA9-derived target
         self.target_price = new_target
         # Track fill
+        add_dt = pd.to_datetime(add_date)
         self.fills.append({
-            'date': pd.to_datetime(add_date),
+            'date': add_dt,
             'price': add_price,
             'capital': add_capital,
             'quantity': add_qty
         })
+        # Ensure subsequent tracking begins no earlier than this re-entry execution date
+        if add_dt > self.last_tracked_date:
+            self.last_tracked_date = add_dt
         
     def close_position(self, exit_date: str, exit_price: float, exit_reason: str):
         """Close the position"""
@@ -307,34 +368,46 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
         print(f"\n🔄 Signal {i}/{len(potential_signals)}: {signal_date}")
         print(f"   Reason: {derived_reason}")
         
-        # Validate with trade agent strictly as-of the signal date
-        trade_signal = trade_agent(stock_name, signal_date)
+        # Determine if we already hold a position (re-entry path)
+        open_positions = [p for p in positions if not p.is_closed]
         
-        if trade_signal.signal_type == "BUY":
-            # Determine EMA9 target at execution date
-            exec_dt = pd.to_datetime(execution_date)
-            ema9_target = None
-            if exec_dt in market_data.index and 'EMA9' in market_data.columns:
-                ema9_target = market_data.loc[exec_dt]['EMA9']
+        # Determine EMA9 target at execution date (used by both initial and re-entry)
+        exec_dt = pd.to_datetime(execution_date)
+        ema9_target = None
+        if exec_dt in market_data.index and 'EMA9' in market_data.columns:
+            ema9_target = market_data.loc[exec_dt]['EMA9']
+        
+        if open_positions:
+            # Re-entry: do NOT consult trade agent per request
             if pd.isna(ema9_target) if ema9_target is not None else True:
-                ema9_target = trade_signal.target_price or (signal['execution_price'] * 1.08)
-            
-            # Re-entry vs initial logic
-            open_positions = [p for p in positions if not p.is_closed]
-            if open_positions:
-                # Add to existing position (averaging)
-                pos = open_positions[0]
-                pos.add_reentry(
-                    add_date=execution_date,
-                    add_price=signal['execution_price'],
-                    add_capital=capital_per_position,
-                    new_target=float(ema9_target)
-                )
-                print(f"   ➕ RE-ENTRY: Add at {signal['execution_price']:.2f} | New Avg: {pos.entry_price:.2f} | Target: {pos.target_price:.2f}")
-                # Continue tracking only up to next signal (if any)
-                # Next tracking will be scheduled below after we compute until_date
-            else:
-                # Execute new initial position using EMA9 target (no stop-loss)
+                # Fallback to simple 8% above execution if EMA9 missing
+                ema9_target = signal['execution_price'] * 1.08
+            pos = open_positions[0]
+            pos.add_reentry(
+                add_date=execution_date,
+                add_price=signal['execution_price'],
+                add_capital=capital_per_position,
+                new_target=float(ema9_target)
+            )
+            _write_backtest_csv_row({
+                'run_id': BACKTEST_RUN_ID,
+                'date': pd.to_datetime(execution_date).strftime('%Y-%m-%d'),
+                'symbol': stock_name,
+                'event': 'reentry',
+                'reason': derived_reason,
+                'execution_price': float(signal['execution_price']),
+                'new_avg_entry': float(pos.entry_price),
+                'new_target': float(pos.target_price),
+                'capital': float(capital_per_position)
+            })
+            print(f"   ➕ RE-ENTRY: Add at {signal['execution_price']:.2f} | New Avg: {pos.entry_price:.2f} | Target: {pos.target_price:.2f}")
+            # Tracking will proceed after until_date computation
+        else:
+            # Initial entry: validate with trade agent strictly as-of the signal date
+            trade_signal = trade_agent(stock_name, signal_date)
+            if trade_signal.signal_type == "BUY":
+                if pd.isna(ema9_target) if ema9_target is not None else True:
+                    ema9_target = trade_signal.target_price or (signal['execution_price'] * 1.08)
                 position = IntegratedPosition(
                     stock_name=stock_name,
                     entry_date=execution_date,
@@ -345,15 +418,22 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
                 )
                 positions.append(position)
                 executed_trades += 1
-                
+                _write_backtest_csv_row({
+                    'run_id': BACKTEST_RUN_ID,
+                    'date': pd.to_datetime(execution_date).strftime('%Y-%m-%d'),
+                    'symbol': stock_name,
+                    'event': 'entry',
+                    'reason': derived_reason,
+                    'execution_price': float(signal['execution_price']),
+                    'target_price': float(position.target_price),
+                    'stop_loss': float(trade_signal.stop_loss) if trade_signal.stop_loss is not None else None,
+                    'capital': float(capital_per_position)
+                })
                 print(f"   ✅ TRADE EXECUTED: Buy at {signal['execution_price']:.2f}")
                 print(f"      Target: {position.target_price:.2f}")
-                
-                # Tracking is deferred until we know the next signal date
-            
-        else:
-            print(f"   ⏸️ TRADE SKIPPED: Trade agent returned {trade_signal.signal_type}")
-            skipped_signals += 1
+            else:
+                print(f"   ⏸️ TRADE SKIPPED: Trade agent returned {trade_signal.signal_type}")
+                skipped_signals += 1
     
         # After processing this signal, incrementally track any open position up to next signal's execution date
         next_until = None
@@ -386,7 +466,35 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
         total_return_pct = (total_pnl / total_invested * 100) if total_invested > 0 else 0
         
         print(f"Total P&L: ${total_pnl:,.0f}")
-        print(f"Total Return: {total_return_pct:+.2f}%")
+    print(f"Total Return: {total_return_pct:+.2f}%")
+
+    # Write human-friendly summary CSV (one row per integrated position)
+    summary_rows = []
+    for p in positions:
+        entry_date_str = p.entry_date.strftime('%Y-%m-%d') if p.entry_date is not None else ''
+        exit_date_str = p.exit_date.strftime('%Y-%m-%d') if p.exit_date is not None else ''
+        reentries = [f['date'].strftime('%Y-%m-%d') for f in p.fills[1:]] if hasattr(p, 'fills') and len(p.fills) > 1 else []
+        is_reentry = len(reentries) > 0
+        comments = f"reentries={len(reentries)}" if is_reentry else ''
+        summary_rows.append({
+            'run_id': BACKTEST_RUN_ID,
+            'symbol': stock_name,
+            'entry_date': entry_date_str,
+            'exit_date': exit_date_str,
+            'entry_price': float(p.entry_price) if p.entry_price is not None else '',
+            'exit_price': float(p.exit_price) if p.exit_price is not None else '',
+            'quantity': int(p.quantity) if hasattr(p, 'quantity') else '',
+            'pnl': float(p.get_pnl()),
+            'pnl_pct': float(p.get_return_pct()),
+            'entry_condition': 'Integrated entry',
+            'exit_condition': p.exit_reason or '',
+            'average_price': float(p.entry_price) if p.entry_price is not None else '',
+            'is_reentry': is_reentry,
+            'reentry_date': ','.join(reentries),
+            'comments': comments
+        })
+    if summary_rows:
+        _write_summary_csv_rows(summary_rows)
     
     return results
 
@@ -394,10 +502,13 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
 def track_position_to_exit(position: IntegratedPosition, market_data: pd.DataFrame, until_date: pd.Timestamp | None = None):
     """Track a position until target is reached or until a specified date.
     If until_date is None, track to the end of the backtest period and close at period end.
+    Ensures tracking never considers candles before the latest fill or last tracked date (prevents retroactive exits).
     """
+    # Determine tracking start date (latest of entry, last fill, last tracked)
+    start_date = max(position.entry_date, position.get_last_fill_date(), position.last_tracked_date)
     
-    # Build slice starting from entry
-    data = market_data.loc[market_data.index >= position.entry_date]
+    # Build slice starting from effective start
+    data = market_data.loc[market_data.index >= start_date]
     if until_date is not None:
         data = data.loc[data.index <= until_date]
     
@@ -405,17 +516,56 @@ def track_position_to_exit(position: IntegratedPosition, market_data: pd.DataFra
         print(f"      ⚠️ No market data available for tracking position")
         return
         
+    last_processed_date = None
     # Track each day until exit condition
     for date, row in data.iterrows():
+        last_processed_date = date
         high_price = row['High']
-        if high_price >= position.target_price:
+        # Dynamic EMA9 target: exit as soon as price touches EMA9 of the same day
+        ema9_today = row['EMA9'] if 'EMA9' in row and pd.notna(row['EMA9']) else None
+        if ema9_today is not None and high_price >= ema9_today:
+            position.close_position(
+                exit_date=date.strftime('%Y-%m-%d'),
+                exit_price=float(ema9_today),
+                exit_reason="EMA9 touch"
+            )
+            # Update last tracked date to this exit date
+            position.last_tracked_date = date
+            print(f"      🎯 EMA9 TARGET HIT on {date.strftime('%Y-%m-%d')}: Exit at {float(ema9_today):.2f}")
+            print(f"         P&L: ${position.get_pnl():,.0f} ({position.get_return_pct():+.1f}%)")
+            _write_backtest_csv_row({
+                'run_id': BACKTEST_RUN_ID,
+                'date': pd.to_datetime(date).strftime('%Y-%m-%d'),
+                'symbol': position.stock_name,
+                'event': 'exit',
+                'reason': 'EMA9 touch',
+                'exit_price': float(ema9_today),
+                'entry_price': float(position.entry_price),
+                'pnl': float(position.get_pnl()),
+                'return_pct': float(position.get_return_pct())
+            })
+            return
+        # Fallback to fixed target if EMA9 not available
+        if ema9_today is None and high_price >= position.target_price:
             position.close_position(
                 exit_date=date.strftime('%Y-%m-%d'),
                 exit_price=position.target_price,
                 exit_reason="Target reached"
             )
+            position.last_tracked_date = date
             print(f"      🎯 TARGET HIT on {date.strftime('%Y-%m-%d')}: Exit at {position.target_price:.2f}")
             print(f"         P&L: ${position.get_pnl():,.0f} ({position.get_return_pct():+.1f}%)")
+            _write_backtest_csv_row({
+                'run_id': BACKTEST_RUN_ID,
+                'date': pd.to_datetime(date).strftime('%Y-%m-%d'),
+                'symbol': position.stock_name,
+                'event': 'exit',
+                'reason': 'Target reached',
+                'exit_price': float(position.target_price),
+                'entry_price': float(position.entry_price),
+                'pnl': float(position.get_pnl()),
+                'return_pct': float(position.get_return_pct())
+            })
             return
     
     # If no exit and we're doing a final pass (no until_date), close at period end
@@ -427,8 +577,24 @@ def track_position_to_exit(position: IntegratedPosition, market_data: pd.DataFra
             exit_price=final_price,
             exit_reason="End of period"
         )
+        position.last_tracked_date = final_date
         print(f"      ⏰ POSITION CLOSED at period end: Exit at {final_price:.2f}")
         print(f"         P&L: ${position.get_pnl():,.0f} ({position.get_return_pct():+.1f}%)")
+        _write_backtest_csv_row({
+            'run_id': BACKTEST_RUN_ID,
+            'date': pd.to_datetime(final_date).strftime('%Y-%m-%d'),
+            'symbol': position.stock_name,
+            'event': 'exit',
+            'reason': 'End of period',
+            'exit_price': float(final_price),
+            'entry_price': float(position.entry_price),
+            'pnl': float(position.get_pnl()),
+            'return_pct': float(position.get_return_pct())
+        })
+    else:
+        # No exit, update last tracked date to the last processed candle
+        if last_processed_date is not None:
+            position.last_tracked_date = last_processed_date
 
 
 def generate_integrated_results(stock_name: str, date_range: Tuple[str, str], 
