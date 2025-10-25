@@ -11,3 +11,12 @@ cred.env
 analysis_results/
 logs/
 temp/
+modules/kotak_neo_auto_trader/session_cache.json
+data/
+signals.csv
+scripts/
+(dev)
+test_*.py
+debug_*.py
+demo_candle_analysis.py
+check_market_timing.py

@@ -6,6 +6,9 @@ from core.scrapping import get_stock_list
 from core.csv_exporter import CSVExporter
 from core.backtest_scoring import add_backtest_scores_to_results
 from utils.logger import logger
+import os
+from datetime import datetime
+import pandas as pd
 
 def get_stocks():
     stocks = get_stock_list()
@@ -310,6 +313,29 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
         # Re-sort by priority score for better trading decisions
         results = [r for r in results if r is not None]  # Filter out None values
         results.sort(key=lambda x: -compute_trading_priority_score(x))
+        # Export a final CSV with backtest fields for auto-trader
+        try:
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            out_dir = 'analysis_results'
+            os.makedirs(out_dir, exist_ok=True)
+            out_path = os.path.join(out_dir, f"bulk_analysis_final_{ts}.csv")
+            # Keep the most useful fields; include fallbacks
+            cols = [
+                'ticker','status','verdict','final_verdict','combined_score','strength_score','last_close',
+                'buy_range','target','stop','timeframe_analysis','backtest'
+            ]
+            def _flatten(row):
+                d = {k: row.get(k) for k in cols if k in row}
+                # Simple stringify for complex fields
+                for k in ('buy_range','timeframe_analysis','backtest'):
+                    if k in d and not isinstance(d[k], (str,int,float)):
+                        d[k] = str(d[k])
+                return d
+            df_final = pd.DataFrame([_flatten(r) for r in results if isinstance(r, dict)])
+            df_final.to_csv(out_path, index=False)
+            logger.info(f"Final post-scored CSV written to: {out_path}")
+        except Exception as e:
+            logger.warning(f"Failed to export final post-scored CSV: {e}")
     else:
         results = [r for r in results if r is not None]  # Filter out None values  
         results.sort(key=lambda x: -compute_trading_priority_score(x))
