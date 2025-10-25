@@ -24,6 +24,7 @@ from utils.logger import logger
 from core.data_fetcher import fetch_ohlcv_yf
 from core.indicators import compute_indicators
 from core.scoring import compute_strength_score
+from core.telegram import send_telegram
 
 # Kotak Neo modules
 try:
@@ -91,8 +92,18 @@ class AutoTradeEngine:
             return []
         # If CSV already has post-scored fields, use them
         if 'final_verdict' in df.columns:
+            from . import config as _cfg
             verdict_col = 'final_verdict'
-            df_buy = df[df[verdict_col].astype(str).str.lower().isin(['buy','strong_buy'])]
+            # Apply combined_score threshold if present (default from config)
+            if 'combined_score' in df.columns:
+                th = getattr(_cfg, 'MIN_COMBINED_SCORE', 25)
+                df_buy = df[
+                    df[verdict_col].astype(str).str.lower().isin(['buy','strong_buy']) &
+                    (df['combined_score'].fillna(0) >= th) &
+                    (df.get('status', 'success') == 'success')
+                ]
+            else:
+                df_buy = df[df[verdict_col].astype(str).str.lower().isin(['buy','strong_buy'])]
             recs = []
             for _, row in df_buy.iterrows():
                 ticker = str(row.get('ticker','')).strip().upper()
@@ -100,46 +111,32 @@ class AutoTradeEngine:
                 recs.append(Recommendation(ticker=ticker, verdict=row[verdict_col], last_close=last_close))
             logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path}")
             return recs
-        # Otherwise, recompute post-scored verdicts to match Telegram without changing trade_agent
-        try:
-            # Re-analyze tickers quickly (no CSV export) then run backtest scoring
-            tickers = [str(t).strip().upper() for t in df.get('ticker', []) if isinstance(t, str)]
-            from core.analysis import analyze_ticker
-            from core.backtest_scoring import add_backtest_scores_to_results
-            analyzed = []
-            for t in tickers:
-                try:
-                    res = analyze_ticker(t, enable_multi_timeframe=True, export_to_csv=False)
-                    if res and res.get('status') == 'success':
-                        # Ensure current strength score is computed (Telegram does this before post-scoring)
-                        res['strength_score'] = compute_strength_score(res)
-                    analyzed.append(res)
-                except Exception as e:
-                    logger.warning(f"Analyze failed for {t}: {e}")
-            scored = add_backtest_scores_to_results(analyzed, years_back=2, dip_mode=False)
-            # Apply same filter as Telegram (combined_score >= 25)
-            buys = [r for r in scored if r.get('final_verdict') in ['buy','strong_buy'] and r.get('combined_score', 0) >= 25 and r.get('status') == 'success']
-            recs = [Recommendation(ticker=r['ticker'].upper(), verdict=r['final_verdict'], last_close=float(r.get('last_close', 0) or 0)) for r in buys]
-            logger.info(f"Re-scored {len(buys)} BUY recommendations from {csv_path} to align with Telegram")
+        # Otherwise, DO NOT recompute; trust the CSV that trade_agent produced
+        if 'verdict' in df.columns:
+            df_buy = df[df['verdict'].astype(str).str.lower().isin(['buy','strong_buy'])]
+            recs = [Recommendation(ticker=str(row.get('ticker','')).strip().upper(), verdict=str(row.get('verdict','')).lower(), last_close=float(row.get('last_close', 0) or 0)) for _, row in df_buy.iterrows()]
+            logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path} (raw verdicts)")
             return recs
-        except Exception as e:
-            logger.error(f"Failed to recompute post-scored recommendations: {e}")
-            # Fallback: use raw verdicts from CSV
-            if 'verdict' in df.columns:
-                df_buy = df[df['verdict'].astype(str).str.lower().isin(['buy','strong_buy'])]
-                return [Recommendation(ticker=str(row['ticker']).strip().upper(), verdict=row['verdict'], last_close=float(row.get('last_close', 0) or 0)) for _, row in df_buy.iterrows()]
-            return []
+        logger.warning(f"CSV {csv_path} missing 'final_verdict' and 'verdict' columns; no recommendations loaded")
+        return []
 
     def load_latest_recommendations(self) -> List[Recommendation]:
         # If a custom CSV path is set (from runner), use it
         if hasattr(self, '_custom_csv_path') and self._custom_csv_path:
             return self.load_latest_recommendations_from_csv(self._custom_csv_path)
         path = config.ANALYSIS_DIR
-        # Prefer any CSV (post-scored or pre-scored)
-        pattern = os.path.join(path, config.RECOMMENDED_CSV_GLOB)
-        files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+        # Prefer post-scored CSV; fallback to base if not present
+        patterns = [
+            os.path.join(path, getattr(config, 'RECOMMENDED_CSV_GLOB', 'bulk_analysis_final_*.csv')),
+            os.path.join(path, 'bulk_analysis_*.csv'),
+        ]
+        files = []
+        for pat in patterns:
+            files = sorted(glob.glob(pat), key=os.path.getmtime, reverse=True)
+            if files:
+                break
         if not files:
-            logger.warning(f"No recommendation CSV found at {pattern}")
+            logger.warning(f"No recommendation CSV found in {path}")
             return []
         latest = files[0]
         return self.load_latest_recommendations_from_csv(latest)
@@ -258,6 +255,19 @@ class AutoTradeEngine:
         except Exception:
             return 0
 
+    def get_available_cash(self) -> float:
+        """Return available funds from limits (marginAvailable or cash)."""
+        if not self.portfolio:
+            return 0.0
+        lim = self.portfolio.get_limits() or {}
+        data = lim.get('data') if isinstance(lim, dict) else None
+        if isinstance(data, dict):
+            try:
+                return float(data.get('marginAvailable') or data.get('cash') or 0.0)
+            except Exception:
+                return 0.0
+        return 0.0
+
     # ---------------------- De-dup helpers ----------------------
     @staticmethod
     def _symbol_variants(base: str) -> List[str]:
@@ -342,11 +352,14 @@ class AutoTradeEngine:
                 logger.info(f"Skipping {broker_symbol}: already in holdings")
                 summary["skipped_duplicates"] += 1
                 continue
-            # 2) Active pending buy order check
+            # 2) Active pending buy order check -> cancel and replace
             if self.has_active_buy_order(broker_symbol):
-                logger.info(f"Skipping {broker_symbol}: active pending BUY order exists")
-                summary["skipped_duplicates"] += 1
-                continue
+                variants = self._symbol_variants(broker_symbol)
+                try:
+                    cancelled = self.orders.cancel_pending_buys_for_symbol(variants)
+                    logger.info(f"Cancelled {cancelled} pending BUY order(s) for {broker_symbol}")
+                except Exception as e:
+                    logger.warning(f"Could not cancel pending order(s) for {broker_symbol}: {e}")
 
             ind = self.get_daily_indicators(rec.ticker)
             if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
@@ -359,15 +372,21 @@ class AutoTradeEngine:
                 summary["skipped_invalid_qty"] += 1
                 continue
             qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / close))
-            # Balance check (CNC needs cash)
+            # Balance check (CNC needs cash) -> notify on insufficiency
             affordable = self.get_affordable_qty(close)
-            if affordable < 1:
-                logger.warning(f"Skipping {rec.ticker}: insufficient funds for 1 share at {close}")
+            if affordable < config.MIN_QTY or qty > affordable:
+                avail_cash = self.get_available_cash()
+                required_cash = qty * close
+                shortfall = max(0.0, required_cash - (avail_cash or 0.0))
+                msg = (
+                    f"Insufficient balance for {broker_symbol} AMO BUY.\n"
+                    f"Needed: ₹{required_cash:,.0f} for {qty} @ ₹{close:.2f}.\n"
+                    f"Available: ₹{(avail_cash or 0.0):,.0f}. Shortfall: ₹{shortfall:,.0f}."
+                )
+                send_telegram(msg)
+                logger.warning(msg)
                 summary["skipped_invalid_qty"] += 1
                 continue
-            if qty > affordable:
-                logger.info(f"Reducing qty from {qty} to affordable {affordable} based on available funds")
-                qty = affordable
 
             # Try common series suffixes for NSE cash (order of likelihood)
             # Try common series suffixes for NSE cash (order of likelihood)

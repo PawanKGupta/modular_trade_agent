@@ -175,6 +175,83 @@ class KotakNeoOrders:
     def place_limit_sell(self, symbol: str, quantity: int, price: float, variety: str = "AMO", exchange: str = "NSE", product: str = "CNC") -> Optional[Dict]:
         return self.place_equity_order(symbol=symbol, quantity=quantity, price=price, transaction_type="SELL", order_type="LIMIT", variety=variety, exchange=exchange, product=product)
 
+    # -------------------- GTT Placement (unsupported) --------------------
+    def place_gtt_order(self, *args, **kwargs) -> Optional[Dict]:
+        """Disabled: Kotak Neo API does not support GTT for this integration."""
+        logger.warning("GTT orders are not supported by Kotak Neo API; operation disabled.")
+        return None
+
+    def place_gtt_buy(self, *args, **kwargs) -> Optional[Dict]:
+        """Disabled: Kotak Neo API does not support GTT for this integration."""
+        logger.warning("GTT orders are not supported by Kotak Neo API; operation disabled.")
+        return None
+
+    # -------------------- Cancel / Manage --------------------
+    def cancel_order(self, order_id: str) -> Optional[Dict]:
+        """Cancel an order by ID, trying multiple SDK method names/params."""
+        client = self.auth.get_client()
+        if not client:
+            return None
+        import inspect
+        try:
+            def call_method(name: str) -> Optional[Dict]:
+                if not hasattr(client, name):
+                    return None
+                method = getattr(client, name)
+                try:
+                    params = set(inspect.signature(method).parameters.keys())
+                except (ValueError, TypeError):
+                    params = set()
+                payload = {}
+                for key in ("order_id", "orderId", "neoOrdNo", "ordId", "id"):
+                    if key in params:
+                        payload[key] = order_id
+                if not payload:
+                    # Try positional fallback
+                    try:
+                        resp = method(order_id)
+                        return resp if isinstance(resp, dict) else {"raw": str(resp)}
+                    except Exception:
+                        return None
+                resp = method(**payload)
+                return resp if isinstance(resp, dict) else {"raw": str(resp)}
+            for method_name in ("cancel_order", "order_cancel", "cancelOrder", "cancelorder", "modify_order"):
+                try:
+                    resp = call_method(method_name)
+                    if resp:
+                        logger.info(f"✅ Cancelled order {order_id} via {method_name}")
+                        return resp
+                except Exception as e:
+                    logger.warning(f"Cancel via {method_name} failed: {e}")
+            logger.error(f"❌ Failed to cancel order {order_id}")
+            return None
+        except Exception as e:
+            logger.error(f" Error cancelling order {order_id}: {e}")
+            return None
+
+    def cancel_pending_buys_for_symbol(self, symbol_variants: list[str]) -> int:
+        """Cancel all pending BUY orders for any of the given symbol variants.
+        Returns count cancelled.
+        """
+        pend = self.get_pending_orders() or []
+        cancelled = 0
+        for o in pend:
+            try:
+                txn = str(o.get('transactionType','')).upper()
+                sym = str(o.get('tradingSymbol','')).upper()
+                if not txn.startswith('B'):
+                    continue
+                if sym not in set(v.upper() for v in symbol_variants):
+                    continue
+                oid = o.get('neoOrdNo') or o.get('orderId') or o.get('ordId') or o.get('id')
+                if not oid:
+                    continue
+                if self.cancel_order(str(oid)):
+                    cancelled += 1
+            except Exception:
+                continue
+        return cancelled
+
     # -------------------- Retrieval --------------------
     def get_orders(self) -> Optional[Dict]:
         """
@@ -275,78 +352,9 @@ class KotakNeoOrders:
             return None
     
     def get_gtt_orders(self) -> Optional[Dict]:
-        """
-        Get GTT (Good Till Triggered) orders
-        
-        Returns:
-            Dict: GTT orders data or None if failed
-        """
-        client = self.auth.get_client()
-        if not client:
-            return None
-        
-        try:
-            logger.info(" Retrieving GTT orders...")
-            
-            # GTT orders are typically retrieved using a specific API call
-            # The exact method may vary - trying common approaches
-            
-            try:
-                # Method 1: Try direct GTT method if available
-                if hasattr(client, 'gtt_orders'):
-                    gtt_orders = client.gtt_orders()
-                elif hasattr(client, 'get_gtt_orders'):
-                    gtt_orders = client.get_gtt_orders()
-                else:
-                    # Method 2: Try getting through order report with filter
-                    logger.info("GTT method not found, checking through order reports...")
-                    all_orders = client.order_report()
-                    
-                    if "data" in all_orders and all_orders['data']:
-                        # Filter for GTT orders (orders with validity = GTT)
-                        gtt_orders = {
-                            "data": [order for order in all_orders['data'] 
-                                   if order.get('validity', '').upper() == 'GTT' or 
-                                      order.get('orderType', '').upper() in ['SL', 'SL-M']]
-                        }
-                    else:
-                        gtt_orders = {"data": []}
-                
-                if "error" in gtt_orders:
-                    logger.error(" Failed to get GTT orders: {gtt_orders['error'][0]['message']}")
-                    return None
-                
-                # Process and display GTT orders
-                if 'data' in gtt_orders and gtt_orders['data']:
-                    gtt_data = gtt_orders['data']
-                    logger.info(" Found {len(gtt_data)} GTT orders")
-                    
-                    for gtt in gtt_data:
-                        order_id = gtt.get('neoOrdNo', 'N/A')
-                        symbol = gtt.get('tradingSymbol', 'N/A')
-                        order_type = gtt.get('orderType', 'N/A')
-                        quantity = gtt.get('quantity', 0)
-                        trigger_price = gtt.get('triggerPrice', 0)
-                        status = gtt.get('orderStatus', 'N/A')
-                        transaction_type = gtt.get('transactionType', 'N/A')
-                        
-                        logger.info(" GTT {order_id}: {symbol} {transaction_type} {quantity} @ Trigger=₹{trigger_price} - Status: {status}")
-                else:
-                    logger.info(" No GTT orders found")
-                
-                return gtt_orders
-                
-            except AttributeError:
-                logger.warning(" GTT orders method not available in this API version")
-                logger.info("Attempting alternative method...")
-                
-                # Alternative: Check if there's a specific GTT endpoint
-                # This would need to be implemented based on actual API documentation
-                return {"data": [], "message": "GTT orders method not available"}
-                
-        except Exception as e:
-            logger.error(" Error getting GTT orders: {e}")
-            return None
+        """Disabled: Kotak Neo API does not support GTT in this integration."""
+        logger.info("GTT orders are not supported by Kotak Neo API; returning empty list.")
+        return {"data": [], "message": "GTT not supported"}
     
     def get_pending_orders(self) -> Optional[List[Dict]]:
         """

@@ -7,7 +7,7 @@ from datetime import time
 
 # Portfolio constraints
 MAX_PORTFOLIO_SIZE = 6
-CAPITAL_PER_TRADE = 1  # fixed capital per entry (TEMP for test: ensures qty=1)
+CAPITAL_PER_TRADE = 100000  # fixed capital per entry
 
 # Scheduling
 RUN_TIME = time(hour=16, minute=0)  # 16:00 local time
@@ -16,7 +16,7 @@ MARKET_DAYS = {0, 1, 2, 3, 4}  # Mon=0 .. Sun=6
 # Data/config paths
 ANALYSIS_DIR = "analysis_results"
 RECOMMENDED_SOURCE = "auto"  # auto|csv|json
-RECOMMENDED_CSV_GLOB = "bulk_analysis_*.csv"  # inside ANALYSIS_DIR
+RECOMMENDED_CSV_GLOB = "bulk_analysis_final_*.csv"  # inside ANALYSIS_DIR (post-scored)
 TRADES_HISTORY_PATH = "data/trades_history.json"
 
 # Indicator params
@@ -34,6 +34,9 @@ DEFAULT_VALIDITY = "DAY"
 # Behavior toggles
 ALLOW_DUPLICATE_RECOMMENDATIONS_SAME_DAY = False
 EXIT_ON_EMA9_OR_RSI50 = True
+
+# CSV filtering from trade_agent --backtest
+MIN_COMBINED_SCORE = 25  # only take rows with final_verdict in {buy,strong_buy} and combined_score >= this
 
 # Safety
 MIN_QTY = 1

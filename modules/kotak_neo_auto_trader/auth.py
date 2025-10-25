@@ -214,10 +214,27 @@ class KotakNeoAuth:
                 for attr in ('access_token', 'bearer_token', 'session_token', 'auth_token'):
                     if hasattr(self.client, attr):
                         setattr(self.client, attr, token)
-                prof = None
-                if hasattr(self.client, 'get_profile'):
-                    prof = self.client.get_profile()
-                if prof is not None:
+                # Validate token via a lightweight call: prefer get_profile, else limits/holdings
+                ok = False
+                try:
+                    if hasattr(self.client, 'get_profile'):
+                        prof = self.client.get_profile()
+                        ok = prof is not None
+                except Exception:
+                    ok = False
+                if not ok:
+                    try:
+                        lim = self.client.limits(segment="ALL", exchange="ALL")
+                        ok = isinstance(lim, dict) and 'error' not in lim
+                    except Exception:
+                        ok = False
+                if not ok and hasattr(self.client, 'holdings'):
+                    try:
+                        h = self.client.holdings()
+                        ok = isinstance(h, dict) and 'error' not in h
+                    except Exception:
+                        ok = False
+                if ok:
                     self.session_token = token
                     return True
             except Exception as e:
