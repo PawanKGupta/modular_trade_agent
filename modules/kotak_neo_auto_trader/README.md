@@ -1,76 +1,59 @@
-# kotak_neo_auto_trader
+# kotak_neo_auto_trader (AMO Executor)
 
-Separate module to:
-- Read buy signals from a CSV
-- Auto-place BUY orders when LTP is within range
-- Auto-SELL when price reaches EMA(9)
-- Limit to max 6 open positions
-- Allocate 100,000 currency units per trade
+Execution-only module for placing AMO BUY orders on Kotak Neo using the final stock list produced by trade_agent + backtest.
 
-## CSV format
+Key capabilities:
+- Reads the final, post-scored CSV from trade_agent (`analysis_results/bulk_analysis_final_*.csv`)
+- Filters strictly: `final_verdict` in {`buy`,`strong_buy`} AND `combined_score` ≥ `MIN_COMBINED_SCORE`
+- Sizing: `qty = floor(CAPITAL_PER_TRADE / close)` with affordability check via account limits
+- Pre-checks per symbol:
+  - Skip if already in holdings
+  - Cancel any pending BUY order (variants: `-EQ`, `-BE`, `-BL`, `-BZ`) and place a fresh AMO order
+  - If funds insufficient, send a Telegram notification with required/available/shortfall
+- Session cache: reuses daily session token from `modules/kotak_neo_auto_trader/session_cache.json`
+- GTT is not supported and is disabled
 
-Expected headers in `signals.csv`:
+## Flow
 
+1) Generate recommendations (with backtest scoring):
 ```
-symbol,price_min,price_max[,note]
+.venv\Scripts\python.exe trade_agent.py --backtest
 ```
+This writes `analysis_results/bulk_analysis_final_<timestamp>.csv` (includes `final_verdict` and `combined_score`).
 
-Example:
-
+2) Place AMO orders from the final CSV:
 ```
-symbol,price_min,price_max,note
-TCS,3500,3600,example signal
-RELIANCE,2400,2450,example signal
+.venv\Scripts\python.exe -m modules.kotak_neo_auto_trader.run_place_amo \
+  --env modules\kotak_neo_auto_trader\kotak_neo.env \
+  --csv analysis_results\bulk_analysis_final_*.csv
 ```
+- Omit `--csv` to auto-pick the newest file in `analysis_results/`.
 
-## Configure
+## Configuration
+Edit `modules/kotak_neo_auto_trader/config.py`:
+- `CAPITAL_PER_TRADE` (default 100000)
+- `MAX_PORTFOLIO_SIZE` (default 6)
+- `MIN_QTY` (default 1)
+- `DEFAULT_EXCHANGE` (`NSE`), `DEFAULT_PRODUCT` (`CNC`), `DEFAULT_VARIETY` (`AMO`)
+- `MIN_COMBINED_SCORE` (default 25) — used when `final_verdict` exists in the CSV
+- `ANALYSIS_DIR` (default `analysis_results`)
 
-Edit `modules/kotak_neo_auto_trader/config.py` for:
-- `capital_per_trade` (default 100,000)
-- `max_open_positions` (default 6)
-- `ema_period` (default 9)
-- `poll_interval_seconds` (default 5)
-- `exchange`, `product`, `order_type_default`
-
-Set environment variables for Kotak Neo credentials:
-- `KOTAK_NEO_API_KEY`
-- `KOTAK_NEO_ACCESS_TOKEN`
-- `KOTAK_NEO_USER_ID`
-
-Replace API endpoints in `client/kotak_neo_client.py` with official SDK/REST calls.
-
-## Mock/Paper demo
-
+## Credentials
+Create `modules/kotak_neo_auto_trader/kotak_neo.env` (do not commit):
 ```
-python -m modules.kotak_neo_auto_trader.run_mock_demo
+KOTAK_CONSUMER_KEY=
+KOTAK_CONSUMER_SECRET=
+KOTAK_MOBILE_NUMBER=
+KOTAK_PASSWORD=
+# use one of the following for 2FA
+KOTAK_TOTP_SECRET=
+# or
+KOTAK_MPIN=
+KOTAK_ENVIRONMENT=prod
 ```
+- A daily session token is cached at `modules/kotak_neo_auto_trader/session_cache.json` and reused automatically until EOD.
 
-This uses an in-memory mock to simulate LTP, trigger a BUY within the CSV range, and then exit on EMA(9).
-
-## Run (real, SDK)
-
-1) Install dependencies:
-```
-pip install neo_api_client pyotp
-```
-
-2) Export env vars (replace with your values):
-- NEO_CONSUMER_KEY
-- NEO_CONSUMER_SECRET
-- NEO_ENV=uat or prod
-
-Optional login via env (if you don’t have a persisted token):
-- NEO_MOBILE
-- NEO_PASSWORD
-- NEO_OTP
-
-Or use a .env file (recommended):
-- Copy `.env.example` to `.env` and fill values (keep `.env` out of git)
-- The runner will auto-load `.env` if present
-
-3) Run:
-```
-python -m modules.kotak_neo_auto_trader.run_auto_trader_sdk
-```
-
-This uses `KotakNeoSDKClient`, logs in if env creds are present/.env exists, and parses CSV symbols like `RELIANCE.NS` to `RELIANCE` on `NSE`.
+## Notes
+- This module does not run analysis or backtests; it trusts the CSV from trade_agent.
+- GTT is not supported by this integration (AMO MARKET/LIMIT only).
+- If account `limits` call shows insufficient funds, the order is skipped and a Telegram alert is sent (configure `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`).
