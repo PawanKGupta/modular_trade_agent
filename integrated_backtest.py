@@ -59,7 +59,7 @@ CSV_COLUMNS = [
 ]
 CSV_SUMMARY_COLUMNS = [
     'run_id','symbol','entry_date','exit_date','entry_price','exit_price','quantity',
-    'pnl','pnl_pct','entry_condition','exit_condition','average_price','is_reentry','reentry_date','comments'
+    'pnl','pnl_pct','entry_condition','exit_condition','average_price','is_reentry','reentry_date','reentry_price','reentry_quantity','total_quantity','total_capital','comments'
 ]
 
 def _get_backtest_csv_path() -> str:
@@ -474,16 +474,32 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
         entry_date_str = p.entry_date.strftime('%Y-%m-%d') if p.entry_date is not None else ''
         exit_date_str = p.exit_date.strftime('%Y-%m-%d') if p.exit_date is not None else ''
         reentries = [f['date'].strftime('%Y-%m-%d') for f in p.fills[1:]] if hasattr(p, 'fills') and len(p.fills) > 1 else []
+        reentry_prices = [f['price'] for f in p.fills[1:]] if hasattr(p, 'fills') and len(p.fills) > 1 else []
+        reentry_quantities = [f.get('quantity', 0) for f in p.fills[1:]] if hasattr(p, 'fills') and len(p.fills) > 1 else []
         is_reentry = len(reentries) > 0
         comments = f"reentries={len(reentries)}" if is_reentry else ''
+        # Preserve the initial fill price as entry_price; use current p.entry_price as weighted average
+        initial_price = None
+        try:
+            if hasattr(p, 'fills') and p.fills and 'price' in p.fills[0]:
+                initial_price = float(p.fills[0]['price'])
+        except Exception:
+            initial_price = None
+        # Initial order quantity from first fill
+        initial_qty = None
+        try:
+            if hasattr(p, 'fills') and p.fills and 'quantity' in p.fills[0]:
+                initial_qty = int(p.fills[0]['quantity'])
+        except Exception:
+            initial_qty = None
         summary_rows.append({
             'run_id': BACKTEST_RUN_ID,
             'symbol': stock_name,
             'entry_date': entry_date_str,
             'exit_date': exit_date_str,
-            'entry_price': float(p.entry_price) if p.entry_price is not None else '',
+            'entry_price': initial_price if initial_price is not None else (float(p.entry_price) if p.entry_price is not None else ''),
             'exit_price': float(p.exit_price) if p.exit_price is not None else '',
-            'quantity': int(p.quantity) if hasattr(p, 'quantity') else '',
+            'quantity': initial_qty if initial_qty is not None else (int(p.quantity) if hasattr(p, 'quantity') else ''),
             'pnl': float(p.get_pnl()),
             'pnl_pct': float(p.get_return_pct()),
             'entry_condition': 'Integrated entry',
@@ -491,11 +507,15 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
             'average_price': float(p.entry_price) if p.entry_price is not None else '',
             'is_reentry': is_reentry,
             'reentry_date': ','.join(reentries),
+            'reentry_price': ','.join(str(float(px)) for px in reentry_prices) if reentry_prices else '',
+            'reentry_quantity': ','.join(str(int(q)) for q in reentry_quantities) if reentry_quantities else '',
+            'total_quantity': int(p.quantity) if hasattr(p, 'quantity') else '',
+            'total_capital': float(p.capital) if hasattr(p, 'capital') else '',
             'comments': comments
         })
     if summary_rows:
         _write_summary_csv_rows(summary_rows)
-    
+
     return results
 
 
