@@ -552,12 +552,14 @@ class AutoTradeEngine:
 
     # ---------------------- Orchestrator ----------------------
     def run(self, keep_session: bool = True):
-        if not self.is_trading_weekday():
-            logger.info("Non-trading weekday; skipping auto trade run")
-            return
-        if not self.market_was_open_today():
-            logger.info("Detected market holiday/closed day; skipping run")
-            return
+        # TEMPORARY: Skip weekend check for testing
+        # if not self.is_trading_weekday():
+        #     logger.info("Non-trading weekday; skipping auto trade run")
+        #     return
+        # if not self.market_was_open_today():
+        #     logger.info("Detected market holiday/closed day; skipping run")
+        #     return
+        logger.warning("⚠️ Weekend check disabled for testing - this will attempt live trading!")
         if not self.login():
             logger.error("Login failed; aborting auto trade")
             return
