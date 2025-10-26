@@ -322,6 +322,17 @@ class AutoTradeEngine:
             return False
         variants = set(self._symbol_variants(base_symbol))
         h = self.portfolio.get_holdings() or {}
+        
+        # Check for 2FA gate - if detected, force re-login and retry once
+        if self._response_requires_2fa(h) and hasattr(self.auth, 'force_relogin'):
+            logger.info(f"2FA gate detected in holdings check, attempting re-login...")
+            try:
+                if self.auth.force_relogin():
+                    h = self.portfolio.get_holdings() or {}
+                    logger.debug(f"Holdings re-fetched after re-login")
+            except Exception as e:
+                logger.warning(f"Re-login failed during holdings check: {e}")
+        
         for item in (h.get('data') or []):
             sym = str(item.get('tradingSymbol') or '').upper()
             if sym in variants:
@@ -382,6 +393,21 @@ class AutoTradeEngine:
         if not self.orders or not self.portfolio:
             logger.error("Not logged in")
             return summary
+        
+        # Pre-flight check: Verify we can fetch holdings before proceeding
+        # This prevents duplicate orders if holdings API is down
+        test_holdings = self.portfolio.get_holdings() or {}
+        if self._response_requires_2fa(test_holdings):
+            logger.warning("Holdings API requires 2FA - attempting re-login...")
+            if hasattr(self.auth, 'force_relogin') and self.auth.force_relogin():
+                test_holdings = self.portfolio.get_holdings() or {}
+        
+        # Check if holdings fetch is working
+        if not isinstance(test_holdings, dict) or ('error' in test_holdings and test_holdings.get('error')):
+            logger.error("Cannot fetch holdings - aborting order placement to prevent duplicates")
+            logger.error(f"Holdings API error: {test_holdings}")
+            return summary
+        
         # No longer using history for duplicate skip; rely on live holdings and active orders
         for rec in recommendations:
             # Enforce hard portfolio cap before any balance checks
