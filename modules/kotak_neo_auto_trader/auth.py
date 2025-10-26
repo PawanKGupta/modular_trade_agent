@@ -89,15 +89,19 @@ class KotakNeoAuth:
 
             # Try cached session first (valid for the day)
             if self._try_use_cached_session():
-                # Always attempt 2FA on cached token to enable holdings/orders
-                ok2fa = self._complete_2fa()
-                if not ok2fa:
-                    self.logger.info("Cached session 2FA refresh failed; proceeding with cached token")
-                else:
-                    # Optional: persist refreshed token (if any)
-                    self._save_session_cache()
                 self.is_logged_in = True
                 self.logger.info("Reused cached session token (daily cache)")
+                # Attempt 2FA refresh to ensure session is fully active
+                # Don't fail if this doesn't work - cached token should still be valid
+                try:
+                    ok2fa = self._complete_2fa()
+                    if ok2fa:
+                        self.logger.debug("2FA refresh successful on cached session")
+                        self._save_session_cache()  # Update cache with refreshed token
+                    else:
+                        self.logger.debug("2FA refresh not needed or failed - continuing with cached token")
+                except Exception as e:
+                    self.logger.debug(f"2FA refresh attempt raised exception: {e} - continuing with cached token")
                 return True
 
             # Perform login + 2FA
@@ -153,7 +157,11 @@ class KotakNeoAuth:
                 password=self.password
             )
 
-            if "error" in login_response:
+            if login_response is None:
+                self.logger.error("Login failed: No response from server")
+                return False
+
+            if isinstance(login_response, dict) and "error" in login_response:
                 self.logger.error(f"Login failed: {login_response['error'][0]['message']}")
                 return False
 
@@ -171,7 +179,18 @@ class KotakNeoAuth:
             return False
         try:
             self.logger.info("Using MPIN for 2FA")
+            # Ensure client is available
+            if not self.client:
+                self.logger.error("No client available for 2FA")
+                return False
+            
             session_response = self.client.session_2fa(OTP=self.mpin)
+            
+            # Handle None response (can happen with cached sessions)
+            if session_response is None:
+                self.logger.debug("2FA returned None - session may already be active")
+                return True  # Don't fail if already authenticated
+            
             # Handle SDK error shape
             if isinstance(session_response, dict) and session_response.get('error'):
                 err = session_response.get('error')
@@ -181,11 +200,17 @@ class KotakNeoAuth:
                     msg = str(err)
                 self.logger.error(f"2FA failed: {msg}")
                 return False
+            
             # Extract session token when present
             if hasattr(session_response, 'data') and hasattr(session_response.data, 'token'):
                 self.session_token = session_response.data.token
+                self.logger.debug("2FA session token extracted from response.data.token")
             elif isinstance(session_response, dict) and 'data' in session_response:
-                self.session_token = (session_response.get('data') or {}).get('token')
+                token = (session_response.get('data') or {}).get('token')
+                if token:
+                    self.session_token = token
+                    self.logger.debug("2FA session token extracted from response['data']['token']")
+            
             return True
         except Exception as e:
             self.logger.error(f"2FA error: {e}")
@@ -260,13 +285,13 @@ class KotakNeoAuth:
                 if not ok:
                     try:
                         lim = self.client.limits(segment="ALL", exchange="ALL")
-                        ok = isinstance(lim, dict) and 'error' not in lim
+                        ok = lim is not None and isinstance(lim, dict) and 'error' not in lim
                     except Exception:
                         ok = False
                 if not ok and hasattr(self.client, 'holdings'):
                     try:
                         h = self.client.holdings()
-                        ok = isinstance(h, dict) and 'error' not in h
+                        ok = h is not None and isinstance(h, dict) and 'error' not in h
                     except Exception:
                         ok = False
                 if ok:

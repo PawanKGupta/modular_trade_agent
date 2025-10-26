@@ -268,7 +268,18 @@ class AutoTradeEngine:
         data = lim.get('data') if isinstance(lim, dict) else None
         avail = 0.0
         if isinstance(data, dict):
-            avail = float(data.get('marginAvailable') or data.get('cash') or 0.0)
+            # Try multiple field names for available funds
+            avail = float(
+                data.get('marginAvailable') or 
+                data.get('margin_available') or 
+                data.get('availableMargin') or 
+                data.get('cash') or 
+                data.get('availableCash') or 
+                data.get('available_cash') or 
+                0.0
+            )
+        if avail <= 0:
+            logger.debug(f"Available balance: ₹{avail:.2f} (from limits API response)")
         try:
             from math import floor
             return max(0, floor(avail / float(price)))
@@ -283,8 +294,20 @@ class AutoTradeEngine:
         data = lim.get('data') if isinstance(lim, dict) else None
         if isinstance(data, dict):
             try:
-                return float(data.get('marginAvailable') or data.get('cash') or 0.0)
-            except Exception:
+                # Try multiple field names for available funds
+                avail = float(
+                    data.get('marginAvailable') or 
+                    data.get('margin_available') or 
+                    data.get('availableMargin') or 
+                    data.get('cash') or 
+                    data.get('availableCash') or 
+                    data.get('available_cash') or 
+                    0.0
+                )
+                logger.debug(f"Available cash from limits API: ₹{avail:.2f}")
+                return avail
+            except Exception as e:
+                logger.warning(f"Error parsing available cash: {e}")
                 return 0.0
         return 0.0
 
@@ -457,7 +480,15 @@ class AutoTradeEngine:
 
         for symbol, entries in open_by_symbol.items():
             summary["symbols_evaluated"] += 1
-            ticker = entries[0].get('ticker', f"{symbol}.NS")
+            # Fix: Ensure symbol is valid before constructing ticker
+            ticker = entries[0].get('ticker')
+            if not ticker or ticker == '.NS':
+                # Reconstruct ticker from symbol if missing or invalid
+                if symbol and symbol.strip():
+                    ticker = f"{symbol}.NS"
+                else:
+                    logger.warning(f"Skip invalid empty symbol in trade history")
+                    continue
             ind = self.get_daily_indicators(ticker)
             if not ind:
                 logger.warning(f"Skip {symbol}: missing indicators for re-entry/exit evaluation")

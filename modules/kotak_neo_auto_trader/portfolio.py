@@ -192,16 +192,25 @@ class KotakNeoPortfolio:
                 logger.error(" Failed to get limits: {limits['error'][0]['message']}")
                 return None
             
-            # Display limits summary
+            # Display limits summary with comprehensive field checking
             if 'data' in limits:
                 data = limits['data']
-                cash = data.get('cash', 0)
-                margin_used = data.get('marginUsed', 0)
-                margin_available = data.get('marginAvailable', 0)
+                # Log all available fields for debugging
+                logger.debug(f" Limits API response keys: {list(data.keys())}")
+                
+                # Try multiple field name variants
+                cash = data.get('cash') or data.get('availableCash') or data.get('available_cash') or 0
+                margin_used = data.get('marginUsed') or data.get('margin_used') or data.get('usedMargin') or 0
+                margin_available = (
+                    data.get('marginAvailable') or 
+                    data.get('margin_available') or 
+                    data.get('availableMargin') or 
+                    data.get('available_margin') or 0
+                )
                 
                 logger.info(f"💰 Cash: ₹{cash}")
-                logger.info(" Margin Used: ₹{margin_used}")
-                logger.info(" Margin Available: ₹{margin_available}")
+                logger.info(f" Margin Used: ₹{margin_used}")
+                logger.info(f" Margin Available: ₹{margin_available}")
             
             return limits
             
