@@ -196,7 +196,7 @@ class KotakNeoPortfolio:
             if 'data' in limits:
                 data = limits['data']
                 # Log all available fields for debugging
-                logger.debug(f" Limits API response keys: {list(data.keys())}")
+                logger.info(f" Limits API response keys: {list(data.keys())}")
                 
                 # Try multiple field name variants
                 cash = data.get('cash') or data.get('availableCash') or data.get('available_cash') or 0

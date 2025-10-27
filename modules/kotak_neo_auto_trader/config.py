@@ -7,7 +7,7 @@ from datetime import time
 
 # Portfolio constraints
 MAX_PORTFOLIO_SIZE = 6
-CAPITAL_PER_TRADE = 100000  # fixed capital per entry
+CAPITAL_PER_TRADE = 100000  # fixed capital per entry (₹1 lakh per stock)
 
 # Scheduling
 RUN_TIME = time(hour=16, minute=0)  # 16:00 local time

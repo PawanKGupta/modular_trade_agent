@@ -3,12 +3,19 @@ from utils.logger import logger  # or just import logging
 from dotenv import load_dotenv
 import os
 
-# Try to load cred.env if it exists (for local development)
-# In GitHub Actions, environment variables are set directly
+# Try to load from multiple possible locations
+# Priority: env vars -> cred.env -> config/.env (GCP)
 try:
+    # Try local development file
     load_dotenv("cred.env")
 except:
-    pass  # File doesn't exist (e.g., in GitHub Actions), use env vars directly
+    pass
+
+try:
+    # Try GCP Secret Manager mounted location
+    load_dotenv("config/.env")
+except:
+    pass
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")

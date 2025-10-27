@@ -32,6 +32,7 @@ try:
     from .orders import KotakNeoOrders
     from .portfolio import KotakNeoPortfolio
     from .auth import KotakNeoAuth
+    from .scrip_master import KotakNeoScripMaster
     from . import config
     from .storage import load_history, save_history, append_trade
 except ImportError:
@@ -39,6 +40,7 @@ except ImportError:
     from orders import KotakNeoOrders
     from portfolio import KotakNeoPortfolio
     from auth import KotakNeoAuth
+    from scrip_master import KotakNeoScripMaster
     import config
     from storage import load_history, save_history, append_trade
 
@@ -57,6 +59,9 @@ class AutoTradeEngine:
         self.orders: Optional[KotakNeoOrders] = None
         self.portfolio: Optional[KotakNeoPortfolio] = None
         self.history_path = config.TRADES_HISTORY_PATH
+        
+        # Initialize scrip master for symbol resolution
+        self.scrip_master: Optional[KotakNeoScripMaster] = None
 
     # ---------------------- Utilities ----------------------
     @staticmethod
@@ -213,6 +218,17 @@ class AutoTradeEngine:
         if ok:
             self.orders = KotakNeoOrders(self.auth)
             self.portfolio = KotakNeoPortfolio(self.auth)
+            
+            # Initialize scrip master for symbol resolution
+            try:
+                self.scrip_master = KotakNeoScripMaster(
+                    auth_client=self.auth.client if hasattr(self.auth, 'client') else None
+                )
+                self.scrip_master.load_scrip_master(force_download=False)
+                logger.info("Scrip master loaded for buy order symbol resolution")
+            except Exception as e:
+                logger.warning(f"Failed to load scrip master: {e}. Will use symbol fallback.")
+                self.scrip_master = None
         return ok
 
     def logout(self):
@@ -269,7 +285,10 @@ class AutoTradeEngine:
         avail = 0.0
         if isinstance(data, dict):
             # Try multiple field names for available funds
+            # Priority: Net (Kotak Neo uses this), then standard margin fields
             avail = float(
+                data.get('Net') or 
+                data.get('net') or 
                 data.get('marginAvailable') or 
                 data.get('margin_available') or 
                 data.get('availableMargin') or 
@@ -295,7 +314,10 @@ class AutoTradeEngine:
         if isinstance(data, dict):
             try:
                 # Try multiple field names for available funds
+                # Priority: Net (Kotak Neo uses this), then standard margin fields
                 avail = float(
+                    data.get('Net') or 
+                    data.get('net') or 
                     data.get('marginAvailable') or 
                     data.get('margin_available') or 
                     data.get('availableMargin') or 
@@ -396,17 +418,29 @@ class AutoTradeEngine:
         
         # Pre-flight check: Verify we can fetch holdings before proceeding
         # This prevents duplicate orders if holdings API is down
-        test_holdings = self.portfolio.get_holdings() or {}
+        test_holdings = self.portfolio.get_holdings()
+        
+        # Handle None response (API error)
+        if test_holdings is None:
+            logger.error("Cannot fetch holdings (API returned None) - aborting order placement to prevent duplicates")
+            return summary
+        
+        # Check for 2FA gate
         if self._response_requires_2fa(test_holdings):
             logger.warning("Holdings API requires 2FA - attempting re-login...")
             if hasattr(self.auth, 'force_relogin') and self.auth.force_relogin():
-                test_holdings = self.portfolio.get_holdings() or {}
+                test_holdings = self.portfolio.get_holdings()
+                if test_holdings is None:
+                    logger.error("Holdings still unavailable after re-login - aborting order placement")
+                    return summary
         
-        # Check if holdings fetch is working
-        if not isinstance(test_holdings, dict) or ('error' in test_holdings and test_holdings.get('error')):
-            logger.error("Cannot fetch holdings - aborting order placement to prevent duplicates")
-            logger.error(f"Holdings API error: {test_holdings}")
+        # Verify holdings has 'data' field (successful response structure)
+        if not isinstance(test_holdings, dict) or 'data' not in test_holdings:
+            logger.error("Holdings API returned invalid response - aborting order placement to prevent duplicates")
+            logger.error(f"Holdings response: {test_holdings}")
             return summary
+        
+        logger.info("✓ Holdings API healthy - proceeding with order placement")
         
         # No longer using history for duplicate skip; rely on live holdings and active orders
         for rec in recommendations:
@@ -462,13 +496,35 @@ class AutoTradeEngine:
                 summary["skipped_invalid_qty"] += 1
                 continue
 
-            # Try common series suffixes for NSE cash (order of likelihood)
-            # Try common series suffixes for NSE cash (order of likelihood)
-            series_suffixes = ["-EQ", "-BE", "-BL", "-BZ"]
-            resp = None
-            placed_symbol = None
-            for suf in series_suffixes:
-                place_symbol = broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
+            # Try to resolve symbol using scrip master first
+            resolved_symbol = None
+            if self.scrip_master and self.scrip_master.symbol_map:
+                # Try base symbol first
+                instrument = self.scrip_master.get_instrument(broker_symbol)
+                if instrument:
+                    resolved_symbol = instrument['symbol']
+                    logger.debug(f"Resolved {broker_symbol} -> {resolved_symbol} via scrip master")
+            
+            # If scrip master resolved the symbol, use it directly
+            if resolved_symbol:
+                place_symbol = resolved_symbol
+                trial = self.orders.place_market_buy(
+                    symbol=place_symbol,
+                    quantity=qty,
+                    variety=config.DEFAULT_VARIETY,
+                    exchange=config.DEFAULT_EXCHANGE,
+                    product=config.DEFAULT_PRODUCT,
+                )
+                resp = trial if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial else None
+                placed_symbol = place_symbol if resp else None
+            
+            # Fallback: Try common series suffixes if scrip master didn't work
+            if not resp:
+                series_suffixes = ["-EQ", "-BE", "-BL", "-BZ"]
+                resp = None
+                placed_symbol = None
+                for suf in series_suffixes:
+                    place_symbol = broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
                 trial = self.orders.place_market_buy(
                     symbol=place_symbol,
                     quantity=qty,
