@@ -8,6 +8,7 @@ despite oversold RSI conditions, reducing reversal probability.
 
 import pandas as pd
 import numpy as np
+from datetime import datetime, time
 
 # Robust logging import
 try:
@@ -208,12 +209,63 @@ def is_truly_large_candle(metrics, market_context, volume_ratio=None):
         }
 
 
+def is_market_open():
+    """
+    Check if Indian stock market is currently open (9:15 AM - 3:30 PM IST, Mon-Fri).
+    
+    Returns:
+        bool: True if market is currently open
+    """
+    try:
+        now = datetime.now()
+        
+        # Check if it's a weekday (Monday=0, Sunday=6)
+        if now.weekday() >= 5:  # Saturday or Sunday
+            return False
+        
+        # Market hours: 9:15 AM to 3:30 PM IST
+        market_open = time(9, 15)
+        market_close = time(15, 30)
+        current_time = now.time()
+        
+        return market_open <= current_time <= market_close
+        
+    except Exception as e:
+        logger.warning(f"Error checking market hours: {e}")
+        # Default to assuming market is closed to be conservative
+        return False
+
+
+def is_today_candle(candle_date):
+    """
+    Check if a candle date is today.
+    
+    Args:
+        candle_date: Date or datetime object
+        
+    Returns:
+        bool: True if candle is from today
+    """
+    try:
+        if isinstance(candle_date, pd.Timestamp):
+            candle_date = candle_date.date()
+        elif isinstance(candle_date, datetime):
+            candle_date = candle_date.date()
+        
+        return candle_date == datetime.now().date()
+    except Exception:
+        return False
+
+
 def analyze_recent_candle_quality(df, lookback_candles=3):
     """
     Analyze recent candle quality for reversal potential using enhanced large candle detection.
     
     Large red body candles often indicate strong selling pressure that continues
     into the next day despite oversold RSI conditions.
+    
+    IMPORTANT: During market hours, excludes today's incomplete candle to avoid misleading signals.
+    Only analyzes completed candles (yesterday and before).
     
     Args:
         df: DataFrame with OHLC data
@@ -226,7 +278,8 @@ def analyze_recent_candle_quality(df, lookback_candles=3):
             'reversal_probability': str,
             'details': list,
             'candle_metrics': list,
-            'market_context': dict
+            'market_context': dict,
+            'excluded_today': bool
         }
     """
     
@@ -238,14 +291,39 @@ def analyze_recent_candle_quality(df, lookback_candles=3):
                 'reversal_probability': 'unknown',
                 'details': ['Insufficient candle data'],
                 'candle_metrics': [],
-                'market_context': {}
+                'market_context': {},
+                'excluded_today': False
+            }
+        
+        # Check if we should exclude today's incomplete candle
+        excluded_today = False
+        df_to_analyze = df.copy()
+        
+        if is_market_open() and 'date' in df.columns:
+            last_candle_date = df.iloc[-1]['date']
+            if is_today_candle(last_candle_date):
+                # Exclude today's incomplete candle during market hours
+                df_to_analyze = df.iloc[:-1]
+                excluded_today = True
+                logger.debug(f"Market open - excluding today's incomplete candle from analysis")
+        
+        # Ensure we still have enough data after exclusion
+        if len(df_to_analyze) < lookback_candles:
+            return {
+                'penalty_score': 0,
+                'quality_signal': 'insufficient_data',
+                'reversal_probability': 'unknown',
+                'details': ['Insufficient completed candle data'],
+                'candle_metrics': [],
+                'market_context': {},
+                'excluded_today': excluded_today
             }
             
         # Calculate market context for better large candle assessment
-        market_context = calculate_market_context(df, lookback_days=20)
+        market_context = calculate_market_context(df_to_analyze, lookback_days=20)
         
         # Get recent candles (most recent first)
-        recent_candles = df.tail(lookback_candles).iloc[::-1]
+        recent_candles = df_to_analyze.tail(lookback_candles).iloc[::-1]
         
         penalty_score = 0
         details = []
@@ -357,7 +435,8 @@ def analyze_recent_candle_quality(df, lookback_candles=3):
             'details': details,
             'candle_metrics': candle_metrics,
             'consecutive_red_candles': consecutive_red,
-            'market_context': market_context
+            'market_context': market_context,
+            'excluded_today': excluded_today
         }
         
     except Exception as e:
@@ -368,7 +447,8 @@ def analyze_recent_candle_quality(df, lookback_candles=3):
             'reversal_probability': 'unknown',
             'details': [f'Analysis error: {str(e)}'],
             'candle_metrics': [],
-            'market_context': {}
+            'market_context': {},
+            'excluded_today': False
         }
 
 
