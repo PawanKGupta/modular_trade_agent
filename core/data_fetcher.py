@@ -164,7 +164,20 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None, add_current_d
             df.index = df.index.tz_convert('UTC').tz_localize(None)
         
         # Reset index to create date column
-        df = df.reset_index().rename(columns={'Date': 'date'})
+        df = df.reset_index()
+        
+        # Handle different possible index column names
+        if 'Date' in df.columns:
+            df = df.rename(columns={'Date': 'date'})
+        elif 'index' in df.columns and df['index'].dtype == 'datetime64[ns]':
+            df = df.rename(columns={'index': 'date'})
+        elif df.index.name == 'Date' or pd.api.types.is_datetime64_any_dtype(df.iloc[:, 0]):
+            # If first column looks like dates, rename it
+            df = df.rename(columns={df.columns[0]: 'date'})
+        else:
+            error_msg = f"Cannot find date column in dataframe for {ticker}. Columns: {list(df.columns)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         
         # Only add current day data if explicitly requested (avoid data leakage in backtests)
         if add_current_day:

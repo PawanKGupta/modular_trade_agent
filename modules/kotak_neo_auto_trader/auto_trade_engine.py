@@ -32,6 +32,7 @@ try:
     from .orders import KotakNeoOrders
     from .portfolio import KotakNeoPortfolio
     from .auth import KotakNeoAuth
+    from .scrip_master import KotakNeoScripMaster
     from . import config
     from .storage import load_history, save_history, append_trade
 except ImportError:
@@ -39,6 +40,7 @@ except ImportError:
     from orders import KotakNeoOrders
     from portfolio import KotakNeoPortfolio
     from auth import KotakNeoAuth
+    from scrip_master import KotakNeoScripMaster
     import config
     from storage import load_history, save_history, append_trade
 
@@ -57,6 +59,9 @@ class AutoTradeEngine:
         self.orders: Optional[KotakNeoOrders] = None
         self.portfolio: Optional[KotakNeoPortfolio] = None
         self.history_path = config.TRADES_HISTORY_PATH
+        
+        # Initialize scrip master for symbol resolution
+        self.scrip_master: Optional[KotakNeoScripMaster] = None
 
     # ---------------------- Utilities ----------------------
     @staticmethod
@@ -213,6 +218,17 @@ class AutoTradeEngine:
         if ok:
             self.orders = KotakNeoOrders(self.auth)
             self.portfolio = KotakNeoPortfolio(self.auth)
+            
+            # Initialize scrip master for symbol resolution
+            try:
+                self.scrip_master = KotakNeoScripMaster(
+                    auth_client=self.auth.client if hasattr(self.auth, 'client') else None
+                )
+                self.scrip_master.load_scrip_master(force_download=False)
+                logger.info("Scrip master loaded for buy order symbol resolution")
+            except Exception as e:
+                logger.warning(f"Failed to load scrip master: {e}. Will use symbol fallback.")
+                self.scrip_master = None
         return ok
 
     def logout(self):
@@ -268,7 +284,21 @@ class AutoTradeEngine:
         data = lim.get('data') if isinstance(lim, dict) else None
         avail = 0.0
         if isinstance(data, dict):
-            avail = float(data.get('marginAvailable') or data.get('cash') or 0.0)
+            # Try multiple field names for available funds
+            # Priority: Net (Kotak Neo uses this), then standard margin fields
+            avail = float(
+                data.get('Net') or 
+                data.get('net') or 
+                data.get('marginAvailable') or 
+                data.get('margin_available') or 
+                data.get('availableMargin') or 
+                data.get('cash') or 
+                data.get('availableCash') or 
+                data.get('available_cash') or 
+                0.0
+            )
+        if avail <= 0:
+            logger.debug(f"Available balance: ₹{avail:.2f} (from limits API response)")
         try:
             from math import floor
             return max(0, floor(avail / float(price)))
@@ -283,8 +313,23 @@ class AutoTradeEngine:
         data = lim.get('data') if isinstance(lim, dict) else None
         if isinstance(data, dict):
             try:
-                return float(data.get('marginAvailable') or data.get('cash') or 0.0)
-            except Exception:
+                # Try multiple field names for available funds
+                # Priority: Net (Kotak Neo uses this), then standard margin fields
+                avail = float(
+                    data.get('Net') or 
+                    data.get('net') or 
+                    data.get('marginAvailable') or 
+                    data.get('margin_available') or 
+                    data.get('availableMargin') or 
+                    data.get('cash') or 
+                    data.get('availableCash') or 
+                    data.get('available_cash') or 
+                    0.0
+                )
+                logger.debug(f"Available cash from limits API: ₹{avail:.2f}")
+                return avail
+            except Exception as e:
+                logger.warning(f"Error parsing available cash: {e}")
                 return 0.0
         return 0.0
 
@@ -299,6 +344,17 @@ class AutoTradeEngine:
             return False
         variants = set(self._symbol_variants(base_symbol))
         h = self.portfolio.get_holdings() or {}
+        
+        # Check for 2FA gate - if detected, force re-login and retry once
+        if self._response_requires_2fa(h) and hasattr(self.auth, 'force_relogin'):
+            logger.info(f"2FA gate detected in holdings check, attempting re-login...")
+            try:
+                if self.auth.force_relogin():
+                    h = self.portfolio.get_holdings() or {}
+                    logger.debug(f"Holdings re-fetched after re-login")
+            except Exception as e:
+                logger.warning(f"Re-login failed during holdings check: {e}")
+        
         for item in (h.get('data') or []):
             sym = str(item.get('tradingSymbol') or '').upper()
             if sym in variants:
@@ -359,6 +415,33 @@ class AutoTradeEngine:
         if not self.orders or not self.portfolio:
             logger.error("Not logged in")
             return summary
+        
+        # Pre-flight check: Verify we can fetch holdings before proceeding
+        # This prevents duplicate orders if holdings API is down
+        test_holdings = self.portfolio.get_holdings()
+        
+        # Handle None response (API error)
+        if test_holdings is None:
+            logger.error("Cannot fetch holdings (API returned None) - aborting order placement to prevent duplicates")
+            return summary
+        
+        # Check for 2FA gate
+        if self._response_requires_2fa(test_holdings):
+            logger.warning("Holdings API requires 2FA - attempting re-login...")
+            if hasattr(self.auth, 'force_relogin') and self.auth.force_relogin():
+                test_holdings = self.portfolio.get_holdings()
+                if test_holdings is None:
+                    logger.error("Holdings still unavailable after re-login - aborting order placement")
+                    return summary
+        
+        # Verify holdings has 'data' field (successful response structure)
+        if not isinstance(test_holdings, dict) or 'data' not in test_holdings:
+            logger.error("Holdings API returned invalid response - aborting order placement to prevent duplicates")
+            logger.error(f"Holdings response: {test_holdings}")
+            return summary
+        
+        logger.info("✓ Holdings API healthy - proceeding with order placement")
+        
         # No longer using history for duplicate skip; rely on live holdings and active orders
         for rec in recommendations:
             # Enforce hard portfolio cap before any balance checks
@@ -413,13 +496,35 @@ class AutoTradeEngine:
                 summary["skipped_invalid_qty"] += 1
                 continue
 
-            # Try common series suffixes for NSE cash (order of likelihood)
-            # Try common series suffixes for NSE cash (order of likelihood)
-            series_suffixes = ["-EQ", "-BE", "-BL", "-BZ"]
-            resp = None
-            placed_symbol = None
-            for suf in series_suffixes:
-                place_symbol = broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
+            # Try to resolve symbol using scrip master first
+            resolved_symbol = None
+            if self.scrip_master and self.scrip_master.symbol_map:
+                # Try base symbol first
+                instrument = self.scrip_master.get_instrument(broker_symbol)
+                if instrument:
+                    resolved_symbol = instrument['symbol']
+                    logger.debug(f"Resolved {broker_symbol} -> {resolved_symbol} via scrip master")
+            
+            # If scrip master resolved the symbol, use it directly
+            if resolved_symbol:
+                place_symbol = resolved_symbol
+                trial = self.orders.place_market_buy(
+                    symbol=place_symbol,
+                    quantity=qty,
+                    variety=config.DEFAULT_VARIETY,
+                    exchange=config.DEFAULT_EXCHANGE,
+                    product=config.DEFAULT_PRODUCT,
+                )
+                resp = trial if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial else None
+                placed_symbol = place_symbol if resp else None
+            
+            # Fallback: Try common series suffixes if scrip master didn't work
+            if not resp:
+                series_suffixes = ["-EQ", "-BE", "-BL", "-BZ"]
+                resp = None
+                placed_symbol = None
+                for suf in series_suffixes:
+                    place_symbol = broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
                 trial = self.orders.place_market_buy(
                     symbol=place_symbol,
                     quantity=qty,
@@ -457,7 +562,15 @@ class AutoTradeEngine:
 
         for symbol, entries in open_by_symbol.items():
             summary["symbols_evaluated"] += 1
-            ticker = entries[0].get('ticker', f"{symbol}.NS")
+            # Fix: Ensure symbol is valid before constructing ticker
+            ticker = entries[0].get('ticker')
+            if not ticker or ticker == '.NS':
+                # Reconstruct ticker from symbol if missing or invalid
+                if symbol and symbol.strip():
+                    ticker = f"{symbol}.NS"
+                else:
+                    logger.warning(f"Skip invalid empty symbol in trade history")
+                    continue
             ind = self.get_daily_indicators(ticker)
             if not ind:
                 logger.warning(f"Skip {symbol}: missing indicators for re-entry/exit evaluation")
@@ -552,12 +665,14 @@ class AutoTradeEngine:
 
     # ---------------------- Orchestrator ----------------------
     def run(self, keep_session: bool = True):
-        if not self.is_trading_weekday():
-            logger.info("Non-trading weekday; skipping auto trade run")
-            return
-        if not self.market_was_open_today():
-            logger.info("Detected market holiday/closed day; skipping run")
-            return
+        # TEMPORARY: Skip weekend check for testing
+        # if not self.is_trading_weekday():
+        #     logger.info("Non-trading weekday; skipping auto trade run")
+        #     return
+        # if not self.market_was_open_today():
+        #     logger.info("Detected market holiday/closed day; skipping run")
+        #     return
+        logger.warning("⚠️ Weekend check disabled for testing - this will attempt live trading!")
         if not self.login():
             logger.error("Login failed; aborting auto trade")
             return
