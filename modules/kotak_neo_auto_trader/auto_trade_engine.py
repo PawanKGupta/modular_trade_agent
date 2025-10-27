@@ -34,7 +34,7 @@ try:
     from .auth import KotakNeoAuth
     from .scrip_master import KotakNeoScripMaster
     from . import config
-    from .storage import load_history, save_history, append_trade
+    from .storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders
 except ImportError:
     from trader import KotakNeoTrader
     from orders import KotakNeoOrders
@@ -42,7 +42,7 @@ except ImportError:
     from auth import KotakNeoAuth
     from scrip_master import KotakNeoScripMaster
     import config
-    from storage import load_history, save_history, append_trade
+    from storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders
 
 
 @dataclass
@@ -402,11 +402,69 @@ class AutoTradeEngine:
         except Exception:
             return 0
 
+    def _attempt_place_order(self, broker_symbol: str, ticker: str, qty: int, close: float, ind: Dict[str, Any]) -> bool:
+        """
+        Helper method to attempt placing an order with symbol resolution.
+        Returns True if order placed successfully, False otherwise.
+        """
+        resp = None
+        placed_symbol = None
+        
+        # Try to resolve symbol using scrip master first
+        resolved_symbol = None
+        if self.scrip_master and self.scrip_master.symbol_map:
+            # Try base symbol first
+            instrument = self.scrip_master.get_instrument(broker_symbol)
+            if instrument:
+                resolved_symbol = instrument['symbol']
+                logger.debug(f"Resolved {broker_symbol} -> {resolved_symbol} via scrip master")
+        
+        # If scrip master resolved the symbol, use it directly
+        if resolved_symbol:
+            place_symbol = resolved_symbol
+            trial = self.orders.place_market_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                variety=config.DEFAULT_VARIETY,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
+            resp = trial if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial else None
+            placed_symbol = place_symbol if resp else None
+        
+        # Fallback: Try common series suffixes if scrip master didn't work
+        if not resp:
+            series_suffixes = ["-EQ", "-BE", "-BL", "-BZ"]
+            resp = None
+            placed_symbol = None
+            for suf in series_suffixes:
+                place_symbol = broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
+                trial = self.orders.place_market_buy(
+                    symbol=place_symbol,
+                    quantity=qty,
+                    variety=config.DEFAULT_VARIETY,
+                    exchange=config.DEFAULT_EXCHANGE,
+                    product=config.DEFAULT_PRODUCT,
+                )
+                if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial and 'Not_Ok'.lower() not in str(trial).lower():
+                    resp = trial
+                    placed_symbol = place_symbol
+                    break
+        
+        # Check if order was successful
+        resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp) and 'error' not in resp and 'not_ok' not in str(resp).lower()
+        if resp_valid:
+            logger.info(f"Order placed for {placed_symbol or broker_symbol}; will record once visible in holdings")
+            return True
+        return False
+
     # ---------------------- New entries ----------------------
     def place_new_entries(self, recommendations: List[Recommendation]) -> Dict[str, int]:
         summary = {
             "attempted": 0,
             "placed": 0,
+            "retried": 0,
+            "failed_balance": 0,
             "skipped_portfolio_limit": 0,
             "skipped_duplicates": 0,
             "skipped_missing_data": 0,
@@ -440,9 +498,79 @@ class AutoTradeEngine:
             logger.error(f"Holdings response: {test_holdings}")
             return summary
         
-        logger.info("✓ Holdings API healthy - proceeding with order placement")
+        logger.info("Holdings API healthy - proceeding with order placement")
         
-        # No longer using history for duplicate skip; rely on live holdings and active orders
+        # Clean up expired failed orders (past market open time)
+        cleanup_expired_failed_orders(self.history_path)
+        
+        # STEP 1: Retry previously failed orders due to insufficient balance
+        # (includes yesterday's orders if before 9:15 AM market open)
+        failed_orders = get_failed_orders(self.history_path, include_previous_day_before_market=True)
+        if failed_orders:
+            logger.info(f"Found {len(failed_orders)} previously failed orders to retry")
+            for failed_order in failed_orders[:]:
+                # Check portfolio limit
+                try:
+                    current_count = len(self.current_symbols_in_portfolio())
+                except Exception:
+                    current_count = self.portfolio_size()
+                if current_count >= config.MAX_PORTFOLIO_SIZE:
+                    logger.info(f"Portfolio limit reached ({current_count}/{config.MAX_PORTFOLIO_SIZE}); skipping failed order retries")
+                    break
+                
+                symbol = failed_order.get('symbol')
+                ticker = failed_order.get('ticker')
+                
+                # Skip if already in holdings
+                if self.has_holding(symbol):
+                    logger.info(f"Removing {symbol} from retry queue: already in holdings")
+                    remove_failed_order(self.history_path, symbol)
+                    continue
+                
+                # Skip if already has active buy order
+                if self.has_active_buy_order(symbol):
+                    logger.info(f"Skipping retry for {symbol}: already has pending buy order")
+                    continue
+                
+                summary["retried"] += 1
+                logger.info(f"Retrying failed order for {symbol}...")
+                
+                # Get fresh indicators
+                ind = self.get_daily_indicators(ticker)
+                if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
+                    logger.warning(f"Skipping retry {symbol}: missing indicators")
+                    continue
+                
+                close = ind['close']
+                if close <= 0:
+                    logger.warning(f"Skipping retry {symbol}: invalid close price {close}")
+                    continue
+                
+                qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / close))
+                
+                # Check balance again
+                affordable = self.get_affordable_qty(close)
+                if affordable < config.MIN_QTY or qty > affordable:
+                    avail_cash = self.get_available_cash()
+                    required_cash = qty * close
+                    shortfall = max(0.0, required_cash - (avail_cash or 0.0))
+                    logger.warning(f"Retry failed for {symbol}: still insufficient balance (need ₹{required_cash:,.0f}, have ₹{(avail_cash or 0.0):,.0f})")
+                    # Update the failed order with new attempt timestamp
+                    failed_order['retry_count'] = failed_order.get('retry_count', 0) + 1
+                    failed_order['last_retry_attempt'] = datetime.now().isoformat()
+                    add_failed_order(self.history_path, failed_order)
+                    continue
+                
+                # Try placing the order
+                success = self._attempt_place_order(symbol, ticker, qty, close, ind)
+                if success:
+                    summary["placed"] += 1
+                    remove_failed_order(self.history_path, symbol)
+                    logger.info(f"Successfully placed retry order for {symbol}")
+                else:
+                    logger.warning(f"Retry order placement failed for {symbol}")
+        
+        # STEP 2: Process new recommendations
         for rec in recommendations:
             # Enforce hard portfolio cap before any balance checks
             try:
@@ -480,67 +608,53 @@ class AutoTradeEngine:
                 summary["skipped_invalid_qty"] += 1
                 continue
             qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / close))
-            # Balance check (CNC needs cash) -> notify on insufficiency
+            # Balance check (CNC needs cash) -> notify on insufficiency and save for retry
             affordable = self.get_affordable_qty(close)
             if affordable < config.MIN_QTY or qty > affordable:
                 avail_cash = self.get_available_cash()
                 required_cash = qty * close
                 shortfall = max(0.0, required_cash - (avail_cash or 0.0))
-                msg = (
-                    f"Insufficient balance for {broker_symbol} AMO BUY.\n"
+                # Telegram message with emojis
+                telegram_msg = (
+                    f"⚠️ Insufficient balance for {broker_symbol} AMO BUY.\n"
                     f"Needed: ₹{required_cash:,.0f} for {qty} @ ₹{close:.2f}.\n"
-                    f"Available: ₹{(avail_cash or 0.0):,.0f}. Shortfall: ₹{shortfall:,.0f}."
+                    f"Available: ₹{(avail_cash or 0.0):,.0f}. Shortfall: ₹{shortfall:,.0f}.\n\n"
+                    f"🔁 Order saved for retry until 9:15 AM tomorrow (before market opens).\n"
+                    f"Add balance & run script, or wait for 8 AM scheduled retry."
                 )
-                send_telegram(msg)
-                logger.warning(msg)
+                send_telegram(telegram_msg)
+                
+                # Logger message without emojis
+                logger.warning(
+                    f"Insufficient balance for {broker_symbol} AMO BUY. "
+                    f"Needed: Rs.{required_cash:,.0f} for {qty} @ Rs.{close:.2f}. "
+                    f"Available: Rs.{(avail_cash or 0.0):,.0f}. Shortfall: Rs.{shortfall:,.0f}. "
+                    f"Order saved for retry until 9:15 AM tomorrow."
+                )
+                
+                # Save failed order for retry
+                failed_order_info = {
+                    'symbol': broker_symbol,
+                    'ticker': rec.ticker,
+                    'close': close,
+                    'qty': qty,
+                    'required_cash': required_cash,
+                    'shortfall': shortfall,
+                    'reason': 'insufficient_balance',
+                    'verdict': rec.verdict,
+                    'rsi10': ind.get('rsi10'),
+                    'ema9': ind.get('ema9'),
+                    'ema200': ind.get('ema200'),
+                }
+                add_failed_order(self.history_path, failed_order_info)
+                summary["failed_balance"] += 1
                 summary["skipped_invalid_qty"] += 1
                 continue
 
-            # Try to resolve symbol using scrip master first
-            resolved_symbol = None
-            if self.scrip_master and self.scrip_master.symbol_map:
-                # Try base symbol first
-                instrument = self.scrip_master.get_instrument(broker_symbol)
-                if instrument:
-                    resolved_symbol = instrument['symbol']
-                    logger.debug(f"Resolved {broker_symbol} -> {resolved_symbol} via scrip master")
-            
-            # If scrip master resolved the symbol, use it directly
-            if resolved_symbol:
-                place_symbol = resolved_symbol
-                trial = self.orders.place_market_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    variety=config.DEFAULT_VARIETY,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-                resp = trial if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial else None
-                placed_symbol = place_symbol if resp else None
-            
-            # Fallback: Try common series suffixes if scrip master didn't work
-            if not resp:
-                series_suffixes = ["-EQ", "-BE", "-BL", "-BZ"]
-                resp = None
-                placed_symbol = None
-                for suf in series_suffixes:
-                    place_symbol = broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
-                trial = self.orders.place_market_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    variety=config.DEFAULT_VARIETY,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-                if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial and 'Not_Ok'.lower() not in str(trial).lower():
-                    resp = trial
-                    placed_symbol = place_symbol
-                    break
-            # Only persist successful orders to history
-            resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp) and 'error' not in resp and 'not_ok' not in str(resp).lower()
-            if resp_valid:
+            # Try placing order
+            success = self._attempt_place_order(broker_symbol, rec.ticker, qty, close, ind)
+            if success:
                 summary["placed"] += 1
-                logger.info(f"Order placed for {placed_symbol or broker_symbol}; will record once visible in holdings")
             else:
                 logger.error(f"Order placement failed for {broker_symbol}")
         return summary
@@ -672,7 +786,7 @@ class AutoTradeEngine:
         # if not self.market_was_open_today():
         #     logger.info("Detected market holiday/closed day; skipping run")
         #     return
-        logger.warning("⚠️ Weekend check disabled for testing - this will attempt live trading!")
+        logger.warning("WARNING: Weekend check disabled for testing - this will attempt live trading!")
         if not self.login():
             logger.error("Login failed; aborting auto trade")
             return
@@ -686,6 +800,7 @@ class AutoTradeEngine:
             self.reconcile_holdings_to_history()
             logger.info(
                 f"Run Summary: NewEntries placed={new_summary['placed']}/attempted={new_summary['attempted']}, "
+                f"retried={new_summary.get('retried', 0)}, failed_balance={new_summary.get('failed_balance', 0)}, "
                 f"skipped_dup={new_summary['skipped_duplicates']}, skipped_limit={new_summary['skipped_portfolio_limit']}; "
                 f"Re/Exits: reentries={re_summary['reentries']}, exits={re_summary['exits']}, symbols={re_summary['symbols_evaluated']}"
             )

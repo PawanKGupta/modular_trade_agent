@@ -108,6 +108,14 @@ Create-TradingTask `
     -Time "16:05" `
     -DurationHours 1
 
+# Task 2b: Pre-Market Retry (8:00 AM)
+Create-TradingTask `
+    -TaskName "TradingBot-PreMarketRetry" `
+    -Description "Retry failed AMO orders at 8:00 AM (before market opens)" `
+    -Arguments "-m modules.kotak_neo_auto_trader.run_place_amo --env modules\kotak_neo_auto_trader\kotak_neo.env" `
+    -Time "08:00" `
+    -DurationHours 1
+
 # Task 3: Sell Monitoring (9:15 AM)
 Create-TradingTask `
     -TaskName "TradingBot-SellMonitor" `
@@ -121,14 +129,15 @@ Write-Host "SETUP COMPLETE!" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Scheduled Tasks Created:" -ForegroundColor Yellow
-Write-Host "  1. TradingBot-Analysis      (Mon-Fri at 4:00 PM)" -ForegroundColor White
-Write-Host "  2. TradingBot-BuyOrders     (Mon-Fri at 4:05 PM)" -ForegroundColor White
-Write-Host "  3. TradingBot-SellMonitor   (Mon-Fri at 9:15 AM)" -ForegroundColor White
+Write-Host "  1. TradingBot-Analysis        (Mon-Fri at 4:00 PM)" -ForegroundColor White
+Write-Host "  2. TradingBot-BuyOrders       (Mon-Fri at 4:05 PM)" -ForegroundColor White
+Write-Host "  3. TradingBot-PreMarketRetry  (Mon-Fri at 8:00 AM) <- RETRY FAILED ORDERS" -ForegroundColor Cyan
+Write-Host "  4. TradingBot-SellMonitor     (Mon-Fri at 9:15 AM)" -ForegroundColor White
 Write-Host ""
 
 # Display next run times
 Write-Host "Next Scheduled Runs:" -ForegroundColor Yellow
-$tasks = @("TradingBot-Analysis", "TradingBot-BuyOrders", "TradingBot-SellMonitor")
+$tasks = @("TradingBot-Analysis", "TradingBot-BuyOrders", "TradingBot-PreMarketRetry", "TradingBot-SellMonitor")
 foreach ($taskName in $tasks) {
     $task = Get-ScheduledTask -TaskName $taskName
     $info = Get-ScheduledTaskInfo -TaskName $taskName
