@@ -389,6 +389,24 @@ sudo systemctl disable modular-trade-agent.timer
 
 ### Installation Issues
 
+#### Problem: apt-get update error (cnf-update-db)
+
+**Error**: `ModuleNotFoundError: No module named 'apt_pkg'` or `cnf-update-db` errors
+
+**Solution**: This is a cosmetic error that won't affect installation. To fix:
+
+```bash
+# Quick fix - run the troubleshooting script
+chmod +x fix_ubuntu_system.sh
+./fix_ubuntu_system.sh
+
+# Or manual fix
+sudo rm -f /etc/apt/apt.conf.d/50command-not-found
+sudo apt-get update
+```
+
+Then re-run the installer. The error is non-critical and the installer will continue.
+
 #### Problem: Python version too old
 
 ```bash

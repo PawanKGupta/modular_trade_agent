@@ -92,7 +92,8 @@ install_system_deps() {
     print_header "Installing System Dependencies"
     
     print_info "Updating package list..."
-    sudo apt-get update -qq
+    # Ignore command-not-found database errors (non-critical)
+    sudo apt-get update -qq 2>&1 | grep -v "cnf-update-db" || true
     
     print_info "Installing required packages..."
     
