@@ -96,50 +96,66 @@ class KotakNeoScripMaster:
         try:
             logger.info(f"Downloading scrip master for {exchange} via Kotak Neo API...")
             
-            # Use auth client if provided
+            # Use auth client if provided (preferred method)
             if auth_client and hasattr(auth_client, 'scrip_master'):
                 try:
+                    logger.info(f"Using authenticated API call for {exchange}")
                     result = auth_client.scrip_master(exchange_segment=exchange)
-                    if result and isinstance(result, dict):
+                    
+                    # The API returns a URL string, not direct data
+                    if result and isinstance(result, str) and result.strip().startswith('http'):
+                        csv_url = result.strip()
+                        logger.info(f"Got CSV URL: {csv_url}")
+                        
+                        # Download CSV from URL
+                        csv_response = requests.get(csv_url, timeout=30)
+                        csv_response.raise_for_status()
+                        
+                        # Parse CSV format
+                        lines = csv_response.text.strip().split('\n')
+                        if len(lines) < 2:
+                            logger.error(f"Invalid CSV format for {exchange}")
+                            return None
+                        
+                        # First line is header
+                        headers = [h.strip() for h in lines[0].split(',')]
+                        logger.debug(f"CSV headers: {headers[:10]}...")  # Show first 10
+                        
+                        instruments = []
+                        for line in lines[1:]:
+                            if not line.strip():
+                                continue
+                            
+                            # CSV may have quotes and commas in values, use proper CSV parsing
+                            fields = [f.strip() for f in line.split(',')]
+                            if len(fields) < len(headers):
+                                continue
+                            
+                            # Take only the number of fields that match headers
+                            instrument = dict(zip(headers, fields[:len(headers)]))
+                            instruments.append(instrument)
+                        
+                        logger.info(f"Downloaded {len(instruments)} instruments for {exchange} via CSV")
+                        return instruments
+                    
+                    elif result and isinstance(result, dict):
+                        # Fallback: handle if API returns dict directly
                         instruments = result.get('data', [])
                         if instruments:
                             logger.info(f"Downloaded {len(instruments)} instruments for {exchange} via API")
                             return instruments
+                        else:
+                            logger.warning(f"API returned no instruments for {exchange}")
+                    else:
+                        logger.warning(f"Unexpected API response type: {type(result)}")
+                        
                 except Exception as e:
-                    logger.warning(f"API scrip master failed: {e}, trying URL fallback...")
+                    logger.error(f"API scrip master failed: {e}")
             
-            # Fallback to direct URL download
-            url = self.SCRIP_MASTER_URLS.get(exchange.upper())
-            if not url:
-                logger.error(f"Unknown exchange: {exchange}")
-                return None
-            
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            
-            # Parse CSV/TXT format
-            lines = response.text.strip().split('\n')
-            if len(lines) < 2:
-                logger.error(f"Invalid scrip master format for {exchange}")
-                return None
-            
-            # First line is header
-            headers = [h.strip() for h in lines[0].split('|')]
-            
-            instruments = []
-            for line in lines[1:]:
-                if not line.strip():
-                    continue
-                
-                fields = [f.strip() for f in line.split('|')]
-                if len(fields) != len(headers):
-                    continue
-                
-                instrument = dict(zip(headers, fields))
-                instruments.append(instrument)
-            
-            logger.info(f"Downloaded {len(instruments)} instruments for {exchange}")
-            return instruments
+            # If no auth client or API failed, log error
+            logger.error(f"Cannot download scrip master for {exchange}: auth client required")
+            logger.error(f"Please authenticate using KotakNeoAuth before loading scrip master.")
+            return None
             
         except requests.RequestException as e:
             logger.error(f"Failed to download scrip master for {exchange}: {e}")
@@ -221,23 +237,29 @@ class KotakNeoScripMaster:
     def _build_symbol_map(self, exchange: str, instruments: List[Dict]):
         """Build quick lookup map for symbols"""
         for instrument in instruments:
-            # Extract relevant fields (field names may vary)
-            symbol = instrument.get('pSymbol') or instrument.get('symbol') or instrument.get('tradingSymbol')
-            token = instrument.get('pTrdSymbol') or instrument.get('instrumentToken') or instrument.get('token')
+            # Extract relevant fields - pTrdSymbol is the trading symbol (e.g. GLENMARK-EQ)
+            # pSymbol is numeric ID in Kotak's new format
+            trading_symbol = instrument.get('pTrdSymbol') or instrument.get('symbol') or instrument.get('tradingSymbol')
+            token = instrument.get('pSymbol') or instrument.get('instrumentToken') or instrument.get('token')
             
-            if symbol:
+            if trading_symbol:
                 # Store with exchange prefix for uniqueness
-                key = f"{exchange}:{symbol}"
+                key = f"{exchange}:{trading_symbol}"
                 self.symbol_map[key] = {
                     'exchange': exchange,
-                    'symbol': symbol,
+                    'symbol': trading_symbol,  # This is the trading symbol like GLENMARK-EQ
                     'token': token,
                     'instrument': instrument
                 }
                 
                 # Also store without exchange for convenience (NSE only)
-                if exchange == 'NSE' and symbol not in self.symbol_map:
-                    self.symbol_map[symbol] = self.symbol_map[key]
+                if exchange == 'NSE' and trading_symbol not in self.symbol_map:
+                    self.symbol_map[trading_symbol] = self.symbol_map[key]
+                
+                # Also store base symbol without suffix (e.g., GLENMARK from GLENMARK-EQ)
+                base_symbol = trading_symbol.split('-')[0]
+                if exchange == 'NSE' and base_symbol not in self.symbol_map:
+                    self.symbol_map[base_symbol] = self.symbol_map[key]
     
     def get_instrument(self, symbol: str, exchange: str = 'NSE') -> Optional[Dict]:
         """
