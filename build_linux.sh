@@ -20,7 +20,7 @@ NC='\033[0m' # No Color
 # Check if virtual environment exists
 if [ ! -d ".venv" ]; then
     echo -e "${YELLOW}Virtual environment not found. Creating...${NC}"
-    python3 -m venv .venv
+    python3.11 -m venv .venv
     echo -e "${GREEN}✓ Virtual environment created${NC}"
 fi
 
