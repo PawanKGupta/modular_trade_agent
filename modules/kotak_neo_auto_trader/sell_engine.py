@@ -102,7 +102,7 @@ class SellOrderManager:
             exchange: Exchange name ("NSE" or "BSE")
             
         Returns:
-            Price rounded to valid tick size
+            Price rounded to valid tick size (rounded UP to next valid tick)
         """
         if price <= 0:
             return price
@@ -118,16 +118,16 @@ class SellOrderManager:
             # NSE uses ₹0.05 for all equity stocks (cash segment)
             tick_size = 0.05
         
-        # Round to nearest tick
+        # Round UP to next valid tick (ceiling)
         # Use decimal arithmetic to avoid floating point precision issues
-        from decimal import Decimal, ROUND_HALF_UP
+        from decimal import Decimal, ROUND_UP
         
         # Convert to Decimal for precise arithmetic
         price_decimal = Decimal(str(price))
         tick_decimal = Decimal(str(tick_size))
         
-        # Round to nearest tick
-        rounded = (price_decimal / tick_decimal).quantize(Decimal('1'), rounding=ROUND_HALF_UP) * tick_decimal
+        # Round UP to next tick (always round in favor of seller)
+        rounded = (price_decimal / tick_decimal).quantize(Decimal('1'), rounding=ROUND_UP) * tick_decimal
         
         # Convert back to float with 2 decimal places
         return float(rounded.quantize(Decimal('0.01')))
@@ -307,12 +307,15 @@ class SellOrderManager:
                 logger.error(f"Failed to place sell order for {symbol}")
                 return None
             
-            # Extract order ID
+            # Extract order ID - try multiple response formats
             order_id = (
+                response.get('nOrdNo') or  # Direct field (most common)
+                response.get('data', {}).get('nOrdNo') or
                 response.get('data', {}).get('order_id') or
                 response.get('data', {}).get('neoOrdNo') or
                 response.get('order', {}).get('neoOrdNo') or
-                response.get('neoOrdNo')
+                response.get('neoOrdNo') or
+                response.get('orderId')
             )
             
             if order_id:
@@ -368,23 +371,28 @@ class SellOrderManager:
                 logger.error(f"Failed to place updated sell order for {symbol}")
                 return False
             
-            # Extract new order ID
+            # Extract new order ID - try multiple response formats
             new_order_id = (
+                response.get('nOrdNo') or  # Direct field (most common)
+                response.get('data', {}).get('nOrdNo') or
                 response.get('data', {}).get('order_id') or
                 response.get('data', {}).get('neoOrdNo') or
                 response.get('order', {}).get('neoOrdNo') or
-                response.get('neoOrdNo')
+                response.get('neoOrdNo') or
+                response.get('orderId')
             )
             
             if new_order_id:
                 logger.info(f"✅ Order updated: {symbol} @ ₹{rounded_price:.2f}, New Order ID: {new_order_id}")
-                # Update tracking
+                # Update tracking - preserve ticker from existing entry
                 base_symbol = symbol.split('-')[0]
+                old_entry = self.active_sell_orders.get(base_symbol, {})
                 self.active_sell_orders[base_symbol] = {
                     'order_id': str(new_order_id),
                     'target_price': rounded_price,
                     'placed_symbol': symbol,
-                    'qty': qty
+                    'qty': qty,
+                    'ticker': old_entry.get('ticker')  # Preserve ticker from old entry
                 }
                 return True
             
@@ -489,9 +497,63 @@ class SellOrderManager:
         
         return market_open <= now <= market_close
     
+    def get_existing_sell_orders(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get existing pending sell orders from broker to avoid duplicates
+        
+        Returns:
+            Dict mapping symbol -> order info {order_id, qty, price}
+        """
+        try:
+            existing_orders = {}
+            
+            # Get pending orders from broker
+            pending = self.orders.get_pending_orders()
+            if not pending:
+                return existing_orders
+            
+            # Filter for SELL orders only
+            for order in pending:
+                try:
+                    txn_type = order.get('trnsTp') or order.get('transactionType') or order.get('txnType') or ''
+                    if txn_type.upper() not in ['S', 'SELL']:
+                        continue
+                    
+                    # Extract symbol (remove -EQ suffix)
+                    symbol = order.get('trdSym') or order.get('tradingSymbol') or order.get('symbol') or ''
+                    if '-' in symbol:
+                        symbol = symbol.split('-')[0]
+                    
+                    # Extract order details
+                    qty = int(order.get('qty') or order.get('quantity') or 0)
+                    price = float(order.get('prc') or order.get('price') or 0)
+                    order_id = order.get('nOrdNo') or order.get('orderId') or order.get('order_id') or ''
+                    
+                    if symbol and qty > 0:
+                        existing_orders[symbol.upper()] = {
+                            'order_id': str(order_id),
+                            'qty': qty,
+                            'price': price
+                        }
+                        logger.debug(f"Found existing sell order: {symbol} x{qty} @ ₹{price:.2f}")
+                        
+                except Exception as e:
+                    logger.debug(f"Error parsing order: {e}")
+                    continue
+            
+            if existing_orders:
+                logger.info(f"Found {len(existing_orders)} existing sell orders in broker")
+            
+            return existing_orders
+            
+        except Exception as e:
+            logger.warning(f"Could not fetch existing orders: {e}. Will proceed with placement.")
+            return {}
+    
     def run_at_market_open(self) -> int:
         """
         Place sell orders for all open positions at market open
+        Checks for existing orders to avoid duplicates
         
         Returns:
             Number of orders placed
@@ -503,15 +565,38 @@ class SellOrderManager:
             logger.info("No open positions to place sell orders")
             return 0
         
+        # Check for existing sell orders to avoid duplicates
+        existing_orders = self.get_existing_sell_orders()
+        
         orders_placed = 0
         
         for trade in open_positions:
             symbol = trade.get('symbol')
             ticker = trade.get('ticker')
+            qty = trade.get('qty', 0)
             
             if not symbol or not ticker:
                 logger.warning(f"Skipping trade with missing symbol/ticker: {trade}")
                 continue
+            
+            # Check for existing order with same symbol and quantity (avoid duplicate)
+            if symbol.upper() in existing_orders:
+                existing = existing_orders[symbol.upper()]
+                if existing['qty'] == qty:
+                    logger.info(f"⏭️ Skipping {symbol}: Existing sell order found (Order ID: {existing['order_id']}, Qty: {qty}, Price: ₹{existing['price']:.2f})")
+                    # Track the existing order for monitoring
+                    # IMPORTANT: Must include ticker for monitoring to work
+                    self.active_sell_orders[symbol] = {
+                        'order_id': existing['order_id'],
+                        'target_price': existing['price'],
+                        'placed_symbol': trade.get('placed_symbol') or f"{symbol}-EQ",
+                        'qty': qty,
+                        'ticker': ticker  # From trade history (e.g., GLENMARK.NS)
+                    }
+                    self.lowest_ema9[symbol] = existing['price']
+                    orders_placed += 1  # Count as placed (existing)
+                    logger.debug(f"Tracked {symbol}: ticker={ticker}, order_id={existing['order_id']}")
+                    continue
             
             # Get current EMA9 as target (real-time with LTP)
             broker_sym = trade.get('placed_symbol') or f"{symbol}-EQ"
@@ -535,7 +620,7 @@ class SellOrderManager:
                     'order_id': order_id,
                     'target_price': ema9,
                     'placed_symbol': trade.get('placed_symbol') or f"{symbol}-EQ",
-                    'qty': trade.get('qty', 0),
+                    'qty': qty,
                     'ticker': ticker
                 }
                 self.lowest_ema9[symbol] = ema9
@@ -583,18 +668,21 @@ class SellOrderManager:
             
             result['ema9'] = current_ema9
             
-            # Check if EMA9 is lower than lowest seen
+            # Round EMA9 to tick size BEFORE comparing (avoid unnecessary updates)
+            rounded_ema9 = self.round_to_tick_size(current_ema9)
+            
+            # Check if ROUNDED EMA9 is lower than lowest seen
             lowest_so_far = self.lowest_ema9.get(symbol, float('inf'))
             
-            if current_ema9 < lowest_so_far:
-                logger.info(f"{symbol}: New lower EMA9 found - ₹{current_ema9:.2f} (was ₹{lowest_so_far:.2f})")
+            if rounded_ema9 < lowest_so_far:
+                logger.info(f"{symbol}: New lower EMA9 found - ₹{rounded_ema9:.2f} (was ₹{lowest_so_far:.2f})")
                 
                 # Update sell order
                 success = self.update_sell_order(
                     order_id=order_id,
                     symbol=order_info.get('placed_symbol'),
                     qty=order_info.get('qty'),
-                    new_price=current_ema9
+                    new_price=rounded_ema9
                 )
                 
                 if success:

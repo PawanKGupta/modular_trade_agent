@@ -281,16 +281,57 @@ class KotakNeoOrders:
                 orders_data = orders['data']
                 logger.info(f" Found {len(orders_data)} orders")
                 
+                # Log first order structure for debugging (only once)
+                if orders_data and len(orders_data) > 0:
+                    logger.debug(f"First order structure (keys): {list(orders_data[0].keys())}")
+                
                 # Group orders by status
                 order_stats = {}
                 for order in orders_data:
-                    order_id = order.get('neoOrdNo', 'N/A')
-                    symbol = order.get('tradingSymbol', 'N/A')
-                    order_type = order.get('orderType', 'N/A')
-                    quantity = order.get('quantity', 0)
-                    price = order.get('price', 0)
-                    status = order.get('orderStatus', 'N/A')
-                    transaction_type = order.get('transactionType', 'N/A')
+                    # Try multiple field name variations
+                    order_id = (
+                        order.get('neoOrdNo') or 
+                        order.get('nOrdNo') or 
+                        order.get('orderId') or 
+                        order.get('ordId') or 
+                        'N/A'
+                    )
+                    symbol = (
+                        order.get('tradingSymbol') or 
+                        order.get('trdSym') or 
+                        order.get('symbol') or 
+                        'N/A'
+                    )
+                    order_type = (
+                        order.get('orderType') or 
+                        order.get('ordTyp') or 
+                        order.get('type') or 
+                        'N/A'
+                    )
+                    quantity = (
+                        order.get('quantity') or 
+                        order.get('qty') or 
+                        order.get('filledQty') or 
+                        0
+                    )
+                    price = (
+                        order.get('price') or 
+                        order.get('prc') or 
+                        order.get('avgPrc') or 
+                        0
+                    )
+                    status = (
+                        order.get('orderStatus') or 
+                        order.get('ordSt') or 
+                        order.get('status') or 
+                        'N/A'
+                    )
+                    transaction_type = (
+                        order.get('transactionType') or 
+                        order.get('trnsTp') or 
+                        order.get('txnType') or 
+                        'N/A'
+                    )
                     
                     logger.info(f"📝 Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status}")
                     
@@ -369,24 +410,34 @@ class KotakNeoOrders:
         if not orders or 'data' not in orders:
             return None
         
-        pending_statuses = ['PENDING', 'OPEN', 'PARTIALLY_FILLED', 'TRIGGER_PENDING']
+        pending_statuses = ['PENDING', 'OPEN', 'PARTIALLY_FILLED', 'TRIGGER_PENDING', 'PARTIALLY FILLED']
         pending_orders = []
         
         for order in orders['data']:
-            status = order.get('orderStatus', '').upper()
-            if any(pending_status in status for pending_status in pending_statuses):
+            # Extract status with field name variations
+            status = (
+                order.get('orderStatus') or 
+                order.get('ordSt') or 
+                order.get('status') or 
+                ''
+            )
+            # Convert to uppercase for case-insensitive comparison
+            status_upper = str(status).upper()
+            
+            if any(pending_status in status_upper for pending_status in pending_statuses):
                 pending_orders.append(order)
         
         if pending_orders:
-            logger.warning(" Found {len(pending_orders)} pending orders")
+            logger.warning(f" Found {len(pending_orders)} pending orders")
             for order in pending_orders:
-                symbol = order.get('tradingSymbol', 'N/A')
-                order_type = order.get('orderType', 'N/A')
-                quantity = order.get('quantity', 0)
-                price = order.get('price', 0)
-                status = order.get('orderStatus', 'N/A')
+                symbol = order.get('tradingSymbol') or order.get('trdSym') or order.get('symbol') or 'N/A'
+                order_type = order.get('orderType') or order.get('ordTyp') or order.get('type') or 'N/A'
+                quantity = order.get('quantity') or order.get('qty') or order.get('filledQty') or 0
+                price = order.get('price') or order.get('prc') or order.get('avgPrc') or 0
+                status = order.get('orderStatus') or order.get('ordSt') or order.get('status') or 'N/A'
+                order_id = order.get('neoOrdNo') or order.get('nOrdNo') or order.get('orderId') or 'N/A'
                 
-                logger.warning(" {symbol} {order_type} {quantity}@₹{price} - {status}")
+                logger.warning(f" [{order_id}] {symbol} {order_type} {quantity}@₹{price} - {status}")
         else:
             logger.warning(" No pending orders found")
         

@@ -543,8 +543,39 @@ Kotak Neo API (via orders.py)
 2. **Balance Detection**: Enhanced to try multiple API field name variants for available funds
 3. **2FA Session Handling**: Improved error handling for `None` responses and cached sessions
 4. **NoneType Iteration**: Fixed auth checks that failed when API returned `None`
+5. **Tick Size Rounding**: Implemented NSE/BSE price-specific tick size rounding for order acceptance
+   - NSE: ₹0.05 tick size for all prices
+   - BSE: ₹0.01 for prices < ₹10, ₹0.05 for prices ≥ ₹10
+   - Tested comprehensively with all price ranges and edge cases
 
 **Testing Enhancements**:
 - Weekend check can be temporarily disabled for testing (see `auto_trade_engine.py` line 586)
 - Portfolio fetched 3 times per run (intentional for accuracy): pre-trade sync, validation, post-trade sync
 - Debug logging added for API response field inspection
+- Tick size rounding validated with comprehensive test suite
+
+### Recent Documentation (2025-10-27)
+
+**Deployment Guides**:
+1. **Oracle Cloud Deployment** (`documents/ORACLE_CLOUD_DEPLOYMENT.md`)
+   - Complete deployment guide for Oracle Cloud Free Tier (ARM Ampere A1.Flex)
+   - Systemd services and timers for automated execution (4:00 PM buy, 9:15 AM sell)
+   - Security hardening, backup automation, monitoring setup
+   - Free tier configuration: 2 OCPU + 12 GB RAM, more than sufficient for trading bot
+   - Production-ready with troubleshooting guides and cost optimization strategies
+
+**Sell Orders Monitoring**:
+- Sell engine now integrated for automated exit management
+- Monitors holdings from 9:15 AM to 3:30 PM on trading days
+- Places sell orders when EMA9 conditions met
+- Continuous monitoring with 60-second intervals
+- Automatic position reconciliation with broker portfolio
+
+## Production Deployment Status
+
+✅ **Analysis Engine**: Fully functional with backtest scoring
+✅ **Buy Order Automation**: AMO placement tested and working
+✅ **Sell Order Monitoring**: EMA9-based exit logic implemented
+✅ **Tick Size Compliance**: NSE/BSE rounding ensures order acceptance
+✅ **Oracle Cloud Ready**: Complete deployment documentation available
+⚠️ **Awaiting Production**: System ready for live trading deployment

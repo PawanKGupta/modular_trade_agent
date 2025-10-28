@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
+import threading
 
 from utils.logger import logger
 from utils.retry_handler import exponential_backoff_retry
@@ -9,6 +10,9 @@ from config.settings import (
     RETRY_MAX_ATTEMPTS, RETRY_BASE_DELAY, RETRY_MAX_DELAY, RETRY_BACKOFF_MULTIPLIER,
     CIRCUITBREAKER_FAILURE_THRESHOLD, CIRCUITBREAKER_RECOVERY_TIMEOUT
 )
+
+# Thread lock for yfinance to prevent concurrent data fetching issues
+_yfinance_lock = threading.Lock()
 
 # Create circuit breaker for yfinance API with configurable parameters
 yfinance_circuit_breaker = CircuitBreaker(
@@ -124,14 +128,16 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None, add_current_d
     try:
         logger.debug(f"Fetching data for {ticker} from {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')} [{interval}]")
         
-        df = yf.download(
-            ticker,
-            start=start.strftime("%Y-%m-%d"),
-            end=end.strftime("%Y-%m-%d"),
-            interval=interval,
-            progress=False,
-            auto_adjust=True
-        )
+        # Use lock to prevent concurrent yfinance calls (not thread-safe)
+        with _yfinance_lock:
+            df = yf.download(
+                ticker,
+                start=start.strftime("%Y-%m-%d"),
+                end=end.strftime("%Y-%m-%d"),
+                interval=interval,
+                progress=False,
+                auto_adjust=True
+            )
         
         logger.debug(f"Downloaded data shape for {ticker}: {df.shape}")
 

@@ -1,0 +1,125 @@
+# Cloud Workflows - Trading System Orchestration
+# Coordinates analysis and buy order placement
+
+main:
+  params: [input]
+  steps:
+    - init:
+        assign:
+          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - region: "asia-south1"
+          - analysis_url: ""  # Will be set from deployment
+          - buy_orders_url: ""  # Will be set from deployment
+    
+    - log_start:
+        call: sys.log
+        args:
+          text: ${"Starting trading workflow at " + string(sys.now())}
+          severity: INFO
+    
+    - run_analysis:
+        try:
+          call: http.post
+          args:
+            url: ${analysis_url}
+            auth:
+              type: OIDC
+            timeout: 1800  # 30 minutes
+          result: analysis_result
+        except:
+          as: e
+          steps:
+            - log_analysis_error:
+                call: sys.log
+                args:
+                  text: ${"Analysis failed: " + e.message}
+                  severity: ERROR
+            - return_failure:
+                return:
+                  status: "FAILED"
+                  step: "analysis"
+                  error: ${e.message}
+    
+    - check_analysis_success:
+        switch:
+          - condition: ${analysis_result.code == 200}
+            next: wait_before_orders
+          - condition: true
+            next: analysis_failed
+    
+    - analysis_failed:
+        steps:
+          - log_analysis_failure:
+              call: sys.log
+              args:
+                text: ${"Analysis returned non-200 status: " + string(analysis_result.code)}
+                severity: WARNING
+          - return_analysis_failure:
+              return:
+                status: "FAILED"
+                step: "analysis"
+                code: ${analysis_result.code}
+    
+    - wait_before_orders:
+        call: sys.sleep
+        args:
+          seconds: 60  # Wait 1 minute between analysis and buy orders
+    
+    - place_buy_orders:
+        try:
+          call: http.post
+          args:
+            url: ${buy_orders_url}
+            auth:
+              type: OIDC
+            timeout: 600  # 10 minutes
+          result: buy_result
+        except:
+          as: e
+          steps:
+            - log_buy_error:
+                call: sys.log
+                args:
+                  text: ${"Buy orders failed: " + e.message}
+                  severity: ERROR
+            - return_buy_failure:
+                return:
+                  status: "PARTIAL_SUCCESS"
+                  step: "buy_orders"
+                  error: ${e.message}
+                  analysis_status: "SUCCESS"
+    
+    - check_buy_success:
+        switch:
+          - condition: ${buy_result.code == 200}
+            next: workflow_success
+          - condition: true
+            next: buy_orders_failed
+    
+    - buy_orders_failed:
+        steps:
+          - log_buy_failure:
+              call: sys.log
+              args:
+                text: ${"Buy orders returned non-200 status: " + string(buy_result.code)}
+                severity: WARNING
+          - return_buy_failure_final:
+              return:
+                status: "PARTIAL_SUCCESS"
+                step: "buy_orders"
+                code: ${buy_result.code}
+                analysis_status: "SUCCESS"
+    
+    - workflow_success:
+        steps:
+          - log_success:
+              call: sys.log
+              args:
+                text: "Trading workflow completed successfully"
+                severity: INFO
+          - return_success:
+              return:
+                status: "SUCCESS"
+                analysis_status: "SUCCESS"
+                buy_orders_status: "SUCCESS"
+                completed_at: ${sys.now()}

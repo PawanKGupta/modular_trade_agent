@@ -19,4 +19,5 @@ scripts/
 test_*.py
 debug_*.py
 demo_candle_analysis.py
-check_market_timing.py
+check_market_timing.pydata_backups/
+data_backups/

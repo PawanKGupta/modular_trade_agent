@@ -11,7 +11,7 @@ import glob
 from dataclasses import dataclass
 from math import floor
 from datetime import datetime, date
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 # Project logger
 import sys
@@ -34,7 +34,14 @@ try:
     from .auth import KotakNeoAuth
     from .scrip_master import KotakNeoScripMaster
     from . import config
-    from .storage import load_history, save_history, append_trade
+    from .storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders
+    from .tracking_scope import add_tracked_symbol, is_tracked, get_tracked_symbols, update_tracked_qty
+    from .order_tracker import extract_order_id, add_pending_order, search_order_in_broker_orderbook
+    # Phase 2 modules
+    from .order_status_verifier import get_order_status_verifier
+    from .telegram_notifier import get_telegram_notifier
+    from .manual_order_matcher import get_manual_order_matcher
+    from .eod_cleanup import get_eod_cleanup, schedule_eod_cleanup
 except ImportError:
     from trader import KotakNeoTrader
     from orders import KotakNeoOrders
@@ -42,7 +49,14 @@ except ImportError:
     from auth import KotakNeoAuth
     from scrip_master import KotakNeoScripMaster
     import config
-    from storage import load_history, save_history, append_trade
+    from storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders
+    from tracking_scope import add_tracked_symbol, is_tracked, get_tracked_symbols, update_tracked_qty
+    from order_tracker import extract_order_id, add_pending_order, search_order_in_broker_orderbook
+    # Phase 2 modules
+    from order_status_verifier import get_order_status_verifier
+    from telegram_notifier import get_telegram_notifier
+    from manual_order_matcher import get_manual_order_matcher
+    from eod_cleanup import get_eod_cleanup, schedule_eod_cleanup
 
 
 @dataclass
@@ -53,7 +67,15 @@ class Recommendation:
 
 
 class AutoTradeEngine:
-    def __init__(self, env_file: str = "kotak_neo.env", auth: Optional[KotakNeoAuth] = None):
+    def __init__(
+        self,
+        env_file: str = "kotak_neo.env",
+        auth: Optional[KotakNeoAuth] = None,
+        enable_verifier: bool = True,
+        enable_telegram: bool = True,
+        enable_eod_cleanup: bool = True,
+        verifier_interval: int = 1800
+    ):
         self.env_file = env_file
         self.auth = auth if auth is not None else KotakNeoAuth(env_file)
         self.orders: Optional[KotakNeoOrders] = None
@@ -62,6 +84,18 @@ class AutoTradeEngine:
         
         # Initialize scrip master for symbol resolution
         self.scrip_master: Optional[KotakNeoScripMaster] = None
+        
+        # Phase 2 modules configuration
+        self._enable_verifier = enable_verifier
+        self._enable_telegram = enable_telegram
+        self._enable_eod_cleanup = enable_eod_cleanup
+        self._verifier_interval = verifier_interval
+        
+        # Phase 2 module instances (initialized in login)
+        self.telegram_notifier = None
+        self.order_verifier = None
+        self.manual_matcher = None
+        self.eod_cleanup = None
 
     # ---------------------- Utilities ----------------------
     @staticmethod
@@ -165,28 +199,108 @@ class AutoTradeEngine:
             return None
 
     def reconcile_holdings_to_history(self) -> None:
-        """Add holdings not yet recorded in history (only once they appear in portfolio)."""
+        """
+        Add holdings to history - ONLY for system-recommended (tracked) symbols.
+        Non-tracked symbols are completely ignored.
+        Also performs manual trade reconciliation if enabled.
+        """
         try:
             if not self.portfolio:
                 return
+            
+            # Phase 2: Manual trade reconciliation
+            if self.manual_matcher and self._enable_telegram:
+                try:
+                    holdings_response = self.portfolio.get_holdings()
+                    if holdings_response and isinstance(holdings_response, dict):
+                        holdings = holdings_response.get('data', [])
+                        reconciliation = self.manual_matcher.reconcile_holdings_with_tracking(holdings)
+                        
+                        # Log any discrepancies
+                        if reconciliation.get('discrepancies'):
+                            summary = self.manual_matcher.get_reconciliation_summary(reconciliation)
+                            logger.info(f"\n{summary}")
+                            
+                            # Send Telegram notifications for manual trades
+                            if self.telegram_notifier:
+                                for disc in reconciliation.get('discrepancies', []):
+                                    symbol = disc.get('symbol')
+                                    qty_diff = disc.get('qty_diff', 0)
+                                    broker_qty = disc.get('broker_qty', 0)
+                                    
+                                    if disc.get('trade_type') == 'MANUAL_BUY':
+                                        message = (
+                                            f"📈 *MANUAL BUY DETECTED*\n\n"
+                                            f"📊 Symbol: {symbol}\n"
+                                            f"📦 Quantity: +{qty_diff} shares\n"
+                                            f"💼 New Total: {broker_qty} shares\n"
+                                            f"⏰ Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                                            f"ℹ️ Tracking updated automatically"
+                                        )
+                                        self.telegram_notifier.send_message(message)
+                                    
+                                    elif disc.get('trade_type') == 'MANUAL_SELL':
+                                        message = (
+                                            f"📉 *MANUAL SELL DETECTED*\n\n"
+                                            f"📊 Symbol: {symbol}\n"
+                                            f"📦 Quantity: {qty_diff} shares\n"
+                                            f"💼 Remaining: {broker_qty} shares\n"
+                                            f"⏰ Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                                            f"ℹ️ Tracking updated automatically"
+                                        )
+                                        self.telegram_notifier.send_message(message)
+                        
+                        # Notify about position closures
+                        closed_positions = reconciliation.get('closed_positions', [])
+                        if closed_positions and self.telegram_notifier:
+                            for symbol in closed_positions:
+                                self.telegram_notifier.notify_tracking_stopped(
+                                    symbol,
+                                    "Position fully closed (manual sell detected)"
+                                )
+                except Exception as e:
+                    logger.error(f"Manual trade reconciliation error: {e}")
+            
+            # Get list of symbols actively tracked by system
+            tracked_symbols = get_tracked_symbols(status="active")
+            if not tracked_symbols:
+                logger.debug("No tracked symbols - skipping reconciliation")
+                return
+            
+            logger.info(f"Reconciling holdings for {len(tracked_symbols)} tracked symbols")
+            
             hist = load_history(self.history_path)
             existing = {t.get('symbol') for t in hist.get('trades', []) if t.get('status') == 'open'}
             h = self.portfolio.get_holdings() or {}
+            
             added = 0
+            skipped_not_tracked = 0
+            
             for item in (h.get('data') or []):
                 sym = str(item.get('tradingSymbol') or '').upper().strip()
                 if not sym or sym == 'N/A':
                     continue
+                    
                 base = sym.split('-')[0].strip()
                 if not base or not base.isalnum():
                     continue
+                
+                # CRITICAL: Only process if this symbol is tracked
+                if not is_tracked(base):
+                    skipped_not_tracked += 1
+                    logger.debug(f"Skipping {base} - not system-recommended")
+                    continue
+                
+                # Already in history
                 if base in (s.split('-')[0] for s in existing if s):
                     continue
-                # Guess ticker and indicators
+                
+                # Add tracked holding to history
                 ticker = f"{base}.NS"
                 ind = self.get_daily_indicators(ticker) or {}
                 qty = int(item.get('quantity') or 0)
                 entry_price = item.get('avgPrice') or item.get('price') or item.get('ltp') or ind.get('close')
+                
                 trade = {
                     'symbol': base,
                     'placed_symbol': sym,
@@ -203,12 +317,22 @@ class AutoTradeEngine:
                     'reset_ready': False,
                     'order_response': None,
                     'status': 'open',
-                    'entry_type': 'initial',
+                    'entry_type': 'system_recommended',
                 }
                 append_trade(self.history_path, trade)
                 added += 1
+                logger.debug(f"Added tracked holding to history: {base}")
+            
             if added:
-                logger.info(f"Reconciled {added} holding(s) into trade history")
+                logger.info(
+                    f"Reconciled {added} system-recommended holding(s) into history "
+                    f"(skipped {skipped_not_tracked} non-tracked holdings)"
+                )
+            elif skipped_not_tracked > 0:
+                logger.info(
+                    f"Reconciliation complete: {skipped_not_tracked} non-tracked holdings ignored"
+                )
+                
         except Exception as e:
             logger.warning(f"Reconcile holdings failed: {e}")
 
@@ -229,9 +353,82 @@ class AutoTradeEngine:
             except Exception as e:
                 logger.warning(f"Failed to load scrip master: {e}. Will use symbol fallback.")
                 self.scrip_master = None
+            
+            # Phase 2: Initialize modules
+            self._initialize_phase2_modules()
         return ok
+    
+    def _initialize_phase2_modules(self) -> None:
+        """Initialize Phase 2 modules (verifier, telegram, etc.)."""
+        try:
+            # 1. Initialize Telegram Notifier
+            if self._enable_telegram:
+                self.telegram_notifier = get_telegram_notifier()
+                logger.info(f"Telegram notifier initialized (enabled: {self.telegram_notifier.enabled})")
+            
+            # 2. Initialize Manual Order Matcher
+            self.manual_matcher = get_manual_order_matcher()
+            logger.info("Manual order matcher initialized")
+            
+            # 3. Initialize Order Status Verifier with callbacks
+            if self._enable_verifier:
+                def on_rejection(symbol: str, order_id: str, reason: str):
+                    """Callback when order is rejected."""
+                    logger.warning(f"Order rejected: {symbol} ({order_id}) - {reason}")
+                    if self.telegram_notifier and self.telegram_notifier.enabled:
+                        # Get quantity from pending orders
+                        from .order_tracker import get_order_tracker
+                        tracker = get_order_tracker()
+                        pending_order = tracker.get_order_by_id(order_id)
+                        qty = pending_order.get('qty', 0) if pending_order else 0
+                        self.telegram_notifier.notify_order_rejection(
+                            symbol, order_id, qty, reason
+                        )
+                
+                def on_execution(symbol: str, order_id: str, qty: int):
+                    """Callback when order is executed."""
+                    logger.info(f"Order executed: {symbol} ({order_id}) - {qty} shares")
+                    if self.telegram_notifier and self.telegram_notifier.enabled:
+                        self.telegram_notifier.notify_order_execution(
+                            symbol, order_id, qty
+                        )
+                
+                self.order_verifier = get_order_status_verifier(
+                    broker_client=self.orders,
+                    check_interval_seconds=self._verifier_interval,
+                    on_rejection_callback=on_rejection,
+                    on_execution_callback=on_execution
+                )
+                
+                # Start verifier in background
+                self.order_verifier.start()
+                logger.info(
+                    f"Order status verifier started "
+                    f"(check interval: {self._verifier_interval}s)"
+                )
+            
+            # 4. Initialize EOD Cleanup (but don't schedule yet - done in run())
+            if self._enable_eod_cleanup:
+                self.eod_cleanup = get_eod_cleanup(
+                    broker_client=self.portfolio,  # Use portfolio for holdings access
+                    order_verifier=self.order_verifier,
+                    manual_matcher=self.manual_matcher,
+                    telegram_notifier=self.telegram_notifier
+                )
+                logger.info("EOD cleanup initialized")
+            
+            logger.info("✓ Phase 2 modules initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Phase 2 modules: {e}", exc_info=True)
+            logger.warning("Continuing without Phase 2 features")
 
     def logout(self):
+        # Phase 2: Stop verifier before logout
+        if self.order_verifier and self.order_verifier.is_running():
+            logger.info("Stopping order status verifier...")
+            self.order_verifier.stop()
+        
         self.auth.logout()
 
     # ---------------------- Portfolio helpers ----------------------
@@ -402,11 +599,171 @@ class AutoTradeEngine:
         except Exception:
             return 0
 
+    def _attempt_place_order(
+        self,
+        broker_symbol: str,
+        ticker: str,
+        qty: int,
+        close: float,
+        ind: Dict[str, Any],
+        recommendation_source: Optional[str] = None
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Helper method to attempt placing an order with symbol resolution.
+        
+        Args:
+            broker_symbol: Trading symbol
+            ticker: Full ticker (e.g., RELIANCE.NS)
+            qty: Order quantity
+            close: Current close price
+            ind: Market indicators dict
+            recommendation_source: Source of recommendation (e.g., CSV file)
+        
+        Returns:
+            Tuple of (success: bool, order_id: Optional[str])
+        """
+        resp = None
+        placed_symbol = None
+        placement_time = datetime.now().isoformat()
+        
+        # Try to resolve symbol using scrip master first
+        resolved_symbol = None
+        if self.scrip_master and self.scrip_master.symbol_map:
+            # Try base symbol first
+            instrument = self.scrip_master.get_instrument(broker_symbol)
+            if instrument:
+                resolved_symbol = instrument['symbol']
+                logger.debug(f"Resolved {broker_symbol} -> {resolved_symbol} via scrip master")
+        
+        # If scrip master resolved the symbol, use it directly
+        if resolved_symbol:
+            place_symbol = resolved_symbol
+            trial = self.orders.place_market_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                variety=config.DEFAULT_VARIETY,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
+            resp = trial if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial else None
+            placed_symbol = place_symbol if resp else None
+        
+        # Fallback: Try common series suffixes if scrip master didn't work
+        if not resp:
+            series_suffixes = ["-EQ", "-BE", "-BL", "-BZ"]
+            resp = None
+            placed_symbol = None
+            for suf in series_suffixes:
+                place_symbol = broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
+                trial = self.orders.place_market_buy(
+                    symbol=place_symbol,
+                    quantity=qty,
+                    variety=config.DEFAULT_VARIETY,
+                    exchange=config.DEFAULT_EXCHANGE,
+                    product=config.DEFAULT_PRODUCT,
+                )
+                if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial and 'Not_Ok'.lower() not in str(trial).lower():
+                    resp = trial
+                    placed_symbol = place_symbol
+                    break
+        
+        # Check if order was successful
+        resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp) and 'error' not in resp and 'not_ok' not in str(resp).lower()
+        
+        if not resp_valid:
+            logger.error(f"Order placement failed for {broker_symbol}")
+            return (False, None)
+        
+        # Extract order ID from response
+        order_id = extract_order_id(resp)
+        
+        if not order_id:
+            # Fallback: Search order book after 60 seconds
+            logger.warning(
+                f"No order ID in response for {broker_symbol}. "
+                f"Will search order book after 60 seconds..."
+            )
+            order_id = search_order_in_broker_orderbook(
+                self.orders,
+                placed_symbol or broker_symbol,
+                qty,
+                placement_time,
+                max_wait_seconds=60
+            )
+            
+            if not order_id:
+                # Still no order ID - uncertain placement
+                logger.error(
+                    f"Order placement uncertain for {broker_symbol}: "
+                    f"No order ID and not found in order book"
+                )
+                # Send notification about uncertain order
+                from core.telegram import send_telegram
+                send_telegram(
+                    f"⚠️ Order placement uncertain\n"
+                    f"Symbol: {broker_symbol}\n"
+                    f"Qty: {qty}\n"
+                    f"Order ID not received and not found in order book.\n"
+                    f"Please check broker app manually."
+                )
+                return (False, None)
+        
+        # Order successfully placed with order_id
+        logger.info(
+            f"Order placed successfully: {placed_symbol or broker_symbol} "
+            f"(order_id: {order_id}, qty: {qty})"
+        )
+        
+        # Get pre-existing quantity (if any)
+        pre_existing_qty = 0
+        try:
+            holdings = self.portfolio.get_holdings() or {}
+            for item in (holdings.get('data') or []):
+                sym = str(item.get('tradingSymbol', '')).upper()
+                if broker_symbol.upper() in sym:
+                    pre_existing_qty = int(item.get('quantity', 0))
+                    break
+        except Exception as e:
+            logger.debug(f"Could not get pre-existing qty: {e}")
+        
+        # Register in tracking scope (system-recommended)
+        try:
+            tracking_id = add_tracked_symbol(
+                symbol=broker_symbol,
+                ticker=ticker,
+                initial_order_id=order_id,
+                initial_qty=qty,
+                pre_existing_qty=pre_existing_qty,
+                recommendation_source=recommendation_source,
+                recommendation_verdict=getattr(ind, 'verdict', None)
+            )
+            logger.debug(f"Added to tracking scope: {broker_symbol} (tracking_id: {tracking_id})")
+        except Exception as e:
+            logger.error(f"Failed to add to tracking scope: {e}")
+        
+        # Add to pending orders for status monitoring
+        try:
+            add_pending_order(
+                order_id=order_id,
+                symbol=placed_symbol or broker_symbol,
+                ticker=ticker,
+                qty=qty,
+                order_type="MARKET",
+                variety=config.DEFAULT_VARIETY
+            )
+            logger.debug(f"Added to pending orders: {order_id}")
+        except Exception as e:
+            logger.error(f"Failed to add to pending orders: {e}")
+        
+        return (True, order_id)
+
     # ---------------------- New entries ----------------------
     def place_new_entries(self, recommendations: List[Recommendation]) -> Dict[str, int]:
         summary = {
             "attempted": 0,
             "placed": 0,
+            "retried": 0,
+            "failed_balance": 0,
             "skipped_portfolio_limit": 0,
             "skipped_duplicates": 0,
             "skipped_missing_data": 0,
@@ -440,9 +797,79 @@ class AutoTradeEngine:
             logger.error(f"Holdings response: {test_holdings}")
             return summary
         
-        logger.info("✓ Holdings API healthy - proceeding with order placement")
+        logger.info("Holdings API healthy - proceeding with order placement")
         
-        # No longer using history for duplicate skip; rely on live holdings and active orders
+        # Clean up expired failed orders (past market open time)
+        cleanup_expired_failed_orders(self.history_path)
+        
+        # STEP 1: Retry previously failed orders due to insufficient balance
+        # (includes yesterday's orders if before 9:15 AM market open)
+        failed_orders = get_failed_orders(self.history_path, include_previous_day_before_market=True)
+        if failed_orders:
+            logger.info(f"Found {len(failed_orders)} previously failed orders to retry")
+            for failed_order in failed_orders[:]:
+                # Check portfolio limit
+                try:
+                    current_count = len(self.current_symbols_in_portfolio())
+                except Exception:
+                    current_count = self.portfolio_size()
+                if current_count >= config.MAX_PORTFOLIO_SIZE:
+                    logger.info(f"Portfolio limit reached ({current_count}/{config.MAX_PORTFOLIO_SIZE}); skipping failed order retries")
+                    break
+                
+                symbol = failed_order.get('symbol')
+                ticker = failed_order.get('ticker')
+                
+                # Skip if already in holdings
+                if self.has_holding(symbol):
+                    logger.info(f"Removing {symbol} from retry queue: already in holdings")
+                    remove_failed_order(self.history_path, symbol)
+                    continue
+                
+                # Skip if already has active buy order
+                if self.has_active_buy_order(symbol):
+                    logger.info(f"Skipping retry for {symbol}: already has pending buy order")
+                    continue
+                
+                summary["retried"] += 1
+                logger.info(f"Retrying failed order for {symbol}...")
+                
+                # Get fresh indicators
+                ind = self.get_daily_indicators(ticker)
+                if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
+                    logger.warning(f"Skipping retry {symbol}: missing indicators")
+                    continue
+                
+                close = ind['close']
+                if close <= 0:
+                    logger.warning(f"Skipping retry {symbol}: invalid close price {close}")
+                    continue
+                
+                qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / close))
+                
+                # Check balance again
+                affordable = self.get_affordable_qty(close)
+                if affordable < config.MIN_QTY or qty > affordable:
+                    avail_cash = self.get_available_cash()
+                    required_cash = qty * close
+                    shortfall = max(0.0, required_cash - (avail_cash or 0.0))
+                    logger.warning(f"Retry failed for {symbol}: still insufficient balance (need ₹{required_cash:,.0f}, have ₹{(avail_cash or 0.0):,.0f})")
+                    # Update the failed order with new attempt timestamp
+                    failed_order['retry_count'] = failed_order.get('retry_count', 0) + 1
+                    failed_order['last_retry_attempt'] = datetime.now().isoformat()
+                    add_failed_order(self.history_path, failed_order)
+                    continue
+                
+                # Try placing the order
+                success, order_id = self._attempt_place_order(symbol, ticker, qty, close, ind)
+                if success:
+                    summary["placed"] += 1
+                    remove_failed_order(self.history_path, symbol)
+                    logger.info(f"Successfully placed retry order for {symbol} (order_id: {order_id})")
+                else:
+                    logger.warning(f"Retry order placement failed for {symbol}")
+        
+        # STEP 2: Process new recommendations
         for rec in recommendations:
             # Enforce hard portfolio cap before any balance checks
             try:
@@ -480,67 +907,62 @@ class AutoTradeEngine:
                 summary["skipped_invalid_qty"] += 1
                 continue
             qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / close))
-            # Balance check (CNC needs cash) -> notify on insufficiency
+            # Balance check (CNC needs cash) -> notify on insufficiency and save for retry
             affordable = self.get_affordable_qty(close)
             if affordable < config.MIN_QTY or qty > affordable:
                 avail_cash = self.get_available_cash()
                 required_cash = qty * close
                 shortfall = max(0.0, required_cash - (avail_cash or 0.0))
-                msg = (
-                    f"Insufficient balance for {broker_symbol} AMO BUY.\n"
+                # Telegram message with emojis
+                telegram_msg = (
+                    f"⚠️ Insufficient balance for {broker_symbol} AMO BUY.\n"
                     f"Needed: ₹{required_cash:,.0f} for {qty} @ ₹{close:.2f}.\n"
-                    f"Available: ₹{(avail_cash or 0.0):,.0f}. Shortfall: ₹{shortfall:,.0f}."
+                    f"Available: ₹{(avail_cash or 0.0):,.0f}. Shortfall: ₹{shortfall:,.0f}.\n\n"
+                    f"🔁 Order saved for retry until 9:15 AM tomorrow (before market opens).\n"
+                    f"Add balance & run script, or wait for 8 AM scheduled retry."
                 )
-                send_telegram(msg)
-                logger.warning(msg)
+                send_telegram(telegram_msg)
+                
+                # Logger message without emojis
+                logger.warning(
+                    f"Insufficient balance for {broker_symbol} AMO BUY. "
+                    f"Needed: Rs.{required_cash:,.0f} for {qty} @ Rs.{close:.2f}. "
+                    f"Available: Rs.{(avail_cash or 0.0):,.0f}. Shortfall: Rs.{shortfall:,.0f}. "
+                    f"Order saved for retry until 9:15 AM tomorrow."
+                )
+                
+                # Save failed order for retry
+                failed_order_info = {
+                    'symbol': broker_symbol,
+                    'ticker': rec.ticker,
+                    'close': close,
+                    'qty': qty,
+                    'required_cash': required_cash,
+                    'shortfall': shortfall,
+                    'reason': 'insufficient_balance',
+                    'verdict': rec.verdict,
+                    'rsi10': ind.get('rsi10'),
+                    'ema9': ind.get('ema9'),
+                    'ema200': ind.get('ema200'),
+                }
+                add_failed_order(self.history_path, failed_order_info)
+                summary["failed_balance"] += 1
                 summary["skipped_invalid_qty"] += 1
                 continue
 
-            # Try to resolve symbol using scrip master first
-            resolved_symbol = None
-            if self.scrip_master and self.scrip_master.symbol_map:
-                # Try base symbol first
-                instrument = self.scrip_master.get_instrument(broker_symbol)
-                if instrument:
-                    resolved_symbol = instrument['symbol']
-                    logger.debug(f"Resolved {broker_symbol} -> {resolved_symbol} via scrip master")
-            
-            # If scrip master resolved the symbol, use it directly
-            if resolved_symbol:
-                place_symbol = resolved_symbol
-                trial = self.orders.place_market_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    variety=config.DEFAULT_VARIETY,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-                resp = trial if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial else None
-                placed_symbol = place_symbol if resp else None
-            
-            # Fallback: Try common series suffixes if scrip master didn't work
-            if not resp:
-                series_suffixes = ["-EQ", "-BE", "-BL", "-BZ"]
-                resp = None
-                placed_symbol = None
-                for suf in series_suffixes:
-                    place_symbol = broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
-                trial = self.orders.place_market_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    variety=config.DEFAULT_VARIETY,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-                if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial and 'Not_Ok'.lower() not in str(trial).lower():
-                    resp = trial
-                    placed_symbol = place_symbol
-                    break
-            # Only persist successful orders to history
-            resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp) and 'error' not in resp and 'not_ok' not in str(resp).lower()
-            if resp_valid:
+            # Try placing order (get recommendation source if available)
+            rec_source = getattr(self, '_custom_csv_path', None) or 'system_recommendation'
+            success, order_id = self._attempt_place_order(
+                broker_symbol,
+                rec.ticker,
+                qty,
+                close,
+                ind,
+                recommendation_source=rec_source
+            )
+            if success:
                 summary["placed"] += 1
-                logger.info(f"Order placed for {placed_symbol or broker_symbol}; will record once visible in holdings")
+                logger.info(f"Order placed: {broker_symbol} (order_id: {order_id})")
             else:
                 logger.error(f"Order placement failed for {broker_symbol}")
         return summary
@@ -672,7 +1094,7 @@ class AutoTradeEngine:
         # if not self.market_was_open_today():
         #     logger.info("Detected market holiday/closed day; skipping run")
         #     return
-        logger.warning("⚠️ Weekend check disabled for testing - this will attempt live trading!")
+        logger.warning("WARNING: Weekend check disabled for testing - this will attempt live trading!")
         if not self.login():
             logger.error("Login failed; aborting auto trade")
             return
@@ -686,6 +1108,7 @@ class AutoTradeEngine:
             self.reconcile_holdings_to_history()
             logger.info(
                 f"Run Summary: NewEntries placed={new_summary['placed']}/attempted={new_summary['attempted']}, "
+                f"retried={new_summary.get('retried', 0)}, failed_balance={new_summary.get('failed_balance', 0)}, "
                 f"skipped_dup={new_summary['skipped_duplicates']}, skipped_limit={new_summary['skipped_portfolio_limit']}; "
                 f"Re/Exits: reentries={re_summary['reentries']}, exits={re_summary['exits']}, symbols={re_summary['symbols_evaluated']}"
             )
