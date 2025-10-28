@@ -88,34 +88,45 @@ class KotakNeoAuth:
                 return False
 
             # Try cached session first (valid for the day)
-            if self._try_use_cached_session():
-                self.is_logged_in = True
+            cached_ok = self._try_use_cached_session()
+            if cached_ok:
                 self.logger.info("Reused cached session token (daily cache)")
-                # Attempt 2FA refresh to ensure session is fully active
-                # Don't fail if this doesn't work - cached token should still be valid
+                # Verify session is actually usable by testing an API call
                 try:
-                    ok2fa = self._complete_2fa()
-                    if ok2fa:
-                        self.logger.debug("2FA refresh successful on cached session")
-                        self._save_session_cache()  # Update cache with refreshed token
-                    else:
-                        self.logger.debug("2FA refresh not needed or failed - continuing with cached token")
+                    if hasattr(self.client, 'limits'):
+                        test_response = self.client.limits(segment="ALL", exchange="ALL")
+                        if self._response_requires_2fa(test_response):
+                            self.logger.warning("Cached session requires 2FA - forcing fresh login")
+                            # Clear cache and do fresh login
+                            if self.session_cache_path.exists():
+                                self.session_cache_path.unlink()
+                            cached_ok = False
+                        else:
+                            self.is_logged_in = True
+                            self.logger.info("Cached session verified and active")
+                            return True
                 except Exception as e:
-                    self.logger.debug(f"2FA refresh attempt raised exception: {e} - continuing with cached token")
+                    self.logger.warning(f"Cached session validation failed: {e} - forcing fresh login")
+                    if self.session_cache_path.exists():
+                        self.session_cache_path.unlink()
+                    cached_ok = False
+            
+            if not cached_ok:
+                # Perform fresh login + 2FA
+                if not self._perform_login():
+                    return False
+                if not self._complete_2fa():
+                    return False
+
+                # Cache session for the day
+                self._save_session_cache()
+
+                self.is_logged_in = True
+                self.logger.info("Login completed successfully!")
                 return True
-
-            # Perform login + 2FA
-            if not self._perform_login():
-                return False
-            if not self._complete_2fa():
-                return False
-
-            # Cache session for the day
-            self._save_session_cache()
-
-            self.is_logged_in = True
-            self.logger.info("Login completed successfully!")
-            return True
+            
+            # Should not reach here
+            return False
 
         except Exception as e:
             self.logger.error(f"Login failed with exception: {e}")
