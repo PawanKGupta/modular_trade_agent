@@ -7,11 +7,26 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import pyperclip
 import time
+import sys
 
 from utils.logger import logger
 
+# Try to import pyvirtualdisplay for headless Linux environments
+try:
+    from pyvirtualdisplay import Display
+    HAS_VIRTUAL_DISPLAY = True
+except ImportError:
+    HAS_VIRTUAL_DISPLAY = False
+
 
 def get_stock_list():
+    # Start virtual display only on Linux if available (does not affect Windows)
+    display = None
+    if HAS_VIRTUAL_DISPLAY and sys.platform.startswith('linux'):
+        display = Display(visible=0, size=(1920, 1080))
+        display.start()
+        logger.info("Started virtual display for headless Linux environment")
+    
     # Set Chrome options for headless mode
     chrome_options = Options()
     # chrome_options.add_argument("--headless")  # Runs Chrome in headless mode
@@ -78,5 +93,9 @@ def get_stock_list():
     finally:
         # Close the browser window
         driver.quit()
+        # Stop virtual display if it was started (only on Linux)
+        if display is not None:
+            display.stop()
+            logger.info("Stopped virtual display")
     
     return None
