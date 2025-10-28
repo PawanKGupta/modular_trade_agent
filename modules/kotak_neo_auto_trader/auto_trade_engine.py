@@ -1012,6 +1012,130 @@ class AutoTradeEngine:
                         exchange=config.DEFAULT_EXCHANGE,
                         product=config.DEFAULT_PRODUCT,
                     )
+                    
+                    # Check if order was rejected due to insufficient quantity
+                    order_rejected = False
+                    if resp is None:
+                        order_rejected = True
+                    elif isinstance(resp, dict):
+                        # Check for error indicators in response
+                        keys_lower = {str(k).lower() for k in resp.keys()}
+                        if any(k in keys_lower for k in ("error", "errors")):
+                            error_msg = str(resp).lower()
+                            # Check if error is related to insufficient quantity
+                            if any(phrase in error_msg for phrase in ["insufficient", "quantity", "qty", "not enough", "exceed"]):
+                                order_rejected = True
+                                logger.warning(f"Sell order rejected for {symbol} (likely insufficient qty): {resp}")
+                    
+                    # Retry with actual available quantity from broker
+                    if order_rejected:
+                        logger.info(f"Retrying sell order for {symbol} with broker available quantity...")
+                        try:
+                            # Fetch holdings to get actual available quantity
+                            holdings_response = self.portfolio.get_holdings()
+                            if holdings_response and isinstance(holdings_response, dict) and 'data' in holdings_response:
+                                holdings_data = holdings_response['data']
+                                actual_qty = 0
+                                
+                                # Find the symbol in holdings
+                                for holding in holdings_data:
+                                    holding_symbol = (
+                                        holding.get('tradingSymbol') or
+                                        holding.get('symbol') or
+                                        holding.get('instrumentName') or ''
+                                    ).replace('-EQ', '').upper()
+                                    
+                                    if holding_symbol == symbol.upper():
+                                        actual_qty = int(
+                                            holding.get('quantity') or
+                                            holding.get('qty') or
+                                            holding.get('netQuantity') or
+                                            holding.get('holdingsQuantity') or 0
+                                        )
+                                        break
+                                
+                                if actual_qty > 0:
+                                    logger.info(f"Found {actual_qty} shares available in holdings for {symbol} (expected {total_qty})")
+                                    # Retry sell with actual quantity
+                                    resp = self.orders.place_market_sell(
+                                        symbol=symbol,
+                                        quantity=actual_qty,
+                                        variety=config.DEFAULT_VARIETY,
+                                        exchange=config.DEFAULT_EXCHANGE,
+                                        product=config.DEFAULT_PRODUCT,
+                                    )
+                                    
+                                    # Check if retry also failed
+                                    retry_failed = False
+                                    if resp is None:
+                                        retry_failed = True
+                                    elif isinstance(resp, dict):
+                                        keys_lower = {str(k).lower() for k in resp.keys()}
+                                        if any(k in keys_lower for k in ("error", "errors")):
+                                            retry_failed = True
+                                    
+                                    if retry_failed:
+                                        # Send Telegram notification for failed retry
+                                        telegram_msg = (
+                                            f"❌ *SELL ORDER RETRY FAILED*\n\n"
+                                            f"📊 Symbol: *{symbol}*\n"
+                                            f"💼 Expected Qty: {total_qty}\n"
+                                            f"📦 Available Qty: {actual_qty}\n"
+                                            f"📈 Price: ₹{price:.2f}\n"
+                                            f"📉 RSI10: {rsi:.1f}\n"
+                                            f"📍 EMA9: ₹{ema9:.2f}\n\n"
+                                            f"⚠️ Both initial and retry sell orders failed.\n"
+                                            f"🔧 Manual intervention may be required.\n\n"
+                                            f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                        )
+                                        send_telegram(telegram_msg)
+                                        logger.error(f"Sell order retry FAILED for {symbol} - Telegram alert sent")
+                                    else:
+                                        logger.info(f"Retry sell order placed for {symbol}: {actual_qty} shares")
+                                        # Update total_qty to reflect actual sold quantity
+                                        total_qty = actual_qty
+                                else:
+                                    # Send Telegram notification when no holdings found
+                                    telegram_msg = (
+                                        f"❌ *SELL ORDER RETRY FAILED*\n\n"
+                                        f"📊 Symbol: *{symbol}*\n"
+                                        f"💼 Expected Qty: {total_qty}\n"
+                                        f"📦 Available Qty: 0 (not found in holdings)\n"
+                                        f"📈 Price: ₹{price:.2f}\n\n"
+                                        f"⚠️ Cannot retry - symbol not found in holdings.\n"
+                                        f"🔧 Manual check required.\n\n"
+                                        f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                    )
+                                    send_telegram(telegram_msg)
+                                    logger.error(f"No holdings found for {symbol} - cannot retry sell order - Telegram alert sent")
+                            else:
+                                # Send Telegram notification when holdings fetch fails
+                                telegram_msg = (
+                                    f"❌ *SELL ORDER RETRY FAILED*\n\n"
+                                    f"📊 Symbol: *{symbol}*\n"
+                                    f"💼 Expected Qty: {total_qty}\n"
+                                    f"📈 Price: ₹{price:.2f}\n\n"
+                                    f"⚠️ Failed to fetch holdings from broker.\n"
+                                    f"Cannot determine actual available quantity.\n"
+                                    f"🔧 Manual intervention required.\n\n"
+                                    f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                )
+                                send_telegram(telegram_msg)
+                                logger.error(f"Failed to fetch holdings for retry - cannot determine actual quantity for {symbol} - Telegram alert sent")
+                        except Exception as e:
+                            # Send Telegram notification for exception during retry
+                            telegram_msg = (
+                                f"❌ *SELL ORDER RETRY EXCEPTION*\n\n"
+                                f"📊 Symbol: *{symbol}*\n"
+                                f"💼 Expected Qty: {total_qty}\n"
+                                f"📈 Price: ₹{price:.2f}\n\n"
+                                f"⚠️ Error: {str(e)[:100]}\n"
+                                f"🔧 Manual intervention required.\n\n"
+                                f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
+                            send_telegram(telegram_msg)
+                            logger.error(f"Error during sell order retry for {symbol}: {e} - Telegram alert sent")
+                    
                     # Mark all entries as closed
                     exit_time = datetime.now().isoformat()
                     for e in entries:
