@@ -32,6 +32,9 @@ def get_stock_list():
     # chrome_options.add_argument("--headless")  # Runs Chrome in headless mode
     chrome_options.add_argument("--disable-gpu")  # Disable GPU hardware acceleration (optional)
     chrome_options.add_argument("--no-sandbox")  # Needed for headless mode in some environments (like Linux)
+    chrome_options.add_argument("--disable-dev-shm-usage")  # Overcome limited resource problems
+    chrome_options.add_argument("--disable-software-rasterizer")  # Fix for snap Chromium
+    chrome_options.add_argument("--remote-debugging-port=9222")  # Enable remote debugging
 
     # Set up Chrome driver with headless options
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
