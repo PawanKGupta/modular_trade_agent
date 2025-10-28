@@ -51,7 +51,7 @@ class TrackingScope:
     def _load_tracking_data(self) -> Dict[str, Any]:
         """Load tracking data from file."""
         try:
-            with open(self.tracking_file, 'r', encoding='utf-8') as f:
+            with open(self.tracking_file, 'r', encoding='utf-8-sig') as f:
                 return json.load(f)
         except Exception as e:
             logger.error(f"Failed to load tracking data: {e}")
