@@ -514,7 +514,49 @@ class SellOrderManager:
             if not all_orders or 'data' not in all_orders:
                 return
             
-            # Get current open positions to detect manual closures and quantity changes
+            # Detect manual sales by checking executed SELL orders
+            # (Holdings API won't reflect sales until T+1 settlement)
+            
+            # Get all executed orders today
+            executed_orders = self.orders.get_executed_orders()
+            manual_sells = {}  # {symbol: total_qty_sold}
+            
+            if executed_orders:
+                for order in executed_orders:
+                    # Only check SELL orders
+                    txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
+                    if txn_type not in ['S', 'SELL']:
+                        continue
+                    
+                    order_id = str(order.get('nOrdNo') or order.get('orderId') or '')
+                    symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
+                    if '-' in symbol:
+                        symbol = symbol.split('-')[0]
+                    symbol = symbol.upper()
+                    
+                    # Check if this is a manual sell (order_id not in our tracked orders)
+                    is_bot_order = any(
+                        info.get('order_id') == order_id 
+                        for info in self.active_sell_orders.values()
+                    )
+                    
+                    if not is_bot_order and symbol:
+                        # This is a manual sell order
+                        qty = int(order.get('qty') or order.get('quantity') or order.get('fldQty') or 0)
+                        avg_price = float(order.get('avgPrc') or order.get('price') or 0)
+                        
+                        if qty > 0:
+                            if symbol not in manual_sells:
+                                manual_sells[symbol] = {'qty': 0, 'avg_price': 0, 'orders': []}
+                            
+                            manual_sells[symbol]['qty'] += qty
+                            manual_sells[symbol]['orders'].append({
+                                'order_id': order_id,
+                                'qty': qty,
+                                'price': avg_price
+                            })
+            
+            # Get trade history positions for comparison
             open_positions = self.get_open_positions()
             open_symbols = {trade.get('symbol', '').upper(): trade.get('qty', 0) for trade in open_positions}
             
@@ -522,84 +564,81 @@ class SellOrderManager:
             
             # Check each tracked order
             for symbol, order_info in list(self.active_sell_orders.items()):
-                # Check if position was manually closed (symbol not in open positions anymore)
-                if symbol.upper() not in open_symbols:
-                    # Mark position as closed in trade history (manual exit)
-                    try:
-                        history = load_history(self.history_path)
-                        trades = history.get('trades', [])
-                        
-                        for trade in trades:
-                            if trade.get('symbol', '').upper() == symbol.upper() and trade.get('status') == 'open':
-                                trade['status'] = 'closed'
-                                trade['exit_time'] = datetime.now().isoformat()
-                                trade['exit_reason'] = 'MANUAL_EXIT'
-                                trade['exit_price'] = 0  # Unknown - manually sold
-                                trade['pnl'] = 0  # Unknown
-                                trade['pnl_pct'] = 0  # Unknown
-                                logger.info(f"Trade history updated: {symbol} marked as manually closed")
-                                break
-                        
-                        save_history(self.history_path, history)
-                    except Exception as e:
-                        logger.warning(f"Could not update trade history for {symbol}: {e}")
-                    
-                    rejected_symbols.append(symbol)
-                    logger.info(f"Removing {symbol} from tracking: position no longer exists (manually closed)")
-                    continue
+                symbol_upper = symbol.upper()
                 
-                # Check for quantity mismatch (partial manual sale)
-                tracked_qty = order_info.get('qty', 0)
-                current_qty = open_symbols.get(symbol.upper(), 0)
-                
-                if tracked_qty > 0 and current_qty > 0 and tracked_qty != current_qty:
-                    logger.warning(f"Quantity mismatch for {symbol}: tracked={tracked_qty}, current={current_qty} (partial sale detected)")
+                # Check if this position had manual sells
+                if symbol_upper in manual_sells:
+                    manual_sell_info = manual_sells[symbol_upper]
+                    sold_qty = manual_sell_info['qty']
+                    tracked_qty = order_info.get('qty', 0)
+                    remaining_qty = tracked_qty - sold_qty
                     
-                    # Cancel the existing order (wrong quantity)
+                    logger.warning(f"Manual sell detected for {symbol}: sold {sold_qty} shares")
+                    
+                    # Cancel existing bot order (wrong quantity now)
                     order_id = order_info.get('order_id')
                     if order_id:
                         try:
-                            logger.info(f"Cancelling order {order_id} for {symbol} due to quantity mismatch")
+                            logger.info(f"Cancelling order {order_id} for {symbol} due to manual sale")
                             self.orders.cancel_order(order_id)
                         except Exception as e:
                             logger.warning(f"Failed to cancel order {order_id}: {e}")
                     
-                    # Update trade history with partial exit
+                    # Update trade history
                     try:
                         history = load_history(self.history_path)
                         trades = history.get('trades', [])
                         
                         for trade in trades:
-                            if trade.get('symbol', '').upper() == symbol.upper() and trade.get('status') == 'open':
-                                original_qty = trade.get('qty', 0)
-                                sold_qty = original_qty - current_qty
-                                
-                                # Update quantity to remaining amount
-                                trade['qty'] = current_qty
-                                
-                                # Log partial exit info
-                                if 'partial_exits' not in trade:
-                                    trade['partial_exits'] = []
-                                
-                                trade['partial_exits'].append({
-                                    'qty': sold_qty,
-                                    'exit_time': datetime.now().isoformat(),
-                                    'exit_reason': 'MANUAL_PARTIAL_EXIT',
-                                    'exit_price': 0,  # Unknown
-                                })
-                                
-                                logger.info(f"Trade history updated: {symbol} qty reduced from {original_qty} to {current_qty} (sold {sold_qty} manually)")
+                            if trade.get('symbol', '').upper() == symbol_upper and trade.get('status') == 'open':
+                                if remaining_qty <= 0:
+                                    # Full manual exit
+                                    trade['status'] = 'closed'
+                                    trade['exit_time'] = datetime.now().isoformat()
+                                    trade['exit_reason'] = 'MANUAL_EXIT'
+                                    # Use average price from manual orders
+                                    avg_price = sum(o['price'] * o['qty'] for o in manual_sell_info['orders']) / sold_qty if sold_qty > 0 else 0
+                                    trade['exit_price'] = avg_price
+                                    
+                                    entry_price = trade.get('entry_price', 0)
+                                    if entry_price and avg_price:
+                                        pnl = (avg_price - entry_price) * sold_qty
+                                        pnl_pct = ((avg_price / entry_price) - 1) * 100
+                                        trade['pnl'] = pnl
+                                        trade['pnl_pct'] = pnl_pct
+                                    
+                                    logger.info(f"Trade history updated: {symbol} marked as manually closed (full exit)")
+                                else:
+                                    # Partial manual exit
+                                    trade['qty'] = remaining_qty
+                                    
+                                    if 'partial_exits' not in trade:
+                                        trade['partial_exits'] = []
+                                    
+                                    avg_price = sum(o['price'] * o['qty'] for o in manual_sell_info['orders']) / sold_qty if sold_qty > 0 else 0
+                                    trade['partial_exits'].append({
+                                        'qty': sold_qty,
+                                        'exit_time': datetime.now().isoformat(),
+                                        'exit_reason': 'MANUAL_PARTIAL_EXIT',
+                                        'exit_price': avg_price,
+                                    })
+                                    
+                                    logger.info(f"Trade history updated: {symbol} qty reduced to {remaining_qty} (sold {sold_qty} manually)")
                                 break
                         
                         save_history(self.history_path, history)
                     except Exception as e:
-                        logger.warning(f"Could not update trade history for partial sale of {symbol}: {e}")
+                        logger.warning(f"Could not update trade history for manual sale of {symbol}: {e}")
                     
-                    # Remove from tracking (will be re-added with correct qty on next placement cycle)
+                    # Remove from tracking (will re-add with correct qty if remaining > 0)
                     rejected_symbols.append(symbol)
-                    logger.info(f"Removing {symbol} from tracking: will place new order with correct qty={current_qty}")
+                    if remaining_qty > 0:
+                        logger.info(f"Removing {symbol} from tracking: will place new order with qty={remaining_qty}")
+                    else:
+                        logger.info(f"Removing {symbol} from tracking: fully sold manually")
                     continue
                 
+                # No manual sale detected, check for rejected/cancelled status
                 order_id = order_info.get('order_id')
                 if not order_id:
                     continue
