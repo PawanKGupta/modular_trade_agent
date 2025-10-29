@@ -333,7 +333,18 @@ class KotakNeoOrders:
                         'N/A'
                     )
                     
-                    logger.info(f"📝 Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status}")
+                    # Check for rejection reason
+                    rejection_reason = (
+                        order.get('rejRsn') or 
+                        order.get('rejectionReason') or 
+                        order.get('rmk') or
+                        ''
+                    )
+                    
+                    if rejection_reason and 'reject' in status.lower():
+                        logger.info(f"📝 Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status} - ❌ Reason: {rejection_reason}")
+                    else:
+                        logger.info(f"📝 Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status}")
                     
                     # Count by status
                     order_stats[status] = order_stats.get(status, 0) + 1

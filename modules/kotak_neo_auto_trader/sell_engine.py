@@ -115,8 +115,14 @@ class SellOrderManager:
             else:
                 tick_size = 0.05
         else:
-            # NSE uses ₹0.05 for all equity stocks (cash segment)
-            tick_size = 0.05
+            # NSE tick size rules (cash equity segment)
+            # 0-100: ₹0.05
+            # 100-1000: ₹0.05
+            # 1000+: ₹0.10
+            if price >= 1000:
+                tick_size = 0.10
+            else:
+                tick_size = 0.05
         
         # Round UP to next valid tick (ceiling)
         # Use decimal arithmetic to avoid floating point precision issues

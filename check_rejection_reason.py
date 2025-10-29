@@ -12,8 +12,12 @@ from utils.logger import logger
 def check_rejected_orders():
     """Check rejection reasons for recently rejected orders"""
     
-    # Initialize auth and orders
-    auth = KotakNeoAuth()
+    # Initialize auth and orders with config file
+    config_file = os.path.join(
+        os.path.dirname(__file__),
+        'modules', 'kotak_neo_auto_trader', 'kotak_neo.env'
+    )
+    auth = KotakNeoAuth(config_file=config_file)
     if not auth.login():
         print("Failed to login")
         return
