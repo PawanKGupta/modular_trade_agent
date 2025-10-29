@@ -506,9 +506,15 @@ class SellOrderManager:
     def _cleanup_rejected_orders(self):
         """
         Remove rejected/cancelled orders from active tracking
-        Also detects if position was manually closed (no longer in open positions)
+        Also detects manual buys of bot-recommended stocks
         """
         try:
+            # First, check if user manually bought any stocks that bot recommended but failed to buy
+            from .storage import check_manual_buys_of_failed_orders
+            manual_buys = check_manual_buys_of_failed_orders(self.history_path, self.orders)
+            if manual_buys:
+                logger.info(f"Detected {len(manual_buys)} manual buys of bot recommendations: {', '.join(manual_buys)}")
+            
             # Get all orders to check status
             all_orders = self.orders.get_orders()
             if not all_orders or 'data' not in all_orders:
