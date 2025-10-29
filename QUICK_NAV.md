@@ -42,6 +42,12 @@
 ### ...check system health
 → [`documents/HEALTH_CHECK.md`](documents/HEALTH_CHECK.md)
 
+### ...use Kotak Neo automated trading
+→ [`documents/features/KOTAK_NEO_COMMANDS.md`](documents/features/KOTAK_NEO_COMMANDS.md)
+
+### ...place buy/sell orders automatically
+→ [`documents/features/KOTAK_NEO_COMMANDS.md`](documents/features/KOTAK_NEO_COMMANDS.md)
+
 ### ...learn about a specific feature
 → Browse [`documents/features/`](documents/features/)
 

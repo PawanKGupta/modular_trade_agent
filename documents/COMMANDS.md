@@ -110,21 +110,110 @@ python trade_agent.py --backtest
 ```
 Analyzes stocks and generates scored recommendations based on historical performance.
 
+---
+
+## Kotak Neo Auto Trader Commands
+
+**📚 Full documentation:** [`features/KOTAK_NEO_COMMANDS.md`](features/KOTAK_NEO_COMMANDS.md)
+
 ### Place Buy Orders (AMO)
 ```powershell
-python -m modules.kotak_neo_auto_trader.run_place_amo --env modules\kotak_neo_auto_trader\kotak_neo.env
-```
-Places After Market Orders (AMO) for buying stocks based on analysis results.
+# Auto-detect latest CSV
+python -m modules.kotak_neo_auto_trader.run_place_amo
 
-### Monitor and Place Sell Orders
+# Specify CSV file
+python -m modules.kotak_neo_auto_trader.run_place_amo --csv analysis_results\bulk_analysis_final_*.csv
+
+# Custom env file
+python -m modules.kotak_neo_auto_trader.run_place_amo --env path\to\kotak_neo.env
+
+# Logout after completion
+python -m modules.kotak_neo_auto_trader.run_place_amo --logout
+```
+Places After Market Orders (AMO) for buying stocks at 4 PM based on analysis results.
+
+**Key features:**
+- Pre-flight checks (portfolio cap, holdings, balance)
+- Automatic duplicate order cancellation
+- NSE/BSE tick size rounding
+- Telegram notifications
+
+### Sell Order Management
 ```powershell
-python -m modules.kotak_neo_auto_trader.run_sell_orders --env modules\kotak_neo_auto_trader\kotak_neo.env --monitor-interval 60
-```
-Continuously monitors holdings and places sell orders based on target/stop-loss levels.
+# Standard run (wait for market open, then monitor)
+python -m modules.kotak_neo_auto_trader.run_sell_orders
 
-Options:
-- `--monitor-interval`: Check interval in seconds (default: 60)
-- `--env`: Path to environment configuration file
+# Place once and exit (no monitoring)
+python -m modules.kotak_neo_auto_trader.run_sell_orders --run-once
+
+# Custom monitoring interval
+python -m modules.kotak_neo_auto_trader.run_sell_orders --monitor-interval 30
+
+# Skip waiting for market open (testing)
+python -m modules.kotak_neo_auto_trader.run_sell_orders --skip-wait
+```
+Automated sell order management with EMA9 profit targets.
+
+**Execution:**
+- **9:15 AM:** Places sell orders at EMA9
+- **9:15 AM - 3:30 PM:** Monitors and updates orders every minute
+- **Auto-updates:** Modifies orders when lower EMA9 detected
+- **Auto-closes:** Marks positions as closed when orders execute
+
+### Position Monitoring
+```powershell
+# Standard monitoring (market hours only)
+python -m modules.kotak_neo_auto_trader.run_position_monitor
+
+# Custom history file
+python -m modules.kotak_neo_auto_trader.run_position_monitor --history data\trades_history.json
+
+# Disable Telegram alerts
+python -m modules.kotak_neo_auto_trader.run_position_monitor --no-alerts
+
+# Force run outside market hours
+python -m modules.kotak_neo_auto_trader.run_position_monitor --force
+```
+Real-time position monitoring with exit signals and averaging opportunities.
+
+**Alerts:**
+- ⚠️ Exit imminent (RSI > 50 or price < EMA9)
+- 🔄 Averaging opportunity (RSI < 30)
+- 📊 Position health status
+
+### End-of-Day Cleanup
+```powershell
+# Standard EOD cleanup
+python -m modules.kotak_neo_auto_trader.run_eod_cleanup
+
+# Custom env file
+python -m modules.kotak_neo_auto_trader.run_eod_cleanup --env path\to\kotak_neo.env
+```
+Daily reconciliation and reporting at market close (3:35 PM).
+
+**Tasks:**
+1. Portfolio reconciliation
+2. Order status verification
+3. Trade history update
+4. Daily report generation
+5. Telegram summary
+6. Data backup
+
+### Complete Daily Workflow
+```powershell
+# 4:00 PM - Analysis & Buy Orders
+python trade_agent.py --backtest
+python -m modules.kotak_neo_auto_trader.run_place_amo
+
+# 9:15 AM - Sell Orders (runs until 3:30 PM)
+python -m modules.kotak_neo_auto_trader.run_sell_orders
+
+# 10:00 AM - 3:00 PM - Position Monitoring (hourly)
+python -m modules.kotak_neo_auto_trader.run_position_monitor
+
+# 3:35 PM - End-of-Day Cleanup
+python -m modules.kotak_neo_auto_trader.run_eod_cleanup
+```
 
 ---
 

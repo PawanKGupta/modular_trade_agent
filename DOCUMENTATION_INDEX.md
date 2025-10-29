@@ -62,10 +62,11 @@ Welcome! This index helps you find the right documentation quickly.
 ## 🔧 Feature Documentation
 
 ### Trading Features
-- **[LIVE_POSITION_MONITORING.md](documents/LIVE_POSITION_MONITORING.md)** - Position monitoring system
-- **[AMO_ORDER_RETRY_FEATURE.md](documents/AMO_ORDER_RETRY_FEATURE.md)** - AMO order retry logic
-- **[SELL_ORDER_RETRY_LOGIC.md](documents/SELL_ORDER_RETRY_LOGIC.md)** - Sell order retry implementation
-- **[SAME_DAY_RETRY_QUICKSTART.md](documents/SAME_DAY_RETRY_QUICKSTART.md)** - Same-day order retry guide
+- **[KOTAK_NEO_COMMANDS.md](documents/features/KOTAK_NEO_COMMANDS.md)** - 🆕 **Complete Kotak Neo command reference**
+- **[LIVE_POSITION_MONITORING.md](documents/features/LIVE_POSITION_MONITORING.md)** - Position monitoring system
+- **[AMO_ORDER_RETRY_FEATURE.md](documents/features/AMO_ORDER_RETRY_FEATURE.md)** - AMO order retry logic
+- **[SELL_ORDER_RETRY_LOGIC.md](documents/features/SELL_ORDER_RETRY_LOGIC.md)** - Sell order retry implementation
+- **[SAME_DAY_RETRY_QUICKSTART.md](documents/features/SAME_DAY_RETRY_QUICKSTART.md)** - Same-day order retry guide
 
 ### Analysis Features
 - **[DIP_MODE_COMPARISON.md](documents/DIP_MODE_COMPARISON.md)** - Dip-buying mode comparison
