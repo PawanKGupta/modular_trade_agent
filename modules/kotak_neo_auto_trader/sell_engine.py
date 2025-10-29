@@ -503,6 +503,138 @@ class SellOrderManager:
         
         return market_open <= now <= market_close
     
+    def _cleanup_rejected_orders(self):
+        """
+        Remove rejected/cancelled orders from active tracking
+        Also detects if position was manually closed (no longer in open positions)
+        """
+        try:
+            # Get all orders to check status
+            all_orders = self.orders.get_orders()
+            if not all_orders or 'data' not in all_orders:
+                return
+            
+            # Get current open positions to detect manual closures and quantity changes
+            open_positions = self.get_open_positions()
+            open_symbols = {trade.get('symbol', '').upper(): trade.get('qty', 0) for trade in open_positions}
+            
+            rejected_symbols = []
+            
+            # Check each tracked order
+            for symbol, order_info in list(self.active_sell_orders.items()):
+                # Check if position was manually closed (symbol not in open positions anymore)
+                if symbol.upper() not in open_symbols:
+                    # Mark position as closed in trade history (manual exit)
+                    try:
+                        history = load_history(self.history_path)
+                        trades = history.get('trades', [])
+                        
+                        for trade in trades:
+                            if trade.get('symbol', '').upper() == symbol.upper() and trade.get('status') == 'open':
+                                trade['status'] = 'closed'
+                                trade['exit_time'] = datetime.now().isoformat()
+                                trade['exit_reason'] = 'MANUAL_EXIT'
+                                trade['exit_price'] = 0  # Unknown - manually sold
+                                trade['pnl'] = 0  # Unknown
+                                trade['pnl_pct'] = 0  # Unknown
+                                logger.info(f"Trade history updated: {symbol} marked as manually closed")
+                                break
+                        
+                        save_history(self.history_path, history)
+                    except Exception as e:
+                        logger.warning(f"Could not update trade history for {symbol}: {e}")
+                    
+                    rejected_symbols.append(symbol)
+                    logger.info(f"Removing {symbol} from tracking: position no longer exists (manually closed)")
+                    continue
+                
+                # Check for quantity mismatch (partial manual sale)
+                tracked_qty = order_info.get('qty', 0)
+                current_qty = open_symbols.get(symbol.upper(), 0)
+                
+                if tracked_qty > 0 and current_qty > 0 and tracked_qty != current_qty:
+                    logger.warning(f"Quantity mismatch for {symbol}: tracked={tracked_qty}, current={current_qty} (partial sale detected)")
+                    
+                    # Cancel the existing order (wrong quantity)
+                    order_id = order_info.get('order_id')
+                    if order_id:
+                        try:
+                            logger.info(f"Cancelling order {order_id} for {symbol} due to quantity mismatch")
+                            self.orders.cancel_order(order_id)
+                        except Exception as e:
+                            logger.warning(f"Failed to cancel order {order_id}: {e}")
+                    
+                    # Update trade history with partial exit
+                    try:
+                        history = load_history(self.history_path)
+                        trades = history.get('trades', [])
+                        
+                        for trade in trades:
+                            if trade.get('symbol', '').upper() == symbol.upper() and trade.get('status') == 'open':
+                                original_qty = trade.get('qty', 0)
+                                sold_qty = original_qty - current_qty
+                                
+                                # Update quantity to remaining amount
+                                trade['qty'] = current_qty
+                                
+                                # Log partial exit info
+                                if 'partial_exits' not in trade:
+                                    trade['partial_exits'] = []
+                                
+                                trade['partial_exits'].append({
+                                    'qty': sold_qty,
+                                    'exit_time': datetime.now().isoformat(),
+                                    'exit_reason': 'MANUAL_PARTIAL_EXIT',
+                                    'exit_price': 0,  # Unknown
+                                })
+                                
+                                logger.info(f"Trade history updated: {symbol} qty reduced from {original_qty} to {current_qty} (sold {sold_qty} manually)")
+                                break
+                        
+                        save_history(self.history_path, history)
+                    except Exception as e:
+                        logger.warning(f"Could not update trade history for partial sale of {symbol}: {e}")
+                    
+                    # Remove from tracking (will be re-added with correct qty on next placement cycle)
+                    rejected_symbols.append(symbol)
+                    logger.info(f"Removing {symbol} from tracking: will place new order with correct qty={current_qty}")
+                    continue
+                
+                order_id = order_info.get('order_id')
+                if not order_id:
+                    continue
+                
+                # Find this order in the response
+                for order in all_orders['data']:
+                    ord_id = order.get('nOrdNo') or order.get('orderId') or ''
+                    if str(ord_id) == str(order_id):
+                        # Check status
+                        status = (
+                            order.get('orderStatus') or 
+                            order.get('ordSt') or 
+                            order.get('status') or 
+                            ''
+                        ).lower()
+                        
+                        # Remove if rejected or cancelled
+                        if 'reject' in status or 'cancel' in status:
+                            rejected_symbols.append(symbol)
+                            logger.info(f"Removing {symbol} from tracking: order {order_id} is {status}")
+                        break
+            
+            # Clean up rejected/cancelled orders and manually closed positions
+            for symbol in rejected_symbols:
+                if symbol in self.active_sell_orders:
+                    del self.active_sell_orders[symbol]
+                if symbol in self.lowest_ema9:
+                    del self.lowest_ema9[symbol]
+            
+            if rejected_symbols:
+                logger.info(f"Cleaned up {len(rejected_symbols)} invalid orders from tracking")
+                
+        except Exception as e:
+            logger.warning(f"Error cleaning up rejected orders: {e}")
+    
     def get_existing_sell_orders(self) -> Dict[str, Dict[str, Any]]:
         """
         Get existing pending sell orders from broker to avoid duplicates
@@ -632,6 +764,9 @@ class SellOrderManager:
                 self.lowest_ema9[symbol] = ema9
                 orders_placed += 1
         
+        # Clean up any rejected orders from tracking
+        self._cleanup_rejected_orders()
+        
         logger.info(f"✅ Placed {orders_placed} sell orders at market open")
         return orders_placed
     
@@ -714,6 +849,9 @@ class SellOrderManager:
         """
         stats = {'checked': 0, 'updated': 0, 'executed': 0}
         
+        # Clean up any rejected/cancelled orders before monitoring
+        self._cleanup_rejected_orders()
+        
         if not self.active_sell_orders:
             logger.debug("No active sell orders to monitor")
             return stats
@@ -723,21 +861,46 @@ class SellOrderManager:
         # Check for executed orders first (single API call)
         executed_ids = self.check_order_execution()
         
-        # Process all stocks in parallel
+        # Remove executed orders BEFORE monitoring (don't waste API calls on executed orders)
+        symbols_executed = []
+        for symbol, order_info in list(self.active_sell_orders.items()):
+            order_id = order_info.get('order_id')
+            if order_id in executed_ids:
+                # Mark position as closed in trade history
+                current_price = order_info.get('target_price', 0)
+                if self.mark_position_closed(symbol, current_price, order_id):
+                    symbols_executed.append(symbol)
+                    logger.info(f"✅ Order executed: {symbol} - removing from tracking")
+        
+        # Clean up executed orders
+        for symbol in symbols_executed:
+            if symbol in self.active_sell_orders:
+                del self.active_sell_orders[symbol]
+            if symbol in self.lowest_ema9:
+                del self.lowest_ema9[symbol]
+        
+        stats['executed'] = len(symbols_executed)
+        
+        # If no orders left to monitor, return
+        if not self.active_sell_orders:
+            if stats['executed'] > 0:
+                logger.info(f"Monitor cycle: {stats['executed']} executed, all orders completed")
+            return stats
+        
+        # Process remaining active stocks in parallel
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all monitoring tasks
+            # Submit all monitoring tasks (only for non-executed orders)
             future_to_symbol = {
                 executor.submit(
                     self._check_and_update_single_stock,
                     symbol,
                     order_info,
-                    executed_ids
+                    []  # Empty list - executed orders already removed
                 ): symbol
                 for symbol, order_info in self.active_sell_orders.items()
             }
             
             # Process results as they complete
-            symbols_to_remove = []
             symbols_to_update_ema = {}
             
             for future in as_completed(future_to_symbol):
@@ -747,10 +910,7 @@ class SellOrderManager:
                     result = future.result()
                     action = result.get('action')
                     
-                    if action == 'executed':
-                        symbols_to_remove.append(symbol)
-                        stats['executed'] += 1
-                    elif action == 'updated':
+                    if action == 'updated':
                         symbols_to_update_ema[symbol] = result.get('ema9')
                         stats['updated'] += 1
                     elif action in ['checked', 'error']:
@@ -759,13 +919,6 @@ class SellOrderManager:
                 except Exception as e:
                     logger.error(f"Error processing result for {symbol}: {e}")
                     stats['checked'] += 1
-            
-            # Clean up executed orders (thread-safe, done after all futures complete)
-            for symbol in symbols_to_remove:
-                if symbol in self.active_sell_orders:
-                    del self.active_sell_orders[symbol]
-                if symbol in self.lowest_ema9:
-                    del self.lowest_ema9[symbol]
             
             # Update lowest EMA9 tracking for updated orders
             for symbol, ema9 in symbols_to_update_ema.items():
