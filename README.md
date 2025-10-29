@@ -65,6 +65,24 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 - **Robust Error Handling**: Circuit breakers and exponential backoff retry logic
 - **Data Validation**: Ensures sufficient historical data for accurate analysis
 
+## 📚 Documentation
+
+**New to the project? Start here:**
+
+- 🚀 **[Getting Started Guide](documents/getting-started/GETTING_STARTED.md)** - Complete beginner's setup walkthrough
+- 📖 **[Documentation Index](DOCUMENTATION_INDEX.md)** - Comprehensive guide to all documentation
+- 🔧 **[WARP.md](WARP.md)** - Developer setup and command reference
+- 🪟 **[Windows Executable Guide](EXECUTABLE_README.md)** - No Python required!
+
+**Quick Links:**
+- [Architecture Guide](documents/architecture/ARCHITECTURE_GUIDE.md) - System design
+- [Deployment Guide](documents/deployment/DEPLOYMENT_READY.md) - Production setup
+- [Cloud Deployment](documents/deployment/ORACLE_CLOUD_DEPLOYMENT.md) - Free Oracle Cloud
+- [Commands Reference](documents/COMMANDS.md) - CLI commands
+- [Testing Guide](documents/testing/TESTING_GUIDE_PHASE1_PHASE2.md) - Testing procedures
+
+---
+
 ## 📋 Table of Contents
 
 - [Installation](#installation)
