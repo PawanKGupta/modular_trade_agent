@@ -197,6 +197,10 @@ class KotakNeoAuth:
             
             session_response = self.client.session_2fa(OTP=self.mpin)
             
+            # Debug: log the response to see hsServerId
+            import json
+            self.logger.debug(f"2FA response: {json.dumps(session_response, indent=2, default=str)}")
+            
             # Handle None response (can happen with cached sessions)
             if session_response is None:
                 self.logger.debug("2FA returned None - session may already be active")
