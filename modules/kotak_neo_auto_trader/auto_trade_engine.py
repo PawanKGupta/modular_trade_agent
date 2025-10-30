@@ -183,20 +183,74 @@ class AutoTradeEngine:
     @staticmethod
     def get_daily_indicators(ticker: str) -> Optional[Dict[str, Any]]:
         try:
+            from sys import path as sys_path
+            from pathlib import Path
+            project_root = Path(__file__).parent.parent.parent
+            if str(project_root) not in sys_path:
+                sys_path.insert(0, str(project_root))
+            from config.settings import VOLUME_LOOKBACK_DAYS
+            
             df = fetch_ohlcv_yf(ticker, days=800, interval='1d', add_current_day=False)
             df = compute_indicators(df)
             if df is None or df.empty:
                 return None
             last = df.iloc[-1]
+            # Calculate average volume over configurable period (default: 50 days)
+            avg_vol = df['volume'].tail(VOLUME_LOOKBACK_DAYS).mean() if 'volume' in df.columns else 0
             return {
                 'close': float(last['close']),
                 'rsi10': float(last['rsi10']),
                 'ema9': float(df['close'].ewm(span=config.EMA_SHORT).mean().iloc[-1]) if 'ema9' not in df.columns else float(last.get('ema9', 0)),
-                'ema200': float(last['ema200']) if 'ema200' in df.columns else float(df['close'].ewm(span=config.EMA_LONG).mean().iloc[-1])
+                'ema200': float(last['ema200']) if 'ema200' in df.columns else float(df['close'].ewm(span=config.EMA_LONG).mean().iloc[-1]),
+                'avg_volume': float(avg_vol)
             }
         except Exception as e:
             logger.warning(f"Failed to get indicators for {ticker}: {e}")
             return None
+    
+    @staticmethod
+    def check_position_volume_ratio(qty: int, avg_volume: float, symbol: str, price: float = 0) -> bool:
+        """Check if position size is within acceptable range of daily volume based on stock price."""
+        from sys import path as sys_path
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.parent
+        if str(project_root) not in sys_path:
+            sys_path.insert(0, str(project_root))
+        from config.settings import POSITION_VOLUME_RATIO_TIERS
+        
+        if avg_volume <= 0:
+            logger.warning(f"{symbol}: No volume data available")
+            return False
+        
+        # Determine max ratio based on stock price tier
+        max_ratio = 0.20  # Default: 20% for unknown price
+        tier_used = "default (20%)"
+        
+        if price > 0:
+            # Find applicable tier (sorted descending by price threshold)
+            for price_threshold, ratio_limit in POSITION_VOLUME_RATIO_TIERS:
+                if price >= price_threshold:
+                    max_ratio = ratio_limit
+                    if price_threshold > 0:
+                        tier_used = f"₹{price_threshold}+ ({ratio_limit:.1%})"
+                    else:
+                        tier_used = f"<₹500 ({ratio_limit:.1%})"
+                    break
+        
+        ratio = qty / avg_volume
+        if ratio > max_ratio:
+            logger.warning(
+                f"{symbol}: Position too large relative to volume "
+                f"(price=₹{price:.2f}, qty={qty}, avg_vol={int(avg_volume)}, "
+                f"ratio={ratio:.1%} > {max_ratio:.1%} for tier {tier_used})"
+            )
+            return False
+        
+        logger.debug(
+            f"{symbol}: Volume check passed (ratio={ratio:.2%} of daily volume, "
+            f"tier={tier_used})"
+        )
+        return True
 
     def reconcile_holdings_to_history(self) -> None:
         """
@@ -946,6 +1000,15 @@ class AutoTradeEngine:
                 
                 qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / close))
                 
+                # Check position-to-volume ratio (liquidity filter)
+                avg_vol = ind.get('avg_volume', 0)
+                if not self.check_position_volume_ratio(qty, avg_vol, symbol, close):
+                    logger.info(f"Skipping retry {symbol}: position size too large relative to volume")
+                    summary["skipped_invalid_qty"] += 1
+                    # Remove from failed orders queue since it's not a temporary issue
+                    remove_failed_order(self.history_path, symbol)
+                    continue
+                
                 # Check balance again
                 affordable = self.get_affordable_qty(close)
                 if affordable < config.MIN_QTY or qty > affordable:
@@ -1006,6 +1069,14 @@ class AutoTradeEngine:
                 summary["skipped_invalid_qty"] += 1
                 continue
             qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / close))
+            
+            # Check position-to-volume ratio (liquidity filter)
+            avg_vol = ind.get('avg_volume', 0)
+            if not self.check_position_volume_ratio(qty, avg_vol, broker_symbol, close):
+                logger.info(f"Skipping {broker_symbol}: position size too large relative to volume")
+                summary["skipped_invalid_qty"] += 1
+                continue
+            
             # Balance check (CNC needs cash) -> notify on insufficiency and save for retry
             affordable = self.get_affordable_qty(close)
             if affordable < config.MIN_QTY or qty > affordable:
