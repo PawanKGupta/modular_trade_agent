@@ -5,6 +5,7 @@ Handles order retrieval, tracking, placement, and GTT orders
 """
 
 from typing import Optional, Dict, List
+import os
 # Use existing project logger
 import sys
 from pathlib import Path
@@ -281,8 +282,8 @@ class KotakNeoOrders:
                 orders_data = orders['data']
                 logger.info(f" Found {len(orders_data)} orders")
                 
-                # Log first order structure for debugging (only once)
-                if orders_data and len(orders_data) > 0:
+                # Log first order structure for debugging (opt-in via env)
+                if orders_data and len(orders_data) > 0 and os.getenv("DEBUG_ORDER_KEYS") == "1":
                     logger.debug(f"First order structure (keys): {list(orders_data[0].keys())}")
                 
                 # Group orders by status

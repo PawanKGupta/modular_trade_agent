@@ -87,8 +87,9 @@ class OrderTracker:
         # Try data field first
         data = response.get('data', response)
         
-        # Try common field names
+        # Try common field names (including Kotak Neo's nOrdNo)
         order_id = (
+            data.get('nOrdNo') or
             data.get('neoOrdNo') or
             data.get('orderId') or
             data.get('order_id') or

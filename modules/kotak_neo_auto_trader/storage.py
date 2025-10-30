@@ -182,7 +182,7 @@ def remove_failed_order(path: str, symbol: str) -> None:
         logger.error(f"Failed to remove failed order: {e}")
 
 
-def check_manual_buys_of_failed_orders(path: str, orders_client) -> list:
+def check_manual_buys_of_failed_orders(path: str, orders_client, include_previous_day_before_market: bool = True) -> list:
     """
     Check if user manually bought any stocks from failed orders list.
     If found, add them to trade history so bot can manage them.
@@ -190,12 +190,13 @@ def check_manual_buys_of_failed_orders(path: str, orders_client) -> list:
     Args:
         path: Path to the history file
         orders_client: KotakNeoOrders instance to fetch executed orders
+        include_previous_day_before_market: Include yesterday's executed buys before 9:15 AM
     
     Returns:
         List of symbols that were manually bought and added to trade history
     """
     try:
-        from datetime import datetime, date
+        from datetime import datetime, date, time as dt_time
         
         data = load_history(path)
         failed_orders = data.get('failed_orders', [])
@@ -203,12 +204,15 @@ def check_manual_buys_of_failed_orders(path: str, orders_client) -> list:
         if not failed_orders:
             return []
         
-        # Get all executed BUY orders today
+        # Get all executed BUY orders (we will date-filter below)
         executed_orders = orders_client.get_executed_orders()
         if not executed_orders:
             return []
         
+        now = datetime.now()
         today = date.today()
+        market_open = dt_time(9, 15)
+        before_open = now.time() < market_open
         manually_bought = []
         
         for order in executed_orders:
@@ -217,16 +221,23 @@ def check_manual_buys_of_failed_orders(path: str, orders_client) -> list:
             if txn_type not in ['B', 'BUY']:
                 continue
             
-            # Check if order is from today
+            # Parse order date
             order_time_str = order.get('ordDtTm') or order.get('orderTime') or ''
             try:
                 if order_time_str:
-                    # Parse order date
                     order_date = datetime.strptime(order_time_str.split()[0], '%d-%b-%Y').date()
-                    if order_date != today:
-                        continue
+                else:
+                    continue
             except Exception:
                 # If can't parse date, skip
+                continue
+            
+            # Date filter: today, or previous day before market open (optional)
+            if not (
+                order_date == today or (
+                    include_previous_day_before_market and before_open and order_date == (today - timedelta(days=1))
+                )
+            ):
                 continue
             
             # Extract symbol

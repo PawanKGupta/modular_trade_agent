@@ -34,7 +34,7 @@ try:
     from .auth import KotakNeoAuth
     from .scrip_master import KotakNeoScripMaster
     from . import config
-    from .storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders
+    from .storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders, check_manual_buys_of_failed_orders
     from .tracking_scope import add_tracked_symbol, is_tracked, get_tracked_symbols, update_tracked_qty
     from .order_tracker import extract_order_id, add_pending_order, search_order_in_broker_orderbook
     # Phase 2 modules
@@ -49,7 +49,7 @@ except ImportError:
     from auth import KotakNeoAuth
     from scrip_master import KotakNeoScripMaster
     import config
-    from storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders
+    from storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders, check_manual_buys_of_failed_orders
     from tracking_scope import add_tracked_symbol, is_tracked, get_tracked_symbols, update_tracked_qty
     from order_tracker import extract_order_id, add_pending_order, search_order_in_broker_orderbook
     # Phase 2 modules
@@ -480,22 +480,45 @@ class AutoTradeEngine:
         lim = self.portfolio.get_limits() or {}
         data = lim.get('data') if isinstance(lim, dict) else None
         avail = 0.0
+        used_key = None
         if isinstance(data, dict):
-            # Try multiple field names for available funds
-            # Priority: Net (Kotak Neo uses this), then standard margin fields
-            avail = float(
-                data.get('Net') or 
-                data.get('net') or 
-                data.get('marginAvailable') or 
-                data.get('margin_available') or 
-                data.get('availableMargin') or 
-                data.get('cash') or 
-                data.get('availableCash') or 
-                data.get('available_cash') or 
-                0.0
-            )
-        if avail <= 0:
-            logger.debug(f"Available balance: ₹{avail:.2f} (from limits API response)")
+            # Prefer explicit cash-like fields first (CNC), then margin keys, then Net
+            candidates = [
+                'cash', 'availableCash', 'available_cash',
+                'availableBalance', 'available_balance', 'available_bal',
+                'fundsAvailable', 'funds_available', 'fundAvailable',
+                'marginAvailable', 'margin_available', 'availableMargin',
+                'Net', 'net'
+            ]
+            for k in candidates:
+                try:
+                    v = data.get(k)
+                    if v is None or v == '':
+                        continue
+                    fv = float(v)
+                    if fv > 0:
+                        avail = fv
+                        used_key = k
+                        break
+                except Exception:
+                    continue
+            # Absolute fallback: pick the max numeric value in the payload
+            if avail <= 0:
+                try:
+                    nums = []
+                    for v in data.values():
+                        try:
+                            nums.append(float(v))
+                        except Exception:
+                            pass
+                    if nums:
+                        avail = max(nums)
+                        used_key = used_key or 'max_numeric_field'
+                except Exception:
+                    pass
+        logger.debug(
+            f"Available balance: ₹{avail:.2f} (from limits API; key={used_key or 'n/a'})"
+        )
         try:
             from math import floor
             return max(0, floor(avail / float(price)))
@@ -503,31 +526,54 @@ class AutoTradeEngine:
             return 0
 
     def get_available_cash(self) -> float:
-        """Return available funds from limits (marginAvailable or cash)."""
+        """Return available funds from limits with robust field fallbacks."""
         if not self.portfolio:
             return 0.0
         lim = self.portfolio.get_limits() or {}
         data = lim.get('data') if isinstance(lim, dict) else None
+        avail = 0.0
+        used_key = None
         if isinstance(data, dict):
             try:
-                # Try multiple field names for available funds
-                # Priority: Net (Kotak Neo uses this), then standard margin fields
-                avail = float(
-                    data.get('Net') or 
-                    data.get('net') or 
-                    data.get('marginAvailable') or 
-                    data.get('margin_available') or 
-                    data.get('availableMargin') or 
-                    data.get('cash') or 
-                    data.get('availableCash') or 
-                    data.get('available_cash') or 
-                    0.0
+                # Prefer cash-like fields first, then margin, then Net
+                candidates = [
+                    'cash', 'availableCash', 'available_cash',
+                    'availableBalance', 'available_balance', 'available_bal',
+                    'fundsAvailable', 'funds_available', 'fundAvailable',
+                    'marginAvailable', 'margin_available', 'availableMargin',
+                    'Net', 'net'
+                ]
+                for k in candidates:
+                    v = data.get(k)
+                    if v is None or v == '':
+                        continue
+                    try:
+                        fv = float(v)
+                    except Exception:
+                        continue
+                    if fv > 0:
+                        avail = fv
+                        used_key = k
+                        break
+                # Absolute fallback: use the max numeric value in payload
+                if avail <= 0:
+                    nums = []
+                    for v in data.values():
+                        try:
+                            nums.append(float(v))
+                        except Exception:
+                            pass
+                    if nums:
+                        avail = max(nums)
+                        used_key = used_key or 'max_numeric_field'
+                logger.debug(
+                    f"Available cash from limits API: ₹{avail:.2f} (key={used_key or 'n/a'})"
                 )
-                logger.debug(f"Available cash from limits API: ₹{avail:.2f}")
-                return avail
+                return float(avail)
             except Exception as e:
                 logger.warning(f"Error parsing available cash: {e}")
                 return 0.0
+        logger.debug("Limits API returned no usable 'data' object; assuming ₹0.00 available")
         return 0.0
 
     # ---------------------- De-dup helpers ----------------------
@@ -626,6 +672,17 @@ class AutoTradeEngine:
         placed_symbol = None
         placement_time = datetime.now().isoformat()
         
+        # Determine if this is a BE/BL/BZ segment stock (trade-to-trade)
+        # These segments require LIMIT orders, not MARKET orders
+        is_t2t_segment = any(broker_symbol.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"])
+        
+        # For T2T segments, use limit order at current price + 1% buffer
+        use_limit_order = is_t2t_segment
+        limit_price = close * 1.01 if use_limit_order else 0.0
+        
+        if use_limit_order:
+            logger.info(f"Using LIMIT order for {broker_symbol} (T2T segment) @ ₹{limit_price:.2f}")
+        
         # Try to resolve symbol using scrip master first
         resolved_symbol = None
         if self.scrip_master and self.scrip_master.symbol_map:
@@ -638,15 +695,29 @@ class AutoTradeEngine:
         # If scrip master resolved the symbol, use it directly
         if resolved_symbol:
             place_symbol = resolved_symbol
-            trial = self.orders.place_market_buy(
-                symbol=place_symbol,
-                quantity=qty,
-                variety=config.DEFAULT_VARIETY,
-                exchange=config.DEFAULT_EXCHANGE,
-                product=config.DEFAULT_PRODUCT,
-            )
-            resp = trial if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial else None
-            placed_symbol = place_symbol if resp else None
+            if use_limit_order:
+                trial = self.orders.place_limit_buy(
+                    symbol=place_symbol,
+                    quantity=qty,
+                    price=limit_price,
+                    variety=config.DEFAULT_VARIETY,
+                    exchange=config.DEFAULT_EXCHANGE,
+                    product=config.DEFAULT_PRODUCT,
+                )
+            else:
+                trial = self.orders.place_market_buy(
+                    symbol=place_symbol,
+                    quantity=qty,
+                    variety=config.DEFAULT_VARIETY,
+                    exchange=config.DEFAULT_EXCHANGE,
+                    product=config.DEFAULT_PRODUCT,
+                )
+            # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
+            if isinstance(trial, dict) and 'error' not in trial:
+                stat = trial.get('stat', '').lower()
+                if stat == 'ok' or 'data' in trial or 'order' in trial or 'raw' in trial or 'nordno' in str(trial).lower():
+                    resp = trial
+                    placed_symbol = place_symbol
         
         # Fallback: Try common series suffixes if scrip master didn't work
         if not resp:
@@ -655,17 +726,37 @@ class AutoTradeEngine:
             placed_symbol = None
             for suf in series_suffixes:
                 place_symbol = broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
-                trial = self.orders.place_market_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    variety=config.DEFAULT_VARIETY,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-                if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial and 'Not_Ok'.lower() not in str(trial).lower():
-                    resp = trial
-                    placed_symbol = place_symbol
-                    break
+                
+                # Check if this suffix requires limit order
+                is_t2t_suf = suf in ["-BE", "-BL", "-BZ"]
+                
+                if is_t2t_suf:
+                    limit_price = close * 1.01
+                    logger.debug(f"Trying {place_symbol} with LIMIT @ ₹{limit_price:.2f}")
+                    trial = self.orders.place_limit_buy(
+                        symbol=place_symbol,
+                        quantity=qty,
+                        price=limit_price,
+                        variety=config.DEFAULT_VARIETY,
+                        exchange=config.DEFAULT_EXCHANGE,
+                        product=config.DEFAULT_PRODUCT,
+                    )
+                else:
+                    trial = self.orders.place_market_buy(
+                        symbol=place_symbol,
+                        quantity=qty,
+                        variety=config.DEFAULT_VARIETY,
+                        exchange=config.DEFAULT_EXCHANGE,
+                        product=config.DEFAULT_PRODUCT,
+                    )
+                # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
+                if isinstance(trial, dict) and 'error' not in trial:
+                    stat = trial.get('stat', '').lower()
+                    trial_str = str(trial).lower()
+                    if (stat == 'ok' or 'data' in trial or 'order' in trial or 'raw' in trial or 'nordno' in trial_str) and 'not_ok' not in trial_str:
+                        resp = trial
+                        placed_symbol = place_symbol
+                        break
         
         # Check if order was successful
         resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp) and 'error' not in resp and 'not_ok' not in str(resp).lower()
@@ -801,6 +892,14 @@ class AutoTradeEngine:
         
         # Clean up expired failed orders (past market open time)
         cleanup_expired_failed_orders(self.history_path)
+
+        # Pre-step: If user bought manually (same day or prev day before open), update history and remove from failed queue
+        try:
+            detected = check_manual_buys_of_failed_orders(self.history_path, self.orders, include_previous_day_before_market=True)
+            if detected:
+                logger.info(f"Manual buys detected and recorded: {', '.join(detected)}")
+        except Exception as e:
+            logger.warning(f"Manual buy check failed: {e}")
         
         # STEP 1: Retry previously failed orders due to insufficient balance
         # (includes yesterday's orders if before 9:15 AM market open)
