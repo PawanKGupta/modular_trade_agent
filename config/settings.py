@@ -7,6 +7,8 @@ load_dotenv()
 LOOKBACK_DAYS = 90
 MIN_VOLUME_MULTIPLIER = 1.0
 VOLUME_LOOKBACK_DAYS = 50  # Days to average for volume calculation (liquidity assessment)
+# Absolute minimum average volume to consider a stock liquid enough (20-day avg)
+MIN_ABSOLUTE_AVG_VOLUME = int(os.getenv("MIN_ABSOLUTE_AVG_VOLUME", "150000"))
 
 # Position-to-volume ratio limits (based on stock price category)
 # Only filters out truly illiquid stocks to avoid missing good opportunities
