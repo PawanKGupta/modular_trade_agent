@@ -56,42 +56,20 @@ def test_kotak_env_credentials_not_leaked_in_logs(monkeypatch, caplog):
 
 
 @pytest.mark.security
-def test_kotak_session_cache_does_not_store_credentials(tmp_path):
-    # Create instance and simulate a token then persist cache
+def test_kotak_session_cache_removed_in_v2_1():
+    """
+    Test that session caching has been removed in v2.1 continuous service.
+    Session caching is no longer needed as the service maintains a single
+    persistent session throughout its lifetime.
+    """
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
-
-    env_path = tmp_path / "kotak_neo.env"
-    env_path.write_text(
-        "\n".join([
-            "KOTAK_CONSUMER_KEY=ck_test",
-            "KOTAK_CONSUMER_SECRET=cs_test",
-            "KOTAK_MOBILE_NUMBER=9999999999",
-            "KOTAK_PASSWORD=p@ssW0rd!",
-            "KOTAK_TOTP_SECRET=totp_test",
-            "KOTAK_MPIN=123456",
-            "KOTAK_ENVIRONMENT=prod",
-        ]),
-        encoding="utf-8",
-    )
-
-    auth = KotakNeoAuth(config_file=str(env_path))
-    # Set a fake token and save cache
-    auth.session_token = "fake_session_token"
-    auth._save_session_cache()  # writes modules/kotak_neo_auto_trader/session_cache.json
-
-    cache_file = Path(__file__).resolve().parents[2] / "modules" / "kotak_neo_auto_trader" / "session_cache.json"
-    assert cache_file.exists()
-
-    cache = json.loads(cache_file.read_text(encoding="utf-8"))
-    # Expected keys only; no password or secrets
-    assert "session_token" in cache
-    assert "created_at" in cache
-    assert "expires_at" in cache
-    assert "environment" in cache
-    assert "mobile" in cache
-
-    forbidden = {"password", "consumer_secret", "totp", "mpin"}
-    assert not (forbidden & set(map(str.lower, cache.keys())))
+    
+    # Verify session caching methods have been removed
+    assert not hasattr(KotakNeoAuth, '_save_session_cache')
+    assert not hasattr(KotakNeoAuth, '_try_use_cached_session')
+    
+    # Verify force_relogin still exists (needed for JWT expiry recovery)
+    assert hasattr(KotakNeoAuth, 'force_relogin')
 
 
 @pytest.mark.security

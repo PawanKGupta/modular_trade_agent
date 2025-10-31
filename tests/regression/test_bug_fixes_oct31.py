@@ -9,7 +9,7 @@ Tests for 5 critical bugs fixed:
 4. Trade history update after reentry
 5. Scheduled task timeout configuration
 
-Run with: pytest tests/test_bug_fixes_oct31.py -v
+Run with: pytest tests/regression/test_bug_fixes_oct31.py -v
 """
 
 import sys
@@ -18,7 +18,8 @@ from unittest.mock import Mock, MagicMock, patch
 from datetime import datetime
 import pytest
 
-project_root = Path(__file__).parent.parent
+# Now in tests/regression/ so need to go up 2 levels
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine

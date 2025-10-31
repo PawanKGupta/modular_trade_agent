@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """
+⚠️ DEPRECATED - Use run_trading_service.py instead
+
+This script is kept for manual fallback only.
+The unified trading service (run_trading_service.py) runs all tasks automatically.
+
 Run Auto Trade after trade_agent analysis.
 Usage:
   python -m modules.kotak_neo_auto_trader.run_auto_trade [--env kotak_neo.env]

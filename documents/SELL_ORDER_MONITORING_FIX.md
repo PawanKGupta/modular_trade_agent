@@ -1,5 +1,8 @@
 # Sell Order Monitoring Not Running - Issue Analysis & Fix
 
+**Note**: This document describes a historical fix for v1.0 (separate task architecture).  
+v2.1+ uses the unified continuous service (run_trading_service.py).
+
 **Date**: October 31, 2024  
 **Issue**: EMA9 target updates not happening - sell orders not being modified with lower prices
 

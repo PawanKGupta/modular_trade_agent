@@ -303,7 +303,7 @@ class KotakNeoOrders:
         return cancelled
 
     # -------------------- Retrieval --------------------
-    def get_orders(self) -> Optional[Dict]:
+    def get_orders(self, _retry_count: int = 0) -> Optional[Dict]:
         """Get all existing regular orders (not GTT) with fallbacks and raw logging."""
         client = self.auth.get_client()
         if not client:
@@ -322,9 +322,30 @@ class KotakNeoOrders:
             logger.info(" Retrieving existing orders...")
             orders = _call_any(["order_report", "get_order_report", "orderBook", "orders", "order_book"]) or {}
             
-            if isinstance(orders, dict) and "error" in orders:
-                logger.error(f" Failed to get orders: {orders['error']}")
-                return None
+            # Check for JWT expiry / invalid credentials
+            if isinstance(orders, dict):
+                code = orders.get('code', '')
+                message = str(orders.get('message', '')).lower()
+                description = str(orders.get('description', '')).lower()
+                
+                # Detect JWT expiry
+                if code == '900901' or 'invalid jwt token' in description or 'invalid credentials' in message:
+                    if _retry_count == 0:
+                        logger.warning("❌ JWT token expired - attempting re-authentication...")
+                        if hasattr(self.auth, 'force_relogin') and self.auth.force_relogin():
+                            logger.info("✅ Re-authentication successful - retrying API call")
+                            return self.get_orders(_retry_count=1)  # Retry once
+                        else:
+                            logger.error("❌ Re-authentication failed")
+                            return None
+                    else:
+                        logger.error("❌ JWT token still invalid after re-authentication")
+                        return None
+                
+                # Check for other errors
+                if "error" in orders:
+                    logger.error(f" Failed to get orders: {orders['error']}")
+                    return None
             
             # Process and display orders
             if isinstance(orders, dict) and 'data' in orders and orders['data']:

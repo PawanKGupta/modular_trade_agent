@@ -477,6 +477,38 @@ class AutoTradeEngine:
             logger.error(f"Failed to initialize Phase 2 modules: {e}", exc_info=True)
             logger.warning("Continuing without Phase 2 features")
 
+    def monitor_positions(self) -> Dict[str, Any]:
+        """
+        Monitor all open positions for reentry/exit signals.
+        
+        Returns:
+            Dict with monitoring results
+        """
+        try:
+            from .position_monitor import get_position_monitor
+            
+            # Get position monitor
+            monitor = get_position_monitor(
+                history_path=self.history_path,
+                enable_alerts=self._enable_telegram
+            )
+            
+            # Run monitoring
+            results = monitor.monitor_all_positions()
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Position monitoring failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'monitored': 0,
+                'alerts_sent': 0,
+                'exit_imminent': 0,
+                'averaging_opportunities': 0
+            }
+    
     def logout(self):
         # Phase 2: Stop verifier before logout
         if self.order_verifier and self.order_verifier.is_running():

@@ -269,64 +269,71 @@ Get-Content logs\trade_agent.log | Select-String -Pattern "2024-10-27"
 
 ### Monitor System Resources
 ```powershell
-# Check if tasks are running
+# Check if service is running
 Get-Process python*
 
-# View task execution history
-Get-ScheduledTask -TaskName "TradingBot-*" | Get-ScheduledTaskInfo
+# View unified service status
+Get-ScheduledTask -TaskName "TradingService-Unified" | Get-ScheduledTaskInfo
 ```
 
 ---
 
-## Windows Task Scheduler
+## Unified Trading Service Control
 
-### View Tasks in GUI
+### Service Management
 ```powershell
-taskschd.msc
+# Start the unified service
+Start-ScheduledTask -TaskName "TradingService-Unified"
+
+# Stop the running service
+Stop-ScheduledTask -TaskName "TradingService-Unified"
+
+# Check service status
+Get-ScheduledTask -TaskName "TradingService-Unified" | Select-Object State
+
+# View detailed service info
+Get-ScheduledTask -TaskName "TradingService-Unified" | Get-ScheduledTaskInfo | Format-List
 ```
 
-### Manual Task Control
-
-#### Start a Task Manually
+### Service Configuration
 ```powershell
-Start-ScheduledTask -TaskName "TradingBot-Analysis"
-Start-ScheduledTask -TaskName "TradingBot-BuyOrders"
-Start-ScheduledTask -TaskName "TradingBot-SellMonitor"
+# Set infinite timeout (continuous operation)
+$task = Get-ScheduledTask -TaskName "TradingService-Unified"
+$task.Settings.ExecutionTimeLimit = "PT0S"
+Set-ScheduledTask -InputObject $task
+
+# Enable auto-restart on failure
+$task.Settings.RestartCount = 3
+$task.Settings.RestartInterval = "PT5M"
+Set-ScheduledTask -InputObject $task
 ```
 
-#### Stop a Running Task
+### Manual Service Control
 ```powershell
-Stop-ScheduledTask -TaskName "TradingBot-SellMonitor"
-```
+# Run service manually (for testing)
+.\.\.venv\Scripts\python.exe -m modules.kotak_neo_auto_trader.run_trading_service --env modules/kotak_neo_auto_trader/kotak_neo.env
 
-#### Enable/Disable Individual Tasks
-```powershell
-Enable-ScheduledTask -TaskName "TradingBot-Analysis"
-Disable-ScheduledTask -TaskName "TradingBot-Analysis"
-```
-
-#### View Task Details
-```powershell
-Get-ScheduledTask -TaskName "TradingBot-Analysis" | Format-List *
-Get-ScheduledTaskInfo -TaskName "TradingBot-Analysis" | Format-List *
-```
-
-#### Remove Individual Task
-```powershell
-Unregister-ScheduledTask -TaskName "TradingBot-Analysis" -Confirm:$false
+# Kill stuck service process
+Get-Process python | Where-Object {$_.Modules.FileName -like "*run_trading_service*"} | Stop-Process
 ```
 
 ---
 
-## Scheduled Task Configuration
+## Service Schedule (Continuous 24/7)
 
-### Default Schedule
+### Automatic Tasks
 
-| Task | Schedule | Duration | Description |
-|------|----------|----------|-------------|
-| **TradingBot-Analysis** | Mon-Fri 4:00 PM | 1 hour | Analyzes stocks with backtest scoring |
-| **TradingBot-BuyOrders** | Mon-Fri 4:05 PM | 1 hour | Places AMO buy orders |
-| **TradingBot-SellMonitor** | Mon-Fri 9:15 AM | 7 hours | Monitors holdings and places sell orders |
+| Time | Task | Description |
+|------|------|-------------|
+| **At Startup** | Service Start | Login once, runs continuously |
+| **Mon-Fri 9:00 AM** | Pre-Market Retry | Retry failed orders from previous day |
+| **Mon-Fri 9:15 AM** | Sell Orders | Place limit sell orders at EMA9 targets |
+| **Mon-Fri 9:15-3:30 PM** | Sell Monitoring | Update orders every minute |
+| **Mon-Fri 9:30+ AM (hourly)** | Position Monitor | Check for reentry/exit signals |
+| **Mon-Fri 4:00 PM** | Market Analysis | Run trade_agent.py --backtest |
+| **Mon-Fri 4:05 PM** | Buy Orders | Place AMO buy orders for next day |
+| **Mon-Fri 6:00 PM** | EOD Cleanup | Cleanup + reset for next day |
+| **Sat-Sun** | Idle | Service runs but no tasks execute |
 
 ### Task Settings
 - **Run whether user is logged on or not**: No (Interactive)
@@ -391,15 +398,15 @@ Get-Content logs\trade_agent.log -Tail 50    # Check analysis results
 
 ### Emergency Commands
 ```powershell
-# Stop all trading immediately
-Stop-ScheduledTask -TaskName "TradingBot-SellMonitor"
+# Stop trading service immediately
+Stop-ScheduledTask -TaskName "TradingService-Unified"
 Get-Process python* | Stop-Process
 
-# Disable all scheduled tasks
-.\manage_tasks.ps1 disable
+# Disable service (prevent auto-restart)
+Disable-ScheduledTask -TaskName "TradingService-Unified"
 
 # Re-enable after issue resolved
-.\manage_tasks.ps1 enable
+Enable-ScheduledTask -TaskName "TradingService-Unified"
 ```
 
 ### Testing & Development
@@ -410,8 +417,8 @@ python trade_agent.py --backtest
 # Test with specific parameters
 python -m modules.kotak_neo_auto_trader.run_place_amo --help
 
-# Check task definition without running
-Get-ScheduledTask -TaskName "TradingBot-Analysis" | Select-Object -ExpandProperty Actions
+# Check service definition
+Get-ScheduledTask -TaskName "TradingService-Unified" | Select-Object -ExpandProperty Actions
 ```
 
 ---
