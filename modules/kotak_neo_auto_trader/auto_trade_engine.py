@@ -1326,18 +1326,22 @@ class AutoTradeEngine:
             if rsi > 30:
                 for e in entries:
                     e['reset_ready'] = True
-            # If reset_ready and rsi drops below 30 again, we can re-enable levels for new cycle
+            # If reset_ready and rsi drops below 30 again, trigger NEW CYCLE reentry at RSI<30
             if rsi < 30 and any(e.get('reset_ready') for e in entries):
+                # This is a NEW CYCLE - treat RSI<30 as a fresh reentry opportunity
                 for e in entries:
-                    e['levels_taken'] = {"30": True, "20": False, "10": False}
+                    e['levels_taken'] = {"30": False, "20": False, "10": False}  # Reset all levels
                     e['reset_ready'] = False
                 levels = entries[0]['levels_taken']
-
-            next_level = None
-            if levels.get('30') and not levels.get('20') and rsi < 20:
-                next_level = 20
-            if levels.get('20') and not levels.get('10') and rsi < 10:
-                next_level = 10
+                # Immediately trigger reentry at this RSI<30 level
+                next_level = 30
+            else:
+                # Normal progression through levels
+                next_level = None
+                if levels.get('30') and not levels.get('20') and rsi < 20:
+                    next_level = 20
+                if levels.get('20') and not levels.get('10') and rsi < 10:
+                    next_level = 10
 
             if next_level is not None:
                 # Daily cap: allow max 1 re-entry per symbol per day
@@ -1367,11 +1371,75 @@ class AutoTradeEngine:
                         product=config.DEFAULT_PRODUCT,
                     )
                     # Record new averaging entry only if order succeeded
-                    resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp) and 'error' not in resp and 'not_ok' not in str(resp).lower()
+                    # Accept responses with nOrdNo (direct order ID) or data/order/raw structures
+                    resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp or 'nOrdNo' in resp or 'nordno' in str(resp).lower()) and 'error' not in resp and 'not_ok' not in str(resp).lower()
                     if resp_valid:
-                        # Do not record immediately; wait for holdings
-                        logger.info(f"Re-entry order placed for {symbol}; will record once visible in holdings")
+                        # Mark this level as taken
+                        for e in entries:
+                            e['levels_taken'][str(next_level)] = True
+                        logger.info(f"Re-entry order placed for {symbol} at RSI<{next_level} level; will record once visible in holdings")
                         summary["reentries"] += 1
+                        
+                        # Update existing sell order with new total quantity
+                        try:
+                            logger.info(f"Checking for existing sell order to update after reentry for {symbol}...")
+                            all_orders = self.orders.get_orders()
+                            if all_orders and isinstance(all_orders, dict) and 'data' in all_orders:
+                                for order in all_orders.get('data', []):
+                                    order_symbol = (order.get('tradingSymbol') or '').split('-')[0].upper()
+                                    order_type = (order.get('transactionType') or order.get('trnsTp') or '').upper()
+                                    order_status = (order.get('status') or order.get('orderStatus') or order.get('ordSt') or '').lower()
+                                    
+                                    # Find active sell order for this symbol
+                                    if order_symbol == symbol.upper() and order_type in ['S', 'SELL'] and order_status in ['open', 'pending']:
+                                        old_order_id = order.get('neoOrdNo') or order.get('nOrdNo') or order.get('orderId')
+                                        old_qty = int(order.get('quantity') or order.get('qty') or 0)
+                                        old_price = float(order.get('price') or order.get('prc') or 0)
+                                        
+                                        if old_order_id and old_qty > 0:
+                                            # Calculate new total quantity
+                                            new_total_qty = old_qty + qty
+                                            logger.info(f"Found existing sell order for {symbol}: {old_qty} shares @ ₹{old_price:.2f}")
+                                            logger.info(f"Updating to new total: {old_qty} + {qty} (reentry) = {new_total_qty} shares")
+                                            
+                                            # Modify order with new quantity
+                                            modify_resp = self.orders.modify_order(
+                                                order_id=str(old_order_id),
+                                                quantity=new_total_qty,
+                                                price=old_price
+                                            )
+                                            
+                                            if modify_resp:
+                                                logger.info(f"✅ Sell order updated: {symbol} x{new_total_qty} @ ₹{old_price:.2f}")
+                                            else:
+                                                logger.warning(f"⚠️  Failed to modify sell order {old_order_id} - order may need manual update")
+                                            break  # Only update the first matching sell order
+                                else:
+                                    logger.debug(f"No active sell order found for {symbol} (will be placed at next sell order run)")
+                        except Exception as e:
+                            logger.error(f"Error updating sell order after reentry: {e}")
+                            # Continue execution even if sell order update fails
+                        
+                        # Update trade history with new total quantity
+                        try:
+                            logger.info(f"Updating trade history quantity after reentry for {symbol}...")
+                            for e in entries:
+                                old_qty = e.get('qty', 0)
+                                new_total_qty = old_qty + qty
+                                e['qty'] = new_total_qty
+                                logger.info(f"Trade history updated: {symbol} qty {old_qty} → {new_total_qty}")
+                                # Also add reentry metadata for tracking
+                                if 'reentries' not in e:
+                                    e['reentries'] = []
+                                e['reentries'].append({
+                                    'qty': qty,
+                                    'level': next_level,
+                                    'rsi': rsi,
+                                    'price': price,
+                                    'time': datetime.now().isoformat()
+                                })
+                        except Exception as e:
+                            logger.error(f"Error updating trade history after reentry: {e}")
                     else:
                         logger.error(f"Re-entry order placement failed for {symbol}")
 

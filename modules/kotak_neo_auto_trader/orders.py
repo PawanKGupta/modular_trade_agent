@@ -188,6 +188,55 @@ class KotakNeoOrders:
         return None
 
     # -------------------- Cancel / Manage --------------------
+    def modify_order(self, order_id: str, price: float = None, quantity: int = None, 
+                     trigger_price: float = 0, validity: str = "DAY", order_type: str = "L") -> Optional[Dict]:
+        """Modify an existing order's price and/or quantity."""
+        client = self.auth.get_client()
+        if not client:
+            return None
+        
+        try:
+            # Build payload with only provided parameters
+            payload = {"order_id": order_id}
+            
+            if price is not None:
+                payload["price"] = str(price)
+            if quantity is not None:
+                payload["quantity"] = str(quantity)
+            if trigger_price:
+                payload["trigger_price"] = str(trigger_price)
+            if validity:
+                payload["validity"] = validity.upper()
+            
+            # Add order_type (required by Kotak Neo API)
+            payload["order_type"] = order_type
+            
+            # Kotak Neo uses disclosed_quantity as optional param
+            payload["disclosed_quantity"] = "0"
+            
+            logger.info(f"📝 Modifying order {order_id}: qty={quantity}, price={price}")
+            
+            if hasattr(client, 'modify_order'):
+                response = client.modify_order(**payload)
+                
+                if isinstance(response, dict):
+                    keys_lower = {str(k).lower() for k in response.keys()}
+                    if any(k in keys_lower for k in ("error", "errors")):
+                        logger.error(f"❌ Order modification rejected: {response}")
+                        return None
+                    logger.info(f"✅ Order modified: {response}")
+                    return response
+                else:
+                    logger.info(f"✅ Order modified (raw): {response}")
+                    return {"raw": str(response)}
+            else:
+                logger.error("modify_order method not available in client")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error modifying order {order_id}: {e}")
+            return None
+    
     def cancel_order(self, order_id: str) -> Optional[Dict]:
         """Cancel an order by ID, trying multiple SDK method names/params."""
         client = self.auth.get_client()
@@ -216,7 +265,7 @@ class KotakNeoOrders:
                         return None
                 resp = method(**payload)
                 return resp if isinstance(resp, dict) else {"raw": str(resp)}
-            for method_name in ("cancel_order", "order_cancel", "cancelOrder", "cancelorder", "modify_order"):
+            for method_name in ("cancel_order", "order_cancel", "cancelOrder", "cancelorder"):
                 try:
                     resp = call_method(method_name)
                     if resp:
@@ -227,7 +276,7 @@ class KotakNeoOrders:
             logger.error(f"❌ Failed to cancel order {order_id}")
             return None
         except Exception as e:
-            logger.error(f" Error cancelling order {order_id}: {e}")
+            logger.error(f"❌ Error cancelling order {order_id}: {e}")
             return None
 
     def cancel_pending_buys_for_symbol(self, symbol_variants: list[str]) -> int:
