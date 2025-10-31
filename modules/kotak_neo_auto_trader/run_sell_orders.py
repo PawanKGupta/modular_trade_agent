@@ -24,10 +24,18 @@ try:
     from .sell_engine import SellOrderManager
     from .auth import KotakNeoAuth
     from .auto_trade_engine import AutoTradeEngine
+    from .live_price_cache import LivePriceCache
+    from .live_price_manager import LivePriceManager
+    from .portfolio import KotakNeoPortfolio
+    from .scrip_master import KotakNeoScripMaster
 except ImportError:
     from sell_engine import SellOrderManager
     from auth import KotakNeoAuth
     from auto_trade_engine import AutoTradeEngine
+    from live_price_cache import LivePriceCache
+    from live_price_manager import LivePriceManager
+    from portfolio import KotakNeoPortfolio
+    from scrip_master import KotakNeoScripMaster
 
 
 def is_trading_day() -> bool:
@@ -107,9 +115,55 @@ def main():
         logger.error(f"Failed to initialize auth: {e}")
         return
     
+    # Initialize LivePriceManager for real-time WebSocket prices
+    price_manager = None
+    try:
+        logger.info("Initializing LivePriceManager for real-time prices...")
+        
+        # Get open orders to extract symbols
+        from .orders import KotakNeoOrders
+        orders_api = KotakNeoOrders(auth)
+        orders_response = orders_api.get_orders()
+        
+        # Extract symbols from open sell orders
+        symbols = []
+        if orders_response and 'data' in orders_response:
+            for order in orders_response['data']:
+                # Check if it's an open sell order
+                status = (order.get('orderStatus') or order.get('ordSt') or order.get('status') or '').lower()
+                txn_type = (order.get('transactionType') or order.get('trnsTp') or order.get('txnType') or '').upper()
+                broker_symbol = (order.get('tradingSymbol') or order.get('trdSym') or order.get('symbol') or '').replace('-EQ', '')
+                
+                if status == 'open' and txn_type == 'S' and broker_symbol:
+                    if broker_symbol not in symbols:
+                        symbols.append(broker_symbol)
+        
+        if symbols:
+            # Initialize scrip_master and load data
+            scrip_master = KotakNeoScripMaster(exchanges=['NSE'], auth_client=auth.get_client())
+            scrip_master.load_scrip_master()  # Load scrip data
+            
+            # Initialize LivePriceCache
+            price_cache = LivePriceCache(auth_client=auth, scrip_master=scrip_master)
+            
+            # Initialize and start LivePriceManager
+            price_manager = LivePriceManager(price_cache, symbols)
+            price_manager.start()
+            
+            logger.info(f"✅ LivePriceManager started for {len(symbols)} symbols: {', '.join(symbols)}")
+            
+            # Give it a moment to connect and fetch initial prices
+            time.sleep(2)
+        else:
+            logger.info("No open sell orders found, skipping LivePriceManager initialization")
+            
+    except Exception as e:
+        logger.warning(f"Failed to initialize LivePriceManager: {e}")
+        logger.info("Will fallback to yfinance for price data")
+    
     # Initialize sell order manager
     try:
-        sell_manager = SellOrderManager(auth)
+        sell_manager = SellOrderManager(auth, price_manager=price_manager)
         logger.info("✅ Sell Order Manager initialized")
         
     except Exception as e:

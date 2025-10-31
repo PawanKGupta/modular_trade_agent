@@ -31,6 +31,7 @@ try:
     from .market_data import KotakNeoMarketData
     from .storage import load_history, save_history
     from .scrip_master import KotakNeoScripMaster
+    from .live_price_cache import LivePriceCache
     from . import config
 except ImportError:
     from auth import KotakNeoAuth
@@ -39,6 +40,7 @@ except ImportError:
     from market_data import KotakNeoMarketData
     from storage import load_history, save_history
     from scrip_master import KotakNeoScripMaster
+    from live_price_cache import LivePriceCache
     import config
 
 
@@ -47,7 +49,7 @@ class SellOrderManager:
     Manages automated sell orders with EMA9 target tracking
     """
     
-    def __init__(self, auth: KotakNeoAuth, history_path: str = None, max_workers: int = 10):
+    def __init__(self, auth: KotakNeoAuth, history_path: str = None, max_workers: int = 10, price_manager=None):
         """
         Initialize sell order manager
         
@@ -55,6 +57,7 @@ class SellOrderManager:
             auth: Authenticated Kotak Neo session
             history_path: Path to trade history JSON
             max_workers: Maximum threads for parallel monitoring
+            price_manager: Optional LivePriceManager for real-time prices
         """
         self.auth = auth
         self.orders = KotakNeoOrders(auth)
@@ -62,6 +65,7 @@ class SellOrderManager:
         self.market_data = KotakNeoMarketData(auth)
         self.history_path = history_path or config.TRADES_HISTORY_PATH
         self.max_workers = max_workers
+        self.price_manager = price_manager
         
         # Initialize scrip master for symbol/token resolution
         self.scrip_master = KotakNeoScripMaster(
@@ -204,7 +208,7 @@ class SellOrderManager:
             k = 2.0 / (9 + 1)
             current_ema9 = (current_ltp * k) + (yesterday_ema9 * (1 - k))
             
-            logger.debug(f"{ticker} - Yesterday EMA9: ₹{yesterday_ema9:.2f}, LTP: ₹{current_ltp:.2f}, Current EMA9: ₹{current_ema9:.2f}")
+            logger.info(f"📈 {ticker.replace('.NS', '')}: LTP=₹{current_ltp:.2f}, Yesterday EMA9=₹{yesterday_ema9:.2f} → Current EMA9=₹{current_ema9:.2f}")
             return current_ema9
             
         except Exception as e:
@@ -213,8 +217,8 @@ class SellOrderManager:
     
     def get_current_ltp(self, ticker: str, broker_symbol: str = None) -> Optional[float]:
         """
-        Get current Last Traded Price for a ticker using Kotak Neo API
-        Falls back to yfinance if Kotak API fails
+        Get current Last Traded Price for a ticker
+        Uses LivePriceManager if available, falls back to yfinance
         
         Args:
             ticker: Stock ticker (e.g., 'RELIANCE.NS')
@@ -223,27 +227,20 @@ class SellOrderManager:
         Returns:
             Current LTP or None
         """
-        # Resolve symbol via scrip master if available
-        resolved_symbol = broker_symbol
-        if broker_symbol and self.scrip_master and self.scrip_master.symbol_map:
-            correct_symbol = self.scrip_master.get_trading_symbol(broker_symbol)
-            if correct_symbol:
-                resolved_symbol = correct_symbol
-                logger.debug(f"Resolved symbol: {broker_symbol} -> {resolved_symbol}")
+        # Extract base symbol
+        base_symbol = ticker.replace('.NS', '').replace('.BO', '').upper()
         
-        # Try Kotak Neo API first (real-time)
-        if resolved_symbol:
+        # Try LivePriceManager first (real-time WebSocket prices)
+        if self.price_manager:
             try:
-                ltp = self.market_data.get_ltp(resolved_symbol, exchange="NSE")
+                ltp = self.price_manager.get_ltp(base_symbol, ticker)
                 if ltp is not None:
-                    logger.debug(f"{ticker} LTP from Kotak Neo: ₹{ltp:.2f}")
+                    logger.info(f"➡️ {base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
                     return ltp
-                else:
-                    logger.debug(f"Kotak Neo LTP returned None for {resolved_symbol}, trying yfinance...")
             except Exception as e:
-                logger.warning(f"Kotak Neo LTP fetch failed for {resolved_symbol}: {e}, falling back to yfinance")
+                logger.debug(f"WebSocket LTP failed for {base_symbol}: {e}")
         
-        # Fallback to yfinance (delayed but reliable)
+        # Fallback to yfinance (delayed ~15-20 min)
         try:
             df = fetch_ohlcv_yf(ticker, days=1, interval='1m', add_current_day=True)
             
@@ -252,11 +249,11 @@ class SellOrderManager:
                 return None
             
             ltp = float(df['close'].iloc[-1])
-            logger.debug(f"{ticker} LTP from yfinance (delayed): ₹{ltp:.2f}")
+            logger.info(f"➡️ {base_symbol} LTP from yfinance (delayed ~15min): ₹{ltp:.2f}")
             return ltp
             
         except Exception as e:
-            logger.error(f"Error fetching LTP for {ticker} from both sources: {e}")
+            logger.error(f"Error fetching LTP for {ticker}: {e}")
             return None
     
     def place_sell_order(self, trade: Dict[str, Any], target_price: float) -> Optional[str]:
@@ -338,6 +335,7 @@ class SellOrderManager:
     def update_sell_order(self, order_id: str, symbol: str, qty: int, new_price: float) -> bool:
         """
         Update (modify) an existing sell order with new price
+        Uses modify_order API instead of cancel+replace for efficiency
         
         Args:
             order_id: Existing order ID
@@ -354,8 +352,69 @@ class SellOrderManager:
             if rounded_price != new_price:
                 logger.debug(f"Rounded price from ₹{new_price:.4f} to ₹{rounded_price:.2f} (tick size)")
             
+            # Modify existing order directly (more efficient than cancel+replace)
+            logger.info(f"Modifying order {order_id}: {symbol} x{qty} @ ₹{rounded_price:.2f}")
+            
+            modify_resp = self.orders.modify_order(
+                order_id=str(order_id),
+                quantity=qty,
+                price=rounded_price,
+                order_type="L"  # L = Limit order
+            )
+            
+            if not modify_resp:
+                logger.error(f"Failed to modify order {order_id}")
+                # Fallback to cancel+replace if modify fails
+                logger.info(f"Falling back to cancel+replace for order {order_id}")
+                return self._cancel_and_replace_order(order_id, symbol, qty, rounded_price)
+            
+            # Validate modification response
+            if isinstance(modify_resp, dict):
+                stat = modify_resp.get('stat', '')
+                if stat == 'Ok':
+                    logger.info(f"✅ Order modified successfully: {symbol} @ ₹{rounded_price:.2f}")
+                    
+                    # Update tracking (order_id stays same, just update price)
+                    base_symbol = symbol.split('-')[0]
+                    if base_symbol in self.active_sell_orders:
+                        self.active_sell_orders[base_symbol]['target_price'] = rounded_price
+                    
+                    return True
+                else:
+                    logger.warning(f"Modify order returned non-Ok status: {modify_resp}")
+                    # Fallback to cancel+replace
+                    logger.info(f"Falling back to cancel+replace for order {order_id}")
+                    return self._cancel_and_replace_order(order_id, symbol, qty, rounded_price)
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error updating sell order: {e}")
+            # Try fallback on exception
+            try:
+                logger.info(f"Falling back to cancel+replace due to error")
+                return self._cancel_and_replace_order(order_id, symbol, qty, rounded_price)
+            except Exception as e2:
+                logger.error(f"Fallback also failed: {e2}")
+                return False
+    
+    def _cancel_and_replace_order(self, order_id: str, symbol: str, qty: int, price: float) -> bool:
+        """
+        Fallback method: Cancel existing order and place new one
+        Used when modify_order fails
+        
+        Args:
+            order_id: Existing order ID to cancel
+            symbol: Trading symbol
+            qty: Order quantity
+            price: New target price (already rounded)
+            
+        Returns:
+            True if successful
+        """
+        try:
             # Cancel existing order
-            logger.info(f"Cancelling order {order_id} to update price")
+            logger.info(f"Cancelling order {order_id}")
             cancel_resp = self.orders.cancel_order(order_id)
             
             if not cancel_resp:
@@ -363,23 +422,23 @@ class SellOrderManager:
                 return False
             
             # Place new order with updated price
-            logger.info(f"Placing new sell order: {symbol} x{qty} @ ₹{rounded_price:.2f}")
+            logger.info(f"Placing new sell order: {symbol} x{qty} @ ₹{price:.2f}")
             response = self.orders.place_limit_sell(
                 symbol=symbol,
                 quantity=qty,
-                price=rounded_price,
+                price=price,
                 variety="REGULAR",
                 exchange=config.DEFAULT_EXCHANGE,
                 product=config.DEFAULT_PRODUCT
             )
             
             if not response:
-                logger.error(f"Failed to place updated sell order for {symbol}")
+                logger.error(f"Failed to place replacement sell order for {symbol}")
                 return False
             
-            # Extract new order ID - try multiple response formats
+            # Extract new order ID
             new_order_id = (
-                response.get('nOrdNo') or  # Direct field (most common)
+                response.get('nOrdNo') or
                 response.get('data', {}).get('nOrdNo') or
                 response.get('data', {}).get('order_id') or
                 response.get('data', {}).get('neoOrdNo') or
@@ -389,23 +448,23 @@ class SellOrderManager:
             )
             
             if new_order_id:
-                logger.info(f"✅ Order updated: {symbol} @ ₹{rounded_price:.2f}, New Order ID: {new_order_id}")
-                # Update tracking - preserve ticker from existing entry
+                logger.info(f"✅ Replacement order placed: {symbol} @ ₹{price:.2f}, Order ID: {new_order_id}")
+                # Update tracking with new order ID
                 base_symbol = symbol.split('-')[0]
                 old_entry = self.active_sell_orders.get(base_symbol, {})
                 self.active_sell_orders[base_symbol] = {
                     'order_id': str(new_order_id),
-                    'target_price': rounded_price,
+                    'target_price': price,
                     'placed_symbol': symbol,
                     'qty': qty,
-                    'ticker': old_entry.get('ticker')  # Preserve ticker from old entry
+                    'ticker': old_entry.get('ticker')
                 }
                 return True
             
             return False
             
         except Exception as e:
-            logger.error(f"Error updating sell order: {e}")
+            logger.error(f"Error in cancel+replace: {e}")
             return False
     
     def check_order_execution(self) -> List[str]:
@@ -859,6 +918,10 @@ class SellOrderManager:
             
             # Check if ROUNDED EMA9 is lower than lowest seen
             lowest_so_far = self.lowest_ema9.get(symbol, float('inf'))
+            current_target = order_info.get('target_price', lowest_so_far)
+            
+            # Log EMA9 values for monitoring
+            logger.info(f"📊 {symbol}: Current EMA9=₹{rounded_ema9:.2f}, Target=₹{current_target:.2f}, Lowest=₹{lowest_so_far:.2f}")
             
             if rounded_ema9 < lowest_so_far:
                 logger.info(f"{symbol}: New lower EMA9 found - ₹{rounded_ema9:.2f} (was ₹{lowest_so_far:.2f})")
