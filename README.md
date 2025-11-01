@@ -80,6 +80,7 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 - [Cloud Deployment](documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md) - Free Oracle Cloud
 - [Commands Reference](documents/reference/COMMANDS.md) - CLI commands
 - [Testing Guide](documents/testing/TESTING_GUIDE_PHASE1_PHASE2.md) - Testing procedures
+- [Python/NumPy requirements for Kotak Neo API (Ubuntu)](documents/deployment/ubuntu/PYTHON_NUMPY_REQUIREMENTS.md) - Version compatibility and install steps
 
 ---
 
