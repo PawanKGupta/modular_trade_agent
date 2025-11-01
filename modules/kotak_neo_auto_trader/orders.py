@@ -16,7 +16,7 @@ from utils.logger import logger
 try:
     from .auth import KotakNeoAuth
 except ImportError:
-    from auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
 
 
 class KotakNeoOrders:

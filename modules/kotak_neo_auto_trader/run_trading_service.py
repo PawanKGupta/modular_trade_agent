@@ -34,12 +34,12 @@ try:
     from .portfolio import KotakNeoPortfolio
     from . import config
 except ImportError:
-    from auth import KotakNeoAuth
-    from sell_engine import SellOrderManager
-    from auto_trade_engine import AutoTradeEngine
-    from orders import KotakNeoOrders
-    from portfolio import KotakNeoPortfolio
-    import config
+    from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
+    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+    from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
+    from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
+    from modules.kotak_neo_auto_trader import config
 
 
 class TradingService:

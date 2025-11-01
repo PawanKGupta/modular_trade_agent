@@ -16,7 +16,7 @@ from utils.logger import logger
 try:
     from .auto_trade_engine import AutoTradeEngine
 except ImportError:
-    from auto_trade_engine import AutoTradeEngine
+    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
 
 def main():

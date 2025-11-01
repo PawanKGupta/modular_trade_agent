@@ -34,14 +34,14 @@ try:
     from .live_price_cache import LivePriceCache
     from . import config
 except ImportError:
-    from auth import KotakNeoAuth
-    from orders import KotakNeoOrders
-    from portfolio import KotakNeoPortfolio
-    from market_data import KotakNeoMarketData
-    from storage import load_history, save_history
-    from scrip_master import KotakNeoScripMaster
-    from live_price_cache import LivePriceCache
-    import config
+    from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
+    from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
+    from modules.kotak_neo_auto_trader.market_data import KotakNeoMarketData
+    from modules.kotak_neo_auto_trader.storage import load_history, save_history
+    from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
+    from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
+    from modules.kotak_neo_auto_trader import config
 
 
 class SellOrderManager:

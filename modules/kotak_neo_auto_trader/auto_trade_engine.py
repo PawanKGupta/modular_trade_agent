@@ -43,20 +43,20 @@ try:
     from .manual_order_matcher import get_manual_order_matcher
     from .eod_cleanup import get_eod_cleanup, schedule_eod_cleanup
 except ImportError:
-    from trader import KotakNeoTrader
-    from orders import KotakNeoOrders
-    from portfolio import KotakNeoPortfolio
-    from auth import KotakNeoAuth
-    from scrip_master import KotakNeoScripMaster
-    import config
-    from storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders, check_manual_buys_of_failed_orders
-    from tracking_scope import add_tracked_symbol, is_tracked, get_tracked_symbols, update_tracked_qty
-    from order_tracker import extract_order_id, add_pending_order, search_order_in_broker_orderbook
+    from modules.kotak_neo_auto_trader.trader import KotakNeoTrader
+    from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
+    from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
+    from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
+    from modules.kotak_neo_auto_trader import config
+    from modules.kotak_neo_auto_trader.storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders, check_manual_buys_of_failed_orders
+    from modules.kotak_neo_auto_trader.tracking_scope import add_tracked_symbol, is_tracked, get_tracked_symbols, update_tracked_qty
+    from modules.kotak_neo_auto_trader.order_tracker import extract_order_id, add_pending_order, search_order_in_broker_orderbook
     # Phase 2 modules
-    from order_status_verifier import get_order_status_verifier
-    from telegram_notifier import get_telegram_notifier
-    from manual_order_matcher import get_manual_order_matcher
-    from eod_cleanup import get_eod_cleanup, schedule_eod_cleanup
+    from modules.kotak_neo_auto_trader.order_status_verifier import get_order_status_verifier
+    from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
+    from modules.kotak_neo_auto_trader.manual_order_matcher import get_manual_order_matcher
+    from modules.kotak_neo_auto_trader.eod_cleanup import get_eod_cleanup, schedule_eod_cleanup
 
 
 @dataclass

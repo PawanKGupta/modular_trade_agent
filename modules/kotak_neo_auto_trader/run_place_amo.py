@@ -19,9 +19,9 @@ try:
     from .orders import KotakNeoOrders
     from .portfolio import KotakNeoPortfolio
 except ImportError:
-    from auto_trade_engine import AutoTradeEngine
-    from orders import KotakNeoOrders
-    from portfolio import KotakNeoPortfolio
+    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+    from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
+    from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
 
 
 def main():

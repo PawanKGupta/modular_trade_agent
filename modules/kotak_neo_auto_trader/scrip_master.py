@@ -24,7 +24,7 @@ from utils.logger import logger
 try:
     from . import config
 except ImportError:
-    import config
+    import modules.kotak_neo_auto_trader.config as config
 
 
 class KotakNeoScripMaster:

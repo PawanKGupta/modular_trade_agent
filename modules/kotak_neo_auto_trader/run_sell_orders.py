@@ -34,13 +34,13 @@ try:
     from .portfolio import KotakNeoPortfolio
     from .scrip_master import KotakNeoScripMaster
 except ImportError:
-    from sell_engine import SellOrderManager
-    from auth import KotakNeoAuth
-    from auto_trade_engine import AutoTradeEngine
-    from live_price_cache import LivePriceCache
-    from live_price_manager import LivePriceManager
-    from portfolio import KotakNeoPortfolio
-    from scrip_master import KotakNeoScripMaster
+    from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
+    from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+    from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
+    from modules.kotak_neo_auto_trader.live_price_manager import LivePriceManager
+    from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
+    from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
 
 
 def is_trading_day() -> bool:
