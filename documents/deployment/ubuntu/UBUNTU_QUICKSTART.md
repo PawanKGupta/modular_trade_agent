@@ -46,7 +46,7 @@ This project includes several installation scripts:
 
 **Option A - From Git:**
 ```bash
-git clone https://github.com/YOUR_REPO/modular_trade_agent.git
+git clone <your-repo-url> modular_trade_agent
 cd modular_trade_agent
 ```
 
@@ -78,7 +78,8 @@ When prompted, enter:
 
 ```bash
 cd ~/modular_trade_agent
-./run_agent_backtest.sh
+source .venv/bin/activate
+python3 trade_agent.py --backtest
 ```
 
 ---
@@ -107,8 +108,9 @@ Then re-run the installer.
 ### Manual Run
 ```bash
 cd ~/modular_trade_agent
-./run_agent.sh              # Standard analysis
-./run_agent_backtest.sh     # With historical validation (recommended)
+source .venv/bin/activate
+python3 trade_agent.py                   # Standard analysis
+python3 trade_agent.py --backtest        # With historical validation (recommended)
 ```
 
 ### Check Logs
@@ -120,13 +122,13 @@ tail -f ~/modular_trade_agent/logs/trade_agent_$(date +%Y%m%d).log
 ```bash
 cd ~/modular_trade_agent
 source .venv/bin/activate
-python3 test_telegram.py
+python3 -c "from core.telegram import send_telegram; send_telegram('Test: Telegram OK')"
 ```
 
-### View Service Status (if installed)
+### View Service Status (if using unified service)
 ```bash
-systemctl status modular-trade-agent.timer
-journalctl -u modular-trade-agent.service -f
+systemctl status tradeagent-unified.service
+journalctl -u tradeagent-unified.service -f
 ```
 
 ---
@@ -155,20 +157,18 @@ If you chose to install the systemd service, the agent will run automatically:
 - **What**: Runs `python3 trade_agent.py --backtest`
 - **Logs**: Check with `journalctl -u modular-trade-agent.service -f`
 
-### Manage Service
-
+### Manage Service (unified)
 ```bash
 # Check status
-systemctl status modular-trade-agent.timer
+systemctl status tradeagent-unified.service
 
-# View next scheduled run
-systemctl list-timers modular-trade-agent.timer
+# Logs
+journalctl -u tradeagent-unified.service -f
 
-# Manual run
-sudo systemctl start modular-trade-agent.service
-
-# Stop automatic execution
-sudo systemctl stop modular-trade-agent.timer
+# Start/Stop
+sudo systemctl start tradeagent-unified.service
+sudo systemctl stop tradeagent-unified.service
+```
 ```
 
 ---
@@ -231,22 +231,22 @@ nano ~/modular_trade_agent/cred.env
 ```
 
 ### Command Options
-
 ```bash
 # Standard run
-./run_agent.sh
+python3 trade_agent.py
 
 # With backtest validation (recommended)
-./run_agent_backtest.sh
+python3 trade_agent.py --backtest
 
 # Without CSV export
-./run_agent.sh --no-csv
+python3 trade_agent.py --no-csv
 
 # Dip-buying mode
-./run_agent.sh --dip-mode
+python3 trade_agent.py --dip-mode
 
 # Show help
-./run_agent.sh --help
+python3 trade_agent.py --help
+```
 ```
 
 ---
@@ -256,11 +256,11 @@ nano ~/modular_trade_agent/cred.env
 After installation, verify everything works:
 
 - [ ] Installation completed without errors
-- [ ] `./run_agent.sh --help` works
-- [ ] `python3 test_telegram.py` sends test message
+- [ ] `python3 trade_agent.py --help` works
+- [ ] Telegram test sends message: `python3 -c "from core.telegram import send_telegram; send_telegram('Test')"`
 - [ ] Configuration file exists: `cat cred.env`
 - [ ] Virtual environment works: `source .venv/bin/activate`
-- [ ] Service is active (if installed): `systemctl status modular-trade-agent.timer`
+- [ ] Unified service is active (if used): `systemctl status tradeagent-unified.service`
 - [ ] Logs are being created: `ls -la logs/`
 
 ---

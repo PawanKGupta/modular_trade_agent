@@ -157,7 +157,7 @@ Replace with your actual token and chat ID!
 ### Step 6: Test Telegram Connection (Optional)
 
 ```powershell
-python test_telegram.py
+python -c "from core.telegram import send_telegram; send_telegram('Hello from Modular Trade Agent')"
 ```
 
 You should receive a test message on Telegram! 🎉
@@ -428,10 +428,7 @@ python trade_agent.py --dip-mode
 python trade_agent.py --no-csv
 
 # Test Telegram
-python test_telegram.py
-
-# Run backtest for specific stock
-python run_backtest.py RELIANCE.NS 2022-01-01 2023-12-31
+python -c "from core.telegram import send_telegram; send_telegram('Test from Windows')"
 
 # Activate virtual environment
 .venv\Scripts\activate

@@ -34,16 +34,10 @@ Complete guide for installing and setting up the Modular Trade Agent on Ubuntu/D
 
 ## ⚡ Quick Installation
 
-### One-Line Install (Recommended)
+### Quick Install (Local Script)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/modular_trade_agent/main/setup_ubuntu.sh | bash
-```
-
-Or download and run:
-
-```bash
-wget https://raw.githubusercontent.com/YOUR_REPO/modular_trade_agent/main/setup_ubuntu.sh
+cd ~/modular_trade_agent
 chmod +x setup_ubuntu.sh
 ./setup_ubuntu.sh
 ```
@@ -188,8 +182,8 @@ chmod +x run_agent.sh run_agent_backtest.sh
 
 ```bash
 source .venv/bin/activate
-python3 -c "import yfinance, pandas, numpy, selenium; print('All imports OK!')"
-python3 test_telegram.py  # Test Telegram connection
+python3 -c "import yfinance, pandas, numpy; print('Core imports OK!')"
+python3 -c "from core.telegram import send_telegram; send_telegram('Test: Ubuntu install verified ✅')"  # Test Telegram
 ```
 
 ---
@@ -261,6 +255,8 @@ python3 trade_agent.py --backtest --dip-mode
 
 ### Using Launcher Scripts
 
+If you created the optional launcher scripts in Step 6:
+
 ```bash
 cd ~/modular_trade_agent
 
@@ -269,9 +265,6 @@ cd ~/modular_trade_agent
 
 # With backtest validation
 ./run_agent_backtest.sh
-
-# Run specific backtest
-./run_backtest.sh RELIANCE.NS 2022-01-01 2023-12-31
 ```
 
 ### Output Locations
@@ -289,20 +282,20 @@ cd ~/modular_trade_agent
 
 The installer can set up a systemd service to run automatically at 4:00 PM IST (Mon-Fri).
 
-### Manual Service Installation
+### Unified Service (Continuous) Installation
 
-If you skipped during installation:
+If you want the 24/7 unified service:
 
 ```bash
 cd ~/modular_trade_agent
-sudo nano /etc/systemd/system/modular-trade-agent.service
+sudo nano /etc/systemd/system/tradeagent-unified.service
 ```
 
 Add:
 
 ```ini
 [Unit]
-Description=Modular Trade Agent - Automated Trading System
+Description=Trade Agent (Unified) - Continuous Trading Service
 After=network-online.target
 Wants=network-online.target
 
@@ -311,11 +304,12 @@ Type=simple
 User=YOUR_USERNAME
 Group=YOUR_USERNAME
 WorkingDirectory=/home/YOUR_USERNAME/modular_trade_agent
-ExecStart=/home/YOUR_USERNAME/modular_trade_agent/.venv/bin/python /home/YOUR_USERNAME/modular_trade_agent/trade_agent.py --backtest
-Restart=on-failure
-RestartSec=60
-StandardOutput=append:/home/YOUR_USERNAME/modular_trade_agent/logs/service.log
-StandardError=append:/home/YOUR_USERNAME/modular_trade_agent/logs/service_error.log
+ExecStart=/home/YOUR_USERNAME/modular_trade_agent/.venv/bin/python /home/YOUR_USERNAME/modular_trade_agent/modules/kotak_neo_auto_trader/run_trading_service.py --env modules/kotak_neo_auto_trader/kotak_neo.env
+Restart=always
+RestartSec=10
+# Send logs to journal; app also writes rotating logs under logs/
+StandardOutput=journal
+StandardError=journal
 
 # Environment
 Environment="PATH=/home/YOUR_USERNAME/modular_trade_agent/.venv/bin:/usr/local/bin:/usr/bin:/bin"
@@ -328,59 +322,33 @@ PrivateTmp=true
 WantedBy=multi-user.target
 ```
 
-Create timer:
-
-```bash
-sudo nano /etc/systemd/system/modular-trade-agent.timer
-```
-
-Add:
-
-```ini
-[Unit]
-Description=Modular Trade Agent Daily Timer
-Requires=modular-trade-agent.service
-
-[Timer]
-OnCalendar=Mon-Fri 16:00:00
-Persistent=true
-AccuracySec=1min
-
-[Install]
-WantedBy=timers.target
-```
-
 Enable and start:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable modular-trade-agent.timer
-sudo systemctl start modular-trade-agent.timer
+sudo systemctl enable tradeagent-unified.service
+sudo systemctl start tradeagent-unified.service
 ```
 
-### Service Management Commands
+### Service Management Commands (Unified)
 
 ```bash
-# View timer status
-systemctl status modular-trade-agent.timer
-
-# View next scheduled run
-systemctl list-timers modular-trade-agent.timer
+# View service status
+systemctl status tradeagent-unified.service
 
 # View logs (real-time)
-journalctl -u modular-trade-agent.service -f
+journalctl -u tradeagent-unified.service -f
 
 # View logs (last 100 lines)
-journalctl -u modular-trade-agent.service -n 100
+journalctl -u tradeagent-unified.service -n 100
 
-# Manual execution
-sudo systemctl start modular-trade-agent.service
+# Start/Stop/Restart
+sudo systemctl start tradeagent-unified.service
+sudo systemctl stop tradeagent-unified.service
+sudo systemctl restart tradeagent-unified.service
 
-# Stop timer
-sudo systemctl stop modular-trade-agent.timer
-
-# Disable automatic execution
-sudo systemctl disable modular-trade-agent.timer
+# Enable at boot
+sudo systemctl enable tradeagent-unified.service
 ```
 
 ---
@@ -451,7 +419,7 @@ sudo apt-get install firefox firefox-geckodriver
 # Test configuration
 cd ~/modular_trade_agent
 source .venv/bin/activate
-python3 test_telegram.py
+python3 -c "from core.telegram import send_telegram; send_telegram('Test: Telegram OK')"
 ```
 
 Verify:
@@ -512,8 +480,8 @@ Check logs for errors:
 # Application logs
 tail -f ~/modular_trade_agent/logs/trade_agent_$(date +%Y%m%d).log
 
-# Service logs
-journalctl -u modular-trade-agent.service -f
+# Service logs (unified)
+journalctl -u tradeagent-unified.service -f
 
 # Search for errors
 grep ERROR ~/modular_trade_agent/logs/*.log
@@ -527,10 +495,9 @@ grep ERROR ~/modular_trade_agent/logs/*.log
 
 ```bash
 # Stop and disable service (if installed)
-sudo systemctl stop modular-trade-agent.timer
-sudo systemctl disable modular-trade-agent.timer
-sudo rm /etc/systemd/system/modular-trade-agent.service
-sudo rm /etc/systemd/system/modular-trade-agent.timer
+sudo systemctl stop tradeagent-unified.service
+sudo systemctl disable tradeagent-unified.service
+sudo rm /etc/systemd/system/tradeagent-unified.service
 sudo systemctl daemon-reload
 
 # Remove installation directory
@@ -619,7 +586,7 @@ Add:
 - Installation: `~/modular_trade_agent/`
 - Config: `~/modular_trade_agent/cred.env`
 - Logs: `~/modular_trade_agent/logs/`
-- Service: `/etc/systemd/system/modular-trade-agent.*`
+- Service: `/etc/systemd/system/tradeagent-unified.service`
 
 ### Commands
 ```bash
@@ -630,7 +597,7 @@ Add:
 tail -f logs/trade_agent_$(date +%Y%m%d).log
 
 # Check service
-systemctl status modular-trade-agent.timer
+systemctl status tradeagent-unified.service
 
 # Edit config
 nano cred.env

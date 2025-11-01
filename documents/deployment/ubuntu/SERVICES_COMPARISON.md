@@ -106,8 +106,7 @@ chmod +x setup_ubuntu.sh
 sudo ./setup_ubuntu.sh
 
 # Option 2: Unified Service (1 persistent service - Recommended)
-chmod +x setup_ubuntu_unified.sh
-sudo ./setup_ubuntu_unified.sh
+# Create manual unit as per INSTALL_UBUNTU.md (tradeagent-unified.service)
 ```
 
 ### Windows
@@ -227,9 +226,17 @@ sudo systemctl disable tradeagent-unified.service
 
 #### Complete Uninstall
 ```bash
-# Remove all services
-chmod +x uninstall_ubuntu_services.sh
-sudo ./uninstall_ubuntu_services.sh
+# For unified service
+sudo systemctl stop tradeagent-unified.service
+sudo systemctl disable tradeagent-unified.service
+sudo rm /etc/systemd/system/tradeagent-unified.service
+sudo systemctl daemon-reload
+
+# For multiple services (if installed by setup_ubuntu.sh)
+sudo systemctl stop 'tradeagent-*.timer'
+sudo systemctl disable 'tradeagent-*.timer'
+sudo rm /etc/systemd/system/tradeagent-*.service /etc/systemd/system/tradeagent-*.timer
+sudo systemctl daemon-reload
 ```
 
 ### Windows Commands

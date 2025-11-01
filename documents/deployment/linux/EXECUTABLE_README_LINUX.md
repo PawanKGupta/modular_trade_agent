@@ -16,14 +16,15 @@
    nano kotak_neo.env  # or vi, vim, gedit, etc.
    ```
    
-   Edit with your Kotak Neo credentials:
-   ```env
-   KOTAK_NEO_CONSUMER_KEY=your_key_here
-   KOTAK_NEO_CONSUMER_SECRET=your_secret_here
-   KOTAK_NEO_MOBILE_NUMBER=9876543210
-   KOTAK_NEO_PASSWORD=your_password
-   KOTAK_NEO_MPIN=123456
-   ```
+Edit with your Kotak Neo credentials:
+```env
+KOTAK_CONSUMER_KEY=your_key_here
+KOTAK_CONSUMER_SECRET=your_secret_here
+KOTAK_MOBILE_NUMBER=9876543210
+KOTAK_PASSWORD=your_password
+KOTAK_MPIN=123456
+KOTAK_ENVIRONMENT=prod
+```
 
 3. **Make Scripts Executable**
    ```bash

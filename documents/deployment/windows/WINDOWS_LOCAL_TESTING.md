@@ -87,7 +87,7 @@ KOTAK_ENVIRONMENT=prod
 ### 3. Test Telegram Connection
 
 ```powershell
-python test_telegram.py
+python -c "from core.telegram import send_telegram; send_telegram('Windows test OK')"
 ```
 
 **Expected output:**
@@ -732,7 +732,7 @@ Get-ChildItem analysis_results\bulk_analysis_final_*.csv | Select-Object Name, L
 
 **Test connection:**
 ```powershell
-python test_telegram.py
+python -c "from core.telegram import send_telegram; send_telegram('Windows test OK')"
 ```
 
 **Check credentials:**

@@ -51,11 +51,7 @@ sudo ./setup_ubuntu.sh
 
 ### Option 2: Unified Service (1 persistent service - Recommended)
 
-```bash
-cd ~/modular_trade_agent
-chmod +x setup_ubuntu_unified.sh
-sudo ./setup_ubuntu_unified.sh
-```
+See INSTALL_UBUNTU.md → "Unified Service (Continuous) Installation" for creating the tradeagent-unified.service unit.
 
 **Creates:**
 - 1 unified service handling all trading tasks

@@ -38,16 +38,7 @@ engine.print_summary()
 
 ### Command Line Usage
 
-```bash
-# Basic backtest
-python run_backtest.py RELIANCE.NS 2022-01-01 2023-12-31
-
-# With custom parameters
-python run_backtest.py AAPL 2020-01-01 2023-12-31 --capital 200000 --export-trades --generate-report
-
-# Disable pyramiding
-python run_backtest.py TCS.NS 2021-01-01 2023-06-01 --no-pyramiding
-```
+CLI helpers are not bundled in this repo. Use the Python API shown above to run backtests.
 
 ## 📊 Features
 
@@ -127,27 +118,13 @@ trades_df = engine.get_trades_dataframe()
 print(trades_df.head())
 ```
 
-## 🎮 Example Scripts
+## 🎮 Example Usage
 
-### 1. **run_backtest.py** - Command Line Interface
-Easy-to-use command line tool for running backtests:
-
-```bash
-python run_backtest.py SYMBOL START_DATE END_DATE [OPTIONS]
-```
-
-### 2. **backtest_example.py** - Comprehensive Examples  
-Demonstrates various usage patterns:
+See the Python snippets above for typical usage patterns:
 - Single stock analysis
 - Custom configurations
 - Multiple stock comparisons
-- Different time periods
 - Performance reporting
-
-Run examples:
-```bash
-python backtest_example.py
-```
 
 ## 📊 Sample Output
 
