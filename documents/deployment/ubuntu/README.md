@@ -32,32 +32,38 @@ ubuntu/
 
 ## 🚀 Quick Start
 
-### Option 1: Signal Generation Only (Recommended for beginners)
+### Option 1: Multiple Services (5 separate services)
 
 ```bash
 cd ~/modular_trade_agent
-chmod +x scripts/deploy/ubuntu/installers/*.sh
-sudo scripts/deploy/ubuntu/installers/setup_ubuntu.sh
-```
-
-**Creates:**
-- 1 service: Trade Analysis (4:00 PM daily)
-- Sends BUY signals via Telegram
-
-### Option 2: Complete Automation (All 5 services)
-
-```bash
-cd ~/modular_trade_agent
-chmod +x scripts/deploy/ubuntu/installers/*.sh
-sudo scripts/deploy/ubuntu/installers/setup_complete_services_ubuntu.sh
+chmod +x setup_ubuntu.sh
+sudo ./setup_ubuntu.sh
 ```
 
 **Creates:**
 1. Trade Analysis (4:00 PM) - Generate signals
 2. Auto Trade (9:00 AM & 4:05 PM) - Place orders
-3. Position Monitor (Every 1 min) - Monitor positions
+3. Position Monitor (every 1 min) - Monitor positions
 4. Sell Orders (9:15 AM) - Manage sell orders
 5. EOD Cleanup (3:35 PM) - Daily reconciliation
+
+**Best for:** Granular control, debugging individual tasks
+
+### Option 2: Unified Service (1 persistent service - Recommended)
+
+```bash
+cd ~/modular_trade_agent
+chmod +x setup_ubuntu_unified.sh
+sudo ./setup_ubuntu_unified.sh
+```
+
+**Creates:**
+- 1 unified service handling all trading tasks
+- Maintains persistent session all day
+- Better resource management
+- No JWT expiry issues
+
+**Best for:** Production deployment, resource efficiency
 
 ---
 

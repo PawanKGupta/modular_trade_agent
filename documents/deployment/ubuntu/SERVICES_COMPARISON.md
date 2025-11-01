@@ -101,13 +101,13 @@ to       - └─ Monitors all open positions
 ### Ubuntu
 
 ```bash
-# Option 1: Signal Generation Only (Basic)
-./setup_ubuntu.sh
-# Choose "Yes" when asked about systemd service
+# Option 1: Multiple Services (5 separate systemd services)
+chmod +x setup_ubuntu.sh
+sudo ./setup_ubuntu.sh
 
-# Option 2: Complete Setup (All 5 Services - Aligned with Windows)
-chmod +x setup_complete_services_ubuntu.sh
-sudo ./setup_complete_services_ubuntu.sh
+# Option 2: Unified Service (1 persistent service - Recommended)
+chmod +x setup_ubuntu_unified.sh
+sudo ./setup_ubuntu_unified.sh
 ```
 
 ### Windows
@@ -248,17 +248,24 @@ STOP_ALL_SERVICES.bat
 
 ## 🎯 Use Cases
 
-### Signal Generation Only
-- **Purpose**: Get trade recommendations via Telegram
-- **Services**: Analysis service only
-- **Setup**: `./setup_ubuntu.sh` (basic option)
-- **Best for**: Manual traders who want signals
+### Multiple Services Approach
+- **Purpose**: Separate control over each trading task
+- **Services**: 5 independent systemd services
+- **Setup**: `sudo ./setup_ubuntu.sh`
+- **Best for**: 
+  - Granular control over each task
+  - Debugging individual components
+  - Custom scheduling needs
 
-### Complete Automation
-- **Purpose**: Fully automated trading system
-- **Services**: All 5 services
-- **Setup**: `sudo ./setup_complete_services_ubuntu.sh`
-- **Best for**: Hands-off automated trading
+### Unified Service Approach (Recommended)
+- **Purpose**: Single persistent trading session
+- **Services**: 1 unified service handling all tasks
+- **Setup**: `sudo ./setup_ubuntu_unified.sh`
+- **Best for**:
+  - Production deployment
+  - Better resource management
+  - No JWT expiry issues
+  - Matches Windows implementation
 
 ---
 
