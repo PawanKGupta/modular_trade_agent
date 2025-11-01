@@ -24,7 +24,7 @@ Complete alignment between Windows and Ubuntu systemd services.
 │  │                                                          │ │
 │  │  ① Auto Trade - Places buy orders (4:05 PM)            │ │
 │  │  ② Sell Orders - Places sell orders (9:15 AM)          │ │
-│  │  ③ Position Monitor - Real-time monitoring (every 5min)│ │
+│  │  ③ Position Monitor - Real-time monitoring (every 1min)│ │
 │  │  ④ EOD Cleanup - Daily reconciliation (3:35 PM)        │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
@@ -39,7 +39,7 @@ Complete alignment between Windows and Ubuntu systemd services.
 | Service Name | Script | Purpose | Schedule |
 |--------------|--------|---------|----------|
 | `ModularTradeAgent_Main` | `run_auto_trade.py` | Place buy orders | Manual/4:05 PM |
-| `ModularTradeAgent_Monitor` | `run_position_monitor.py` | Monitor positions | Every 5 min |
+| `ModularTradeAgent_Monitor` | `run_position_monitor.py` | Monitor positions | Every 1 min |
 | `ModularTradeAgent_Sell` | `run_sell_orders.py` | Manage sell orders | 9:15 AM |
 | `ModularTradeAgent_EOD` | `run_eod_cleanup.py` | Daily cleanup | 3:35 PM |
 
@@ -51,7 +51,7 @@ Complete alignment between Windows and Ubuntu systemd services.
 |--------------|--------|---------|----------|
 | `tradeagent-analysis.service` | `trade_agent.py` | Analyze & generate signals | 4:00 PM |
 | `tradeagent-autotrade.service` | `run_auto_trade.py` | Place buy orders | 9:00 AM & 4:05 PM |
-| `tradeagent-monitor.service` | `run_position_monitor.py` | Monitor positions | Every 5 min |
+| `tradeagent-monitor.service` | `run_position_monitor.py` | Monitor positions | Every 1 min |
 | `tradeagent-sell.service` | `run_sell_orders.py` | Manage sell orders | 9:15 AM |
 | `tradeagent-eod.service` | `run_eod_cleanup.py` | Daily cleanup | 3:35 PM |
 
@@ -70,7 +70,7 @@ Complete alignment between Windows and Ubuntu systemd services.
            └─ Places limit sell orders for open positions
            └─ Targets: EMA9 levels
            
-9:15 AM  - 🔵 Position Monitor Starts (every 5 min)
+9:15 AM  - 🔵 Position Monitor Starts (Every 1 min)
 to       - └─ Monitors all open positions
 3:30 PM  - └─ Sends alerts for exit signals
            └─ Checks for averaging opportunities
@@ -143,7 +143,7 @@ python installer/setup.py
 **Purpose**: Real-time position monitoring during market hours  
 **Windows**: `ModularTradeAgent_Monitor`  
 **Ubuntu**: `tradeagent-monitor.service`  
-**Schedule**: Every 5 minutes (9:15 AM - 3:30 PM)  
+**Schedule**: Every 1 minutes (9:15 AM - 3:30 PM)  
 **Actions**:
 - Checks exit conditions (RSI, EMA)
 - Sends Telegram alerts

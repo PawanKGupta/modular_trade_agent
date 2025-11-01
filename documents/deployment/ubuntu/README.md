@@ -55,7 +55,7 @@ sudo scripts/deploy/ubuntu/installers/setup_complete_services_ubuntu.sh
 **Creates:**
 1. Trade Analysis (4:00 PM) - Generate signals
 2. Auto Trade (9:00 AM & 4:05 PM) - Place orders
-3. Position Monitor (every 5 min) - Monitor positions
+3. Position Monitor (Every 1 min) - Monitor positions
 4. Sell Orders (9:15 AM) - Manage sell orders
 5. EOD Cleanup (3:35 PM) - Daily reconciliation
 
