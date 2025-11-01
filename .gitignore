@@ -27,3 +27,9 @@ dist/
 *.spec.bak
 backups/
 data/
+
+# Test coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
