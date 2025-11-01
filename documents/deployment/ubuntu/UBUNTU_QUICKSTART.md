@@ -156,7 +156,7 @@ If you chose to install the systemd service, the agent will run automatically:
 
 - **When**: Every weekday (Mon-Fri) at 4:00 PM IST
 - **What**: Runs `python3 trade_agent.py --backtest`
-- **Logs**: Check with `journalctl -u modular-trade-agent.service -f`
+- **Logs**: Check with `journalctl -u tradeagent-unified.service -f`
 
 ### Manage Service (unified)
 ```bash
@@ -191,7 +191,7 @@ sudo systemctl stop tradeagent-unified.service
 | Permission denied | `chmod +x *.sh` |
 | Python too old | `sudo apt-get install python3.10` |
 | Telegram not working | Check credentials in `cred.env` |
-| Service won't start | Check paths in `/etc/systemd/system/modular-trade-agent.service` |
+| Service won't start | Check paths in `/etc/systemd/system/tradeagent-unified.service` |
 
 ### Still Stuck?
 
@@ -268,7 +268,7 @@ After installation, verify everything works:
 
 ## 🎓 Next Steps
 
-1. **Test the system**: Run `./run_agent_backtest.sh` manually
+1. **Test the system**: Run `python3 trade_agent.py --backtest` manually
 2. **Monitor first runs**: Check logs in `logs/` directory
 3. **Verify Telegram alerts**: Make sure messages arrive
 4. **Review signals**: Don't blindly follow - understand the strategy
@@ -293,7 +293,7 @@ After installation, verify everything works:
 1. **Use tmux/screen** for long-running processes:
    ```bash
    tmux new -s trading
-   ./run_agent_backtest.sh
+   python3 trade_agent.py --backtest
    # Ctrl+B, then D to detach
    ```
 
@@ -304,7 +304,7 @@ After installation, verify everything works:
 
 3. **Create aliases**:
    ```bash
-   echo "alias trade='cd ~/modular_trade_agent && ./run_agent_backtest.sh'" >> ~/.bashrc
+   echo "alias trade='cd ~/modular_trade_agent && python3 trade_agent.py --backtest'" >> ~/.bashrc
    source ~/.bashrc
    # Now just type: trade
    ```
