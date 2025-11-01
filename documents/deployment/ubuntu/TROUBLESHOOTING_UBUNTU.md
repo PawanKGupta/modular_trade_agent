@@ -21,11 +21,7 @@ The `command-not-found` package's update script is broken. This is **cosmetic on
 ### Quick Fix:
 
 ```bash
-# Option 1: Run the fix script (recommended)
-chmod +x fix_ubuntu_system.sh
-./fix_ubuntu_system.sh
-
-# Option 2: Manual fix
+# Remove the problematic apt hook and refresh package lists
 sudo rm -f /etc/apt/apt.conf.d/50command-not-found
 sudo apt-get update
 ```
@@ -76,7 +72,7 @@ sudo apt-get update
 ### Fix:
 ```bash
 # Make scripts executable
-chmod +x setup_ubuntu.sh fix_ubuntu_system.sh
+chmod +x setup_ubuntu.sh
 
 # Check if running as correct user (not root)
 whoami  # Should show your username, not 'root'
@@ -178,7 +174,7 @@ pip install --upgrade pip
 ```bash
 cd ~/modular_trade_agent
 source .venv/bin/activate
-python3 test_telegram.py
+python3 -c "from core.telegram import send_telegram; send_telegram('Troubleshooting test OK')"
 ```
 
 ### Common Issues:
@@ -208,8 +204,8 @@ curl -I https://api.telegram.org
 
 ### Check Status:
 ```bash
-systemctl status modular-trade-agent.service
-journalctl -u modular-trade-agent.service -n 50
+systemctl status tradeagent-unified.service
+journalctl -u tradeagent-unified.service -n 50
 ```
 
 ### Common Issues:
@@ -247,8 +243,10 @@ python3 trade_agent.py --backtest
 If all else fails:
 
 ```bash
-# 1. Run system fix
-./fix_ubuntu_system.sh
+# 1. Clean apt and refresh
+sudo apt-get clean
+sudo apt-get autoclean
+sudo apt-get update
 
 # 2. Remove old installation
 rm -rf ~/modular_trade_agent
@@ -319,21 +317,18 @@ ls -la ~/modular_trade_agent/*.sh
 **Quick Commands Summary:**
 
 ```bash
-# Fix system issues
-./fix_ubuntu_system.sh
-
 # Re-run installer
 ./setup_ubuntu.sh
 
 # Test installation
 source .venv/bin/activate
-python3 test_telegram.py
+python3 -c "from core.telegram import send_telegram; send_telegram('Quick summary test')"
 
 # View logs
 tail -f logs/trade_agent_$(date +%Y%m%d).log
 
-# Check service
-systemctl status modular-trade-agent.timer
+# Check service (unified)
+systemctl status tradeagent-unified.service
 ```
 
 ---

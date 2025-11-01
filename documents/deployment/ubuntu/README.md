@@ -8,22 +8,12 @@ Complete Ubuntu/Linux setup for the Modular Trade Agent with automated systemd s
 
 ```
 ubuntu/
-├── installers/          # Installation scripts
-│   ├── setup_ubuntu.sh                      # Main installer (signal generation only)
-│   ├── setup_complete_services_ubuntu.sh    # Complete setup (all 5 services)
-│   ├── setup_multi_services.sh              # Optional multi-service setup
-│   ├── fix_ubuntu_system.sh                 # System troubleshooting
-│   └── make_executable.sh                   # Make all scripts executable
+├── installers/
+│   └── setup_ubuntu.sh                      # Main installer (multi-service timers)
 │
-├── tests/               # Testing & verification scripts
-│   ├── verify_installation.sh               # Verify complete installation
-│   ├── test_all_services.sh                 # Test all services individually
-│   └── cleanup_old_services.sh              # Remove duplicate services
-│
-└── docs/                # Documentation
+└── docs/
     ├── INSTALL_UBUNTU.md                    # Complete installation guide
     ├── UBUNTU_QUICKSTART.md                 # 5-minute quick start
-    ├── UBUNTU_COMMANDS.md                   # Command reference
     ├── TROUBLESHOOTING_UBUNTU.md            # Error solutions
     └── SERVICES_COMPARISON.md               # Windows vs Ubuntu comparison
 ```
@@ -125,16 +115,18 @@ sudo systemctl stop tradeagent-*.timer
 ### Remove All Services
 
 ```bash
-cd ~/modular_trade_agent
-chmod +x uninstall_ubuntu_services.sh
-sudo ./uninstall_ubuntu_services.sh
-```
+# Unified service
+sudo systemctl stop tradeagent-unified.service
+sudo systemctl disable tradeagent-unified.service
+sudo rm /etc/systemd/system/tradeagent-unified.service
+sudo systemctl daemon-reload
 
-This will:
-- Stop all running services
-- Disable all timers
-- Remove all service files from /etc/systemd/system/
-- Reload systemd daemon
+# Multi-service timers/services (if installed)
+sudo systemctl stop 'tradeagent-*.timer'
+sudo systemctl disable 'tradeagent-*.timer'
+sudo rm /etc/systemd/system/tradeagent-*.service /etc/systemd/system/tradeagent-*.timer
+sudo systemctl daemon-reload
+```
 
 **Note:** This only removes services. Project files, configs, and data remain.
 
@@ -179,12 +171,11 @@ This will:
 ## 🔧 Troubleshooting
 
 ### Installation Issues
+- See TROUBLESHOOTING_UBUNTU.md for apt_pkg and common fixes.
+- Re-run installer:
 ```bash
-# Fix system issues first
-sudo scripts/deploy/ubuntu/installers/fix_ubuntu_system.sh
-
-# Then re-run installer
-sudo scripts/deploy/ubuntu/installers/setup_ubuntu.sh
+cd ~/modular_trade_agent
+./setup_ubuntu.sh
 ```
 
 ### Service Issues

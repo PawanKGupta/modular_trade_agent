@@ -359,21 +359,16 @@ sudo systemctl enable tradeagent-unified.service
 
 #### Problem: apt-get update error (cnf-update-db)
 
-**Error**: `ModuleNotFoundError: No module named 'apt_pkg'` or `cnf-update-db` errors
+See TROUBLESHOOTING_UBUNTU.md → "ModuleNotFoundError: apt_pkg" for the latest steps.
 
-**Solution**: This is a cosmetic error that won't affect installation. To fix:
+Quick manual fix:
 
 ```bash
-# Quick fix - run the troubleshooting script
-chmod +x fix_ubuntu_system.sh
-./fix_ubuntu_system.sh
-
-# Or manual fix
 sudo rm -f /etc/apt/apt.conf.d/50command-not-found
 sudo apt-get update
 ```
 
-Then re-run the installer. The error is non-critical and the installer will continue.
+Then re-run the installer.
 
 #### Problem: Python version too old
 

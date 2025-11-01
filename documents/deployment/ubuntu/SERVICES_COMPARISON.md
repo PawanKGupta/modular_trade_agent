@@ -298,7 +298,7 @@ STOP_ALL_SERVICES.bat
 ### Unified Service Approach (Recommended)
 - **Purpose**: Single persistent trading session
 - **Services**: 1 unified service handling all tasks
-- **Setup**: `sudo ./setup_ubuntu_unified.sh`
+- **Setup**: Create systemd unit as per INSTALL_UBUNTU.md (tradeagent-unified.service)
 - **Best for**:
   - Production deployment
   - Better resource management
@@ -313,12 +313,12 @@ STOP_ALL_SERVICES.bat
 
 **Ubuntu:**
 ```bash
-cd ~/modular_trade_agent
-./verify_installation.sh
-
-# Or check manually
+# Check timers/services (if using multi-service setup)
 systemctl list-timers tradeagent-*
 systemctl list-units tradeagent-* --all
+
+# Or unified service
+systemctl status tradeagent-unified.service
 ```
 
 **Windows:**

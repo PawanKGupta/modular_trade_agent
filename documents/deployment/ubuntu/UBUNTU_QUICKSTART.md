@@ -92,14 +92,15 @@ ModuleNotFoundError: No module named 'apt_pkg'
 E: Problem executing scripts APT::Update::Post-Invoke-Success
 ```
 
-**This is harmless!** The installer will continue. But to fix it:
+**This is harmless!** The installer will continue. To fix it quickly:
 
 ```bash
-chmod +x fix_ubuntu_system.sh
-./fix_ubuntu_system.sh
+# Remove the problematic apt hook and refresh package lists
+sudo rm -f /etc/apt/apt.conf.d/50command-not-found
+sudo apt-get update
 ```
 
-Then re-run the installer.
+See TROUBLESHOOTING_UBUNTU.md for more details. Then re-run the installer.
 
 ---
 
@@ -178,7 +179,7 @@ sudo systemctl stop tradeagent-unified.service
 ### Installation Failed?
 
 1. **Check the error** in the terminal output
-2. **Run the fix script**: `./fix_ubuntu_system.sh`
+2. **Apply the apt_pkg manual fix** (see above) if relevant
 3. **Check the troubleshooting guide**: `TROUBLESHOOTING_UBUNTU.md`
 4. **Re-run installer**: `./setup_ubuntu.sh`
 
@@ -186,7 +187,7 @@ sudo systemctl stop tradeagent-unified.service
 
 | Issue | Quick Fix |
 |-------|-----------|
-| `apt_pkg` error | `./fix_ubuntu_system.sh` |
+| `apt_pkg` error | Remove 50command-not-found + `apt-get update` |
 | Permission denied | `chmod +x *.sh` |
 | Python too old | `sudo apt-get install python3.10` |
 | Telegram not working | Check credentials in `cred.env` |
