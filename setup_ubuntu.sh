@@ -437,7 +437,7 @@ fi
 echo -e "${BLUE}📚 Documentation:${NC}"
 echo -e "  Setup Guide:      documents/getting-started/PYTHON_SETUP.md"
 echo -e "  Service Details:  documents/deployment/ubuntu/SERVICES_COMPARISON.md"
-echo -e "  Commands:         documents/deployment/ubuntu/UBUNTU_COMMANDS.md"
+echo -e "  Quickstart:       documents/deployment/ubuntu/UBUNTU_QUICKSTART.md"
 echo ""
 
 echo -e "${GREEN}Happy Trading! 📈${NC}"

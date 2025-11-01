@@ -148,7 +148,6 @@ This will:
 
 - **[INSTALL_UBUNTU.md](INSTALL_UBUNTU.md)** - Complete installation guide
 - **[UBUNTU_QUICKSTART.md](UBUNTU_QUICKSTART.md)** - Quick 5-minute setup
-- **[UBUNTU_COMMANDS.md](UBUNTU_COMMANDS.md)** - All commands reference
 - **[TROUBLESHOOTING_UBUNTU.md](TROUBLESHOOTING_UBUNTU.md)** - Fix common errors
 - **[SERVICES_COMPARISON.md](SERVICES_COMPARISON.md)** - Windows vs Ubuntu
 
