@@ -190,7 +190,7 @@ service_name = "MyTradingBot"  # Custom service name
 Edit `installer/setup.py` lines 134-142 (GUI) or 83-91 (console):
 ```python
 fields = [
-    ("KOTAK_NEO_CONSUMER_KEY", "Consumer Key *"),
+    ("KOTAK_CONSUMER_KEY", "Consumer Key *"),
     ("MY_CUSTOM_FIELD", "My Custom Setting"),  # Add here
     ...
 ]

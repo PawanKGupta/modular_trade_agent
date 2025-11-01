@@ -11,11 +11,11 @@
    - Rename `kotak_neo.env.example` to `kotak_neo.env`
    - Edit with your Kotak Neo credentials:
      ```env
-     KOTAK_NEO_CONSUMER_KEY=your_key_here
-     KOTAK_NEO_CONSUMER_SECRET=your_secret_here
-     KOTAK_NEO_MOBILE_NUMBER=9876543210
-     KOTAK_NEO_PASSWORD=your_password
-     KOTAK_NEO_MPIN=123456
+     KOTAK_CONSUMER_KEY=your_key_here
+     KOTAK_CONSUMER_SECRET=your_secret_here
+     KOTAK_MOBILE_NUMBER=9876543210
+     KOTAK_PASSWORD=your_password
+     KOTAK_MPIN=123456
      ```
 
 3. **Run the Application**
@@ -93,11 +93,11 @@ Edit `kotak_neo.env`:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `KOTAK_NEO_CONSUMER_KEY` | API Consumer Key | `abc123...` |
-| `KOTAK_NEO_CONSUMER_SECRET` | API Consumer Secret | `xyz789...` |
-| `KOTAK_NEO_MOBILE_NUMBER` | Registered mobile | `9876543210` |
-| `KOTAK_NEO_PASSWORD` | Login password | `MyPass@123` |
-| `KOTAK_NEO_MPIN` | M-PIN for transactions | `123456` |
+| `KOTAK_CONSUMER_KEY` | API Consumer Key | `abc123...` |
+| `KOTAK_CONSUMER_SECRET` | API Consumer Secret | `xyz789...` |
+| `KOTAK_MOBILE_NUMBER` | Registered mobile | `9876543210` |
+| `KOTAK_PASSWORD` | Login password | `MyPass@123` |
+| `KOTAK_MPIN` | M-PIN for transactions | `123456` |
 
 ### Optional Settings
 

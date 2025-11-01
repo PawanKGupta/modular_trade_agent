@@ -21,7 +21,7 @@ This guide explains how to build a standalone Windows executable (`.exe`) for th
 
 ```powershell
 # Run the build script
-.\scripts\build\build.ps1
+pyinstaller --onefile --name ModularTradeAgent trade_agent.py
 ```
 
 This will:
@@ -78,11 +78,11 @@ ModularTradeAgent/
 1. **Copy the folder** to target machine
 2. **Create `kotak_neo.env`** with actual credentials:
    ```env
-   KOTAK_NEO_CONSUMER_KEY=your_key
-   KOTAK_NEO_CONSUMER_SECRET=your_secret
-   KOTAK_NEO_MOBILE_NUMBER=your_mobile
-   KOTAK_NEO_PASSWORD=your_password
-   KOTAK_NEO_MPIN=your_mpin
+   KOTAK_CONSUMER_KEY=your_key
+   KOTAK_CONSUMER_SECRET=your_secret
+   KOTAK_MOBILE_NUMBER=your_mobile
+   KOTAK_PASSWORD=your_password
+   KOTAK_MPIN=your_mpin
    ```
 3. **Run the executable**:
    ```powershell
