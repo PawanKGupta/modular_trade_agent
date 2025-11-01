@@ -90,44 +90,47 @@ The installer creates **4 separate Windows services**, each handling a specific 
 
 ---
 
-## Service Control Scripts
+## Service Control (NSSM / sc)
 
 ### Start All Services
 ```cmd
-START_ALL_SERVICES.bat
+sc start ModularTradeAgent_Main
+sc start ModularTradeAgent_Monitor
+sc start ModularTradeAgent_EOD
+sc start ModularTradeAgent_Sell
 ```
-Starts all 4 services in sequence.
 
 ### Stop All Services
 ```cmd
-STOP_ALL_SERVICES.bat
+sc stop ModularTradeAgent_Sell
+sc stop ModularTradeAgent_EOD
+sc stop ModularTradeAgent_Monitor
+sc stop ModularTradeAgent_Main
 ```
-Stops all 4 services in sequence.
 
 ### Individual Service Control
-
-**Main Trading Engine**:
 ```cmd
-START_MAIN.bat    # Start main auto trader
-STOP_MAIN.bat     # Stop main auto trader
+:: Main Trading Engine
+sc start ModularTradeAgent_Main
+sc stop ModularTradeAgent_Main
+
+:: Position Monitor
+sc start ModularTradeAgent_Monitor
+sc stop ModularTradeAgent_Monitor
+
+:: EOD Cleanup
+sc start ModularTradeAgent_EOD
+sc stop ModularTradeAgent_EOD
+
+:: Sell Order Manager
+sc start ModularTradeAgent_Sell
+sc stop ModularTradeAgent_Sell
 ```
 
-**Position Monitor**:
+Note: If you installed services with NSSM, you can also use:
 ```cmd
-START_MONITOR.bat    # Start position monitor
-STOP_MONITOR.bat     # Stop position monitor
-```
-
-**EOD Cleanup**:
-```cmd
-START_EOD.bat    # Start EOD cleanup
-STOP_EOD.bat     # Stop EOD cleanup
-```
-
-**Sell Order Manager**:
-```cmd
-START_SELL.bat    # Start sell order manager
-STOP_SELL.bat     # Stop sell order manager
+nssm start ModularTradeAgent_Main
+nssm stop ModularTradeAgent_Main
 ```
 
 ## Recommended Usage Patterns
@@ -135,43 +138,47 @@ STOP_SELL.bat     # Stop sell order manager
 ### Pattern 1: Full Automation
 Run all services continuously:
 ```cmd
-# Start everything
-START_ALL_SERVICES.bat
+:: Start everything
+sc start ModularTradeAgent_Main
+sc start ModularTradeAgent_Monitor
+sc start ModularTradeAgent_EOD
+sc start ModularTradeAgent_Sell
 
-# Services run 24/7
-# Main: Places orders when needed
-# Monitor: Alerts you during market hours
-# EOD: Runs cleanup at 6 PM daily
-# Sell: Manages sell orders during market hours
+:: Services run 24/7
+:: Main: Places orders when needed
+:: Monitor: Alerts you during market hours
+:: EOD: Runs cleanup at 6 PM daily
+:: Sell: Manages sell orders during market hours
 ```
 
 ### Pattern 2: Manual Control
 Run only specific services as needed:
 ```cmd
-# Morning: Place AMO orders
-START_MAIN.bat
-# ... waits for completion ...
-STOP_MAIN.bat
+:: Morning: Place AMO orders
+sc start ModularTradeAgent_Main
+:: ... wait for completion ...
+sc stop ModularTradeAgent_Main
 
-# During market: Monitor positions
-START_MONITOR.bat
+:: During market: Monitor positions
+sc start ModularTradeAgent_Monitor
 
-# Evening: Daily cleanup
-START_EOD.bat
+:: Evening: Daily cleanup
+sc start ModularTradeAgent_EOD
 ```
 
 ### Pattern 3: Hybrid
 Some services automated, some manual:
 ```cmd
-# Automated: Monitor and sell management
-START_MONITOR.bat
-START_SELL.bat
+:: Automated: Monitor and sell management
+sc start ModularTradeAgent_Monitor
+sc start ModularTradeAgent_Sell
 
-# Manual: You control when to trade
-# Run RUN_AGENT.bat when you want to place orders
+:: Manual: You control when to trade
+:: Manually start/stop ModularTradeAgent_Main when desired
 
-# Automated: Daily cleanup
-START_EOD.bat (scheduled at 6 PM)
+:: Automated: Daily cleanup
+:: Schedule or manually start at 6 PM
+sc start ModularTradeAgent_EOD
 ```
 
 ## Service Configuration
@@ -327,16 +334,26 @@ sc delete ModularTradeAgent_Sell
 
 ### Remove Installation
 ```cmd
-# Stop all services first
-STOP_ALL_SERVICES.bat
+:: Stop all services first
+sc stop ModularTradeAgent_Sell
+sc stop ModularTradeAgent_EOD
+sc stop ModularTradeAgent_Monitor
+sc stop ModularTradeAgent_Main
 
-# Uninstall services
+:: Uninstall services (use either NSSM or sc)
+:: With NSSM:
 nssm remove ModularTradeAgent_Main confirm
 nssm remove ModularTradeAgent_Monitor confirm
 nssm remove ModularTradeAgent_EOD confirm
 nssm remove ModularTradeAgent_Sell confirm
 
-# Delete installation directory
+:: Or with sc:
+sc delete ModularTradeAgent_Main
+sc delete ModularTradeAgent_Monitor
+sc delete ModularTradeAgent_EOD
+sc delete ModularTradeAgent_Sell
+
+:: Delete installation directory (if created by installer)
 rmdir /s C:\ProgramData\ModularTradeAgent
 ```
 
@@ -401,8 +418,8 @@ rmdir /s C:\ProgramData\ModularTradeAgent
 4. ✅ **Sell** - Sell order management
 
 **Control**:
-- Start/Stop all: `START_ALL_SERVICES.bat` / `STOP_ALL_SERVICES.bat`
-- Individual control: `START_MAIN.bat`, `START_MONITOR.bat`, etc.
+- Start/Stop all: `sc start/stop ModularTradeAgent_*`
+- Individual control: `sc start ModularTradeAgent_Main`, `sc stop ModularTradeAgent_Main`, etc.
 
 **Logs**: `C:\ProgramData\ModularTradeAgent\logs\`
 
