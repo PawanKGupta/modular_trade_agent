@@ -16,7 +16,7 @@ if exist "ModularTradeAgent.exe" (
     echo ERROR: ModularTradeAgent.exe not found!
     echo.
     echo Please build the executable first using:
-    echo   .\build.ps1
+echo   .\scripts\build\build.ps1
     echo.
     pause
     exit /b 1

@@ -62,7 +62,7 @@ modules/kotak_neo_auto_trader/
   ├── position_monitor.py       ✓ Live monitoring module
   └── run_position_monitor.py   ✓ Runner script
 
-win_local_deployment_guide/
+scripts/deploy/windows/
   └── add_position_monitoring.ps1  ✓ Task setup script
 ```
 
@@ -70,7 +70,7 @@ win_local_deployment_guide/
 
 ```powershell
 # Navigate to deployment folder
-cd C:\Personal\Projects\TradingView\modular_trade_agent\win_local_deployment_guide
+cd C:\Personal\Projects\TradingView\modular_trade_agent\scripts\deploy\windows
 
 # Run setup (as Administrator)
 .\add_position_monitoring.ps1

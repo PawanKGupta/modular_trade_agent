@@ -21,7 +21,7 @@ This guide explains how to build a standalone Windows executable (`.exe`) for th
 
 ```powershell
 # Run the build script
-.\build.ps1
+.\scripts\build\build.ps1
 ```
 
 This will:
@@ -41,7 +41,7 @@ This will:
 pip install pyinstaller
 
 # Build using spec file
-pyinstaller build_executable.spec --clean
+pyinstaller build\build_executable.spec --clean
 ```
 
 ## Build Output

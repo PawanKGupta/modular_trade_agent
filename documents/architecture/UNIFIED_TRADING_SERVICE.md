@@ -137,7 +137,7 @@ Total: 1 login/day → No JWT errors → Runs forever → No restarts
    
    **Alternative**: Use the provided script:
    ```powershell
-   .\configure_continuous_service.ps1
+.\scripts\build\configure_continuous_service.ps1
    ```
 
 3. **Verify task created**:

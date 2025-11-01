@@ -19,7 +19,7 @@ A single executable (`ModularTradeAgent_Setup.exe`) that:
 
 ```powershell
 # Single command to build everything
-.\build_installer.ps1
+.\scripts\build\build_installer.ps1
 ```
 
 This will:

@@ -36,8 +36,8 @@ ubuntu/
 
 ```bash
 cd ~/modular_trade_agent
-chmod +x ubuntu/installers/*.sh
-sudo ubuntu/installers/setup_ubuntu.sh
+chmod +x scripts/deploy/ubuntu/installers/*.sh
+sudo scripts/deploy/ubuntu/installers/setup_ubuntu.sh
 ```
 
 **Creates:**
@@ -48,8 +48,8 @@ sudo ubuntu/installers/setup_ubuntu.sh
 
 ```bash
 cd ~/modular_trade_agent
-chmod +x ubuntu/installers/*.sh
-sudo ubuntu/installers/setup_complete_services_ubuntu.sh
+chmod +x scripts/deploy/ubuntu/installers/*.sh
+sudo scripts/deploy/ubuntu/installers/setup_complete_services_ubuntu.sh
 ```
 
 **Creates:**
@@ -67,8 +67,8 @@ After installation, verify everything works:
 
 ```bash
 cd ~/modular_trade_agent
-chmod +x ubuntu/tests/*.sh
-sudo ubuntu/tests/verify_installation.sh
+chmod +x scripts/deploy/ubuntu/tests/*.sh
+sudo scripts/deploy/ubuntu/tests/verify_installation.sh
 ```
 
 ---
@@ -79,7 +79,7 @@ Test all services individually:
 
 ```bash
 cd ~/modular_trade_agent
-sudo ubuntu/tests/test_all_services.sh
+sudo scripts/deploy/ubuntu/tests/test_all_services.sh
 ```
 
 This will:
@@ -120,11 +120,11 @@ sudo systemctl stop tradeagent-*.timer
 
 ## 📚 Documentation
 
-- **[INSTALL_UBUNTU.md](docs/INSTALL_UBUNTU.md)** - Complete installation guide
-- **[UBUNTU_QUICKSTART.md](docs/UBUNTU_QUICKSTART.md)** - Quick 5-minute setup
-- **[UBUNTU_COMMANDS.md](docs/UBUNTU_COMMANDS.md)** - All commands reference
-- **[TROUBLESHOOTING_UBUNTU.md](docs/TROUBLESHOOTING_UBUNTU.md)** - Fix common errors
-- **[SERVICES_COMPARISON.md](docs/SERVICES_COMPARISON.md)** - Windows vs Ubuntu
+- **[INSTALL_UBUNTU.md](INSTALL_UBUNTU.md)** - Complete installation guide
+- **[UBUNTU_QUICKSTART.md](UBUNTU_QUICKSTART.md)** - Quick 5-minute setup
+- **[UBUNTU_COMMANDS.md](UBUNTU_COMMANDS.md)** - All commands reference
+- **[TROUBLESHOOTING_UBUNTU.md](TROUBLESHOOTING_UBUNTU.md)** - Fix common errors
+- **[SERVICES_COMPARISON.md](SERVICES_COMPARISON.md)** - Windows vs Ubuntu
 
 ---
 
@@ -160,19 +160,19 @@ sudo systemctl stop tradeagent-*.timer
 ### Installation Issues
 ```bash
 # Fix system issues first
-sudo ubuntu/installers/fix_ubuntu_system.sh
+sudo scripts/deploy/ubuntu/installers/fix_ubuntu_system.sh
 
 # Then re-run installer
-sudo ubuntu/installers/setup_ubuntu.sh
+sudo scripts/deploy/ubuntu/installers/setup_ubuntu.sh
 ```
 
 ### Service Issues
 ```bash
 # Clean up duplicates
-sudo ubuntu/tests/cleanup_old_services.sh
+sudo scripts/deploy/ubuntu/tests/cleanup_old_services.sh
 
 # Verify installation
-sudo ubuntu/tests/verify_installation.sh
+sudo scripts/deploy/ubuntu/tests/verify_installation.sh
 ```
 
 ### Check Logs

@@ -7,7 +7,7 @@ This guide covers the backup/restore utilities and uninstallation procedures for
 
 ## Backup Utility
 
-### BACKUP_DATA.bat
+### scripts\\BACKUP_DATA.bat
 
 A convenient batch script to backup all important data files before making changes or troubleshooting.
 
@@ -22,7 +22,7 @@ A convenient batch script to backup all important data files before making chang
 
 **Simple Backup:**
 ```batch
-BACKUP_DATA.bat
+scripts\BACKUP_DATA.bat
 ```
 
 **What Gets Backed Up:**

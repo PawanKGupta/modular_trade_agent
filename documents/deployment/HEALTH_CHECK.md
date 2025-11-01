@@ -6,9 +6,9 @@ The health check utility verifies the complete installation and configuration of
 ## Running the Health Check
 
 ### Method 1: Using the Batch File (Easiest)
-Double-click `health_check.bat` or run from command prompt:
+Double-click `scripts\\health_check.bat` or run from command prompt:
 ```cmd
-health_check.bat
+scripts\health_check.bat
 ```
 
 ### Method 2: Direct Python Execution

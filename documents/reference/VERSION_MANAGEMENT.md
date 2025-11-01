@@ -101,7 +101,7 @@ When releasing a bugfix for the current quarter:
 
 3. **Rebuild installer**:
    ```powershell
-   .\build_installer.ps1
+.\scripts\build\build_installer.ps1
    ```
 
 4. **Tag release**:

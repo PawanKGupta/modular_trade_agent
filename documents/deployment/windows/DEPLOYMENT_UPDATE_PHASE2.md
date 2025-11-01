@@ -27,7 +27,7 @@
 
 ```powershell
 # Navigate to deployment guide folder
-cd C:\Personal\Projects\TradingView\modular_trade_agent\win_local_deployment_guide
+cd C:\Personal\Projects\TradingView\modular_trade_agent\scripts\deploy\windows
 
 # Run updated setup (as Administrator)
 .\setup_scheduled_tasks_phase2.ps1
