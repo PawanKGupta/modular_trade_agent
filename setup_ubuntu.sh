@@ -250,8 +250,33 @@ Description=Modular Trade Agent - Position Monitor Timer (Every 1 minute, 9:15 A
 Requires=tradeagent-monitor.service
 
 [Timer]
-# Run every minute during market hours (9:15 AM - 3:30 PM)
-OnCalendar=Mon-Fri *-*-* 09:15..15:30:*
+# Start at 9:15 AM on weekdays
+OnCalendar=Mon-Fri *-*-* 09:15:00
+# Then run every 1 minute
+OnUnitActiveSec=1min
+# Stop is handled by service itself or manual stop at 3:30 PM
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+# Create a oneshot service to stop the monitor timer
+cat > /etc/systemd/system/tradeagent-monitor-stop.service <<EOF
+[Unit]
+Description=Stop Position Monitor Timer
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl stop tradeagent-monitor.timer
+EOF
+
+cat > /etc/systemd/system/tradeagent-monitor-stop.timer <<EOF
+[Unit]
+Description=Stop Position Monitor at 3:30 PM
+
+[Timer]
+OnCalendar=Mon-Fri *-*-* 15:30:00
 Persistent=true
 
 [Install]
@@ -344,6 +369,7 @@ systemctl daemon-reload
 systemctl enable tradeagent-analysis.timer
 systemctl enable tradeagent-autotrade.timer
 systemctl enable tradeagent-monitor.timer
+systemctl enable tradeagent-monitor-stop.timer
 systemctl enable tradeagent-sell.timer
 systemctl enable tradeagent-eod.timer
 
@@ -351,6 +377,7 @@ systemctl enable tradeagent-eod.timer
 systemctl start tradeagent-analysis.timer
 systemctl start tradeagent-autotrade.timer
 systemctl start tradeagent-monitor.timer
+systemctl start tradeagent-monitor-stop.timer
 systemctl start tradeagent-sell.timer
 systemctl start tradeagent-eod.timer
 
