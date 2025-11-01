@@ -70,7 +70,7 @@ def main():
     )
     parser.add_argument(
         "--env",
-        default="kotak_neo.env",
+        default="modules/kotak_neo_auto_trader/kotak_neo.env",
         help="Path to Kotak Neo credentials env file"
     )
     parser.add_argument(

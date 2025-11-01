@@ -21,7 +21,7 @@ class KotakNeoAuth:
     Authentication handler for Kotak Neo API
     """
 
-    def __init__(self, config_file: str = "kotak_neo.env"):
+    def __init__(self, config_file: str = "modules/kotak_neo_auto_trader/kotak_neo.env"):
         """
         Initialize authentication module
 

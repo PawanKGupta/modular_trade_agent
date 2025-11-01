@@ -47,7 +47,7 @@ class TradingService:
     Unified trading service that runs all tasks with single persistent session
     """
     
-    def __init__(self, env_file: str = "kotak_neo.env"):
+    def __init__(self, env_file: str = "modules/kotak_neo_auto_trader/kotak_neo.env"):
         """Initialize trading service"""
         self.env_file = env_file
         self.auth: Optional[KotakNeoAuth] = None

@@ -29,7 +29,7 @@ class KotakNeoTrader:
     Main coordinator class that combines all trading modules
     """
     
-    def __init__(self, config_file: str = "kotak_neo.env"):
+    def __init__(self, config_file: str = "modules/kotak_neo_auto_trader/kotak_neo.env"):
         """
         Initialize the complete trader system
         

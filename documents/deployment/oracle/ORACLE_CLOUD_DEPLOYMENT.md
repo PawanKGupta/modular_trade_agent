@@ -139,11 +139,11 @@ pip3 install -r requirements.txt
 # Setup credentials
 # Option 1: Upload via SCP
 # scp modules/kotak_neo_auto_trader/kotak_neo.env ubuntu@$INSTANCE_IP:~/modular_trade_agent/modules/kotak_neo_auto_trader/
-# scp config/.env ubuntu@$INSTANCE_IP:~/modular_trade_agent/config/
+# scp cred.env ubuntu@$INSTANCE_IP:~/modular_trade_agent/
 
 # Option 2: Create manually on VM
 nano modules/kotak_neo_auto_trader/kotak_neo.env
-nano config/.env
+nano cred.env
 
 # Create directories
 mkdir -p data analysis_results logs
@@ -236,12 +236,12 @@ cd modular_trade_agent
 pip3 install -r requirements.txt
 
 # Create directories
-mkdir -p data analysis_results logs config modules/kotak_neo_auto_trader
+mkdir -p data analysis_results logs modules/kotak_neo_auto_trader
 
 # Setup credentials
 echo "📝 Setting up credentials..."
 echo "Create modules/kotak_neo_auto_trader/kotak_neo.env with your Kotak Neo credentials"
-echo "Create config/.env with your Telegram credentials"
+echo "Create cred.env with your Telegram credentials"
 echo "Press Enter when done..."
 read
 
@@ -261,7 +261,7 @@ echo ""
 echo "📋 Next steps:"
 echo "1. Add your credentials to:"
 echo "   - modules/kotak_neo_auto_trader/kotak_neo.env"
-echo "   - config/.env"
+echo "   - cred.env"
 echo "2. Test: cd modular_trade_agent && python3 -m src.presentation.cli.application analyze --backtest"
 echo "3. View logs: tail -f /home/ubuntu/logs/*.log"
 echo ""
@@ -460,9 +460,9 @@ crontab -l
 
 ## 📚 Related
 
-- **GCP Alternative**: [GCP_DEPLOYMENT.md](GCP_DEPLOYMENT.md)
-- **Free Tier GCP**: [FREE_TIER_DEPLOYMENT.md](FREE_TIER_DEPLOYMENT.md)
-- **Telegram Setup**: [TELEGRAM_GCP_SETUP.md](TELEGRAM_GCP_SETUP.md)
+- **GCP Alternative**: [GCP_DEPLOYMENT.md](../gcp/GCP_DEPLOYMENT.md)
+- **Free Tier GCP**: [FREE_TIER_DEPLOYMENT.md](../gcp/FREE_TIER_DEPLOYMENT.md)
+- **Telegram Setup**: [TELEGRAM_GCP_SETUP.md](../gcp/TELEGRAM_GCP_SETUP.md)
 
 ## 🎉 Conclusion
 
