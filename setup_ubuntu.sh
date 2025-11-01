@@ -250,8 +250,8 @@ Description=Modular Trade Agent - Position Monitor Timer (Every 1 minute, 9:15 A
 Requires=tradeagent-monitor.service
 
 [Timer]
-# Run every 1 minute during market hours (9:15 AM - 3:30 PM)
-OnCalendar=Mon-Fri *-*-* 09:15..15:30:00
+# Run every minute during market hours (9:15 AM - 3:30 PM)
+OnCalendar=Mon-Fri *-*-* 09:15..15:30:*
 Persistent=true
 
 [Install]
