@@ -22,7 +22,7 @@ This directory contains detailed documentation for the Modular Trade Agent proje
 ### `deployment/`
 **For DevOps** - Deployment and production setup guides
 - `DEPLOYMENT_READY.md` - Production deployment checklist
-- `ORACLE_CLOUD_DEPLOYMENT.md` - Cloud deployment guide
+- `oracle/ORACLE_CLOUD_DEPLOYMENT.md` - Cloud deployment guide
 - `MIGRATION_GUIDE.md` - Version migration guide
 - `WINDOWS_SERVICES_GUIDE.md` - Windows service setup
 - `BACKUP_RESTORE_UNINSTALL_GUIDE.md` - Maintenance procedures
@@ -62,7 +62,7 @@ This directory contains detailed documentation for the Modular Trade Agent proje
 → `deployment/DEPLOYMENT_READY.md`
 
 **Deploy to Oracle Cloud (free)**
-→ `deployment/ORACLE_CLOUD_DEPLOYMENT.md`
+→ `deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md`
 
 **Set up Windows executable**
 → `ALL_IN_ONE_INSTALLER_GUIDE.md` or `WINDOWS_EXECUTABLE_GUIDE.md`
@@ -78,20 +78,20 @@ This directory contains detailed documentation for the Modular Trade Agent proje
 
 ---
 
-## 📋 Root-Level Quick Reference Files
+## 📋 Quick Reference Files
 
 These important files remain in the `documents/` root for quick access:
 
 ### Installation & Setup
-- `ALL_IN_ONE_INSTALLER_GUIDE.md` - All-in-one installer (Windows)
-- `WINDOWS_EXECUTABLE_GUIDE.md` - Standalone executable guide
-- `WINDOWS_SERVICES_GUIDE.md` - Windows service setup
+- `getting-started/ALL_IN_ONE_INSTALLER_GUIDE.md` - All-in-one installer (Windows)
+- `getting-started/WINDOWS_EXECUTABLE_GUIDE.md` - Standalone executable guide
+- `deployment/windows/WINDOWS_SERVICES_GUIDE.md` - Windows service setup
 
 ### Core Guides
-- `COMMANDS.md` - Command reference
-- `CLI_USAGE.md` - CLI interface guide
-- `HEALTH_CHECK.md` - System health monitoring
-- `VERSION_MANAGEMENT.md` - Version tracking
+- `reference/COMMANDS.md` - Command reference
+- `reference/CLI_USAGE.md` - CLI interface guide
+- `deployment/HEALTH_CHECK.md` - System health monitoring
+- `reference/VERSION_MANAGEMENT.md` - Version tracking
 
 ---
 
@@ -106,7 +106,7 @@ These important files remain in the `documents/` root for quick access:
 
 ### Deployment Files
 - `DEPLOYMENT_READY.md`
-- `ORACLE_CLOUD_DEPLOYMENT.md`
+- `oracle/ORACLE_CLOUD_DEPLOYMENT.md`
 - `MIGRATION_GUIDE.md`
 - `BACKUP_RESTORE_UNINSTALL_GUIDE.md`
 

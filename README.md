@@ -77,8 +77,8 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 **Quick Links:**
 - [Architecture Guide](documents/architecture/ARCHITECTURE_GUIDE.md) - System design
 - [Deployment Guide](documents/deployment/DEPLOYMENT_READY.md) - Production setup
-- [Cloud Deployment](documents/deployment/ORACLE_CLOUD_DEPLOYMENT.md) - Free Oracle Cloud
-- [Commands Reference](documents/COMMANDS.md) - CLI commands
+- [Cloud Deployment](documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md) - Free Oracle Cloud
+- [Commands Reference](documents/reference/COMMANDS.md) - CLI commands
 - [Testing Guide](documents/testing/TESTING_GUIDE_PHASE1_PHASE2.md) - Testing procedures
 
 ---

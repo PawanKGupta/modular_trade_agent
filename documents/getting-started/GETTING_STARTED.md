@@ -50,7 +50,7 @@ The **Modular Trade Agent** is an automated trading analysis system that:
 3. Enter your Telegram credentials in the GUI
 4. The installer handles everything automatically!
 
-👉 **See:** [ALL_IN_ONE_INSTALLER_GUIDE.md](../ALL_IN_ONE_INSTALLER_GUIDE.md) for details
+👉 **See:** [ALL_IN_ONE_INSTALLER_GUIDE.md](./ALL_IN_ONE_INSTALLER_GUIDE.md) for details
 
 ---
 
@@ -284,7 +284,7 @@ Run automatically in the cloud at 4 PM IST weekdays:
 
 For 24/7 operation with automated execution:
 
-👉 **See:** [ORACLE_CLOUD_DEPLOYMENT.md](../ORACLE_CLOUD_DEPLOYMENT.md) - Free cloud deployment guide
+👉 **See:** [ORACLE_CLOUD_DEPLOYMENT.md](../deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md) - Free cloud deployment guide
 
 ---
 
@@ -380,7 +380,7 @@ pip install -r requirements.txt
 
 ### Specific Guides
 
-- **Command Reference:** [COMMANDS.md](../COMMANDS.md)
+- **Command Reference:** [COMMANDS.md](../reference/COMMANDS.md)
 - **Architecture Details:** [ARCHITECTURE_GUIDE.md](../ARCHITECTURE_GUIDE.md)
 - **Troubleshooting:** [README.md](../../README.md) - "Troubleshooting" section
 - **Developer Setup:** [WARP.md](../../WARP.md)

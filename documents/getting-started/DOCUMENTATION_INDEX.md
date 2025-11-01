@@ -19,24 +19,24 @@ Welcome! This index helps you find the right documentation quickly.
 
 ### Basic Usage
 - **[README.md](README.md)** - Complete feature overview and usage examples
-- **[COMMANDS.md](documents/COMMANDS.md)** - Available commands and CLI usage
-- **[CLI_USAGE.md](documents/CLI_USAGE.md)** - Command-line interface details
+- **[COMMANDS.md](documents/reference/COMMANDS.md)** - Available commands and CLI usage
+- **[CLI_USAGE.md](documents/reference/CLI_USAGE.md)** - Command-line interface details
 
 ### Installation & Setup
 - **[GETTING_STARTED.md](docs/getting-started/GETTING_STARTED.md)** - First-time setup walkthrough
-- **[WINDOWS_EXECUTABLE_GUIDE.md](documents/WINDOWS_EXECUTABLE_GUIDE.md)** - Standalone executable setup
-- **[ALL_IN_ONE_INSTALLER_GUIDE.md](documents/ALL_IN_ONE_INSTALLER_GUIDE.md)** - All-in-one installer for Windows
-- **[WINDOWS_SERVICES_GUIDE.md](documents/WINDOWS_SERVICES_GUIDE.md)** - Running as Windows service
+- **[WINDOWS_EXECUTABLE_GUIDE.md](documents/getting-started/WINDOWS_EXECUTABLE_GUIDE.md)** - Standalone executable setup
+- **[ALL_IN_ONE_INSTALLER_GUIDE.md](documents/getting-started/ALL_IN_ONE_INSTALLER_GUIDE.md)** - All-in-one installer for Windows
+- **[WINDOWS_SERVICES_GUIDE.md](documents/deployment/windows/WINDOWS_SERVICES_GUIDE.md)** - Running as Windows service
 
 ### Deployment
 - **[DEPLOYMENT_READY.md](documents/DEPLOYMENT_READY.md)** - Production deployment checklist
-- **[ORACLE_CLOUD_DEPLOYMENT.md](documents/ORACLE_CLOUD_DEPLOYMENT.md)** - Deploy to Oracle Cloud Free Tier
+- **[ORACLE_CLOUD_DEPLOYMENT.md](documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md)** - Deploy to Oracle Cloud Free Tier
 - **[MIGRATION_GUIDE.md](documents/MIGRATION_GUIDE.md)** - Migrating between versions
 
 ### Backup & Maintenance
 - **[BACKUP_RESTORE_UNINSTALL_GUIDE.md](documents/BACKUP_RESTORE_UNINSTALL_GUIDE.md)** - Backup, restore, and uninstall
-- **[HEALTH_CHECK.md](documents/HEALTH_CHECK.md)** - System health monitoring
-- **[VERSION_MANAGEMENT.md](documents/VERSION_MANAGEMENT.md)** - Version tracking and updates
+- **[HEALTH_CHECK.md](documents/deployment/HEALTH_CHECK.md)** - System health monitoring
+- **[VERSION_MANAGEMENT.md](documents/reference/VERSION_MANAGEMENT.md)** - Version tracking and updates
 
 ---
 
@@ -119,8 +119,8 @@ Welcome! This index helps you find the right documentation quickly.
 
 **📱 End Users (Non-Technical)**
 1. [Getting Started Guide](docs/getting-started/GETTING_STARTED.md)
-2. [Windows Executable Guide](documents/WINDOWS_EXECUTABLE_GUIDE.md)
-3. [All-in-One Installer](documents/ALL_IN_ONE_INSTALLER_GUIDE.md)
+2. [Windows Executable Guide](documents/getting-started/WINDOWS_EXECUTABLE_GUIDE.md)
+3. [All-in-One Installer](documents/getting-started/ALL_IN_ONE_INSTALLER_GUIDE.md)
 
 **💻 Developers**
 1. [WARP.md](WARP.md) - Development environment
@@ -129,8 +129,8 @@ Welcome! This index helps you find the right documentation quickly.
 
 **🚀 DevOps / Deployment**
 1. [Deployment Ready](documents/DEPLOYMENT_READY.md)
-2. [Oracle Cloud Deployment](documents/ORACLE_CLOUD_DEPLOYMENT.md)
-3. [Health Check](documents/HEALTH_CHECK.md)
+2. [Oracle Cloud Deployment](documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md)
+3. [Health Check](documents/deployment/HEALTH_CHECK.md)
 
 **🧪 Testers / QA**
 1. [Testing Guide](documents/TESTING_GUIDE_PHASE1_PHASE2.md)
@@ -164,8 +164,8 @@ modular_trade_agent/
 
 **Looking for:**
 - **Setup instructions** → See [Getting Started](#-getting-started)
-- **How to run commands** → See [COMMANDS.md](documents/COMMANDS.md)
-- **Cloud deployment** → See [ORACLE_CLOUD_DEPLOYMENT.md](documents/ORACLE_CLOUD_DEPLOYMENT.md)
+- **How to run commands** → See [COMMANDS.md](documents/reference/COMMANDS.md)
+- **Cloud deployment** → See [ORACLE_CLOUD_DEPLOYMENT.md](documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md)
 - **System design** → See [Architecture & Design](#-architecture--design)
 - **Bug fixes** → See [Feature Documentation](#-feature-documentation)
 - **Test results** → See [Testing & Validation](#-testing--validation)

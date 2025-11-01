@@ -805,7 +805,7 @@ After successful local testing:
 1. ✅ **Verify all tests pass** (Phases 1-4)
 2. ✅ **Run for 1-2 weeks locally** with small capital
 3. ✅ **Review performance** and fine-tune parameters
-4. ✅ **Deploy to Oracle Cloud** using `ORACLE_CLOUD_DEPLOYMENT.md`
+4. ✅ **Deploy to Oracle Cloud** using `documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md`
 5. ✅ **Monitor production** for first few trades
 6. ✅ **Scale up capital** gradually once confident
 

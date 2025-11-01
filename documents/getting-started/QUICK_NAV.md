@@ -22,13 +22,13 @@
 → [`EXECUTABLE_README.md`](EXECUTABLE_README.md)
 
 ### ...deploy to cloud (free)
-→ [`documents/deployment/ORACLE_CLOUD_DEPLOYMENT.md`](documents/deployment/ORACLE_CLOUD_DEPLOYMENT.md)
+→ [`documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md`](documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md)
 
 ### ...understand the architecture
 → [`documents/architecture/ARCHITECTURE_GUIDE.md`](documents/architecture/ARCHITECTURE_GUIDE.md)
 
 ### ...see available commands
-→ [`documents/COMMANDS.md`](documents/COMMANDS.md)
+→ [`documents/reference/COMMANDS.md`](documents/reference/COMMANDS.md)
 
 ### ...deploy to production
 → [`documents/deployment/DEPLOYMENT_READY.md`](documents/deployment/DEPLOYMENT_READY.md)
@@ -40,7 +40,7 @@
 → [`documents/deployment/BACKUP_RESTORE_UNINSTALL_GUIDE.md`](documents/deployment/BACKUP_RESTORE_UNINSTALL_GUIDE.md)
 
 ### ...check system health
-→ [`documents/HEALTH_CHECK.md`](documents/HEALTH_CHECK.md)
+→ [`documents/deployment/HEALTH_CHECK.md`](documents/deployment/HEALTH_CHECK.md)
 
 ### ...use Kotak Neo automated trading
 → [`documents/features/KOTAK_NEO_COMMANDS.md`](documents/features/KOTAK_NEO_COMMANDS.md)
@@ -75,18 +75,18 @@
 
 ### 📱 End Users (Non-Technical)
 1. [`EXECUTABLE_README.md`](EXECUTABLE_README.md) - Windows executable
-2. [`documents/ALL_IN_ONE_INSTALLER_GUIDE.md`](documents/ALL_IN_ONE_INSTALLER_GUIDE.md) - Automatic installer
+2. [`documents/getting-started/ALL_IN_ONE_INSTALLER_GUIDE.md`](documents/getting-started/ALL_IN_ONE_INSTALLER_GUIDE.md) - Automatic installer
 3. [`documents/getting-started/GETTING_STARTED.md`](documents/getting-started/GETTING_STARTED.md) - Full setup
 
 ### 💻 Developers
 1. [`WARP.md`](WARP.md) - Dev environment
 2. [`documents/architecture/ARCHITECTURE_GUIDE.md`](documents/architecture/ARCHITECTURE_GUIDE.md) - System design
-3. [`documents/COMMANDS.md`](documents/COMMANDS.md) - CLI reference
+3. [`documents/reference/COMMANDS.md`](documents/reference/COMMANDS.md) - CLI reference
 
 ### 🚀 DevOps / Cloud Deployers
 1. [`documents/deployment/DEPLOYMENT_READY.md`](documents/deployment/DEPLOYMENT_READY.md) - Production checklist
-2. [`documents/deployment/ORACLE_CLOUD_DEPLOYMENT.md`](documents/deployment/ORACLE_CLOUD_DEPLOYMENT.md) - Cloud setup
-3. [`documents/HEALTH_CHECK.md`](documents/HEALTH_CHECK.md) - Monitoring
+2. [`documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md`](documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md) - Cloud setup
+3. [`documents/deployment/HEALTH_CHECK.md`](documents/deployment/HEALTH_CHECK.md) - Monitoring
 
 ### 🧪 Testers / QA
 1. [`documents/testing/TESTING_GUIDE_PHASE1_PHASE2.md`](documents/testing/TESTING_GUIDE_PHASE1_PHASE2.md) - Testing procedures
