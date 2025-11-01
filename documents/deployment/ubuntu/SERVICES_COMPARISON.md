@@ -172,6 +172,7 @@ python installer/setup.py
 
 ### Ubuntu Commands
 
+#### View Services
 ```bash
 # View all services
 systemctl list-timers tradeagent-*
@@ -183,22 +184,52 @@ systemctl status tradeagent-monitor.timer
 systemctl status tradeagent-sell.timer
 systemctl status tradeagent-eod.timer
 
-# View logs
+# View unified service
+systemctl status tradeagent-unified.service
+```
+
+#### View Logs
+```bash
 journalctl -u tradeagent-analysis.service -f
 journalctl -u tradeagent-autotrade.service -f
 journalctl -u tradeagent-monitor.service -f
 journalctl -u tradeagent-sell.service -f
 journalctl -u tradeagent-eod.service -f
 
-# Manual execution
+# Unified service logs
+journalctl -u tradeagent-unified.service -f
+```
+
+#### Manual Execution
+```bash
 sudo systemctl start tradeagent-analysis.service
 sudo systemctl start tradeagent-autotrade.service
 sudo systemctl start tradeagent-monitor.service
 sudo systemctl start tradeagent-sell.service
 sudo systemctl start tradeagent-eod.service
 
-# Stop all services
+# Restart unified service
+sudo systemctl restart tradeagent-unified.service
+```
+
+#### Stop/Disable Services
+```bash
+# Stop all timers (multiple services)
 sudo systemctl stop tradeagent-*.timer
+
+# Stop unified service
+sudo systemctl stop tradeagent-unified.service
+
+# Disable services (prevent auto-start)
+sudo systemctl disable tradeagent-analysis.timer
+sudo systemctl disable tradeagent-unified.service
+```
+
+#### Complete Uninstall
+```bash
+# Remove all services
+chmod +x uninstall_ubuntu_services.sh
+sudo ./uninstall_ubuntu_services.sh
 ```
 
 ### Windows Commands

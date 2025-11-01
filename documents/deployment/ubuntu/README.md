@@ -124,6 +124,26 @@ sudo systemctl stop tradeagent-*.timer
 
 ---
 
+## 🗑️ Uninstallation
+
+### Remove All Services
+
+```bash
+cd ~/modular_trade_agent
+chmod +x uninstall_ubuntu_services.sh
+sudo ./uninstall_ubuntu_services.sh
+```
+
+This will:
+- Stop all running services
+- Disable all timers
+- Remove all service files from /etc/systemd/system/
+- Reload systemd daemon
+
+**Note:** This only removes services. Project files, configs, and data remain.
+
+---
+
 ## 📚 Documentation
 
 - **[INSTALL_UBUNTU.md](INSTALL_UBUNTU.md)** - Complete installation guide
