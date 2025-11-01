@@ -5,36 +5,21 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import pyperclip
 import time
-import sys
+
+from bs4 import BeautifulSoup
 
 from utils.logger import logger
 
-# Try to import pyvirtualdisplay for headless Linux environments
-try:
-    from pyvirtualdisplay import Display
-    HAS_VIRTUAL_DISPLAY = True
-except ImportError:
-    HAS_VIRTUAL_DISPLAY = False
-
-
 def get_stock_list():
-    # Start virtual display only on Linux if available (does not affect Windows)
-    display = None
-    if HAS_VIRTUAL_DISPLAY and sys.platform.startswith('linux'):
-        display = Display(visible=0, size=(1920, 1080))
-        display.start()
-        logger.info("Started virtual display for headless Linux environment")
-    
-    # Set Chrome options for headless mode
+
+    # Set Chrome options for headless mode and cross-platform compatibility
     chrome_options = Options()
-    # chrome_options.add_argument("--headless")  # Runs Chrome in headless mode
-    chrome_options.add_argument("--disable-gpu")  # Disable GPU hardware acceleration (optional)
-    chrome_options.add_argument("--no-sandbox")  # Needed for headless mode in some environments (like Linux)
+    chrome_options.add_argument("--headless=new")  # Runs Chrome in headless mode
+    chrome_options.add_argument("--disable-gpu")  # Disable GPU hardware acceleration
+    chrome_options.add_argument("--no-sandbox")  # Needed for headless mode in Linux environments
     chrome_options.add_argument("--disable-dev-shm-usage")  # Overcome limited resource problems
     chrome_options.add_argument("--disable-software-rasterizer")  # Fix for snap Chromium
-    chrome_options.add_argument("--remote-debugging-port=9222")  # Enable remote debugging
 
     # Set up Chrome driver with headless options
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
@@ -42,50 +27,46 @@ def get_stock_list():
     # URL of the chartink screener
     url = 'https://chartink.com/screener/daily-rsi-6602'
 
-    # Open the page using Selenium
-    driver.get(url)
-    driver.maximize_window()
-
-    # Take a screenshot after page load to check if the page is fully loaded
-    # driver.save_screenshot("after_page_load.png")
-
-    # Wait for the page to load completely (replace time.sleep() with WebDriverWait)
-    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//span[text()="Copy"]')))
-
-    # Try to find the "Copy" button and click it
     try:
+        # Open the page using Selenium
+        driver.get(url)
+
+        # Wait for the page to load completely
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//span[text()="Copy"]')))
+
+        # Find and click the "Run Scan" button
         run_scan_button = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, '//span[text()="Run Scan"]'))
         )
-        # Take a screenshot before clicking the "Copy" button to see the button's state
-        # driver.save_screenshot("before_copy_button_click.png")
         run_scan_button.click()
-        time.sleep(5)
+
+        # Wait for scan results to load
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//table[contains(@class, "rounded-b")]/tbody')))
 
         driver.execute_script("window.scrollBy(0, 800);")
-        # Wait for the copy button to be clickable
-        copy_button = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, '//span[text()="Copy"]'))
-        )
-        # Take a screenshot before clicking the "Copy" button to see the button's state
-        # driver.save_screenshot("before_copy_button_click.png")
-        copy_button.click()
 
-        # Wait for the "Symbols" button to be clickable and click it
-        symbols_button = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, '//span[text()="symbols"]'))
-        )
-        # Take a screenshot before clicking the "Symbols" button
-        # driver.save_screenshot("before_symbols_button_click.png")
-        symbols_button.click()
+        # Wait for table to be visible after scroll
+        WebDriverWait(driver, 5).until(EC.visibility_of_element_located((By.XPATH, '//table[contains(@class, "rounded-b")]/tbody')))
 
-        # Wait to ensure the clipboard is populated (you can increase the sleep time here)
-        time.sleep(3)  # Increased wait time to make sure the clipboard has time to copy
+        element = driver.find_element(By.XPATH, '//table[contains(@class, "rounded-b")]/tbody')
 
-        # Get the copied data from the clipboard
-        copied_data = pyperclip.paste()
+        # Get the HTML of that element
+        html_content = element.get_attribute("outerHTML")
 
-        # Print the copied data to the console
+        soup = BeautifulSoup(html_content, 'html.parser')
+
+        rows = soup.find_all('tr')
+        stock_list = []
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) == 7:
+                stock_name = cols[2].text.strip()
+                logger.debug(f"Found stock: {stock_name}")
+                stock_list.append(stock_name)
+
+        copied_data = ', '.join(stock_list)
+
+        # Log the copied data
         logger.info("Copied Data: %s", copied_data)
         return copied_data
 
@@ -96,9 +77,3 @@ def get_stock_list():
     finally:
         # Close the browser window
         driver.quit()
-        # Stop virtual display if it was started (only on Linux)
-        if display is not None:
-            display.stop()
-            logger.info("Stopped virtual display")
-    
-    return None
