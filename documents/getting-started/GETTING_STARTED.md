@@ -455,4 +455,4 @@ python -c "from core.telegram import send_telegram; send_telegram('Test from Win
 ---
 
 **Last Updated:** 2025-10-29  
-**Version:** 1.0.0
+**Version:** 26.1.1

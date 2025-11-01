@@ -341,7 +341,7 @@ A: Not in the executable. You need the source code for customization.
 ## Version Information
 
 - **Application**: Modular Trade Agent
-- **Version**: 1.0.0
+- **Version**: 26.1.1
 - **Build Date**: 2025-10-28
 - **Platform**: Linux x86_64
 
