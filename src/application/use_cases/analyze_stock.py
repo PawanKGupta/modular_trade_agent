@@ -155,7 +155,12 @@ class AnalyzeStockUseCase:
             'volume_multiplier': result.get('volume_multiplier'),
             'risk_reward_ratio': result.get('risk_reward_ratio'),
             # Include candle analysis details for regression validation
-            'candle_analysis': result.get('candle_analysis')
+            'candle_analysis': result.get('candle_analysis'),
+            # ML prediction data (Phase 3/4)
+            'ml_verdict': result.get('ml_verdict'),
+            'ml_confidence': result.get('ml_confidence'),
+            'verdict_source': result.get('verdict_source'),
+            'rule_verdict': result.get('rule_verdict')
         }
         
         return AnalysisResponse(

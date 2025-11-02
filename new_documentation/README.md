@@ -21,6 +21,10 @@ Links for details
 - [Known Issues](KNOWN_ISSUES.md)
 - [Release notes (25.4.1)](releases/25.4.1.md)
 
+**⭐ Comprehensive Guides (NEW):**
+- [System Architecture Evolution](../documents/SYSTEM_ARCHITECTURE_EVOLUTION.md) — Complete architectural transformation (Phases 1-4)
+- [ML Implementation Guide](../documents/ML_IMPLEMENTATION_GUIDE.md) — ML setup, training, monitoring, and continuous learning
+
 ---
 
 ## Feature 1 — Trade Agent

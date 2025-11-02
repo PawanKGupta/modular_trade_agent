@@ -1,0 +1,158 @@
+"""
+Strategy Configuration Management
+
+This module provides centralized configuration management for trading strategy parameters.
+Replaces hardcoded magic numbers throughout the codebase.
+"""
+
+import os
+from dataclasses import dataclass
+from typing import Optional
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+@dataclass
+class StrategyConfig:
+    """Centralized strategy configuration parameters"""
+    
+    # RSI Thresholds
+    rsi_oversold: float = 30.0
+    rsi_extreme_oversold: float = 20.0
+    rsi_near_oversold: float = 40.0
+    
+    # Volume Configuration
+    min_volume_multiplier: float = 1.0
+    volume_multiplier_for_strong: float = 1.2
+    volume_lookback_days: int = 50
+    min_absolute_avg_volume: int = 150000
+    
+    # Fundamental Filters
+    pe_max_attractive: float = 15.0
+    pe_max_decent: float = 25.0
+    pb_max_attractive: float = 1.5
+    pb_max_expensive: float = 10.0
+    
+    # Multi-Timeframe Analysis
+    mtf_alignment_excellent: float = 8.0
+    mtf_alignment_good: float = 6.0
+    mtf_alignment_fair: float = 4.0
+    
+    # Risk Management
+    default_stop_loss_pct: float = 0.08  # 8%
+    tight_stop_loss_pct: float = 0.06   # 6%
+    min_stop_loss_pct: float = 0.03     # 3%
+    default_target_pct: float = 0.10     # 10%
+    strong_buy_target_pct: float = 0.12  # 12%
+    excellent_target_pct: float = 0.15   # 15%
+    
+    # Risk-Reward Ratios
+    strong_buy_risk_reward: float = 3.0
+    buy_risk_reward: float = 2.5
+    excellent_risk_reward: float = 3.5
+    
+    # Buy Range Configuration
+    buy_range_default_low: float = 0.995  # -0.5%
+    buy_range_default_high: float = 1.01   # +1.0%
+    buy_range_tight_low: float = 0.997     # -0.3%
+    buy_range_tight_high: float = 1.007   # +0.7%
+    buy_range_max_width_pct: float = 2.0   # Maximum buy range width
+    
+    # Support-based buy range
+    support_buffer_strong: float = 0.003   # 0.3%
+    support_buffer_moderate: float = 0.005  # 0.5%
+    
+    # Backtest Scoring Weights
+    backtest_weight: float = 0.5  # 50% historical, 50% current analysis
+    
+    # News Sentiment
+    news_sentiment_enabled: bool = True
+    news_sentiment_lookback_days: int = 30
+    news_sentiment_min_articles: int = 2
+    news_sentiment_pos_threshold: float = 0.25
+    news_sentiment_neg_threshold: float = -0.25
+    
+    # ML Configuration
+    ml_enabled: bool = False
+    ml_verdict_model_path: str = "models/verdict_model_random_forest.pkl"
+    ml_price_model_path: str = "models/price_model_random_forest.pkl"
+    ml_confidence_threshold: float = 0.5  # 50% confidence threshold
+    ml_combine_with_rules: bool = True  # Combine ML with rule-based logic
+    
+    @classmethod
+    def from_env(cls) -> 'StrategyConfig':
+        """Load configuration from environment variables with defaults"""
+        return cls(
+            # RSI thresholds
+            rsi_oversold=float(os.getenv('RSI_OVERSOLD', '30.0')),
+            rsi_extreme_oversold=float(os.getenv('RSI_EXTREME_OVERSOLD', '20.0')),
+            rsi_near_oversold=float(os.getenv('RSI_NEAR_OVERSOLD', '40.0')),
+            
+            # Volume
+            min_volume_multiplier=float(os.getenv('MIN_VOLUME_MULTIPLIER', '1.0')),
+            volume_multiplier_for_strong=float(os.getenv('VOLUME_MULTIPLIER_FOR_STRONG', '1.2')),
+            volume_lookback_days=int(os.getenv('VOLUME_LOOKBACK_DAYS', '50')),
+            min_absolute_avg_volume=int(os.getenv('MIN_ABSOLUTE_AVG_VOLUME', '150000')),
+            
+            # Fundamentals
+            pe_max_attractive=float(os.getenv('PE_MAX_ATTRACTIVE', '15.0')),
+            pe_max_decent=float(os.getenv('PE_MAX_DECENT', '25.0')),
+            pb_max_attractive=float(os.getenv('PB_MAX_ATTRACTIVE', '1.5')),
+            pb_max_expensive=float(os.getenv('PB_MAX_EXPENSIVE', '10.0')),
+            
+            # MTF
+            mtf_alignment_excellent=float(os.getenv('MTF_ALIGNMENT_EXCELLENT', '8.0')),
+            mtf_alignment_good=float(os.getenv('MTF_ALIGNMENT_GOOD', '6.0')),
+            mtf_alignment_fair=float(os.getenv('MTF_ALIGNMENT_FAIR', '4.0')),
+            
+            # Risk Management
+            default_stop_loss_pct=float(os.getenv('DEFAULT_STOP_LOSS_PCT', '0.08')),
+            tight_stop_loss_pct=float(os.getenv('TIGHT_STOP_LOSS_PCT', '0.06')),
+            min_stop_loss_pct=float(os.getenv('MIN_STOP_LOSS_PCT', '0.03')),
+            default_target_pct=float(os.getenv('DEFAULT_TARGET_PCT', '0.10')),
+            strong_buy_target_pct=float(os.getenv('STRONG_BUY_TARGET_PCT', '0.12')),
+            excellent_target_pct=float(os.getenv('EXCELLENT_TARGET_PCT', '0.15')),
+            
+            # Risk-Reward
+            strong_buy_risk_reward=float(os.getenv('STRONG_BUY_RISK_REWARD', '3.0')),
+            buy_risk_reward=float(os.getenv('BUY_RISK_REWARD', '2.5')),
+            excellent_risk_reward=float(os.getenv('EXCELLENT_RISK_REWARD', '3.5')),
+            
+            # Buy Range
+            buy_range_default_low=float(os.getenv('BUY_RANGE_DEFAULT_LOW', '0.995')),
+            buy_range_default_high=float(os.getenv('BUY_RANGE_DEFAULT_HIGH', '1.01')),
+            buy_range_tight_low=float(os.getenv('BUY_RANGE_TIGHT_LOW', '0.997')),
+            buy_range_tight_high=float(os.getenv('BUY_RANGE_TIGHT_HIGH', '1.007')),
+            buy_range_max_width_pct=float(os.getenv('BUY_RANGE_MAX_WIDTH_PCT', '2.0')),
+            
+            # Support buffers
+            support_buffer_strong=float(os.getenv('SUPPORT_BUFFER_STRONG', '0.003')),
+            support_buffer_moderate=float(os.getenv('SUPPORT_BUFFER_MODERATE', '0.005')),
+            
+            # Backtest
+            backtest_weight=float(os.getenv('BACKTEST_WEIGHT', '0.5')),
+            
+            # News Sentiment
+            news_sentiment_enabled=os.getenv('NEWS_SENTIMENT_ENABLED', 'true').lower() in ('1', 'true', 'yes', 'on'),
+            news_sentiment_lookback_days=int(os.getenv('NEWS_SENTIMENT_LOOKBACK_DAYS', '30')),
+            news_sentiment_min_articles=int(os.getenv('NEWS_SENTIMENT_MIN_ARTICLES', '2')),
+            news_sentiment_pos_threshold=float(os.getenv('NEWS_SENTIMENT_POS_THRESHOLD', '0.25')),
+            news_sentiment_neg_threshold=float(os.getenv('NEWS_SENTIMENT_NEG_THRESHOLD', '-0.25')),
+            
+            # ML Configuration
+            ml_enabled=os.getenv('ML_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on'),
+            ml_verdict_model_path=os.getenv('ML_VERDICT_MODEL_PATH', 'models/verdict_model_random_forest.pkl'),
+            ml_price_model_path=os.getenv('ML_PRICE_MODEL_PATH', 'models/price_model_random_forest.pkl'),
+            ml_confidence_threshold=float(os.getenv('ML_CONFIDENCE_THRESHOLD', '0.5')),
+            ml_combine_with_rules=os.getenv('ML_COMBINE_WITH_RULES', 'true').lower() in ('1', 'true', 'yes', 'on'),
+        )
+    
+    @classmethod
+    def default(cls) -> 'StrategyConfig':
+        """Return default configuration (same as instantiation defaults)"""
+        return cls()
+    
+    def __repr__(self) -> str:
+        return f"StrategyConfig(rsi_oversold={self.rsi_oversold}, volume_lookback={self.volume_lookback_days}, ...)"
+

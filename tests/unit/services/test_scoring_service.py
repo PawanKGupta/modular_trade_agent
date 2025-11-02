@@ -1,4 +1,5 @@
-from src.application.services.scoring_service import ScoringService
+# Phase 4: Use services package directly (consolidated)
+from services.scoring_service import ScoringService
 
 
 def test_compute_strength_score_with_timeframe():

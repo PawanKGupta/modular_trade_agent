@@ -74,6 +74,10 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 - 🔧 **[WARP.md](WARP.md)** - Developer setup and command reference
 - 🪟 **[Windows Executable Guide](documents/deployment/windows/EXECUTABLE_README.md)** - No Python required!
 
+**⭐ Comprehensive Guides (NEW):**
+- 🏗️ **[System Architecture Evolution](documents/SYSTEM_ARCHITECTURE_EVOLUTION.md)** - Complete architectural transformation (Phases 1-4)
+- 🤖 **[ML Implementation Guide](documents/ML_IMPLEMENTATION_GUIDE.md)** - Complete ML setup, training, and monitoring
+
 **Quick Links:**
 - [Architecture Guide](documents/architecture/ARCHITECTURE_GUIDE.md) - System design
 - [Deployment Guide](documents/deployment/DEPLOYMENT_READY.md) - Production setup
@@ -224,10 +228,36 @@ The system will:
 
 Test individual components:
 
+**NEW (Recommended - Phase 4):**
 ```python
-from core.analysis import analyze_ticker
-result = analyze_ticker("RELIANCE.NS")
+from services import AnalysisService
+
+service = AnalysisService()
+result = service.analyze_ticker("RELIANCE.NS")
 print(result)
+```
+
+**OLD (Deprecated but still works):**
+```python
+from core.analysis import analyze_ticker  # ⚠️ Deprecated in Phase 4
+result = analyze_ticker("RELIANCE.NS")  # Shows deprecation warning
+print(result)
+```
+
+**For batch analysis (Async - Phase 2):**
+```python
+from services import AsyncAnalysisService
+import asyncio
+
+async def analyze():
+    service = AsyncAnalysisService(max_concurrent=10)
+    results = await service.analyze_batch_async(
+        tickers=["RELIANCE.NS", "TCS.NS", "INFY.NS"],
+        enable_multi_timeframe=True
+    )
+    return results
+
+results = asyncio.run(analyze())
 ```
 
 ## 🔬 Backtesting Module
@@ -328,25 +358,54 @@ python run_backtest.py SYMBOL START END [OPTIONS]
 ```
 modular_trade_agent/
 ├── documents/                      # Project documentation
+│   ├── architecture/               # Architecture design docs
+│   ├── deployment/                 # Deployment guides
+│   ├── features/                   # Feature documentation
+│   ├── phases/                     # Phase completion docs
+│   └── getting-started/            # Getting started guides
 ├── modules/
-│   └── kotak_neo_auto_trader/
+│   └── kotak_neo_auto_trader/      # Broker integration module
 │       ├── run_trading_service.py  # Unified scheduler (continuous)
 │       ├── auto_trade_engine.py
 │       └── ...
-├── backtest/
+├── services/                       # Service layer (Phase 1-4)
+│   ├── analysis_service.py         # Main orchestrator
+│   ├── data_service.py            # Data fetching
+│   ├── indicator_service.py       # Technical indicators
+│   ├── signal_service.py          # Signal detection
+│   ├── verdict_service.py         # Verdict determination
+│   ├── scoring_service.py         # Scoring (Phase 4)
+│   ├── backtest_service.py        # Backtest integration (Phase 4)
+│   ├── async_analysis_service.py  # Async batch analysis (Phase 2)
+│   ├── cache_service.py           # Caching layer (Phase 2)
+│   ├── event_bus.py               # Event-driven architecture (Phase 3)
+│   ├── pipeline.py                 # Pipeline pattern (Phase 3)
+│   └── models.py                  # Typed data classes (Phase 2)
+├── src/                            # Clean architecture (legacy src/ pattern)
+│   ├── application/               # Application layer
+│   ├── domain/                     # Domain entities
+│   └── infrastructure/             # Infrastructure adapters
+├── core/                           # Legacy code (deprecated in Phase 4)
+│   ├── analysis.py                 # ⚠️ DEPRECATED - Use services
+│   ├── scoring.py                  # ⚠️ DEPRECATED - Use services
+│   ├── backtest_scoring.py         # ⚠️ DEPRECATED - Use services
+│   └── ...                         # Other legacy modules
+├── config/                         # Configuration
+│   ├── strategy_config.py          # Strategy parameters (Phase 1)
+│   └── settings.py
+├── backtest/                       # Backtesting framework
 │   ├── backtest_engine.py
 │   ├── performance_analyzer.py
 │   └── README.md
-├── core/
-│   ├── analysis.py
-│   ├── indicators.py
-│   ├── data_fetcher.py
-│   ├── telegram.py
-│   └── scrapping.py
 ├── tests/                          # Unit/integration tests
-├── config/
-│   └── settings.py
-├── logs/
+├── scripts/                        # Utility scripts
+│   ├── validate_phase1.py
+│   ├── validate_phase2.py
+│   └── validate_all_phases.py
+├── utils/                          # Utility modules
+│   ├── deprecation.py              # Deprecation utilities (Phase 4)
+│   └── logger.py
+├── logs/                           # Log files
 ├── cred.env                        # Environment variables (create this)
 ├── requirements.txt                # Python dependencies
 ├── trade_agent.py                  # Main analysis entrypoint

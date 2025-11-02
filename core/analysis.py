@@ -138,7 +138,18 @@ def assess_support_proximity(timeframe_confirmation):
 def calculate_smart_buy_range(current_price, timeframe_confirmation):
     """
     Calculate intelligent buy range based on support levels and MTF analysis
+    
+    ⚠️ DEPRECATED in Phase 4: This helper function is deprecated.
+    Use VerdictService.calculate_trading_parameters() instead.
     """
+    # Phase 4: Issue deprecation warning (but only once per session to avoid spam)
+    import warnings
+    warnings.warn(
+        "DEPRECATED: core.analysis.calculate_smart_buy_range() is deprecated in Phase 4. "
+        "Use services.VerdictService.calculate_trading_parameters() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     try:
         # Default range ±1%
         default_range = (round(current_price * 0.995, 2), round(current_price * 1.01, 2))
@@ -191,7 +202,18 @@ def calculate_smart_buy_range(current_price, timeframe_confirmation):
 def calculate_smart_stop_loss(current_price, recent_low, timeframe_confirmation, df):
     """
     Calculate intelligent stop loss based on uptrend context and support levels
+    
+    ⚠️ DEPRECATED in Phase 4: This helper function is deprecated.
+    Use VerdictService.calculate_trading_parameters() instead.
     """
+    # Phase 4: Issue deprecation warning
+    import warnings
+    warnings.warn(
+        "DEPRECATED: core.analysis.calculate_smart_stop_loss() is deprecated in Phase 4. "
+        "Use services.VerdictService.calculate_trading_parameters() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     try:
         # Default stop: recent low or 8% down
         default_stop = round(min(recent_low * 0.995, current_price * 0.92), 2)
@@ -250,7 +272,18 @@ def calculate_smart_stop_loss(current_price, recent_low, timeframe_confirmation,
 def calculate_smart_target(current_price, stop_price, verdict, timeframe_confirmation, recent_high):
     """
     Calculate intelligent target based on MTF quality, resistance levels, and risk-reward
+    
+    ⚠️ DEPRECATED in Phase 4: This helper function is deprecated.
+    Use VerdictService.calculate_trading_parameters() instead.
     """
+    # Phase 4: Issue deprecation warning
+    import warnings
+    warnings.warn(
+        "DEPRECATED: core.analysis.calculate_smart_target() is deprecated in Phase 4. "
+        "Use services.VerdictService.calculate_trading_parameters() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     try:
         # Calculate risk amount
         risk_amount = current_price - stop_price
@@ -325,8 +358,56 @@ def calculate_smart_target(current_price, stop_price, verdict, timeframe_confirm
         return round(current_price * 1.10, 2)
 
 def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv_exporter=None, as_of_date=None):
+    """
+    Analyze a ticker - backward compatible wrapper using new service layer.
+    
+    ⚠️ DEPRECATED in Phase 4: This function is deprecated and will be removed in a future version.
+    
+    For new code, prefer using AnalysisService directly:
+        from services import AnalysisService
+        service = AnalysisService()
+        result = service.analyze_ticker(ticker, ...)
+    
+    For async batch analysis, use AsyncAnalysisService:
+        from services import AsyncAnalysisService
+        import asyncio
+        
+        async def analyze():
+            service = AsyncAnalysisService(max_concurrent=10)
+            return await service.analyze_batch_async(tickers=[ticker])
+        
+        result = asyncio.run(analyze())[0]
+    
+    Migration guide: See utils.deprecation.get_migration_guide("analyze_ticker")
+    """
+    # Phase 4: Issue deprecation warning
+    import warnings
+    from utils.deprecation import deprecation_notice
+    
+    deprecation_notice(
+        module="core.analysis",
+        function="analyze_ticker",
+        replacement="services.AnalysisService.analyze_ticker() or services.AsyncAnalysisService.analyze_batch_async()",
+        version="Phase 4"
+    )
     try:
-        logger.debug(f"Starting analysis for {ticker}")
+        # Try using new service layer (Phase 1 refactoring)
+        try:
+            from services.analysis_service import AnalysisService
+            service = AnalysisService()
+            return service.analyze_ticker(
+                ticker=ticker,
+                enable_multi_timeframe=enable_multi_timeframe,
+                export_to_csv=export_to_csv,
+                csv_exporter=csv_exporter,
+                as_of_date=as_of_date
+            )
+        except ImportError:
+            # Fallback to legacy implementation if service layer not available
+            logger.warning("Service layer not available, using legacy implementation")
+        
+        # Legacy implementation (original code preserved for backward compatibility)
+        logger.debug(f"Starting analysis for {ticker} (legacy mode)")
         
         # Initialize timeframe analyzer
         tf_analyzer = TimeframeAnalysis() if enable_multi_timeframe else None
@@ -640,6 +721,24 @@ def analyze_multiple_tickers(tickers, enable_multi_timeframe=True, export_to_csv
     """
     Analyze multiple tickers and export results to CSV
     
+    ⚠️ DEPRECATED in Phase 4: This function is deprecated and will be removed in a future version.
+    
+    For new code, prefer using AsyncAnalysisService for faster batch analysis:
+        from services import AsyncAnalysisService
+        import asyncio
+        
+        async def analyze():
+            service = AsyncAnalysisService(max_concurrent=10)
+            return await service.analyze_batch_async(
+                tickers=tickers,
+                enable_multi_timeframe=enable_multi_timeframe,
+                export_to_csv=export_to_csv
+            )
+        
+        results = asyncio.run(analyze())
+    
+    Migration guide: See utils.deprecation.get_migration_guide("analyze_multiple_tickers")
+    
     Args:
         tickers: List of ticker symbols to analyze
         enable_multi_timeframe: Enable multi-timeframe analysis
@@ -649,6 +748,15 @@ def analyze_multiple_tickers(tickers, enable_multi_timeframe=True, export_to_csv
     Returns:
         List of analysis results and CSV filepath if exported
     """
+    # Phase 4: Issue deprecation warning
+    from utils.deprecation import deprecation_notice
+    
+    deprecation_notice(
+        module="core.analysis",
+        function="analyze_multiple_tickers",
+        replacement="services.AsyncAnalysisService.analyze_batch_async()",
+        version="Phase 4"
+    )
     logger.info(f"Starting batch analysis for {len(tickers)} tickers")
     
     csv_exporter = CSVExporter() if export_to_csv else None
