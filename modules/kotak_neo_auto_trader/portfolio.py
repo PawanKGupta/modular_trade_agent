@@ -15,7 +15,7 @@ from utils.logger import logger
 try:
     from .auth import KotakNeoAuth
 except ImportError:
-    from auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
 
 
 class KotakNeoPortfolio:
@@ -188,34 +188,52 @@ class KotakNeoPortfolio:
             logger.info(" Retrieving account limits...")
             limits = client.limits(segment="ALL", exchange="ALL")
             
-            if "error" in limits:
-                logger.error(" Failed to get limits: {limits['error'][0]['message']}")
+            if isinstance(limits, dict) and "error" in limits:
+                try:
+                    msg = limits['error'][0]['message'] if isinstance(limits.get('error'), list) else limits.get('error')
+                except Exception:
+                    msg = limits.get('error')
+                logger.error(f" Failed to get limits: {msg}")
                 return None
             
-            # Display limits summary with comprehensive field checking
-            if 'data' in limits:
+            # Normalize response: ensure a {'data': {...}} shape for downstream consumers
+            normalized = None
+            if isinstance(limits, dict) and 'data' in limits and isinstance(limits['data'], dict):
+                normalized = limits
                 data = limits['data']
-                # Log all available fields for debugging
+            elif isinstance(limits, dict):
+                # Some environments return flat dict without 'data'
+                data = limits
+                normalized = {'data': data}
+            else:
+                # Unknown shape
+                logger.info(f" Limits API returned non-dict payload: {type(limits)}")
+                return None
+
+            # Display limits summary with comprehensive field checking
+            try:
                 logger.info(f" Limits API response keys: {list(data.keys())}")
-                
-                # Try multiple field name variants
-                cash = data.get('cash') or data.get('availableCash') or data.get('available_cash') or 0
-                margin_used = data.get('marginUsed') or data.get('margin_used') or data.get('usedMargin') or 0
-                margin_available = (
-                    data.get('marginAvailable') or 
-                    data.get('margin_available') or 
-                    data.get('availableMargin') or 
-                    data.get('available_margin') or 0
-                )
-                
-                logger.info(f"💰 Cash: ₹{cash}")
-                logger.info(f" Margin Used: ₹{margin_used}")
-                logger.info(f" Margin Available: ₹{margin_available}")
+            except Exception:
+                pass
             
-            return limits
+            # Try multiple field name variants
+            cash = data.get('cash') or data.get('availableCash') or data.get('available_cash') or 0
+            margin_used = data.get('marginUsed') or data.get('margin_used') or data.get('usedMargin') or 0
+            margin_available = (
+                data.get('marginAvailable') or 
+                data.get('margin_available') or 
+                data.get('availableMargin') or 
+                data.get('available_margin') or 0
+            )
+            
+            logger.info(f"💰 Cash: ₹{cash}")
+            logger.info(f" Margin Used: ₹{margin_used}")
+            logger.info(f" Margin Available: ₹{margin_available}")
+            
+            return normalized
             
         except Exception as e:
-            logger.error(" Error getting limits: {e}")
+            logger.error(f" Error getting limits: {e}")
             return None
     
     def get_portfolio_summary(self) -> Dict:

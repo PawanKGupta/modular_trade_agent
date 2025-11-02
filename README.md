@@ -65,6 +65,24 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 - **Robust Error Handling**: Circuit breakers and exponential backoff retry logic
 - **Data Validation**: Ensures sufficient historical data for accurate analysis
 
+## 📚 Documentation
+
+**New to the project? Start here:**
+
+- 🚀 **[Getting Started Guide](documents/getting-started/GETTING_STARTED.md)** - Complete beginner's setup walkthrough
+- 📖 **[Documentation Index](documents/getting-started/DOCUMENTATION_INDEX.md)** - Comprehensive guide to all documentation
+- 🔧 **[WARP.md](WARP.md)** - Developer setup and command reference
+- 🪟 **[Windows Executable Guide](documents/deployment/windows/EXECUTABLE_README.md)** - No Python required!
+
+**Quick Links:**
+- [Architecture Guide](documents/architecture/ARCHITECTURE_GUIDE.md) - System design
+- [Deployment Guide](documents/deployment/DEPLOYMENT_READY.md) - Production setup
+- [Cloud Deployment](documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md) - Free Oracle Cloud
+- [Commands Reference](documents/reference/COMMANDS.md) - CLI commands
+- [Testing Guide](documents/testing/TESTING_GUIDE_PHASE1_PHASE2.md) - Testing procedures
+
+---
+
 ## 📋 Table of Contents
 
 - [Installation](#installation)
@@ -80,35 +98,25 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 
 ## 🛠 Installation
 
+### Platform Guides
+- Windows
+  - Executable (no Python required): [Windows Executable](documents/deployment/windows/EXECUTABLE_README.md)
+  - Unified Service (continuous): [Windows Unified Service](documents/deployment/windows/WINDOWS_UNIFIED_SERVICE.md)
+  - Quick Reference: [Windows Quick Reference](documents/deployment/windows/WINDOWS_QUICK_REFERENCE.md)
+- Ubuntu/Debian
+  - Install Guide: [Ubuntu Install Guide](documents/deployment/ubuntu/INSTALL_UBUNTU.md)
+  - Quickstart: [Ubuntu Quickstart](documents/deployment/ubuntu/UBUNTU_QUICKSTART.md)
+  - Services Overview: [Services Comparison](documents/deployment/ubuntu/SERVICES_COMPARISON.md)
+- Cloud
+  - Oracle Cloud Free Tier: [Oracle Cloud Deployment](documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md)
+  - GCP Deployment: [GCP Deployment](documents/deployment/gcp/GCP_DEPLOYMENT.md)
+
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.12 or higher
 - Windows/Linux/macOS
 - Internet connection for data fetching
 
-### Setup
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd modular_trade_agent
-   ```
-
-2. **Create virtual environment**
-   ```bash
-   python -m venv .venv
-   
-   # Windows
-   .venv\Scripts\activate
-   
-   # Linux/macOS
-   source .venv/bin/activate
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
 
 4. **Configure environment variables**
    Create a `cred.env` file with your Telegram credentials:
@@ -211,15 +219,6 @@ The system will:
 11. **CSV Export**: Save complete analysis data for record-keeping
 12. **Enhanced Telegram Alerts**: Send prioritized trade alerts with backtest performance data
 
-### Custom Stock List
-
-Modify the stock list in `trade_agent.py`:
-
-```python
-def get_stocks():
-    stocks = "NAVA, GLENMARK, VGL, HYUNDAI, ENRIN"
-    return [s.strip().upper() + ".NS" for s in stocks.split(",")]
-```
 
 ### Manual Testing
 
@@ -237,15 +236,14 @@ The system includes a sophisticated backtesting framework for evaluating the **E
 
 ### 🎥 Quick Start
 
-```bash
-# Basic backtest
-python run_backtest.py RELIANCE.NS 2022-01-01 2023-12-31
+See [Backtest README](documents/backtest/README.md) for full API usage. Example:
 
-# With detailed analysis
-python run_backtest.py ORIENTCEM.NS 2025-01-15 2025-06-15 --export-trades --generate-report
-
-# Custom capital per position
-python run_backtest.py TCS.NS 2023-01-01 2024-12-31 --capital 200000
+```python
+from backtest import BacktestEngine, PerformanceAnalyzer
+engine = BacktestEngine("RELIANCE.NS", "2022-01-01", "2023-12-31")
+results = engine.run_backtest()
+analyzer = PerformanceAnalyzer(engine)
+report = analyzer.generate_report(save_to_file=True)
 ```
 
 ### 📋 Strategy Rules
@@ -329,55 +327,30 @@ python run_backtest.py SYMBOL START END [OPTIONS]
 
 ```
 modular_trade_agent/
-├── .github/                 # ✨ GitHub Actions Workflow
-│   └── workflows/
-│       └── trading-agent.yml    # Automated cloud execution at 4PM IST
-├── backtest/                # 🆕 Advanced Backtesting Framework
-│   ├── __init__.py          # Package initialization
-│   ├── backtest_config.py   # Backtesting configuration settings
-│   ├── backtest_engine.py   # Core backtesting logic with pyramiding
-│   ├── position_manager.py  # Position tracking and trade management
-│   ├── performance_analyzer.py # Advanced analytics and reporting
-│   └── README.md           # Detailed backtesting documentation
-├── config/
-│   ├── __init__.py
-│   └── settings.py          # Configuration parameters
+├── documents/                      # Project documentation
+├── modules/
+│   └── kotak_neo_auto_trader/
+│       ├── run_trading_service.py  # Unified scheduler (continuous)
+│       ├── auto_trade_engine.py
+│       └── ...
+├── backtest/
+│   ├── backtest_engine.py
+│   ├── performance_analyzer.py
+│   └── README.md
 ├── core/
-│   ├── __init__.py
-│   ├── analysis.py          # Main analysis logic with enhanced filters and data leakage prevention
-│   ├── backtest_scoring.py  # ✨ Historical backtest scoring integration
-│   ├── csv_exporter.py      # CSV export system for analysis data
-│   ├── data_fetcher.py      # Multi-timeframe data retrieval with retry logic and backtesting support
-│   ├── indicators.py        # Technical indicators (RSI, EMA, etc.)
-│   ├── news_sentiment.py    # ✨ Enhanced news sentiment analysis with 30-day lookback
-│   ├── patterns.py          # Candlestick patterns
-│   ├── scoring.py           # Signal strength scoring
-│   ├── scrapping.py         # Web scraping utilities with ChartInk integration
-│   ├── telegram.py          # Enhanced Telegram messaging with priority ranking
-│   ├── timeframe_analysis.py # Multi-timeframe dip-buying analysis engine
-│   └── volume_analysis.py   # ✨ Intelligent volume quality assessment and pattern analysis
-├── utils/
-│   ├── __init__.py
-│   ├── circuit_breaker.py   # Circuit breaker implementation
-│   ├── logger.py            # Logging configuration
-│   └── retry_handler.py     # Retry logic with exponential backoff
-├── Test/
-│   ├── backtesting.py      # Legacy backtesting utilities
-│   ├── backtest_stocks.py  # Stock backtesting
-│   ├── debug_test.py       # Debug utilities
-│   └── volume_analysis.py  # Volume analysis
-├── backtest_reports/       # 🆕 Generated backtest reports
-├── backtest_exports/       # 🆕 Exported trade data (CSV)
-├── logs/                   # Log files
-├── cred.env               # Environment variables (create this)
-├── requirements.txt       # Python dependencies
-├── trade_agent.py        # Main execution script with backtest integration
-├── test_telegram.py      # ✨ Telegram connection testing
-├── test_backtest_integration.py # ✨ Backtest integration testing
-├── integrated_backtest.py # ✨ Comprehensive backtest workflow
-├── run_backtest.py       # 🆕 Backtesting command-line interface
-├── backtest_example.py   # 🆕 Backtesting examples and demonstrations
-└── README.md            # This file
+│   ├── analysis.py
+│   ├── indicators.py
+│   ├── data_fetcher.py
+│   ├── telegram.py
+│   └── scrapping.py
+├── tests/                          # Unit/integration tests
+├── config/
+│   └── settings.py
+├── logs/
+├── cred.env                        # Environment variables (create this)
+├── requirements.txt                # Python dependencies
+├── trade_agent.py                  # Main analysis entrypoint
+└── README.md
 ```
 
 ## 📊 Technical Indicators
@@ -454,7 +427,7 @@ The system includes robust error handling:
 Comprehensive logging system:
 
 - **Console Output**: Real-time execution status
-- **File Logging**: Detailed logs in `logs/trade_agent.log`
+- **File Logging**: Detailed logs in `logs/trade_agent_YYYYMMDD.log`
 - **Log Levels**: DEBUG, INFO, WARNING, ERROR
 - **Structured Logging**: Timestamped with module information
 
@@ -573,17 +546,12 @@ python trade_agent.py --dip-mode
 python trade_agent.py --backtest --dip-mode
 ```
 
+For continuous, all-day operation, use the unified scheduler:
+- Windows Service: documents/deployment/windows/WINDOWS_UNIFIED_SERVICE.md
+- Ubuntu Service: documents/deployment/ubuntu/INSTALL_UBUNTU.md (Unified Service section)
+
 ### Strategy Backtesting
-```bash
-# Quick backtest
-python run_backtest.py RELIANCE.NS 2022-01-01 2023-12-31
-
-# Comprehensive analysis
-python run_backtest.py ORIENTCEM.NS 2025-01-15 2025-06-15 --export-trades --generate-report
-
-# Try multiple examples
-python backtest_example.py
-```
+Use the Python API (see documents/backtest/README.md) instead of CLI helpers.
 
 ### Programmatic Usage
 ```python
@@ -640,10 +608,13 @@ The system is **pre-configured** to run automatically on GitHub Actions:
 
 If you prefer running locally:
 
-**Windows Task Scheduler**:
+**Windows Unified Service (recommended)**:
+- See documents/deployment/windows/WINDOWS_UNIFIED_SERVICE.md
+
+**Windows Task Scheduler (alternative)**:
 ```batch
 cd C:\path\to\modular_trade_agent
-.venv\Scripts\python.exe trade_agent.py --backtest
+.venv\Scripts\python.exe modules\kotak_neo_auto_trader\run_trading_service.py --env modules\kotak_neo_auto_trader\kotak_neo.env
 ```
 
 **Linux Cron**:

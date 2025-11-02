@@ -557,7 +557,7 @@ Kotak Neo API (via orders.py)
 ### Recent Documentation (2025-10-27)
 
 **Deployment Guides**:
-1. **Oracle Cloud Deployment** (`documents/ORACLE_CLOUD_DEPLOYMENT.md`)
+1. **Oracle Cloud Deployment** (`documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md`)
    - Complete deployment guide for Oracle Cloud Free Tier (ARM Ampere A1.Flex)
    - Systemd services and timers for automated execution (4:00 PM buy, 9:15 AM sell)
    - Security hardening, backup automation, monitoring setup

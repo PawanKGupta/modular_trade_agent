@@ -410,15 +410,16 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip
                 rsi_factor = 0.9  # 10% lower thresholds
             
             # Enhanced reclassification with confidence-aware and RSI-adjusted thresholds
+            # FIXED: Reduced thresholds to be less conservative (Issue #1)
             if trade_count >= 5:
                 # High confidence thresholds (adjusted by RSI)
                 strong_buy_threshold = 60 * rsi_factor
                 combined_strong_threshold = 35 * rsi_factor
                 combined_exceptional_threshold = 60 * rsi_factor
                 
-                buy_threshold = 40 * rsi_factor
-                combined_buy_threshold = 25 * rsi_factor
-                combined_decent_threshold = 40 * rsi_factor
+                buy_threshold = 35 * rsi_factor  # Reduced from 40
+                combined_buy_threshold = 22 * rsi_factor  # Reduced from 25
+                combined_decent_threshold = 35 * rsi_factor  # Reduced from 40
                 
                 if (backtest_score >= strong_buy_threshold and combined_score >= combined_strong_threshold) or combined_score >= combined_exceptional_threshold:
                     stock_result['final_verdict'] = 'strong_buy'
@@ -427,14 +428,15 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip
                 else:
                     stock_result['final_verdict'] = 'watch'
             else:
-                # Lower confidence thresholds (more conservative, adjusted by RSI)
-                strong_buy_threshold = 70 * rsi_factor
-                combined_strong_threshold = 45 * rsi_factor
-                combined_exceptional_threshold = 70 * rsi_factor
+                # Lower confidence thresholds (adjusted by RSI)
+                # FIXED: Made less conservative for low trade counts
+                strong_buy_threshold = 65 * rsi_factor  # Reduced from 70
+                combined_strong_threshold = 42 * rsi_factor  # Reduced from 45
+                combined_exceptional_threshold = 65 * rsi_factor  # Reduced from 70
                 
-                buy_threshold = 50 * rsi_factor
-                combined_buy_threshold = 35 * rsi_factor
-                combined_decent_threshold = 50 * rsi_factor
+                buy_threshold = 40 * rsi_factor  # Reduced from 50
+                combined_buy_threshold = 28 * rsi_factor  # Reduced from 35
+                combined_decent_threshold = 45 * rsi_factor  # Reduced from 50
                 
                 if (backtest_score >= strong_buy_threshold and combined_score >= combined_strong_threshold) or combined_score >= combined_exceptional_threshold:
                     stock_result['final_verdict'] = 'strong_buy'
@@ -450,6 +452,62 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip
             # Add confidence indicator to result
             confidence_level = "High" if trade_count >= 5 else "Medium" if trade_count >= 2 else "Low"
             stock_result['backtest_confidence'] = confidence_level
+            
+            # FIXED: Recalculate trading parameters if verdict was upgraded (Issue #2)
+            # Check if verdict was upgraded to buy/strong_buy but parameters are missing
+            if stock_result['final_verdict'] in ['buy', 'strong_buy']:
+                if not stock_result.get('buy_range') or not stock_result.get('target') or not stock_result.get('stop'):
+                    logger.info(f"  {ticker}: Recalculating trading parameters for upgraded verdict")
+                    
+                    try:
+                        from core.analysis import calculate_smart_buy_range, calculate_smart_stop_loss, calculate_smart_target
+                        import pandas as pd
+                        
+                        current_price = stock_result.get('last_close')
+                        if current_price and current_price > 0:
+                            timeframe_confirmation = stock_result.get('timeframe_analysis')
+                            
+                            # Estimate recent low/high from current price if not available
+                            recent_low = current_price * 0.92
+                            recent_high = current_price * 1.15
+                            
+                            # Calculate buy range (only takes 2 args: current_price, timeframe_confirmation)
+                            buy_range = calculate_smart_buy_range(
+                                current_price, 
+                                timeframe_confirmation
+                            )
+                            
+                            # Calculate stop loss
+                            stop = calculate_smart_stop_loss(
+                                current_price, 
+                                recent_low, 
+                                timeframe_confirmation, 
+                                None  # df
+                            )
+                            
+                            # Calculate target
+                            target = calculate_smart_target(
+                                current_price, 
+                                stop, 
+                                stock_result['final_verdict'],
+                                timeframe_confirmation, 
+                                recent_high
+                            )
+                            
+                            # Update result with calculated parameters
+                            stock_result['buy_range'] = buy_range
+                            stock_result['target'] = target
+                            stock_result['stop'] = stop
+                            
+                            logger.info(f"  {ticker}: Calculated - Buy Range: {buy_range}, Target: {target}, Stop: {stop}")
+                    
+                    except Exception as calc_error:
+                        logger.error(f"  {ticker}: Failed to recalculate parameters: {calc_error}")
+                        # Set safe defaults to prevent telegram errors
+                        if current_price:
+                            stock_result['buy_range'] = (round(current_price * 0.995, 2), round(current_price * 1.01, 2))
+                            stock_result['stop'] = round(current_price * 0.92, 2)
+                            stock_result['target'] = round(current_price * 1.10, 2)
             
             logger.info(f"  {ticker}: Current={current_score:.1f}, Backtest={backtest_score:.1f}, Combined={combined_score:.1f}, Final={stock_result['final_verdict']}")
             

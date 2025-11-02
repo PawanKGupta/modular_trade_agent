@@ -34,7 +34,7 @@ try:
     from .auth import KotakNeoAuth
     from .scrip_master import KotakNeoScripMaster
     from . import config
-    from .storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders
+    from .storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders, check_manual_buys_of_failed_orders
     from .tracking_scope import add_tracked_symbol, is_tracked, get_tracked_symbols, update_tracked_qty
     from .order_tracker import extract_order_id, add_pending_order, search_order_in_broker_orderbook
     # Phase 2 modules
@@ -43,20 +43,20 @@ try:
     from .manual_order_matcher import get_manual_order_matcher
     from .eod_cleanup import get_eod_cleanup, schedule_eod_cleanup
 except ImportError:
-    from trader import KotakNeoTrader
-    from orders import KotakNeoOrders
-    from portfolio import KotakNeoPortfolio
-    from auth import KotakNeoAuth
-    from scrip_master import KotakNeoScripMaster
-    import config
-    from storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders
-    from tracking_scope import add_tracked_symbol, is_tracked, get_tracked_symbols, update_tracked_qty
-    from order_tracker import extract_order_id, add_pending_order, search_order_in_broker_orderbook
+    from modules.kotak_neo_auto_trader.trader import KotakNeoTrader
+    from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
+    from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
+    from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
+    from modules.kotak_neo_auto_trader import config
+    from modules.kotak_neo_auto_trader.storage import load_history, save_history, append_trade, add_failed_order, get_failed_orders, remove_failed_order, cleanup_expired_failed_orders, check_manual_buys_of_failed_orders
+    from modules.kotak_neo_auto_trader.tracking_scope import add_tracked_symbol, is_tracked, get_tracked_symbols, update_tracked_qty
+    from modules.kotak_neo_auto_trader.order_tracker import extract_order_id, add_pending_order, search_order_in_broker_orderbook
     # Phase 2 modules
-    from order_status_verifier import get_order_status_verifier
-    from telegram_notifier import get_telegram_notifier
-    from manual_order_matcher import get_manual_order_matcher
-    from eod_cleanup import get_eod_cleanup, schedule_eod_cleanup
+    from modules.kotak_neo_auto_trader.order_status_verifier import get_order_status_verifier
+    from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
+    from modules.kotak_neo_auto_trader.manual_order_matcher import get_manual_order_matcher
+    from modules.kotak_neo_auto_trader.eod_cleanup import get_eod_cleanup, schedule_eod_cleanup
 
 
 @dataclass
@@ -183,20 +183,74 @@ class AutoTradeEngine:
     @staticmethod
     def get_daily_indicators(ticker: str) -> Optional[Dict[str, Any]]:
         try:
+            from sys import path as sys_path
+            from pathlib import Path
+            project_root = Path(__file__).parent.parent.parent
+            if str(project_root) not in sys_path:
+                sys_path.insert(0, str(project_root))
+            from config.settings import VOLUME_LOOKBACK_DAYS
+            
             df = fetch_ohlcv_yf(ticker, days=800, interval='1d', add_current_day=False)
             df = compute_indicators(df)
             if df is None or df.empty:
                 return None
             last = df.iloc[-1]
+            # Calculate average volume over configurable period (default: 50 days)
+            avg_vol = df['volume'].tail(VOLUME_LOOKBACK_DAYS).mean() if 'volume' in df.columns else 0
             return {
                 'close': float(last['close']),
                 'rsi10': float(last['rsi10']),
                 'ema9': float(df['close'].ewm(span=config.EMA_SHORT).mean().iloc[-1]) if 'ema9' not in df.columns else float(last.get('ema9', 0)),
-                'ema200': float(last['ema200']) if 'ema200' in df.columns else float(df['close'].ewm(span=config.EMA_LONG).mean().iloc[-1])
+                'ema200': float(last['ema200']) if 'ema200' in df.columns else float(df['close'].ewm(span=config.EMA_LONG).mean().iloc[-1]),
+                'avg_volume': float(avg_vol)
             }
         except Exception as e:
             logger.warning(f"Failed to get indicators for {ticker}: {e}")
             return None
+    
+    @staticmethod
+    def check_position_volume_ratio(qty: int, avg_volume: float, symbol: str, price: float = 0) -> bool:
+        """Check if position size is within acceptable range of daily volume based on stock price."""
+        from sys import path as sys_path
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.parent
+        if str(project_root) not in sys_path:
+            sys_path.insert(0, str(project_root))
+        from config.settings import POSITION_VOLUME_RATIO_TIERS
+        
+        if avg_volume <= 0:
+            logger.warning(f"{symbol}: No volume data available")
+            return False
+        
+        # Determine max ratio based on stock price tier
+        max_ratio = 0.20  # Default: 20% for unknown price
+        tier_used = "default (20%)"
+        
+        if price > 0:
+            # Find applicable tier (sorted descending by price threshold)
+            for price_threshold, ratio_limit in POSITION_VOLUME_RATIO_TIERS:
+                if price >= price_threshold:
+                    max_ratio = ratio_limit
+                    if price_threshold > 0:
+                        tier_used = f"₹{price_threshold}+ ({ratio_limit:.1%})"
+                    else:
+                        tier_used = f"<₹500 ({ratio_limit:.1%})"
+                    break
+        
+        ratio = qty / avg_volume
+        if ratio > max_ratio:
+            logger.warning(
+                f"{symbol}: Position too large relative to volume "
+                f"(price=₹{price:.2f}, qty={qty}, avg_vol={int(avg_volume)}, "
+                f"ratio={ratio:.1%} > {max_ratio:.1%} for tier {tier_used})"
+            )
+            return False
+        
+        logger.debug(
+            f"{symbol}: Volume check passed (ratio={ratio:.2%} of daily volume, "
+            f"tier={tier_used})"
+        )
+        return True
 
     def reconcile_holdings_to_history(self) -> None:
         """
@@ -423,6 +477,38 @@ class AutoTradeEngine:
             logger.error(f"Failed to initialize Phase 2 modules: {e}", exc_info=True)
             logger.warning("Continuing without Phase 2 features")
 
+    def monitor_positions(self) -> Dict[str, Any]:
+        """
+        Monitor all open positions for reentry/exit signals.
+        
+        Returns:
+            Dict with monitoring results
+        """
+        try:
+            from .position_monitor import get_position_monitor
+            
+            # Get position monitor
+            monitor = get_position_monitor(
+                history_path=self.history_path,
+                enable_alerts=self._enable_telegram
+            )
+            
+            # Run monitoring
+            results = monitor.monitor_all_positions()
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Position monitoring failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'monitored': 0,
+                'alerts_sent': 0,
+                'exit_imminent': 0,
+                'averaging_opportunities': 0
+            }
+    
     def logout(self):
         # Phase 2: Stop verifier before logout
         if self.order_verifier and self.order_verifier.is_running():
@@ -480,22 +566,45 @@ class AutoTradeEngine:
         lim = self.portfolio.get_limits() or {}
         data = lim.get('data') if isinstance(lim, dict) else None
         avail = 0.0
+        used_key = None
         if isinstance(data, dict):
-            # Try multiple field names for available funds
-            # Priority: Net (Kotak Neo uses this), then standard margin fields
-            avail = float(
-                data.get('Net') or 
-                data.get('net') or 
-                data.get('marginAvailable') or 
-                data.get('margin_available') or 
-                data.get('availableMargin') or 
-                data.get('cash') or 
-                data.get('availableCash') or 
-                data.get('available_cash') or 
-                0.0
-            )
-        if avail <= 0:
-            logger.debug(f"Available balance: ₹{avail:.2f} (from limits API response)")
+            # Prefer explicit cash-like fields first (CNC), then margin keys, then Net
+            candidates = [
+                'cash', 'availableCash', 'available_cash',
+                'availableBalance', 'available_balance', 'available_bal',
+                'fundsAvailable', 'funds_available', 'fundAvailable',
+                'marginAvailable', 'margin_available', 'availableMargin',
+                'Net', 'net'
+            ]
+            for k in candidates:
+                try:
+                    v = data.get(k)
+                    if v is None or v == '':
+                        continue
+                    fv = float(v)
+                    if fv > 0:
+                        avail = fv
+                        used_key = k
+                        break
+                except Exception:
+                    continue
+            # Absolute fallback: pick the max numeric value in the payload
+            if avail <= 0:
+                try:
+                    nums = []
+                    for v in data.values():
+                        try:
+                            nums.append(float(v))
+                        except Exception:
+                            pass
+                    if nums:
+                        avail = max(nums)
+                        used_key = used_key or 'max_numeric_field'
+                except Exception:
+                    pass
+        logger.debug(
+            f"Available balance: ₹{avail:.2f} (from limits API; key={used_key or 'n/a'})"
+        )
         try:
             from math import floor
             return max(0, floor(avail / float(price)))
@@ -503,31 +612,54 @@ class AutoTradeEngine:
             return 0
 
     def get_available_cash(self) -> float:
-        """Return available funds from limits (marginAvailable or cash)."""
+        """Return available funds from limits with robust field fallbacks."""
         if not self.portfolio:
             return 0.0
         lim = self.portfolio.get_limits() or {}
         data = lim.get('data') if isinstance(lim, dict) else None
+        avail = 0.0
+        used_key = None
         if isinstance(data, dict):
             try:
-                # Try multiple field names for available funds
-                # Priority: Net (Kotak Neo uses this), then standard margin fields
-                avail = float(
-                    data.get('Net') or 
-                    data.get('net') or 
-                    data.get('marginAvailable') or 
-                    data.get('margin_available') or 
-                    data.get('availableMargin') or 
-                    data.get('cash') or 
-                    data.get('availableCash') or 
-                    data.get('available_cash') or 
-                    0.0
+                # Prefer cash-like fields first, then margin, then Net
+                candidates = [
+                    'cash', 'availableCash', 'available_cash',
+                    'availableBalance', 'available_balance', 'available_bal',
+                    'fundsAvailable', 'funds_available', 'fundAvailable',
+                    'marginAvailable', 'margin_available', 'availableMargin',
+                    'Net', 'net'
+                ]
+                for k in candidates:
+                    v = data.get(k)
+                    if v is None or v == '':
+                        continue
+                    try:
+                        fv = float(v)
+                    except Exception:
+                        continue
+                    if fv > 0:
+                        avail = fv
+                        used_key = k
+                        break
+                # Absolute fallback: use the max numeric value in payload
+                if avail <= 0:
+                    nums = []
+                    for v in data.values():
+                        try:
+                            nums.append(float(v))
+                        except Exception:
+                            pass
+                    if nums:
+                        avail = max(nums)
+                        used_key = used_key or 'max_numeric_field'
+                logger.debug(
+                    f"Available cash from limits API: ₹{avail:.2f} (key={used_key or 'n/a'})"
                 )
-                logger.debug(f"Available cash from limits API: ₹{avail:.2f}")
-                return avail
+                return float(avail)
             except Exception as e:
                 logger.warning(f"Error parsing available cash: {e}")
                 return 0.0
+        logger.debug("Limits API returned no usable 'data' object; assuming ₹0.00 available")
         return 0.0
 
     # ---------------------- De-dup helpers ----------------------
@@ -626,6 +758,17 @@ class AutoTradeEngine:
         placed_symbol = None
         placement_time = datetime.now().isoformat()
         
+        # Determine if this is a BE/BL/BZ segment stock (trade-to-trade)
+        # These segments require LIMIT orders, not MARKET orders
+        is_t2t_segment = any(broker_symbol.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"])
+        
+        # For T2T segments, use limit order at current price + 1% buffer
+        use_limit_order = is_t2t_segment
+        limit_price = close * 1.01 if use_limit_order else 0.0
+        
+        if use_limit_order:
+            logger.info(f"Using LIMIT order for {broker_symbol} (T2T segment) @ ₹{limit_price:.2f}")
+        
         # Try to resolve symbol using scrip master first
         resolved_symbol = None
         if self.scrip_master and self.scrip_master.symbol_map:
@@ -638,15 +781,29 @@ class AutoTradeEngine:
         # If scrip master resolved the symbol, use it directly
         if resolved_symbol:
             place_symbol = resolved_symbol
-            trial = self.orders.place_market_buy(
-                symbol=place_symbol,
-                quantity=qty,
-                variety=config.DEFAULT_VARIETY,
-                exchange=config.DEFAULT_EXCHANGE,
-                product=config.DEFAULT_PRODUCT,
-            )
-            resp = trial if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial else None
-            placed_symbol = place_symbol if resp else None
+            if use_limit_order:
+                trial = self.orders.place_limit_buy(
+                    symbol=place_symbol,
+                    quantity=qty,
+                    price=limit_price,
+                    variety=config.DEFAULT_VARIETY,
+                    exchange=config.DEFAULT_EXCHANGE,
+                    product=config.DEFAULT_PRODUCT,
+                )
+            else:
+                trial = self.orders.place_market_buy(
+                    symbol=place_symbol,
+                    quantity=qty,
+                    variety=config.DEFAULT_VARIETY,
+                    exchange=config.DEFAULT_EXCHANGE,
+                    product=config.DEFAULT_PRODUCT,
+                )
+            # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
+            if isinstance(trial, dict) and 'error' not in trial:
+                stat = trial.get('stat', '').lower()
+                if stat == 'ok' or 'data' in trial or 'order' in trial or 'raw' in trial or 'nordno' in str(trial).lower():
+                    resp = trial
+                    placed_symbol = place_symbol
         
         # Fallback: Try common series suffixes if scrip master didn't work
         if not resp:
@@ -655,17 +812,37 @@ class AutoTradeEngine:
             placed_symbol = None
             for suf in series_suffixes:
                 place_symbol = broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
-                trial = self.orders.place_market_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    variety=config.DEFAULT_VARIETY,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-                if isinstance(trial, dict) and ('data' in trial or 'order' in trial or 'raw' in trial) and 'error' not in trial and 'Not_Ok'.lower() not in str(trial).lower():
-                    resp = trial
-                    placed_symbol = place_symbol
-                    break
+                
+                # Check if this suffix requires limit order
+                is_t2t_suf = suf in ["-BE", "-BL", "-BZ"]
+                
+                if is_t2t_suf:
+                    limit_price = close * 1.01
+                    logger.debug(f"Trying {place_symbol} with LIMIT @ ₹{limit_price:.2f}")
+                    trial = self.orders.place_limit_buy(
+                        symbol=place_symbol,
+                        quantity=qty,
+                        price=limit_price,
+                        variety=config.DEFAULT_VARIETY,
+                        exchange=config.DEFAULT_EXCHANGE,
+                        product=config.DEFAULT_PRODUCT,
+                    )
+                else:
+                    trial = self.orders.place_market_buy(
+                        symbol=place_symbol,
+                        quantity=qty,
+                        variety=config.DEFAULT_VARIETY,
+                        exchange=config.DEFAULT_EXCHANGE,
+                        product=config.DEFAULT_PRODUCT,
+                    )
+                # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
+                if isinstance(trial, dict) and 'error' not in trial:
+                    stat = trial.get('stat', '').lower()
+                    trial_str = str(trial).lower()
+                    if (stat == 'ok' or 'data' in trial or 'order' in trial or 'raw' in trial or 'nordno' in trial_str) and 'not_ok' not in trial_str:
+                        resp = trial
+                        placed_symbol = place_symbol
+                        break
         
         # Check if order was successful
         resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp) and 'error' not in resp and 'not_ok' not in str(resp).lower()
@@ -801,6 +978,14 @@ class AutoTradeEngine:
         
         # Clean up expired failed orders (past market open time)
         cleanup_expired_failed_orders(self.history_path)
+
+        # Pre-step: If user bought manually (same day or prev day before open), update history and remove from failed queue
+        try:
+            detected = check_manual_buys_of_failed_orders(self.history_path, self.orders, include_previous_day_before_market=True)
+            if detected:
+                logger.info(f"Manual buys detected and recorded: {', '.join(detected)}")
+        except Exception as e:
+            logger.warning(f"Manual buy check failed: {e}")
         
         # STEP 1: Retry previously failed orders due to insufficient balance
         # (includes yesterday's orders if before 9:15 AM market open)
@@ -846,6 +1031,15 @@ class AutoTradeEngine:
                     continue
                 
                 qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / close))
+                
+                # Check position-to-volume ratio (liquidity filter)
+                avg_vol = ind.get('avg_volume', 0)
+                if not self.check_position_volume_ratio(qty, avg_vol, symbol, close):
+                    logger.info(f"Skipping retry {symbol}: position size too large relative to volume")
+                    summary["skipped_invalid_qty"] += 1
+                    # Remove from failed orders queue since it's not a temporary issue
+                    remove_failed_order(self.history_path, symbol)
+                    continue
                 
                 # Check balance again
                 affordable = self.get_affordable_qty(close)
@@ -907,6 +1101,14 @@ class AutoTradeEngine:
                 summary["skipped_invalid_qty"] += 1
                 continue
             qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / close))
+            
+            # Check position-to-volume ratio (liquidity filter)
+            avg_vol = ind.get('avg_volume', 0)
+            if not self.check_position_volume_ratio(qty, avg_vol, broker_symbol, close):
+                logger.info(f"Skipping {broker_symbol}: position size too large relative to volume")
+                summary["skipped_invalid_qty"] += 1
+                continue
+            
             # Balance check (CNC needs cash) -> notify on insufficiency and save for retry
             affordable = self.get_affordable_qty(close)
             if affordable < config.MIN_QTY or qty > affordable:
@@ -1012,6 +1214,130 @@ class AutoTradeEngine:
                         exchange=config.DEFAULT_EXCHANGE,
                         product=config.DEFAULT_PRODUCT,
                     )
+                    
+                    # Check if order was rejected due to insufficient quantity
+                    order_rejected = False
+                    if resp is None:
+                        order_rejected = True
+                    elif isinstance(resp, dict):
+                        # Check for error indicators in response
+                        keys_lower = {str(k).lower() for k in resp.keys()}
+                        if any(k in keys_lower for k in ("error", "errors")):
+                            error_msg = str(resp).lower()
+                            # Check if error is related to insufficient quantity
+                            if any(phrase in error_msg for phrase in ["insufficient", "quantity", "qty", "not enough", "exceed"]):
+                                order_rejected = True
+                                logger.warning(f"Sell order rejected for {symbol} (likely insufficient qty): {resp}")
+                    
+                    # Retry with actual available quantity from broker
+                    if order_rejected:
+                        logger.info(f"Retrying sell order for {symbol} with broker available quantity...")
+                        try:
+                            # Fetch holdings to get actual available quantity
+                            holdings_response = self.portfolio.get_holdings()
+                            if holdings_response and isinstance(holdings_response, dict) and 'data' in holdings_response:
+                                holdings_data = holdings_response['data']
+                                actual_qty = 0
+                                
+                                # Find the symbol in holdings
+                                for holding in holdings_data:
+                                    holding_symbol = (
+                                        holding.get('tradingSymbol') or
+                                        holding.get('symbol') or
+                                        holding.get('instrumentName') or ''
+                                    ).replace('-EQ', '').upper()
+                                    
+                                    if holding_symbol == symbol.upper():
+                                        actual_qty = int(
+                                            holding.get('quantity') or
+                                            holding.get('qty') or
+                                            holding.get('netQuantity') or
+                                            holding.get('holdingsQuantity') or 0
+                                        )
+                                        break
+                                
+                                if actual_qty > 0:
+                                    logger.info(f"Found {actual_qty} shares available in holdings for {symbol} (expected {total_qty})")
+                                    # Retry sell with actual quantity
+                                    resp = self.orders.place_market_sell(
+                                        symbol=symbol,
+                                        quantity=actual_qty,
+                                        variety=config.DEFAULT_VARIETY,
+                                        exchange=config.DEFAULT_EXCHANGE,
+                                        product=config.DEFAULT_PRODUCT,
+                                    )
+                                    
+                                    # Check if retry also failed
+                                    retry_failed = False
+                                    if resp is None:
+                                        retry_failed = True
+                                    elif isinstance(resp, dict):
+                                        keys_lower = {str(k).lower() for k in resp.keys()}
+                                        if any(k in keys_lower for k in ("error", "errors")):
+                                            retry_failed = True
+                                    
+                                    if retry_failed:
+                                        # Send Telegram notification for failed retry
+                                        telegram_msg = (
+                                            f"❌ *SELL ORDER RETRY FAILED*\n\n"
+                                            f"📊 Symbol: *{symbol}*\n"
+                                            f"💼 Expected Qty: {total_qty}\n"
+                                            f"📦 Available Qty: {actual_qty}\n"
+                                            f"📈 Price: ₹{price:.2f}\n"
+                                            f"📉 RSI10: {rsi:.1f}\n"
+                                            f"📍 EMA9: ₹{ema9:.2f}\n\n"
+                                            f"⚠️ Both initial and retry sell orders failed.\n"
+                                            f"🔧 Manual intervention may be required.\n\n"
+                                            f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                        )
+                                        send_telegram(telegram_msg)
+                                        logger.error(f"Sell order retry FAILED for {symbol} - Telegram alert sent")
+                                    else:
+                                        logger.info(f"Retry sell order placed for {symbol}: {actual_qty} shares")
+                                        # Update total_qty to reflect actual sold quantity
+                                        total_qty = actual_qty
+                                else:
+                                    # Send Telegram notification when no holdings found
+                                    telegram_msg = (
+                                        f"❌ *SELL ORDER RETRY FAILED*\n\n"
+                                        f"📊 Symbol: *{symbol}*\n"
+                                        f"💼 Expected Qty: {total_qty}\n"
+                                        f"📦 Available Qty: 0 (not found in holdings)\n"
+                                        f"📈 Price: ₹{price:.2f}\n\n"
+                                        f"⚠️ Cannot retry - symbol not found in holdings.\n"
+                                        f"🔧 Manual check required.\n\n"
+                                        f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                    )
+                                    send_telegram(telegram_msg)
+                                    logger.error(f"No holdings found for {symbol} - cannot retry sell order - Telegram alert sent")
+                            else:
+                                # Send Telegram notification when holdings fetch fails
+                                telegram_msg = (
+                                    f"❌ *SELL ORDER RETRY FAILED*\n\n"
+                                    f"📊 Symbol: *{symbol}*\n"
+                                    f"💼 Expected Qty: {total_qty}\n"
+                                    f"📈 Price: ₹{price:.2f}\n\n"
+                                    f"⚠️ Failed to fetch holdings from broker.\n"
+                                    f"Cannot determine actual available quantity.\n"
+                                    f"🔧 Manual intervention required.\n\n"
+                                    f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                )
+                                send_telegram(telegram_msg)
+                                logger.error(f"Failed to fetch holdings for retry - cannot determine actual quantity for {symbol} - Telegram alert sent")
+                        except Exception as e:
+                            # Send Telegram notification for exception during retry
+                            telegram_msg = (
+                                f"❌ *SELL ORDER RETRY EXCEPTION*\n\n"
+                                f"📊 Symbol: *{symbol}*\n"
+                                f"💼 Expected Qty: {total_qty}\n"
+                                f"📈 Price: ₹{price:.2f}\n\n"
+                                f"⚠️ Error: {str(e)[:100]}\n"
+                                f"🔧 Manual intervention required.\n\n"
+                                f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
+                            send_telegram(telegram_msg)
+                            logger.error(f"Error during sell order retry for {symbol}: {e} - Telegram alert sent")
+                    
                     # Mark all entries as closed
                     exit_time = datetime.now().isoformat()
                     for e in entries:
@@ -1032,18 +1358,22 @@ class AutoTradeEngine:
             if rsi > 30:
                 for e in entries:
                     e['reset_ready'] = True
-            # If reset_ready and rsi drops below 30 again, we can re-enable levels for new cycle
+            # If reset_ready and rsi drops below 30 again, trigger NEW CYCLE reentry at RSI<30
             if rsi < 30 and any(e.get('reset_ready') for e in entries):
+                # This is a NEW CYCLE - treat RSI<30 as a fresh reentry opportunity
                 for e in entries:
-                    e['levels_taken'] = {"30": True, "20": False, "10": False}
+                    e['levels_taken'] = {"30": False, "20": False, "10": False}  # Reset all levels
                     e['reset_ready'] = False
                 levels = entries[0]['levels_taken']
-
-            next_level = None
-            if levels.get('30') and not levels.get('20') and rsi < 20:
-                next_level = 20
-            if levels.get('20') and not levels.get('10') and rsi < 10:
-                next_level = 10
+                # Immediately trigger reentry at this RSI<30 level
+                next_level = 30
+            else:
+                # Normal progression through levels
+                next_level = None
+                if levels.get('30') and not levels.get('20') and rsi < 20:
+                    next_level = 20
+                if levels.get('20') and not levels.get('10') and rsi < 10:
+                    next_level = 10
 
             if next_level is not None:
                 # Daily cap: allow max 1 re-entry per symbol per day
@@ -1073,11 +1403,75 @@ class AutoTradeEngine:
                         product=config.DEFAULT_PRODUCT,
                     )
                     # Record new averaging entry only if order succeeded
-                    resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp) and 'error' not in resp and 'not_ok' not in str(resp).lower()
+                    # Accept responses with nOrdNo (direct order ID) or data/order/raw structures
+                    resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp or 'nOrdNo' in resp or 'nordno' in str(resp).lower()) and 'error' not in resp and 'not_ok' not in str(resp).lower()
                     if resp_valid:
-                        # Do not record immediately; wait for holdings
-                        logger.info(f"Re-entry order placed for {symbol}; will record once visible in holdings")
+                        # Mark this level as taken
+                        for e in entries:
+                            e['levels_taken'][str(next_level)] = True
+                        logger.info(f"Re-entry order placed for {symbol} at RSI<{next_level} level; will record once visible in holdings")
                         summary["reentries"] += 1
+                        
+                        # Update existing sell order with new total quantity
+                        try:
+                            logger.info(f"Checking for existing sell order to update after reentry for {symbol}...")
+                            all_orders = self.orders.get_orders()
+                            if all_orders and isinstance(all_orders, dict) and 'data' in all_orders:
+                                for order in all_orders.get('data', []):
+                                    order_symbol = (order.get('tradingSymbol') or '').split('-')[0].upper()
+                                    order_type = (order.get('transactionType') or order.get('trnsTp') or '').upper()
+                                    order_status = (order.get('status') or order.get('orderStatus') or order.get('ordSt') or '').lower()
+                                    
+                                    # Find active sell order for this symbol
+                                    if order_symbol == symbol.upper() and order_type in ['S', 'SELL'] and order_status in ['open', 'pending']:
+                                        old_order_id = order.get('neoOrdNo') or order.get('nOrdNo') or order.get('orderId')
+                                        old_qty = int(order.get('quantity') or order.get('qty') or 0)
+                                        old_price = float(order.get('price') or order.get('prc') or 0)
+                                        
+                                        if old_order_id and old_qty > 0:
+                                            # Calculate new total quantity
+                                            new_total_qty = old_qty + qty
+                                            logger.info(f"Found existing sell order for {symbol}: {old_qty} shares @ ₹{old_price:.2f}")
+                                            logger.info(f"Updating to new total: {old_qty} + {qty} (reentry) = {new_total_qty} shares")
+                                            
+                                            # Modify order with new quantity
+                                            modify_resp = self.orders.modify_order(
+                                                order_id=str(old_order_id),
+                                                quantity=new_total_qty,
+                                                price=old_price
+                                            )
+                                            
+                                            if modify_resp:
+                                                logger.info(f"✅ Sell order updated: {symbol} x{new_total_qty} @ ₹{old_price:.2f}")
+                                            else:
+                                                logger.warning(f"⚠️  Failed to modify sell order {old_order_id} - order may need manual update")
+                                            break  # Only update the first matching sell order
+                                else:
+                                    logger.debug(f"No active sell order found for {symbol} (will be placed at next sell order run)")
+                        except Exception as e:
+                            logger.error(f"Error updating sell order after reentry: {e}")
+                            # Continue execution even if sell order update fails
+                        
+                        # Update trade history with new total quantity
+                        try:
+                            logger.info(f"Updating trade history quantity after reentry for {symbol}...")
+                            for e in entries:
+                                old_qty = e.get('qty', 0)
+                                new_total_qty = old_qty + qty
+                                e['qty'] = new_total_qty
+                                logger.info(f"Trade history updated: {symbol} qty {old_qty} → {new_total_qty}")
+                                # Also add reentry metadata for tracking
+                                if 'reentries' not in e:
+                                    e['reentries'] = []
+                                e['reentries'].append({
+                                    'qty': qty,
+                                    'level': next_level,
+                                    'rsi': rsi,
+                                    'price': price,
+                                    'time': datetime.now().isoformat()
+                                })
+                        except Exception as e:
+                            logger.error(f"Error updating trade history after reentry: {e}")
                     else:
                         logger.error(f"Re-entry order placement failed for {symbol}")
 

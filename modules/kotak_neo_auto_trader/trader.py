@@ -19,9 +19,9 @@ try:
     from .orders import KotakNeoOrders
 except ImportError:
     # Fall back to absolute imports (when run directly)
-    from auth import KotakNeoAuth
-    from portfolio import KotakNeoPortfolio
-    from orders import KotakNeoOrders
+    from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
+    from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
 
 
 class KotakNeoTrader:
@@ -29,7 +29,7 @@ class KotakNeoTrader:
     Main coordinator class that combines all trading modules
     """
     
-    def __init__(self, config_file: str = "kotak_neo.env"):
+    def __init__(self, config_file: str = "modules/kotak_neo_auto_trader/kotak_neo.env"):
         """
         Initialize the complete trader system
         

@@ -18,6 +18,7 @@ from utils.logger import logger
 from modules.kotak_neo_auto_trader.storage import load_history
 from modules.kotak_neo_auto_trader.tracking_scope import get_tracked_symbols, get_tracking_entry
 from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
+from modules.kotak_neo_auto_trader.live_price_manager import get_live_price_manager
 from core.data_fetcher import fetch_ohlcv_yf
 from core.indicators import compute_indicators
 
@@ -59,7 +60,9 @@ class PositionMonitor:
         self,
         history_path: str = "data/trades_history.json",
         telegram_notifier=None,
-        enable_alerts: bool = True
+        enable_alerts: bool = True,
+        live_price_manager=None,
+        enable_realtime_prices: bool = True
     ):
         """
         Initialize position monitor.
@@ -68,10 +71,22 @@ class PositionMonitor:
             history_path: Path to trades history JSON
             telegram_notifier: TelegramNotifier instance
             enable_alerts: Enable Telegram alerts
+            live_price_manager: LivePriceManager instance (optional)
+            enable_realtime_prices: Use real-time prices from WebSocket
         """
         self.history_path = history_path
         self.telegram = telegram_notifier or get_telegram_notifier()
         self.enable_alerts = enable_alerts
+        self.enable_realtime_prices = enable_realtime_prices
+        
+        # Live price manager (for real-time LTP)
+        if enable_realtime_prices:
+            self.price_manager = live_price_manager or get_live_price_manager(
+                enable_websocket=True,
+                enable_yfinance_fallback=True
+            )
+        else:
+            self.price_manager = None
         
         # Alert thresholds
         self.large_move_threshold = 3.0  # 3% price move
@@ -106,6 +121,15 @@ class PositionMonitor:
         
         logger.info(f"Monitoring {len(open_positions)} position(s)")
         logger.info("")
+        
+        # Subscribe to live prices for all open positions
+        if self.price_manager:
+            symbols = list(open_positions.keys())
+            try:
+                self.price_manager.subscribe_to_positions(symbols)
+                logger.info(f"✓ Subscribed to live prices for {len(symbols)} positions")
+            except Exception as e:
+                logger.warning(f"Live price subscription failed: {e}")
         
         results = {
             'monitored': 0,
@@ -192,9 +216,28 @@ class PositionMonitor:
             df = compute_indicators(df)
             latest = df.iloc[-1]
             
-            current_price = float(latest['close'])
+            # Use real-time LTP if available, else fall back to close price
+            if self.price_manager:
+                current_price = self.price_manager.get_ltp(symbol, ticker)
+                if current_price is None:
+                    logger.warning(f"Could not get real-time LTP for {symbol}, using close price")
+                    current_price = float(latest['close'])
+                else:
+                    logger.debug(f"Using real-time LTP for {symbol}: ₹{current_price}")
+            else:
+                current_price = float(latest['close'])
+            
             rsi10 = float(latest['rsi10'])
-            ema9 = float(df['close'].ewm(span=9).mean().iloc[-1])
+            
+            # Calculate EMA9 with real-time LTP
+            # Append current_price to the series and recalculate EMA9
+            close_series = df['close'].copy()
+            if self.price_manager and current_price != float(latest['close']):
+                # Add real-time price as latest data point
+                import pandas as pd
+                close_series = pd.concat([close_series, pd.Series([current_price])])
+            
+            ema9 = float(close_series.ewm(span=9).mean().iloc[-1])
             ema200 = float(latest.get('ema200', 0))
             
         except Exception as e:
@@ -355,7 +398,8 @@ class PositionMonitor:
 
 def get_position_monitor(
     history_path: str = "data/trades_history.json",
-    enable_alerts: bool = True
+    enable_alerts: bool = True,
+    enable_realtime_prices: bool = True
 ) -> PositionMonitor:
     """
     Factory function to get position monitor instance.
@@ -363,6 +407,7 @@ def get_position_monitor(
     Args:
         history_path: Path to trades history
         enable_alerts: Enable Telegram alerts
+        enable_realtime_prices: Use real-time prices from WebSocket
     
     Returns:
         PositionMonitor instance
@@ -371,5 +416,6 @@ def get_position_monitor(
     return PositionMonitor(
         history_path=history_path,
         telegram_notifier=telegram,
-        enable_alerts=enable_alerts
+        enable_alerts=enable_alerts,
+        enable_realtime_prices=enable_realtime_prices
     )

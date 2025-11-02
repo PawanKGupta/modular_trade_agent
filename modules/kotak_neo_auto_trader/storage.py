@@ -182,6 +182,125 @@ def remove_failed_order(path: str, symbol: str) -> None:
         logger.error(f"Failed to remove failed order: {e}")
 
 
+def check_manual_buys_of_failed_orders(path: str, orders_client, include_previous_day_before_market: bool = True) -> list:
+    """
+    Check if user manually bought any stocks from failed orders list.
+    If found, add them to trade history so bot can manage them.
+    
+    Args:
+        path: Path to the history file
+        orders_client: KotakNeoOrders instance to fetch executed orders
+        include_previous_day_before_market: Include yesterday's executed buys before 9:15 AM
+    
+    Returns:
+        List of symbols that were manually bought and added to trade history
+    """
+    try:
+        from datetime import datetime, date, time as dt_time
+        
+        data = load_history(path)
+        failed_orders = data.get('failed_orders', [])
+        
+        if not failed_orders:
+            return []
+        
+        # Get all executed BUY orders (we will date-filter below)
+        executed_orders = orders_client.get_executed_orders()
+        if not executed_orders:
+            return []
+        
+        now = datetime.now()
+        today = date.today()
+        market_open = dt_time(9, 15)
+        before_open = now.time() < market_open
+        manually_bought = []
+        
+        for order in executed_orders:
+            # Only check BUY orders
+            txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
+            if txn_type not in ['B', 'BUY']:
+                continue
+            
+            # Parse order date
+            order_time_str = order.get('ordDtTm') or order.get('orderTime') or ''
+            try:
+                if order_time_str:
+                    order_date = datetime.strptime(order_time_str.split()[0], '%d-%b-%Y').date()
+                else:
+                    continue
+            except Exception:
+                # If can't parse date, skip
+                continue
+            
+            # Date filter: today, or previous day before market open (optional)
+            if not (
+                order_date == today or (
+                    include_previous_day_before_market and before_open and order_date == (today - timedelta(days=1))
+                )
+            ):
+                continue
+            
+            # Extract symbol
+            symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
+            if '-' in symbol:
+                symbol = symbol.split('-')[0]
+            symbol = symbol.upper()
+            
+            if not symbol:
+                continue
+            
+            # Check if this symbol is in failed orders
+            failed_order = next((fo for fo in failed_orders if fo.get('symbol', '').upper() == symbol), None)
+            
+            if failed_order:
+                # This stock was recommended by bot but buy failed, now user bought it manually!
+                qty = int(order.get('qty') or order.get('quantity') or order.get('fldQty') or 0)
+                avg_price = float(order.get('avgPrc') or order.get('price') or 0)
+                order_id = order.get('nOrdNo') or order.get('orderId') or ''
+                
+                if qty > 0 and avg_price > 0:
+                    # Add to trade history
+                    trade_entry = {
+                        'symbol': symbol,
+                        'ticker': failed_order.get('ticker', f'{symbol}.NS'),
+                        'entry_price': avg_price,
+                        'entry_time': datetime.now().isoformat(),
+                        'entry_type': 'manual_buy_of_bot_recommendation',
+                        'qty': qty,
+                        'status': 'open',
+                        'placed_symbol': order.get('trdSym') or f'{symbol}-EQ',
+                        'order_id': str(order_id),
+                        'capital': avg_price * qty,
+                        # Copy technical data from failed order if available
+                        'rsi10': failed_order.get('rsi10', 0),
+                        'ema9': failed_order.get('ema9', 0),
+                        'ema200': failed_order.get('ema200', 0),
+                        'rsi_entry_level': failed_order.get('rsi_entry_level', 'unknown'),
+                        'original_recommendation_date': failed_order.get('first_failed_at'),
+                    }
+                    
+                    data.setdefault('trades', [])
+                    data['trades'].append(trade_entry)
+                    manually_bought.append(symbol)
+                    
+                    logger.info(f"✅ Added {symbol} to trade history (manual buy of bot recommendation, qty={qty}, price=₹{avg_price:.2f})")
+        
+        # Save updated history and remove these from failed orders
+        if manually_bought:
+            data['failed_orders'] = [fo for fo in failed_orders if fo.get('symbol', '').upper() not in [s.upper() for s in manually_bought]]
+            ensure_dir(path)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            
+            logger.info(f"Detected and added {len(manually_bought)} manual buys: {', '.join(manually_bought)}")
+        
+        return manually_bought
+        
+    except Exception as e:
+        logger.error(f"Error checking manual buys: {e}")
+        return []
+
+
 def cleanup_expired_failed_orders(path: str) -> int:
     """
     Remove failed orders that are expired:

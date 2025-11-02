@@ -70,16 +70,25 @@ def sample_analysis_result():
         buy_range_low=2400.0,
         buy_range_high=2450.0,
         target=2650.0,
-        stop_loss=2300.0
+        stop_loss=2300.0,
+        potential_gain_pct=8.16,
+        potential_loss_pct=6.12,
+        risk_reward_ratio=1.33
+    )
+    
+    sig = Signal(
+        ticker="RELIANCE.NS",
+        signal_type=SignalType.BUY,
+        timestamp=datetime(2025, 10, 26, 10, 0, 0),
+        strength_score=75.0,
     )
     
     return AnalysisResult(
         ticker="RELIANCE.NS",
-        timestamp=datetime(2025, 10, 26, 10, 0, 0),
-        verdict=SignalType.BUY,
         status="success",
+        timestamp=datetime(2025, 10, 26, 10, 0, 0),
+        signal=sig,
         trading_params=trading_params,
-        rsi=28.5,
         mtf_alignment_score=8.0,
         backtest_score=45.0,
         combined_score=32.5,

@@ -153,7 +153,9 @@ class AnalyzeStockUseCase:
             'pe': result.get('pe'),
             'pb': result.get('pb'),
             'volume_multiplier': result.get('volume_multiplier'),
-            'risk_reward_ratio': result.get('risk_reward_ratio')
+            'risk_reward_ratio': result.get('risk_reward_ratio'),
+            # Include candle analysis details for regression validation
+            'candle_analysis': result.get('candle_analysis')
         }
         
         return AnalysisResponse(

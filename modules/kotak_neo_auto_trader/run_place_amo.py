@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """
+⚠️ DEPRECATED - Use run_trading_service.py instead
+
+This script is kept for manual fallback only.
+The unified trading service (run_trading_service.py) handles buy orders automatically at 4:05 PM.
+
 Place AMO MARKET buy orders sized by capital for recommendations from CSV
 with pre-checks: skip if in holdings, notify on insufficient balance, cancel-and-replace any pending BUY.
 Usage:
@@ -14,9 +19,9 @@ try:
     from .orders import KotakNeoOrders
     from .portfolio import KotakNeoPortfolio
 except ImportError:
-    from auto_trade_engine import AutoTradeEngine
-    from orders import KotakNeoOrders
-    from portfolio import KotakNeoPortfolio
+    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+    from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
+    from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
 
 
 def main():

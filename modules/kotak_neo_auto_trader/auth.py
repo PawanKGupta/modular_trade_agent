@@ -4,11 +4,8 @@ Handles login, logout, and session management
 """
 
 import os
-import json
 from dotenv import load_dotenv
-from typing import Optional, Tuple
-from datetime import datetime, timedelta
-# Import existing project logger
+from typing import Optional
 import sys
 from pathlib import Path
 
@@ -24,7 +21,7 @@ class KotakNeoAuth:
     Authentication handler for Kotak Neo API
     """
 
-    def __init__(self, config_file: str = "kotak_neo.env"):
+    def __init__(self, config_file: str = "modules/kotak_neo_auto_trader/kotak_neo.env"):
         """
         Initialize authentication module
 
@@ -43,8 +40,6 @@ class KotakNeoAuth:
         self._load_credentials()
 
         self.logger.info(f"KotakNeoAuth initialized with environment: {self.environment}")
-        # Session cache path (persist token for the day)
-        self.session_cache_path = Path(__file__).with_name("session_cache.json")
 
     def _load_credentials(self):
         """Load credentials from environment file"""
@@ -73,7 +68,8 @@ class KotakNeoAuth:
 
     def login(self) -> bool:
         """
-        Perform complete login process with daily token caching.
+        Perform complete login process.
+        For long-running service, this is called ONCE at startup.
         """
         try:
             from neo_api_client import NeoAPI
@@ -87,46 +83,16 @@ class KotakNeoAuth:
             if not self.client:
                 return False
 
-            # Try cached session first (valid for the day)
-            cached_ok = self._try_use_cached_session()
-            if cached_ok:
-                self.logger.info("Reused cached session token (daily cache)")
-                # Verify session is actually usable by testing an API call
-                try:
-                    if hasattr(self.client, 'limits'):
-                        test_response = self.client.limits(segment="ALL", exchange="ALL")
-                        if self._response_requires_2fa(test_response):
-                            self.logger.warning("Cached session requires 2FA - forcing fresh login")
-                            # Clear cache and do fresh login
-                            if self.session_cache_path.exists():
-                                self.session_cache_path.unlink()
-                            cached_ok = False
-                        else:
-                            self.is_logged_in = True
-                            self.logger.info("Cached session verified and active")
-                            return True
-                except Exception as e:
-                    self.logger.warning(f"Cached session validation failed: {e} - forcing fresh login")
-                    if self.session_cache_path.exists():
-                        self.session_cache_path.unlink()
-                    cached_ok = False
-            
-            if not cached_ok:
-                # Perform fresh login + 2FA
-                if not self._perform_login():
-                    return False
-                if not self._complete_2fa():
-                    return False
+            # Perform login + 2FA
+            if not self._perform_login():
+                return False
+            if not self._complete_2fa():
+                return False
 
-                # Cache session for the day
-                self._save_session_cache()
-
-                self.is_logged_in = True
-                self.logger.info("Login completed successfully!")
-                return True
-            
-            # Should not reach here
-            return False
+            self.is_logged_in = True
+            self.logger.info("Login completed successfully!")
+            self.logger.info("Session will remain active for the entire trading day")
+            return True
 
         except Exception as e:
             self.logger.error(f"Login failed with exception: {e}")
@@ -197,6 +163,10 @@ class KotakNeoAuth:
             
             session_response = self.client.session_2fa(OTP=self.mpin)
             
+            # Debug: log the response to see hsServerId
+            import json
+            self.logger.debug(f"2FA response: {json.dumps(session_response, indent=2, default=str)}")
+            
             # Handle None response (can happen with cached sessions)
             if session_response is None:
                 self.logger.debug("2FA returned None - session may already be active")
@@ -227,113 +197,31 @@ class KotakNeoAuth:
             self.logger.error(f"2FA error: {e}")
             return False
 
-    def _refresh_2fa_if_possible(self) -> None:
-        """Attempt a quick 2FA refresh on the current client if credentials are available."""
-        try:
-            if self.mpin or self.totp_secret:
-                self._complete_2fa()
-        except Exception:
-            pass
 
     def force_relogin(self) -> bool:
-        """Force a fresh login + 2FA and persist session cache."""
+        """Force a fresh login + 2FA (used when JWT expires)."""
         try:
+            self.logger.info("Forcing fresh login...")
             if not self.client:
                 self.client = self._initialize_client()
             if not self._perform_login():
                 return False
             if not self._complete_2fa():
                 return False
-            self._save_session_cache()
             self.is_logged_in = True
+            self.logger.info("Re-authentication successful")
             return True
         except Exception as e:
             self.logger.error(f"Force re-login failed: {e}")
             return False
 
     def _response_requires_2fa(self, resp) -> bool:
+        """Check if response indicates 2FA is required."""
         try:
             s = str(resp)
             return '2fa' in s.lower() or 'complete the 2fa' in s.lower()
         except Exception:
             return False
-
-    def _try_use_cached_session(self) -> bool:
-        """Attempt to reuse a cached session token for the current day."""
-        try:
-            if not self.session_cache_path.exists():
-                return False
-            with open(self.session_cache_path, 'r', encoding='utf-8') as f:
-                cache = json.load(f)
-            # Basic validations
-            if cache.get('environment') != self.environment or cache.get('mobile') != self.mobile_number:
-                return False
-            exp = cache.get('expires_at')
-            if not exp:
-                return False
-            if datetime.fromisoformat(exp) <= datetime.now():
-                return False
-            token = cache.get('session_token')
-            if not token:
-                return False
-            # Try to inject token into client and verify by lightweight call
-            try:
-                # Common patterns in HTTP clients
-                if hasattr(self.client, 'session') and hasattr(self.client.session, 'headers'):
-                    self.client.session.headers['Authorization'] = f'Bearer {token}'
-                # Fallback attributes
-                for attr in ('access_token', 'bearer_token', 'session_token', 'auth_token'):
-                    if hasattr(self.client, attr):
-                        setattr(self.client, attr, token)
-                # Validate token via a lightweight call: prefer get_profile, else limits/holdings
-                ok = False
-                try:
-                    if hasattr(self.client, 'get_profile'):
-                        prof = self.client.get_profile()
-                        ok = prof is not None
-                except Exception:
-                    ok = False
-                if not ok:
-                    try:
-                        lim = self.client.limits(segment="ALL", exchange="ALL")
-                        ok = lim is not None and isinstance(lim, dict) and 'error' not in lim
-                    except Exception:
-                        ok = False
-                if not ok and hasattr(self.client, 'holdings'):
-                    try:
-                        h = self.client.holdings()
-                        ok = h is not None and isinstance(h, dict) and 'error' not in h
-                    except Exception:
-                        ok = False
-                if ok:
-                    self.session_token = token
-                    return True
-            except Exception as e:
-                self.logger.info(f"Cached session not usable, falling back to fresh login: {e}")
-                return False
-            return False
-        except Exception:
-            return False
-
-    def _save_session_cache(self) -> None:
-        """Save session token cache valid until end of day."""
-        try:
-            if not self.session_token:
-                return
-            # Expire at end-of-day local time
-            now = datetime.now()
-            eod = datetime(year=now.year, month=now.month, day=now.day, hour=23, minute=59, second=59)
-            cache = {
-                'session_token': self.session_token,
-                'created_at': now.isoformat(),
-                'expires_at': eod.isoformat(),
-                'environment': self.environment,
-                'mobile': self.mobile_number,
-            }
-            with open(self.session_cache_path, 'w', encoding='utf-8') as f:
-                json.dump(cache, f, indent=2)
-        except Exception as e:
-            self.logger.info(f"Could not persist session cache: {e}")
 
     def logout(self) -> bool:
         """

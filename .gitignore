@@ -12,12 +12,24 @@ analysis_results/
 logs/
 temp/
 modules/kotak_neo_auto_trader/session_cache.json
-data/
+modules/kotak_neo_auto_trader/kotak_neo.env
 signals.csv
 scripts/
 (dev)
-test_*.py
 debug_*.py
 demo_candle_analysis.py
 check_market_timing.pydata_backups/
 data_backups/
+
+# Build artifacts (PyInstaller)
+build/
+dist/
+*.spec.bak
+backups/
+data/
+
+# Test coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/

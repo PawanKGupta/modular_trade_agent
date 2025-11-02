@@ -8,7 +8,7 @@ from core.timeframe_analysis import TimeframeAnalysis
 from core.csv_exporter import CSVExporter
 from core.volume_analysis import assess_volume_quality_intelligent, get_volume_verdict, analyze_volume_pattern
 from core.candle_analysis import analyze_recent_candle_quality, should_downgrade_signal, get_candle_quality_summary
-from config.settings import RSI_OVERSOLD, MIN_VOLUME_MULTIPLIER, VOLUME_MULTIPLIER_FOR_STRONG
+from config.settings import RSI_OVERSOLD, MIN_VOLUME_MULTIPLIER, VOLUME_MULTIPLIER_FOR_STRONG, VOLUME_LOOKBACK_DAYS
 from config.settings import (
     NEWS_SENTIMENT_ENABLED,
     NEWS_SENTIMENT_POS_THRESHOLD,
@@ -17,7 +17,10 @@ from config.settings import (
 from core.news_sentiment import analyze_news_sentiment
 from utils.logger import logger
 
-def avg_volume(df, lookback=20):
+def avg_volume(df, lookback=None):
+    """Calculate average volume over specified lookback period (default from config)."""
+    if lookback is None:
+        lookback = VOLUME_LOOKBACK_DAYS
     return df['volume'].tail(lookback).mean()
 
 def assess_fundamental_quality(pe, pb, rsi):
@@ -416,7 +419,7 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
         elif confirmation_type == 'fair_uptrend_dip':
             signals.append("fair_uptrend_dip")
 
-    avg_vol = avg_volume(df, 20)
+    avg_vol = avg_volume(df)  # Uses VOLUME_LOOKBACK_DAYS from config (default: 50)
     
     # Intelligent volume analysis with time-awareness
     volume_analysis = assess_volume_quality_intelligent(
@@ -426,6 +429,10 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
     )
     
     vol_ok, vol_strong, volume_description = get_volume_verdict(volume_analysis)
+    
+    # Log low liquidity stocks
+    if volume_analysis.get('quality') == 'illiquid':
+        logger.info(f"{ticker}: Filtered out - {volume_analysis.get('reason')}")
     
     # Additional volume pattern context
     volume_pattern = analyze_volume_pattern(df)

@@ -31,15 +31,17 @@ try:
     from .market_data import KotakNeoMarketData
     from .storage import load_history, save_history
     from .scrip_master import KotakNeoScripMaster
+    from .live_price_cache import LivePriceCache
     from . import config
 except ImportError:
-    from auth import KotakNeoAuth
-    from orders import KotakNeoOrders
-    from portfolio import KotakNeoPortfolio
-    from market_data import KotakNeoMarketData
-    from storage import load_history, save_history
-    from scrip_master import KotakNeoScripMaster
-    import config
+    from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
+    from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
+    from modules.kotak_neo_auto_trader.market_data import KotakNeoMarketData
+    from modules.kotak_neo_auto_trader.storage import load_history, save_history
+    from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
+    from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
+    from modules.kotak_neo_auto_trader import config
 
 
 class SellOrderManager:
@@ -47,7 +49,7 @@ class SellOrderManager:
     Manages automated sell orders with EMA9 target tracking
     """
     
-    def __init__(self, auth: KotakNeoAuth, history_path: str = None, max_workers: int = 10):
+    def __init__(self, auth: KotakNeoAuth, history_path: str = None, max_workers: int = 10, price_manager=None):
         """
         Initialize sell order manager
         
@@ -55,6 +57,7 @@ class SellOrderManager:
             auth: Authenticated Kotak Neo session
             history_path: Path to trade history JSON
             max_workers: Maximum threads for parallel monitoring
+            price_manager: Optional LivePriceManager for real-time prices
         """
         self.auth = auth
         self.orders = KotakNeoOrders(auth)
@@ -62,6 +65,7 @@ class SellOrderManager:
         self.market_data = KotakNeoMarketData(auth)
         self.history_path = history_path or config.TRADES_HISTORY_PATH
         self.max_workers = max_workers
+        self.price_manager = price_manager
         
         # Initialize scrip master for symbol/token resolution
         self.scrip_master = KotakNeoScripMaster(
@@ -115,8 +119,14 @@ class SellOrderManager:
             else:
                 tick_size = 0.05
         else:
-            # NSE uses ₹0.05 for all equity stocks (cash segment)
-            tick_size = 0.05
+            # NSE tick size rules (cash equity segment)
+            # 0-100: ₹0.05
+            # 100-1000: ₹0.05
+            # 1000+: ₹0.10
+            if price >= 1000:
+                tick_size = 0.10
+            else:
+                tick_size = 0.05
         
         # Round UP to next valid tick (ceiling)
         # Use decimal arithmetic to avoid floating point precision issues
@@ -198,7 +208,7 @@ class SellOrderManager:
             k = 2.0 / (9 + 1)
             current_ema9 = (current_ltp * k) + (yesterday_ema9 * (1 - k))
             
-            logger.debug(f"{ticker} - Yesterday EMA9: ₹{yesterday_ema9:.2f}, LTP: ₹{current_ltp:.2f}, Current EMA9: ₹{current_ema9:.2f}")
+            logger.info(f"📈 {ticker.replace('.NS', '')}: LTP=₹{current_ltp:.2f}, Yesterday EMA9=₹{yesterday_ema9:.2f} → Current EMA9=₹{current_ema9:.2f}")
             return current_ema9
             
         except Exception as e:
@@ -207,8 +217,8 @@ class SellOrderManager:
     
     def get_current_ltp(self, ticker: str, broker_symbol: str = None) -> Optional[float]:
         """
-        Get current Last Traded Price for a ticker using Kotak Neo API
-        Falls back to yfinance if Kotak API fails
+        Get current Last Traded Price for a ticker
+        Uses LivePriceManager if available, falls back to yfinance
         
         Args:
             ticker: Stock ticker (e.g., 'RELIANCE.NS')
@@ -217,27 +227,20 @@ class SellOrderManager:
         Returns:
             Current LTP or None
         """
-        # Resolve symbol via scrip master if available
-        resolved_symbol = broker_symbol
-        if broker_symbol and self.scrip_master and self.scrip_master.symbol_map:
-            correct_symbol = self.scrip_master.get_trading_symbol(broker_symbol)
-            if correct_symbol:
-                resolved_symbol = correct_symbol
-                logger.debug(f"Resolved symbol: {broker_symbol} -> {resolved_symbol}")
+        # Extract base symbol
+        base_symbol = ticker.replace('.NS', '').replace('.BO', '').upper()
         
-        # Try Kotak Neo API first (real-time)
-        if resolved_symbol:
+        # Try LivePriceManager first (real-time WebSocket prices)
+        if self.price_manager:
             try:
-                ltp = self.market_data.get_ltp(resolved_symbol, exchange="NSE")
+                ltp = self.price_manager.get_ltp(base_symbol, ticker)
                 if ltp is not None:
-                    logger.debug(f"{ticker} LTP from Kotak Neo: ₹{ltp:.2f}")
+                    logger.info(f"➡️ {base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
                     return ltp
-                else:
-                    logger.debug(f"Kotak Neo LTP returned None for {resolved_symbol}, trying yfinance...")
             except Exception as e:
-                logger.warning(f"Kotak Neo LTP fetch failed for {resolved_symbol}: {e}, falling back to yfinance")
+                logger.debug(f"WebSocket LTP failed for {base_symbol}: {e}")
         
-        # Fallback to yfinance (delayed but reliable)
+        # Fallback to yfinance (delayed ~15-20 min)
         try:
             df = fetch_ohlcv_yf(ticker, days=1, interval='1m', add_current_day=True)
             
@@ -246,11 +249,11 @@ class SellOrderManager:
                 return None
             
             ltp = float(df['close'].iloc[-1])
-            logger.debug(f"{ticker} LTP from yfinance (delayed): ₹{ltp:.2f}")
+            logger.info(f"➡️ {base_symbol} LTP from yfinance (delayed ~15min): ₹{ltp:.2f}")
             return ltp
             
         except Exception as e:
-            logger.error(f"Error fetching LTP for {ticker} from both sources: {e}")
+            logger.error(f"Error fetching LTP for {ticker}: {e}")
             return None
     
     def place_sell_order(self, trade: Dict[str, Any], target_price: float) -> Optional[str]:
@@ -332,6 +335,7 @@ class SellOrderManager:
     def update_sell_order(self, order_id: str, symbol: str, qty: int, new_price: float) -> bool:
         """
         Update (modify) an existing sell order with new price
+        Uses modify_order API instead of cancel+replace for efficiency
         
         Args:
             order_id: Existing order ID
@@ -348,8 +352,69 @@ class SellOrderManager:
             if rounded_price != new_price:
                 logger.debug(f"Rounded price from ₹{new_price:.4f} to ₹{rounded_price:.2f} (tick size)")
             
+            # Modify existing order directly (more efficient than cancel+replace)
+            logger.info(f"Modifying order {order_id}: {symbol} x{qty} @ ₹{rounded_price:.2f}")
+            
+            modify_resp = self.orders.modify_order(
+                order_id=str(order_id),
+                quantity=qty,
+                price=rounded_price,
+                order_type="L"  # L = Limit order
+            )
+            
+            if not modify_resp:
+                logger.error(f"Failed to modify order {order_id}")
+                # Fallback to cancel+replace if modify fails
+                logger.info(f"Falling back to cancel+replace for order {order_id}")
+                return self._cancel_and_replace_order(order_id, symbol, qty, rounded_price)
+            
+            # Validate modification response
+            if isinstance(modify_resp, dict):
+                stat = modify_resp.get('stat', '')
+                if stat == 'Ok':
+                    logger.info(f"✅ Order modified successfully: {symbol} @ ₹{rounded_price:.2f}")
+                    
+                    # Update tracking (order_id stays same, just update price)
+                    base_symbol = symbol.split('-')[0]
+                    if base_symbol in self.active_sell_orders:
+                        self.active_sell_orders[base_symbol]['target_price'] = rounded_price
+                    
+                    return True
+                else:
+                    logger.warning(f"Modify order returned non-Ok status: {modify_resp}")
+                    # Fallback to cancel+replace
+                    logger.info(f"Falling back to cancel+replace for order {order_id}")
+                    return self._cancel_and_replace_order(order_id, symbol, qty, rounded_price)
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error updating sell order: {e}")
+            # Try fallback on exception
+            try:
+                logger.info(f"Falling back to cancel+replace due to error")
+                return self._cancel_and_replace_order(order_id, symbol, qty, rounded_price)
+            except Exception as e2:
+                logger.error(f"Fallback also failed: {e2}")
+                return False
+    
+    def _cancel_and_replace_order(self, order_id: str, symbol: str, qty: int, price: float) -> bool:
+        """
+        Fallback method: Cancel existing order and place new one
+        Used when modify_order fails
+        
+        Args:
+            order_id: Existing order ID to cancel
+            symbol: Trading symbol
+            qty: Order quantity
+            price: New target price (already rounded)
+            
+        Returns:
+            True if successful
+        """
+        try:
             # Cancel existing order
-            logger.info(f"Cancelling order {order_id} to update price")
+            logger.info(f"Cancelling order {order_id}")
             cancel_resp = self.orders.cancel_order(order_id)
             
             if not cancel_resp:
@@ -357,23 +422,23 @@ class SellOrderManager:
                 return False
             
             # Place new order with updated price
-            logger.info(f"Placing new sell order: {symbol} x{qty} @ ₹{rounded_price:.2f}")
+            logger.info(f"Placing new sell order: {symbol} x{qty} @ ₹{price:.2f}")
             response = self.orders.place_limit_sell(
                 symbol=symbol,
                 quantity=qty,
-                price=rounded_price,
+                price=price,
                 variety="REGULAR",
                 exchange=config.DEFAULT_EXCHANGE,
                 product=config.DEFAULT_PRODUCT
             )
             
             if not response:
-                logger.error(f"Failed to place updated sell order for {symbol}")
+                logger.error(f"Failed to place replacement sell order for {symbol}")
                 return False
             
-            # Extract new order ID - try multiple response formats
+            # Extract new order ID
             new_order_id = (
-                response.get('nOrdNo') or  # Direct field (most common)
+                response.get('nOrdNo') or
                 response.get('data', {}).get('nOrdNo') or
                 response.get('data', {}).get('order_id') or
                 response.get('data', {}).get('neoOrdNo') or
@@ -383,23 +448,23 @@ class SellOrderManager:
             )
             
             if new_order_id:
-                logger.info(f"✅ Order updated: {symbol} @ ₹{rounded_price:.2f}, New Order ID: {new_order_id}")
-                # Update tracking - preserve ticker from existing entry
+                logger.info(f"✅ Replacement order placed: {symbol} @ ₹{price:.2f}, Order ID: {new_order_id}")
+                # Update tracking with new order ID
                 base_symbol = symbol.split('-')[0]
                 old_entry = self.active_sell_orders.get(base_symbol, {})
                 self.active_sell_orders[base_symbol] = {
                     'order_id': str(new_order_id),
-                    'target_price': rounded_price,
+                    'target_price': price,
                     'placed_symbol': symbol,
                     'qty': qty,
-                    'ticker': old_entry.get('ticker')  # Preserve ticker from old entry
+                    'ticker': old_entry.get('ticker')
                 }
                 return True
             
             return False
             
         except Exception as e:
-            logger.error(f"Error updating sell order: {e}")
+            logger.error(f"Error in cancel+replace: {e}")
             return False
     
     def check_order_execution(self) -> List[str]:
@@ -496,6 +561,183 @@ class SellOrderManager:
         market_close = dt_time(15, 30)
         
         return market_open <= now <= market_close
+    
+    def _cleanup_rejected_orders(self):
+        """
+        Remove rejected/cancelled orders from active tracking
+        Also detects manual buys of bot-recommended stocks
+        """
+        try:
+            # First, check if user manually bought any stocks that bot recommended but failed to buy
+            from .storage import check_manual_buys_of_failed_orders
+            manual_buys = check_manual_buys_of_failed_orders(self.history_path, self.orders)
+            if manual_buys:
+                logger.info(f"Detected {len(manual_buys)} manual buys of bot recommendations: {', '.join(manual_buys)}")
+            
+            # Get all orders to check status
+            all_orders = self.orders.get_orders()
+            if not all_orders or 'data' not in all_orders:
+                return
+            
+            # Detect manual sales by checking executed SELL orders
+            # (Holdings API won't reflect sales until T+1 settlement)
+            
+            # Get all executed orders today
+            executed_orders = self.orders.get_executed_orders()
+            manual_sells = {}  # {symbol: total_qty_sold}
+            
+            if executed_orders:
+                for order in executed_orders:
+                    # Only check SELL orders
+                    txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
+                    if txn_type not in ['S', 'SELL']:
+                        continue
+                    
+                    order_id = str(order.get('nOrdNo') or order.get('orderId') or '')
+                    symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
+                    if '-' in symbol:
+                        symbol = symbol.split('-')[0]
+                    symbol = symbol.upper()
+                    
+                    # Check if this is a manual sell (order_id not in our tracked orders)
+                    is_bot_order = any(
+                        info.get('order_id') == order_id 
+                        for info in self.active_sell_orders.values()
+                    )
+                    
+                    if not is_bot_order and symbol:
+                        # This is a manual sell order
+                        qty = int(order.get('qty') or order.get('quantity') or order.get('fldQty') or 0)
+                        avg_price = float(order.get('avgPrc') or order.get('price') or 0)
+                        
+                        if qty > 0:
+                            if symbol not in manual_sells:
+                                manual_sells[symbol] = {'qty': 0, 'avg_price': 0, 'orders': []}
+                            
+                            manual_sells[symbol]['qty'] += qty
+                            manual_sells[symbol]['orders'].append({
+                                'order_id': order_id,
+                                'qty': qty,
+                                'price': avg_price
+                            })
+            
+            # Get trade history positions for comparison
+            open_positions = self.get_open_positions()
+            open_symbols = {trade.get('symbol', '').upper(): trade.get('qty', 0) for trade in open_positions}
+            
+            rejected_symbols = []
+            
+            # Check each tracked order
+            for symbol, order_info in list(self.active_sell_orders.items()):
+                symbol_upper = symbol.upper()
+                
+                # Check if this position had manual sells
+                if symbol_upper in manual_sells:
+                    manual_sell_info = manual_sells[symbol_upper]
+                    sold_qty = manual_sell_info['qty']
+                    tracked_qty = order_info.get('qty', 0)
+                    remaining_qty = tracked_qty - sold_qty
+                    
+                    logger.warning(f"Manual sell detected for {symbol}: sold {sold_qty} shares")
+                    
+                    # Cancel existing bot order (wrong quantity now)
+                    order_id = order_info.get('order_id')
+                    if order_id:
+                        try:
+                            logger.info(f"Cancelling order {order_id} for {symbol} due to manual sale")
+                            self.orders.cancel_order(order_id)
+                        except Exception as e:
+                            logger.warning(f"Failed to cancel order {order_id}: {e}")
+                    
+                    # Update trade history
+                    try:
+                        history = load_history(self.history_path)
+                        trades = history.get('trades', [])
+                        
+                        for trade in trades:
+                            if trade.get('symbol', '').upper() == symbol_upper and trade.get('status') == 'open':
+                                if remaining_qty <= 0:
+                                    # Full manual exit
+                                    trade['status'] = 'closed'
+                                    trade['exit_time'] = datetime.now().isoformat()
+                                    trade['exit_reason'] = 'MANUAL_EXIT'
+                                    # Use average price from manual orders
+                                    avg_price = sum(o['price'] * o['qty'] for o in manual_sell_info['orders']) / sold_qty if sold_qty > 0 else 0
+                                    trade['exit_price'] = avg_price
+                                    
+                                    entry_price = trade.get('entry_price', 0)
+                                    if entry_price and avg_price:
+                                        pnl = (avg_price - entry_price) * sold_qty
+                                        pnl_pct = ((avg_price / entry_price) - 1) * 100
+                                        trade['pnl'] = pnl
+                                        trade['pnl_pct'] = pnl_pct
+                                    
+                                    logger.info(f"Trade history updated: {symbol} marked as manually closed (full exit)")
+                                else:
+                                    # Partial manual exit
+                                    trade['qty'] = remaining_qty
+                                    
+                                    if 'partial_exits' not in trade:
+                                        trade['partial_exits'] = []
+                                    
+                                    avg_price = sum(o['price'] * o['qty'] for o in manual_sell_info['orders']) / sold_qty if sold_qty > 0 else 0
+                                    trade['partial_exits'].append({
+                                        'qty': sold_qty,
+                                        'exit_time': datetime.now().isoformat(),
+                                        'exit_reason': 'MANUAL_PARTIAL_EXIT',
+                                        'exit_price': avg_price,
+                                    })
+                                    
+                                    logger.info(f"Trade history updated: {symbol} qty reduced to {remaining_qty} (sold {sold_qty} manually)")
+                                break
+                        
+                        save_history(self.history_path, history)
+                    except Exception as e:
+                        logger.warning(f"Could not update trade history for manual sale of {symbol}: {e}")
+                    
+                    # Remove from tracking (will re-add with correct qty if remaining > 0)
+                    rejected_symbols.append(symbol)
+                    if remaining_qty > 0:
+                        logger.info(f"Removing {symbol} from tracking: will place new order with qty={remaining_qty}")
+                    else:
+                        logger.info(f"Removing {symbol} from tracking: fully sold manually")
+                    continue
+                
+                # No manual sale detected, check for rejected/cancelled status
+                order_id = order_info.get('order_id')
+                if not order_id:
+                    continue
+                
+                # Find this order in the response
+                for order in all_orders['data']:
+                    ord_id = order.get('nOrdNo') or order.get('orderId') or ''
+                    if str(ord_id) == str(order_id):
+                        # Check status
+                        status = (
+                            order.get('orderStatus') or 
+                            order.get('ordSt') or 
+                            order.get('status') or 
+                            ''
+                        ).lower()
+                        
+                        # Remove if rejected or cancelled
+                        if 'reject' in status or 'cancel' in status:
+                            rejected_symbols.append(symbol)
+                            logger.info(f"Removing {symbol} from tracking: order {order_id} is {status}")
+                        break
+            
+            # Clean up rejected/cancelled orders and manually closed positions
+            for symbol in rejected_symbols:
+                if symbol in self.active_sell_orders:
+                    del self.active_sell_orders[symbol]
+                if symbol in self.lowest_ema9:
+                    del self.lowest_ema9[symbol]
+            
+            if rejected_symbols:
+                logger.info(f"Cleaned up {len(rejected_symbols)} invalid orders from tracking")
+                
+        except Exception as e:
+            logger.warning(f"Error cleaning up rejected orders: {e}")
     
     def get_existing_sell_orders(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -626,6 +868,9 @@ class SellOrderManager:
                 self.lowest_ema9[symbol] = ema9
                 orders_placed += 1
         
+        # Clean up any rejected orders from tracking
+        self._cleanup_rejected_orders()
+        
         logger.info(f"✅ Placed {orders_placed} sell orders at market open")
         return orders_placed
     
@@ -673,6 +918,10 @@ class SellOrderManager:
             
             # Check if ROUNDED EMA9 is lower than lowest seen
             lowest_so_far = self.lowest_ema9.get(symbol, float('inf'))
+            current_target = order_info.get('target_price', lowest_so_far)
+            
+            # Log EMA9 values for monitoring
+            logger.info(f"📊 {symbol}: Current EMA9=₹{rounded_ema9:.2f}, Target=₹{current_target:.2f}, Lowest=₹{lowest_so_far:.2f}")
             
             if rounded_ema9 < lowest_so_far:
                 logger.info(f"{symbol}: New lower EMA9 found - ₹{rounded_ema9:.2f} (was ₹{lowest_so_far:.2f})")
@@ -708,6 +957,9 @@ class SellOrderManager:
         """
         stats = {'checked': 0, 'updated': 0, 'executed': 0}
         
+        # Clean up any rejected/cancelled orders before monitoring
+        self._cleanup_rejected_orders()
+        
         if not self.active_sell_orders:
             logger.debug("No active sell orders to monitor")
             return stats
@@ -717,21 +969,46 @@ class SellOrderManager:
         # Check for executed orders first (single API call)
         executed_ids = self.check_order_execution()
         
-        # Process all stocks in parallel
+        # Remove executed orders BEFORE monitoring (don't waste API calls on executed orders)
+        symbols_executed = []
+        for symbol, order_info in list(self.active_sell_orders.items()):
+            order_id = order_info.get('order_id')
+            if order_id in executed_ids:
+                # Mark position as closed in trade history
+                current_price = order_info.get('target_price', 0)
+                if self.mark_position_closed(symbol, current_price, order_id):
+                    symbols_executed.append(symbol)
+                    logger.info(f"✅ Order executed: {symbol} - removing from tracking")
+        
+        # Clean up executed orders
+        for symbol in symbols_executed:
+            if symbol in self.active_sell_orders:
+                del self.active_sell_orders[symbol]
+            if symbol in self.lowest_ema9:
+                del self.lowest_ema9[symbol]
+        
+        stats['executed'] = len(symbols_executed)
+        
+        # If no orders left to monitor, return
+        if not self.active_sell_orders:
+            if stats['executed'] > 0:
+                logger.info(f"Monitor cycle: {stats['executed']} executed, all orders completed")
+            return stats
+        
+        # Process remaining active stocks in parallel
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all monitoring tasks
+            # Submit all monitoring tasks (only for non-executed orders)
             future_to_symbol = {
                 executor.submit(
                     self._check_and_update_single_stock,
                     symbol,
                     order_info,
-                    executed_ids
+                    []  # Empty list - executed orders already removed
                 ): symbol
                 for symbol, order_info in self.active_sell_orders.items()
             }
             
             # Process results as they complete
-            symbols_to_remove = []
             symbols_to_update_ema = {}
             
             for future in as_completed(future_to_symbol):
@@ -741,10 +1018,7 @@ class SellOrderManager:
                     result = future.result()
                     action = result.get('action')
                     
-                    if action == 'executed':
-                        symbols_to_remove.append(symbol)
-                        stats['executed'] += 1
-                    elif action == 'updated':
+                    if action == 'updated':
                         symbols_to_update_ema[symbol] = result.get('ema9')
                         stats['updated'] += 1
                     elif action in ['checked', 'error']:
@@ -753,13 +1027,6 @@ class SellOrderManager:
                 except Exception as e:
                     logger.error(f"Error processing result for {symbol}: {e}")
                     stats['checked'] += 1
-            
-            # Clean up executed orders (thread-safe, done after all futures complete)
-            for symbol in symbols_to_remove:
-                if symbol in self.active_sell_orders:
-                    del self.active_sell_orders[symbol]
-                if symbol in self.lowest_ema9:
-                    del self.lowest_ema9[symbol]
             
             # Update lowest EMA9 tracking for updated orders
             for symbol, ema9 in symbols_to_update_ema.items():

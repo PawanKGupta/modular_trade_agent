@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """
+⚠️ DEPRECATED - Use run_trading_service.py instead
+
+This script is kept for manual fallback only.
+The unified trading service (run_trading_service.py) handles position monitoring automatically (hourly).
+
 Position Monitor Runner
 Executes live position monitoring for scheduled tasks
 """

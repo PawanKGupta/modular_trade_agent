@@ -5,6 +5,7 @@ Handles order retrieval, tracking, placement, and GTT orders
 """
 
 from typing import Optional, Dict, List
+import os
 # Use existing project logger
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ from utils.logger import logger
 try:
     from .auth import KotakNeoAuth
 except ImportError:
-    from auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
 
 
 class KotakNeoOrders:
@@ -187,6 +188,55 @@ class KotakNeoOrders:
         return None
 
     # -------------------- Cancel / Manage --------------------
+    def modify_order(self, order_id: str, price: float = None, quantity: int = None, 
+                     trigger_price: float = 0, validity: str = "DAY", order_type: str = "L") -> Optional[Dict]:
+        """Modify an existing order's price and/or quantity."""
+        client = self.auth.get_client()
+        if not client:
+            return None
+        
+        try:
+            # Build payload with only provided parameters
+            payload = {"order_id": order_id}
+            
+            if price is not None:
+                payload["price"] = str(price)
+            if quantity is not None:
+                payload["quantity"] = str(quantity)
+            if trigger_price:
+                payload["trigger_price"] = str(trigger_price)
+            if validity:
+                payload["validity"] = validity.upper()
+            
+            # Add order_type (required by Kotak Neo API)
+            payload["order_type"] = order_type
+            
+            # Kotak Neo uses disclosed_quantity as optional param
+            payload["disclosed_quantity"] = "0"
+            
+            logger.info(f"📝 Modifying order {order_id}: qty={quantity}, price={price}")
+            
+            if hasattr(client, 'modify_order'):
+                response = client.modify_order(**payload)
+                
+                if isinstance(response, dict):
+                    keys_lower = {str(k).lower() for k in response.keys()}
+                    if any(k in keys_lower for k in ("error", "errors")):
+                        logger.error(f"❌ Order modification rejected: {response}")
+                        return None
+                    logger.info(f"✅ Order modified: {response}")
+                    return response
+                else:
+                    logger.info(f"✅ Order modified (raw): {response}")
+                    return {"raw": str(response)}
+            else:
+                logger.error("modify_order method not available in client")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error modifying order {order_id}: {e}")
+            return None
+    
     def cancel_order(self, order_id: str) -> Optional[Dict]:
         """Cancel an order by ID, trying multiple SDK method names/params."""
         client = self.auth.get_client()
@@ -215,7 +265,7 @@ class KotakNeoOrders:
                         return None
                 resp = method(**payload)
                 return resp if isinstance(resp, dict) else {"raw": str(resp)}
-            for method_name in ("cancel_order", "order_cancel", "cancelOrder", "cancelorder", "modify_order"):
+            for method_name in ("cancel_order", "order_cancel", "cancelOrder", "cancelorder"):
                 try:
                     resp = call_method(method_name)
                     if resp:
@@ -226,7 +276,7 @@ class KotakNeoOrders:
             logger.error(f"❌ Failed to cancel order {order_id}")
             return None
         except Exception as e:
-            logger.error(f" Error cancelling order {order_id}: {e}")
+            logger.error(f"❌ Error cancelling order {order_id}: {e}")
             return None
 
     def cancel_pending_buys_for_symbol(self, symbol_variants: list[str]) -> int:
@@ -253,7 +303,7 @@ class KotakNeoOrders:
         return cancelled
 
     # -------------------- Retrieval --------------------
-    def get_orders(self) -> Optional[Dict]:
+    def get_orders(self, _retry_count: int = 0) -> Optional[Dict]:
         """Get all existing regular orders (not GTT) with fallbacks and raw logging."""
         client = self.auth.get_client()
         if not client:
@@ -272,17 +322,38 @@ class KotakNeoOrders:
             logger.info(" Retrieving existing orders...")
             orders = _call_any(["order_report", "get_order_report", "orderBook", "orders", "order_book"]) or {}
             
-            if isinstance(orders, dict) and "error" in orders:
-                logger.error(f" Failed to get orders: {orders['error']}")
-                return None
+            # Check for JWT expiry / invalid credentials
+            if isinstance(orders, dict):
+                code = orders.get('code', '')
+                message = str(orders.get('message', '')).lower()
+                description = str(orders.get('description', '')).lower()
+                
+                # Detect JWT expiry
+                if code == '900901' or 'invalid jwt token' in description or 'invalid credentials' in message:
+                    if _retry_count == 0:
+                        logger.warning("❌ JWT token expired - attempting re-authentication...")
+                        if hasattr(self.auth, 'force_relogin') and self.auth.force_relogin():
+                            logger.info("✅ Re-authentication successful - retrying API call")
+                            return self.get_orders(_retry_count=1)  # Retry once
+                        else:
+                            logger.error("❌ Re-authentication failed")
+                            return None
+                    else:
+                        logger.error("❌ JWT token still invalid after re-authentication")
+                        return None
+                
+                # Check for other errors
+                if "error" in orders:
+                    logger.error(f" Failed to get orders: {orders['error']}")
+                    return None
             
             # Process and display orders
             if isinstance(orders, dict) and 'data' in orders and orders['data']:
                 orders_data = orders['data']
                 logger.info(f" Found {len(orders_data)} orders")
                 
-                # Log first order structure for debugging (only once)
-                if orders_data and len(orders_data) > 0:
+                # Log first order structure for debugging (opt-in via env)
+                if orders_data and len(orders_data) > 0 and os.getenv("DEBUG_ORDER_KEYS") == "1":
                     logger.debug(f"First order structure (keys): {list(orders_data[0].keys())}")
                 
                 # Group orders by status
@@ -333,7 +404,18 @@ class KotakNeoOrders:
                         'N/A'
                     )
                     
-                    logger.info(f"📝 Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status}")
+                    # Check for rejection reason
+                    rejection_reason = (
+                        order.get('rejRsn') or 
+                        order.get('rejectionReason') or 
+                        order.get('rmk') or
+                        ''
+                    )
+                    
+                    if rejection_reason and 'reject' in status.lower():
+                        logger.info(f"📝 Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status} - ❌ Reason: {rejection_reason}")
+                    else:
+                        logger.info(f"📝 Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status}")
                     
                     # Count by status
                     order_stats[status] = order_stats.get(status, 0) + 1

@@ -10,6 +10,7 @@ from typing import Dict, Tuple, Optional
 from utils.logger import logger
 from config.settings import (
     MIN_VOLUME_MULTIPLIER,
+    MIN_ABSOLUTE_AVG_VOLUME,
     VOLUME_MULTIPLIER_FOR_STRONG,
     VOLUME_INTRADAY_MULTIPLIER,
     VOLUME_MARKET_CLOSE_HOUR,
@@ -94,7 +95,21 @@ def assess_volume_quality_intelligent(
             'threshold_used': MIN_VOLUME_MULTIPLIER,
             'passes': False,
             'time_adjusted': False,
+            'avg_volume': 0,
             'reason': 'No historical volume data'
+        }
+    
+    # Check absolute volume first (liquidity filter)
+    if avg_volume < MIN_ABSOLUTE_AVG_VOLUME:
+        return {
+            'ratio': round(current_volume / avg_volume, 2) if avg_volume > 0 else 0,
+            'quality': 'illiquid',
+            'score': 0,
+            'threshold_used': MIN_VOLUME_MULTIPLIER,
+            'passes': False,
+            'time_adjusted': False,
+            'avg_volume': int(avg_volume),
+            'reason': f'Low liquidity: avg_volume={int(avg_volume)} < {MIN_ABSOLUTE_AVG_VOLUME}'
         }
     
     base_ratio = current_volume / avg_volume
@@ -170,6 +185,7 @@ def assess_volume_quality_intelligent(
         'passes': passes,
         'time_adjusted': time_adjusted,
         'current_hour': current_hour if time_adjusted else None,
+        'avg_volume': int(avg_volume),
         'reason': ' + '.join(reasons) if reasons else 'low_volume'
     }
 
