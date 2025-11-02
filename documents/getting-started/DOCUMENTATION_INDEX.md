@@ -191,5 +191,5 @@ Found outdated documentation? Want to improve something?
 
 ---
 
-**Last Updated:** 2025-10-29
-**Version:** 26.1.1
+**Last Updated:** 2025-11-02
+**Version:** 25.4.1

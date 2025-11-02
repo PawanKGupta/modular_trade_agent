@@ -2,7 +2,7 @@
 
 This simplified guide focuses on the most-used features and the recommended unified deployments.
 
-Version: 26.1.1
+Version: 25.4.1
 Python: 3.12+
 
 ---
@@ -19,7 +19,7 @@ Links for details
 - [Windows unified service](deployment/WINDOWS_UNIFIED.md)
 - [Ubuntu unified service](deployment/UBUNTU_UNIFIED.md)
 - [Known Issues](KNOWN_ISSUES.md)
-- [Release notes (26.1.1)](releases/26.1.1.md)
+- [Release notes (25.4.1)](releases/25.4.1.md)
 
 ---
 
@@ -80,8 +80,8 @@ Multi‑service docs (advanced)
 
 ---
 
-## Release Notes (26.1.1)
-- Summary: [releases/26.1.1.md](releases/26.1.1.md)
+## Release Notes (25.4.1)
+- Summary: [releases/25.4.1.md](releases/25.4.1.md)
 - Bug fixes: one-liners with links to details
 - Enhancements: one-liners with links to details
 
