@@ -158,7 +158,8 @@ class TradingService:
             self.price_cache.start()
             logger.info("✅ WebSocket price feed started")
             
-            # Note: Symbols will be subscribed dynamically when sell orders are placed
+            # Subscribe to any existing open positions immediately
+            self._subscribe_to_open_positions()
             
         except Exception as e:
             logger.error(f"Failed to initialize live prices: {e}")
@@ -166,6 +167,44 @@ class TradingService:
             self.price_cache = None
             self.scrip_master = None
             # Don't fail initialization - system can work with yfinance fallback
+    
+    def _subscribe_to_open_positions(self):
+        """
+        Subscribe WebSocket to any existing open positions.
+        Prevents empty subscription reconnect loop.
+        """
+        if not self.price_cache:
+            return
+        
+        try:
+            from .storage import load_history
+            
+            # Load open positions from history
+            history = load_history(config.TRADES_HISTORY_PATH)
+            trades = history.get('trades', [])
+            open_trades = [t for t in trades if t.get('status') == 'open']
+            
+            if not open_trades:
+                logger.debug("No open positions to subscribe to WebSocket")
+                return
+            
+            # Extract unique symbols
+            symbols = set()
+            for trade in open_trades:
+                symbol = trade.get('symbol', '').replace('.NS', '').replace('.BO', '').upper()
+                if symbol:
+                    symbols.add(symbol)
+            
+            if symbols:
+                logger.info(f"Subscribing to {len(symbols)} open position(s) on WebSocket...")
+                self.price_cache.subscribe(list(symbols))
+                logger.info(f"✅ Subscribed to WebSocket for: {', '.join(sorted(symbols))}")
+            else:
+                logger.debug("No valid symbols found in open positions")
+                
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to open positions: {e}")
+            # Not critical - subscriptions will happen later
     
     def is_trading_day(self) -> bool:
         """Check if today is a trading day (Monday-Friday)"""
@@ -259,8 +298,8 @@ class TradingService:
             logger.info(f"TASK: POSITION MONITOR ({current_hour}:30)")
             logger.info("=" * 80)
             
-            # Monitor positions for signals
-            summary = self.engine.monitor_positions()
+            # Monitor positions for signals (share price_cache)
+            summary = self.engine.monitor_positions(live_price_manager=self.price_cache)
             logger.info(f"Position monitor summary: {summary}")
             
             self.tasks_completed['position_monitor'][current_hour] = True
