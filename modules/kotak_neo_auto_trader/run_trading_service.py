@@ -404,6 +404,14 @@ class TradingService:
             logger.info("TASK: END-OF-DAY CLEANUP (6:00 PM)")
             logger.info("=" * 80)
             
+            # Clean up expired failed orders
+            from .storage import cleanup_expired_failed_orders
+            removed_count = cleanup_expired_failed_orders(config.TRADES_HISTORY_PATH)
+            if removed_count > 0:
+                logger.info(f"✅ Cleaned up {removed_count} expired failed order(s)")
+            else:
+                logger.info("No expired failed orders to clean up")
+            
             # Run EOD cleanup if available
             if hasattr(self.engine, 'eod_cleanup') and self.engine.eod_cleanup:
                 self.engine.eod_cleanup.run()
