@@ -158,7 +158,8 @@ class TradingService:
             self.price_cache.start()
             logger.info("✅ WebSocket price feed started")
             
-            # Note: Symbols will be subscribed dynamically when sell orders are placed
+            # Subscribe to any existing open positions immediately
+            self._subscribe_to_open_positions()
             
         except Exception as e:
             logger.error(f"Failed to initialize live prices: {e}")
@@ -166,6 +167,59 @@ class TradingService:
             self.price_cache = None
             self.scrip_master = None
             # Don't fail initialization - system can work with yfinance fallback
+    
+    def _subscribe_to_open_positions(self):
+        """
+        Subscribe WebSocket to symbols with active pending sell orders.
+        This ensures real-time prices for sell order monitoring.
+        
+        Note: This method is called at startup. The SellOrderManager will
+        subscribe to additional symbols as sell orders are placed during runtime.
+        """
+        if not self.price_cache:
+            return
+        
+        try:
+            # Get pending sell orders from broker
+            if not self.auth:
+                logger.debug("Auth not initialized, skipping WebSocket subscription")
+                return
+            
+            from .orders import KotakNeoOrders
+            orders_client = KotakNeoOrders(self.auth)
+            pending_orders = orders_client.get_pending_orders()
+            
+            if not pending_orders:
+                logger.debug("No pending orders to subscribe to WebSocket")
+                return
+            
+            # Extract symbols from SELL orders only
+            symbols = set()
+            for order in pending_orders:
+                # Check if this is a SELL order
+                txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
+                if txn_type not in ['S', 'SELL']:
+                    continue
+                
+                # Extract symbol (e.g., 'DALBHARAT-EQ' -> 'DALBHARAT')
+                symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
+                if '-' in symbol:
+                    symbol = symbol.split('-')[0]
+                symbol = symbol.upper()
+                
+                if symbol:
+                    symbols.add(symbol)
+            
+            if symbols:
+                logger.info(f"Subscribing to {len(symbols)} active sell order(s) on WebSocket...")
+                self.price_cache.subscribe(list(symbols))
+                logger.info(f"✅ Subscribed to WebSocket for sell orders: {', '.join(sorted(symbols))}")
+            else:
+                logger.debug("No active sell orders found to subscribe")
+                
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to open positions: {e}")
+            # Not critical - subscriptions will happen later
     
     def is_trading_day(self) -> bool:
         """Check if today is a trading day (Monday-Friday)"""
@@ -259,8 +313,8 @@ class TradingService:
             logger.info(f"TASK: POSITION MONITOR ({current_hour}:30)")
             logger.info("=" * 80)
             
-            # Monitor positions for signals
-            summary = self.engine.monitor_positions()
+            # Monitor positions for signals (share price_cache)
+            summary = self.engine.monitor_positions(live_price_manager=self.price_cache)
             logger.info(f"Position monitor summary: {summary}")
             
             self.tasks_completed['position_monitor'][current_hour] = True

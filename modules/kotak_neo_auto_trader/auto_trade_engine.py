@@ -477,20 +477,28 @@ class AutoTradeEngine:
             logger.error(f"Failed to initialize Phase 2 modules: {e}", exc_info=True)
             logger.warning("Continuing without Phase 2 features")
 
-    def monitor_positions(self) -> Dict[str, Any]:
+    def monitor_positions(self, live_price_manager=None) -> Dict[str, Any]:
         """
         Monitor all open positions for reentry/exit signals.
+        
+        Args:
+            live_price_manager: Optional LivePriceCache instance to reuse
         
         Returns:
             Dict with monitoring results
         """
         try:
-            from .position_monitor import get_position_monitor
+            from .position_monitor import PositionMonitor
+            from .telegram_notifier import get_telegram_notifier
             
-            # Get position monitor
-            monitor = get_position_monitor(
+            # Create position monitor with shared price manager
+            telegram = get_telegram_notifier() if self._enable_telegram else None
+            monitor = PositionMonitor(
                 history_path=self.history_path,
-                enable_alerts=self._enable_telegram
+                telegram_notifier=telegram,
+                enable_alerts=self._enable_telegram,
+                live_price_manager=live_price_manager,  # Reuse shared instance
+                enable_realtime_prices=True
             )
             
             # Run monitoring
