@@ -14,8 +14,10 @@ from utils.logger import logger
 
 try:
     from .auth import KotakNeoAuth
+    from .auth_handler import handle_reauth
 except ImportError:
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.auth_handler import handle_reauth
 
 
 class KotakNeoPortfolio:
@@ -125,6 +127,7 @@ class KotakNeoPortfolio:
             logger.error(f" Error getting holdings: {e}")
             return None
     
+    @handle_reauth
     def get_positions(self) -> Optional[Dict]:
         """
         Get current positions (open trades for the day)
@@ -173,6 +176,7 @@ class KotakNeoPortfolio:
             logger.error(" Error getting positions: {e}")
             return None
     
+    @handle_reauth
     def get_limits(self) -> Optional[Dict]:
         """
         Get account limits and margins
