@@ -16,8 +16,10 @@ from utils.logger import logger
 
 try:
     from .auth import KotakNeoAuth
+    from .auth_handler import handle_reauth
 except ImportError:
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.auth_handler import handle_reauth
 
 
 class KotakNeoMarketData:
@@ -35,6 +37,7 @@ class KotakNeoMarketData:
         self.auth = auth
         logger.info("KotakNeoMarketData initialized")
     
+    @handle_reauth
     def get_quote(self, symbol: str, exchange: str = "NSE", instrument_token: str = None) -> Optional[Dict]:
         """
         Get real-time quote for a symbol
