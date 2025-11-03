@@ -170,37 +170,52 @@ class TradingService:
     
     def _subscribe_to_open_positions(self):
         """
-        Subscribe WebSocket to any existing open positions.
-        Prevents empty subscription reconnect loop.
+        Subscribe WebSocket to symbols with active pending sell orders.
+        This ensures real-time prices for sell order monitoring.
+        
+        Note: This method is called at startup. The SellOrderManager will
+        subscribe to additional symbols as sell orders are placed during runtime.
         """
         if not self.price_cache:
             return
         
         try:
-            from .storage import load_history
-            
-            # Load open positions from history
-            history = load_history(config.TRADES_HISTORY_PATH)
-            trades = history.get('trades', [])
-            open_trades = [t for t in trades if t.get('status') == 'open']
-            
-            if not open_trades:
-                logger.debug("No open positions to subscribe to WebSocket")
+            # Get pending sell orders from broker
+            if not self.auth:
+                logger.debug("Auth not initialized, skipping WebSocket subscription")
                 return
             
-            # Extract unique symbols
+            from .orders import KotakNeoOrders
+            orders_client = KotakNeoOrders(self.auth)
+            pending_orders = orders_client.get_pending_orders()
+            
+            if not pending_orders:
+                logger.debug("No pending orders to subscribe to WebSocket")
+                return
+            
+            # Extract symbols from SELL orders only
             symbols = set()
-            for trade in open_trades:
-                symbol = trade.get('symbol', '').replace('.NS', '').replace('.BO', '').upper()
+            for order in pending_orders:
+                # Check if this is a SELL order
+                txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
+                if txn_type not in ['S', 'SELL']:
+                    continue
+                
+                # Extract symbol (e.g., 'DALBHARAT-EQ' -> 'DALBHARAT')
+                symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
+                if '-' in symbol:
+                    symbol = symbol.split('-')[0]
+                symbol = symbol.upper()
+                
                 if symbol:
                     symbols.add(symbol)
             
             if symbols:
-                logger.info(f"Subscribing to {len(symbols)} open position(s) on WebSocket...")
+                logger.info(f"Subscribing to {len(symbols)} active sell order(s) on WebSocket...")
                 self.price_cache.subscribe(list(symbols))
-                logger.info(f"✅ Subscribed to WebSocket for: {', '.join(sorted(symbols))}")
+                logger.info(f"✅ Subscribed to WebSocket for sell orders: {', '.join(sorted(symbols))}")
             else:
-                logger.debug("No valid symbols found in open positions")
+                logger.debug("No active sell orders found to subscribe")
                 
         except Exception as e:
             logger.warning(f"Failed to subscribe to open positions: {e}")
