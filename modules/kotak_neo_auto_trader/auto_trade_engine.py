@@ -477,20 +477,30 @@ class AutoTradeEngine:
             logger.error(f"Failed to initialize Phase 2 modules: {e}", exc_info=True)
             logger.warning("Continuing without Phase 2 features")
 
-    def monitor_positions(self) -> Dict[str, Any]:
+    def monitor_positions(self, live_price_manager=None) -> Dict[str, Any]:
         """
         Monitor all open positions for reentry/exit signals.
+        
+        Args:
+            live_price_manager: Optional shared LivePriceCache/LivePriceManager instance
+                               to avoid duplicate auth sessions and WebSocket connections
         
         Returns:
             Dict with monitoring results
         """
         try:
-            from .position_monitor import get_position_monitor
+            from .position_monitor import PositionMonitor, get_telegram_notifier
             
-            # Get position monitor
-            monitor = get_position_monitor(
+            # Use direct instantiation to pass shared live_price_manager
+            # This avoids creating duplicate auth sessions and WebSocket connections
+            telegram = get_telegram_notifier() if self._enable_telegram else None
+            
+            monitor = PositionMonitor(
                 history_path=self.history_path,
-                enable_alerts=self._enable_telegram
+                telegram_notifier=telegram,
+                enable_alerts=self._enable_telegram,
+                live_price_manager=live_price_manager,  # Pass shared instance
+                enable_realtime_prices=True
             )
             
             # Run monitoring
@@ -845,7 +855,8 @@ class AutoTradeEngine:
                         break
         
         # Check if order was successful
-        resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp) and 'error' not in resp and 'not_ok' not in str(resp).lower()
+        # Accept responses with nOrdNo (direct order ID) or data/order/raw structures
+        resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp or 'nOrdNo' in resp or 'nordno' in str(resp).lower()) and 'error' not in resp and 'not_ok' not in str(resp).lower()
         
         if not resp_valid:
             logger.error(f"Order placement failed for {broker_symbol}")

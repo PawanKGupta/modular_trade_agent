@@ -4,6 +4,13 @@ Unit tests for AnalysisService (Phase 1 refactoring)
 Tests the new service layer extracted from monolithic analyze_ticker() function.
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
+
 import pytest
 import pandas as pd
 from unittest.mock import Mock, MagicMock, patch

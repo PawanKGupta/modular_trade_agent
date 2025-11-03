@@ -102,7 +102,9 @@ class PipelineStep(ABC):
         Returns:
             True if step should be skipped
         """
-        return not self.enabled or context.has_error()
+        # Only skip if step is disabled
+        # Don't skip due to errors - let each step handle errors gracefully
+        return not self.enabled
     
     def __call__(self, context: PipelineContext) -> PipelineContext:
         """
@@ -346,9 +348,21 @@ class AnalysisPipeline:
         Returns:
             True if has critical error
         """
-        # For now, all errors are critical
-        # Can be extended to allow non-critical warnings
-        return True
+        # Data fetch errors are critical - can't proceed without data
+        # But allow verdict step to run to set a default verdict
+        critical_errors = [
+            "No data available",
+            "Data fetch failed",
+            "No data available for verdict determination"
+        ]
+        
+        for error in context.errors:
+            if any(critical in error for critical in critical_errors):
+                # Still critical, but allow verdict step to handle it
+                return False  # Don't stop early - let verdict step set default
+        
+        # Other errors may be critical
+        return len(context.errors) > 0
     
     def get_step_names(self) -> List[str]:
         """

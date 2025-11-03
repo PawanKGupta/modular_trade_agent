@@ -29,18 +29,12 @@ try:
     from .sell_engine import SellOrderManager
     from .auth import KotakNeoAuth
     from .auto_trade_engine import AutoTradeEngine
-    from .live_price_cache import LivePriceCache
     from .live_price_manager import LivePriceManager
-    from .portfolio import KotakNeoPortfolio
-    from .scrip_master import KotakNeoScripMaster
 except ImportError:
     from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
     from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
-    from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
     from modules.kotak_neo_auto_trader.live_price_manager import LivePriceManager
-    from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
-    from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
 
 
 def is_trading_day() -> bool:
@@ -144,16 +138,11 @@ def main():
                         symbols.append(broker_symbol)
         
         if symbols:
-            # Initialize scrip_master and load data
-            scrip_master = KotakNeoScripMaster(exchanges=['NSE'], auth_client=auth.get_client())
-            scrip_master.load_scrip_master()  # Load scrip data
+            # Initialize LivePriceManager with env_file (it handles auth and scrip_master internally)
+            price_manager = LivePriceManager(env_file=args.env)
             
-            # Initialize LivePriceCache
-            price_cache = LivePriceCache(auth_client=auth, scrip_master=scrip_master)
-            
-            # Initialize and start LivePriceManager
-            price_manager = LivePriceManager(price_cache, symbols)
-            price_manager.start()
+            # Subscribe to positions for real-time prices
+            price_manager.subscribe_to_positions(symbols)
             
             logger.info(f"✅ LivePriceManager started for {len(symbols)} symbols: {', '.join(symbols)}")
             
@@ -261,6 +250,13 @@ def main():
         traceback.print_exc()
         
     finally:
+        # Clean up price manager
+        if price_manager:
+            try:
+                price_manager.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping price manager: {e}")
+        
         logger.info("\nSell order management session ended")
 
 

@@ -218,12 +218,26 @@ class PositionMonitor:
             
             # Use real-time LTP if available, else fall back to close price
             if self.price_manager:
-                current_price = self.price_manager.get_ltp(symbol, ticker)
-                if current_price is None:
-                    logger.warning(f"Could not get real-time LTP for {symbol}, using close price")
+                try:
+                    # Handle both LivePriceCache (single arg) and LivePriceManager (two args)
+                    if hasattr(self.price_manager, 'get_ltp'):
+                        import inspect
+                        sig = inspect.signature(self.price_manager.get_ltp)
+                        if len(sig.parameters) == 2:  # LivePriceManager: get_ltp(symbol, ticker)
+                            current_price = self.price_manager.get_ltp(symbol, ticker)
+                        else:  # LivePriceCache: get_ltp(symbol)
+                            current_price = self.price_manager.get_ltp(symbol)
+                        
+                        if current_price is None:
+                            logger.debug(f"Could not get real-time LTP for {symbol}, using close price")
+                            current_price = float(latest['close'])
+                        else:
+                            logger.debug(f"Using real-time LTP for {symbol}: ₹{current_price}")
+                    else:
+                        current_price = float(latest['close'])
+                except Exception as e:
+                    logger.debug(f"Error getting real-time LTP for {symbol}: {e}, using close price")
                     current_price = float(latest['close'])
-                else:
-                    logger.debug(f"Using real-time LTP for {symbol}: ₹{current_price}")
             else:
                 current_price = float(latest['close'])
             
@@ -399,7 +413,8 @@ class PositionMonitor:
 def get_position_monitor(
     history_path: str = "data/trades_history.json",
     enable_alerts: bool = True,
-    enable_realtime_prices: bool = True
+    enable_realtime_prices: bool = True,
+    live_price_manager=None
 ) -> PositionMonitor:
     """
     Factory function to get position monitor instance.
@@ -408,6 +423,8 @@ def get_position_monitor(
         history_path: Path to trades history
         enable_alerts: Enable Telegram alerts
         enable_realtime_prices: Use real-time prices from WebSocket
+        live_price_manager: Optional shared LivePriceCache/LivePriceManager instance
+                           to avoid duplicate auth sessions (backward compatible)
     
     Returns:
         PositionMonitor instance
@@ -417,5 +434,6 @@ def get_position_monitor(
         history_path=history_path,
         telegram_notifier=telegram,
         enable_alerts=enable_alerts,
+        live_price_manager=live_price_manager,  # Pass through if provided
         enable_realtime_prices=enable_realtime_prices
     )

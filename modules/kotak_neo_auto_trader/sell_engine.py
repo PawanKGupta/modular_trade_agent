@@ -32,6 +32,8 @@ try:
     from .storage import load_history, save_history
     from .scrip_master import KotakNeoScripMaster
     from .live_price_cache import LivePriceCache
+    from .utils.symbol_utils import extract_ticker_base, extract_base_symbol, get_lookup_symbol
+    from .utils.price_manager_utils import get_ltp_from_manager
     from . import config
 except ImportError:
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
@@ -41,6 +43,8 @@ except ImportError:
     from modules.kotak_neo_auto_trader.storage import load_history, save_history
     from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
     from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
+    from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_ticker_base, extract_base_symbol, get_lookup_symbol
+    from modules.kotak_neo_auto_trader.utils.price_manager_utils import get_ltp_from_manager
     from modules.kotak_neo_auto_trader import config
 
 
@@ -227,13 +231,18 @@ class SellOrderManager:
         Returns:
             Current LTP or None
         """
-        # Extract base symbol
-        base_symbol = ticker.replace('.NS', '').replace('.BO', '').upper()
+        # Extract base symbol using utility function
+        base_symbol = extract_ticker_base(ticker)
         
-        # Try LivePriceManager first (real-time WebSocket prices)
+        # Try LivePriceCache/LivePriceManager first (real-time WebSocket prices)
         if self.price_manager:
             try:
-                ltp = self.price_manager.get_ltp(base_symbol, ticker)
+                # Get appropriate lookup symbol (prioritize broker_symbol for correct instrument token)
+                lookup_symbol = get_lookup_symbol(broker_symbol, base_symbol)
+                
+                # Use utility function to handle different price manager interfaces
+                ltp = get_ltp_from_manager(self.price_manager, lookup_symbol, ticker)
+                
                 if ltp is not None:
                     logger.info(f"➡️ {base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
                     return ltp
@@ -375,7 +384,7 @@ class SellOrderManager:
                     logger.info(f"✅ Order modified successfully: {symbol} @ ₹{rounded_price:.2f}")
                     
                     # Update tracking (order_id stays same, just update price)
-                    base_symbol = symbol.split('-')[0]
+                    base_symbol = extract_base_symbol(symbol)
                     if base_symbol in self.active_sell_orders:
                         self.active_sell_orders[base_symbol]['target_price'] = rounded_price
                     
@@ -450,7 +459,7 @@ class SellOrderManager:
             if new_order_id:
                 logger.info(f"✅ Replacement order placed: {symbol} @ ₹{price:.2f}, Order ID: {new_order_id}")
                 # Update tracking with new order ID
-                base_symbol = symbol.split('-')[0]
+                base_symbol = extract_base_symbol(symbol)
                 old_entry = self.active_sell_orders.get(base_symbol, {})
                 self.active_sell_orders[base_symbol] = {
                     'order_id': str(new_order_id),
@@ -595,9 +604,7 @@ class SellOrderManager:
                     
                     order_id = str(order.get('nOrdNo') or order.get('orderId') or '')
                     symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
-                    if '-' in symbol:
-                        symbol = symbol.split('-')[0]
-                    symbol = symbol.upper()
+                    symbol = extract_base_symbol(symbol)
                     
                     # Check if this is a manual sell (order_id not in our tracked orders)
                     is_bot_order = any(
@@ -739,6 +746,69 @@ class SellOrderManager:
         except Exception as e:
             logger.warning(f"Error cleaning up rejected orders: {e}")
     
+    def has_completed_sell_order(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Check if a symbol has a completed/executed sell order.
+        
+        Uses get_orders() directly to get ALL orders (including completed ones).
+        get_pending_orders() filters out completed orders, so we need get_orders().
+        
+        Args:
+            symbol: Base symbol (e.g., 'DALBHARAT') or full symbol (e.g., 'DALBHARAT-EQ')
+            
+        Returns:
+            Dict with order details {'order_id': str, 'price': float} if completed order found,
+            None otherwise
+        """
+        try:
+            # Use get_orders() directly to get ALL orders (including completed ones)
+            all_orders = self.orders.get_orders()
+            if not all_orders or 'data' not in all_orders:
+                return None
+            
+            # Extract base symbol for comparison using utility function
+            base_symbol = extract_base_symbol(symbol)
+            
+            # Check for completed SELL orders matching the symbol
+            for order in all_orders.get('data', []):
+                # Check transaction type - only SELL orders
+                txn_type = (order.get('transactionType') or order.get('trnsTp') or order.get('txnType') or '').upper()
+                if txn_type not in ['S', 'SELL']:
+                    continue
+                
+                # Extract order symbol using utility function
+                order_symbol = (order.get('tradingSymbol') or order.get('trdSym') or order.get('symbol') or '').upper()
+                order_base_symbol = extract_base_symbol(order_symbol)
+                
+                # Check if symbol matches
+                if order_base_symbol != base_symbol:
+                    continue
+                
+                # Check order status - look for completed/executed/filled
+                status = (order.get('orderStatus') or order.get('ordSt') or order.get('status') or '').lower()
+                
+                # Check for completed status keywords
+                if any(keyword in status for keyword in ['complete', 'executed', 'filled', 'done']):
+                    order_id = order.get('neoOrdNo') or order.get('nOrdNo') or order.get('orderId')
+                    
+                    # Extract order price (execution price)
+                    order_price = (
+                        float(order.get('prc') or order.get('price') or order.get('executedPrice') or order.get('executed_price') or 0)
+                    )
+                    
+                    logger.info(f"✅ Found completed sell order for {base_symbol}: Order ID {order_id}, Status: {status}, Price: ₹{order_price:.2f}")
+                    
+                    return {
+                        'order_id': str(order_id) if order_id else '',
+                        'price': order_price
+                    }
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error checking for completed sell order for {symbol}: {e}")
+            return None
+    
     def get_existing_sell_orders(self) -> Dict[str, Dict[str, Any]]:
         """
         Get existing pending sell orders from broker to avoid duplicates
@@ -763,8 +833,7 @@ class SellOrderManager:
                     
                     # Extract symbol (remove -EQ suffix)
                     symbol = order.get('trdSym') or order.get('tradingSymbol') or order.get('symbol') or ''
-                    if '-' in symbol:
-                        symbol = symbol.split('-')[0]
+                    symbol = extract_base_symbol(symbol)
                     
                     # Extract order details
                     qty = int(order.get('qty') or order.get('quantity') or 0)
@@ -819,6 +888,17 @@ class SellOrderManager:
             
             if not symbol or not ticker:
                 logger.warning(f"Skipping trade with missing symbol/ticker: {trade}")
+                continue
+            
+            # Check if position already has a completed sell order (already sold)
+            completed_order_info = self.has_completed_sell_order(symbol)
+            if completed_order_info:
+                logger.info(f"⏭️ Skipping {symbol}: Already has completed sell order - position already sold")
+                # Update trade history to mark position as closed
+                order_id = completed_order_info.get('order_id', '')
+                order_price = completed_order_info.get('price', 0)
+                if self.mark_position_closed(symbol, order_price, order_id):
+                    logger.info(f"✅ Updated trade history: {symbol} marked as closed (Order ID: {order_id}, Price: ₹{order_price:.2f})")
                 continue
             
             # Check for existing order with same symbol and quantity (avoid duplicate)
@@ -973,6 +1053,28 @@ class SellOrderManager:
         symbols_executed = []
         for symbol, order_info in list(self.active_sell_orders.items()):
             order_id = order_info.get('order_id')
+            
+            # Check if sell order has been completed (via get_orders() to catch all statuses)
+            completed_order_info = self.has_completed_sell_order(symbol)
+            if completed_order_info:
+                logger.info(f"✅ {symbol} sell order completed - removing from monitoring")
+                # Mark position as closed in trade history
+                # Use order price from completed order info, fallback to target_price
+                order_price = completed_order_info.get('price', 0)
+                if order_price == 0:
+                    order_price = order_info.get('target_price', 0)
+                
+                # Use order_id from completed order info if available, fallback to tracked order_id
+                completed_order_id = completed_order_info.get('order_id', '')
+                if not completed_order_id:
+                    completed_order_id = order_id or 'completed'
+                
+                if self.mark_position_closed(symbol, order_price, completed_order_id):
+                    symbols_executed.append(symbol)
+                    logger.info(f"✅ Position closed: {symbol} - removing from tracking")
+                continue
+            
+            # Also check executed_ids (from get_executed_orders())
             if order_id in executed_ids:
                 # Mark position as closed in trade history
                 current_price = order_info.get('target_price', 0)

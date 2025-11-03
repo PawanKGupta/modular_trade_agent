@@ -202,7 +202,12 @@ class DetermineVerdictStep(PipelineStep):
         try:
             # Get data from context
             if not context.data or 'df' not in context.data:
+                # Set default verdict when no data available
+                context.set_result('verdict', 'avoid')
+                context.set_result('justification', ['No data available - cannot determine verdict'])
+                context.set_result('verdict_source', 'rule_based')
                 context.add_error("No data available for verdict determination")
+                logger.warning(f"No data available for {context.ticker} - setting default verdict: avoid")
                 return context
             
             df = context.data['df']

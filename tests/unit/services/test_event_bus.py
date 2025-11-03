@@ -4,6 +4,13 @@ Unit tests for Event Bus (Phase 3)
 Tests the event-driven architecture implementation
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
+
 import pytest
 from datetime import datetime
 from services.event_bus import (

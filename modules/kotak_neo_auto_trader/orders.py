@@ -15,8 +15,10 @@ from utils.logger import logger
 
 try:
     from .auth import KotakNeoAuth
+    from .auth_handler import handle_reauth
 except ImportError:
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.auth_handler import handle_reauth
 
 
 class KotakNeoOrders:
@@ -35,6 +37,7 @@ class KotakNeoOrders:
         logger.info(" KotakNeoOrders initialized")
     
     # -------------------- Placement --------------------
+    @handle_reauth
     def place_equity_order(self,
                            symbol: str,
                            quantity: int,
@@ -188,6 +191,7 @@ class KotakNeoOrders:
         return None
 
     # -------------------- Cancel / Manage --------------------
+    @handle_reauth
     def modify_order(self, order_id: str, price: float = None, quantity: int = None, 
                      trigger_price: float = 0, validity: str = "DAY", order_type: str = "L") -> Optional[Dict]:
         """Modify an existing order's price and/or quantity."""
@@ -237,6 +241,7 @@ class KotakNeoOrders:
             logger.error(f"❌ Error modifying order {order_id}: {e}")
             return None
     
+    @handle_reauth
     def cancel_order(self, order_id: str) -> Optional[Dict]:
         """Cancel an order by ID, trying multiple SDK method names/params."""
         client = self.auth.get_client()
@@ -303,7 +308,8 @@ class KotakNeoOrders:
         return cancelled
 
     # -------------------- Retrieval --------------------
-    def get_orders(self, _retry_count: int = 0) -> Optional[Dict]:
+    @handle_reauth
+    def get_orders(self) -> Optional[Dict]:
         """Get all existing regular orders (not GTT) with fallbacks and raw logging."""
         client = self.auth.get_client()
         if not client:
@@ -322,27 +328,8 @@ class KotakNeoOrders:
             logger.info(" Retrieving existing orders...")
             orders = _call_any(["order_report", "get_order_report", "orderBook", "orders", "order_book"]) or {}
             
-            # Check for JWT expiry / invalid credentials
+            # Check for other errors (not auth errors - handled by decorator)
             if isinstance(orders, dict):
-                code = orders.get('code', '')
-                message = str(orders.get('message', '')).lower()
-                description = str(orders.get('description', '')).lower()
-                
-                # Detect JWT expiry
-                if code == '900901' or 'invalid jwt token' in description or 'invalid credentials' in message:
-                    if _retry_count == 0:
-                        logger.warning("❌ JWT token expired - attempting re-authentication...")
-                        if hasattr(self.auth, 'force_relogin') and self.auth.force_relogin():
-                            logger.info("✅ Re-authentication successful - retrying API call")
-                            return self.get_orders(_retry_count=1)  # Retry once
-                        else:
-                            logger.error("❌ Re-authentication failed")
-                            return None
-                    else:
-                        logger.error("❌ JWT token still invalid after re-authentication")
-                        return None
-                
-                # Check for other errors
                 if "error" in orders:
                     logger.error(f" Failed to get orders: {orders['error']}")
                     return None

@@ -187,7 +187,13 @@ class KotakNeoAuth:
                 self.session_token = session_response.data.token
                 self.logger.debug("2FA session token extracted from response.data.token")
             elif isinstance(session_response, dict) and 'data' in session_response:
-                token = (session_response.get('data') or {}).get('token')
+                # Fix: Check if data field is None before accessing it
+                data_field = session_response.get('data')
+                if data_field is None:
+                    self.logger.debug("2FA response data field is None - session may already be active")
+                    return True  # Don't fail if data is None (cached session)
+                
+                token = data_field.get('token') if isinstance(data_field, dict) else None
                 if token:
                     self.session_token = token
                     self.logger.debug("2FA session token extracted from response['data']['token']")
