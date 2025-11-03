@@ -78,6 +78,9 @@ class LivePriceCache:
         # Internal threads/handles
         self._monitor_thread: Optional[threading.Thread] = None
         
+        # Throttle connection logs to avoid spam
+        self._last_connect_log = 0
+        
         # Stats
         self.stats = {
             'messages_received': 0,
@@ -255,6 +258,35 @@ class LivePriceCache:
             
         except Exception as e:
             logger.error(f"Subscription failed: {e}", exc_info=True)
+            self.stats['errors'] += 1
+    
+    def subscribe_to_positions(self, symbols: List[str]):
+        """
+        Subscribe to live prices for given symbols.
+        Wrapper for backward compatibility with LivePriceManager interface.
+        
+        Args:
+            symbols: List of symbols (e.g., ["RELIANCE", "TCS"])
+        """
+        if not symbols:
+            return
+        
+        try:
+            self.subscribe(symbols)
+            logger.info(f"✓ Subscribed to {len(symbols)} positions")
+            
+            # Wait for initial connection and data
+            if self.wait_for_connection(timeout=10):
+                logger.info("✓ WebSocket connected")
+                if self.wait_for_data(timeout=10):
+                    logger.info("✓ Receiving live data")
+                else:
+                    logger.warning("⚠️ No data received yet (market may be closed)")
+            else:
+                logger.warning("⚠️ WebSocket connection timeout")
+                
+        except Exception as e:
+            logger.error(f"Subscription failed: {e}")
             self.stats['errors'] += 1
     
     def unsubscribe(self, symbols: List[str]):
@@ -476,8 +508,15 @@ class LivePriceCache:
         if self._shutdown.is_set():
             # Ignore late open during shutdown
             return
-        logger.info(f"WebSocket connected: {message}")
         self._ws_connected.set()
+        
+        # Throttle connection logs to avoid spam from broker keepalive
+        now = time.time()
+        if now - self._last_connect_log > 60:  # Log once per minute max
+            logger.info(f"WebSocket connected: {message}")
+            self._last_connect_log = now
+        else:
+            logger.debug(f"WebSocket keepalive: {message}")
         
         # Note: We don't resubscribe here because:
         # 1. If this is the first connection, subscribe() was already called which triggered the connection
