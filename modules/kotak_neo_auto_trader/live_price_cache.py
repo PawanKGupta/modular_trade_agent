@@ -212,12 +212,47 @@ class LivePriceCache:
         
         # Subscribe via WebSocket
         try:
+            # If not connected yet, subscribe() will establish connection automatically
+            # But we can also try to explicitly start the connection first
+            if not self._ws_connected.is_set():
+                logger.info("WebSocket not connected yet, establishing connection via subscribe()...")
+                # The Kotak Neo client's subscribe() method should automatically establish
+                # the WebSocket connection if not already connected, but let's make sure
+                # by checking if there's a start method we should call first
+                try:
+                    # Try to explicitly start WebSocket if method exists
+                    if hasattr(self.client, 'start_websocket'):
+                        self.client.start_websocket()
+                    elif hasattr(self.client, 'startWebSocket'):
+                        self.client.startWebSocket()
+                    elif hasattr(self.client, 'connect_websocket'):
+                        self.client.connect_websocket()
+                    elif hasattr(self.client, 'connectWebSocket'):
+                        self.client.connectWebSocket()
+                except Exception as e:
+                    logger.debug(f"Explicit WebSocket start not available/needed: {e}")
+                    # This is fine - subscribe() will handle it
+            
+            # Subscribe - this will establish connection if not already connected
             self.client.subscribe(
                 instrument_tokens=tokens_to_subscribe,
                 isIndex=False,
                 isDepth=False
             )
             logger.info(f"✓ Subscribed to {len(tokens_to_subscribe)} new instruments")
+            
+            # Wait a moment for connection and subscription to be processed
+            time.sleep(1)
+            
+            # Check if connection was established
+            if not self._ws_connected.is_set():
+                logger.warning("WebSocket connection not established after subscribe() - waiting...")
+                # Wait up to 5 seconds for connection
+                if self._ws_connected.wait(timeout=5.0):
+                    logger.info("✓ WebSocket connection established")
+                else:
+                    logger.warning("⚠️ WebSocket connection timeout after subscribe()")
+            
         except Exception as e:
             logger.error(f"Subscription failed: {e}", exc_info=True)
             self.stats['errors'] += 1
@@ -270,12 +305,13 @@ class LivePriceCache:
             except Exception as e:
                 logger.error(f"Unsubscribe failed: {e}")
     
-    def get_ltp(self, symbol: str) -> Optional[float]:
+    def get_ltp(self, symbol: str, ticker: Optional[str] = None) -> Optional[float]:
         """
         Get latest LTP for a symbol.
         
         Args:
             symbol: Symbol name (e.g., "RELIANCE")
+            ticker: Optional ticker (e.g., "RELIANCE.NS") - not used but kept for compatibility
         
         Returns:
             Latest LTP or None if not available/stale
@@ -431,6 +467,7 @@ class LivePriceCache:
             logger.debug(f"WebSocket error during shutdown: {error}")
             return
         logger.error(f"WebSocket error: {error}")
+        logger.error(f"Error type: {type(error)}, Error details: {str(error)}")
         self.stats['errors'] += 1
         self._ws_connected.clear()
     
@@ -441,6 +478,11 @@ class LivePriceCache:
             return
         logger.info(f"WebSocket connected: {message}")
         self._ws_connected.set()
+        
+        # Note: We don't resubscribe here because:
+        # 1. If this is the first connection, subscribe() was already called which triggered the connection
+        # 2. If this is a reconnection, the _reconnect() method handles resubscription
+        # Resubscribing here can cause connection to close/reopen in a loop
     
     def _on_close(self, message):
         """WebSocket close callback."""
@@ -449,10 +491,17 @@ class LivePriceCache:
             return
         logger.warning(f"WebSocket closed: {message}")
         self._ws_connected.clear()
+        
+        # Log why connection might have closed
+        if message:
+            logger.debug(f"Close reason: {message}")
     
     def _connection_monitor(self):
         """Monitor connection and reconnect if needed."""
         logger.info("Connection monitor started")
+        
+        # Track if we've ever been connected (to distinguish initial connection from reconnection)
+        has_ever_connected = False
         
         while self._ws_running.is_set() and not self._shutdown.is_set():
             try:
@@ -460,8 +509,27 @@ class LivePriceCache:
                 if not self._ws_connected.is_set():
                     if self._shutdown.is_set():
                         break
-                    logger.warning("WebSocket disconnected, attempting reconnect...")
-                    self._reconnect()
+                    
+                    # If we've been connected before, this is a reconnection
+                    if has_ever_connected:
+                        # Only reconnect if we have active subscriptions
+                        if self._subscribed_tokens:
+                            logger.warning(f"WebSocket disconnected ({len(self._subscribed_tokens)} subscriptions pending), attempting reconnect...")
+                            self._reconnect()
+                        else:
+                            logger.debug("WebSocket disconnected, but no active subscriptions. Waiting...")
+                    else:
+                        # Initial connection - subscribe() will establish it when called
+                        # Just wait for subscriptions to be made
+                        if self._subscribed_tokens:
+                            logger.debug(f"Initial connection pending ({len(self._subscribed_tokens)} subscriptions) - subscribe() will establish connection")
+                        else:
+                            logger.debug("WebSocket not connected yet, waiting for subscriptions...")
+                else:
+                    # Mark that we've been connected at least once
+                    if not has_ever_connected:
+                        has_ever_connected = True
+                        logger.info("✅ WebSocket connection established")
                 
                 # Sleep before next check
                 for _ in range(int(max(1, self.reconnect_delay))):
@@ -481,6 +549,12 @@ class LivePriceCache:
         """Attempt to reconnect WebSocket."""
         if self._shutdown.is_set() or not self._ws_running.is_set():
             return
+        
+        # Don't reconnect if already connected
+        if self._ws_connected.is_set():
+            logger.debug("Already connected, no need to reconnect")
+            return
+        
         try:
             if not self._subscribed_tokens:
                 logger.debug("No subscriptions to reconnect")
@@ -488,7 +562,8 @@ class LivePriceCache:
             
             logger.info(f"Reconnecting with {len(self._subscribed_tokens)} subscriptions...")
             
-            # Resubscribe
+            # Subscribe (this will establish connection if not already connected)
+            # The Kotak Neo client will automatically establish WebSocket connection when subscribe() is called
             self.client.subscribe(
                 instrument_tokens=self._subscribed_tokens,
                 isIndex=False,
@@ -496,11 +571,14 @@ class LivePriceCache:
             )
             
             self.stats['reconnections'] += 1
-            logger.info("✓ Reconnected successfully")
+            logger.info(f"✓ Reconnection attempted (subscribe called, connection will open via callback)")
+            
+            # Wait a moment for connection to establish
+            time.sleep(1)
             
         except Exception as e:
             if not self._shutdown.is_set():
-                logger.error(f"Reconnection failed: {e}")
+                logger.error(f"Reconnection failed: {e}", exc_info=True)
                 self.stats['errors'] += 1
     
     def get_stats(self) -> Dict:

@@ -233,12 +233,23 @@ class SellOrderManager:
         # Try LivePriceManager first (real-time WebSocket prices)
         if self.price_manager:
             try:
-                ltp = self.price_manager.get_ltp(base_symbol, ticker)
+                # Use broker_symbol if available (e.g., 'DALBHARAT-EQ'), otherwise use base_symbol
+                # This matches the subscription which uses full trading symbols
+                lookup_symbol = broker_symbol.upper() if broker_symbol else base_symbol
+                ltp = self.price_manager.get_ltp(lookup_symbol, ticker)
                 if ltp is not None:
-                    logger.info(f"➡️ {base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
+                    logger.info(f"➡️ {lookup_symbol} LTP from WebSocket: ₹{ltp:.2f}")
                     return ltp
+                
+                # If lookup with broker_symbol failed, try base_symbol as fallback
+                if broker_symbol and lookup_symbol != base_symbol:
+                    ltp = self.price_manager.get_ltp(base_symbol, ticker)
+                    if ltp is not None:
+                        logger.info(f"➡️ {base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
+                        return ltp
             except Exception as e:
-                logger.debug(f"WebSocket LTP failed for {base_symbol}: {e}")
+                failed_symbol = lookup_symbol if broker_symbol else base_symbol
+                logger.debug(f"WebSocket LTP failed for {failed_symbol}: {e}")
         
         # Fallback to yfinance (delayed ~15-20 min)
         try:
@@ -792,6 +803,58 @@ class SellOrderManager:
             logger.warning(f"Could not fetch existing orders: {e}. Will proceed with placement.")
             return {}
     
+    def has_completed_sell_order(self, symbol: str) -> bool:
+        """
+        Check if a symbol already has a completed/executed sell order
+        
+        Args:
+            symbol: Trading symbol (base, without suffix)
+            
+        Returns:
+            True if there's a completed sell order for this symbol
+        """
+        try:
+            symbol_upper = symbol.upper()
+            
+            # Use get_orders() directly to get ALL orders (including completed ones)
+            # get_pending_orders() filters out completed orders, so we can't use it
+            all_orders = self.orders.get_orders()
+            if not all_orders or 'data' not in all_orders:
+                return False
+            
+            for order in all_orders['data']:
+                # Only check SELL orders
+                txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
+                if txn_type not in ['S', 'SELL']:
+                    continue
+                
+                # Extract symbol
+                order_symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
+                if '-' in order_symbol:
+                    order_symbol = order_symbol.split('-')[0]
+                order_symbol = order_symbol.upper()
+                
+                # Check if this is for our symbol
+                if order_symbol == symbol_upper:
+                    # Check order status - completed orders have 'complete' or 'executed' status
+                    status = (
+                        order.get('orderStatus') or 
+                        order.get('ordSt') or 
+                        order.get('status') or 
+                        ''
+                    ).lower()
+                    
+                    if 'complete' in status or 'executed' in status or 'filled' in status:
+                        order_id = order.get('nOrdNo') or order.get('orderId') or ''
+                        logger.info(f"✅ Found completed sell order for {symbol}: Order ID {order_id}, Status: {status}")
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Error checking completed sell orders for {symbol}: {e}")
+            return False
+    
     def run_at_market_open(self) -> int:
         """
         Place sell orders for all open positions at market open
@@ -819,6 +882,11 @@ class SellOrderManager:
             
             if not symbol or not ticker:
                 logger.warning(f"Skipping trade with missing symbol/ticker: {trade}")
+                continue
+            
+            # Skip if position already has a completed sell order
+            if self.has_completed_sell_order(symbol):
+                logger.info(f"⏭️ Skipping {symbol}: Already has completed sell order - position already sold")
                 continue
             
             # Check for existing order with same symbol and quantity (avoid duplicate)
@@ -959,6 +1027,25 @@ class SellOrderManager:
         
         # Clean up any rejected/cancelled orders before monitoring
         self._cleanup_rejected_orders()
+        
+        # Remove symbols that already have completed sell orders (don't monitor them)
+        symbols_with_completed_orders = []
+        for symbol in list(self.active_sell_orders.keys()):
+            if self.has_completed_sell_order(symbol):
+                symbols_with_completed_orders.append(symbol)
+                logger.info(f"✅ Skipping monitoring for {symbol}: Already has completed sell order")
+        
+        # Remove from tracking
+        for symbol in symbols_with_completed_orders:
+            if symbol in self.active_sell_orders:
+                # Mark position as closed if not already
+                order_info = self.active_sell_orders[symbol]
+                order_id = order_info.get('order_id')
+                current_price = order_info.get('target_price', 0)
+                self.mark_position_closed(symbol, current_price, order_id or '')
+                del self.active_sell_orders[symbol]
+            if symbol in self.lowest_ema9:
+                del self.lowest_ema9[symbol]
         
         if not self.active_sell_orders:
             logger.debug("No active sell orders to monitor")
