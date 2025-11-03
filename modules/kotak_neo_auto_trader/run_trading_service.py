@@ -32,6 +32,8 @@ try:
     from .auto_trade_engine import AutoTradeEngine
     from .orders import KotakNeoOrders
     from .portfolio import KotakNeoPortfolio
+    from .scrip_master import KotakNeoScripMaster
+    from .live_price_cache import LivePriceCache
     from . import config
 except ImportError:
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
@@ -39,6 +41,8 @@ except ImportError:
     from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
     from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
     from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
+    from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
+    from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
     from modules.kotak_neo_auto_trader import config
 
 
@@ -53,6 +57,8 @@ class TradingService:
         self.auth: Optional[KotakNeoAuth] = None
         self.engine: Optional[AutoTradeEngine] = None
         self.sell_manager: Optional[SellOrderManager] = None
+        self.price_cache: Optional[LivePriceCache] = None
+        self.scrip_master: Optional[KotakNeoScripMaster] = None
         self.running = False
         self.shutdown_requested = False
         
@@ -100,9 +106,16 @@ class TradingService:
             logger.info("Initializing trading engine...")
             self.engine = AutoTradeEngine(env_file=self.env_file, auth=self.auth)
             
-            # Initialize sell order manager (will be started at market open)
+            # Initialize WebSocket live price feed
+            logger.info("Initializing live price feed...")
+            self._initialize_live_prices()
+            
+            # Initialize sell order manager with live prices
             logger.info("Initializing sell order manager...")
-            self.sell_manager = SellOrderManager(self.auth)
+            self.sell_manager = SellOrderManager(
+                self.auth, 
+                price_manager=self.price_cache
+            )
             
             logger.info("✅ Service initialized successfully")
             logger.info("=" * 80)
@@ -113,6 +126,46 @@ class TradingService:
             import traceback
             traceback.print_exc()
             return False
+    
+    def _initialize_live_prices(self):
+        """
+        Initialize real-time price feed via WebSocket
+        
+        Creates:
+        - Scrip master for symbol/token mapping
+        - LivePriceCache for WebSocket price streaming
+        """
+        try:
+            # Load scrip master
+            logger.info("Loading scrip master...")
+            self.scrip_master = KotakNeoScripMaster(
+                auth_client=self.auth.client,
+                exchanges=['NSE']
+            )
+            self.scrip_master.load_scrip_master(force_download=False)
+            logger.info("✅ Scrip master loaded")
+            
+            # Initialize price cache with WebSocket
+            logger.info("Starting WebSocket price feed...")
+            self.price_cache = LivePriceCache(
+                auth_client=self.auth.client,
+                scrip_master=self.scrip_master,
+                stale_threshold_seconds=60,
+                reconnect_delay_seconds=5
+            )
+            
+            # Start WebSocket service
+            self.price_cache.start()
+            logger.info("✅ WebSocket price feed started")
+            
+            # Note: Symbols will be subscribed dynamically when sell orders are placed
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize live prices: {e}")
+            logger.warning("⚠️ Will fall back to yfinance for LTP (15min delayed)")
+            self.price_cache = None
+            self.scrip_master = None
+            # Don't fail initialization - system can work with yfinance fallback
     
     def is_trading_day(self) -> bool:
         """Check if today is a trading day (Monday-Friday)"""
@@ -373,6 +426,15 @@ class TradingService:
             logger.info("=" * 80)
             logger.info("TRADING SERVICE SHUTDOWN")
             logger.info("=" * 80)
+            
+            # Stop WebSocket price feed
+            if self.price_cache:
+                try:
+                    logger.info("Stopping WebSocket price feed...")
+                    self.price_cache.stop()
+                    logger.info("✅ WebSocket stopped")
+                except Exception as e:
+                    logger.error(f"Error stopping WebSocket: {e}")
             
             # Logout from session
             if self.auth:
