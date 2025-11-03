@@ -541,8 +541,8 @@ class SellOrderManager:
                     if entry_price and qty:
                         pnl = (exit_price - entry_price) * qty
                         pnl_pct = ((exit_price / entry_price) - 1) * 100
-                        trade['pnl'] = pnl
-                        trade['pnl_pct'] = pnl_pct
+                        trade['pnl'] = round(pnl, 2)
+                        trade['pnl_pct'] = round(pnl_pct, 2)
                         logger.info(f"Position closed: {symbol} - P&L: ₹{pnl:.2f} ({pnl_pct:+.2f}%)")
                     
                     updated = True
@@ -803,7 +803,7 @@ class SellOrderManager:
             logger.warning(f"Could not fetch existing orders: {e}. Will proceed with placement.")
             return {}
     
-    def has_completed_sell_order(self, symbol: str) -> bool:
+    def has_completed_sell_order(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         Check if a symbol already has a completed/executed sell order
         
@@ -811,7 +811,7 @@ class SellOrderManager:
             symbol: Trading symbol (base, without suffix)
             
         Returns:
-            True if there's a completed sell order for this symbol
+            Dict with order_id and price if completed order found, None otherwise
         """
         try:
             symbol_upper = symbol.upper()
@@ -820,7 +820,7 @@ class SellOrderManager:
             # get_pending_orders() filters out completed orders, so we can't use it
             all_orders = self.orders.get_orders()
             if not all_orders or 'data' not in all_orders:
-                return False
+                return None
             
             for order in all_orders['data']:
                 # Only check SELL orders
@@ -846,14 +846,18 @@ class SellOrderManager:
                     
                     if 'complete' in status or 'executed' in status or 'filled' in status:
                         order_id = order.get('nOrdNo') or order.get('orderId') or ''
-                        logger.info(f"✅ Found completed sell order for {symbol}: Order ID {order_id}, Status: {status}")
-                        return True
+                        order_price = order.get('ordPrc') or order.get('orderPrice') or order.get('prc') or 0
+                        logger.info(f"✅ Found completed sell order for {symbol}: Order ID {order_id}, Status: {status}, Price: ₹{order_price:.2f}")
+                        return {
+                            'order_id': order_id,
+                            'price': float(order_price) if order_price else 0
+                        }
             
-            return False
+            return None
             
         except Exception as e:
             logger.debug(f"Error checking completed sell orders for {symbol}: {e}")
-            return False
+            return None
     
     def run_at_market_open(self) -> int:
         """
@@ -885,8 +889,13 @@ class SellOrderManager:
                 continue
             
             # Skip if position already has a completed sell order
-            if self.has_completed_sell_order(symbol):
+            completed_order_info = self.has_completed_sell_order(symbol)
+            if completed_order_info:
                 logger.info(f"⏭️ Skipping {symbol}: Already has completed sell order - position already sold")
+                # Mark position as closed in trade history
+                order_id = completed_order_info.get('order_id', '')
+                order_price = completed_order_info.get('price', 0)
+                self.mark_position_closed(symbol, order_price, order_id)
                 continue
             
             # Check for existing order with same symbol and quantity (avoid duplicate)
@@ -1031,7 +1040,8 @@ class SellOrderManager:
         # Remove symbols that already have completed sell orders (don't monitor them)
         symbols_with_completed_orders = []
         for symbol in list(self.active_sell_orders.keys()):
-            if self.has_completed_sell_order(symbol):
+            completed_order_info = self.has_completed_sell_order(symbol)
+            if completed_order_info:
                 symbols_with_completed_orders.append(symbol)
                 logger.info(f"✅ Skipping monitoring for {symbol}: Already has completed sell order")
         
