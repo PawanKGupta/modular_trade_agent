@@ -178,7 +178,34 @@ EOF
 chmod +x run_agent.sh run_agent_backtest.sh
 ```
 
-### Step 7: Test Installation
+### Step 7: Configure Server Timezone
+
+**IMPORTANT**: Set the server timezone to IST (Indian Standard Time) to ensure scheduled tasks run at the correct time.
+
+```bash
+# Check current timezone
+timedatectl
+
+# Set timezone to Indian Standard Time (IST)
+sudo timedatectl set-timezone Asia/Kolkata
+
+# Verify the change
+timedatectl
+```
+
+**Expected output:**
+```
+               Local time: Mon 2025-11-03 09:00:00 IST
+           Universal time: Mon 2025-11-03 03:30:00 UTC
+                Time zone: Asia/Kolkata (IST, +0530)
+```
+
+**Why this is critical:**
+- The trading service schedules tasks based on **server local time**
+- If timezone is UTC, a 9:00 AM IST task will run at 3:30 AM UTC (wrong time)
+- Setting timezone to IST ensures tasks run at expected Indian market hours
+
+### Step 8: Test Installation
 
 ```bash
 source .venv/bin/activate
@@ -322,6 +349,17 @@ PrivateTmp=true
 WantedBy=multi-user.target
 ```
 
+**Before enabling the service**, ensure timezone is set to IST:
+
+```bash
+# Verify timezone is IST
+timedatectl | grep "Time zone"
+# Should show: Time zone: Asia/Kolkata (IST, +0530)
+
+# If not IST, set it now
+sudo timedatectl set-timezone Asia/Kolkata
+```
+
 Enable and start:
 
 ```bash
@@ -401,6 +439,34 @@ sudo apt-get install firefox firefox-geckodriver
 ```
 
 ### Runtime Issues
+
+#### Problem: Scheduled task not running at expected time
+
+**Symptom**: Service is running but tasks don't execute at 9:00 AM IST.
+
+**Cause**: Server timezone is not set to IST.
+
+**Solution**:
+```bash
+# Check current timezone
+timedatectl
+
+# If not Asia/Kolkata, set it
+sudo timedatectl set-timezone Asia/Kolkata
+
+# Restart the service to pick up new timezone
+sudo systemctl restart tradeagent-unified.service
+
+# Verify service is running
+systemctl status tradeagent-unified.service
+
+# Check logs to confirm
+journalctl -u tradeagent-unified.service -f
+```
+
+**Verification**:
+- Check logs the next day at 9:00 AM IST
+- You should see task execution entries in the journal
 
 #### Problem: No data fetched
 
