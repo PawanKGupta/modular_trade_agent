@@ -187,10 +187,12 @@ class KotakNeoAuth:
                 self.session_token = session_response.data.token
                 self.logger.debug("2FA session token extracted from response.data.token")
             elif isinstance(session_response, dict) and 'data' in session_response:
-                token = (session_response.get('data') or {}).get('token')
-                if token:
-                    self.session_token = token
-                    self.logger.debug("2FA session token extracted from response['data']['token']")
+                data = session_response.get('data')
+                if data and isinstance(data, dict):
+                    token = data.get('token')
+                    if token:
+                        self.session_token = token
+                        self.logger.debug("2FA session token extracted from response['data']['token']")
             
             return True
         except Exception as e:
