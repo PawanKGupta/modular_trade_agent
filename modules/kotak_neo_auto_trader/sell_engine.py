@@ -233,12 +233,23 @@ class SellOrderManager:
         # Try LivePriceManager first (real-time WebSocket prices)
         if self.price_manager:
             try:
-                ltp = self.price_manager.get_ltp(base_symbol, ticker)
+                # Use broker_symbol if available (e.g., 'DALBHARAT-EQ'), otherwise use base_symbol
+                # This matches the subscription which uses full trading symbols
+                lookup_symbol = broker_symbol.upper() if broker_symbol else base_symbol
+                ltp = self.price_manager.get_ltp(lookup_symbol, ticker)
                 if ltp is not None:
-                    logger.info(f"➡️ {base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
+                    logger.info(f"➡️ {lookup_symbol} LTP from WebSocket: ₹{ltp:.2f}")
                     return ltp
+                
+                # If lookup with broker_symbol failed, try base_symbol as fallback
+                if broker_symbol and lookup_symbol != base_symbol:
+                    ltp = self.price_manager.get_ltp(base_symbol, ticker)
+                    if ltp is not None:
+                        logger.info(f"➡️ {base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
+                        return ltp
             except Exception as e:
-                logger.debug(f"WebSocket LTP failed for {base_symbol}: {e}")
+                failed_symbol = lookup_symbol if broker_symbol else base_symbol
+                logger.debug(f"WebSocket LTP failed for {failed_symbol}: {e}")
         
         # Fallback to yfinance (delayed ~15-20 min)
         try:

@@ -158,7 +158,14 @@ class TradingService:
             self.price_cache.start()
             logger.info("✅ WebSocket price feed started")
             
-            # Subscribe to any existing open positions immediately
+            # Wait for connection to be established before subscribing
+            logger.info("Waiting for WebSocket connection...")
+            if self.price_cache.wait_for_connection(timeout=10):
+                logger.info("✅ WebSocket connection established")
+            else:
+                logger.warning("⚠️ WebSocket connection timeout, subscriptions may fail")
+            
+            # Subscribe to any existing open positions
             self._subscribe_to_open_positions()
             
         except Exception as e:
@@ -177,20 +184,24 @@ class TradingService:
         subscribe to additional symbols as sell orders are placed during runtime.
         """
         if not self.price_cache:
+            logger.warning("⚠️ Price cache not initialized, cannot subscribe to open positions")
             return
         
         try:
             # Get pending sell orders from broker
             if not self.auth:
-                logger.debug("Auth not initialized, skipping WebSocket subscription")
+                logger.warning("⚠️ Auth not initialized, skipping WebSocket subscription")
                 return
             
-            from .orders import KotakNeoOrders
+            logger.info("Getting pending sell orders to subscribe to WebSocket...")
+            from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
             orders_client = KotakNeoOrders(self.auth)
             pending_orders = orders_client.get_pending_orders()
             
+            logger.debug(f"Retrieved {len(pending_orders) if pending_orders else 0} pending orders")
+            
             if not pending_orders:
-                logger.debug("No pending orders to subscribe to WebSocket")
+                logger.info("No pending orders to subscribe to WebSocket")
                 return
             
             # Extract symbols from SELL orders only
@@ -199,26 +210,32 @@ class TradingService:
                 # Check if this is a SELL order
                 txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
                 if txn_type not in ['S', 'SELL']:
+                    logger.debug(f"Skipping non-SELL order: {txn_type}")
                     continue
                 
-                # Extract symbol (e.g., 'DALBHARAT-EQ' -> 'DALBHARAT')
+                # Extract symbol (keep full trading symbol like 'DALBHARAT-EQ' for accurate lookup)
                 symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
-                if '-' in symbol:
-                    symbol = symbol.split('-')[0]
+                if not symbol:
+                    logger.debug(f"Order missing symbol: {order}")
+                    continue
+                    
+                # Keep the full symbol (e.g., 'DALBHARAT-EQ') to get correct instrument token
+                # Don't strip the suffix as different segments (-EQ, -BL, etc.) have different tokens
                 symbol = symbol.upper()
                 
                 if symbol:
                     symbols.add(symbol)
+                    logger.debug(f"Found SELL order for symbol: {symbol}")
             
             if symbols:
-                logger.info(f"Subscribing to {len(symbols)} active sell order(s) on WebSocket...")
+                logger.info(f"Subscribing to {len(symbols)} active sell order(s) on WebSocket: {', '.join(sorted(symbols))}")
                 self.price_cache.subscribe(list(symbols))
                 logger.info(f"✅ Subscribed to WebSocket for sell orders: {', '.join(sorted(symbols))}")
             else:
-                logger.debug("No active sell orders found to subscribe")
+                logger.info("No SELL orders found to subscribe (all orders may be BUY or no valid symbols)")
                 
         except Exception as e:
-            logger.warning(f"Failed to subscribe to open positions: {e}")
+            logger.error(f"Failed to subscribe to open positions: {e}", exc_info=True)
             # Not critical - subscriptions will happen later
     
     def is_trading_day(self) -> bool:

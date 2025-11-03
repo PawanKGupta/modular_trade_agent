@@ -148,16 +148,32 @@ def main():
             scrip_master = KotakNeoScripMaster(exchanges=['NSE'], auth_client=auth.get_client())
             scrip_master.load_scrip_master()  # Load scrip data
             
-            # Initialize LivePriceCache
-            price_cache = LivePriceCache(auth_client=auth, scrip_master=scrip_master)
+            # Initialize LivePriceCache (use directly, not via LivePriceManager)
+            price_cache = LivePriceCache(
+                auth_client=auth.client,
+                scrip_master=scrip_master,
+                stale_threshold_seconds=60,
+                reconnect_delay_seconds=5
+            )
             
-            # Initialize and start LivePriceManager
-            price_manager = LivePriceManager(price_cache, symbols)
-            price_manager.start()
+            # Start WebSocket service
+            price_cache.start()
+            logger.info("✅ WebSocket price feed started")
             
-            logger.info(f"✅ LivePriceManager started for {len(symbols)} symbols: {', '.join(symbols)}")
+            # Wait for connection to be established before subscribing
+            logger.info("Waiting for WebSocket connection...")
+            if price_cache.wait_for_connection(timeout=10):
+                logger.info("✅ WebSocket connection established")
+            else:
+                logger.warning("⚠️ WebSocket connection timeout, subscriptions may fail")
             
-            # Give it a moment to connect and fetch initial prices
+            # Subscribe to symbols
+            price_cache.subscribe(symbols)
+            price_manager = price_cache  # Use LivePriceCache directly
+            
+            logger.info(f"✅ LivePriceCache started for {len(symbols)} symbols: {', '.join(symbols)}")
+            
+            # Give it a moment to fetch initial prices
             time.sleep(2)
         else:
             logger.info("No open sell orders found, skipping LivePriceManager initialization")
