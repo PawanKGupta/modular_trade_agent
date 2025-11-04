@@ -296,18 +296,24 @@ class TradingService:
                                 symbols.append(symbol)
                         
                         # Also get symbols from existing sell orders
+                        from .utils.order_field_extractor import OrderFieldExtractor
+                        from .utils.order_status_parser import OrderStatusParser
+                        from .utils.symbol_utils import extract_base_symbol
+                        from .domain.value_objects.order_enums import OrderStatus
+                        
                         orders_api = KotakNeoOrders(self.auth)
                         orders_response = orders_api.get_orders()
                         
                         if orders_response and 'data' in orders_response:
                             for order in orders_response['data']:
-                                status = (order.get('orderStatus') or order.get('ordSt') or order.get('status') or '').lower()
-                                txn_type = (order.get('transactionType') or order.get('trnsTp') or order.get('txnType') or '').upper()
-                                broker_symbol = (order.get('tradingSymbol') or order.get('trdSym') or order.get('symbol') or '').replace('-EQ', '')
+                                status = OrderStatusParser.parse_status(order)
+                                txn_type = OrderFieldExtractor.get_transaction_type(order)
+                                broker_symbol = OrderFieldExtractor.get_symbol(order)
+                                base_symbol = extract_base_symbol(broker_symbol) if broker_symbol else ''
                                 
-                                if status == 'open' and txn_type == 'S' and broker_symbol:
-                                    if broker_symbol not in symbols:
-                                        symbols.append(broker_symbol)
+                                if status == OrderStatus.OPEN and txn_type == 'S' and base_symbol:
+                                    if base_symbol not in symbols:
+                                        symbols.append(base_symbol)
                         
                         if symbols:
                             # Subscribe to any new symbols (existing ones already subscribed)
