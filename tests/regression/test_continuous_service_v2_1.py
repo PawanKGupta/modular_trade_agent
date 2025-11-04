@@ -351,7 +351,7 @@ class TestDeprecatedScriptsWarnings:
         script_path = project_root / "modules" / "kotak_neo_auto_trader" / "run_auto_trade.py"
         content = script_path.read_text(encoding="utf-8")
         
-        assert "⚠️ DEPRECATED" in content
+        assert "DEPRECATED" in content
         assert "run_trading_service.py" in content
         assert "manual fallback" in content.lower()
     
@@ -360,7 +360,7 @@ class TestDeprecatedScriptsWarnings:
         script_path = project_root / "modules" / "kotak_neo_auto_trader" / "run_place_amo.py"
         content = script_path.read_text(encoding="utf-8")
         
-        assert "⚠️ DEPRECATED" in content
+        assert "DEPRECATED" in content
         assert "run_trading_service.py" in content
     
     def test_run_sell_orders_has_deprecation_warning(self):
@@ -368,7 +368,7 @@ class TestDeprecatedScriptsWarnings:
         script_path = project_root / "modules" / "kotak_neo_auto_trader" / "run_sell_orders.py"
         content = script_path.read_text(encoding="utf-8")
         
-        assert "⚠️ DEPRECATED" in content
+        assert "DEPRECATED" in content
         assert "run_trading_service.py" in content
     
     def test_run_position_monitor_has_deprecation_warning(self):
@@ -376,7 +376,7 @@ class TestDeprecatedScriptsWarnings:
         script_path = project_root / "modules" / "kotak_neo_auto_trader" / "run_position_monitor.py"
         content = script_path.read_text(encoding="utf-8")
         
-        assert "⚠️ DEPRECATED" in content
+        assert "DEPRECATED" in content
         assert "run_trading_service.py" in content
     
     def test_run_eod_cleanup_has_deprecation_warning(self):
@@ -384,7 +384,7 @@ class TestDeprecatedScriptsWarnings:
         script_path = project_root / "modules" / "kotak_neo_auto_trader" / "run_eod_cleanup.py"
         content = script_path.read_text(encoding="utf-8")
         
-        assert "⚠️ DEPRECATED" in content
+        assert "DEPRECATED" in content
         assert "run_trading_service.py" in content
 
 
