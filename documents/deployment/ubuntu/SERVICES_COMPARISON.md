@@ -106,7 +106,9 @@ chmod +x setup_ubuntu.sh
 sudo ./setup_ubuntu.sh
 
 # Option 2: Unified Service (1 persistent service - Recommended)
-# Create manual unit as per INSTALL_UBUNTU.md (tradeagent-unified.service)
+chmod +x setup_ubuntu_unified.sh
+sudo ./setup_ubuntu_unified.sh
+# Or manually create systemd unit as per INSTALL_UBUNTU.md
 ```
 
 ### Windows
@@ -298,12 +300,19 @@ STOP_ALL_SERVICES.bat
 ### Unified Service Approach (Recommended)
 - **Purpose**: Single persistent trading session
 - **Services**: 1 unified service handling all tasks
-- **Setup**: Create systemd unit as per INSTALL_UBUNTU.md (tradeagent-unified.service)
+- **Setup**: Run the unified service installer script:
+  ```bash
+  cd ~/modular_trade_agent
+  sudo ./setup_ubuntu_unified.sh
+  ```
+  Or manually create systemd unit as per INSTALL_UBUNTU.md (tradeagent-unified.service)
 - **Best for**:
   - Production deployment
   - Better resource management
   - No JWT expiry issues
   - Matches Windows implementation
+
+**Note**: If you get `Unit tradeagent-unified.service could not be found`, the service hasn't been created yet. Run the setup script above to create it.
 
 ---
 
@@ -317,8 +326,11 @@ STOP_ALL_SERVICES.bat
 systemctl list-timers tradeagent-*
 systemctl list-units tradeagent-* --all
 
-# Or unified service
+# Check unified service (if installed)
 systemctl status tradeagent-unified.service
+
+# If service not found, install it:
+# sudo ./setup_ubuntu_unified.sh
 ```
 
 **Windows:**
@@ -364,8 +376,13 @@ services.msc
 3. **Install** on Ubuntu:
    ```bash
    cd ~/modular_trade_agent
+   
+   # Option 1: Multiple services
    ./setup_ubuntu.sh
    sudo ./setup_complete_services_ubuntu.sh
+   
+   # Option 2: Unified service (Recommended)
+   sudo ./setup_ubuntu_unified.sh
    ```
 
 4. **Copy** configuration files:
@@ -383,6 +400,50 @@ services.msc
    ./verify_installation.sh
    systemctl list-timers tradeagent-*
    ```
+
+---
+
+## 🔧 Troubleshooting
+
+### Service Not Found Error
+
+**Error**: `Unit tradeagent-unified.service could not be found`
+
+**Solution**: The service hasn't been created yet. Install it using one of these methods:
+
+**Method 1: Use the setup script (Recommended)**
+```bash
+cd ~/modular_trade_agent
+chmod +x setup_ubuntu_unified.sh
+sudo ./setup_ubuntu_unified.sh
+```
+
+**Method 2: Manual installation**
+Follow the instructions in `documents/deployment/ubuntu/INSTALL_UBUNTU.md` under the "Unified Service Setup" section.
+
+**Method 3: Verify installation**
+```bash
+# Check if service file exists
+ls -la /etc/systemd/system/tradeagent-unified.service
+
+# If it doesn't exist, create it manually or run the setup script
+# If it exists but service isn't found, reload systemd:
+sudo systemctl daemon-reload
+systemctl status tradeagent-unified.service
+```
+
+### Check Which Services Are Installed
+
+```bash
+# List all tradeagent services
+systemctl list-units --all --type=service | grep tradeagent
+
+# List all tradeagent timers (for multi-service setup)
+systemctl list-timers --all | grep tradeagent
+
+# Check if unified service exists
+systemctl list-unit-files | grep tradeagent-unified
+```
 
 ---
 
