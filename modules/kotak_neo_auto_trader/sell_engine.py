@@ -32,6 +32,7 @@ try:
     from .storage import load_history, save_history
     from .scrip_master import KotakNeoScripMaster
     from .live_price_cache import LivePriceCache
+    from .order_state_manager import OrderStateManager
     from .utils.symbol_utils import extract_ticker_base, extract_base_symbol, get_lookup_symbol
     from .utils.price_manager_utils import get_ltp_from_manager
     from .utils.order_field_extractor import OrderFieldExtractor
@@ -45,6 +46,7 @@ except ImportError:
     from modules.kotak_neo_auto_trader.storage import load_history, save_history
     from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
     from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
+    from modules.kotak_neo_auto_trader.order_state_manager import OrderStateManager
     from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_ticker_base, extract_base_symbol, get_lookup_symbol
     from modules.kotak_neo_auto_trader.utils.price_manager_utils import get_ltp_from_manager
     from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
@@ -57,7 +59,7 @@ class SellOrderManager:
     Manages automated sell orders with EMA9 target tracking
     """
     
-    def __init__(self, auth: KotakNeoAuth, history_path: str = None, max_workers: int = 10, price_manager=None):
+    def __init__(self, auth: KotakNeoAuth, history_path: str = None, max_workers: int = 10, price_manager=None, order_state_manager: Optional[OrderStateManager] = None):
         """
         Initialize sell order manager
         
@@ -66,6 +68,7 @@ class SellOrderManager:
             history_path: Path to trade history JSON
             max_workers: Maximum threads for parallel monitoring
             price_manager: Optional LivePriceManager for real-time prices
+            order_state_manager: Optional OrderStateManager for unified state management
         """
         self.auth = auth
         self.orders = KotakNeoOrders(auth)
@@ -74,6 +77,21 @@ class SellOrderManager:
         self.history_path = history_path or config.TRADES_HISTORY_PATH
         self.max_workers = max_workers
         self.price_manager = price_manager
+        
+        # Initialize OrderStateManager if not provided (for backward compatibility)
+        self.state_manager = order_state_manager
+        if self.state_manager is None:
+            try:
+                # Try to create OrderStateManager with same history_path
+                data_dir = str(Path(self.history_path).parent) if self.history_path else "data"
+                self.state_manager = OrderStateManager(
+                    history_path=self.history_path,
+                    data_dir=data_dir
+                )
+                logger.debug("OrderStateManager initialized automatically")
+            except Exception as e:
+                logger.debug(f"OrderStateManager not available, using legacy mode: {e}")
+                self.state_manager = None
         
         # Initialize scrip master for symbol/token resolution
         self.scrip_master = KotakNeoScripMaster(
@@ -88,12 +106,166 @@ class SellOrderManager:
             logger.warning(f"Failed to load scrip master: {e}. Will use symbols as-is.")
         
         # Track active sell orders {symbol: {'order_id': str, 'target_price': float}}
+        # Legacy mode: Used when OrderStateManager is not available
         self.active_sell_orders: Dict[str, Dict[str, Any]] = {}
         
         # Track lowest EMA9 values {symbol: float}
         self.lowest_ema9: Dict[str, float] = {}
         
         logger.info(f"SellOrderManager initialized with {max_workers} worker threads")
+    
+    def _register_order(self, symbol: str, order_id: str, target_price: float, qty: int, ticker: Optional[str] = None, **kwargs) -> None:
+        """
+        Helper method to register order using OrderStateManager if available, otherwise legacy mode.
+        
+        Args:
+            symbol: Trading symbol
+            order_id: Order ID
+            target_price: Target price
+            qty: Quantity
+            ticker: Optional ticker symbol
+            **kwargs: Additional metadata
+        """
+        if self.state_manager:
+            self.state_manager.register_sell_order(
+                symbol=symbol,
+                order_id=order_id,
+                target_price=target_price,
+                qty=qty,
+                ticker=ticker,
+                **kwargs
+            )
+            # Sync active_sell_orders for backward compatibility
+            base_symbol = extract_base_symbol(symbol).upper()
+            self.active_sell_orders[base_symbol] = {
+                'order_id': order_id,
+                'target_price': target_price,
+                'qty': qty,
+                'ticker': ticker,
+                **kwargs
+            }
+        else:
+            # Legacy mode
+            base_symbol = extract_base_symbol(symbol).upper()
+            self.active_sell_orders[base_symbol] = {
+                'order_id': order_id,
+                'target_price': target_price,
+                'qty': qty,
+                'ticker': ticker,
+                **kwargs
+            }
+    
+    def _update_order_price(self, symbol: str, new_price: float) -> bool:
+        """
+        Helper method to update order price using OrderStateManager if available.
+        
+        Args:
+            symbol: Trading symbol
+            new_price: New target price
+            
+        Returns:
+            True if updated, False otherwise
+        """
+        if self.state_manager:
+            result = self.state_manager.update_sell_order_price(symbol, new_price)
+            if result:
+                # Sync active_sell_orders for backward compatibility
+                base_symbol = extract_base_symbol(symbol).upper()
+                if base_symbol in self.active_sell_orders:
+                    self.active_sell_orders[base_symbol]['target_price'] = new_price
+            return result
+        else:
+            # Legacy mode
+            base_symbol = extract_base_symbol(symbol).upper()
+            if base_symbol in self.active_sell_orders:
+                self.active_sell_orders[base_symbol]['target_price'] = new_price
+                return True
+            return False
+    
+    def _remove_order(self, symbol: str, reason: Optional[str] = None) -> bool:
+        """
+        Helper method to remove order using OrderStateManager if available.
+        
+        Args:
+            symbol: Trading symbol
+            reason: Optional reason for removal
+            
+        Returns:
+            True if removed, False otherwise
+        """
+        base_symbol = extract_base_symbol(symbol).upper()
+        
+        if self.state_manager:
+            # Always sync from OrderStateManager first to ensure consistency
+            state_orders = self.state_manager.get_active_sell_orders()
+            self.active_sell_orders.update(state_orders)
+            
+            # Try to remove from OrderStateManager (may or may not be there)
+            result = self.state_manager.remove_from_tracking(symbol, reason=reason)
+            
+            # Always remove from self.active_sell_orders if present (for backward compatibility)
+            # This ensures removal even if OrderStateManager didn't have it
+            removed = False
+            if base_symbol in self.active_sell_orders:
+                del self.active_sell_orders[base_symbol]
+                removed = True
+            
+            # Return True if either OrderStateManager had it or we removed from local dict
+            return result or removed
+        else:
+            # Legacy mode
+            if base_symbol in self.active_sell_orders:
+                del self.active_sell_orders[base_symbol]
+                return True
+            return False
+    
+    def _get_active_orders(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Helper method to get active orders, syncing from OrderStateManager if available.
+        
+        Returns:
+            Dict of active sell orders
+        """
+        if self.state_manager:
+            # Sync from OrderStateManager
+            state_orders = self.state_manager.get_active_sell_orders()
+            self.active_sell_orders.update(state_orders)
+        
+        return self.active_sell_orders
+    
+    def _mark_order_executed(self, symbol: str, order_id: str, execution_price: float, execution_qty: Optional[int] = None) -> bool:
+        """
+        Helper method to mark order as executed using OrderStateManager if available.
+        
+        Args:
+            symbol: Trading symbol
+            order_id: Order ID
+            execution_price: Execution price
+            execution_qty: Optional execution quantity
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.state_manager:
+            result = self.state_manager.mark_order_executed(
+                symbol=symbol,
+                order_id=order_id,
+                execution_price=execution_price,
+                execution_qty=execution_qty
+            )
+            if result:
+                # Sync active_sell_orders for backward compatibility
+                base_symbol = extract_base_symbol(symbol).upper()
+                if base_symbol in self.active_sell_orders:
+                    del self.active_sell_orders[base_symbol]
+            return result
+        else:
+            # Legacy mode - just remove from tracking
+            base_symbol = extract_base_symbol(symbol).upper()
+            if base_symbol in self.active_sell_orders:
+                del self.active_sell_orders[base_symbol]
+                return True
+            return False
     
     @staticmethod
     def round_to_tick_size(price: float, exchange: str = "NSE") -> float:
@@ -388,9 +560,7 @@ class SellOrderManager:
                     logger.info(f"✅ Order modified successfully: {symbol} @ ₹{rounded_price:.2f}")
                     
                     # Update tracking (order_id stays same, just update price)
-                    base_symbol = extract_base_symbol(symbol)
-                    if base_symbol in self.active_sell_orders:
-                        self.active_sell_orders[base_symbol]['target_price'] = rounded_price
+                    self._update_order_price(symbol, rounded_price)
                     
                     return True
                 else:
@@ -465,13 +635,14 @@ class SellOrderManager:
                 # Update tracking with new order ID
                 base_symbol = extract_base_symbol(symbol)
                 old_entry = self.active_sell_orders.get(base_symbol, {})
-                self.active_sell_orders[base_symbol] = {
-                    'order_id': str(new_order_id),
-                    'target_price': price,
-                    'placed_symbol': symbol,
-                    'qty': qty,
-                    'ticker': old_entry.get('ticker')
-                }
+                self._register_order(
+                    symbol=symbol,
+                    order_id=str(new_order_id),
+                    target_price=price,
+                    qty=qty,
+                    ticker=old_entry.get('ticker'),
+                    placed_symbol=symbol
+                )
                 return True
             
             return False
@@ -861,15 +1032,15 @@ class SellOrderManager:
                 return order
         return None
     
-    def _remove_from_tracking(self, symbol: str):
+    def _remove_from_tracking(self, symbol: str, reason: Optional[str] = None):
         """
         Remove symbol from active tracking.
         
         Args:
             symbol: Symbol to remove
+            reason: Optional reason for removal
         """
-        if symbol in self.active_sell_orders:
-            del self.active_sell_orders[symbol]
+        self._remove_order(symbol, reason=reason)
         if symbol in self.lowest_ema9:
             del self.lowest_ema9[symbol]
     
@@ -1014,8 +1185,12 @@ class SellOrderManager:
                 # Update trade history to mark position as closed
                 order_id = completed_order_info.get('order_id', '')
                 order_price = completed_order_info.get('price', 0)
-                if self.mark_position_closed(symbol, order_price, order_id):
-                    logger.info(f"✅ Updated trade history: {symbol} marked as closed (Order ID: {order_id}, Price: ₹{order_price:.2f})")
+                if self.state_manager:
+                    if self._mark_order_executed(symbol, order_id, order_price):
+                        logger.info(f"✅ Updated trade history: {symbol} marked as closed (Order ID: {order_id}, Price: ₹{order_price:.2f})")
+                else:
+                    if self.mark_position_closed(symbol, order_price, order_id):
+                        logger.info(f"✅ Updated trade history: {symbol} marked as closed (Order ID: {order_id}, Price: ₹{order_price:.2f})")
                 continue
             
             # Check for existing order with same symbol and quantity (avoid duplicate)
@@ -1025,13 +1200,14 @@ class SellOrderManager:
                     logger.info(f"⏭️ Skipping {symbol}: Existing sell order found (Order ID: {existing['order_id']}, Qty: {qty}, Price: ₹{existing['price']:.2f})")
                     # Track the existing order for monitoring
                     # IMPORTANT: Must include ticker for monitoring to work
-                    self.active_sell_orders[symbol] = {
-                        'order_id': existing['order_id'],
-                        'target_price': existing['price'],
-                        'placed_symbol': trade.get('placed_symbol') or f"{symbol}-EQ",
-                        'qty': qty,
-                        'ticker': ticker  # From trade history (e.g., GLENMARK.NS)
-                    }
+                    self._register_order(
+                        symbol=symbol,
+                        order_id=existing['order_id'],
+                        target_price=existing['price'],
+                        qty=qty,
+                        ticker=ticker,  # From trade history (e.g., GLENMARK.NS)
+                        placed_symbol=trade.get('placed_symbol') or f"{symbol}-EQ"
+                    )
                     self.lowest_ema9[symbol] = existing['price']
                     orders_placed += 1  # Count as placed (existing)
                     logger.debug(f"Tracked {symbol}: ticker={ticker}, order_id={existing['order_id']}")
@@ -1055,13 +1231,14 @@ class SellOrderManager:
             
             if order_id:
                 # Track the order
-                self.active_sell_orders[symbol] = {
-                    'order_id': order_id,
-                    'target_price': ema9,
-                    'placed_symbol': trade.get('placed_symbol') or f"{symbol}-EQ",
-                    'qty': qty,
-                    'ticker': ticker
-                }
+                self._register_order(
+                    symbol=symbol,
+                    order_id=order_id,
+                    target_price=ema9,
+                    qty=qty,
+                    ticker=ticker,
+                    placed_symbol=trade.get('placed_symbol') or f"{symbol}-EQ"
+                )
                 self.lowest_ema9[symbol] = ema9
                 orders_placed += 1
         
@@ -1091,9 +1268,13 @@ class SellOrderManager:
             # Check if this order was executed
             if order_id in executed_ids:
                 current_price = order_info.get('target_price', 0)
-                if self.mark_position_closed(symbol, current_price, order_id):
-                    result['action'] = 'executed'
-                    result['success'] = True
+                # Use OrderStateManager if available, otherwise legacy method
+                if self.state_manager:
+                    self._mark_order_executed(symbol, order_id, current_price)
+                else:
+                    self.mark_position_closed(symbol, current_price, order_id)
+                result['action'] = 'executed'
+                result['success'] = True
                 return result
             
             # Get current EMA9
@@ -1186,23 +1367,33 @@ class SellOrderManager:
                 if not completed_order_id:
                     completed_order_id = order_id or 'completed'
                 
-                if self.mark_position_closed(symbol, order_price, completed_order_id):
-                    symbols_executed.append(symbol)
-                    logger.info(f"✅ Position closed: {symbol} - removing from tracking")
+                if self.state_manager:
+                    if self._mark_order_executed(symbol, completed_order_id, order_price):
+                        symbols_executed.append(symbol)
+                        logger.info(f"✅ Position closed: {symbol} - removing from tracking")
+                else:
+                    if self.mark_position_closed(symbol, order_price, completed_order_id):
+                        symbols_executed.append(symbol)
+                        logger.info(f"✅ Position closed: {symbol} - removing from tracking")
                 continue
             
             # Also check executed_ids (from get_executed_orders())
             if order_id in executed_ids:
                 # Mark position as closed in trade history
                 current_price = order_info.get('target_price', 0)
-                if self.mark_position_closed(symbol, current_price, order_id):
-                    symbols_executed.append(symbol)
-                    logger.info(f"✅ Order executed: {symbol} - removing from tracking")
+                if self.state_manager:
+                    if self._mark_order_executed(symbol, order_id, current_price):
+                        symbols_executed.append(symbol)
+                        logger.info(f"✅ Order executed: {symbol} - removing from tracking")
+                else:
+                    if self.mark_position_closed(symbol, current_price, order_id):
+                        symbols_executed.append(symbol)
+                        logger.info(f"✅ Order executed: {symbol} - removing from tracking")
         
         # Clean up executed orders
         for symbol in symbols_executed:
-            if symbol in self.active_sell_orders:
-                del self.active_sell_orders[symbol]
+            # Remove from tracking (OrderStateManager handles this if available)
+            self._remove_order(symbol, reason="Executed")
             if symbol in self.lowest_ema9:
                 del self.lowest_ema9[symbol]
         
