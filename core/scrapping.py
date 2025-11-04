@@ -132,73 +132,79 @@ def get_stock_list():
             # URL of the chartink screener
             url = 'https://chartink.com/screener/daily-rsi-6602'
 
-            try:
-                # Open the page using Selenium
-                driver.get(url)
+            # Open the page using Selenium
+            driver.get(url)
 
-                # Wait for the page to load completely
-                WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//span[text()="Copy"]')))
+            # Wait for the page to load completely
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//span[text()="Copy"]')))
 
-                # Find and click the "Run Scan" button
-                run_scan_button = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, '//span[text()="Run Scan"]'))
-                )
-                run_scan_button.click()
+            # Find and click the "Run Scan" button
+            run_scan_button = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, '//span[text()="Run Scan"]'))
+            )
+            run_scan_button.click()
 
-                # Wait for scan results to load
-                WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//table[contains(@class, "rounded-b")]/tbody')))
+            # Wait for scan results to load
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//table[contains(@class, "rounded-b")]/tbody')))
 
-                driver.execute_script("window.scrollBy(0, 800);")
+            driver.execute_script("window.scrollBy(0, 800);")
 
-                # Wait for table to be visible after scroll
-                WebDriverWait(driver, 5).until(EC.visibility_of_element_located((By.XPATH, '//table[contains(@class, "rounded-b")]/tbody')))
+            # Wait for table to be visible after scroll
+            WebDriverWait(driver, 5).until(EC.visibility_of_element_located((By.XPATH, '//table[contains(@class, "rounded-b")]/tbody')))
 
-                element = driver.find_element(By.XPATH, '//table[contains(@class, "rounded-b")]/tbody')
+            element = driver.find_element(By.XPATH, '//table[contains(@class, "rounded-b")]/tbody')
 
-                # Get the HTML of that element
-                html_content = element.get_attribute("outerHTML")
+            # Get the HTML of that element
+            html_content = element.get_attribute("outerHTML")
 
-                soup = BeautifulSoup(html_content, 'html.parser')
+            soup = BeautifulSoup(html_content, 'html.parser')
 
-                rows = soup.find_all('tr')
-                stock_list = []
-                for row in rows:
-                    cols = row.find_all('td')
-                    if len(cols) == 7:
-                        stock_name = cols[2].text.strip()
-                        logger.debug(f"Found stock: {stock_name}")
-                        stock_list.append(stock_name)
+            rows = soup.find_all('tr')
+            stock_list = []
+            for row in rows:
+                cols = row.find_all('td')
+                if len(cols) == 7:
+                    stock_name = cols[2].text.strip()
+                    logger.debug(f"Found stock: {stock_name}")
+                    stock_list.append(stock_name)
 
-                copied_data = ', '.join(stock_list)
+            copied_data = ', '.join(stock_list)
 
-                # Log the copied data
-                logger.info("Copied Data: %s", copied_data)
-                return copied_data
+            # Log the copied data
+            logger.info("Copied Data: %s", copied_data)
+            
+            # Success - close driver and return
+            if driver:
+                try:
+                    driver.quit()
+                except Exception as e:
+                    logger.warning(f"Error closing driver: {e}")
+            
+            return copied_data
 
-            except Exception as e:
-                error_str = str(e).lower()
-                logger.error(f"Error during stock scraping (attempt {attempt + 1}/{max_retries}): {e}")
-                
-                # Check if it's a network/timeout error that we should retry
-                if any(keyword in error_str for keyword in ['timeout', 'connection', 'socket', 'read', 'timed out', 'network']):
-                    if attempt < max_retries - 1:
-                        continue
-                    else:
-                        logger.error("Stock scraping failed after all retries")
-                        return None
+        except Exception as e:
+            error_str = str(e).lower()
+            logger.error(f"Error during stock scraping (attempt {attempt + 1}/{max_retries}): {e}")
+            
+            # Clean up driver on error
+            if driver:
+                try:
+                    driver.quit()
+                except Exception as e2:
+                    logger.warning(f"Error closing driver: {e2}")
+            
+            # Check if it's a network/timeout error that we should retry
+            if any(keyword in error_str for keyword in ['timeout', 'connection', 'socket', 'read', 'timed out', 'network']):
+                if attempt < max_retries - 1:
+                    continue
                 else:
-                    # Non-network error - don't retry
-                    logger.error("Stock scraping failed with non-network error")
+                    logger.error("Stock scraping failed after all retries")
                     return None
-
-            finally:
-                # Close the browser window
-                if driver:
-                    try:
-                        driver.quit()
-                    except Exception as e:
-                        logger.warning(f"Error closing driver: {e}")
-        
-        # If we get here, all retries exhausted
-        logger.error("Stock scraping failed after all retry attempts")
-        return None
+            else:
+                # Non-network error - don't retry
+                logger.error("Stock scraping failed with non-network error")
+                return None
+    
+    # If we get here, all retries exhausted
+    logger.error("Stock scraping failed after all retry attempts")
+    return None
