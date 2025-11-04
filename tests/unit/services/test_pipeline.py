@@ -107,14 +107,16 @@ class TestPipelineStep:
         assert result.get_result('TestStep_executed') is None
     
     def test_step_skip_on_context_error(self):
-        """Test that step is skipped if context has error"""
+        """Test that step is NOT skipped if context has error (steps handle errors gracefully)"""
         step = MockStep("TestStep")
         context = PipelineContext(ticker="TEST.NS")
         context.add_error("Previous error")
         
         result = step(context)
         
-        assert step.execute_count == 0
+        # Steps should execute even with errors - they handle errors gracefully
+        # This was changed in a previous fix to allow verdict step to run even if data fetch fails
+        assert step.execute_count == 1
     
     def test_step_error_handling(self):
         """Test that step errors are caught and added to context"""

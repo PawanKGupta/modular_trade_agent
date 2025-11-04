@@ -10,6 +10,13 @@ from typing import Dict, Any
 
 from utils.logger import logger
 
+try:
+    from .utils.order_field_extractor import OrderFieldExtractor
+    from .utils.symbol_utils import extract_base_symbol
+except ImportError:
+    from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
+    from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
 DEFAULT_HISTORY_TEMPLATE = {
     "trades": [],  # list of trade entries
     "failed_orders": [],  # orders that failed due to insufficient balance (to retry later)
@@ -217,12 +224,11 @@ def check_manual_buys_of_failed_orders(path: str, orders_client, include_previou
         
         for order in executed_orders:
             # Only check BUY orders
-            txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
-            if txn_type not in ['B', 'BUY']:
+            if not OrderFieldExtractor.is_buy_order(order):
                 continue
             
             # Parse order date
-            order_time_str = order.get('ordDtTm') or order.get('orderTime') or ''
+            order_time_str = OrderFieldExtractor.get_order_time(order)
             try:
                 if order_time_str:
                     order_date = datetime.strptime(order_time_str.split()[0], '%d-%b-%Y').date()
@@ -240,10 +246,9 @@ def check_manual_buys_of_failed_orders(path: str, orders_client, include_previou
             ):
                 continue
             
-            # Extract symbol
-            symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
-            if '-' in symbol:
-                symbol = symbol.split('-')[0]
+            # Extract symbol using utility and symbol utils
+            symbol = OrderFieldExtractor.get_symbol(order)
+            symbol = extract_base_symbol(symbol) if symbol else ''
             symbol = symbol.upper()
             
             if not symbol:

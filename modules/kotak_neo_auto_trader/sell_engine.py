@@ -34,6 +34,8 @@ try:
     from .live_price_cache import LivePriceCache
     from .utils.symbol_utils import extract_ticker_base, extract_base_symbol, get_lookup_symbol
     from .utils.price_manager_utils import get_ltp_from_manager
+    from .utils.order_field_extractor import OrderFieldExtractor
+    from .utils.order_status_parser import OrderStatusParser
     from . import config
 except ImportError:
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
@@ -45,6 +47,8 @@ except ImportError:
     from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
     from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_ticker_base, extract_base_symbol, get_lookup_symbol
     from modules.kotak_neo_auto_trader.utils.price_manager_utils import get_ltp_from_manager
+    from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
+    from modules.kotak_neo_auto_trader.utils.order_status_parser import OrderStatusParser
     from modules.kotak_neo_auto_trader import config
 
 
@@ -577,174 +581,297 @@ class SellOrderManager:
         Also detects manual buys of bot-recommended stocks
         """
         try:
-            # First, check if user manually bought any stocks that bot recommended but failed to buy
-            from .storage import check_manual_buys_of_failed_orders
-            manual_buys = check_manual_buys_of_failed_orders(self.history_path, self.orders)
-            if manual_buys:
-                logger.info(f"Detected {len(manual_buys)} manual buys of bot recommendations: {', '.join(manual_buys)}")
+            # 1. Detect manual buys
+            self._detect_and_handle_manual_buys()
             
-            # Get all orders to check status
-            all_orders = self.orders.get_orders()
-            if not all_orders or 'data' not in all_orders:
-                return
+            # 2. Detect manual sells and handle
+            manual_sells = self._detect_manual_sells()
+            if manual_sells:
+                self._handle_manual_sells(manual_sells)
             
-            # Detect manual sales by checking executed SELL orders
-            # (Holdings API won't reflect sales until T+1 settlement)
-            
-            # Get all executed orders today
-            executed_orders = self.orders.get_executed_orders()
-            manual_sells = {}  # {symbol: total_qty_sold}
-            
-            if executed_orders:
-                for order in executed_orders:
-                    # Only check SELL orders
-                    txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
-                    if txn_type not in ['S', 'SELL']:
-                        continue
-                    
-                    order_id = str(order.get('nOrdNo') or order.get('orderId') or '')
-                    symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
-                    symbol = extract_base_symbol(symbol)
-                    
-                    # Check if this is a manual sell (order_id not in our tracked orders)
-                    is_bot_order = any(
-                        info.get('order_id') == order_id 
-                        for info in self.active_sell_orders.values()
-                    )
-                    
-                    if not is_bot_order and symbol:
-                        # This is a manual sell order
-                        qty = int(order.get('qty') or order.get('quantity') or order.get('fldQty') or 0)
-                        avg_price = float(order.get('avgPrc') or order.get('price') or 0)
-                        
-                        if qty > 0:
-                            if symbol not in manual_sells:
-                                manual_sells[symbol] = {'qty': 0, 'avg_price': 0, 'orders': []}
-                            
-                            manual_sells[symbol]['qty'] += qty
-                            manual_sells[symbol]['orders'].append({
-                                'order_id': order_id,
-                                'qty': qty,
-                                'price': avg_price
-                            })
-            
-            # Get trade history positions for comparison
-            open_positions = self.get_open_positions()
-            open_symbols = {trade.get('symbol', '').upper(): trade.get('qty', 0) for trade in open_positions}
-            
-            rejected_symbols = []
-            
-            # Check each tracked order
-            for symbol, order_info in list(self.active_sell_orders.items()):
-                symbol_upper = symbol.upper()
-                
-                # Check if this position had manual sells
-                if symbol_upper in manual_sells:
-                    manual_sell_info = manual_sells[symbol_upper]
-                    sold_qty = manual_sell_info['qty']
-                    tracked_qty = order_info.get('qty', 0)
-                    remaining_qty = tracked_qty - sold_qty
-                    
-                    logger.warning(f"Manual sell detected for {symbol}: sold {sold_qty} shares")
-                    
-                    # Cancel existing bot order (wrong quantity now)
-                    order_id = order_info.get('order_id')
-                    if order_id:
-                        try:
-                            logger.info(f"Cancelling order {order_id} for {symbol} due to manual sale")
-                            self.orders.cancel_order(order_id)
-                        except Exception as e:
-                            logger.warning(f"Failed to cancel order {order_id}: {e}")
-                    
-                    # Update trade history
-                    try:
-                        history = load_history(self.history_path)
-                        trades = history.get('trades', [])
-                        
-                        for trade in trades:
-                            if trade.get('symbol', '').upper() == symbol_upper and trade.get('status') == 'open':
-                                if remaining_qty <= 0:
-                                    # Full manual exit
-                                    trade['status'] = 'closed'
-                                    trade['exit_time'] = datetime.now().isoformat()
-                                    trade['exit_reason'] = 'MANUAL_EXIT'
-                                    # Use average price from manual orders
-                                    avg_price = sum(o['price'] * o['qty'] for o in manual_sell_info['orders']) / sold_qty if sold_qty > 0 else 0
-                                    trade['exit_price'] = avg_price
-                                    
-                                    entry_price = trade.get('entry_price', 0)
-                                    if entry_price and avg_price:
-                                        pnl = (avg_price - entry_price) * sold_qty
-                                        pnl_pct = ((avg_price / entry_price) - 1) * 100
-                                        trade['pnl'] = pnl
-                                        trade['pnl_pct'] = pnl_pct
-                                    
-                                    logger.info(f"Trade history updated: {symbol} marked as manually closed (full exit)")
-                                else:
-                                    # Partial manual exit
-                                    trade['qty'] = remaining_qty
-                                    
-                                    if 'partial_exits' not in trade:
-                                        trade['partial_exits'] = []
-                                    
-                                    avg_price = sum(o['price'] * o['qty'] for o in manual_sell_info['orders']) / sold_qty if sold_qty > 0 else 0
-                                    trade['partial_exits'].append({
-                                        'qty': sold_qty,
-                                        'exit_time': datetime.now().isoformat(),
-                                        'exit_reason': 'MANUAL_PARTIAL_EXIT',
-                                        'exit_price': avg_price,
-                                    })
-                                    
-                                    logger.info(f"Trade history updated: {symbol} qty reduced to {remaining_qty} (sold {sold_qty} manually)")
-                                break
-                        
-                        save_history(self.history_path, history)
-                    except Exception as e:
-                        logger.warning(f"Could not update trade history for manual sale of {symbol}: {e}")
-                    
-                    # Remove from tracking (will re-add with correct qty if remaining > 0)
-                    rejected_symbols.append(symbol)
-                    if remaining_qty > 0:
-                        logger.info(f"Removing {symbol} from tracking: will place new order with qty={remaining_qty}")
-                    else:
-                        logger.info(f"Removing {symbol} from tracking: fully sold manually")
-                    continue
-                
-                # No manual sale detected, check for rejected/cancelled status
-                order_id = order_info.get('order_id')
-                if not order_id:
-                    continue
-                
-                # Find this order in the response
-                for order in all_orders['data']:
-                    ord_id = order.get('nOrdNo') or order.get('orderId') or ''
-                    if str(ord_id) == str(order_id):
-                        # Check status
-                        status = (
-                            order.get('orderStatus') or 
-                            order.get('ordSt') or 
-                            order.get('status') or 
-                            ''
-                        ).lower()
-                        
-                        # Remove if rejected or cancelled
-                        if 'reject' in status or 'cancel' in status:
-                            rejected_symbols.append(symbol)
-                            logger.info(f"Removing {symbol} from tracking: order {order_id} is {status}")
-                        break
-            
-            # Clean up rejected/cancelled orders and manually closed positions
-            for symbol in rejected_symbols:
-                if symbol in self.active_sell_orders:
-                    del self.active_sell_orders[symbol]
-                if symbol in self.lowest_ema9:
-                    del self.lowest_ema9[symbol]
-            
-            if rejected_symbols:
-                logger.info(f"Cleaned up {len(rejected_symbols)} invalid orders from tracking")
+            # 3. Remove rejected/cancelled orders
+            self._remove_rejected_orders()
                 
         except Exception as e:
             logger.warning(f"Error cleaning up rejected orders: {e}")
+    
+    def _detect_and_handle_manual_buys(self) -> List[str]:
+        """
+        Detect manual buys of failed orders.
+        
+        Returns:
+            List of symbols that were manually bought
+        """
+        from .storage import check_manual_buys_of_failed_orders
+        manual_buys = check_manual_buys_of_failed_orders(self.history_path, self.orders)
+        if manual_buys:
+            logger.info(f"Detected {len(manual_buys)} manual buys of bot recommendations: {', '.join(manual_buys)}")
+        return manual_buys
+    
+    def _detect_manual_sells(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Detect manual sell orders by checking executed SELL orders.
+        
+        Returns:
+            Dict mapping symbol -> {'qty': int, 'orders': List[Dict]}
+        """
+        executed_orders = self.orders.get_executed_orders()
+        if not executed_orders:
+            return {}
+        
+        manual_sells = {}
+        
+        for order in executed_orders:
+            # Only check SELL orders
+            if not OrderFieldExtractor.is_sell_order(order):
+                continue
+            
+            order_id = OrderFieldExtractor.get_order_id(order)
+            symbol = extract_base_symbol(OrderFieldExtractor.get_symbol(order))
+            
+            # Check if this is a manual sell (order_id not in our tracked orders)
+            if not self._is_tracked_order(order_id) and symbol:
+                qty = OrderFieldExtractor.get_quantity(order)
+                avg_price = OrderFieldExtractor.get_price(order)
+                
+                if qty > 0:
+                    if symbol not in manual_sells:
+                        manual_sells[symbol] = {'qty': 0, 'orders': []}
+                    
+                    manual_sells[symbol]['qty'] += qty
+                    manual_sells[symbol]['orders'].append({
+                        'order_id': order_id,
+                        'qty': qty,
+                        'price': avg_price
+                    })
+        
+        return manual_sells
+    
+    def _is_tracked_order(self, order_id: str) -> bool:
+        """
+        Check if order_id is in our tracked orders.
+        
+        Args:
+            order_id: Order ID to check
+            
+        Returns:
+            True if order is tracked, False otherwise
+        """
+        return any(
+            info.get('order_id') == order_id 
+            for info in self.active_sell_orders.values()
+        )
+    
+    def _handle_manual_sells(self, manual_sells: Dict[str, Dict[str, Any]]):
+        """
+        Handle detected manual sells: cancel bot orders, update trade history.
+        
+        Args:
+            manual_sells: Dict mapping symbol -> sell info
+        """
+        rejected_symbols = []
+        
+        for symbol, sell_info in manual_sells.items():
+            symbol_upper = symbol.upper()
+            
+            # Skip if not in tracked orders
+            tracked_symbol = next(
+                (s for s in self.active_sell_orders.keys() if s.upper() == symbol_upper),
+                None
+            )
+            if not tracked_symbol:
+                continue
+            
+            order_info = self.active_sell_orders[tracked_symbol]
+            sold_qty = sell_info['qty']
+            tracked_qty = order_info.get('qty', 0)
+            remaining_qty = tracked_qty - sold_qty
+            
+            logger.warning(f"Manual sell detected for {symbol}: sold {sold_qty} shares")
+            
+            # Cancel existing bot order (wrong quantity now)
+            self._cancel_bot_order_for_manual_sell(symbol, order_info)
+            
+            # Update trade history
+            self._update_trade_history_for_manual_sell(symbol, sell_info, remaining_qty)
+            
+            # Remove from tracking
+            rejected_symbols.append(tracked_symbol)
+            if remaining_qty > 0:
+                logger.info(f"Removing {symbol} from tracking: will place new order with qty={remaining_qty}")
+            else:
+                logger.info(f"Removing {symbol} from tracking: fully sold manually")
+        
+        # Remove from tracking
+        for symbol in rejected_symbols:
+            self._remove_from_tracking(symbol)
+    
+    def _cancel_bot_order_for_manual_sell(self, symbol: str, order_info: Dict[str, Any]):
+        """
+        Cancel bot order when manual sell detected.
+        
+        Args:
+            symbol: Symbol name
+            order_info: Order info dict
+        """
+        order_id = order_info.get('order_id')
+        if order_id:
+            try:
+                logger.info(f"Cancelling order {order_id} for {symbol} due to manual sale")
+                self.orders.cancel_order(order_id)
+            except Exception as e:
+                logger.warning(f"Failed to cancel order {order_id}: {e}")
+    
+    def _update_trade_history_for_manual_sell(
+        self, 
+        symbol: str, 
+        sell_info: Dict[str, Any], 
+        remaining_qty: int
+    ):
+        """
+        Update trade history for manual sell.
+        
+        Args:
+            symbol: Symbol name
+            sell_info: Manual sell info dict
+            remaining_qty: Remaining quantity after manual sell
+        """
+        try:
+            history = load_history(self.history_path)
+            trades = history.get('trades', [])
+            
+            symbol_upper = symbol.upper()
+            sold_qty = sell_info['qty']
+            
+            for trade in trades:
+                if trade.get('symbol', '').upper() == symbol_upper and trade.get('status') == 'open':
+                    if remaining_qty <= 0:
+                        # Full manual exit
+                        self._mark_trade_as_closed(trade, sell_info, sold_qty, 'MANUAL_EXIT')
+                        logger.info(f"Trade history updated: {symbol} marked as manually closed (full exit)")
+                    else:
+                        # Partial manual exit
+                        trade['qty'] = remaining_qty
+                        
+                        if 'partial_exits' not in trade:
+                            trade['partial_exits'] = []
+                        
+                        avg_price = self._calculate_avg_price_from_orders(sell_info['orders'])
+                        trade['partial_exits'].append({
+                            'qty': sold_qty,
+                            'exit_time': datetime.now().isoformat(),
+                            'exit_reason': 'MANUAL_PARTIAL_EXIT',
+                            'exit_price': avg_price,
+                        })
+                        
+                        logger.info(f"Trade history updated: {symbol} qty reduced to {remaining_qty} (sold {sold_qty} manually)")
+                    break
+            
+            save_history(self.history_path, history)
+        except Exception as e:
+            logger.warning(f"Could not update trade history for manual sale of {symbol}: {e}")
+    
+    def _mark_trade_as_closed(self, trade: Dict[str, Any], sell_info: Dict[str, Any], sold_qty: int, exit_reason: str):
+        """
+        Mark trade as closed in trade history.
+        
+        Args:
+            trade: Trade dict from history
+            sell_info: Manual sell info dict
+            sold_qty: Quantity sold
+            exit_reason: Exit reason string
+        """
+        trade['status'] = 'closed'
+        trade['exit_time'] = datetime.now().isoformat()
+        trade['exit_reason'] = exit_reason
+        
+        avg_price = self._calculate_avg_price_from_orders(sell_info['orders'])
+        trade['exit_price'] = avg_price
+        
+        entry_price = trade.get('entry_price', 0)
+        if entry_price and avg_price:
+            pnl = (avg_price - entry_price) * sold_qty
+            pnl_pct = ((avg_price / entry_price) - 1) * 100
+            trade['pnl'] = pnl
+            trade['pnl_pct'] = pnl_pct
+    
+    def _calculate_avg_price_from_orders(self, orders: List[Dict[str, Any]]) -> float:
+        """
+        Calculate average price from order list.
+        
+        Args:
+            orders: List of order dicts with 'price' and 'qty'
+            
+        Returns:
+            Average price as float
+        """
+        if not orders:
+            return 0.0
+        
+        total_value = sum(o['price'] * o['qty'] for o in orders)
+        total_qty = sum(o['qty'] for o in orders)
+        
+        return total_value / total_qty if total_qty > 0 else 0.0
+    
+    def _remove_rejected_orders(self):
+        """
+        Remove rejected/cancelled orders from active tracking.
+        """
+        all_orders = self.orders.get_orders()
+        if not all_orders or 'data' not in all_orders:
+            return
+        
+        rejected_symbols = []
+        
+        for symbol, order_info in list(self.active_sell_orders.items()):
+            order_id = order_info.get('order_id')
+            if not order_id:
+                continue
+            
+            # Find this order in broker orders
+            broker_order = self._find_order_in_broker_orders(order_id, all_orders['data'])
+            if broker_order:
+                # Check if order is rejected or cancelled
+                if OrderStatusParser.is_rejected(broker_order) or OrderStatusParser.is_cancelled(broker_order):
+                    status = OrderStatusParser.parse_status(broker_order)
+                    rejected_symbols.append(symbol)
+                    logger.info(f"Removing {symbol} from tracking: order {order_id} is {status.value}")
+        
+        # Clean up rejected/cancelled orders
+        for symbol in rejected_symbols:
+            self._remove_from_tracking(symbol)
+        
+        if rejected_symbols:
+            logger.info(f"Cleaned up {len(rejected_symbols)} invalid orders from tracking")
+    
+    def _find_order_in_broker_orders(self, order_id: str, broker_orders: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        Find order in broker orders list by order ID.
+        
+        Args:
+            order_id: Order ID to find
+            broker_orders: List of broker order dicts
+            
+        Returns:
+            Order dict if found, None otherwise
+        """
+        for order in broker_orders:
+            broker_order_id = OrderFieldExtractor.get_order_id(order)
+            if str(broker_order_id) == str(order_id):
+                return order
+        return None
+    
+    def _remove_from_tracking(self, symbol: str):
+        """
+        Remove symbol from active tracking.
+        
+        Args:
+            symbol: Symbol to remove
+        """
+        if symbol in self.active_sell_orders:
+            del self.active_sell_orders[symbol]
+        if symbol in self.lowest_ema9:
+            del self.lowest_ema9[symbol]
     
     def has_completed_sell_order(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
@@ -772,12 +899,11 @@ class SellOrderManager:
             # Check for completed SELL orders matching the symbol
             for order in all_orders.get('data', []):
                 # Check transaction type - only SELL orders
-                txn_type = (order.get('transactionType') or order.get('trnsTp') or order.get('txnType') or '').upper()
-                if txn_type not in ['S', 'SELL']:
+                if not OrderFieldExtractor.is_sell_order(order):
                     continue
                 
                 # Extract order symbol using utility function
-                order_symbol = (order.get('tradingSymbol') or order.get('trdSym') or order.get('symbol') or '').upper()
+                order_symbol = OrderFieldExtractor.get_symbol(order)
                 order_base_symbol = extract_base_symbol(order_symbol)
                 
                 # Check if symbol matches
@@ -785,21 +911,14 @@ class SellOrderManager:
                     continue
                 
                 # Check order status - look for completed/executed/filled
-                status = (order.get('orderStatus') or order.get('ordSt') or order.get('status') or '').lower()
-                
-                # Check for completed status keywords
-                if any(keyword in status for keyword in ['complete', 'executed', 'filled', 'done']):
-                    order_id = order.get('neoOrdNo') or order.get('nOrdNo') or order.get('orderId')
+                if OrderStatusParser.is_completed(order):
+                    order_id = OrderFieldExtractor.get_order_id(order)
+                    order_price = OrderFieldExtractor.get_price(order)
                     
-                    # Extract order price (execution price)
-                    order_price = (
-                        float(order.get('prc') or order.get('price') or order.get('executedPrice') or order.get('executed_price') or 0)
-                    )
-                    
-                    logger.info(f"✅ Found completed sell order for {base_symbol}: Order ID {order_id}, Status: {status}, Price: ₹{order_price:.2f}")
+                    logger.info(f"✅ Found completed sell order for {base_symbol}: Order ID {order_id}, Price: ₹{order_price:.2f}")
                     
                     return {
-                        'order_id': str(order_id) if order_id else '',
+                        'order_id': order_id,
                         'price': order_price
                     }
             
@@ -827,22 +946,20 @@ class SellOrderManager:
             # Filter for SELL orders only
             for order in pending:
                 try:
-                    txn_type = order.get('trnsTp') or order.get('transactionType') or order.get('txnType') or ''
-                    if txn_type.upper() not in ['S', 'SELL']:
+                    if not OrderFieldExtractor.is_sell_order(order):
                         continue
                     
                     # Extract symbol (remove -EQ suffix)
-                    symbol = order.get('trdSym') or order.get('tradingSymbol') or order.get('symbol') or ''
-                    symbol = extract_base_symbol(symbol)
+                    symbol = extract_base_symbol(OrderFieldExtractor.get_symbol(order))
                     
                     # Extract order details
-                    qty = int(order.get('qty') or order.get('quantity') or 0)
-                    price = float(order.get('prc') or order.get('price') or 0)
-                    order_id = order.get('nOrdNo') or order.get('orderId') or order.get('order_id') or ''
+                    qty = OrderFieldExtractor.get_quantity(order)
+                    price = OrderFieldExtractor.get_price(order)
+                    order_id = OrderFieldExtractor.get_order_id(order)
                     
                     if symbol and qty > 0:
                         existing_orders[symbol.upper()] = {
-                            'order_id': str(order_id),
+                            'order_id': order_id,
                             'qty': qty,
                             'price': price
                         }
