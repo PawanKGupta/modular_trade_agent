@@ -10,6 +10,9 @@ This service:
 - Gracefully shuts down at market close
 
 Replaces 6 separate scheduled tasks with 1 unified service.
+
+IMPORTANT: This is the ONLY entry point that creates new auth sessions.
+All other components receive the shared auth session and only handle re-authentication.
 """
 
 import sys
@@ -108,8 +111,18 @@ class TradingService:
             logger.info("Initializing trading engine...")
             self.engine = AutoTradeEngine(env_file=self.env_file, auth=self.auth)
             
+            # Initialize engine (creates portfolio, orders, etc.)
+            # Since auth is already logged in, this just initializes components without re-auth
+            if not self.engine.login():
+                logger.error("Engine initialization failed")
+                return False
+            
             # Initialize live prices (WebSocket for real-time LTP)
             self._initialize_live_prices()
+            
+            # Update portfolio with price manager for WebSocket LTP access
+            if self.engine.portfolio and self.price_cache:
+                self.engine.portfolio.price_manager = self.price_cache
             
             # Initialize sell order manager (will be started at market open)
             logger.info("Initializing sell order manager...")
@@ -155,11 +168,13 @@ class TradingService:
             logger.info("✓ Scrip master loaded")
             
             # Initialize LivePriceCache with WebSocket connection
+            # Pass auth object so LivePriceCache can get fresh client after re-auth
             self.price_cache = LivePriceCache(
                 auth_client=self.auth.client if hasattr(self.auth, 'client') else None,
                 scrip_master=self.scrip_master,
                 stale_threshold_seconds=60,
-                reconnect_delay_seconds=5
+                reconnect_delay_seconds=5,
+                auth=self.auth  # Pass auth reference for re-auth handling
             )
             
             # Start real-time price streaming

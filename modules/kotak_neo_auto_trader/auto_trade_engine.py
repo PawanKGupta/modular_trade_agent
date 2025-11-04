@@ -77,7 +77,16 @@ class AutoTradeEngine:
         verifier_interval: int = 1800
     ):
         self.env_file = env_file
-        self.auth = auth if auth is not None else KotakNeoAuth(env_file)
+        # IMPORTANT: When used by run_trading_service, auth MUST be provided
+        # Only create new auth for standalone usage (backward compatibility)
+        if auth is None:
+            logger.warning(
+                "AutoTradeEngine: No auth provided - creating new session. "
+                "For run_trading_service, always pass the shared auth session."
+            )
+            self.auth = KotakNeoAuth(env_file)
+        else:
+            self.auth = auth
         self.orders: Optional[KotakNeoOrders] = None
         self.portfolio: Optional[KotakNeoPortfolio] = None
         self.history_path = config.TRADES_HISTORY_PATH
@@ -392,6 +401,26 @@ class AutoTradeEngine:
 
     # ---------------------- Session ----------------------
     def login(self) -> bool:
+        # If already authenticated, skip login but still initialize components
+        if self.auth.is_authenticated():
+            self.orders = KotakNeoOrders(self.auth)
+            self.portfolio = KotakNeoPortfolio(self.auth)
+            
+            # Initialize scrip master for symbol resolution
+            try:
+                self.scrip_master = KotakNeoScripMaster(
+                    auth_client=self.auth.client if hasattr(self.auth, 'client') else None
+                )
+                self.scrip_master.load_scrip_master(force_download=False)
+                logger.info("Scrip master loaded for buy order symbol resolution")
+            except Exception as e:
+                logger.warning(f"Failed to load scrip master: {e}. Will use symbol fallback.")
+                self.scrip_master = None
+            
+            # Phase 2: Initialize modules
+            self._initialize_phase2_modules()
+            return True
+        
         ok = self.auth.login()
         if ok:
             self.orders = KotakNeoOrders(self.auth)
@@ -957,9 +986,20 @@ class AutoTradeEngine:
             "skipped_missing_data": 0,
             "skipped_invalid_qty": 0,
         }
+        
+        # Check if authenticated - if not, try to re-authenticate
+        if not self.auth or not self.auth.is_authenticated():
+            logger.warning("Session expired - attempting re-authentication...")
+            if not self.login():
+                logger.error("Re-authentication failed - cannot proceed")
+                return summary
+            logger.info("Re-authentication successful - proceeding with order placement")
+        
         if not self.orders or not self.portfolio:
-            logger.error("Not logged in")
-            return summary
+            logger.error("Orders or portfolio not initialized - attempting login...")
+            if not self.login():
+                logger.error("Login failed - cannot proceed")
+                return summary
         
         # Pre-flight check: Verify we can fetch holdings before proceeding
         # This prevents duplicate orders if holdings API is down
@@ -1183,9 +1223,20 @@ class AutoTradeEngine:
     # ---------------------- Re-entry and exit ----------------------
     def evaluate_reentries_and_exits(self) -> Dict[str, int]:
         summary = {"symbols_evaluated": 0, "exits": 0, "reentries": 0}
+        
+        # Check if authenticated - if not, try to re-authenticate
+        if not self.auth or not self.auth.is_authenticated():
+            logger.warning("Session expired - attempting re-authentication...")
+            if not self.login():
+                logger.error("Re-authentication failed - cannot proceed")
+                return summary
+            logger.info("Re-authentication successful - proceeding with evaluation")
+        
         if not self.orders:
-            logger.error("Not logged in")
-            return summary
+            logger.error("Orders not initialized - attempting login...")
+            if not self.login():
+                logger.error("Login failed - cannot proceed")
+                return summary
         data = load_history(self.history_path)
         trades = data.get('trades', [])
         # Group open trades by symbol

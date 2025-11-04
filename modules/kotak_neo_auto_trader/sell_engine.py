@@ -72,7 +72,7 @@ class SellOrderManager:
         """
         self.auth = auth
         self.orders = KotakNeoOrders(auth)
-        self.portfolio = KotakNeoPortfolio(auth)
+        self.portfolio = KotakNeoPortfolio(auth, price_manager=price_manager)
         self.market_data = KotakNeoMarketData(auth)
         self.history_path = history_path or config.TRADES_HISTORY_PATH
         self.max_workers = max_workers

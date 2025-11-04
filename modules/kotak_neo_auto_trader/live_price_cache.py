@@ -45,18 +45,21 @@ class LivePriceCache:
         auth_client,
         scrip_master,
         stale_threshold_seconds: int = 60,
-        reconnect_delay_seconds: int = 5
+        reconnect_delay_seconds: int = 5,
+        auth=None
     ):
         """
         Initialize live price cache.
         
         Args:
-            auth_client: Authenticated Kotak Neo client
+            auth_client: Authenticated Kotak Neo client (can be stale after re-auth)
             scrip_master: KotakNeoScripMaster instance
             stale_threshold_seconds: Mark data stale after this many seconds
             reconnect_delay_seconds: Wait time before reconnect attempt
+            auth: Optional KotakNeoAuth object to get fresh client after re-auth
         """
         self.client = auth_client
+        self.auth = auth  # Store auth reference to get fresh client after re-auth
         self.scrip_master = scrip_master
         self.stale_threshold = timedelta(seconds=stale_threshold_seconds)
         self.reconnect_delay = reconnect_delay_seconds
@@ -224,6 +227,13 @@ class LivePriceCache:
         if not tokens_to_subscribe:
             logger.info("No new symbols to subscribe")
             return
+        
+        # Get fresh client if auth is available (handles session expiry)
+        if self.auth and hasattr(self.auth, 'get_client'):
+            fresh_client = self.auth.get_client()
+            if fresh_client and fresh_client != self.client:
+                logger.info("Updating client reference after re-authentication...")
+                self.client = fresh_client
         
         # Explicitly attempt to start WebSocket connection if not already connected
         if not self._ws_connected.is_set():
@@ -559,6 +569,13 @@ class LivePriceCache:
             if not self._subscribed_tokens:
                 logger.debug("No subscriptions to reconnect")
                 return
+            
+            # Get fresh client if auth is available (handles session expiry)
+            if self.auth and hasattr(self.auth, 'get_client'):
+                fresh_client = self.auth.get_client()
+                if fresh_client and fresh_client != self.client:
+                    logger.info("Updating client reference after re-authentication...")
+                    self.client = fresh_client
             
             logger.info(f"Reconnecting with {len(self._subscribed_tokens)} subscriptions...")
             

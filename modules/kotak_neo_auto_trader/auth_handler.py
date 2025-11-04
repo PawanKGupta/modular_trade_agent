@@ -39,8 +39,10 @@ def is_auth_error(response: Any) -> bool:
     if code == '900901':
         return True
     
-    # Check for JWT token errors in description
+    # Check for JWT token errors in description or message
     if 'invalid jwt token' in description or 'jwt token expired' in description:
+        return True
+    if 'invalid jwt token' in message or 'jwt token expired' in message:
         return True
     
     # Check for credential errors in message
@@ -138,13 +140,18 @@ def _attempt_reauth_thread_safe(auth, method_name: str) -> bool:
             logger.warning(f"JWT token expired - attempting re-authentication for {method_name}...")
             reauth_event.clear()  # Clear previous state
             
-            if auth.force_relogin():
-                logger.info(f"Re-authentication successful for {method_name}")
-                reauth_event.set()  # Signal success to waiting threads
-                return True
-            else:
-                logger.error(f"Re-authentication failed for {method_name}")
-                # Don't set event on failure - other threads can retry
+            try:
+                if auth.force_relogin():
+                    logger.info(f"Re-authentication successful for {method_name}")
+                    reauth_event.set()  # Signal success to waiting threads
+                    return True
+                else:
+                    logger.error(f"Re-authentication failed for {method_name}")
+                    # Don't set event on failure - other threads can retry
+                    return False
+            except Exception as e:
+                logger.error(f"Re-authentication exception for {method_name}: {e}")
+                # Don't set event on exception - other threads can retry
                 return False
         finally:
             lock.release()
@@ -167,12 +174,16 @@ def _attempt_reauth_thread_safe(auth, method_name: str) -> bool:
                     
                     # Perform re-auth
                     reauth_event.clear()
-                    if auth.force_relogin():
-                        logger.info(f"Re-authentication successful (timeout recovery) for {method_name}")
-                        reauth_event.set()
-                        return True
-                    else:
-                        logger.error(f"Re-authentication failed (timeout recovery) for {method_name}")
+                    try:
+                        if auth.force_relogin():
+                            logger.info(f"Re-authentication successful (timeout recovery) for {method_name}")
+                            reauth_event.set()
+                            return True
+                        else:
+                            logger.error(f"Re-authentication failed (timeout recovery) for {method_name}")
+                            return False
+                    except Exception as e:
+                        logger.error(f"Re-authentication exception (timeout recovery) for {method_name}: {e}")
                         return False
                 finally:
                     lock.release()
