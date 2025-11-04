@@ -247,9 +247,14 @@ class SellOrderManager:
                     if ltp is not None:
                         logger.info(f"➡️ {base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
                         return ltp
+                
+                # Log why WebSocket lookup failed (for debugging)
+                logger.debug(f"WebSocket LTP not found for {lookup_symbol} (symbol may not be subscribed or no price data yet)")
             except Exception as e:
                 failed_symbol = lookup_symbol if broker_symbol else base_symbol
-                logger.debug(f"WebSocket LTP failed for {failed_symbol}: {e}")
+                logger.warning(f"WebSocket LTP failed for {failed_symbol}: {e}")
+        else:
+            logger.debug(f"WebSocket price_manager not initialized, falling back to yfinance for {base_symbol}")
         
         # Fallback to yfinance (delayed ~15-20 min)
         try:
