@@ -139,7 +139,25 @@ class KotakNeoAuth:
                 return False
 
             if isinstance(login_response, dict) and "error" in login_response:
-                self.logger.error(f"Login failed: {login_response['error'][0]['message']}")
+                error = login_response.get('error')
+                try:
+                    # Handle error as list or dict
+                    if isinstance(error, list) and len(error) > 0:
+                        error_item = error[0]
+                        if isinstance(error_item, dict):
+                            msg = error_item.get('message', str(error_item))
+                        elif error_item is not None:
+                            msg = str(error_item)
+                        else:
+                            msg = "Unknown error (None in error list)"
+                    elif isinstance(error, dict):
+                        msg = error.get('message', str(error))
+                    else:
+                        msg = str(error) if error is not None else "Unknown error"
+                except Exception as parse_error:
+                    self.logger.warning(f"Error parsing login error response: {parse_error}")
+                    msg = str(error) if error is not None else "Unknown error"
+                self.logger.error(f"Login failed: {msg}")
                 return False
 
             self.logger.info("Login successful, proceeding with 2FA...")
@@ -147,6 +165,8 @@ class KotakNeoAuth:
 
         except Exception as e:
             self.logger.error(f"Login error: {e}")
+            import traceback
+            self.logger.debug(f"Login error traceback: {traceback.format_exc()}")
             return False
 
     def _complete_2fa(self) -> bool:
@@ -172,31 +192,48 @@ class KotakNeoAuth:
                 self.logger.debug("2FA returned None - session may already be active")
                 return True  # Don't fail if already authenticated
             
-            # Handle SDK error shape
-            if isinstance(session_response, dict) and session_response.get('error'):
-                err = session_response.get('error')
-                try:
-                    msg = err[0]['message'] if isinstance(err, list) and err else str(err)
-                except Exception:
-                    msg = str(err)
-                self.logger.error(f"2FA failed: {msg}")
-                return False
-            
-            # Extract session token when present
-            if hasattr(session_response, 'data') and hasattr(session_response.data, 'token'):
-                self.session_token = session_response.data.token
-                self.logger.debug("2FA session token extracted from response.data.token")
-            elif isinstance(session_response, dict) and 'data' in session_response:
+            # Handle SDK error shape - check if session_response is a dict first
+            if isinstance(session_response, dict):
+                error = session_response.get('error')
+                if error:
+                    try:
+                        # Handle error as list or dict
+                        if isinstance(error, list) and len(error) > 0:
+                            error_item = error[0]
+                            if isinstance(error_item, dict):
+                                msg = error_item.get('message', str(error_item))
+                            elif error_item is not None:
+                                msg = str(error_item)
+                            else:
+                                msg = "Unknown error (None in error list)"
+                        elif isinstance(error, dict):
+                            msg = error.get('message', str(error))
+                        else:
+                            msg = str(error)
+                    except Exception as parse_error:
+                        self.logger.warning(f"Error parsing 2FA error response: {parse_error}")
+                        msg = str(error)
+                    self.logger.error(f"2FA failed: {msg}")
+                    return False
+                
+                # Extract session token when present
                 data = session_response.get('data')
                 if data and isinstance(data, dict):
                     token = data.get('token')
                     if token:
                         self.session_token = token
                         self.logger.debug("2FA session token extracted from response['data']['token']")
+            else:
+                # Handle object-style response (hasattr check)
+                if hasattr(session_response, 'data') and hasattr(session_response.data, 'token'):
+                    self.session_token = session_response.data.token
+                    self.logger.debug("2FA session token extracted from response.data.token")
             
             return True
         except Exception as e:
             self.logger.error(f"2FA error: {e}")
+            import traceback
+            self.logger.debug(f"2FA error traceback: {traceback.format_exc()}")
             return False
 
 
@@ -276,3 +313,113 @@ class KotakNeoAuth:
             bool: True if authenticated, False otherwise
         """
         return self.is_logged_in
+
+    def validate_login(self, test_api_call: bool = True) -> tuple[bool, dict]:
+        """
+        Validate login by checking authentication state and optionally testing API access.
+        
+        Args:
+            test_api_call (bool): If True, make a test API call to verify session is valid
+            
+        Returns:
+            tuple[bool, dict]: (is_valid, validation_details)
+                - is_valid: True if login is valid, False otherwise
+                - validation_details: Dictionary with validation results and messages
+        """
+        validation_details = {
+            "is_logged_in": False,
+            "client_exists": False,
+            "session_token_exists": False,
+            "api_test_passed": None,
+            "api_test_message": None,
+            "errors": [],
+            "warnings": []
+        }
+        
+        # Check basic authentication state
+        validation_details["is_logged_in"] = self.is_logged_in
+        if not self.is_logged_in:
+            validation_details["errors"].append("Not logged in (is_logged_in=False)")
+        
+        # Check client exists
+        validation_details["client_exists"] = self.client is not None
+        if not self.client:
+            validation_details["errors"].append("Client not initialized")
+        
+        # Check session token
+        validation_details["session_token_exists"] = self.session_token is not None
+        if not self.session_token:
+            validation_details["warnings"].append("Session token not set (may be normal for some SDK versions)")
+        
+        # Basic validation - if not logged in or no client, return early
+        if not validation_details["is_logged_in"] or not validation_details["client_exists"]:
+            return False, validation_details
+        
+        # Optional: Test API call to verify session is actually valid
+        if test_api_call:
+            try:
+                # Try to get limits (lightweight API call that requires authentication)
+                # This is a good test because it requires valid session
+                if hasattr(self.client, 'limits'):
+                    response = self.client.limits()
+                    if response is None:
+                        validation_details["api_test_passed"] = False
+                        validation_details["api_test_message"] = "API call returned None"
+                        validation_details["errors"].append("API test failed: No response from limits API")
+                    elif isinstance(response, dict) and "error" in response:
+                        error = response.get("error")
+                        error_msg = "Unknown error"
+                        try:
+                            if isinstance(error, list) and len(error) > 0:
+                                error_item = error[0]
+                                if isinstance(error_item, dict):
+                                    error_msg = error_item.get('message', str(error_item))
+                                else:
+                                    error_msg = str(error_item) if error_item else "Unknown error"
+                            elif isinstance(error, dict):
+                                error_msg = error.get('message', str(error))
+                            else:
+                                error_msg = str(error) if error else "Unknown error"
+                        except Exception:
+                            error_msg = str(error)
+                        
+                        validation_details["api_test_passed"] = False
+                        validation_details["api_test_message"] = f"API error: {error_msg}"
+                        
+                        # Check if it's an auth error
+                        if any(keyword in error_msg.lower() for keyword in ['invalid', 'jwt', 'token', 'credentials', 'unauthorized']):
+                            validation_details["errors"].append(f"Session appears to be invalid: {error_msg}")
+                        else:
+                            validation_details["warnings"].append(f"API test returned error (may not be auth-related): {error_msg}")
+                    else:
+                        # Success - API call worked
+                        validation_details["api_test_passed"] = True
+                        validation_details["api_test_message"] = "API test successful - session is valid"
+                elif hasattr(self.client, 'get_limits'):
+                    # Try alternative method name
+                    response = self.client.get_limits()
+                    validation_details["api_test_passed"] = response is not None
+                    validation_details["api_test_message"] = "API test successful" if response else "API call returned None"
+                else:
+                    # No limits method available, try holdings as fallback
+                    if hasattr(self.client, 'holdings'):
+                        response = self.client.holdings()
+                        validation_details["api_test_passed"] = response is not None
+                        validation_details["api_test_message"] = "API test successful (holdings)" if response else "API call returned None"
+                    else:
+                        validation_details["api_test_passed"] = None
+                        validation_details["api_test_message"] = "No test API methods available (limits/holdings)"
+                        validation_details["warnings"].append("Could not test API - no test methods available")
+            except Exception as e:
+                validation_details["api_test_passed"] = False
+                validation_details["api_test_message"] = f"API test exception: {str(e)}"
+                validation_details["errors"].append(f"API test failed with exception: {str(e)}")
+        
+        # Determine overall validity
+        is_valid = (
+            validation_details["is_logged_in"] and
+            validation_details["client_exists"] and
+            (validation_details["api_test_passed"] is not False if test_api_call else True)
+        )
+        
+        return is_valid, validation_details
