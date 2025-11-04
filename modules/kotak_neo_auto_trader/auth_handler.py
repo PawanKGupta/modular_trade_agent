@@ -125,7 +125,7 @@ def _attempt_reauth_thread_safe(auth, method_name: str) -> bool:
         True if re-auth was successful (either performed here or by another thread)
     """
     if not hasattr(auth, 'force_relogin'):
-        logger.error("❌ Auth object does not have force_relogin() method")
+        logger.error("Auth object does not have force_relogin() method")
         return False
     
     lock = _get_reauth_lock(auth)
@@ -135,29 +135,29 @@ def _attempt_reauth_thread_safe(auth, method_name: str) -> bool:
     if lock.acquire(blocking=False):
         # Got lock - this thread will perform re-auth
         try:
-            logger.warning(f"❌ JWT token expired - attempting re-authentication for {method_name}...")
+            logger.warning(f"JWT token expired - attempting re-authentication for {method_name}...")
             reauth_event.clear()  # Clear previous state
             
             if auth.force_relogin():
-                logger.info(f"✅ Re-authentication successful for {method_name}")
+                logger.info(f"Re-authentication successful for {method_name}")
                 reauth_event.set()  # Signal success to waiting threads
                 return True
             else:
-                logger.error(f"❌ Re-authentication failed for {method_name}")
+                logger.error(f"Re-authentication failed for {method_name}")
                 # Don't set event on failure - other threads can retry
                 return False
         finally:
             lock.release()
     else:
         # Lock held - another thread is performing re-auth
-        logger.debug(f"⏳ Waiting for re-authentication in progress for {method_name}...")
+        logger.debug(f"Waiting for re-authentication in progress for {method_name}...")
         
         # Wait for re-auth to complete (with timeout to prevent deadlock)
         if reauth_event.wait(timeout=30.0):
-            logger.debug(f"✅ Re-authentication completed by another thread for {method_name}")
+            logger.debug(f"Re-authentication completed by another thread for {method_name}")
             return True
         else:
-            logger.warning(f"⏰ Re-authentication timeout for {method_name} - attempting own re-auth")
+            logger.warning(f"Re-authentication timeout for {method_name} - attempting own re-auth")
             # Timeout - try to acquire lock and perform re-auth
             if lock.acquire(blocking=True, timeout=5.0):
                 try:
@@ -168,16 +168,16 @@ def _attempt_reauth_thread_safe(auth, method_name: str) -> bool:
                     # Perform re-auth
                     reauth_event.clear()
                     if auth.force_relogin():
-                        logger.info(f"✅ Re-authentication successful (timeout recovery) for {method_name}")
+                        logger.info(f"Re-authentication successful (timeout recovery) for {method_name}")
                         reauth_event.set()
                         return True
                     else:
-                        logger.error(f"❌ Re-authentication failed (timeout recovery) for {method_name}")
+                        logger.error(f"Re-authentication failed (timeout recovery) for {method_name}")
                         return False
                 finally:
                     lock.release()
             else:
-                logger.error(f"❌ Could not acquire lock for re-authentication (timeout) for {method_name}")
+                logger.error(f"Could not acquire lock for re-authentication (timeout) for {method_name}")
                 return False
     
     return False
@@ -210,14 +210,14 @@ def handle_reauth(func: Callable) -> Callable:
                 # Use thread-safe re-authentication
                 if hasattr(self, 'auth'):
                     if _attempt_reauth_thread_safe(self.auth, func.__name__):
-                        logger.info(f"🔄 Retrying {func.__name__} after re-authentication...")
+                        logger.info(f"Retrying {func.__name__} after re-authentication...")
                         # Retry once after successful re-auth
                         return func(self, *args, **kwargs)
                     else:
-                        logger.error(f"❌ Re-authentication failed for {func.__name__}")
+                        logger.error(f"Re-authentication failed for {func.__name__}")
                         return None
                 else:
-                    logger.error("❌ Auth object not found")
+                    logger.error("Auth object not found")
                     return None
             
             # Check for error field in response (some APIs return errors this way)
@@ -228,13 +228,13 @@ def handle_reauth(func: Callable) -> Callable:
                         # Use thread-safe re-authentication
                         if hasattr(self, 'auth'):
                             if _attempt_reauth_thread_safe(self.auth, func.__name__):
-                                logger.info(f"🔄 Retrying {func.__name__} after re-authentication...")
+                                logger.info(f"Retrying {func.__name__} after re-authentication...")
                                 return func(self, *args, **kwargs)
                             else:
-                                logger.error(f"❌ Re-authentication failed for {func.__name__}")
+                                logger.error(f"Re-authentication failed for {func.__name__}")
                                 return None
                         else:
-                            logger.error("❌ Auth object not found")
+                            logger.error("Auth object not found")
                             return None
             
             return result
@@ -245,19 +245,19 @@ def handle_reauth(func: Callable) -> Callable:
                 # Use thread-safe re-authentication
                 if hasattr(self, 'auth'):
                     if _attempt_reauth_thread_safe(self.auth, func.__name__):
-                        logger.info(f"🔄 Retrying {func.__name__} after re-authentication...")
+                        logger.info(f"Retrying {func.__name__} after re-authentication...")
                         # Retry once after successful re-auth
                         try:
                             return func(self, *args, **kwargs)
                         except Exception as retry_error:
                             # If retry also fails, log and return None
-                            logger.error(f"❌ Method {func.__name__} failed after re-auth: {retry_error}")
+                            logger.error(f"Method {func.__name__} failed after re-auth: {retry_error}")
                             return None
                     else:
-                        logger.error(f"❌ Re-authentication failed for {func.__name__}")
+                        logger.error(f"Re-authentication failed for {func.__name__}")
                         return None
                 else:
-                    logger.error("❌ Auth object not found")
+                    logger.error("Auth object not found")
                     return None
             
             # Re-raise non-auth exceptions
@@ -288,10 +288,10 @@ def call_with_reauth(auth, api_call: Callable, *args, **kwargs) -> Optional[Any]
         if isinstance(result, dict) and is_auth_error(result):
             # Use thread-safe re-authentication
             if _attempt_reauth_thread_safe(auth, "api_call"):
-                logger.info("🔄 Retrying API call after re-authentication...")
+                logger.info("Retrying API call after re-authentication...")
                 return api_call(*args, **kwargs)
             else:
-                logger.error("❌ Re-authentication failed")
+                logger.error("Re-authentication failed")
                 return None
         
         return result
@@ -301,14 +301,14 @@ def call_with_reauth(auth, api_call: Callable, *args, **kwargs) -> Optional[Any]
         if is_auth_exception(e):
             # Use thread-safe re-authentication
             if _attempt_reauth_thread_safe(auth, "api_call"):
-                logger.info("🔄 Retrying API call after re-authentication...")
+                logger.info("Retrying API call after re-authentication...")
                 try:
                     return api_call(*args, **kwargs)
                 except Exception as retry_error:
-                    logger.error(f"❌ API call failed after re-auth: {retry_error}")
+                    logger.error(f"API call failed after re-auth: {retry_error}")
                     return None
             else:
-                logger.error("❌ Re-authentication failed")
+                logger.error("Re-authentication failed")
                 return None
         
         # Re-raise non-auth exceptions

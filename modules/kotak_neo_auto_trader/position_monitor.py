@@ -286,20 +286,20 @@ class PositionMonitor:
         
         # Check exit conditions
         if current_price >= ema9:
-            alerts.append(f"🎯 EXIT: Price (₹{current_price:.2f}) >= EMA9 (₹{ema9:.2f})")
+            alerts.append(f"EXIT: Price (₹{current_price:.2f}) >= EMA9 (₹{ema9:.2f})")
             exit_imminent = True
             alert_level = 'critical'
         elif distance_to_ema9_pct > 0 and distance_to_ema9_pct < self.exit_proximity_threshold:
-            alerts.append(f"⚠️ EXIT APPROACHING: Price {distance_to_ema9_pct:.1f}% below EMA9")
+            alerts.append(f"EXIT APPROACHING: Price {distance_to_ema9_pct:.1f}% below EMA9")
             exit_imminent = True
             alert_level = 'warning'
         
         if rsi10 > 50:
-            alerts.append(f"🎯 EXIT: RSI10 ({rsi10:.1f}) > 50")
+            alerts.append(f"EXIT: RSI10 ({rsi10:.1f}) > 50")
             exit_imminent = True
             alert_level = 'critical'
         elif rsi10 > self.rsi_exit_warning:
-            alerts.append(f"⚠️ EXIT APPROACHING: RSI10 ({rsi10:.1f}) near 50")
+            alerts.append(f"EXIT APPROACHING: RSI10 ({rsi10:.1f}) near 50")
             exit_imminent = True
             alert_level = 'warning'
         
@@ -307,20 +307,20 @@ class PositionMonitor:
         levels = entries[0].get('levels_taken', {"30": True, "20": False, "10": False})
         
         if rsi10 < 20 and levels.get('30') and not levels.get('20'):
-            alerts.append(f"🔄 AVERAGING OPPORTUNITY: RSI10 ({rsi10:.1f}) < 20")
+            alerts.append(f"AVERAGING OPPORTUNITY: RSI10 ({rsi10:.1f}) < 20")
             averaging_opportunity = True
             if alert_level == 'info':
                 alert_level = 'warning'
         
         if rsi10 < 10 and levels.get('20') and not levels.get('10'):
-            alerts.append(f"🔄 AVERAGING OPPORTUNITY: RSI10 ({rsi10:.1f}) < 10")
+            alerts.append(f"AVERAGING OPPORTUNITY: RSI10 ({rsi10:.1f}) < 10")
             averaging_opportunity = True
             if alert_level == 'info':
                 alert_level = 'warning'
         
         # Check large price movements
         if abs(unrealized_pnl_pct) > self.large_move_threshold:
-            direction = "📈 GAIN" if unrealized_pnl_pct > 0 else "📉 LOSS"
+            direction = "GAIN" if unrealized_pnl_pct > 0 else "LOSS"
             alerts.append(
                 f"{direction}: {abs(unrealized_pnl_pct):.1f}% "
                 f"(₹{abs(unrealized_pnl):,.0f})"
@@ -374,22 +374,22 @@ class PositionMonitor:
         
         # Determine emoji based on alert level
         emoji = {
-            'info': 'ℹ️',
-            'warning': '⚠️',
-            'critical': '🚨'
-        }.get(status.alert_level, 'ℹ️')
+            'info': '',
+            'warning': '',
+            'critical': ''
+        }.get(status.alert_level, '')
         
         # Build message
         message_lines = [
             f"{emoji} *POSITION ALERT*",
             "",
-            f"📊 Symbol: *{status.symbol}*",
-            f"💰 Current: ₹{status.current_price:.2f}",
-            f"📦 Quantity: {status.quantity}",
-            f"💵 P&L: ₹{status.unrealized_pnl:,.0f} ({status.unrealized_pnl_pct:+.2f}%)",
+            f"Symbol: *{status.symbol}*",
+            f"Current: ₹{status.current_price:.2f}",
+            f"Quantity: {status.quantity}",
+            f"P&L: ₹{status.unrealized_pnl:,.0f} ({status.unrealized_pnl_pct:+.2f}%)",
             "",
-            f"📈 RSI10: {status.rsi10:.1f}",
-            f"📉 EMA9: ₹{status.ema9:.2f}",
+            f"RSI10: {status.rsi10:.1f}",
+            f"EMA9: ₹{status.ema9:.2f}",
             f"📍 Distance to EMA9: {status.distance_to_ema9_pct:+.1f}%",
             "",
             "*Alerts:*"
@@ -399,7 +399,7 @@ class PositionMonitor:
             message_lines.append(f"  • {alert}")
         
         message_lines.append("")
-        message_lines.append(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        message_lines.append(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
         message = "\n".join(message_lines)
         

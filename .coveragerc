@@ -1,8 +1,0 @@
-[run]
-branch = True
-source =
-    .
-
-[html]
-directory = logs/htmlcov
-title = Modular Trade Agent Coverage

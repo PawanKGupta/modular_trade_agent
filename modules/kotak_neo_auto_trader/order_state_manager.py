@@ -125,7 +125,7 @@ class OrderStateManager:
                     )
                 
                 logger.info(
-                    f"✅ Registered sell order: {base_symbol} "
+                    f"Registered sell order: {base_symbol} "
                     f"(order_id: {order_id}, price: ₹{target_price:.2f}, qty: {qty})"
                 )
                 
@@ -182,7 +182,7 @@ class OrderStateManager:
                 )
                 
                 logger.info(
-                    f"✅ Marked order as executed: {base_symbol} "
+                    f"Marked order as executed: {base_symbol} "
                     f"(order_id: {order_id}, price: ₹{execution_price:.2f}, qty: {execution_qty})"
                 )
                 

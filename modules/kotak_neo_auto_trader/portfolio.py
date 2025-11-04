@@ -114,9 +114,9 @@ class KotakNeoPortfolio:
                     )
                     if pnl == 0 and quantity > 0 and avg_price > 0 and ltp > 0:
                         pnl = (ltp - avg_price) * quantity
-                    logger.info(f"📈 {stock_name}: Qty={quantity}, LTP=₹{ltp:.2f}, Value=₹{market_value:.2f}, P&L=₹{pnl:.2f}")
+                    logger.info(f"{stock_name}: Qty={quantity}, LTP=₹{ltp:.2f}, Value=₹{market_value:.2f}, P&L=₹{pnl:.2f}")
                     total_value += market_value
-                logger.info(f"💰 Total Portfolio Value: ₹{total_value:.2f}")
+                logger.info(f"Total Portfolio Value: ₹{total_value:.2f}")
             else:
                 preview = str(holdings)[:300]
                 logger.info(f" No holdings found in portfolio (raw preview: {preview})")
@@ -230,7 +230,7 @@ class KotakNeoPortfolio:
                 data.get('available_margin') or 0
             )
             
-            logger.info(f"💰 Cash: ₹{cash}")
+            logger.info(f"Cash: ₹{cash}")
             logger.info(f" Margin Used: ₹{margin_used}")
             logger.info(f" Margin Available: ₹{margin_available}")
             

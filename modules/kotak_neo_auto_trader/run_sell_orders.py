@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-⚠️ DEPRECATED - Use run_trading_service.py instead
+DEPRECATED - Use run_trading_service.py instead
 
 This script is kept for manual fallback only.
 The unified trading service (run_trading_service.py) handles sell orders automatically from 9:15 AM.
@@ -108,7 +108,7 @@ def main():
             logger.error("Authentication failed. Exiting.")
             return
         
-        logger.info("✅ Authentication successful")
+        logger.info("Authentication successful")
         
     except Exception as e:
         logger.error(f"Failed to initialize auth: {e}")
@@ -150,7 +150,7 @@ def main():
             # Subscribe to positions for real-time prices
             price_manager.subscribe_to_positions(symbols)
             
-            logger.info(f"✅ LivePriceManager started for {len(symbols)} symbols: {', '.join(symbols)}")
+            logger.info(f"LivePriceManager started for {len(symbols)} symbols: {', '.join(symbols)}")
             
             # Give it a moment to connect and fetch initial prices
             time.sleep(2)
@@ -164,7 +164,7 @@ def main():
     # Initialize sell order manager
     try:
         sell_manager = SellOrderManager(auth, price_manager=price_manager)
-        logger.info("✅ Sell Order Manager initialized")
+        logger.info("Sell Order Manager initialized")
         
     except Exception as e:
         logger.error(f"Failed to initialize Sell Order Manager: {e}")
@@ -183,7 +183,7 @@ def main():
             logger.info("No orders to place. Exiting.")
             return
         
-        logger.info(f"✅ Phase 1 complete: {orders_placed} sell orders placed")
+        logger.info(f"Phase 1 complete: {orders_placed} sell orders placed")
         
         # If run-once mode, exit here
         if args.run_once:

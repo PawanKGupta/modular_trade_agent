@@ -44,7 +44,7 @@ def handle_broker_error(
                 return func(*args, **kwargs)
             except Exception as e:
                 log_func = getattr(logger, log_level.lower(), logger.warning)
-                log_func(f"❌ Error in {operation}: {e}")
+                log_func(f"Error in {operation}: {e}")
                 
                 if reraise:
                     raise
@@ -84,7 +84,7 @@ def safe_execute(
         return operation()
     except Exception as e:
         log_func = getattr(logger, log_level.lower(), logger.warning)
-        log_func(f"❌ Error in {operation_name}: {e}")
+        log_func(f"Error in {operation_name}: {e}")
         
         if reraise:
             raise
@@ -121,7 +121,7 @@ class BrokerErrorHandler:
             self.error_occurred = True
             self.exception = exc_val
             log_func = getattr(logger, self.log_level.lower(), logger.warning)
-            log_func(f"❌ Error in {self.operation_name}: {exc_val}")
+            log_func(f"Error in {self.operation_name}: {exc_val}")
             
             # Suppress exception if reraise is False
             return True  # Suppress exception

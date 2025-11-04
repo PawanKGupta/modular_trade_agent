@@ -284,23 +284,23 @@ class AutoTradeEngine:
                                     
                                     if disc.get('trade_type') == 'MANUAL_BUY':
                                         message = (
-                                            f"📈 *MANUAL BUY DETECTED*\n\n"
-                                            f"📊 Symbol: {symbol}\n"
-                                            f"📦 Quantity: +{qty_diff} shares\n"
-                                            f"💼 New Total: {broker_qty} shares\n"
-                                            f"⏰ Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                                            f"ℹ️ Tracking updated automatically"
+                                            f"MANUAL BUY DETECTED\n\n"
+                                            f"Symbol: {symbol}\n"
+                                            f"Quantity: +{qty_diff} shares\n"
+                                            f"New Total: {broker_qty} shares\n"
+                                            f"Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                                            f"Tracking updated automatically"
                                         )
                                         self.telegram_notifier.send_message(message)
                                     
                                     elif disc.get('trade_type') == 'MANUAL_SELL':
                                         message = (
-                                            f"📉 *MANUAL SELL DETECTED*\n\n"
-                                            f"📊 Symbol: {symbol}\n"
-                                            f"📦 Quantity: {qty_diff} shares\n"
-                                            f"💼 Remaining: {broker_qty} shares\n"
-                                            f"⏰ Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                                            f"ℹ️ Tracking updated automatically"
+                                            f"MANUAL SELL DETECTED\n\n"
+                                            f"Symbol: {symbol}\n"
+                                            f"Quantity: {qty_diff} shares\n"
+                                            f"Remaining: {broker_qty} shares\n"
+                                            f"Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                                            f"Tracking updated automatically"
                                         )
                                         self.telegram_notifier.send_message(message)
                         
@@ -888,7 +888,7 @@ class AutoTradeEngine:
                 # Send notification about uncertain order
                 from core.telegram import send_telegram
                 send_telegram(
-                    f"⚠️ Order placement uncertain\n"
+                    f"Order placement uncertain\n"
                     f"Symbol: {broker_symbol}\n"
                     f"Qty: {qty}\n"
                     f"Order ID not received and not found in order book.\n"
@@ -1128,10 +1128,10 @@ class AutoTradeEngine:
                 shortfall = max(0.0, required_cash - (avail_cash or 0.0))
                 # Telegram message with emojis
                 telegram_msg = (
-                    f"⚠️ Insufficient balance for {broker_symbol} AMO BUY.\n"
+                    f"Insufficient balance for {broker_symbol} AMO BUY.\n"
                     f"Needed: ₹{required_cash:,.0f} for {qty} @ ₹{close:.2f}.\n"
                     f"Available: ₹{(avail_cash or 0.0):,.0f}. Shortfall: ₹{shortfall:,.0f}.\n\n"
-                    f"🔁 Order saved for retry until 9:15 AM tomorrow (before market opens).\n"
+                    f"Order saved for retry until 9:15 AM tomorrow (before market opens).\n"
                     f"Add balance & run script, or wait for 8 AM scheduled retry."
                 )
                 send_telegram(telegram_msg)
@@ -1290,16 +1290,16 @@ class AutoTradeEngine:
                                     if retry_failed:
                                         # Send Telegram notification for failed retry
                                         telegram_msg = (
-                                            f"❌ *SELL ORDER RETRY FAILED*\n\n"
-                                            f"📊 Symbol: *{symbol}*\n"
-                                            f"💼 Expected Qty: {total_qty}\n"
-                                            f"📦 Available Qty: {actual_qty}\n"
-                                            f"📈 Price: ₹{price:.2f}\n"
-                                            f"📉 RSI10: {rsi:.1f}\n"
-                                            f"📍 EMA9: ₹{ema9:.2f}\n\n"
-                                            f"⚠️ Both initial and retry sell orders failed.\n"
-                                            f"🔧 Manual intervention may be required.\n\n"
-                                            f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                            f"SELL ORDER RETRY FAILED\n\n"
+                                            f"Symbol: *{symbol}*\n"
+                                            f"Expected Qty: {total_qty}\n"
+                                            f"Available Qty: {actual_qty}\n"
+                                            f"Price: ₹{price:.2f}\n"
+                                            f"RSI10: {rsi:.1f}\n"
+                                            f"EMA9: ₹{ema9:.2f}\n\n"
+                                            f"Both initial and retry sell orders failed.\n"
+                                            f"Manual intervention may be required.\n\n"
+                                            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                                         )
                                         send_telegram(telegram_msg)
                                         logger.error(f"Sell order retry FAILED for {symbol} - Telegram alert sent")
@@ -1310,41 +1310,41 @@ class AutoTradeEngine:
                                 else:
                                     # Send Telegram notification when no holdings found
                                     telegram_msg = (
-                                        f"❌ *SELL ORDER RETRY FAILED*\n\n"
-                                        f"📊 Symbol: *{symbol}*\n"
-                                        f"💼 Expected Qty: {total_qty}\n"
-                                        f"📦 Available Qty: 0 (not found in holdings)\n"
-                                        f"📈 Price: ₹{price:.2f}\n\n"
-                                        f"⚠️ Cannot retry - symbol not found in holdings.\n"
-                                        f"🔧 Manual check required.\n\n"
-                                        f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                        f"SELL ORDER RETRY FAILED\n\n"
+                                        f"Symbol: *{symbol}*\n"
+                                        f"Expected Qty: {total_qty}\n"
+                                        f"Available Qty: 0 (not found in holdings)\n"
+                                        f"Price: ₹{price:.2f}\n\n"
+                                        f"Cannot retry - symbol not found in holdings.\n"
+                                        f"Manual check required.\n\n"
+                                        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                                     )
                                     send_telegram(telegram_msg)
                                     logger.error(f"No holdings found for {symbol} - cannot retry sell order - Telegram alert sent")
                             else:
                                 # Send Telegram notification when holdings fetch fails
                                 telegram_msg = (
-                                    f"❌ *SELL ORDER RETRY FAILED*\n\n"
-                                    f"📊 Symbol: *{symbol}*\n"
-                                    f"💼 Expected Qty: {total_qty}\n"
-                                    f"📈 Price: ₹{price:.2f}\n\n"
-                                    f"⚠️ Failed to fetch holdings from broker.\n"
+                                    f"SELL ORDER RETRY FAILED\n\n"
+                                    f"Symbol: *{symbol}*\n"
+                                    f"Expected Qty: {total_qty}\n"
+                                    f"Price: ₹{price:.2f}\n\n"
+                                    f"Failed to fetch holdings from broker.\n"
                                     f"Cannot determine actual available quantity.\n"
-                                    f"🔧 Manual intervention required.\n\n"
-                                    f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                    f"Manual intervention required.\n\n"
+                                    f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                                 )
                                 send_telegram(telegram_msg)
                                 logger.error(f"Failed to fetch holdings for retry - cannot determine actual quantity for {symbol} - Telegram alert sent")
                         except Exception as e:
                             # Send Telegram notification for exception during retry
                             telegram_msg = (
-                                f"❌ *SELL ORDER RETRY EXCEPTION*\n\n"
-                                f"📊 Symbol: *{symbol}*\n"
-                                f"💼 Expected Qty: {total_qty}\n"
-                                f"📈 Price: ₹{price:.2f}\n\n"
-                                f"⚠️ Error: {str(e)[:100]}\n"
-                                f"🔧 Manual intervention required.\n\n"
-                                f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                f"SELL ORDER RETRY EXCEPTION\n\n"
+                                f"Symbol: *{symbol}*\n"
+                                f"Expected Qty: {total_qty}\n"
+                                f"Price: ₹{price:.2f}\n\n"
+                                f"Error: {str(e)[:100]}\n"
+                                f"Manual intervention required.\n\n"
+                                f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                             )
                             send_telegram(telegram_msg)
                             logger.error(f"Error during sell order retry for {symbol}: {e} - Telegram alert sent")
@@ -1453,9 +1453,9 @@ class AutoTradeEngine:
                                             )
                                             
                                             if modify_resp:
-                                                logger.info(f"✅ Sell order updated: {symbol} x{new_total_qty} @ ₹{old_price:.2f}")
+                                                logger.info(f"Sell order updated: {symbol} x{new_total_qty} @ ₹{old_price:.2f}")
                                             else:
-                                                logger.warning(f"⚠️  Failed to modify sell order {old_order_id} - order may need manual update")
+                                                logger.warning(f"Failed to modify sell order {old_order_id} - order may need manual update")
                                             break  # Only update the first matching sell order
                                 else:
                                     logger.debug(f"No active sell order found for {symbol} (will be placed at next sell order run)")

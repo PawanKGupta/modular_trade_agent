@@ -388,7 +388,7 @@ class SellOrderManager:
             k = 2.0 / (9 + 1)
             current_ema9 = (current_ltp * k) + (yesterday_ema9 * (1 - k))
             
-            logger.info(f"📈 {ticker.replace('.NS', '')}: LTP=₹{current_ltp:.2f}, Yesterday EMA9=₹{yesterday_ema9:.2f} → Current EMA9=₹{current_ema9:.2f}")
+            logger.info(f"{ticker.replace('.NS', '')}: LTP=₹{current_ltp:.2f}, Yesterday EMA9=₹{yesterday_ema9:.2f} → Current EMA9=₹{current_ema9:.2f}")
             return current_ema9
             
         except Exception as e:
@@ -420,7 +420,7 @@ class SellOrderManager:
                 ltp = get_ltp_from_manager(self.price_manager, lookup_symbol, ticker)
                 
                 if ltp is not None:
-                    logger.info(f"➡️ {base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
+                    logger.info(f"{base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
                     return ltp
             except Exception as e:
                 logger.debug(f"WebSocket LTP failed for {base_symbol}: {e}")
@@ -434,7 +434,7 @@ class SellOrderManager:
                 return None
             
             ltp = float(df['close'].iloc[-1])
-            logger.info(f"➡️ {base_symbol} LTP from yfinance (delayed ~15min): ₹{ltp:.2f}")
+            logger.info(f"{base_symbol} LTP from yfinance (delayed ~15min): ₹{ltp:.2f}")
             return ltp
             
         except Exception as e:
@@ -507,7 +507,7 @@ class SellOrderManager:
             )
             
             if order_id:
-                logger.info(f"✅ Sell order placed: {symbol} @ ₹{rounded_price:.2f}, Order ID: {order_id}")
+                logger.info(f"Sell order placed: {symbol} @ ₹{rounded_price:.2f}, Order ID: {order_id}")
                 return str(order_id)
             else:
                 logger.warning(f"Order placed but no ID returned: {response}")
@@ -557,7 +557,7 @@ class SellOrderManager:
             if isinstance(modify_resp, dict):
                 stat = modify_resp.get('stat', '')
                 if stat == 'Ok':
-                    logger.info(f"✅ Order modified successfully: {symbol} @ ₹{rounded_price:.2f}")
+                    logger.info(f"Order modified successfully: {symbol} @ ₹{rounded_price:.2f}")
                     
                     # Update tracking (order_id stays same, just update price)
                     self._update_order_price(symbol, rounded_price)
@@ -631,7 +631,7 @@ class SellOrderManager:
             )
             
             if new_order_id:
-                logger.info(f"✅ Replacement order placed: {symbol} @ ₹{price:.2f}, Order ID: {new_order_id}")
+                logger.info(f"Replacement order placed: {symbol} @ ₹{price:.2f}, Order ID: {new_order_id}")
                 # Update tracking with new order ID
                 base_symbol = extract_base_symbol(symbol)
                 old_entry = self.active_sell_orders.get(base_symbol, {})
@@ -673,7 +673,7 @@ class SellOrderManager:
                     for info in self.active_sell_orders.values()
                 ):
                     executed_ids.append(str(order_id))
-                    logger.info(f"✅ Sell order executed: Order ID {order_id}")
+                    logger.info(f"Sell order executed: Order ID {order_id}")
             
             return executed_ids
             
@@ -1086,7 +1086,7 @@ class SellOrderManager:
                     order_id = OrderFieldExtractor.get_order_id(order)
                     order_price = OrderFieldExtractor.get_price(order)
                     
-                    logger.info(f"✅ Found completed sell order for {base_symbol}: Order ID {order_id}, Price: ₹{order_price:.2f}")
+                    logger.info(f"Found completed sell order for {base_symbol}: Order ID {order_id}, Price: ₹{order_price:.2f}")
                     
                     return {
                         'order_id': order_id,
@@ -1181,23 +1181,23 @@ class SellOrderManager:
             # Check if position already has a completed sell order (already sold)
             completed_order_info = self.has_completed_sell_order(symbol)
             if completed_order_info:
-                logger.info(f"⏭️ Skipping {symbol}: Already has completed sell order - position already sold")
+                logger.info(f"Skipping {symbol}: Already has completed sell order - position already sold")
                 # Update trade history to mark position as closed
                 order_id = completed_order_info.get('order_id', '')
                 order_price = completed_order_info.get('price', 0)
                 if self.state_manager:
                     if self._mark_order_executed(symbol, order_id, order_price):
-                        logger.info(f"✅ Updated trade history: {symbol} marked as closed (Order ID: {order_id}, Price: ₹{order_price:.2f})")
+                        logger.info(f"Updated trade history: {symbol} marked as closed (Order ID: {order_id}, Price: ₹{order_price:.2f})")
                 else:
                     if self.mark_position_closed(symbol, order_price, order_id):
-                        logger.info(f"✅ Updated trade history: {symbol} marked as closed (Order ID: {order_id}, Price: ₹{order_price:.2f})")
+                        logger.info(f"Updated trade history: {symbol} marked as closed (Order ID: {order_id}, Price: ₹{order_price:.2f})")
                 continue
             
             # Check for existing order with same symbol and quantity (avoid duplicate)
             if symbol.upper() in existing_orders:
                 existing = existing_orders[symbol.upper()]
                 if existing['qty'] == qty:
-                    logger.info(f"⏭️ Skipping {symbol}: Existing sell order found (Order ID: {existing['order_id']}, Qty: {qty}, Price: ₹{existing['price']:.2f})")
+                    logger.info(f"Skipping {symbol}: Existing sell order found (Order ID: {existing['order_id']}, Qty: {qty}, Price: ₹{existing['price']:.2f})")
                     # Track the existing order for monitoring
                     # IMPORTANT: Must include ticker for monitoring to work
                     self._register_order(
@@ -1245,7 +1245,7 @@ class SellOrderManager:
         # Clean up any rejected orders from tracking
         self._cleanup_rejected_orders()
         
-        logger.info(f"✅ Placed {orders_placed} sell orders at market open")
+        logger.info(f"Placed {orders_placed} sell orders at market open")
         return orders_placed
     
     def _check_and_update_single_stock(self, symbol: str, order_info: Dict[str, Any], executed_ids: List[str]) -> Dict[str, Any]:
@@ -1299,7 +1299,7 @@ class SellOrderManager:
             current_target = order_info.get('target_price', lowest_so_far)
             
             # Log EMA9 values for monitoring
-            logger.info(f"📊 {symbol}: Current EMA9=₹{rounded_ema9:.2f}, Target=₹{current_target:.2f}, Lowest=₹{lowest_so_far:.2f}")
+            logger.info(f"{symbol}: Current EMA9=₹{rounded_ema9:.2f}, Target=₹{current_target:.2f}, Lowest=₹{lowest_so_far:.2f}")
             
             if rounded_ema9 < lowest_so_far:
                 logger.info(f"{symbol}: New lower EMA9 found - ₹{rounded_ema9:.2f} (was ₹{lowest_so_far:.2f})")
@@ -1355,7 +1355,7 @@ class SellOrderManager:
             # Check if sell order has been completed (via get_orders() to catch all statuses)
             completed_order_info = self.has_completed_sell_order(symbol)
             if completed_order_info:
-                logger.info(f"✅ {symbol} sell order completed - removing from monitoring")
+                logger.info(f"{symbol} sell order completed - removing from monitoring")
                 # Mark position as closed in trade history
                 # Use order price from completed order info, fallback to target_price
                 order_price = completed_order_info.get('price', 0)
@@ -1370,11 +1370,11 @@ class SellOrderManager:
                 if self.state_manager:
                     if self._mark_order_executed(symbol, completed_order_id, order_price):
                         symbols_executed.append(symbol)
-                        logger.info(f"✅ Position closed: {symbol} - removing from tracking")
+                        logger.info(f"Position closed: {symbol} - removing from tracking")
                 else:
                     if self.mark_position_closed(symbol, order_price, completed_order_id):
                         symbols_executed.append(symbol)
-                        logger.info(f"✅ Position closed: {symbol} - removing from tracking")
+                        logger.info(f"Position closed: {symbol} - removing from tracking")
                 continue
             
             # Also check executed_ids (from get_executed_orders())
@@ -1384,11 +1384,11 @@ class SellOrderManager:
                 if self.state_manager:
                     if self._mark_order_executed(symbol, order_id, current_price):
                         symbols_executed.append(symbol)
-                        logger.info(f"✅ Order executed: {symbol} - removing from tracking")
+                        logger.info(f"Order executed: {symbol} - removing from tracking")
                 else:
                     if self.mark_position_closed(symbol, current_price, order_id):
                         symbols_executed.append(symbol)
-                        logger.info(f"✅ Order executed: {symbol} - removing from tracking")
+                        logger.info(f"Order executed: {symbol} - removing from tracking")
         
         # Clean up executed orders
         for symbol in symbols_executed:

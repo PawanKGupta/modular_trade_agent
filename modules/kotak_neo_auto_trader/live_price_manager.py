@@ -129,9 +129,9 @@ class LivePriceManager:
                 if self.price_cache.wait_for_data(timeout=10):
                     logger.info("✓ Receiving live data")
                 else:
-                    logger.warning("⚠️ No data received yet (market may be closed)")
+                    logger.warning("No data received yet (market may be closed)")
             else:
-                logger.warning("⚠️ WebSocket connection timeout")
+                logger.warning("WebSocket connection timeout")
                 
         except Exception as e:
             logger.error(f"Subscription failed: {e}")

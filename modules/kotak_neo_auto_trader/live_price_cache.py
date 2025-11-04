@@ -535,7 +535,7 @@ class LivePriceCache:
                     # Connected - mark as ever connected
                     if not has_ever_connected:
                         has_ever_connected = True
-                        logger.info("✅ WebSocket connection established")
+                        logger.info("WebSocket connection established")
                 
                 # Sleep before next check
                 for _ in range(int(max(1, self.reconnect_delay))):

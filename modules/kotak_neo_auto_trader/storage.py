@@ -288,7 +288,7 @@ def check_manual_buys_of_failed_orders(path: str, orders_client, include_previou
                     data['trades'].append(trade_entry)
                     manually_bought.append(symbol)
                     
-                    logger.info(f"✅ Added {symbol} to trade history (manual buy of bot recommendation, qty={qty}, price=₹{avg_price:.2f})")
+                    logger.info(f"Added {symbol} to trade history (manual buy of bot recommendation, qty={qty}, price=₹{avg_price:.2f})")
         
         # Save updated history and remove these from failed orders
         if manually_bought:

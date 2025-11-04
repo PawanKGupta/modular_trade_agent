@@ -89,25 +89,25 @@ def check_and_reauth(auth, response_or_exception: Any, retry_count: int = 0) -> 
     
     # Prevent infinite retry loops
     if retry_count > 0:
-        logger.error("❌ Authentication failed after re-authentication attempt")
+        logger.error("Authentication failed after re-authentication attempt")
         return False
     
     # Attempt re-authentication
-    logger.warning("❌ JWT token expired or invalid - attempting re-authentication...")
+    logger.warning("JWT token expired or invalid - attempting re-authentication...")
     
     if not hasattr(auth, 'force_relogin'):
-        logger.error("❌ Auth object does not have force_relogin() method")
+        logger.error("Auth object does not have force_relogin() method")
         return False
     
     try:
         if auth.force_relogin():
-            logger.info("✅ Re-authentication successful")
+            logger.info("Re-authentication successful")
             return True
         else:
-            logger.error("❌ Re-authentication failed")
+            logger.error("Re-authentication failed")
             return False
     except Exception as e:
-        logger.error(f"❌ Re-authentication exception: {e}")
+        logger.error(f"Re-authentication exception: {e}")
         return False
 
 
@@ -137,7 +137,7 @@ def with_reauth_retry(
     """
     # Prevent infinite retry loops
     if retry_count > max_retries:
-        logger.error(f"❌ Max retries ({max_retries}) exceeded for API call")
+        logger.error(f"Max retries ({max_retries}) exceeded for API call")
         return None
     
     try:
@@ -147,7 +147,7 @@ def with_reauth_retry(
         # Check if response indicates auth failure
         if isinstance(result, dict) and check_and_reauth(auth, result, retry_count):
             # Retry once after successful re-auth
-            logger.info("🔄 Retrying API call after re-authentication...")
+            logger.info("Retrying API call after re-authentication...")
             return with_reauth_retry(auth, api_call, *args, retry_count=retry_count + 1, max_retries=max_retries, **kwargs)
         
         return result
@@ -157,7 +157,7 @@ def with_reauth_retry(
         if is_auth_exception(e):
             if check_and_reauth(auth, e, retry_count):
                 # Retry once after successful re-auth
-                logger.info("🔄 Retrying API call after re-authentication...")
+                logger.info("Retrying API call after re-authentication...")
                 return with_reauth_retry(auth, api_call, *args, retry_count=retry_count + 1, max_retries=max_retries, **kwargs)
         
         # Re-raise non-auth exceptions

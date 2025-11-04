@@ -140,14 +140,14 @@ class KotakNeoOrders:
                         logger.error(f" Order rejected: {response}")
                         return None
                     safe = _sanitize(response)
-                    logger.info(f"✅ Order placed: {safe}")
+                    logger.info(f"Order placed: {safe}")
                     return safe
                 # Non-dict responses: convert to string and treat as success only if indicative
                 resp_text = str(response)
                 if 'error' in resp_text.lower() or 'invalid' in resp_text.lower():
                     logger.error(f" Order rejected/invalid: {resp_text}")
                     return None
-                logger.info(f"✅ Order placed (raw): {resp_text}")
+                logger.info(f"Order placed (raw): {resp_text}")
                 return {"raw": resp_text}
 
             for method_name in ("place_order", "order_place", "placeorder"):
@@ -160,7 +160,7 @@ class KotakNeoOrders:
                 except Exception as e:
                     logger.warning(f"Order placement via {method_name} failed: {e}")
 
-            logger.error(f"❌ Failed to place order for {symbol}: no compatible method/params")
+            logger.error(f"Failed to place order for {symbol}: no compatible method/params")
             return None
         
         except Exception as e:
@@ -218,7 +218,7 @@ class KotakNeoOrders:
             # Kotak Neo uses disclosed_quantity as optional param
             payload["disclosed_quantity"] = "0"
             
-            logger.info(f"📝 Modifying order {order_id}: qty={quantity}, price={price}")
+            logger.info(f"Modifying order {order_id}: qty={quantity}, price={price}")
             
             if hasattr(client, 'modify_order'):
                 response = client.modify_order(**payload)
@@ -226,19 +226,19 @@ class KotakNeoOrders:
                 if isinstance(response, dict):
                     keys_lower = {str(k).lower() for k in response.keys()}
                     if any(k in keys_lower for k in ("error", "errors")):
-                        logger.error(f"❌ Order modification rejected: {response}")
+                        logger.error(f"Order modification rejected: {response}")
                         return None
-                    logger.info(f"✅ Order modified: {response}")
+                    logger.info(f"Order modified: {response}")
                     return response
                 else:
-                    logger.info(f"✅ Order modified (raw): {response}")
+                    logger.info(f"Order modified (raw): {response}")
                     return {"raw": str(response)}
             else:
                 logger.error("modify_order method not available in client")
                 return None
                 
         except Exception as e:
-            logger.error(f"❌ Error modifying order {order_id}: {e}")
+            logger.error(f"Error modifying order {order_id}: {e}")
             return None
     
     @handle_reauth
@@ -274,14 +274,14 @@ class KotakNeoOrders:
                 try:
                     resp = call_method(method_name)
                     if resp:
-                        logger.info(f"✅ Cancelled order {order_id} via {method_name}")
+                        logger.info(f"Cancelled order {order_id} via {method_name}")
                         return resp
                 except Exception as e:
                     logger.warning(f"Cancel via {method_name} failed: {e}")
-            logger.error(f"❌ Failed to cancel order {order_id}")
+            logger.error(f"Failed to cancel order {order_id}")
             return None
         except Exception as e:
-            logger.error(f"❌ Error cancelling order {order_id}: {e}")
+            logger.error(f"Error cancelling order {order_id}: {e}")
             return None
 
     def cancel_pending_buys_for_symbol(self, symbol_variants: list[str]) -> int:
@@ -400,9 +400,9 @@ class KotakNeoOrders:
                     )
                     
                     if rejection_reason and 'reject' in status.lower():
-                        logger.info(f"📝 Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status} - ❌ Reason: {rejection_reason}")
+                        logger.info(f"Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status} - Reason: {rejection_reason}")
                     else:
-                        logger.info(f"📝 Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status}")
+                        logger.info(f"Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status}")
                     
                     # Count by status
                     order_stats[status] = order_stats.get(status, 0) + 1

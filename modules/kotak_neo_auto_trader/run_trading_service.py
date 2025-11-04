@@ -81,7 +81,7 @@ class TradingService:
         
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signal"""
-        logger.info("⚠️ Shutdown signal received - stopping service gracefully...")
+        logger.info("Shutdown signal received - stopping service gracefully...")
         self.shutdown_requested = True
         
     def initialize(self) -> bool:
@@ -99,10 +99,10 @@ class TradingService:
             self.auth = KotakNeoAuth(self.env_file)
             
             if not self.auth.login():
-                logger.error("❌ Authentication failed")
+                logger.error("Authentication failed")
                 return False
             
-            logger.info("✅ Authentication successful - session active for the day")
+            logger.info("Authentication successful - session active for the day")
             
             # Initialize trading engine
             logger.info("Initializing trading engine...")
@@ -118,12 +118,12 @@ class TradingService:
             # Subscribe to open positions immediately to avoid reconnect loops
             self._subscribe_to_open_positions()
             
-            logger.info("✅ Service initialized successfully")
+            logger.info("Service initialized successfully")
             logger.info("=" * 80)
             return True
             
         except Exception as e:
-            logger.error(f"❌ Service initialization failed: {e}")
+            logger.error(f"Service initialization failed: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -169,9 +169,9 @@ class TradingService:
             # Wait for WebSocket connection to be established
             logger.info("Waiting for WebSocket connection...")
             if self.price_cache.wait_for_connection(timeout=10):
-                logger.info("✅ WebSocket connection established")
+                logger.info("WebSocket connection established")
             else:
-                logger.warning("⚠️ WebSocket connection timeout, subscriptions may fail")
+                logger.warning("WebSocket connection timeout, subscriptions may fail")
             
         except Exception as e:
             logger.warning(f"Failed to initialize live price cache: {e}")
@@ -223,7 +223,7 @@ class TradingService:
             if symbols:
                 # Subscribe to positions for real-time prices (only SELL orders)
                 self.price_cache.subscribe(symbols)
-                logger.info(f"✅ Subscribed to WebSocket for sell orders: {', '.join(symbols)}")
+                logger.info(f"Subscribed to WebSocket for sell orders: {', '.join(symbols)}")
             else:
                 logger.debug("No active sell orders found to subscribe (will subscribe as orders are placed)")
                 
@@ -268,10 +268,10 @@ class TradingService:
                 logger.info("No recommendations to retry")
             
             self.tasks_completed['premarket_retry'] = True
-            logger.info("✅ Pre-market retry completed")
+            logger.info("Pre-market retry completed")
             
         except Exception as e:
-            logger.error(f"❌ Pre-market retry failed: {e}")
+            logger.error(f"Pre-market retry failed: {e}")
             import traceback
             traceback.print_exc()
     
@@ -325,7 +325,7 @@ class TradingService:
                 
                 # Place sell orders at market open
                 orders_placed = self.sell_manager.run_at_market_open()
-                logger.info(f"✅ Placed {orders_placed} sell orders")
+                logger.info(f"Placed {orders_placed} sell orders")
                 
                 self.tasks_completed['sell_monitor_started'] = True
             
@@ -335,7 +335,7 @@ class TradingService:
                 logger.debug(f"Sell monitor: {stats['checked']} checked, {stats['updated']} updated, {stats['executed']} executed")
                 
         except Exception as e:
-            logger.error(f"❌ Sell monitor failed: {e}")
+            logger.error(f"Sell monitor failed: {e}")
             import traceback
             traceback.print_exc()
     
@@ -358,10 +358,10 @@ class TradingService:
             logger.info(f"Position monitor summary: {summary}")
             
             self.tasks_completed['position_monitor'][current_hour] = True
-            logger.info("✅ Position monitoring completed")
+            logger.info("Position monitoring completed")
             
         except Exception as e:
-            logger.error(f"❌ Position monitor failed: {e}")
+            logger.error(f"Position monitor failed: {e}")
             import traceback
             traceback.print_exc()
     
@@ -385,14 +385,14 @@ class TradingService:
             )
             
             if result.returncode == 0:
-                logger.info("✅ Market analysis completed successfully")
+                logger.info("Market analysis completed successfully")
             else:
-                logger.error(f"❌ Market analysis failed: {result.stderr}")
+                logger.error(f"Market analysis failed: {result.stderr}")
             
             self.tasks_completed['analysis'] = True
             
         except Exception as e:
-            logger.error(f"❌ Analysis failed: {e}")
+            logger.error(f"Analysis failed: {e}")
             import traceback
             traceback.print_exc()
     
@@ -412,10 +412,10 @@ class TradingService:
                 logger.info("No buy recommendations to place")
             
             self.tasks_completed['buy_orders'] = True
-            logger.info("✅ Buy orders placement completed")
+            logger.info("Buy orders placement completed")
             
         except Exception as e:
-            logger.error(f"❌ Buy orders failed: {e}")
+            logger.error(f"Buy orders failed: {e}")
             import traceback
             traceback.print_exc()
     
@@ -433,7 +433,7 @@ class TradingService:
             try:
                 removed_count = cleanup_expired_failed_orders(config.TRADES_HISTORY_PATH)
                 if removed_count > 0:
-                    logger.info(f"✅ Cleaned up {removed_count} expired failed order(s)")
+                    logger.info(f"Cleaned up {removed_count} expired failed order(s)")
                 else:
                     logger.debug("No expired failed orders to clean up")
             except Exception as e:
@@ -442,23 +442,23 @@ class TradingService:
             # Run EOD cleanup if available
             if hasattr(self.engine, 'eod_cleanup') and self.engine.eod_cleanup:
                 self.engine.eod_cleanup.run()
-                logger.info("✅ EOD cleanup completed")
+                logger.info("EOD cleanup completed")
             else:
                 logger.info("EOD cleanup not configured")
             
             self.tasks_completed['eod_cleanup'] = True
             
             # Reset task completion flags for next day
-            logger.info("📊 EOD cleanup completed - resetting for next trading day")
+            logger.info("EOD cleanup completed - resetting for next trading day")
             self.tasks_completed['analysis'] = False
             self.tasks_completed['buy_orders'] = False
             self.tasks_completed['premarket_retry'] = False
             self.tasks_completed['sell_monitor_started'] = False
             self.tasks_completed['position_monitor'] = {}
-            logger.info("✅ Service ready for next trading day")
+            logger.info("Service ready for next trading day")
             
         except Exception as e:
-            logger.error(f"❌ EOD cleanup failed: {e}")
+            logger.error(f"EOD cleanup failed: {e}")
             import traceback
             traceback.print_exc()
     
@@ -515,12 +515,12 @@ class TradingService:
                 time.sleep(30)
                 
             except KeyboardInterrupt:
-                logger.info("⚠️ Keyboard interrupt received")
+                logger.info("Keyboard interrupt received")
                 self.shutdown_requested = True
                 break
                 
             except Exception as e:
-                logger.error(f"❌ Scheduler error: {e}")
+                logger.error(f"Scheduler error: {e}")
                 import traceback
                 traceback.print_exc()
                 time.sleep(60)  # Wait a bit before retrying
@@ -537,14 +537,14 @@ class TradingService:
             if self.price_cache:
                 try:
                     self.price_cache.stop()
-                    logger.info("✅ Price cache stopped")
+                    logger.info("Price cache stopped")
                 except Exception as e:
                     logger.warning(f"Error stopping price cache: {e}")
             
             # Logout from session
             if self.auth:
                 self.auth.logout()
-                logger.info("✅ Logged out successfully")
+                logger.info("Logged out successfully")
             
             logger.info("Service stopped gracefully")
             logger.info("=" * 80)
