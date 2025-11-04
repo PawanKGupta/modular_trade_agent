@@ -183,53 +183,152 @@ class KotakNeoAuth:
             
             session_response = self.client.session_2fa(OTP=self.mpin)
             
-            # Debug: log the response to see hsServerId
-            import json
-            self.logger.debug(f"2FA response: {json.dumps(session_response, indent=2, default=str)}")
+            # Debug: log the response type and content (CRITICAL for production debugging)
+            self.logger.info(f"2FA response type: {type(session_response)}")
+            self.logger.info(f"2FA response is None: {session_response is None}")
+            self.logger.info(f"2FA response has .get(): {hasattr(session_response, 'get') if session_response is not None else 'N/A'}")
+            try:
+                import json
+                response_str = json.dumps(session_response, indent=2, default=str)
+                self.logger.debug(f"2FA response: {response_str}")
+            except Exception as json_err:
+                self.logger.warning(f"2FA response (cannot JSON serialize): {session_response}, error: {json_err}")
             
             # Handle None response (can happen with cached sessions)
             if session_response is None:
-                self.logger.debug("2FA returned None - session may already be active")
+                self.logger.info("2FA returned None - session may already be active")
                 return True  # Don't fail if already authenticated
             
-            # Handle SDK error shape - check if session_response is a dict first
-            if isinstance(session_response, dict):
-                error = session_response.get('error')
-                if error:
-                    try:
-                        # Handle error as list or dict
-                        if isinstance(error, list) and len(error) > 0:
-                            error_item = error[0]
-                            if isinstance(error_item, dict):
-                                msg = error_item.get('message', str(error_item))
-                            elif error_item is not None:
-                                msg = str(error_item)
-                            else:
-                                msg = "Unknown error (None in error list)"
-                        elif isinstance(error, dict):
-                            msg = error.get('message', str(error))
-                        else:
-                            msg = str(error)
-                    except Exception as parse_error:
-                        self.logger.warning(f"Error parsing 2FA error response: {parse_error}")
-                        msg = str(error)
-                    self.logger.error(f"2FA failed: {msg}")
-                    return False
+            # Handle SDK error shape - be VERY defensive about .get() calls
+            # CRITICAL: Check None FIRST before ANY attribute access
+            try:
+                # Double-check None (defensive programming - might have changed)
+                if session_response is None:
+                    self.logger.info("2FA response is None (checked again) - session may already be active")
+                    return True
                 
-                # Extract session token when present
-                data = session_response.get('data')
-                if data and isinstance(data, dict):
-                    token = data.get('token')
-                    if token:
-                        self.session_token = token
-                        self.logger.debug("2FA session token extracted from response['data']['token']")
-            else:
-                # Handle object-style response (hasattr check)
-                if hasattr(session_response, 'data') and hasattr(session_response.data, 'token'):
-                    self.session_token = session_response.data.token
-                    self.logger.debug("2FA session token extracted from response.data.token")
+                # Check if session_response is a dict - SAFEST approach
+                if isinstance(session_response, dict):
+                    # Safe dict access - dict.get() is always safe
+                    error = session_response.get('error')
+                    if error:
+                        try:
+                            # Handle error as list or dict
+                            if isinstance(error, list) and len(error) > 0:
+                                error_item = error[0]
+                                if isinstance(error_item, dict):
+                                    msg = error_item.get('message', str(error_item))
+                                elif error_item is not None:
+                                    msg = str(error_item)
+                                else:
+                                    msg = "Unknown error (None in error list)"
+                            elif isinstance(error, dict):
+                                msg = error.get('message', str(error))
+                            else:
+                                msg = str(error) if error is not None else "Unknown error"
+                        except Exception as parse_error:
+                            self.logger.warning(f"Error parsing 2FA error response: {parse_error}")
+                            msg = str(error) if error is not None else "Unknown error"
+                        self.logger.error(f"2FA failed: {msg}")
+                        return False
+                    
+                    # Extract session token when present
+                    data = session_response.get('data')
+                    if data is not None and isinstance(data, dict):
+                        token = data.get('token')
+                        if token:
+                            self.session_token = token
+                            self.logger.debug("2FA session token extracted from response['data']['token']")
+                
+                # Check if session_response has .get() method (but not a dict)
+                # IMPORTANT: Check None FIRST before hasattr
+                elif session_response is not None and hasattr(session_response, 'get'):
+                    # Verify .get() is actually callable before using it
+                    try:
+                        get_method = getattr(session_response, 'get', None)
+                        if not callable(get_method):
+                            self.logger.debug("session_response.get exists but is not callable")
+                            # Treat as unknown type
+                            pass
+                        else:
+                            # Handle object-style response with .get() method
+                            try:
+                                # Safe .get() call - we know it exists and is callable
+                                error = get_method('error')
+                                if error:
+                                    self.logger.error(f"2FA failed: {error}")
+                                    return False
+                                
+                                # Safe .get() call for data
+                                data = get_method('data')
+                                if data is not None:
+                                    # Safe token extraction - be extra careful
+                                    token = None
+                                    if isinstance(data, dict):
+                                        token = data.get('token')
+                                    elif hasattr(data, 'token'):
+                                        token = getattr(data, 'token', None)
+                                    elif hasattr(data, 'get') and callable(getattr(data, 'get', None)):
+                                        try:
+                                            token = data.get('token') if data is not None else None
+                                        except (AttributeError, TypeError):
+                                            token = None
+                                    
+                                    if token:
+                                        self.session_token = token
+                                        self.logger.debug("2FA session token extracted from response.data.token")
+                            except AttributeError as e:
+                                self.logger.warning(f"Error accessing object-style response (AttributeError): {e}")
+                                # Don't fail - might be success
+                            except Exception as e:
+                                self.logger.warning(f"Error accessing object-style response: {e}")
+                                # Don't fail - might be success
+                    except Exception as e:
+                        self.logger.debug(f"Error checking .get() method: {e}")
+                
+                # Check if session_response has .data attribute
+                # IMPORTANT: Check None FIRST before hasattr
+                elif session_response is not None and hasattr(session_response, 'data'):
+                    try:
+                        if hasattr(session_response.data, 'token'):
+                            self.session_token = session_response.data.token
+                            self.logger.debug("2FA session token extracted from response.data.token")
+                    except AttributeError as e:
+                        self.logger.debug(f"Could not access response.data.token: {e}")
+                    except Exception as e:
+                        self.logger.warning(f"Error accessing response.data.token: {e}")
+                
+                else:
+                    # Unknown response type - log but don't fail (might be success)
+                    if session_response is not None:
+                        self.logger.debug(f"2FA returned unexpected response type: {type(session_response)}")
+                    # Don't fail - might be success indicator
+                    
+            except AttributeError as e:
+                # Catch any AttributeError from .get() calls
+                error_msg = str(e)
+                self.logger.error(f"2FA error (AttributeError accessing response): {error_msg}")
+                self.logger.error(f"2FA error - session_response type: {type(session_response)}")
+                self.logger.error(f"2FA error - session_response value: {session_response}")
+                import traceback
+                tb_str = traceback.format_exc()
+                self.logger.error(f"2FA AttributeError traceback: {tb_str}")
+                # AttributeError means we tried to call .get() on None or invalid object
+                # This is a real error, so return False
+                return False
             
             return True
+        except AttributeError as e:
+            # Specific handling for AttributeError (likely .get() on None)
+            error_msg = str(e)
+            self.logger.error(f"2FA error (AttributeError): {error_msg}")
+            import traceback
+            tb_str = traceback.format_exc()
+            self.logger.error(f"2FA AttributeError traceback: {tb_str}")
+            # Log client state for debugging
+            self.logger.error(f"2FA error - client exists: {self.client is not None}")
+            self.logger.error(f"2FA error - client type: {type(self.client) if self.client else 'None'}")
+            return False
         except Exception as e:
             self.logger.error(f"2FA error: {e}")
             import traceback
