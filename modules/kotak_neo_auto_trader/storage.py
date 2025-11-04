@@ -369,3 +369,57 @@ def cleanup_expired_failed_orders(path: str) -> int:
     except Exception as e:
         logger.error(f"Failed to cleanup expired orders: {e}")
         return 0
+
+
+def mark_position_closed(history_path: str, symbol: str, exit_price: float, sell_order_id: str) -> bool:
+    """
+    Mark a position as closed in trade history.
+    
+    Args:
+        history_path: Path to the history file
+        symbol: Trading symbol (base, without suffix)
+        exit_price: Execution price
+        sell_order_id: Order ID
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        history = load_history(history_path)
+        trades = history.get('trades', [])
+        
+        updated = False
+        for trade in trades:
+            trade_symbol = trade.get('symbol', '').upper()
+            if trade_symbol == symbol.upper() and trade.get('status') == 'open':
+                # Mark as closed
+                trade['status'] = 'closed'
+                trade['exit_price'] = exit_price
+                trade['exit_time'] = datetime.now().isoformat()
+                trade['exit_reason'] = 'EMA9_TARGET'
+                trade['sell_order_id'] = sell_order_id
+                
+                # Calculate P&L
+                entry_price = trade.get('entry_price', 0)
+                qty = trade.get('qty', 0)
+                if entry_price and qty:
+                    pnl = (exit_price - entry_price) * qty
+                    pnl_pct = ((exit_price / entry_price) - 1) * 100
+                    trade['pnl'] = pnl
+                    trade['pnl_pct'] = pnl_pct
+                    logger.info(f"Position closed: {symbol} - P&L: ₹{pnl:.2f} ({pnl_pct:+.2f}%)")
+                
+                updated = True
+                break
+        
+        if updated:
+            save_history(history_path, history)
+            logger.info(f"Trade history updated: {symbol} marked as closed")
+            return True
+        else:
+            logger.warning(f"No open position found for {symbol} in trade history")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error marking position closed: {e}")
+        return False
