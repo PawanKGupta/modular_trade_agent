@@ -151,14 +151,25 @@ class TestJWTExpiryHandling:
         
         orders = KotakNeoOrders(mock_auth)
         
-        # Verify JWT expiry detection would trigger
-        # (This is integration-tested, here we verify the code exists)
+        # Verify JWT expiry detection is handled via @handle_reauth decorator
         import inspect
         source = inspect.getsource(orders.get_orders)
         
-        assert '900901' in source
-        assert 'invalid jwt token' in source.lower()
-        assert 'force_relogin' in source
+        # Check that decorator is used (centralized JWT expiry handling)
+        assert '@handle_reauth' in source or 'handle_reauth' in source
+        
+        # Verify JWT expiry detection exists in auth_handler (centralized)
+        from modules.kotak_neo_auto_trader.auth_handler import is_auth_error, _attempt_reauth_thread_safe
+        import inspect as inspect_module
+        auth_handler_source = inspect_module.getsource(is_auth_error)
+        reauth_source = inspect_module.getsource(_attempt_reauth_thread_safe)
+        
+        # Verify error code 900901 is detected in auth_handler
+        assert '900901' in auth_handler_source
+        assert 'invalid jwt token' in auth_handler_source.lower()
+        
+        # Verify force_relogin is called in re-authentication handler (not in is_auth_error)
+        assert 'force_relogin' in reauth_source or 'force_relogin' in source.lower()
     
     def test_auto_trade_engine_detects_2fa_gates(self):
         """Test that auto_trade_engine detects 2FA requirement"""
