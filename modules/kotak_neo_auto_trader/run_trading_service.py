@@ -516,7 +516,7 @@ class TradingService:
             
             # Run EOD cleanup if available
             if hasattr(self.engine, 'eod_cleanup') and self.engine.eod_cleanup:
-                self.engine.eod_cleanup.run()
+                self.engine.eod_cleanup.run_eod_cleanup()
                 logger.info("EOD cleanup completed")
             else:
                 logger.info("EOD cleanup not configured")
@@ -548,20 +548,37 @@ class TradingService:
         logger.info("Press Ctrl+C to stop")
         logger.info("")
         
+        # Log initial status
+        now_init = datetime.now()
+        logger.info(f"Current time: {now_init.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Is trading day: {self.is_trading_day()} (weekday: {now_init.weekday()}, 0=Mon, 4=Fri)")
+        logger.info(f"Is market hours: {self.is_market_hours()}")
+        logger.info("Starting scheduler loop...")
+        logger.info("(Service will run continuously - tasks only execute on trading days)")
+        logger.info("")
+        
         last_minute = -1
+        loop_count = 0
         
         while not self.shutdown_requested:
+            loop_count += 1
             try:
                 now = datetime.now()
                 current_time = now.time()
                 current_minute = now.minute
                 
+                # Log first few loops to confirm it's running
+                if loop_count <= 3:
+                    logger.info(f"Scheduler loop iteration #{loop_count} at {now.strftime('%H:%M:%S')}")
+                
                 # Run tasks only once per minute (on trading days only)
                 if current_minute != last_minute:
                     last_minute = current_minute
+                    logger.debug(f"Scheduler check at {current_time.strftime('%H:%M:%S')} (loop #{loop_count})")
                     
                     # Only run tasks on trading days (Mon-Fri)
                     if self.is_trading_day():
+                        logger.debug(f"  → Trading day detected - checking tasks...")
                         # 9:00 AM - Pre-market retry
                         if self.should_run_task('premarket_retry', dt_time(9, 0)):
                             self.run_premarket_retry()
@@ -586,6 +603,10 @@ class TradingService:
                         if self.should_run_task('eod_cleanup', dt_time(18, 0)):
                             self.run_eod_cleanup()
                 
+                # Periodic heartbeat log (every 5 minutes to show service is alive)
+                if now.minute % 5 == 0 and now.second < 30:
+                    logger.info(f"Scheduler heartbeat: {now.strftime('%Y-%m-%d %H:%M:%S')} - Service running (loop #{loop_count})...")
+                
                 # Sleep for 30 seconds between checks
                 time.sleep(30)
                 
@@ -598,6 +619,7 @@ class TradingService:
                 logger.error(f"Scheduler error: {e}")
                 import traceback
                 traceback.print_exc()
+                logger.error("Service will continue after error - waiting 60 seconds before retry...")
                 time.sleep(60)  # Wait a bit before retrying
     
     def shutdown(self):
@@ -629,18 +651,27 @@ class TradingService:
     
     def run(self):
         """Main entry point - Runs continuously"""
+        logger.info("Setting up signal handlers...")
         self.setup_signal_handlers()
         
         # Initialize service (single login)
+        logger.info("Starting service initialization...")
         if not self.initialize():
-            logger.error("Failed to initialize service")
+            logger.error("Failed to initialize service - service will exit")
             return
+        
+        logger.info("Initialization complete - entering scheduler loop...")
         
         try:
             # Run scheduler continuously
             self.run_scheduler()
+        except Exception as e:
+            logger.error(f"Fatal error in scheduler: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             # Always cleanup on exit
+            logger.info("Entering shutdown sequence...")
             self.shutdown()
 
 

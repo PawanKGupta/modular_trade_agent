@@ -161,27 +161,38 @@ class KotakNeoAuth:
                 self.logger.error("No client available for 2FA")
                 return False
             
-            session_response = self.client.session_2fa(OTP=self.mpin)
+            # Call session_2fa with error handling
+            try:
+                session_response = self.client.session_2fa(OTP=self.mpin)
+            except Exception as session_err:
+                self.logger.error(f"2FA call failed: {session_err}")
+                return False
             
-            # Debug: log the response to see hsServerId
-            import json
-            self.logger.debug(f"2FA response: {json.dumps(session_response, indent=2, default=str)}")
-            
-            # Handle None response (can happen with cached sessions)
+            # Handle None response FIRST (can happen with cached sessions or API errors)
             if session_response is None:
                 self.logger.debug("2FA returned None - session may already be active")
                 return True  # Don't fail if already authenticated
             
+            # Debug: log the response to see structure (only if not None)
+            import json
+            try:
+                self.logger.debug(f"2FA response: {json.dumps(session_response, indent=2, default=str)}")
+            except Exception as log_err:
+                self.logger.debug(f"2FA response logging failed: {log_err}, response type: {type(session_response)}")
+            
             # Handle SDK error shape - check if response is dict-like first
-            # Use getattr with default to handle both dicts and dict-like objects
+            # Use explicit None check AND type check to prevent AttributeError
             err = None
             if isinstance(session_response, dict):
                 err = session_response.get('error')
-            elif hasattr(session_response, 'get'):
+            elif session_response is not None and hasattr(session_response, 'get'):
                 # Handle dict-like objects (e.g., custom SDK response objects)
+                # Additional None check before calling get()
                 try:
-                    err = session_response.get('error')
-                except (AttributeError, TypeError):
+                    if callable(getattr(session_response, 'get', None)):
+                        err = session_response.get('error')
+                except (AttributeError, TypeError) as e:
+                    self.logger.debug(f"Could not access error from session_response: {e}")
                     pass  # If get() fails, continue
             
             if err:
@@ -202,7 +213,7 @@ class KotakNeoAuth:
             
             # Extract session token when present
             # Try object attribute access first (SDK response object)
-            if hasattr(session_response, 'data'):
+            if session_response is not None and hasattr(session_response, 'data'):
                 try:
                     data_obj = session_response.data
                     if data_obj is not None and hasattr(data_obj, 'token'):
@@ -213,37 +224,41 @@ class KotakNeoAuth:
                     self.logger.debug(f"Could not access session_response.data.token: {e}")
             
             # Try dict access (JSON response)
-            # Handle both dict and dict-like objects safely
+            # Handle both dict and dict-like objects safely with explicit None checks
             data_field = None
             if isinstance(session_response, dict):
                 data_field = session_response.get('data')
-            elif hasattr(session_response, 'get'):
+            elif session_response is not None and hasattr(session_response, 'get'):
                 # Handle dict-like objects (e.g., custom SDK response objects)
+                # Additional None check and callable check before calling get()
                 try:
-                    data_field = session_response.get('data')
-                except (AttributeError, TypeError):
+                    if callable(getattr(session_response, 'get', None)):
+                        data_field = session_response.get('data')
+                except (AttributeError, TypeError) as e:
+                    self.logger.debug(f"Could not access data from session_response: {e}")
                     pass  # If get() fails, data_field remains None
             
             if data_field is None:
                 self.logger.debug("2FA response data field is None - session may already be active")
                 return True  # Don't fail if data is None (cached session)
             
-            # Safely extract token from data field
+            # Safely extract token from data field with explicit None check
             if isinstance(data_field, dict):
                 token = data_field.get('token')
                 if token:
                     self.session_token = token
                     self.logger.debug("2FA session token extracted from response['data']['token']")
-            elif hasattr(data_field, 'get'):
-                # Handle dict-like data field
+            elif data_field is not None and hasattr(data_field, 'get'):
+                # Handle dict-like data field with callable check
                 try:
-                    token = data_field.get('token')
-                    if token:
-                        self.session_token = token
-                        self.logger.debug("2FA session token extracted from dict-like data field")
-                except (AttributeError, TypeError):
+                    if callable(getattr(data_field, 'get', None)):
+                        token = data_field.get('token')
+                        if token:
+                            self.session_token = token
+                            self.logger.debug("2FA session token extracted from dict-like data field")
+                except (AttributeError, TypeError) as e:
                     # Data field exists but get() failed - might be a different structure
-                    self.logger.debug(f"2FA response data field is not accessible: {type(data_field)}")
+                    self.logger.debug(f"2FA response data field is not accessible: {type(data_field)}, error: {e}")
             else:
                 # Data field exists but is not a dict or dict-like - might be a different structure
                 self.logger.debug(f"2FA response data field is not a dict: {type(data_field)}")

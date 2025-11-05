@@ -15,6 +15,11 @@ _reauth_locks: Dict[int, threading.Lock] = {}
 _reauth_locks_lock = threading.Lock()  # Protects the dict itself
 _reauth_in_progress: Dict[int, threading.Event] = {}
 _reauth_in_progress_lock = threading.Lock()  # Protects the dict itself
+# Track recent re-auth failures to prevent loops
+_recent_reauth_failures: Dict[int, tuple] = {}  # auth_id -> (failure_time, failure_count)
+_recent_reauth_failures_lock = threading.Lock()  # Protects the dict itself
+_REAUTH_FAILURE_WINDOW = 60  # seconds
+_MAX_REAUTH_FAILURES = 3  # max failures in window before blocking
 
 
 def is_auth_error(response: Any) -> bool:
@@ -92,6 +97,67 @@ def _get_reauth_lock(auth) -> threading.Lock:
         if auth_id not in _reauth_locks:
             _reauth_locks[auth_id] = threading.Lock()
         return _reauth_locks[auth_id]
+
+
+def _check_reauth_failure_rate(auth) -> bool:
+    """
+    Check if re-auth has failed too many times recently.
+    
+    Returns:
+        True if re-auth should be blocked (too many failures), False otherwise
+    """
+    import time
+    auth_id = id(auth)
+    current_time = time.time()
+    
+    with _recent_reauth_failures_lock:
+        if auth_id not in _recent_reauth_failures:
+            return False
+        
+        failure_time, failure_count = _recent_reauth_failures[auth_id]
+        
+        # Reset if window expired
+        if current_time - failure_time > _REAUTH_FAILURE_WINDOW:
+            del _recent_reauth_failures[auth_id]
+            return False
+        
+        # Block if too many failures
+        if failure_count >= _MAX_REAUTH_FAILURES:
+            logger.warning(
+                f"Re-authentication blocked: {failure_count} failures in last {_REAUTH_FAILURE_WINDOW}s. "
+                f"Please check authentication credentials or API status."
+            )
+            return True
+        
+        return False
+
+
+def _record_reauth_failure(auth):
+    """Record a re-auth failure for rate limiting"""
+    import time
+    auth_id = id(auth)
+    current_time = time.time()
+    
+    with _recent_reauth_failures_lock:
+        if auth_id not in _recent_reauth_failures:
+            _recent_reauth_failures[auth_id] = (current_time, 1)
+        else:
+            failure_time, failure_count = _recent_reauth_failures[auth_id]
+            
+            # Reset if window expired
+            if current_time - failure_time > _REAUTH_FAILURE_WINDOW:
+                _recent_reauth_failures[auth_id] = (current_time, 1)
+            else:
+                # Increment failure count
+                _recent_reauth_failures[auth_id] = (failure_time, failure_count + 1)
+
+
+def _clear_reauth_failures(auth):
+    """Clear re-auth failure history after successful re-auth"""
+    auth_id = id(auth)
+    with _recent_reauth_failures_lock:
+        if auth_id in _recent_reauth_failures:
+            del _recent_reauth_failures[auth_id]
 
 
 def _get_reauth_event(auth) -> threading.Event:
@@ -218,14 +284,33 @@ def handle_reauth(func: Callable) -> Callable:
             
             # Check if response indicates auth failure
             if isinstance(result, dict) and is_auth_error(result):
+                # Check if re-auth should be blocked due to recent failures
+                if _check_reauth_failure_rate(self.auth):
+                    logger.error(f"Re-authentication blocked for {func.__name__} due to recent failures")
+                    return None
+                
                 # Use thread-safe re-authentication
                 if hasattr(self, 'auth'):
                     if _attempt_reauth_thread_safe(self.auth, func.__name__):
                         logger.info(f"Retrying {func.__name__} after re-authentication...")
                         # Retry once after successful re-auth
-                        return func(self, *args, **kwargs)
+                        retry_result = func(self, *args, **kwargs)
+                        
+                        # If retry still fails with auth error, re-auth didn't actually work
+                        if isinstance(retry_result, dict) and is_auth_error(retry_result):
+                            logger.warning(
+                                f"Re-authentication appears to have failed for {func.__name__}: "
+                                f"retry still returned auth error. Recording failure."
+                            )
+                            _record_reauth_failure(self.auth)
+                            return None
+                        
+                        # Clear failure history on successful retry
+                        _clear_reauth_failures(self.auth)
+                        return retry_result
                     else:
                         logger.error(f"Re-authentication failed for {func.__name__}")
+                        _record_reauth_failure(self.auth)
                         return None
                 else:
                     logger.error("Auth object not found")
@@ -236,13 +321,32 @@ def handle_reauth(func: Callable) -> Callable:
                 error_data = result.get('error')
                 if isinstance(error_data, dict):
                     if is_auth_error(error_data):
+                        # Check if re-auth should be blocked due to recent failures
+                        if _check_reauth_failure_rate(self.auth):
+                            logger.error(f"Re-authentication blocked for {func.__name__} due to recent failures")
+                            return None
+                        
                         # Use thread-safe re-authentication
                         if hasattr(self, 'auth'):
                             if _attempt_reauth_thread_safe(self.auth, func.__name__):
                                 logger.info(f"Retrying {func.__name__} after re-authentication...")
-                                return func(self, *args, **kwargs)
+                                retry_result = func(self, *args, **kwargs)
+                                
+                                # If retry still fails with auth error, re-auth didn't actually work
+                                if isinstance(retry_result, dict) and is_auth_error(retry_result):
+                                    logger.warning(
+                                        f"Re-authentication appears to have failed for {func.__name__}: "
+                                        f"retry still returned auth error. Recording failure."
+                                    )
+                                    _record_reauth_failure(self.auth)
+                                    return None
+                                
+                                # Clear failure history on successful retry
+                                _clear_reauth_failures(self.auth)
+                                return retry_result
                             else:
                                 logger.error(f"Re-authentication failed for {func.__name__}")
+                                _record_reauth_failure(self.auth)
                                 return None
                         else:
                             logger.error("Auth object not found")
