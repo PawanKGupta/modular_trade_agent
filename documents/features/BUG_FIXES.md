@@ -3,7 +3,8 @@
 **Note**: This document tracks historical bugs fixed in v1.0-v2.0 (separate task architecture).  
 v2.1+ uses the unified continuous service (run_trading_service.py).
 
-This document tracks all bugs discovered and fixed in the automated trading system.
+This document serves as an **index/summary** of all bugs discovered and fixed in the automated trading system.  
+For detailed documentation, architecture explanations, and examples, see the **Related Documentation** links in each bug entry.
 
 ---
 
