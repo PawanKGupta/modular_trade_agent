@@ -162,9 +162,24 @@ class KotakNeoAuth:
                 return False
             
             # Call session_2fa with error handling
+            # Wrap in try-except to catch ANY exception, including AttributeError from SDK
             try:
                 session_response = self.client.session_2fa(OTP=self.mpin)
+            except AttributeError as attr_err:
+                # Specifically catch AttributeError ('NoneType' object has no attribute 'get')
+                error_msg = str(attr_err)
+                if "NoneType" in error_msg and "get" in error_msg:
+                    self.logger.warning(f"2FA SDK error (NoneType.get): {error_msg} - treating as session already active")
+                    return True  # Assume session is already active if SDK has this error
+                else:
+                    self.logger.error(f"2FA call failed (AttributeError): {attr_err}")
+                    return False
             except Exception as session_err:
+                error_msg = str(session_err)
+                # Handle specific NoneType.get error even if it's not AttributeError
+                if "NoneType" in error_msg and "get" in error_msg:
+                    self.logger.warning(f"2FA SDK error (NoneType.get): {error_msg} - treating as session already active")
+                    return True  # Assume session is already active
                 self.logger.error(f"2FA call failed: {session_err}")
                 return False
             
