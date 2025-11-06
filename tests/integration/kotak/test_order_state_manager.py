@@ -236,5 +236,101 @@ class TestOrderStateManager:
         assert isinstance(history, dict)
         assert 'trades' in history
         assert 'failed_orders' in history
+    
+    def test_register_sell_order_duplicate_prevention(self, state_manager):
+        """Test that duplicate registration is prevented"""
+        # Register order first time
+        result1 = state_manager.register_sell_order(
+            symbol="DALBHARAT-EQ",
+            order_id="251106000008974",
+            target_price=2095.53,
+            qty=233,
+            ticker="DALBHARAT.NS"
+        )
+        
+        assert result1 is True
+        assert "DALBHARAT" in state_manager.active_sell_orders
+        assert state_manager.active_sell_orders["DALBHARAT"]["order_id"] == "251106000008974"
+        assert state_manager.active_sell_orders["DALBHARAT"]["target_price"] == 2095.53
+        
+        # Get initial pending orders count
+        initial_pending = state_manager.get_pending_orders()
+        initial_count = len([o for o in initial_pending if o['order_id'] == '251106000008974'])
+        
+        # Try to register same order again with same price
+        result2 = state_manager.register_sell_order(
+            symbol="DALBHARAT-EQ",
+            order_id="251106000008974",
+            target_price=2095.53,
+            qty=233,
+            ticker="DALBHARAT.NS"
+        )
+        
+        # Should return True (order already tracked) but not create duplicate
+        assert result2 is True
+        
+        # Verify no duplicate in active orders
+        assert len(state_manager.active_sell_orders) == 1
+        assert state_manager.active_sell_orders["DALBHARAT"]["order_id"] == "251106000008974"
+        
+        # Verify no duplicate in pending orders
+        final_pending = state_manager.get_pending_orders()
+        final_count = len([o for o in final_pending if o['order_id'] == '251106000008974'])
+        assert final_count == initial_count, "Duplicate order should not be added to pending orders"
+    
+    def test_register_sell_order_duplicate_with_zero_price(self, state_manager):
+        """Test that duplicate with zero price doesn't overwrite correct price"""
+        # Register order with correct price
+        result1 = state_manager.register_sell_order(
+            symbol="DALBHARAT-EQ",
+            order_id="251106000008974",
+            target_price=2095.53,
+            qty=233,
+            ticker="DALBHARAT.NS"
+        )
+        
+        assert result1 is True
+        assert state_manager.active_sell_orders["DALBHARAT"]["target_price"] == 2095.53
+        
+        # Try to register same order with zero price (simulating the bug scenario)
+        result2 = state_manager.register_sell_order(
+            symbol="DALBHARAT-EQ",
+            order_id="251106000008974",
+            target_price=0.0,
+            qty=233,
+            ticker="DALBHARAT.NS"
+        )
+        
+        # Should return True but NOT update price to 0.0
+        assert result2 is True
+        # Price should remain unchanged (0.0 is not > 0, so update condition fails)
+        assert state_manager.active_sell_orders["DALBHARAT"]["target_price"] == 2095.53
+    
+    def test_register_sell_order_price_update(self, state_manager):
+        """Test that price update works when order already exists"""
+        # Register order with initial price
+        state_manager.register_sell_order(
+            symbol="RELIANCE-EQ",
+            order_id="12345",
+            target_price=2500.0,
+            qty=10,
+            ticker="RELIANCE.NS"
+        )
+        
+        assert state_manager.active_sell_orders["RELIANCE"]["target_price"] == 2500.0
+        
+        # Register same order with updated price
+        result = state_manager.register_sell_order(
+            symbol="RELIANCE-EQ",
+            order_id="12345",
+            target_price=2550.0,
+            qty=10,
+            ticker="RELIANCE.NS"
+        )
+        
+        # Should update price
+        assert result is True
+        assert state_manager.active_sell_orders["RELIANCE"]["target_price"] == 2550.0
+        assert "last_updated" in state_manager.active_sell_orders["RELIANCE"]
 
 

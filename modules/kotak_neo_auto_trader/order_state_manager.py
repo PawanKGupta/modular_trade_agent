@@ -101,6 +101,29 @@ class OrderStateManager:
             try:
                 base_symbol = extract_base_symbol(symbol).upper()
                 
+                # Check if order already exists in active_sell_orders
+                existing_order = self.active_sell_orders.get(base_symbol)
+                if existing_order and existing_order.get('order_id') == order_id:
+                    # Order already registered - check if price needs updating
+                    existing_price = existing_order.get('target_price', 0)
+                    if existing_price != target_price and target_price > 0:
+                        # Price changed - update it
+                        logger.debug(
+                            f"Order {order_id} already registered for {base_symbol}. "
+                            f"Updating price from ₹{existing_price:.2f} to ₹{target_price:.2f}"
+                        )
+                        self.active_sell_orders[base_symbol]['target_price'] = target_price
+                        self.active_sell_orders[base_symbol]['last_updated'] = datetime.now().isoformat()
+                        return True  # Return True after updating price
+                    else:
+                        # Order already registered with same or better price - skip duplicate registration
+                        logger.debug(
+                            f"Order {order_id} already registered for {base_symbol}. "
+                            f"Existing price: ₹{existing_price:.2f}, New price: ₹{target_price:.2f}. "
+                            f"Skipping duplicate registration."
+                        )
+                        return True  # Return True since order is already tracked
+                
                 # 1. Update in-memory cache
                 self.active_sell_orders[base_symbol] = {
                     'order_id': order_id,
@@ -112,7 +135,7 @@ class OrderStateManager:
                     **kwargs
                 }
                 
-                # 2. Add to pending orders tracker
+                # 2. Add to pending orders tracker (will skip if duplicate due to fix in add_pending_order)
                 if ticker:
                     self._order_tracker.add_pending_order(
                         order_id=order_id,

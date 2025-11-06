@@ -128,6 +128,24 @@ class OrderTracker:
         """
         data = self._load_pending_data()
         
+        # Check if order already exists (prevent duplicates)
+        existing_order = None
+        for order in data["orders"]:
+            if order["order_id"] == order_id:
+                existing_order = order
+                break
+        
+        if existing_order:
+            # Order already exists - log warning and skip adding duplicate
+            logger.warning(
+                f"Order {order_id} already exists in pending orders. "
+                f"Existing: symbol={existing_order.get('symbol')}, "
+                f"status={existing_order.get('status')}, "
+                f"price={existing_order.get('price')}. "
+                f"Skipping duplicate add for {symbol}."
+            )
+            return
+        
         pending_order = {
             "order_id": order_id,
             "symbol": symbol,
