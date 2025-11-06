@@ -39,6 +39,7 @@ try:
     from .live_price_cache import LivePriceCache
     from .storage import cleanup_expired_failed_orders
     from . import config
+    from .utils.service_conflict_detector import prevent_service_conflict
 except ImportError:
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
     from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
@@ -49,6 +50,7 @@ except ImportError:
     from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
     from modules.kotak_neo_auto_trader.storage import cleanup_expired_failed_orders
     from modules.kotak_neo_auto_trader import config
+    from modules.kotak_neo_auto_trader.utils.service_conflict_detector import prevent_service_conflict
 
 
 class TradingService:
@@ -96,6 +98,11 @@ class TradingService:
             logger.info("=" * 80)
             logger.info("TRADING SERVICE INITIALIZATION")
             logger.info("=" * 80)
+            
+            # Check for service conflicts (prevent running with old services)
+            if not prevent_service_conflict("run_trading_service.py", is_unified=True):
+                logger.error("Service initialization aborted due to conflicts.")
+                return False
             
             # Initialize authentication
             logger.info("Authenticating with Kotak Neo...")

@@ -74,3 +74,4 @@ def get_lookup_symbol(broker_symbol: Optional[str], base_symbol: str) -> str:
         return normalize_symbol(broker_symbol)
     return normalize_symbol(base_symbol)
 
+

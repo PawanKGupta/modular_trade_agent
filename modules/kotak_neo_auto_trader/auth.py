@@ -4,6 +4,7 @@ Handles login, logout, and session management
 """
 
 import os
+import threading
 from dotenv import load_dotenv
 from typing import Optional
 import sys
@@ -32,6 +33,10 @@ class KotakNeoAuth:
         self.client = None
         self.session_token = None
         self.is_logged_in = False
+        
+        # Thread lock for thread-safe client access
+        # Prevents race conditions when multiple threads use the same client
+        self._client_lock = threading.Lock()
 
         # Use existing project logger
         self.logger = logger
@@ -113,17 +118,8 @@ class KotakNeoAuth:
             return client
 
         except Exception as init_error:
-            self.logger.warning(f"Client initialization warning: {init_error}")
-            self.logger.info("Attempting to continue with login...")
-
-            # Create client anyway - sometimes it still works
-            from neo_api_client import NeoAPI
-            return NeoAPI(
-                consumer_key=self.consumer_key,
-                consumer_secret=self.consumer_secret,
-                environment=self.environment,
-                neo_fin_key="neotradeapi"
-            )
+            self.logger.error(f"Client initialization failed: {init_error}")
+            return None
 
     def _perform_login(self) -> bool:
         """Perform username/password login"""
@@ -150,169 +146,197 @@ class KotakNeoAuth:
             return False
 
     def _complete_2fa(self) -> bool:
-        """Complete 2FA authentication using MPIN from env (recommended by Kotak Neo)."""
+        """
+        Complete 2FA authentication using MPIN from env (recommended by Kotak Neo).
+        
+        Handles various response formats and SDK exceptions gracefully.
+        """
         if not self.mpin:
             self.logger.error("MPIN not configured; set KOTAK_MPIN in kotak_neo.env for 2FA")
             return False
+        
+        if not self.client:
+            self.logger.error("No client available for 2FA")
+            return False
+        
         try:
             self.logger.info("Using MPIN for 2FA")
-            # Ensure client is available
-            if not self.client:
-                self.logger.error("No client available for 2FA")
-                return False
             
-            # Call session_2fa with error handling
-            # Wrap in try-except to catch ANY exception, including AttributeError from SDK
+            # Call session_2fa with comprehensive error handling
             try:
                 session_response = self.client.session_2fa(OTP=self.mpin)
-            except AttributeError as attr_err:
-                # Specifically catch AttributeError ('NoneType' object has no attribute 'get')
-                error_msg = str(attr_err)
-                if "NoneType" in error_msg and "get" in error_msg:
-                    self.logger.warning(f"2FA SDK error (NoneType.get): {error_msg} - treating as session already active")
-                    return True  # Assume session is already active if SDK has this error
-                else:
-                    self.logger.error(f"2FA call failed (AttributeError): {attr_err}")
-                    return False
             except Exception as session_err:
-                error_msg = str(session_err)
-                # Handle specific NoneType.get error even if it's not AttributeError
-                if "NoneType" in error_msg and "get" in error_msg:
-                    self.logger.warning(f"2FA SDK error (NoneType.get): {error_msg} - treating as session already active")
-                    return True  # Assume session is already active
+                error_msg = str(session_err).lower()
+                # Handle SDK internal errors (NoneType.get) - treat as session already active
+                if "nonetype" in error_msg and "get" in error_msg:
+                    self.logger.warning(
+                        f"2FA SDK internal error (NoneType.get): {session_err} - "
+                        "treating as session already active"
+                    )
+                    return True
+                # Other exceptions are real failures
                 self.logger.error(f"2FA call failed: {session_err}")
                 return False
             
-            # Handle None response FIRST (can happen with cached sessions or API errors)
+            # Handle None response (session may already be active)
             if session_response is None:
                 self.logger.debug("2FA returned None - session may already be active")
-                return True  # Don't fail if already authenticated
+                return True
             
-            # Debug: log the response to see structure (only if not None)
-            import json
-            try:
-                self.logger.debug(f"2FA response: {json.dumps(session_response, indent=2, default=str)}")
-            except Exception as log_err:
-                self.logger.debug(f"2FA response logging failed: {log_err}, response type: {type(session_response)}")
+            # Check for error in response
+            error = self._extract_error_from_response(session_response)
+            if error:
+                self.logger.error(f"2FA failed: {error}")
+                return False
             
-            # Handle SDK error shape - check if response is dict-like first
-            # Use explicit None check AND type check to prevent AttributeError
-            err = None
-            if isinstance(session_response, dict):
-                err = session_response.get('error')
-            elif session_response is not None and hasattr(session_response, 'get'):
-                # Handle dict-like objects (e.g., custom SDK response objects)
-                # Additional None check before calling get()
-                try:
-                    if callable(getattr(session_response, 'get', None)):
-                        err = session_response.get('error')
-                except (AttributeError, TypeError) as e:
-                    self.logger.debug(f"Could not access error from session_response: {e}")
-                    pass  # If get() fails, continue
+            # Extract session token if present
+            token = self._extract_token_from_response(session_response)
+            if token:
+                self.session_token = token
+                self.logger.debug("2FA session token extracted successfully")
             
-            if err:
-                try:
-                    # Handle list of errors
-                    if isinstance(err, list) and len(err) > 0:
-                        if isinstance(err[0], dict):
-                            msg = err[0].get('message', str(err[0]))
-                        else:
-                            msg = str(err[0])
-                    else:
-                        msg = str(err)
-                    self.logger.error(f"2FA failed: {msg}")
-                    return False
-                except Exception as e:
-                    self.logger.error(f"2FA failed: {err} (error parsing: {e})")
-                    return False
-            
-            # Extract session token when present
-            # Try object attribute access first (SDK response object)
-            if session_response is not None and hasattr(session_response, 'data'):
-                try:
-                    data_obj = session_response.data
-                    if data_obj is not None and hasattr(data_obj, 'token'):
-                        self.session_token = data_obj.token
-                        self.logger.debug("2FA session token extracted from response.data.token")
-                        return True
-                except Exception as e:
-                    self.logger.debug(f"Could not access session_response.data.token: {e}")
-            
-            # Try dict access (JSON response)
-            # Handle both dict and dict-like objects safely with explicit None checks
-            data_field = None
-            if isinstance(session_response, dict):
-                data_field = session_response.get('data')
-            elif session_response is not None and hasattr(session_response, 'get'):
-                # Handle dict-like objects (e.g., custom SDK response objects)
-                # Additional None check and callable check before calling get()
-                try:
-                    if callable(getattr(session_response, 'get', None)):
-                        data_field = session_response.get('data')
-                except (AttributeError, TypeError) as e:
-                    self.logger.debug(f"Could not access data from session_response: {e}")
-                    pass  # If get() fails, data_field remains None
-            
-            if data_field is None:
-                self.logger.debug("2FA response data field is None - session may already be active")
-                return True  # Don't fail if data is None (cached session)
-            
-            # Safely extract token from data field with explicit None check
-            if isinstance(data_field, dict):
-                token = data_field.get('token')
-                if token:
-                    self.session_token = token
-                    self.logger.debug("2FA session token extracted from response['data']['token']")
-            elif data_field is not None and hasattr(data_field, 'get'):
-                # Handle dict-like data field with callable check
-                try:
-                    if callable(getattr(data_field, 'get', None)):
-                        token = data_field.get('token')
-                        if token:
-                            self.session_token = token
-                            self.logger.debug("2FA session token extracted from dict-like data field")
-                except (AttributeError, TypeError) as e:
-                    # Data field exists but get() failed - might be a different structure
-                    self.logger.debug(f"2FA response data field is not accessible: {type(data_field)}, error: {e}")
-            else:
-                # Data field exists but is not a dict or dict-like - might be a different structure
-                self.logger.debug(f"2FA response data field is not a dict: {type(data_field)}")
-            
-            # If we get here without errors, consider it successful (session may already be active)
+            # Success (even if no token - session may already be active)
             return True
-        except AttributeError as e:
-            # Handle 'NoneType' object has no attribute 'get' specifically
-            self.logger.error(f"2FA error: {e} - session_response may be None or invalid format")
-            return False
+            
         except Exception as e:
             self.logger.error(f"2FA error: {e}")
             return False
+    
+    def _extract_error_from_response(self, response) -> Optional[str]:
+        """Extract error message from 2FA response safely."""
+        try:
+            if isinstance(response, dict):
+                err = response.get('error')
+            elif hasattr(response, 'get') and callable(getattr(response, 'get', None)):
+                err = response.get('error')
+            else:
+                return None
+            
+            if not err:
+                return None
+            
+            # Handle list of errors
+            if isinstance(err, list) and len(err) > 0:
+                if isinstance(err[0], dict):
+                    return err[0].get('message', str(err[0]))
+                return str(err[0])
+            
+            return str(err)
+            
+        except Exception as e:
+            self.logger.debug(f"Error extracting error from response: {e}")
+            return None
+    
+    def _extract_token_from_response(self, response) -> Optional[str]:
+        """Extract token from 2FA response safely."""
+        try:
+            # Try object attribute access first (SDK response object)
+            if hasattr(response, 'data'):
+                data_obj = response.data
+                if data_obj and hasattr(data_obj, 'token'):
+                    return data_obj.token
+            
+            # Try dict access (JSON response)
+            data_field = None
+            if isinstance(response, dict):
+                data_field = response.get('data')
+            elif hasattr(response, 'get') and callable(getattr(response, 'get', None)):
+                data_field = response.get('data')
+            
+            if not data_field:
+                return None
+            
+            # Extract token from data field
+            if isinstance(data_field, dict):
+                return data_field.get('token')
+            elif hasattr(data_field, 'get') and callable(getattr(data_field, 'get', None)):
+                return data_field.get('token')
+            
+            return None
+            
+        except Exception as e:
+            self.logger.debug(f"Error extracting token from response: {e}")
+            return None
 
 
     def force_relogin(self) -> bool:
-        """Force a fresh login + 2FA (used when JWT expires)."""
-        try:
-            self.logger.info("Forcing fresh login...")
-            if not self.client:
+        """
+        Force a fresh login + 2FA (used when JWT expires) - THREAD-SAFE.
+        
+        IMPORTANT: Always creates a NEW client instance and properly cleans up old client.
+        Uses lock to prevent concurrent re-authentication attempts from multiple threads.
+        
+        The issue: When JWT expires quickly (e.g., 13 seconds), the SDK's internal state
+        can become corrupted. Creating a new client without cleanup can cause SDK to
+        access None values internally, leading to 'NoneType' object has no attribute 'get' errors.
+        """
+        # Use lock to prevent concurrent re-auth attempts
+        # This ensures only one thread performs re-auth at a time
+        with self._client_lock:
+            try:
+                self.logger.info("Forcing fresh login...")
+                
+                # Step 1: Clean up old client first (if exists)
+                # This clears SDK internal state that might be corrupted
+                old_client = self.client
+                if old_client:
+                    try:
+                        # Try to logout old client to clear SDK state
+                        # Don't fail if logout fails (client might already be invalid)
+                        old_client.logout()
+                        self.logger.debug("Old client logged out successfully")
+                    except Exception as logout_err:
+                        # Logout might fail if client is already invalid - that's okay
+                        self.logger.debug(f"Old client logout failed (expected if expired): {logout_err}")
+                
+                # Step 2: Reset authentication state
+                self.is_logged_in = False
+                self.session_token = None
+                self.client = None
+                
+                # Step 3: ALWAYS create a new client (don't reuse stale clients)
+                # This is critical: expired clients can cause SDK internal errors
                 self.client = self._initialize_client()
-            if not self._perform_login():
+                
+                if not self.client:
+                    self.logger.error("Failed to initialize new client for re-authentication")
+                    return False
+                
+                # Step 4: Perform fresh login + 2FA
+                # Add retry logic for 2FA in case SDK needs time to initialize
+                if not self._perform_login():
+                    return False
+                
+                # Retry 2FA up to 2 times if it fails with SDK errors
+                max_2fa_retries = 2
+                for attempt in range(max_2fa_retries):
+                    if self._complete_2fa():
+                        self.is_logged_in = True
+                        self.logger.info("Re-authentication successful")
+                        return True
+                    
+                    if attempt < max_2fa_retries - 1:
+                        self.logger.warning(f"2FA failed, retrying ({attempt + 1}/{max_2fa_retries})...")
+                        # Create another fresh client if 2FA fails
+                        self.client = None
+                        self.client = self._initialize_client()
+                        if not self.client:
+                            break
+                        # Re-login before retrying 2FA
+                        if not self._perform_login():
+                            break
+                    else:
+                        self.logger.error("2FA failed after retries")
+                
                 return False
-            if not self._complete_2fa():
+                
+            except Exception as e:
+                self.logger.error(f"Force re-login failed: {e}")
+                # Reset state on failure
+                self.is_logged_in = False
+                self.session_token = None
+                self.client = None
                 return False
-            self.is_logged_in = True
-            self.logger.info("Re-authentication successful")
-            return True
-        except Exception as e:
-            self.logger.error(f"Force re-login failed: {e}")
-            return False
-
-    def _response_requires_2fa(self, resp) -> bool:
-        """Check if response indicates 2FA is required."""
-        try:
-            s = str(resp)
-            return '2fa' in s.lower() or 'complete the 2fa' in s.lower()
-        except Exception:
-            return False
 
     def logout(self) -> bool:
         """
@@ -338,15 +362,20 @@ class KotakNeoAuth:
 
     def get_client(self):
         """
-        Get the authenticated client instance
+        Get the authenticated client instance (thread-safe).
+        
+        Uses lock to prevent race conditions when multiple threads
+        (e.g., from ThreadPoolExecutor in SellOrderManager) access
+        the client simultaneously.
 
         Returns:
             NeoAPI client or None if not logged in
         """
-        if not self.is_logged_in:
-            self.logger.error("Not logged in. Please login first.")
-            return None
-        return self.client
+        with self._client_lock:
+            if not self.is_logged_in:
+                self.logger.error("Not logged in. Please login first.")
+                return None
+            return self.client
 
     def get_session_token(self) -> Optional[str]:
         """

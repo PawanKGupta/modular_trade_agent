@@ -49,3 +49,4 @@ def get_ltp_from_manager(
                 return price_manager.get_ltp(symbol, ticker)
             return None
 
+

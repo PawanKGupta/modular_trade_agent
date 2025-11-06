@@ -237,3 +237,4 @@ class TestOrderStateManager:
         assert 'trades' in history
         assert 'failed_orders' in history
 
+

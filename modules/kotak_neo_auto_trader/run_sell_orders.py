@@ -30,11 +30,13 @@ try:
     from .auth import KotakNeoAuth
     from .auto_trade_engine import AutoTradeEngine
     from .live_price_manager import LivePriceManager
+    from .utils.service_conflict_detector import prevent_service_conflict
 except ImportError:
     from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
     from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
     from modules.kotak_neo_auto_trader.live_price_manager import LivePriceManager
+    from modules.kotak_neo_auto_trader.utils.service_conflict_detector import prevent_service_conflict
 
 
 def is_trading_day() -> bool:
@@ -89,6 +91,11 @@ def main():
     logger.info("=" * 60)
     logger.info("SELL ORDER MANAGEMENT SYSTEM")
     logger.info("=" * 60)
+    
+    # Check for service conflicts (prevent running with unified service)
+    if not prevent_service_conflict("run_sell_orders.py", is_unified=False):
+        logger.error("Exiting due to service conflict.")
+        sys.exit(1)
     
     # Check if trading day
     if not is_trading_day() and not args.skip_wait:
