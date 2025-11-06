@@ -144,6 +144,7 @@ class OrderStatusVerifier:
                 'checked': 0,
                 'executed': 0,
                 'rejected': 0,
+                'cancelled': 0,
                 'partial': 0,
                 'still_pending': 0
             }
@@ -159,6 +160,7 @@ class OrderStatusVerifier:
                 'checked': len(pending_orders),
                 'executed': 0,
                 'rejected': 0,
+                'cancelled': 0,
                 'partial': 0,
                 'still_pending': len(pending_orders)
             }
@@ -167,6 +169,7 @@ class OrderStatusVerifier:
             'checked': len(pending_orders),
             'executed': 0,
             'rejected': 0,
+            'cancelled': 0,
             'partial': 0,
             'still_pending': 0
         }
@@ -210,6 +213,14 @@ class OrderStatusVerifier:
                 )
                 counts['rejected'] += 1
                 
+            elif broker_status['status'] == 'CANCELLED':
+                self._handle_cancellation(
+                    pending_order,
+                    broker_order,
+                    broker_status
+                )
+                counts['cancelled'] += 1
+                
             elif broker_status['status'] == 'PARTIALLY_FILLED':
                 self._handle_partial_fill(
                     pending_order,
@@ -233,6 +244,7 @@ class OrderStatusVerifier:
             f"Verification complete: "
             f"{counts['executed']} executed, "
             f"{counts['rejected']} rejected, "
+            f"{counts.get('cancelled', 0)} cancelled, "
             f"{counts['partial']} partial, "
             f"{counts['still_pending']} still pending"
         )
@@ -344,6 +356,7 @@ class OrderStatusVerifier:
             'executed': 'EXECUTED',
             'rejected': 'REJECTED',
             'cancelled': 'CANCELLED',
+            'canceled': 'CANCELLED',  # American spelling
             'open': 'OPEN',
             'pending': 'PENDING',
             'trigger pending': 'PENDING',
@@ -457,6 +470,49 @@ class OrderStatusVerifier:
             except Exception as e:
                 logger.error(f"Error in rejection callback: {e}")
     
+    def _handle_cancellation(
+        self,
+        pending_order: Dict[str, Any],
+        broker_order: Dict[str, Any],
+        broker_status: Dict[str, Any]
+    ) -> None:
+        """
+        Handle cancelled order.
+        
+        Args:
+            pending_order: Pending order from our tracker
+            broker_order: Order from broker
+            broker_status: Parsed broker status
+        """
+        order_id = pending_order['order_id']
+        symbol = pending_order['symbol']
+        qty = pending_order['qty']
+        
+        logger.info(
+            f"Order CANCELLED: {symbol} x{qty} "
+            f"(order_id: {order_id})"
+        )
+        
+        # Update order tracker
+        self.order_tracker.update_order_status(
+            order_id=order_id,
+            status='CANCELLED'
+        )
+        
+        # Stop tracking this symbol (order cancelled)
+        if self.tracking_scope.is_tracked(symbol):
+            self.tracking_scope.stop_tracking(
+                symbol,
+                reason="Order cancelled"
+            )
+        
+        # Remove from pending (cancellation finalized)
+        self.order_tracker.remove_pending_order(order_id)
+        
+        # Note: Cancellation callback can be added if needed
+        # Similar to rejection callback, but typically cancellations
+        # are handled differently (user-initiated vs broker-initiated)
+    
     def _handle_partial_fill(
         self,
         pending_order: Dict[str, Any],
@@ -529,6 +585,8 @@ class OrderStatusVerifier:
                 self._handle_execution(pending_order, broker_order, broker_status)
             elif broker_status['status'] == 'REJECTED':
                 self._handle_rejection(pending_order, broker_order, broker_status)
+            elif broker_status['status'] == 'CANCELLED':
+                self._handle_cancellation(pending_order, broker_order, broker_status)
             elif broker_status['status'] == 'PARTIALLY_FILLED':
                 self._handle_partial_fill(pending_order, broker_order, broker_status)
             
