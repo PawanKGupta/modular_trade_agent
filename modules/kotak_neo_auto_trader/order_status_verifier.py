@@ -247,12 +247,43 @@ class OrderStatusVerifier:
             List of order dicts from broker
         """
         try:
-            response = self.broker_client.order_report()
+            # Handle both NeoAPI client and KotakNeoOrders wrapper
+            if hasattr(self.broker_client, 'order_report'):
+                # Direct NeoAPI client
+                response = self.broker_client.order_report()
+            elif hasattr(self.broker_client, 'get_orders'):
+                # KotakNeoOrders wrapper - use its get_orders() method
+                response = self.broker_client.get_orders()
+            elif hasattr(self.broker_client, 'auth') and hasattr(self.broker_client.auth, 'get_client'):
+                # KotakNeoOrders - access underlying client via auth
+                client = self.broker_client.auth.get_client()
+                if client and hasattr(client, 'order_report'):
+                    response = client.order_report()
+                else:
+                    logger.error(f"Could not access order_report from broker_client.auth.get_client()")
+                    return []
+            else:
+                logger.error(f"broker_client does not have order_report() or get_orders() method. Type: {type(self.broker_client)}")
+                return []
             
             if isinstance(response, list):
                 return response
-            elif isinstance(response, dict) and 'data' in response:
-                return response['data']
+            elif isinstance(response, dict):
+                # Handle dict response - check for 'data' key
+                if 'data' in response:
+                    data = response['data']
+                    if isinstance(data, list):
+                        return data
+                    elif isinstance(data, dict):
+                        # Sometimes data is a dict with order details
+                        return [data] if data else []
+                    return []
+                # Check if response itself is structured as orders
+                if 'orders' in response:
+                    orders = response['orders']
+                    return orders if isinstance(orders, list) else []
+                # Empty dict means no orders
+                return []
             else:
                 logger.error(f"Unexpected broker response format: {type(response)}")
                 return []
