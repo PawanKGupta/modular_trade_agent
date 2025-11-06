@@ -442,28 +442,40 @@ class KotakNeoOrders:
                 order_history = client.order_report()
             
             if "error" in order_history:
-                logger.error(" Failed to get order history: {order_history['error'][0]['message']}")
+                error_msg = order_history['error'][0]['message'] if isinstance(order_history['error'], list) else str(order_history['error'])
+                logger.error(f"Failed to get order history: {error_msg}")
                 return None
             
             # Process and display order history
             if 'data' in order_history and order_history['data']:
                 history_data = order_history['data']
-                logger.info(" Found {len(history_data)} order history entries")
                 
-                for entry in history_data:
-                    order_id = entry.get('neoOrdNo', 'N/A')
-                    symbol = entry.get('tradingSymbol', 'N/A')
-                    status = entry.get('orderStatus', 'N/A')
-                    timestamp = entry.get('orderEntryTime', 'N/A')
-                    
+                # Handle different response formats
+                if isinstance(history_data, list):
+                    logger.info(f"Found {len(history_data)} order history entries")
+                    for entry in history_data:
+                        if isinstance(entry, dict):
+                            order_id = entry.get('neoOrdNo') or entry.get('nOrdNo') or entry.get('orderId', 'N/A')
+                            symbol = entry.get('tradingSymbol', 'N/A')
+                            status = entry.get('orderStatus', 'N/A')
+                            timestamp = entry.get('orderEntryTime', 'N/A')
+                            logger.info(f"{timestamp}: Order {order_id} ({symbol}) - {status}")
+                elif isinstance(history_data, dict):
+                    logger.info("Found 1 order history entry")
+                    order_id = history_data.get('neoOrdNo') or history_data.get('nOrdNo') or history_data.get('orderId', 'N/A')
+                    symbol = history_data.get('tradingSymbol', 'N/A')
+                    status = history_data.get('orderStatus', 'N/A')
+                    timestamp = history_data.get('orderEntryTime', 'N/A')
                     logger.info(f"{timestamp}: Order {order_id} ({symbol}) - {status}")
+                else:
+                    logger.debug(f"Unexpected history_data format: {type(history_data)}")
             else:
                 logger.info("No order history found")
             
             return order_history
             
         except Exception as e:
-            logger.error(" Error getting order history: {e}")
+            logger.error(f"Error getting order history: {e}")
             return None
     
     # GTT retrieval not supported; rely only on open orders via get_orders/get_pending_orders
