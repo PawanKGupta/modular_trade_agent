@@ -471,4 +471,84 @@ All fixes have been tested with:
 
 ---
 
-*Last Updated: October 31, 2024*
+## Bug #6: Duplicate Order Registration (HIGH)
+
+**Date Fixed**: November 7, 2025  
+**Severity**: High  
+**Status**: ✅ Fixed
+
+### Description
+Same order_id was being registered multiple times in `pending_orders.json`, creating duplicate entries. Example: DALBHARAT order_id `251106000008974` appeared 3 times with different timestamps and prices (including ₹0.0).
+
+### Root Cause
+- `add_pending_order()` in `order_tracker.py` didn't check for existing orders before adding
+- `register_sell_order()` in `order_state_manager.py` always called `add_pending_order()` without checking if order already exists
+- When `run_at_market_open()` found existing orders from broker, it re-registered them
+
+### Fix Applied
+**Files**: 
+- `modules/kotak_neo_auto_trader/order_tracker.py` - Added duplicate check in `add_pending_order()`
+- `modules/kotak_neo_auto_trader/order_state_manager.py` - Added duplicate check and proper return after price update in `register_sell_order()`
+
+### Impact
+- Prevents duplicate order entries
+- Prevents zero price overwriting correct price
+- Ensures proper price updates with `last_updated` timestamp
+
+---
+
+## Bug #7: Target and Lowest EMA9 Showing ₹0.00 (MEDIUM)
+
+**Date Fixed**: November 7, 2025  
+**Severity**: Medium  
+**Status**: ✅ Fixed
+
+### Description
+When monitoring sell orders, Target and Lowest EMA9 values showed ₹0.00 instead of actual values. Example log: `DALBHARAT: Current EMA9=₹2095.30, Target=₹0.00, Lowest=₹0.00`
+
+### Root Cause
+- When syncing orders from `OrderStateManager`, `lowest_ema9` dictionary was not initialized
+- If `target_price` was 0 (from duplicate bug), both Target and Lowest showed 0.00
+- `lowest_ema9` was only set when orders were placed, not when syncing existing orders
+
+### Fix Applied
+**File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- `_get_active_orders()`: Initialize `lowest_ema9` from `target_price` when syncing (if > 0)
+- `_check_and_update_single_stock()`: Initialize `lowest_ema9` from `target_price` or current EMA9 if missing
+- Handle zero `target_price` by using `lowest_ema9` or current EMA9 for display
+
+### Impact
+- Target and Lowest always show meaningful values
+- Better visibility for monitoring
+- Prevents unnecessary first update when EMA9 hasn't changed
+
+---
+
+## Bug #8: Unknown Broker Status Warning for CANCELLED Orders (MEDIUM)
+
+**Date Fixed**: November 7, 2025  
+**Severity**: Medium  
+**Status**: ✅ Fixed
+
+### Description
+System logged warnings "Unknown broker status: CANCELLED" when orders were cancelled. The status parser correctly mapped "cancelled" to "CANCELLED", but the verification logic didn't handle it.
+
+### Root Cause
+- `order_status_verifier.py` had status map with `'cancelled': 'CANCELLED'` but didn't handle `'CANCELLED'` status in `verify_pending_orders()`
+- Only handled: EXECUTED, REJECTED, PARTIALLY_FILLED, OPEN, PENDING
+- CANCELLED status fell into "Unknown broker status" branch
+
+### Fix Applied
+**File**: `modules/kotak_neo_auto_trader/order_status_verifier.py`
+- Added `_handle_cancellation()` method to properly handle cancelled orders
+- Added CANCELLED status handling in `verify_pending_orders()` and `verify_order_by_id()`
+- Added cancelled count to verification statistics
+
+### Impact
+- No more "Unknown broker status" warnings for cancelled orders
+- Proper tracking and cleanup of cancelled orders
+- Better visibility in verification statistics
+
+---
+
+*Last Updated: November 7, 2025*

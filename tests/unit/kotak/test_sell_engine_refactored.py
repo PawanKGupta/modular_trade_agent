@@ -359,4 +359,177 @@ class TestRefactoredSellEngineMethods:
             
             # Should call handle_manual_sells
             mock_handle_sells.assert_called_once_with({'RELIANCE': {'qty': 5, 'orders': []}})
+    
+    def test_get_active_orders_initializes_lowest_ema9_from_target_price(self, sell_manager):
+        """Test that _get_active_orders initializes lowest_ema9 from target_price when syncing from OrderStateManager"""
+        # Setup OrderStateManager mock
+        mock_state_manager = Mock()
+        mock_state_manager.get_active_sell_orders.return_value = {
+            'DALBHARAT': {
+                'order_id': '251106000008974',
+                'target_price': 2095.53,
+                'qty': 233,
+                'ticker': 'DALBHARAT.NS'
+            },
+            'RELIANCE': {
+                'order_id': '12345',
+                'target_price': 2500.0,
+                'qty': 10,
+                'ticker': 'RELIANCE.NS'
+            }
+        }
+        sell_manager.state_manager = mock_state_manager
+        sell_manager.lowest_ema9 = {}  # Empty initially
+        
+        # Call _get_active_orders
+        result = sell_manager._get_active_orders()
+        
+        # Verify orders synced
+        assert 'DALBHARAT' in result
+        assert 'RELIANCE' in result
+        
+        # Verify lowest_ema9 initialized from target_price
+        assert sell_manager.lowest_ema9['DALBHARAT'] == 2095.53
+        assert sell_manager.lowest_ema9['RELIANCE'] == 2500.0
+    
+    def test_get_active_orders_skips_zero_target_price(self, sell_manager):
+        """Test that _get_active_orders skips initializing lowest_ema9 when target_price is 0"""
+        mock_state_manager = Mock()
+        mock_state_manager.get_active_sell_orders.return_value = {
+            'DALBHARAT': {
+                'order_id': '251106000008974',
+                'target_price': 0.0,  # Zero price from duplicate bug
+                'qty': 233,
+                'ticker': 'DALBHARAT.NS'
+            }
+        }
+        sell_manager.state_manager = mock_state_manager
+        sell_manager.lowest_ema9 = {}
+        
+        result = sell_manager._get_active_orders()
+        
+        # Order should be synced
+        assert 'DALBHARAT' in result
+        
+        # But lowest_ema9 should NOT be initialized (target_price is 0)
+        assert 'DALBHARAT' not in sell_manager.lowest_ema9
+    
+    def test_check_and_update_single_stock_initializes_lowest_ema9_from_target_price(self, sell_manager):
+        """Test that _check_and_update_single_stock initializes lowest_ema9 from target_price if not set"""
+        order_info = {
+            'order_id': '12345',
+            'target_price': 2095.53,
+            'qty': 233,
+            'ticker': 'DALBHARAT.NS',
+            'placed_symbol': 'DALBHARAT-EQ'
+        }
+        sell_manager.lowest_ema9 = {}  # Empty initially
+        
+        # Mock get_current_ema9
+        with patch.object(sell_manager, 'get_current_ema9', return_value=2095.27), \
+             patch.object(sell_manager, 'round_to_tick_size', return_value=2095.30), \
+             patch.object(sell_manager, 'update_sell_order', return_value=False):
+            
+            result = sell_manager._check_and_update_single_stock('DALBHARAT', order_info, [])
+            
+            # Verify lowest_ema9 initialized from target_price
+            assert sell_manager.lowest_ema9['DALBHARAT'] == 2095.53
+    
+    def test_check_and_update_single_stock_initializes_lowest_ema9_from_current_ema9_when_target_zero(self, sell_manager):
+        """Test that _check_and_update_single_stock initializes lowest_ema9 from current EMA9 when target_price is 0"""
+        order_info = {
+            'order_id': '251106000008974',
+            'target_price': 0.0,  # Zero price from duplicate bug
+            'qty': 233,
+            'ticker': 'DALBHARAT.NS',
+            'placed_symbol': 'DALBHARAT-EQ'
+        }
+        sell_manager.lowest_ema9 = {}  # Empty initially
+        
+        current_ema9 = 2095.27
+        rounded_ema9 = 2095.30
+        
+        # Mock get_current_ema9
+        with patch.object(sell_manager, 'get_current_ema9', return_value=current_ema9), \
+             patch.object(sell_manager, 'round_to_tick_size', return_value=rounded_ema9), \
+             patch.object(sell_manager, 'update_sell_order', return_value=False):
+            
+            result = sell_manager._check_and_update_single_stock('DALBHARAT', order_info, [])
+            
+            # Verify lowest_ema9 initialized from current EMA9 (not target_price)
+            assert sell_manager.lowest_ema9['DALBHARAT'] == rounded_ema9
+    
+    def test_check_and_update_single_stock_handles_zero_target_price_display(self, sell_manager):
+        """Test that _check_and_update_single_stock handles zero target_price for display"""
+        order_info = {
+            'order_id': '251106000008974',
+            'target_price': 0.0,  # Zero price
+            'qty': 233,
+            'ticker': 'DALBHARAT.NS',
+            'placed_symbol': 'DALBHARAT-EQ'
+        }
+        sell_manager.lowest_ema9 = {'DALBHARAT': 2095.30}  # Already initialized
+        
+        current_ema9 = 2095.27
+        rounded_ema9 = 2095.30
+        
+        with patch.object(sell_manager, 'get_current_ema9', return_value=current_ema9), \
+             patch.object(sell_manager, 'round_to_tick_size', return_value=rounded_ema9), \
+             patch.object(sell_manager, 'update_sell_order', return_value=False), \
+             patch('modules.kotak_neo_auto_trader.sell_engine.logger') as mock_logger:
+            
+            result = sell_manager._check_and_update_single_stock('DALBHARAT', order_info, [])
+            
+            # Verify log was called with correct values
+            log_calls = [str(call) for call in mock_logger.info.call_args_list]
+            # Should show Target=2095.30 (from lowest_ema9), not 0.0
+            assert any('Target=₹2095.30' in str(call) for call in log_calls)
+            assert any('Lowest=₹2095.30' in str(call) for call in log_calls)
+    
+    def test_check_and_update_single_stock_handles_missing_target_price(self, sell_manager):
+        """Test that _check_and_update_single_stock handles missing target_price"""
+        order_info = {
+            'order_id': '12345',
+            # No target_price key
+            'qty': 10,
+            'ticker': 'RELIANCE.NS',
+            'placed_symbol': 'RELIANCE-EQ'
+        }
+        sell_manager.lowest_ema9 = {}  # Empty initially
+        
+        current_ema9 = 2500.0
+        rounded_ema9 = 2500.0
+        
+        with patch.object(sell_manager, 'get_current_ema9', return_value=current_ema9), \
+             patch.object(sell_manager, 'round_to_tick_size', return_value=rounded_ema9), \
+             patch.object(sell_manager, 'update_sell_order', return_value=False):
+            
+            result = sell_manager._check_and_update_single_stock('RELIANCE', order_info, [])
+            
+            # Verify lowest_ema9 initialized from current EMA9
+            assert sell_manager.lowest_ema9['RELIANCE'] == rounded_ema9
+    
+    def test_check_and_update_single_stock_preserves_existing_lowest_ema9(self, sell_manager):
+        """Test that _check_and_update_single_stock doesn't overwrite existing lowest_ema9"""
+        order_info = {
+            'order_id': '12345',
+            'target_price': 2500.0,
+            'qty': 10,
+            'ticker': 'RELIANCE.NS',
+            'placed_symbol': 'RELIANCE-EQ'
+        }
+        # Already has lower value
+        sell_manager.lowest_ema9 = {'RELIANCE': 2480.0}
+        
+        current_ema9 = 2500.0
+        rounded_ema9 = 2500.0
+        
+        with patch.object(sell_manager, 'get_current_ema9', return_value=current_ema9), \
+             patch.object(sell_manager, 'round_to_tick_size', return_value=rounded_ema9), \
+             patch.object(sell_manager, 'update_sell_order', return_value=False):
+            
+            result = sell_manager._check_and_update_single_stock('RELIANCE', order_info, [])
+            
+            # Verify existing lowest_ema9 preserved (not overwritten)
+            assert sell_manager.lowest_ema9['RELIANCE'] == 2480.0
 

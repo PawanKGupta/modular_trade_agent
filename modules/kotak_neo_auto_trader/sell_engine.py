@@ -230,6 +230,13 @@ class SellOrderManager:
             # Sync from OrderStateManager
             state_orders = self.state_manager.get_active_sell_orders()
             self.active_sell_orders.update(state_orders)
+            
+            # Initialize lowest_ema9 from target_price if not already set
+            for symbol, order_info in state_orders.items():
+                if symbol not in self.lowest_ema9:
+                    target_price = order_info.get('target_price', 0)
+                    if target_price > 0:
+                        self.lowest_ema9[symbol] = target_price
         
         return self.active_sell_orders
     
@@ -1295,8 +1302,21 @@ class SellOrderManager:
             rounded_ema9 = self.round_to_tick_size(current_ema9)
             
             # Check if ROUNDED EMA9 is lower than lowest seen
+            # Initialize lowest_ema9 from target_price if not set
+            if symbol not in self.lowest_ema9:
+                target_price = order_info.get('target_price', 0)
+                if target_price > 0:
+                    self.lowest_ema9[symbol] = target_price
+                else:
+                    # If target_price is 0 or missing, use current EMA9 as initial value
+                    self.lowest_ema9[symbol] = rounded_ema9
+            
             lowest_so_far = self.lowest_ema9.get(symbol, float('inf'))
-            current_target = order_info.get('target_price', lowest_so_far)
+            current_target = order_info.get('target_price', 0)
+            
+            # If target_price is 0 or missing, use lowest_so_far as target
+            if current_target <= 0:
+                current_target = lowest_so_far if lowest_so_far != float('inf') else rounded_ema9
             
             # Log EMA9 values for monitoring
             logger.info(f"{symbol}: Current EMA9=₹{rounded_ema9:.2f}, Target=₹{current_target:.2f}, Lowest=₹{lowest_so_far:.2f}")
