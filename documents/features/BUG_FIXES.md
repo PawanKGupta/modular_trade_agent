@@ -495,6 +495,9 @@ Same order_id was being registered multiple times in `pending_orders.json`, crea
 - Prevents zero price overwriting correct price
 - Ensures proper price updates with `last_updated` timestamp
 
+### Related Documentation
+- **[Pending Order Maintenance Logic](../architecture/PENDING_ORDER_MAINTENANCE_LOGIC.md)** - Detailed explanation of how pending orders are maintained
+
 ---
 
 ## Bug #7: Target and Lowest EMA9 Showing ₹0.00 (MEDIUM)
@@ -521,6 +524,10 @@ When monitoring sell orders, Target and Lowest EMA9 values showed ₹0.00 instea
 - Target and Lowest always show meaningful values
 - Better visibility for monitoring
 - Prevents unnecessary first update when EMA9 hasn't changed
+
+### Related Documentation
+- **[Target/Lowest Same Value Impact Analysis](../analysis/TARGET_LOWEST_SAME_VALUE_IMPACT.md)** - Detailed impact analysis showing why Target == Lowest is safe
+- **[Target/Lowest EMA9 Fix Example](../examples/TARGET_LOWEST_EMA9_FIX_EXAMPLE.md)** - Step-by-step example with before/after scenarios
 
 ---
 
