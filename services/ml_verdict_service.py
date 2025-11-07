@@ -33,7 +33,7 @@ class MLVerdictService(VerdictService):
         Initialize ML verdict service
         
         Args:
-            model_path: Path to trained ML model
+            model_path: Path to trained ML model (if None, will try to find based on config)
             config: Strategy configuration (uses default if None)
         """
         super().__init__(config)
@@ -41,6 +41,23 @@ class MLVerdictService(VerdictService):
         self.model = None
         self.model_loaded = False
         self.feature_cols = []
+        
+        # If no model_path provided, try to find model based on configuration
+        if model_path is None:
+            try:
+                from utils.model_versioning import get_model_path
+                model_path = get_model_path(self.config, "verdict")
+                if model_path:
+                    logger.info(f"Found model for config: {model_path}")
+            except Exception as e:
+                logger.debug(f"Could not find model for config: {e}")
+        
+        # Fallback to default model if no config-based model found
+        if model_path is None:
+            default_model = "models/verdict_model_random_forest.pkl"
+            if Path(default_model).exists():
+                model_path = default_model
+                logger.info(f"Using default model: {default_model}")
         
         if model_path and Path(model_path).exists():
             try:
