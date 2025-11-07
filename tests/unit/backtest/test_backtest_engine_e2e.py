@@ -28,6 +28,12 @@ def patch_yfinance(monkeypatch, df):
             # Ignore start/end, return prebuilt df
             return df
     monkeypatch.setattr(eng_mod, 'yf', FakeYF, raising=False)
+    
+    # Also patch fetch_multi_timeframe_data if it's used
+    from core import data_fetcher
+    def fake_fetch_multi_timeframe_data(ticker, days=800, end_date=None, add_current_day=True, config=None):
+        return {'daily': df, 'weekly': df}
+    monkeypatch.setattr(data_fetcher, 'fetch_multi_timeframe_data', fake_fetch_multi_timeframe_data, raising=False)
 
 
 def patch_ta_for_signals(monkeypatch, mode='entries'):

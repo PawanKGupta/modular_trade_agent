@@ -100,7 +100,8 @@ class TestMLVerdictService:
         
         assert 'volume' in features
         assert features['volume'] == 1100000
-        assert 'avg_volume_20' in features
+        # Default volume_exhaustion_lookback_daily = 10, so feature is avg_volume_10
+        assert 'avg_volume_10' in features
         assert 'volume_ratio' in features
         assert 'recent_high_20' in features
         assert 'recent_low_20' in features

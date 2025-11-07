@@ -77,7 +77,8 @@ def test_run_stock_backtest_simple_mode(monkeypatch):
 
 def test_add_backtest_scores_to_results(monkeypatch):
     # Mock run_stock_backtest to avoid network and control outputs
-    def fake_run_stock_backtest(ticker, years_back=2, dip_mode=False):
+    # Updated to match new function signature with config parameter
+    def fake_run_stock_backtest(ticker, years_back=2, dip_mode=False, config=None):
         return {
             'backtest_score': 60.0,
             'total_return_pct': 30.0,
@@ -101,4 +102,6 @@ def test_add_backtest_scores_to_results(monkeypatch):
     assert len(enhanced) == 1
     item = enhanced[0]
     assert 'backtest' in item and 'combined_score' in item
-    assert abs(item['combined_score'] - ((20.0*0.5)+(60.0*0.5))) < 1e-6
+    # Combined score = (current_score * 0.5) + (backtest_score * 0.5)
+    # = (20.0 * 0.5) + (60.0 * 0.5) = 10.0 + 30.0 = 40.0
+    assert abs(item['combined_score'] - 40.0) < 1e-6
