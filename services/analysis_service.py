@@ -154,7 +154,23 @@ class AnalysisService:
                     logger.error(f"Failed to compute indicators for {ticker}")
                     return {"ticker": ticker, "status": "indicator_error"}
             
-            # Step 4: Get latest and previous rows
+            # Step 4: Check chart quality (hard filter) - early check to save processing
+            chart_quality_data = self.verdict_service.assess_chart_quality(df)
+            chart_quality_passed = chart_quality_data.get('passed', True)
+            
+            if not chart_quality_passed:
+                logger.info(f"{ticker}: Chart quality failed - {chart_quality_data.get('reason', 'Poor chart quality')}")
+                return {
+                    "ticker": ticker,
+                    "status": "success",
+                    "verdict": "avoid",
+                    "justification": [f"Chart quality failed: {chart_quality_data.get('reason', 'Poor chart quality')}"],
+                    "chart_quality": chart_quality_data,
+                    "rsi": None,
+                    "last_close": float(df.iloc[-1]['close']) if len(df) > 0 else 0.0,
+                }
+            
+            # Step 5: Get latest and previous rows
             last = self.data_service.get_latest_row(df)
             prev = self.data_service.get_previous_row(df)
             
@@ -162,7 +178,7 @@ class AnalysisService:
                 logger.error(f"Error accessing data rows for {ticker}")
                 return {"ticker": ticker, "status": "data_access_error"}
             
-            # Step 5: Detect signals
+            # Step 6: Detect signals
             signal_data = self.signal_service.detect_all_signals(
                 ticker=ticker,
                 df=df,
@@ -176,23 +192,23 @@ class AnalysisService:
             timeframe_confirmation = signal_data['timeframe_confirmation']
             news_sentiment = signal_data['news_sentiment']
             
-            # Step 6: Assess volume
+            # Step 7: Assess volume (includes execution capital calculation)
             volume_data = self.verdict_service.assess_volume(df, last)
             
-            # Step 7: Get recent extremes
+            # Step 8: Get recent extremes
             extremes = self.data_service.get_recent_extremes(df)
             
-            # Step 8: Fetch fundamentals
+            # Step 9: Fetch fundamentals
             fundamentals = self.verdict_service.fetch_fundamentals(ticker)
             pe = fundamentals['pe']
             pb = fundamentals['pb']
             fundamental_ok = not (pe is not None and pe < 0)
             
-            # Step 9: Get indicator values
+            # Step 10: Get indicator values
             rsi_value = self.indicator_service.get_rsi_value(last)
             is_above_ema200 = self.indicator_service.is_above_ema200(last)
             
-            # Step 10: Determine verdict
+            # Step 11: Determine verdict (with chart quality check)
             verdict, justification = self.verdict_service.determine_verdict(
                 signals=signals,
                 rsi_value=rsi_value,
@@ -201,17 +217,18 @@ class AnalysisService:
                 vol_strong=volume_data['vol_strong'],
                 fundamental_ok=fundamental_ok,
                 timeframe_confirmation=timeframe_confirmation,
-                news_sentiment=news_sentiment
+                news_sentiment=news_sentiment,
+                chart_quality_passed=chart_quality_passed
             )
             
-            # Step 11: Apply candle quality check (may downgrade verdict)
+            # Step 12: Apply candle quality check (may downgrade verdict)
             verdict, candle_analysis, downgrade_reason = self.verdict_service.apply_candle_quality_check(
                 df, verdict
             )
             if downgrade_reason:
                 justification.append(f"candle_downgrade:{downgrade_reason}")
             
-            # Step 12: Calculate trading parameters
+            # Step 13: Calculate trading parameters
             current_price = float(last['close'])
             trading_params = self.verdict_service.calculate_trading_parameters(
                 current_price=current_price,
@@ -222,7 +239,7 @@ class AnalysisService:
                 df=df
             )
             
-            # Step 13: Build result
+            # Step 14: Build result
             result = {
                 "ticker": ticker,
                 "verdict": verdict,
@@ -243,6 +260,11 @@ class AnalysisService:
                 "volume_pattern": volume_data['volume_pattern'],
                 "volume_description": volume_data['volume_description'],
                 "candle_analysis": candle_analysis,
+                "chart_quality": chart_quality_data,
+                "execution_capital": volume_data.get('execution_capital', 0.0),
+                "max_capital": volume_data.get('max_capital', 0.0),
+                "capital_adjusted": volume_data.get('capital_adjusted', False),
+                "liquidity_recommendation": volume_data.get('liquidity_recommendation', {}),
                 "status": "success"
             }
             

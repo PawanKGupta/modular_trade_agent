@@ -58,9 +58,55 @@ class BacktestEngine:
         self.rsi_20_trade_made = False  # Track if RSI < 20 trade was made
         self.first_entry_made = False
         
+        # Phase 10: Chart quality tracking
+        self.chart_quality_failed = False
+        self.chart_quality_data = None
+        
         # Load and prepare data
         self._load_data()
         
+        # Phase 10: Check chart quality if enabled (after data is loaded)
+        self._check_chart_quality()
+    
+    def _check_chart_quality(self):
+        """
+        Check chart quality and filter out if poor (Phase 10)
+        """
+        try:
+            from services.chart_quality_service import ChartQualityService
+            from config.strategy_config import StrategyConfig
+            
+            if self.data is None or self.data.empty:
+                self.chart_quality_failed = False
+                self.chart_quality_data = None
+                return
+            
+            strategy_config = StrategyConfig.default()
+            chart_quality_enabled = getattr(strategy_config, 'chart_quality_enabled_in_backtest', True)
+            
+            if not chart_quality_enabled:
+                self.chart_quality_failed = False
+                self.chart_quality_data = None
+                return
+            
+            chart_quality_service = ChartQualityService(config=strategy_config)
+            chart_quality_data = chart_quality_service.assess_chart_quality(self.data)
+            
+            if not chart_quality_data.get('passed', True):
+                reason = chart_quality_data.get('reason', 'Poor chart quality')
+                print(f"⚠️ Chart quality failed for {self.symbol}: {reason}")
+                # Mark engine as filtered - results will be empty
+                self.chart_quality_failed = True
+                self.chart_quality_data = chart_quality_data
+            else:
+                self.chart_quality_failed = False
+                self.chart_quality_data = chart_quality_data
+                
+        except Exception as e:
+            print(f"Warning: Chart quality check failed: {e}")
+            self.chart_quality_failed = False
+            self.chart_quality_data = None
+    
     def _load_data(self):
         """
         Load and prepare market data with auto-adjustment for sufficient EMA data
@@ -332,6 +378,19 @@ class BacktestEngine:
         print(f"Strategy: EMA200 + RSI10 with Pyramiding")
         print("-" * 50)
         
+        # Phase 10: Skip backtest if chart quality failed
+        if self.chart_quality_failed:
+            print(f"⛔ Backtest skipped due to poor chart quality")
+            return {
+                'symbol': self.symbol,
+                'total_positions': 0,
+                'total_trades': 0,
+                'total_return_pct': 0,
+                'win_rate': 0,
+                'chart_quality': self.chart_quality_data,
+                'reason': 'Chart quality failed'
+            }
+        
         trade_count = 0
         
         try:
@@ -425,7 +484,8 @@ class BacktestEngine:
                 'buy_hold_return': buy_hold_return,
                 'strategy_vs_buy_hold': total_return_pct - buy_hold_return,
                 'open_positions': len(self.position_manager.get_open_positions()),
-                'closed_positions': len(self.position_manager.get_closed_positions())
+                'closed_positions': len(self.position_manager.get_closed_positions()),
+                'chart_quality': self.chart_quality_data  # Phase 10: Include chart quality data
             }
             
             return results

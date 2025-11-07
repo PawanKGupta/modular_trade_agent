@@ -27,7 +27,19 @@ class StrategyConfig:
     min_volume_multiplier: float = 1.0
     volume_multiplier_for_strong: float = 1.2
     volume_lookback_days: int = 50
-    min_absolute_avg_volume: int = 150000
+    min_absolute_avg_volume: int = 20000  # Lowered to minimal safety net (was 150000)
+    
+    # Capital Configuration
+    user_capital: float = 200000.0  # Default: 2L
+    max_position_volume_ratio: float = 0.10  # 10% of daily volume max
+    
+    # Chart Quality Configuration
+    chart_quality_enabled: bool = True
+    chart_quality_min_score: float = 60.0  # Minimum score for acceptance (0-100)
+    chart_quality_max_gap_frequency: float = 20.0  # Max gap frequency (%)
+    chart_quality_min_daily_range_pct: float = 1.5  # Min daily range (%)
+    chart_quality_max_extreme_candle_frequency: float = 15.0  # Max extreme candle frequency (%)
+    chart_quality_enabled_in_backtest: bool = True
     
     # Fundamental Filters
     pe_max_attractive: float = 15.0
@@ -110,7 +122,19 @@ class StrategyConfig:
             min_volume_multiplier=float(os.getenv('MIN_VOLUME_MULTIPLIER', '1.0')),
             volume_multiplier_for_strong=float(os.getenv('VOLUME_MULTIPLIER_FOR_STRONG', '1.2')),
             volume_lookback_days=int(os.getenv('VOLUME_LOOKBACK_DAYS', '50')),
-            min_absolute_avg_volume=int(os.getenv('MIN_ABSOLUTE_AVG_VOLUME', '150000')),
+            min_absolute_avg_volume=int(os.getenv('MIN_ABSOLUTE_AVG_VOLUME', '20000')),
+            
+            # Capital
+            user_capital=float(os.getenv('USER_CAPITAL', '200000.0')),
+            max_position_volume_ratio=float(os.getenv('MAX_POSITION_VOLUME_RATIO', '0.10')),
+            
+            # Chart Quality
+            chart_quality_enabled=os.getenv('CHART_QUALITY_ENABLED', 'true').lower() in ('1', 'true', 'yes', 'on'),
+            chart_quality_min_score=float(os.getenv('CHART_QUALITY_MIN_SCORE', '60.0')),
+            chart_quality_max_gap_frequency=float(os.getenv('CHART_QUALITY_MAX_GAP_FREQUENCY', '20.0')),
+            chart_quality_min_daily_range_pct=float(os.getenv('CHART_QUALITY_MIN_DAILY_RANGE_PCT', '1.5')),
+            chart_quality_max_extreme_candle_frequency=float(os.getenv('CHART_QUALITY_MAX_EXTREME_CANDLE_FREQUENCY', '15.0')),
+            chart_quality_enabled_in_backtest=os.getenv('CHART_QUALITY_ENABLED_IN_BACKTEST', 'true').lower() in ('1', 'true', 'yes', 'on'),
             
             # Fundamentals
             pe_max_attractive=float(os.getenv('PE_MAX_ATTRACTIVE', '15.0')),

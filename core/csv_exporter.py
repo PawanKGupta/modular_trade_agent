@@ -104,6 +104,24 @@ class CSVExporter:
             justifications = analysis_result.get('justification', [])
             flattened['justifications'] = ', '.join(justifications)
             
+            # Phase 12: Capital and liquidity information
+            flattened['execution_capital'] = analysis_result.get('execution_capital', 0)
+            flattened['max_capital'] = analysis_result.get('max_capital', 0)
+            flattened['capital_adjusted'] = analysis_result.get('capital_adjusted', False)
+            
+            # Phase 12: Chart quality information
+            chart_quality = analysis_result.get('chart_quality', {})
+            if chart_quality and isinstance(chart_quality, dict):
+                flattened['chart_quality_score'] = chart_quality.get('score', 0)
+                flattened['chart_quality_status'] = chart_quality.get('status', 'unknown')
+                flattened['chart_quality_passed'] = chart_quality.get('passed', True)
+                flattened['chart_quality_reason'] = chart_quality.get('reason', '')
+            else:
+                flattened['chart_quality_score'] = 0
+                flattened['chart_quality_status'] = 'unknown'
+                flattened['chart_quality_passed'] = True
+                flattened['chart_quality_reason'] = ''
+            
             # Multi-timeframe analysis
             timeframe_analysis = analysis_result.get('timeframe_analysis')
             if timeframe_analysis:

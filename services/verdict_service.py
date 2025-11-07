@@ -21,6 +21,8 @@ import yfinance as yf
 
 from utils.logger import logger
 from config.strategy_config import StrategyConfig
+from services.chart_quality_service import ChartQualityService
+from services.liquidity_capital_service import LiquidityCapitalService
 
 
 class VerdictService:
@@ -34,6 +36,8 @@ class VerdictService:
             config: Strategy configuration (uses default if None)
         """
         self.config = config or StrategyConfig.default()
+        self.chart_quality_service = ChartQualityService(config=self.config)
+        self.liquidity_capital_service = LiquidityCapitalService(config=self.config)
     
     def fetch_fundamentals(self, ticker: str) -> Dict[str, Optional[float]]:
         """
@@ -56,13 +60,67 @@ class VerdictService:
             logger.warning(f"Could not fetch fundamental data for {ticker}: {e}")
             return {'pe': None, 'pb': None}
     
-    def assess_volume(self, df: pd.DataFrame, last: pd.Series) -> Dict[str, Any]:
+    def assess_chart_quality(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Assess chart quality for a stock
+        
+        Args:
+            df: DataFrame with OHLC data
+            
+        Returns:
+            Dict with chart quality analysis results
+        """
+        return self.chart_quality_service.assess_chart_quality(df)
+    
+    def check_chart_quality(self, df: pd.DataFrame) -> bool:
+        """
+        Check if chart quality is acceptable (hard filter)
+        
+        Args:
+            df: DataFrame with OHLC data
+            
+        Returns:
+            True if chart is acceptable, False otherwise
+        """
+        return self.chart_quality_service.is_chart_acceptable(df)
+    
+    def calculate_execution_capital(
+        self,
+        avg_volume: float,
+        stock_price: float,
+        user_capital: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Calculate execution capital based on liquidity
+        
+        Args:
+            avg_volume: Average daily volume
+            stock_price: Current stock price
+            user_capital: User's configured capital (optional, uses config default)
+            
+        Returns:
+            Dict with execution capital details
+        """
+        return self.liquidity_capital_service.calculate_execution_capital(
+            user_capital=user_capital,
+            avg_volume=avg_volume,
+            stock_price=stock_price
+        )
+    
+    def assess_volume(
+        self, 
+        df: pd.DataFrame, 
+        last: pd.Series,
+        disable_liquidity_filter: bool = False
+    ) -> Dict[str, Any]:
         """
         Assess volume quality for a stock
         
         Args:
             df: DataFrame with volume data
             last: Latest row
+            disable_liquidity_filter: If True, skip the absolute volume liquidity filter
+                                     (useful for backtesting where we want to see all opportunities)
             
         Returns:
             Dict with volume analysis results
@@ -73,7 +131,8 @@ class VerdictService:
         volume_analysis = assess_volume_quality_intelligent(
             current_volume=last['volume'],
             avg_volume=avg_vol,
-            enable_time_adjustment=True
+            enable_time_adjustment=True,
+            disable_liquidity_filter=disable_liquidity_filter
         )
         
         vol_ok, vol_strong, volume_description = get_volume_verdict(volume_analysis)
@@ -85,6 +144,13 @@ class VerdictService:
         # Additional volume pattern context
         volume_pattern = analyze_volume_pattern(df)
         
+        # Calculate execution capital based on liquidity
+        stock_price = last['close']
+        execution_capital_data = self.calculate_execution_capital(
+            avg_volume=avg_vol,
+            stock_price=stock_price
+        )
+        
         return {
             'volume_analysis': volume_analysis,
             'vol_ok': vol_ok,
@@ -93,6 +159,10 @@ class VerdictService:
             'volume_pattern': volume_pattern,
             'avg_vol': avg_vol,
             'today_vol': last['volume'],
+            'execution_capital': execution_capital_data.get('execution_capital', 0.0),
+            'max_capital': execution_capital_data.get('max_capital', 0.0),
+            'capital_adjusted': execution_capital_data.get('capital_adjusted', False),
+            'liquidity_recommendation': execution_capital_data,
         }
     
     def determine_verdict(
@@ -104,7 +174,8 @@ class VerdictService:
         vol_strong: bool,
         fundamental_ok: bool,
         timeframe_confirmation: Optional[Dict[str, Any]],
-        news_sentiment: Optional[Dict[str, Any]]
+        news_sentiment: Optional[Dict[str, Any]],
+        chart_quality_passed: bool = True
     ) -> Tuple[str, List[str]]:
         """
         Determine verdict (strong_buy/buy/watch/avoid) and justification
@@ -118,10 +189,15 @@ class VerdictService:
             fundamental_ok: Whether fundamentals are acceptable
             timeframe_confirmation: MTF confirmation data
             news_sentiment: News sentiment data
+            chart_quality_passed: Whether chart quality check passed (hard filter)
             
         Returns:
             Tuple of (verdict, justification_list)
         """
+        # Hard filter: Chart quality check
+        if not chart_quality_passed:
+            return "avoid", ["Chart quality failed - too many gaps/extreme candles/flat movement"]
+        
         verdict = "avoid"
         justification = []
         

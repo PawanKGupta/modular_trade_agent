@@ -47,6 +47,7 @@ class ScoringService:
                 - verdict: str (strong_buy/buy/watch/avoid)
                 - justification: List[str]
                 - timeframe_analysis: Dict (optional)
+                - chart_quality: Dict (optional) - chart quality analysis with score and status
             
         Returns:
             Strength score (0-25), or -1 for non-buy verdicts
@@ -131,6 +132,21 @@ class ScoringService:
                     score += 2
                 elif volume_exhaustion_score >= 1:
                     score += 1
+        
+        # Chart quality bonus (cleaner charts = higher score)
+        chart_quality = analysis_data.get('chart_quality', {})
+        if chart_quality and isinstance(chart_quality, dict):
+            chart_score = chart_quality.get('score', 0)
+            chart_status = chart_quality.get('status', 'poor')
+            
+            # Bonus for clean charts (only if passed hard filter)
+            if chart_status == 'clean' and chart_score >= 80:
+                score += 3  # Excellent chart quality bonus
+            elif chart_status == 'acceptable' and chart_score >= 70:
+                score += 2  # Good chart quality bonus
+            elif chart_status == 'acceptable' and chart_score >= 60:
+                score += 1  # Acceptable chart quality bonus
+            # Poor charts (score < 60) should already be filtered by hard filter
 
         return min(score, 25)  # Cap maximum score at 25
     
@@ -148,6 +164,7 @@ class ScoringService:
                 - timeframe_analysis: Dict
                 - pe: float (optional)
                 - backtest_score: float (optional)
+                - chart_quality: Dict (optional) - chart quality analysis with score and status
         
         Returns:
             Priority score (0-100+)
@@ -216,6 +233,21 @@ class ScoringService:
                 priority_score += 10
             elif backtest_score >= 20:
                 priority_score += 5
+            
+            # 7. Chart Quality (cleaner charts = higher priority)
+            chart_quality = stock_data.get('chart_quality', {})
+            if chart_quality and isinstance(chart_quality, dict):
+                chart_score = chart_quality.get('score', 0)
+                chart_status = chart_quality.get('status', 'poor')
+                
+                # Prioritize cleaner charts (only if passed hard filter)
+                if chart_status == 'clean' and chart_score >= 80:
+                    priority_score += 10  # Excellent chart quality
+                elif chart_status == 'acceptable' and chart_score >= 70:
+                    priority_score += 7   # Good chart quality
+                elif chart_status == 'acceptable' and chart_score >= 60:
+                    priority_score += 5   # Acceptable chart quality
+                # Poor charts (score < 60) should already be filtered by hard filter
             
             return priority_score
             

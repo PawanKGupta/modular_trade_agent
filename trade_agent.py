@@ -79,6 +79,32 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
         potential_loss = ((last_close - stop) / last_close) * 100
         risk_reward = potential_gain / potential_loss if potential_loss > 0 else 0
         
+        # Phase 13: Capital and chart quality information
+        execution_capital = stock_data.get('execution_capital', 0)
+        capital_adjusted = stock_data.get('capital_adjusted', False)
+        chart_quality = stock_data.get('chart_quality', {})
+        
+        # Format capital info
+        capital_info = ""
+        if execution_capital and execution_capital > 0:
+            if capital_adjusted:
+                capital_info = f" 💰 Capital: ₹{execution_capital:,.0f} (adjusted for liquidity)"
+            else:
+                capital_info = f" 💰 Capital: ₹{execution_capital:,.0f}"
+        
+        # Format chart quality info
+        chart_info = ""
+        if chart_quality and isinstance(chart_quality, dict):
+            chart_score = chart_quality.get('score', 0)
+            chart_status = chart_quality.get('status', 'unknown')
+            if chart_score > 0:
+                if chart_status == 'clean':
+                    chart_info = f" 📊 Chart: {chart_score:.0f}/100 (clean)"
+                elif chart_status == 'acceptable':
+                    chart_info = f" 📊 Chart: {chart_score:.0f}/100 (acceptable)"
+                else:
+                    chart_info = f" 📊 Chart: {chart_score:.0f}/100"
+        
         # Multi-timeframe analysis details
         mtf_info = ""
         setup_details = ""
@@ -176,6 +202,17 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
             tokens = setup_details.replace('|', '').strip()
             if tokens:
                 lines.append(f"\t{tokens}")
+        
+        # Phase 13: Add capital and chart quality info
+        if capital_info:
+            # Extract just the capital amount and adjustment status
+            capital_text = capital_info.replace('💰 Capital: ', '').strip()
+            lines.append(f"\tCapital: {capital_text}")
+        
+        if chart_info:
+            # Extract just the chart score and status
+            chart_text = chart_info.replace('📊 Chart: ', '').strip()
+            lines.append(f"\tChart: {chart_text}")
         # Fundamentals (PE)
         if pe is not None and pe > 0:
             lines.append(f"\tPE:{pe:.1f}")
@@ -417,7 +454,8 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
             # Keep the most useful fields; include fallbacks
             cols = [
                 'ticker','status','verdict','final_verdict','combined_score','strength_score','last_close',
-                'buy_range','target','stop','timeframe_analysis','backtest'
+                'buy_range','target','stop','timeframe_analysis','backtest',
+                'execution_capital','max_capital','capital_adjusted','chart_quality'  # Phase 12: New fields
             ]
             def _flatten(row):
                 d = {k: row.get(k) for k in cols if k in row}

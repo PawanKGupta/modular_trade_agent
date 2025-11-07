@@ -73,7 +73,8 @@ def assess_volume_quality_intelligent(
     current_volume: float, 
     avg_volume: float,
     current_hour: Optional[int] = None,
-    enable_time_adjustment: bool = True
+    enable_time_adjustment: bool = True,
+    disable_liquidity_filter: bool = False
 ) -> Dict[str, any]:
     """
     Intelligent volume quality assessment with time-awareness
@@ -83,6 +84,8 @@ def assess_volume_quality_intelligent(
         avg_volume: Average volume (typically 20-day)
         current_hour: Current market hour (None for auto-detect)
         enable_time_adjustment: Enable time-based adjustments
+        disable_liquidity_filter: If True, skip the absolute volume liquidity filter
+                                  (useful for backtesting where we want to see all opportunities)
         
     Returns:
         Dict with volume analysis results
@@ -99,8 +102,11 @@ def assess_volume_quality_intelligent(
             'reason': 'No historical volume data'
         }
     
-    # Check absolute volume first (liquidity filter)
-    if avg_volume < MIN_ABSOLUTE_AVG_VOLUME:
+    # Check absolute volume first (liquidity filter) - now minimal safety net only
+    # Actual capital adjustment handled by LiquidityCapitalService
+    # This check is kept as a minimal safety net for truly illiquid stocks
+    # Skip this check if disable_liquidity_filter is True (for backtesting)
+    if not disable_liquidity_filter and avg_volume < MIN_ABSOLUTE_AVG_VOLUME:
         return {
             'ratio': round(current_volume / avg_volume, 2) if avg_volume > 0 else 0,
             'quality': 'illiquid',

@@ -164,6 +164,8 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool =
     Strategy:
     - Buy when RSI < 30 (oversold) and above EMA200
     - Sell at 8% target or 5% stop loss
+    - Uses dynamic capital based on liquidity
+    - Filters by chart quality if enabled
     
     Args:
         stock_symbol: Stock symbol to backtest
@@ -172,10 +174,16 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool =
         config: StrategyConfig instance (uses default if None)
     """
     from config.strategy_config import StrategyConfig
+    from services.chart_quality_service import ChartQualityService
+    from services.liquidity_capital_service import LiquidityCapitalService
     
     # Get config if not provided
     if config is None:
         config = StrategyConfig.default()
+    
+    # Initialize services
+    chart_quality_service = ChartQualityService(config=config)
+    liquidity_capital_service = LiquidityCapitalService(config=config)
     
     try:
         # Get historical data
@@ -195,6 +203,25 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool =
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
         
+        # Phase 9: Check chart quality if enabled in backtest
+        chart_quality_enabled = getattr(config, 'chart_quality_enabled_in_backtest', True)
+        chart_quality_data = None
+        if chart_quality_enabled:
+            chart_quality_data = chart_quality_service.assess_chart_quality(data)
+            if not chart_quality_data.get('passed', True):
+                logger.info(f"{stock_symbol}: Chart quality failed in backtest - {chart_quality_data.get('reason', 'Poor chart quality')}")
+                return {
+                    'symbol': stock_symbol,
+                    'backtest_score': 0.0,
+                    'total_return_pct': 0,
+                    'win_rate': 0,
+                    'total_trades': 0,
+                    'vs_buy_hold': 0,
+                    'execution_rate': 100.0,
+                    'chart_quality': chart_quality_data,
+                    'reason': 'Chart quality failed'
+                }
+        
         # Calculate indicators using configurable RSI period
         rsi_col = f'RSI{config.rsi_period}'
         data[rsi_col] = calculate_wilder_rsi(data['Close'], period=config.rsi_period, config=config)
@@ -207,7 +234,7 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool =
         data['EMA50'] = data['Close'].ewm(span=50).mean()
         data['EMA200'] = data['Close'].ewm(span=200).mean()
         
-        # Calculate volume indicators for filtering
+        # Calculate volume indicators for filtering and capital calculation
         data['Volume_SMA20'] = data['Volume'].rolling(20).mean()
         data['Volume_Ratio'] = data['Volume'] / data['Volume_SMA20']
         
@@ -234,12 +261,32 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool =
                 not pd.isna(row['Volume_Ratio']) and 
                 row['Volume_Ratio'] > volume_threshold):
                 
+                # Phase 9: Calculate execution capital based on liquidity at entry
+                avg_volume = row.get('Volume_SMA20', row['Volume'])
+                stock_price = row['Close']
+                capital_data = liquidity_capital_service.calculate_execution_capital(
+                    avg_volume=avg_volume,
+                    stock_price=stock_price
+                )
+                execution_capital = capital_data.get('execution_capital', config.user_capital)
+                
+                # Calculate position size (shares) based on execution capital
+                shares = int(execution_capital / stock_price) if stock_price > 0 else 0
+                
+                # Skip if capital is too low (below minimum threshold)
+                if execution_capital < 1000:  # Minimum 1K capital
+                    logger.debug(f"{stock_symbol}: Skipping trade at {date} - insufficient capital: {execution_capital:.0f}")
+                    continue
+                
                 current_position = {
                     'entry_date': date,
                     'entry_price': row['Close'],
                     'target_price': row['Close'] * 1.08,  # 8% target
                     'stop_loss': row['Close'] * 0.95,     # 5% stop
-                    'volume_ratio': row['Volume_Ratio']   # Track volume quality
+                    'volume_ratio': row['Volume_Ratio'],   # Track volume quality
+                    'execution_capital': execution_capital,  # Track capital used
+                    'shares': shares,  # Track position size
+                    'avg_volume': avg_volume  # Track liquidity
                 }
                 continue
             
@@ -252,15 +299,25 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool =
                     exit_price = current_position['target_price'] if hit_target else current_position['stop_loss']
                     exit_reason = "Target" if hit_target else "Stop Loss"
                     
-                    pnl_pct = ((exit_price - current_position['entry_price']) / current_position['entry_price']) * 100
+                    # Calculate P&L based on position size and price movement
+                    shares = current_position.get('shares', 0)
+                    entry_price = current_position['entry_price']
+                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+                    pnl_absolute = (exit_price - entry_price) * shares
+                    execution_capital = current_position.get('execution_capital', 0)
+                    roi = (pnl_absolute / execution_capital * 100) if execution_capital > 0 else 0
                     
                     positions.append({
                         'entry_date': current_position['entry_date'],
-                        'entry_price': current_position['entry_price'],
+                        'entry_price': entry_price,
                         'exit_date': date,
                         'exit_price': exit_price,
                         'exit_reason': exit_reason,
                         'pnl_pct': pnl_pct,
+                        'pnl_absolute': pnl_absolute,
+                        'execution_capital': execution_capital,
+                        'shares': shares,
+                        'roi': roi,
                         'winner': pnl_pct > 0
                     })
                     
@@ -275,15 +332,32 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool =
                 'win_rate': 0,
                 'total_trades': 0,
                 'vs_buy_hold': 0,
-                'execution_rate': 100.0
+                'execution_rate': 100.0,
+                'chart_quality': chart_quality_data
             }
         
         total_trades = len(positions)
         winning_trades = sum(1 for p in positions if p['winner'])
         win_rate = (winning_trades / total_trades) * 100
         
+        # Calculate returns based on weighted average (by capital)
+        # This gives better representation of actual returns when capital varies
+        total_capital = sum(p.get('execution_capital', 0) for p in positions)
+        total_pnl = sum(p.get('pnl_absolute', 0) for p in positions)
+        
+        # Calculate average return (percentage)
         avg_return = np.mean([p['pnl_pct'] for p in positions])
-        total_return = sum(p['pnl_pct'] for p in positions)
+        
+        # Total return as weighted ROI (total P&L / total capital)
+        # This gives accurate return when capital varies per trade
+        if total_capital > 0:
+            total_return = (total_pnl / total_capital) * 100
+        else:
+            # Fallback to average percentage return if no capital data
+            total_return = avg_return * len(positions)
+        
+        # Also calculate total return as sum of percentage returns (legacy compatibility)
+        total_return_pct = sum(p['pnl_pct'] for p in positions)
         
         # Buy and hold comparison
         first_price = data.iloc[0]['Close']
@@ -292,22 +366,31 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool =
         
         vs_buy_hold = total_return - buy_hold_return
         
+        # Calculate average execution capital
+        avg_execution_capital = np.mean([p.get('execution_capital', 0) for p in positions])
+        
         logger.info(f"Simple backtest for {stock_symbol}: "
                    f"{total_trades} trades, {win_rate:.1f}% win rate, "
-                   f"{total_return:.1f}% return")
+                   f"{total_return:.1f}% return (weighted), {total_pnl:.0f} total P&L")
         
-        return {
+        result = {
             'symbol': stock_symbol,
             'backtest_score': 0,  # Will be calculated later
-            'total_return_pct': total_return,
+            'total_return_pct': total_return,  # Weighted average ROI
+            'total_return_pct_legacy': total_return_pct,  # Sum of percentage returns (legacy)
             'win_rate': win_rate,
             'total_trades': total_trades,
             'vs_buy_hold': vs_buy_hold,
             'execution_rate': 100.0,
             'avg_return': avg_return,
             'winning_trades': winning_trades,
-            'losing_trades': total_trades - winning_trades
+            'losing_trades': total_trades - winning_trades,
+            'total_pnl': total_pnl,
+            'avg_execution_capital': avg_execution_capital,
+            'chart_quality': chart_quality_data
         }
+        
+        return result
         
     except Exception as e:
         logger.error(f"Simple backtest failed for {stock_symbol}: {e}")
