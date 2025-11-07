@@ -118,21 +118,30 @@ class TestMLVerdictService:
     
     def test_predict_verdict_with_confidence_no_model(self):
         """Test prediction when model not loaded"""
-        service = MLVerdictService()
-        
-        verdict, confidence = service.predict_verdict_with_confidence(
-            signals=[],
-            rsi_value=30.0,
-            is_above_ema200=True,
-            vol_ok=True,
-            vol_strong=False,
-            fundamental_ok=True,
-            timeframe_confirmation=None,
-            news_sentiment=None
-        )
-        
-        assert verdict is None
-        assert confidence == 0.0
+        # Mock Path.exists to return False for default model (simulate no default model)
+        with patch('services.ml_verdict_service.Path') as mock_path_class:
+            def path_side_effect(path_str):
+                mock_path = MagicMock()
+                mock_path.exists.return_value = False  # Default model doesn't exist
+                return mock_path
+            
+            mock_path_class.side_effect = path_side_effect
+            
+            service = MLVerdictService()
+            
+            verdict, confidence = service.predict_verdict_with_confidence(
+                signals=[],
+                rsi_value=30.0,
+                is_above_ema200=True,
+                vol_ok=True,
+                vol_strong=False,
+                fundamental_ok=True,
+                timeframe_confirmation=None,
+                news_sentiment=None
+            )
+            
+            assert verdict is None
+            assert confidence == 0.0
     
     def test_fallback_to_rule_based(self):
         """Test fallback to rule-based verdict"""
