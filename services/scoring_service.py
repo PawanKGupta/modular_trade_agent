@@ -7,10 +7,11 @@ Migrated from core/scoring.py to service layer (Phase 4).
 This service can be used independently or as part of the analysis pipeline.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import logging
 
 from utils.logger import logger
+from config.strategy_config import StrategyConfig
 
 
 class ScoringService:
@@ -26,9 +27,14 @@ class ScoringService:
     providing dependency injection and better testability.
     """
     
-    def __init__(self):
-        """Initialize scoring service"""
-        pass
+    def __init__(self, config: Optional[StrategyConfig] = None):
+        """
+        Initialize scoring service
+        
+        Args:
+            config: StrategyConfig instance (uses default if None)
+        """
+        self.config = config if config is not None else StrategyConfig.default()
     
     def compute_strength_score(self, analysis_data: Dict[str, Any]) -> float:
         """
@@ -69,9 +75,10 @@ class ScoringService:
             elif j.startswith('rsi:'):
                 try:
                     rsi_val = float(j.split(':')[1])
-                    if rsi_val < 30:
+                    # Use configurable RSI thresholds
+                    if rsi_val < self.config.rsi_oversold:  # Default: 30
                         score += 1
-                    if rsi_val < 20:
+                    if rsi_val < self.config.rsi_extreme_oversold:  # Default: 20
                         score += 1
                 except Exception:
                     pass
@@ -103,11 +110,12 @@ class ScoringService:
             
             if daily_analysis and weekly_analysis:
                 # Daily oversold condition (primary signal)
+                # Uses configurable thresholds: extreme = rsi_extreme_oversold, high = rsi_oversold
                 daily_oversold = daily_analysis.get('oversold_analysis', {})
                 if daily_oversold.get('severity') == 'extreme':
-                    score += 3  # RSI < 20
+                    score += 3  # RSI < config.rsi_extreme_oversold (default: 20)
                 elif daily_oversold.get('severity') == 'high':
-                    score += 2  # RSI < 30
+                    score += 2  # RSI < config.rsi_oversold (default: 30)
                 
                 # Support level confluence
                 daily_support = daily_analysis.get('support_analysis', {})

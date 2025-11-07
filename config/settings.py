@@ -20,8 +20,29 @@ POSITION_VOLUME_RATIO_TIERS = [
     (0, 0.20)       # Small caps (<₹500): 20% max - only filter worst cases
 ]
 
-RSI_OVERSOLD = 30
-RSI_NEAR_OVERSOLD = 40
+# DEPRECATED: Use StrategyConfig.rsi_oversold instead
+# This constant is kept for backward compatibility but will be removed in a future version
+import warnings
+from config.strategy_config import StrategyConfig
+
+_strategy_config = StrategyConfig.default()
+RSI_OVERSOLD = _strategy_config.rsi_oversold  # Default: 30.0
+RSI_NEAR_OVERSOLD = _strategy_config.rsi_near_oversold  # Default: 40.0
+
+def _warn_deprecated_rsi_constant(name: str):
+    """Issue deprecation warning for RSI constants"""
+    warnings.warn(
+        f"{name} from config.settings is deprecated. "
+        f"Use StrategyConfig.{name.lower()} instead. "
+        f"This will be removed in a future version.",
+        DeprecationWarning,
+        stacklevel=3
+    )
+
+# Note: Direct constant access won't trigger warnings automatically
+# Importers should migrate to StrategyConfig for new code
+# See migration guide in StrategyConfig docstring
+
 VOLUME_MULTIPLIER_FOR_STRONG = 1.2
 
 # Volume analysis configuration

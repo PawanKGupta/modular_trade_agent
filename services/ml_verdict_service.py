@@ -203,45 +203,87 @@ class MLVerdictService(VerdictService):
         
         features = {}
         
-        # Basic indicators
-        features['rsi_10'] = float(rsi_value) if rsi_value is not None else 50.0
+        # Get configurable parameters from config (defaults for backward compatibility)
+        rsi_period = self.config.rsi_period if self.config else 10
+        volume_lookback = self.config.volume_exhaustion_lookback_daily if self.config else 20
+        support_lookback = self.config.support_resistance_lookback_daily if self.config else 20
+        
+        # Basic indicators - use configurable RSI period
+        rsi_feature_name = f'rsi_{rsi_period}'
+        features[rsi_feature_name] = float(rsi_value) if rsi_value is not None else 50.0
+        
+        # Also keep 'rsi_10' for backward compatibility if period == 10
+        if rsi_period == 10:
+            features['rsi_10'] = features[rsi_feature_name]
+        
         features['ema200'] = float(indicators.get('ema200', 0)) if indicators else 0.0
         features['price'] = float(indicators.get('close', 0)) if indicators else 0.0
         features['price_above_ema200'] = 1.0 if is_above_ema200 else 0.0
         
-        # Volume features
+        # Volume features - use configurable volume lookback
         if df is not None and not df.empty:
             try:
                 features['volume'] = float(df['volume'].iloc[-1])
-                features['avg_volume_20'] = float(df['volume'].tail(20).mean()) if len(df) >= 20 else features['volume']
-                features['volume_ratio'] = features['volume'] / features['avg_volume_20'] if features['avg_volume_20'] > 0 else 1.0
+                avg_volume_feature_name = f'avg_volume_{volume_lookback}'
+                features[avg_volume_feature_name] = float(df['volume'].tail(volume_lookback).mean()) if len(df) >= volume_lookback else features['volume']
+                
+                # Also keep 'avg_volume_20' for backward compatibility if lookback == 20
+                if volume_lookback == 20:
+                    features['avg_volume_20'] = features[avg_volume_feature_name]
+                
+                features['volume_ratio'] = features['volume'] / features[avg_volume_feature_name] if features[avg_volume_feature_name] > 0 else 1.0
             except:
                 features['volume'] = 0.0
-                features['avg_volume_20'] = 0.0
+                avg_volume_feature_name = f'avg_volume_{volume_lookback}'
+                features[avg_volume_feature_name] = 0.0
+                if volume_lookback == 20:
+                    features['avg_volume_20'] = 0.0
                 features['volume_ratio'] = 1.0
         else:
             features['volume'] = 0.0
-            features['avg_volume_20'] = 0.0
+            avg_volume_feature_name = f'avg_volume_{volume_lookback}'
+            features[avg_volume_feature_name] = 0.0
+            if volume_lookback == 20:
+                features['avg_volume_20'] = 0.0
             features['volume_ratio'] = 1.0
         
         features['vol_strong'] = 1.0 if vol_strong else 0.0
         
-        # Price action features
+        # Price action features - use configurable support/resistance lookback
         if df is not None and not df.empty:
             try:
-                features['recent_high_20'] = float(df['high'].tail(20).max()) if len(df) >= 20 else features['price']
-                features['recent_low_20'] = float(df['low'].tail(20).min()) if len(df) >= 20 else features['price']
+                recent_high_feature_name = f'recent_high_{support_lookback}'
+                recent_low_feature_name = f'recent_low_{support_lookback}'
+                
+                features[recent_high_feature_name] = float(df['high'].tail(support_lookback).max()) if len(df) >= support_lookback else features['price']
+                features[recent_low_feature_name] = float(df['low'].tail(support_lookback).min()) if len(df) >= support_lookback else features['price']
+                
+                # Also keep 'recent_high_20' and 'recent_low_20' for backward compatibility if lookback == 20
+                if support_lookback == 20:
+                    features['recent_high_20'] = features[recent_high_feature_name]
+                    features['recent_low_20'] = features[recent_low_feature_name]
+                
                 if features['price'] > 0:
-                    features['support_distance_pct'] = ((features['price'] - features['recent_low_20']) / features['price']) * 100
+                    features['support_distance_pct'] = ((features['price'] - features[recent_low_feature_name]) / features['price']) * 100
                 else:
                     features['support_distance_pct'] = 0.0
             except:
-                features['recent_high_20'] = features['price']
-                features['recent_low_20'] = features['price']
+                recent_high_feature_name = f'recent_high_{support_lookback}'
+                recent_low_feature_name = f'recent_low_{support_lookback}'
+                features[recent_high_feature_name] = features['price']
+                features[recent_low_feature_name] = features['price']
+                if support_lookback == 20:
+                    features['recent_high_20'] = features['price']
+                    features['recent_low_20'] = features['price']
                 features['support_distance_pct'] = 0.0
         else:
-            features['recent_high_20'] = features['price']
-            features['recent_low_20'] = features['price']
+            recent_high_feature_name = f'recent_high_{support_lookback}'
+            recent_low_feature_name = f'recent_low_{support_lookback}'
+            features[recent_high_feature_name] = features['price']
+            features[recent_low_feature_name] = features['price']
+            if support_lookback == 20:
+                features['recent_high_20'] = features['price']
+                features['recent_low_20'] = features['price']
             features['support_distance_pct'] = 0.0
         
         # Pattern signals
