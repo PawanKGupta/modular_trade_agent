@@ -62,8 +62,17 @@ class BacktestEngine:
         self._load_data()
         
     def _load_data(self):
-        """Load and prepare market data with auto-adjustment for sufficient EMA data"""
+        """
+        Load and prepare market data with auto-adjustment for sufficient EMA data
+        Uses fetch_multi_timeframe_data() for consistency with main system
+        """
         try:
+            from core.data_fetcher import fetch_multi_timeframe_data
+            from config.strategy_config import StrategyConfig
+            
+            # Get config for data fetching strategy
+            strategy_config = StrategyConfig.default()
+            
             # Calculate required buffer for EMA200: need ~300+ trading days for reliable EMA200
             # Assuming ~252 trading days per year, we need ~1.5 years of data minimum
             required_trading_days = max(self.config.EMA_PERIOD * 1.5, 300)
@@ -79,26 +88,49 @@ class BacktestEngine:
             print(f"Requested backtest period: {self.start_date.date()} to {self.end_date.date()}")
             print(f"Data fetch period: {auto_start_date.date()} to {data_end.date()} (auto-adjusted)")
             
-            # Download data
-            self.data = yf.download(
-                self.symbol, 
-                start=auto_start_date, 
-                end=data_end, 
-                progress=False,
-                auto_adjust=True
+            # Use fetch_multi_timeframe_data() for consistency
+            # Calculate minimum days needed (use configurable max years)
+            min_days = max(required_calendar_days, strategy_config.data_fetch_daily_max_years * 365)
+            
+            # Fetch data using configurable data fetching strategy
+            multi_data = fetch_multi_timeframe_data(
+                ticker=self.symbol,
+                days=min_days,
+                end_date=data_end.strftime('%Y-%m-%d'),
+                add_current_day=False,  # Backtesting mode - no current day data
+                config=strategy_config
             )
+            
+            if multi_data is None or multi_data.get('daily') is None:
+                raise ValueError(f"No data available for {self.symbol}")
+            
+            # Use daily data (weekly not needed for backtest)
+            self.data = multi_data['daily']
             
             if self.data.empty:
                 raise ValueError(f"No data available for {self.symbol}")
-                
-            # Handle MultiIndex columns
-            if isinstance(self.data.columns, pd.MultiIndex):
-                self.data.columns = self.data.columns.get_level_values(0)
-                
-            # Ensure we have required columns
-            required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-            missing_cols = [col for col in required_cols if col not in self.data.columns]
-            if missing_cols:
+            
+            # Ensure date column is set as index for filtering
+            if 'date' in self.data.columns:
+                self.data['date'] = pd.to_datetime(self.data['date'])
+                self.data = self.data.set_index('date')
+            
+            # Ensure we have required columns (convert to proper case)
+            required_cols_lower = ['open', 'high', 'low', 'close', 'volume']
+            required_cols_upper = ['Open', 'High', 'Low', 'Close', 'Volume']
+            
+            # Check if columns are lowercase (from fetch_multi_timeframe_data)
+            if all(col in self.data.columns for col in required_cols_lower):
+                # Rename to uppercase for compatibility
+                self.data = self.data.rename(columns={
+                    'open': 'Open',
+                    'high': 'High',
+                    'low': 'Low',
+                    'close': 'Close',
+                    'volume': 'Volume'
+                })
+            elif not all(col in self.data.columns for col in required_cols_upper):
+                missing_cols = [col for col in required_cols_upper if col not in self.data.columns]
                 raise ValueError(f"Missing required columns: {missing_cols}")
             
             # Calculate technical indicators
@@ -126,12 +158,17 @@ class BacktestEngine:
             raise
             
     def _calculate_indicators(self):
-        """Calculate technical indicators"""
+        """Calculate technical indicators using pandas_ta (standardized method)"""
         try:
-            # Calculate RSI using pandas_ta default method (matches TradingView)
-            self.data['RSI10'] = ta.rsi(self.data['Close'], length=self.config.RSI_PERIOD)
+            # Calculate RSI using pandas_ta (standardized method)
+            rsi_col = f'RSI{self.config.RSI_PERIOD}'
+            self.data[rsi_col] = ta.rsi(self.data['Close'], length=self.config.RSI_PERIOD)
             
-            # Calculate EMA200
+            # Also keep 'RSI10' for backward compatibility if period is 10
+            if self.config.RSI_PERIOD == 10:
+                self.data['RSI10'] = self.data[rsi_col]
+            
+            # Calculate EMA200 using pandas_ta (standardized method)
             self.data['EMA200'] = ta.ema(self.data['Close'], length=self.config.EMA_PERIOD)
             
             # Drop NaN values
@@ -155,7 +192,9 @@ class BacktestEngine:
             Tuple of (should_enter, entry_reason)
         """
         close_price = row['Close']
-        rsi = row['RSI10']
+        # Use configurable RSI column name
+        rsi_col = f'RSI{self.config.RSI_PERIOD}'
+        rsi = row[rsi_col] if rsi_col in row.index else row.get('RSI10')
         ema200 = row['EMA200']
         
         # Skip if missing data
@@ -296,12 +335,16 @@ class BacktestEngine:
         trade_count = 0
         
         try:
+            # Get RSI column name from config
+            rsi_col = f'RSI{self.config.RSI_PERIOD}'
+            
             # Iterate through each trading day
             for current_date, row in self.data.iterrows():
                 
                 # Update RSI state tracking
-                if not pd.isna(row['RSI10']):
-                    self._update_rsi_state(row['RSI10'], current_date)
+                rsi_value = row[rsi_col] if rsi_col in row.index else row.get('RSI10')
+                if not pd.isna(rsi_value):
+                    self._update_rsi_state(rsi_value, current_date)
                 
                 # Check entry conditions
                 should_enter, entry_reason = self._check_entry_conditions(row, current_date)

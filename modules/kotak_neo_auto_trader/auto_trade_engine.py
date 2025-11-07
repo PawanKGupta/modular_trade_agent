@@ -200,15 +200,25 @@ class AutoTradeEngine:
             from config.settings import VOLUME_LOOKBACK_DAYS
             
             df = fetch_ohlcv_yf(ticker, days=800, interval='1d', add_current_day=False)
-            df = compute_indicators(df)
+            # Use configurable RSI period from StrategyConfig
+            from config.strategy_config import StrategyConfig
+            strategy_config = StrategyConfig.default()
+            df = compute_indicators(df, rsi_period=strategy_config.rsi_period)
             if df is None or df.empty:
                 return None
             last = df.iloc[-1]
             # Calculate average volume over configurable period (default: 50 days)
             avg_vol = df['volume'].tail(VOLUME_LOOKBACK_DAYS).mean() if 'volume' in df.columns else 0
+            
+            # Use configurable RSI column name
+            rsi_col = f'rsi{strategy_config.rsi_period}'
+            # Fallback to 'rsi10' for backward compatibility
+            if rsi_col not in last.index and 'rsi10' in last.index:
+                rsi_col = 'rsi10'
+            
             return {
                 'close': float(last['close']),
-                'rsi10': float(last['rsi10']),
+                'rsi10': float(last[rsi_col]) if rsi_col in last.index else 0.0,  # Keep 'rsi10' key for backward compatibility
                 'ema9': float(df['close'].ewm(span=config.EMA_SHORT).mean().iloc[-1]) if 'ema9' not in df.columns else float(last.get('ema9', 0)),
                 'ema200': float(last['ema200']) if 'ema200' in df.columns else float(df['close'].ewm(span=config.EMA_LONG).mean().iloc[-1]),
                 'avg_volume': float(avg_vol)

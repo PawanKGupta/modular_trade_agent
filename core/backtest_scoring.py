@@ -125,8 +125,24 @@ def calculate_backtest_score(backtest_results: Dict, dip_mode: bool = False) -> 
         return 0.0
 
 
-def calculate_wilder_rsi(prices, period=10):
-    """Calculate RSI using Wilder's method (matches your trading strategy)"""
+def calculate_wilder_rsi(prices, period=None, config=None):
+    """
+    Calculate RSI using Wilder's method (matches your trading strategy)
+    
+    Args:
+        prices: Price series
+        period: RSI period (uses config if None)
+        config: StrategyConfig instance (uses default if None)
+    """
+    from config.strategy_config import StrategyConfig
+    
+    # Get config if not provided
+    if config is None:
+        config = StrategyConfig.default()
+    
+    # Use provided period or config default
+    period = period if period is not None else config.rsi_period
+    
     delta = prices.diff()
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
@@ -141,14 +157,25 @@ def calculate_wilder_rsi(prices, period=10):
     return rsi
 
 
-def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool = False) -> Dict:
+def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool = False, config=None) -> Dict:
     """
-    Run a simple backtest using RSI 10 oversold strategy.
+    Run a simple backtest using configurable RSI oversold strategy.
     
     Strategy:
-    - Buy when RSI10 < 30 (oversold) and above EMA200
+    - Buy when RSI < 30 (oversold) and above EMA200
     - Sell at 8% target or 5% stop loss
+    
+    Args:
+        stock_symbol: Stock symbol to backtest
+        years_back: Number of years to look back
+        dip_mode: Enable dip mode (more permissive volume requirements)
+        config: StrategyConfig instance (uses default if None)
     """
+    from config.strategy_config import StrategyConfig
+    
+    # Get config if not provided
+    if config is None:
+        config = StrategyConfig.default()
     
     try:
         # Get historical data
@@ -168,8 +195,14 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool =
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
         
-        # Calculate indicators
-        data['RSI10'] = calculate_wilder_rsi(data['Close'], 10)
+        # Calculate indicators using configurable RSI period
+        rsi_col = f'RSI{config.rsi_period}'
+        data[rsi_col] = calculate_wilder_rsi(data['Close'], period=config.rsi_period, config=config)
+        
+        # Also keep 'RSI10' for backward compatibility if period is 10
+        if config.rsi_period == 10:
+            data['RSI10'] = data[rsi_col]
+        
         data['EMA20'] = data['Close'].ewm(span=20).mean()
         data['EMA50'] = data['Close'].ewm(span=50).mean()
         data['EMA200'] = data['Close'].ewm(span=200).mean()
@@ -183,18 +216,20 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool =
         current_position = None
         
         for i, (date, row) in enumerate(data.iterrows()):
-            if pd.isna(row['RSI10']):
+            rsi_value = row[rsi_col] if rsi_col in row.index else row.get('RSI10')
+            if pd.isna(rsi_value):
                 continue
                 
-            # Entry condition: RSI10 < 30, above EMA200, and adequate volume
+            # Entry condition: RSI < oversold threshold, above EMA200, and adequate volume
             # Dip mode: More permissive volume requirements for extreme oversold conditions
-            if dip_mode and row['RSI10'] < 25:  # Extreme oversold in dip mode
+            extreme_oversold_threshold = config.rsi_extreme_oversold if hasattr(config, 'rsi_extreme_oversold') else 20
+            if dip_mode and rsi_value < extreme_oversold_threshold:  # Extreme oversold in dip mode
                 volume_threshold = 1.0  # Any volume OK for extreme dips
             else:
                 volume_threshold = 1.2 if not dip_mode else 1.1  # Relaxed in dip mode
                 
             if (current_position is None and 
-                row['RSI10'] < 30 and 
+                rsi_value < config.rsi_oversold and 
                 row['Close'] > row['EMA200'] and
                 not pd.isna(row['Volume_Ratio']) and 
                 row['Volume_Ratio'] > volume_threshold):
@@ -283,7 +318,7 @@ def run_simple_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool =
         }
 
 
-def run_stock_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool = False) -> Dict:
+def run_stock_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool = False, config=None) -> Dict:
     """
     Run backtest for a stock using available method (integrated or simple).
     
@@ -297,7 +332,7 @@ def run_stock_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool = 
     
     if BACKTEST_MODE == 'simple':
         # Use simple backtest
-        backtest_results = run_simple_backtest(stock_symbol, years_back, dip_mode)
+        backtest_results = run_simple_backtest(stock_symbol, years_back, dip_mode, config)
         backtest_score = calculate_backtest_score(backtest_results, dip_mode)
         backtest_results['backtest_score'] = backtest_score
         return backtest_results
@@ -342,13 +377,13 @@ def run_stock_backtest(stock_symbol: str, years_back: int = 2, dip_mode: bool = 
         except Exception as e:
             logger.error(f"Integrated backtest failed for {stock_symbol}: {e}, falling back to simple")
             # Fallback to simple backtest
-            backtest_results = run_simple_backtest(stock_symbol, years_back, dip_mode)
+            backtest_results = run_simple_backtest(stock_symbol, years_back, dip_mode, config)
             backtest_score = calculate_backtest_score(backtest_results, dip_mode)
             backtest_results['backtest_score'] = backtest_score
             return backtest_results
 
 
-def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip_mode: bool = False) -> list:
+def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip_mode: bool = False, config=None) -> list:
     """
     Add backtest scores to existing stock analysis results.
     
@@ -390,7 +425,7 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip
             logger.info(f"Processing {i}/{len(stock_results)}: {ticker}")
             
             # Run backtest for this stock
-            backtest_data = run_stock_backtest(ticker, years_back, dip_mode)
+            backtest_data = run_stock_backtest(ticker, years_back, dip_mode, config)
             
             # Add backtest data to stock result
             stock_result['backtest'] = {
@@ -421,12 +456,19 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip
             current_rsi = stock_result.get('rsi', 30)  # Default to 30 if not available
             
             # RSI-based threshold adjustment (more oversold = lower thresholds)
+            # Use configurable thresholds from StrategyConfig
+            from config.strategy_config import StrategyConfig
+            config = StrategyConfig.default()
+            
             rsi_factor = 1.0
-            if current_rsi < 20:  # Extremely oversold
+            extreme_oversold = config.rsi_extreme_oversold  # Default: 20
+            rsi_oversold = config.rsi_oversold  # Default: 30
+            
+            if current_rsi < extreme_oversold:  # Extremely oversold
                 rsi_factor = 0.7  # 30% lower thresholds
-            elif current_rsi < 25:  # Very oversold
+            elif current_rsi < (extreme_oversold + 5):  # Very oversold (default: 25)
                 rsi_factor = 0.8  # 20% lower thresholds
-            elif current_rsi < 30:  # Oversold
+            elif current_rsi < rsi_oversold:  # Oversold
                 rsi_factor = 0.9  # 10% lower thresholds
             
             # Enhanced reclassification with confidence-aware and RSI-adjusted thresholds

@@ -17,7 +17,8 @@ load_dotenv()
 class StrategyConfig:
     """Centralized strategy configuration parameters"""
     
-    # RSI Thresholds
+    # RSI Configuration
+    rsi_period: int = 10  # RSI calculation period (default: 10 for short-term strategy)
     rsi_oversold: float = 30.0
     rsi_extreme_oversold: float = 20.0
     rsi_near_oversold: float = 40.0
@@ -66,6 +67,21 @@ class StrategyConfig:
     # Backtest Scoring Weights
     backtest_weight: float = 0.5  # 50% historical, 50% current analysis
     
+    # Support/Resistance Lookback Configuration
+    support_resistance_lookback_daily: int = 20  # Daily timeframe lookback periods
+    support_resistance_lookback_weekly: int = 50  # Weekly timeframe lookback periods
+    
+    # Volume Exhaustion Lookback Configuration
+    volume_exhaustion_lookback_daily: int = 10  # Daily timeframe volume exhaustion lookback
+    volume_exhaustion_lookback_weekly: int = 20  # Weekly timeframe volume exhaustion lookback
+    
+    # Data Fetching Configuration
+    data_fetch_daily_max_years: int = 5  # Maximum years to fetch for daily data
+    data_fetch_weekly_max_years: int = 3  # Maximum years to fetch for weekly data
+    
+    # Adaptive Logic Configuration
+    enable_adaptive_lookback: bool = True  # Enable adaptive lookback based on available data
+    
     # News Sentiment
     news_sentiment_enabled: bool = True
     news_sentiment_lookback_days: int = 30
@@ -84,7 +100,8 @@ class StrategyConfig:
     def from_env(cls) -> 'StrategyConfig':
         """Load configuration from environment variables with defaults"""
         return cls(
-            # RSI thresholds
+            # RSI configuration
+            rsi_period=int(os.getenv('RSI_PERIOD', '10')),
             rsi_oversold=float(os.getenv('RSI_OVERSOLD', '30.0')),
             rsi_extreme_oversold=float(os.getenv('RSI_EXTREME_OVERSOLD', '20.0')),
             rsi_near_oversold=float(os.getenv('RSI_NEAR_OVERSOLD', '40.0')),
@@ -146,6 +163,21 @@ class StrategyConfig:
             ml_price_model_path=os.getenv('ML_PRICE_MODEL_PATH', 'models/price_model_random_forest.pkl'),
             ml_confidence_threshold=float(os.getenv('ML_CONFIDENCE_THRESHOLD', '0.5')),
             ml_combine_with_rules=os.getenv('ML_COMBINE_WITH_RULES', 'true').lower() in ('1', 'true', 'yes', 'on'),
+            
+            # Support/Resistance Lookback
+            support_resistance_lookback_daily=int(os.getenv('SUPPORT_RESISTANCE_LOOKBACK_DAILY', '20')),
+            support_resistance_lookback_weekly=int(os.getenv('SUPPORT_RESISTANCE_LOOKBACK_WEEKLY', '50')),
+            
+            # Volume Exhaustion Lookback
+            volume_exhaustion_lookback_daily=int(os.getenv('VOLUME_EXHAUSTION_LOOKBACK_DAILY', '10')),
+            volume_exhaustion_lookback_weekly=int(os.getenv('VOLUME_EXHAUSTION_LOOKBACK_WEEKLY', '20')),
+            
+            # Data Fetching
+            data_fetch_daily_max_years=int(os.getenv('DATA_FETCH_DAILY_MAX_YEARS', '5')),
+            data_fetch_weekly_max_years=int(os.getenv('DATA_FETCH_WEEKLY_MAX_YEARS', '3')),
+            
+            # Adaptive Logic
+            enable_adaptive_lookback=os.getenv('ENABLE_ADAPTIVE_LOOKBACK', 'true').lower() in ('1', 'true', 'yes', 'on'),
         )
     
     @classmethod

@@ -113,7 +113,8 @@ class DataService:
         self, 
         ticker: str, 
         end_date: Optional[str] = None,
-        add_current_day: bool = True
+        add_current_day: bool = True,
+        config: Optional[Any] = None
     ) -> Optional[Dict[str, pd.DataFrame]]:
         """
         Fetch multi-timeframe (daily + weekly) data for a ticker
@@ -149,12 +150,12 @@ class DataService:
                     logger.debug(f"Infrastructure provider failed, using core.*: {e}")
                     if fetch_multi_timeframe_data is None:
                         raise ImportError("Neither infrastructure provider nor core.data_fetcher.fetch_multi_timeframe_data is available")
-                    multi_data = fetch_multi_timeframe_data(ticker, end_date=end_date, add_current_day=add_current_day)
+                    multi_data = fetch_multi_timeframe_data(ticker, end_date=end_date, add_current_day=add_current_day, config=config)
             else:
                 # Fallback to core.* for backward compatibility
-                if fetch_multi_timeframe_data is None:
-                    raise ImportError("core.data_fetcher.fetch_multi_timeframe_data is not available")
-                multi_data = fetch_multi_timeframe_data(ticker, end_date=end_date, add_current_day=add_current_day)
+                    if fetch_multi_timeframe_data is None:
+                        raise ImportError("core.data_fetcher.fetch_multi_timeframe_data is not available")
+                    multi_data = fetch_multi_timeframe_data(ticker, end_date=end_date, add_current_day=add_current_day, config=config)
             
             if multi_data is None or multi_data.get('daily') is None:
                 logger.warning(f"No multi-timeframe data available for {ticker}")

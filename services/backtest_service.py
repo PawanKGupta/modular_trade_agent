@@ -155,7 +155,8 @@ class BacktestService:
                 
                 # Use ScoringService for combined score calculation
                 from services.scoring_service import ScoringService
-                scoring_service = ScoringService()
+                from config.strategy_config import StrategyConfig
+                scoring_service = ScoringService(config=StrategyConfig.default())
                 combined_score = scoring_service.compute_combined_score(
                     current_score=current_score,
                     backtest_score=backtest_score,

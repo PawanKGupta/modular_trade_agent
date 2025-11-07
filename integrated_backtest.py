@@ -45,16 +45,18 @@ class SignalResult:
         return f"SignalResult(type={self.signal_type}, buy={self.buy_price}, target={self.target_price})"
 
 
-def run_backtest(stock_name: str, date_range: Tuple[str, str]) -> List[Dict]:
+def run_backtest(stock_name: str, date_range: Tuple[str, str], return_engine: bool = False) -> tuple:
     """
     Performs backtest logic and identifies entry/re-entry dates based on strategy.
     
     Args:
         stock_name: Stock symbol (e.g., "RELIANCE.NS", "AAPL")
         date_range: Tuple of (start_date, end_date) in YYYY-MM-DD format
+        return_engine: If True, returns (signals, engine) tuple to allow data reuse
         
     Returns:
-        List of potential trade signals (dates when buy conditions are met)
+        List of potential trade signals if return_engine=False
+        Tuple of (signals, engine) if return_engine=True
     """
     start_date, end_date = date_range
     
@@ -62,7 +64,11 @@ def run_backtest(stock_name: str, date_range: Tuple[str, str]) -> List[Dict]:
     print(f"Period: {start_date} to {end_date}")
     
     # Create a modified backtest engine that returns signals instead of executing trades
-    config = BacktestConfig()
+    # Use synced config with StrategyConfig
+    from backtest.backtest_config import BacktestConfig
+    from config.strategy_config import StrategyConfig
+    
+    config = BacktestConfig.default_synced()  # Sync with StrategyConfig
     config.DETAILED_LOGGING = False  # Keep it quiet for signal generation
     
     engine = BacktestEngine(
@@ -77,10 +83,14 @@ def run_backtest(stock_name: str, date_range: Tuple[str, str]) -> List[Dict]:
     
     try:
         # Iterate through the data to identify buy signals
+        # Get RSI column name from config
+        rsi_col = f'RSI{config.RSI_PERIOD}'
+        
         for current_date, row in engine.data.iterrows():
             # Update RSI state tracking (same logic as backtest engine)
-            if not pd.isna(row['RSI10']):
-                engine._update_rsi_state(row['RSI10'], current_date)
+            rsi_value = row[rsi_col] if rsi_col in row.index else row.get('RSI10')
+            if not pd.isna(rsi_value):
+                engine._update_rsi_state(rsi_value, current_date)
             
             # Check entry conditions
             should_enter, entry_reason = engine._check_entry_conditions(row, current_date)
@@ -97,7 +107,7 @@ def run_backtest(stock_name: str, date_range: Tuple[str, str]) -> List[Dict]:
                         'execution_date': next_day, 
                         'execution_price': execution_price,
                         'reason': entry_reason,
-                        'rsi': row['RSI10'],
+                        'rsi': rsi_value,
                         'close_price': row['Close'],
                         'ema200': row['EMA200']
                     }
@@ -107,26 +117,68 @@ def run_backtest(stock_name: str, date_range: Tuple[str, str]) -> List[Dict]:
                     engine.first_entry_made = True
         
         print(f"✅ Found {len(potential_signals)} potential entry signals")
+        
+        if return_engine:
+            return potential_signals, engine
         return potential_signals
         
     except Exception as e:
         print(f"❌ Error in backtest analysis: {e}")
+        if return_engine:
+            return [], None
         return []
 
 
-def trade_agent(stock_name: str, buy_date: str) -> SignalResult:
+def trade_agent(stock_name: str, buy_date: str, 
+                pre_fetched_data: Optional[pd.DataFrame] = None,
+                pre_calculated_indicators: Optional[Dict] = None) -> SignalResult:
     """
     Ask the analysis engine to compute BUY/WATCH and prices strictly as-of buy_date.
     Returns the trade_agent's buy_range midpoint, target, and stop without modification.
+    
+    Args:
+        stock_name: Stock symbol
+        buy_date: Date for analysis (YYYY-MM-DD format)
+        pre_fetched_data: Optional pre-fetched daily DataFrame (from BacktestEngine)
+        pre_calculated_indicators: Optional dict with pre-calculated indicators (rsi, ema200, etc.)
+    
+    Returns:
+        SignalResult with buy signal and prices
     """
     print(f"🤖 Trade Agent analyzing {stock_name} for date {buy_date}")
 
     try:
-        analysis_result = analyze_ticker(
-            stock_name,
+        # If pre-fetched data is available, use it to avoid duplicate fetching
+        # Convert BacktestEngine data format to match analyze_ticker expectations
+        pre_fetched_daily = None
+        pre_fetched_weekly = None
+        
+        if pre_fetched_data is not None:
+            # BacktestEngine uses uppercase column names, convert to lowercase for compatibility
+            pre_fetched_daily = pre_fetched_data.copy()
+            if 'Close' in pre_fetched_daily.columns:
+                # Rename columns to lowercase for compatibility
+                pre_fetched_daily = pre_fetched_daily.rename(columns={
+                    'Open': 'open',
+                    'High': 'high',
+                    'Low': 'low',
+                    'Close': 'close',
+                    'Volume': 'volume'
+                })
+        
+        # Use AnalysisService directly for better control and optimization
+        from services.analysis_service import AnalysisService
+        from config.strategy_config import StrategyConfig
+        
+        service = AnalysisService(config=StrategyConfig.default())
+        analysis_result = service.analyze_ticker(
+            ticker=stock_name,
             enable_multi_timeframe=True,
             export_to_csv=False,
-            as_of_date=buy_date
+            as_of_date=buy_date,
+            pre_fetched_daily=pre_fetched_daily,
+            pre_fetched_weekly=pre_fetched_weekly,
+            pre_calculated_indicators=pre_calculated_indicators
         )
 
         if analysis_result.get('status') != 'success':
@@ -255,8 +307,8 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
     print(f"Capital per position: ${capital_per_position:,.0f}")
     print("=" * 60)
     
-    # Step 1: Run backtest to get potential buy/re-entry dates
-    potential_signals = run_backtest(stock_name, date_range)
+    # Step 1: Run backtest to get potential buy/re-entry dates and reuse engine data
+    potential_signals, backtest_engine = run_backtest(stock_name, date_range, return_engine=True)
     
     if not potential_signals:
         return {
@@ -274,16 +326,30 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
     executed_trades = 0
     skipped_signals = 0
     
-    # Get market data for position tracking
-    import yfinance as yf
-    market_data = yf.download(stock_name, start=start_date, end=end_date, progress=False)
-    if isinstance(market_data.columns, pd.MultiIndex):
-        market_data.columns = market_data.columns.get_level_values(0)
-    # Compute EMA9 for target setting
-    try:
-        market_data['EMA9'] = ta.ema(market_data['Close'], length=9)
-    except Exception:
-        market_data['EMA9'] = pd.Series(index=market_data.index, dtype=float)
+    # Reuse BacktestEngine data for position tracking (eliminate duplicate fetch)
+    # BacktestEngine already has data loaded with indicators calculated
+    if backtest_engine and backtest_engine.data is not None:
+        market_data = backtest_engine.data.copy()
+        print(f"   ✓ Reusing BacktestEngine data ({len(market_data)} rows) for position tracking")
+        
+        # Ensure we have EMA9 for target setting (BacktestEngine doesn't calculate EMA9)
+        try:
+            if 'EMA9' not in market_data.columns:
+                market_data['EMA9'] = ta.ema(market_data['Close'], length=9)
+        except Exception:
+            market_data['EMA9'] = pd.Series(index=market_data.index, dtype=float)
+    else:
+        # Fallback to fetching if BacktestEngine data not available
+        print(f"   ⚠️ BacktestEngine data not available, fetching market data...")
+        import yfinance as yf
+        market_data = yf.download(stock_name, start=start_date, end=end_date, progress=False)
+        if isinstance(market_data.columns, pd.MultiIndex):
+            market_data.columns = market_data.columns.get_level_values(0)
+        # Compute EMA9 for target setting
+        try:
+            market_data['EMA9'] = ta.ema(market_data['Close'], length=9)
+        except Exception:
+            market_data['EMA9'] = pd.Series(index=market_data.index, dtype=float)
     
     # Step 2: For each identified buy date, validate with trade agent
     for i, signal in enumerate(potential_signals, 1):
@@ -308,7 +374,17 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
         print(f"   Reason: {derived_reason}")
         
         # Validate with trade agent strictly as-of the signal date
-        trade_signal = trade_agent(stock_name, signal_date)
+        # Pass pre-fetched data from BacktestEngine to avoid duplicate fetching
+        # Note: analyze_ticker still fetches its own data, but this prepares for future optimization
+        trade_signal = trade_agent(
+            stock_name, 
+            signal_date,
+            pre_fetched_data=backtest_engine.data if backtest_engine else None,
+            pre_calculated_indicators={
+                'rsi': signal.get('rsi'),
+                'ema200': signal.get('ema200')
+            } if backtest_engine else None
+        )
         
         if trade_signal.signal_type == "BUY":
             # Determine EMA9 target at execution date

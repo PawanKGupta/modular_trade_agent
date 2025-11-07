@@ -220,24 +220,51 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None, add_current_d
         raise Exception(error_msg) from e
 
 
-def fetch_multi_timeframe_data(ticker, days=800, end_date=None, add_current_day=True):  # Increased for accurate EMA200
+def fetch_multi_timeframe_data(ticker, days=800, end_date=None, add_current_day=True, config=None):
     """
-    Fetch data for multiple timeframes (daily and weekly)
-    Returns dict with 'daily' and 'weekly' dataframes
+    Fetch data for multiple timeframes (daily and weekly) with configurable data fetching strategy
+    
+    Args:
+        ticker: Stock ticker symbol
+        days: Minimum days to fetch (will be adjusted based on config)
+        end_date: End date for data fetching (None for current date)
+        add_current_day: Whether to add current day data
+        config: StrategyConfig instance (uses default if None)
+    
+    Returns:
+        dict with 'daily' and 'weekly' dataframes
     """
+    from config.strategy_config import StrategyConfig
+    
+    # Get config if not provided
+    if config is None:
+        config = StrategyConfig.default()
+    
     try:
+        # Configurable data fetching strategy
+        daily_max_years = config.data_fetch_daily_max_years  # Default: 5
+        weekly_max_years = config.data_fetch_weekly_max_years  # Default: 3
+        
+        # Calculate minimum days needed
+        daily_min_days = max(800, daily_max_years * 365)  # At least 800 days or max_years
+        weekly_min_days = max(20 * 7, weekly_max_years * 365)  # At least 20 weeks or max_years
+        
+        # Use the larger of requested days or minimum required
+        daily_days = max(days, daily_min_days)
+        weekly_days = max(days * 3, weekly_min_days)  # Weekly needs more days for same period
+        
         # Fetch daily data first (ensure enough history for EMA200)
         try:
-            daily_days = max(days, 800)  # Minimum 800 days for accurate EMA200
             daily_data = fetch_ohlcv_yf(ticker, days=daily_days, interval='1d', end_date=end_date, add_current_day=add_current_day)
+            logger.debug(f"Fetched {len(daily_data)} daily candles for {ticker} (requested: {daily_days} days, max_years: {daily_max_years})")
         except Exception as e:
             logger.warning(f"Failed to fetch daily data for {ticker}: {e}")
             return None
         
         # Fetch weekly data (need more days for sufficient weekly candles)
         try:
-            weekly_days = max(days * 3, 1095)  # At least 3 years for weekly analysis
             weekly_data = fetch_ohlcv_yf(ticker, days=weekly_days, interval='1wk', end_date=end_date, add_current_day=add_current_day)
+            logger.debug(f"Fetched {len(weekly_data)} weekly candles for {ticker} (requested: {weekly_days} days, max_years: {weekly_max_years})")
         except Exception as e:
             logger.warning(f"Failed to fetch weekly data for {ticker}: {e}")
             # Return with daily data only, weekly will be None

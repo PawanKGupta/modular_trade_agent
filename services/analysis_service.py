@@ -62,7 +62,10 @@ class AnalysisService:
         enable_multi_timeframe: bool = True,
         export_to_csv: bool = False,
         csv_exporter: Optional[CSVExporter] = None,
-        as_of_date: Optional[str] = None
+        as_of_date: Optional[str] = None,
+        pre_fetched_daily: Optional[pd.DataFrame] = None,
+        pre_fetched_weekly: Optional[pd.DataFrame] = None,
+        pre_calculated_indicators: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Analyze a single ticker - main entry point
@@ -76,6 +79,9 @@ class AnalysisService:
             export_to_csv: Export results to CSV
             csv_exporter: CSV exporter instance (creates default if None)
             as_of_date: Date for analysis (YYYY-MM-DD format) - used for backtesting
+            pre_fetched_daily: Optional pre-fetched daily DataFrame (avoids duplicate fetching)
+            pre_fetched_weekly: Optional pre-fetched weekly DataFrame (avoids duplicate fetching)
+            pre_calculated_indicators: Optional dict with pre-calculated indicators (rsi, ema200, etc.)
             
         Returns:
             Dict with analysis results including:
@@ -93,37 +99,60 @@ class AnalysisService:
             # Disable current day data addition during backtesting (when as_of_date is provided)
             add_current_day = as_of_date is None  # Only add current day for live analysis
             
-            # Step 1: Fetch data
+            # Step 1: Fetch data (or use pre-fetched data if available)
             df = None
             weekly_df = None
             
-            if enable_multi_timeframe:
-                multi_data = self.data_service.fetch_multi_timeframe(
-                    ticker, end_date=as_of_date, add_current_day=add_current_day
-                )
-                if multi_data is None or multi_data.get('daily') is None:
-                    logger.warning(f"No multi-timeframe data available for {ticker}")
-                    return {"ticker": ticker, "status": "no_data"}
-                df = multi_data['daily']
-                weekly_df = multi_data.get('weekly')
+            # Use pre-fetched data if available (optimization for integrated backtest)
+            if pre_fetched_daily is not None:
+                df = pre_fetched_daily.copy()
+                if enable_multi_timeframe and pre_fetched_weekly is not None:
+                    weekly_df = pre_fetched_weekly.copy()
+                logger.debug(f"Using pre-fetched data for {ticker} (optimization)")
             else:
-                df = self.data_service.fetch_single_timeframe(
-                    ticker, end_date=as_of_date, add_current_day=add_current_day
-                )
-                if df is None or df.empty:
-                    logger.warning(f"No data available for {ticker}")
-                    return {"ticker": ticker, "status": "no_data"}
+                # Fetch data normally
+                if enable_multi_timeframe:
+                    multi_data = self.data_service.fetch_multi_timeframe(
+                        ticker, end_date=as_of_date, add_current_day=add_current_day, config=self.config
+                    )
+                    if multi_data is None or multi_data.get('daily') is None:
+                        logger.warning(f"No multi-timeframe data available for {ticker}")
+                        return {"ticker": ticker, "status": "no_data"}
+                    df = multi_data['daily']
+                    weekly_df = multi_data.get('weekly')
+                else:
+                    df = self.data_service.fetch_single_timeframe(
+                        ticker, end_date=as_of_date, add_current_day=add_current_day
+                    )
+                    if df is None or df.empty:
+                        logger.warning(f"No data available for {ticker}")
+                        return {"ticker": ticker, "status": "no_data"}
             
             # Step 2: Clip to as_of_date if provided (ensure no future data leaks)
             df = self.data_service.clip_to_date(df, as_of_date)
             if weekly_df is not None:
                 weekly_df = self.data_service.clip_to_date(weekly_df, as_of_date)
             
-            # Step 3: Compute technical indicators
-            df = self.indicator_service.compute_indicators(df)
-            if df is None or df.empty:
-                logger.error(f"Failed to compute indicators for {ticker}")
-                return {"ticker": ticker, "status": "indicator_error"}
+            # Step 3: Compute technical indicators (or use pre-calculated if available)
+            if pre_calculated_indicators is not None and 'rsi' in pre_calculated_indicators and 'ema200' in pre_calculated_indicators:
+                # Use pre-calculated indicators if available (optimization for integrated backtest)
+                # Still need to compute indicators for other columns, but can skip RSI/EMA200
+                df = self.indicator_service.compute_indicators(df)
+                # Override with pre-calculated values if they exist
+                rsi_col = f'rsi{self.config.rsi_period}'
+                if rsi_col in df.columns:
+                    # Update with pre-calculated RSI (if available for the last row)
+                    if 'rsi' in pre_calculated_indicators:
+                        df.iloc[-1, df.columns.get_loc(rsi_col)] = pre_calculated_indicators['rsi']
+                if 'ema200' in df.columns and 'ema200' in pre_calculated_indicators:
+                    df.iloc[-1, df.columns.get_loc('ema200')] = pre_calculated_indicators['ema200']
+                logger.debug(f"Using pre-calculated indicators for {ticker} (optimization)")
+            else:
+                # Compute indicators normally
+                df = self.indicator_service.compute_indicators(df)
+                if df is None or df.empty:
+                    logger.error(f"Failed to compute indicators for {ticker}")
+                    return {"ticker": ticker, "status": "indicator_error"}
             
             # Step 4: Get latest and previous rows
             last = self.data_service.get_latest_row(df)
