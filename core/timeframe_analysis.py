@@ -80,12 +80,15 @@ class TimeframeAnalysis:
         # Get appropriate lookback for this timeframe
         support_lookback = self._get_support_lookback(timeframe)
         
-        # Apply adaptive logic if enabled
-        if len(df) > 0:
-            available_data_days = len(df)
-            support_lookback = self._get_adaptive_lookback(available_data_days, support_lookback, timeframe)
+        # Check if df is valid (not None and not empty)
+        if df is None or df.empty:
+            return None
         
-        if df is None or len(df) < support_lookback:
+        # Apply adaptive logic if enabled
+        available_data_days = len(df)
+        support_lookback = self._get_adaptive_lookback(available_data_days, support_lookback, timeframe)
+        
+        if len(df) < support_lookback:
             return None
             
         try:

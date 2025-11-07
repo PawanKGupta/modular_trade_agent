@@ -83,7 +83,7 @@ class TestMLVerdictServiceConfigBasedModelSelection:
             with patch('services.ml_verdict_service.Path') as mock_path_class:
                 def path_side_effect(path_str):
                     mock_path = MagicMock()
-                    if "random_forest" in str(path_str):
+                    if "random_forest" in str(path_str) or str(path_str).endswith("verdict_model_random_forest.pkl"):
                         mock_path.exists.return_value = True
                     else:
                         mock_path.exists.return_value = False

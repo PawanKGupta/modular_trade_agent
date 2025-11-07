@@ -13,7 +13,7 @@ sys.path.insert(0, str(project_root))
 
 import pytest
 import pandas as pd
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, MagicMock, patch
 
 from services.ml_verdict_service import MLVerdictService
 from services.ml_price_service import MLPriceService
@@ -24,9 +24,18 @@ class TestMLVerdictService:
     
     def test_init_without_model(self):
         """Test initialization without model path"""
-        service = MLVerdictService()
-        assert not service.model_loaded
-        assert service.model is None
+        # Mock Path.exists to return False for default model (simulate no default model)
+        with patch('services.ml_verdict_service.Path') as mock_path_class:
+            def path_side_effect(path_str):
+                mock_path = MagicMock()
+                mock_path.exists.return_value = False  # Default model doesn't exist
+                return mock_path
+            
+            mock_path_class.side_effect = path_side_effect
+            
+            service = MLVerdictService()
+            assert not service.model_loaded
+            assert service.model is None
     
     def test_init_with_invalid_path(self):
         """Test initialization with invalid model path"""

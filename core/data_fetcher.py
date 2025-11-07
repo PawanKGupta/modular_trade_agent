@@ -249,9 +249,10 @@ def fetch_multi_timeframe_data(ticker, days=800, end_date=None, add_current_day=
         daily_min_days = max(800, daily_max_years * 365)  # At least 800 days or max_years
         weekly_min_days = max(20 * 7, weekly_max_years * 365)  # At least 20 weeks or max_years
         
-        # Use the larger of requested days or minimum required
-        daily_days = max(days, daily_min_days)
-        weekly_days = max(days * 3, weekly_min_days)  # Weekly needs more days for same period
+        # Use the larger of requested days or minimum required, but cap at max_years
+        # This prevents excessive data fetching when days parameter is very large
+        daily_days = min(max(days, daily_min_days), daily_max_years * 365)
+        weekly_days = min(max(days * 3, weekly_min_days), weekly_max_years * 365)  # Weekly needs more days for same period
         
         # Fetch daily data first (ensure enough history for EMA200)
         try:

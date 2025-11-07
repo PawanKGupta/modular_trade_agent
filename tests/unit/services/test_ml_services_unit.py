@@ -4,6 +4,7 @@
 import sys
 from pathlib import Path
 import pandas as pd
+from unittest.mock import MagicMock, patch
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -19,10 +20,18 @@ def test_ml_verdict_service():
     logger.info("Testing MLVerdictService")
     logger.info("="*60)
     
-    # Test 1: Init without model
-    service = MLVerdictService()
-    assert not service.model_loaded, "Model should not be loaded without path"
-    logger.info("✅ Test 1 PASSED: Init without model")
+    # Test 1: Init without model (mock default model to not exist)
+    with patch('services.ml_verdict_service.Path') as mock_path_class:
+        def path_side_effect(path_str):
+            mock_path = MagicMock()
+            mock_path.exists.return_value = False  # Default model doesn't exist
+            return mock_path
+        
+        mock_path_class.side_effect = path_side_effect
+        
+        service = MLVerdictService()
+        assert not service.model_loaded, "Model should not be loaded without path and no default model"
+        logger.info("✅ Test 1 PASSED: Init without model")
     
     # Test 2: Init with valid model
     model_path = "models/verdict_model_random_forest.pkl"

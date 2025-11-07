@@ -53,6 +53,7 @@ class MLVerdictService(VerdictService):
                 logger.debug(f"Could not find model for config: {e}")
         
         # Fallback to default model if no config-based model found
+        # This provides a sensible default for production use
         if model_path is None:
             default_model = "models/verdict_model_random_forest.pkl"
             if Path(default_model).exists():
