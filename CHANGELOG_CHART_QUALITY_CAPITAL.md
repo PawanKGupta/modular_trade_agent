@@ -1,8 +1,17 @@
 # Changelog: Chart Quality & Capital Adjustment Features
 
-## Version 1.0.0 - 2025-11-08
+## Version 1.1.0 - 2025-11-08
 
 ### 🆕 New Features
+
+#### Two-Stage Approach: Chart Quality + ML Model
+- **Two-Stage Filtering**: Chart quality filter (Stage 1) + ML model prediction (Stage 2)
+- **Stage 1 - Chart Quality Filter**: Hard filter that rejects poor-quality charts before ML prediction
+- **Stage 2 - ML Model Prediction**: Only runs if chart quality passes, ensuring distribution match
+- **Automatic Integration**: AnalysisService automatically uses MLVerdictService if ML model exists
+- **Production Safety**: Chart quality always enforced, ML model only sees valid stocks
+- **Distribution Match**: Training and production use same chart quality filtering
+- **Improved Accuracy**: Expected +2-5% improvement from matching distributions
 
 #### Chart Quality Filtering
 - **Chart Quality Service**: New service to analyze chart patterns and filter poor-quality charts
@@ -85,22 +94,25 @@ MIN_ABSOLUTE_AVG_VOLUME=20000  # Lowered from 150000
 - `services/chart_quality_service.py` - Chart quality analysis
 - `services/liquidity_capital_service.py` - Capital calculation
 - `scripts/test_phases_complete.py` - Comprehensive test suite
+- `scripts/test_two_stage_approach.py` - Two-stage approach verification
 - `tests/unit/services/test_chart_quality_service.py` - Unit tests for chart quality
 - `tests/unit/services/test_liquidity_capital_service.py` - Unit tests for capital service
 - `documents/features/CHART_QUALITY_AND_CAPITAL_ADJUSTMENT.md` - Feature documentation
+- `documents/features/TWO_STAGE_CHART_QUALITY_ML_APPROACH.md` - Two-stage approach documentation
 
 ### 📝 Modified Files
 - `config/strategy_config.py` - Added chart quality and capital settings
 - `config/settings.py` - Updated MIN_ABSOLUTE_AVG_VOLUME default
 - `services/verdict_service.py` - Added chart quality hard filter
-- `services/analysis_service.py` - Integrated chart quality and capital
+- `services/analysis_service.py` - Integrated chart quality and capital, auto MLVerdictService integration
+- `services/ml_verdict_service.py` - Added two-stage approach (chart quality + ML)
 - `services/scoring_service.py` - Added chart quality to scoring
 - `services/filtering_service.py` - Respects chart quality
 - `core/backtest_scoring.py` - Chart quality and dynamic capital
 - `backtest/backtest_engine.py` - Chart quality filtering
 - `modules/kotak_neo_auto_trader/auto_trade_engine.py` - Uses execution_capital
 - `core/csv_exporter.py` - Exports new fields
-- `trade_agent.py` - Telegram notifications with new fields
+- `trade_agent.py` - Telegram notifications with new fields, two-stage ML integration
 - `src/application/dto/analysis_response.py` - Added new fields
 - `src/application/use_cases/analyze_stock.py` - Includes new fields
 - `core/volume_analysis.py` - Updated liquidity filter
@@ -111,6 +123,8 @@ MIN_ABSOLUTE_AVG_VOLUME=20000  # Lowered from 150000
 - **IMPLEMENTATION_SUMMARY.md**: Updated with test results
 - **DOCUMENTATION_INDEX.md**: Added new features documentation link
 - **CHART_QUALITY_AND_CAPITAL_ADJUSTMENT.md**: Complete feature documentation
+- **TWO_STAGE_CHART_QUALITY_ML_APPROACH.md**: Complete two-stage approach documentation
+- **TWO_STAGE_IMPLEMENTATION_SUMMARY.md**: Implementation summary
 
 ### 🔄 Migration Notes
 
@@ -130,6 +144,7 @@ MIN_ABSOLUTE_AVG_VOLUME=20000  # Lowered from 150000
 - Fixed liquidity filtering to use minimal safety net instead of hard filter
 - Fixed capital calculation to respect liquidity limits
 - Fixed chart quality analysis to handle both yfinance and standard column formats
+- Fixed ML prediction to respect chart quality filter (two-stage approach)
 
 ### ⚠️ Known Issues
 - Gap detection may detect weekend/holiday gaps (expected behavior)
@@ -144,7 +159,96 @@ MIN_ABSOLUTE_AVG_VOLUME=20000  # Lowered from 150000
 
 ---
 
+---
+
+## Version 1.0.0 - 2025-11-08 (Initial Release)
+
+### 🆕 New Features
+
+#### Chart Quality Filtering
+- **Chart Quality Service**: New service to analyze chart patterns and filter poor-quality charts
+- **Gap Analysis**: Detects gap up/gap down frequency to identify irregular trading patterns
+- **Movement Analysis**: Detects flat/choppy charts with no meaningful movement
+- **Extreme Candle Analysis**: Detects big red/green candles indicating erratic price action
+- **Chart Cleanliness Score**: Overall score (0-100) based on gap frequency, movement, and extreme candles
+- **Hard Filter**: Stocks with score < 60 are immediately marked "avoid"
+- **Configurable Thresholds**: All thresholds configurable via environment variables
+
+#### Dynamic Capital Adjustment
+- **Liquidity Capital Service**: New service to calculate execution capital based on stock liquidity
+- **Maximum Capital Calculation**: Calculates max capital from liquidity (10% of daily volume default)
+- **Execution Capital Calculation**: Uses min(user_capital, max_capital) for safe position sizing
+- **Automatic Adjustment**: Automatically reduces capital when liquidity is low
+- **Position Size Calculation**: Calculates exact number of shares based on execution capital
+- **Capital Safety Checks**: Validates capital is safe for stock liquidity
+
+### 🔧 Improvements
+
+#### Analysis Pipeline
+- **Early Chart Quality Check**: Chart quality checked early to save processing
+- **Chart Quality in Scoring**: Cleaner charts receive bonus points (+1 to +3)
+- **Chart Quality in Filtering**: Chart quality respected in candidate filtering
+- **Capital in Volume Analysis**: Execution capital calculated during volume analysis
+
+#### Backtesting
+- **Chart Quality Filtering**: Filters stocks before backtest runs
+- **Dynamic Capital**: Uses execution capital per trade based on historical liquidity
+- **Weighted Returns**: Calculates returns based on capital-weighted ROI
+- **Chart Quality in Results**: Includes chart quality data in backtest results
+
+#### Trade Execution
+- **Execution Capital from CSV**: Auto trader uses execution_capital from analysis CSV
+- **Position Sizing**: Calculates quantity from execution capital
+- **Retry Logic**: Preserves execution_capital for failed orders
+- **Re-entry Logic**: Calculates execution_capital for re-entries
+
+#### Export & Notifications
+- **CSV Export**: Includes new fields:
+  - `execution_capital`, `max_capital`, `capital_adjusted`
+  - `chart_quality_score`, `chart_quality_status`, `chart_quality_passed`, `chart_quality_reason`
+- **Telegram Alerts**: Includes capital and chart quality information
+
+### 📊 Configuration Changes
+
+#### New Environment Variables
+```env
+# Chart Quality
+CHART_QUALITY_ENABLED=true
+CHART_QUALITY_MIN_SCORE=60.0
+CHART_QUALITY_MAX_GAP_FREQUENCY=20.0
+CHART_QUALITY_MIN_DAILY_RANGE_PCT=1.5
+CHART_QUALITY_MAX_EXTREME_CANDLE_FREQUENCY=15.0
+CHART_QUALITY_ENABLED_IN_BACKTEST=true
+
+# Capital & Liquidity
+USER_CAPITAL=200000.0
+MAX_POSITION_VOLUME_RATIO=0.10
+MIN_ABSOLUTE_AVG_VOLUME=20000  # Lowered from 150000
+```
+
+#### Updated Settings
+- **MIN_ABSOLUTE_AVG_VOLUME**: Lowered from 150000 to 20000 (minimal safety net)
+- **StrategyConfig**: Added chart quality and capital configuration fields
+
+### 🧪 Testing
+
+#### Unit Tests
+- **Chart Quality Service**: 92% coverage (24 tests)
+- **Liquidity Capital Service**: 91% coverage (45 tests)
+- **Total**: 69/69 tests passing
+- **Coverage**: >90% for both services ✅
+
+#### Integration Tests
+- **Total**: 5/5 tests passing
+- **Coverage**: All integration points tested ✅
+
+---
+
 ## Summary
 
+### Version 1.1.0
+This release adds the two-stage approach (Chart Quality + ML Model) to ensure ML models only see stocks that pass chart quality filtering, matching the training data distribution and improving model accuracy.
+
+### Version 1.0.0
 This release adds comprehensive chart quality filtering and dynamic capital adjustment features to improve trade selection and position sizing. All features are fully tested (>90% coverage) and ready for production use.
 

@@ -94,10 +94,15 @@ class MLVerdictService(VerdictService):
         vol_strong: bool,
         fundamental_ok: bool,
         timeframe_confirmation: Optional[Dict[str, Any]],
-        news_sentiment: Optional[Dict[str, Any]]
+        news_sentiment: Optional[Dict[str, Any]],
+        chart_quality_passed: bool = True
     ) -> Tuple[str, List[str]]:
         """
         Determine verdict using ML if available, else rule-based
+        
+        Two-Stage Approach:
+        1. Stage 1: Chart quality filter (hard filter) - MUST pass before ML
+        2. Stage 2: ML model prediction (only if chart quality passed)
         
         Args:
             signals: List of detected signals
@@ -108,11 +113,18 @@ class MLVerdictService(VerdictService):
             fundamental_ok: Whether fundamentals are OK
             timeframe_confirmation: Multi-timeframe confirmation data
             news_sentiment: News sentiment data
+            chart_quality_passed: Whether chart quality check passed (hard filter)
             
         Returns:
             Tuple of (verdict, justification)
         """
-        # Try ML prediction first
+        # Stage 1: Chart quality filter (hard filter)
+        # If chart quality fails, immediately return "avoid" without ML prediction
+        if not chart_quality_passed:
+            return "avoid", ["Chart quality failed - too many gaps/extreme candles/flat movement"]
+        
+        # Stage 2: ML model prediction (only if chart quality passed)
+        # Try ML prediction only if chart quality passed
         if self.model_loaded:
             try:
                 ml_verdict = self._predict_with_ml(
@@ -122,15 +134,17 @@ class MLVerdictService(VerdictService):
                 )
                 if ml_verdict:
                     justification = self._build_ml_justification(ml_verdict)
+                    logger.debug(f"ML prediction (chart quality passed): {ml_verdict}")
                     return ml_verdict, justification
             except Exception as e:
                 logger.debug(f"ML prediction failed: {e}, falling back to rules")
         
-        # Fall back to rule-based logic
+        # Fall back to rule-based logic (only if chart quality passed)
         return super().determine_verdict(
             signals, rsi_value, is_above_ema200,
             vol_ok, vol_strong, fundamental_ok,
-            timeframe_confirmation, news_sentiment
+            timeframe_confirmation, news_sentiment,
+            chart_quality_passed=chart_quality_passed
         )
     
     def _predict_with_ml(
@@ -340,14 +354,39 @@ class MLVerdictService(VerdictService):
         news_sentiment: Optional[Dict[str, Any]],
         indicators: Optional[Dict[str, Any]] = None,
         fundamentals: Optional[Dict[str, Any]] = None,
-        df: Optional[Any] = None
+        df: Optional[Any] = None,
+        chart_quality_passed: bool = True
     ) -> Tuple[Optional[str], float]:
         """
         Predict verdict with confidence score (for testing/comparison)
         
+        Two-Stage Approach:
+        1. Stage 1: Chart quality filter (hard filter) - MUST pass before ML
+        2. Stage 2: ML model prediction (only if chart quality passed)
+        
+        Args:
+            signals: List of detected signals
+            rsi_value: Current RSI value
+            is_above_ema200: Whether price is above EMA200
+            vol_ok: Whether volume is OK
+            vol_strong: Whether volume is strong
+            fundamental_ok: Whether fundamentals are OK
+            timeframe_confirmation: Multi-timeframe confirmation data
+            news_sentiment: News sentiment data
+            indicators: Optional indicators dict
+            fundamentals: Optional fundamentals dict
+            df: Optional DataFrame
+            chart_quality_passed: Whether chart quality check passed (hard filter)
+            
         Returns:
-            Tuple of (verdict, confidence) or (None, 0.0) if unavailable
+            Tuple of (verdict, confidence) or (None, 0.0) if unavailable or chart quality failed
         """
+        # Stage 1: Chart quality filter (hard filter)
+        # If chart quality fails, return None (skip ML prediction)
+        if not chart_quality_passed:
+            logger.debug("ML prediction skipped: Chart quality failed (two-stage filter)")
+            return None, 0.0
+        
         if not self.model_loaded:
             return None, 0.0
         

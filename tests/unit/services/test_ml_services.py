@@ -155,11 +155,197 @@ class TestMLVerdictService:
             vol_strong=False,
             fundamental_ok=True,
             timeframe_confirmation=None,
-            news_sentiment=None
+            news_sentiment=None,
+            chart_quality_passed=True  # Chart quality passed
         )
         
         # Should return rule-based verdict (not None)
         assert verdict in ['strong_buy', 'buy', 'watch', 'avoid']
+    
+    def test_determine_verdict_chart_quality_failed(self):
+        """Test that determine_verdict returns 'avoid' immediately when chart quality fails (Stage 1)"""
+        service = MLVerdictService()  # No model loaded
+        
+        verdict, justification = service.determine_verdict(
+            signals=['hammer'],
+            rsi_value=28.0,
+            is_above_ema200=True,
+            vol_ok=True,
+            vol_strong=False,
+            fundamental_ok=True,
+            timeframe_confirmation=None,
+            news_sentiment=None,
+            chart_quality_passed=False  # Chart quality failed (Stage 1)
+        )
+        
+        # Should return 'avoid' immediately without ML prediction
+        assert verdict == "avoid"
+        assert "Chart quality failed" in str(justification)
+    
+    def test_determine_verdict_chart_quality_passed_no_model(self):
+        """Test that determine_verdict proceeds to rule-based when chart quality passed but no ML model"""
+        service = MLVerdictService()  # No model loaded
+        
+        verdict, justification = service.determine_verdict(
+            signals=['hammer'],
+            rsi_value=28.0,
+            is_above_ema200=True,
+            vol_ok=True,
+            vol_strong=False,
+            fundamental_ok=True,
+            timeframe_confirmation=None,
+            news_sentiment=None,
+            chart_quality_passed=True  # Chart quality passed (Stage 1)
+        )
+        
+        # Should proceed to rule-based logic (Stage 2 fallback)
+        assert verdict in ['strong_buy', 'buy', 'watch', 'avoid']
+    
+    def test_predict_verdict_with_confidence_chart_quality_failed(self):
+        """Test that predict_verdict_with_confidence returns None when chart quality fails (Stage 1)"""
+        # Mock Path.exists to return False for default model (simulate no default model)
+        with patch('services.ml_verdict_service.Path') as mock_path_class:
+            def path_side_effect(path_str):
+                mock_path = MagicMock()
+                mock_path.exists.return_value = False  # Default model doesn't exist
+                return mock_path
+            
+            mock_path_class.side_effect = path_side_effect
+            
+            service = MLVerdictService()
+            
+            verdict, confidence = service.predict_verdict_with_confidence(
+                signals=[],
+                rsi_value=30.0,
+                is_above_ema200=True,
+                vol_ok=True,
+                vol_strong=False,
+                fundamental_ok=True,
+                timeframe_confirmation=None,
+                news_sentiment=None,
+                chart_quality_passed=False  # Chart quality failed (Stage 1)
+            )
+            
+            # Should return None immediately without ML prediction
+            assert verdict is None
+            assert confidence == 0.0
+    
+    def test_predict_verdict_with_confidence_chart_quality_passed_no_model(self):
+        """Test that predict_verdict_with_confidence returns None when chart quality passed but no ML model"""
+        # Mock Path.exists to return False for default model (simulate no default model)
+        with patch('services.ml_verdict_service.Path') as mock_path_class:
+            def path_side_effect(path_str):
+                mock_path = MagicMock()
+                mock_path.exists.return_value = False  # Default model doesn't exist
+                return mock_path
+            
+            mock_path_class.side_effect = path_side_effect
+            
+            service = MLVerdictService()
+            
+            verdict, confidence = service.predict_verdict_with_confidence(
+                signals=[],
+                rsi_value=30.0,
+                is_above_ema200=True,
+                vol_ok=True,
+                vol_strong=False,
+                fundamental_ok=True,
+                timeframe_confirmation=None,
+                news_sentiment=None,
+                chart_quality_passed=True  # Chart quality passed (Stage 1)
+            )
+            
+            # Should return None because no ML model (Stage 2 unavailable)
+            assert verdict is None
+            assert confidence == 0.0
+    
+    def test_determine_verdict_chart_quality_passed_with_model(self):
+        """Test that determine_verdict proceeds to ML prediction when chart quality passed and model exists"""
+        model_path = "models/verdict_model_random_forest.pkl"
+        if not Path(model_path).exists():
+            pytest.skip("Model file not found")
+        
+        service = MLVerdictService(model_path=model_path)
+        if not service.model_loaded:
+            pytest.skip("Model not loaded")
+        
+        # Test with chart quality passed
+        verdict, justification = service.determine_verdict(
+            signals=['hammer'],
+            rsi_value=28.0,
+            is_above_ema200=True,
+            vol_ok=True,
+            vol_strong=False,
+            fundamental_ok=True,
+            timeframe_confirmation=None,
+            news_sentiment=None,
+            chart_quality_passed=True  # Chart quality passed (Stage 1)
+        )
+        
+        # Should return ML verdict or rule-based verdict (Stage 2)
+        assert verdict in ['strong_buy', 'buy', 'watch', 'avoid']
+        
+        # Test with chart quality failed
+        verdict, justification = service.determine_verdict(
+            signals=['hammer'],
+            rsi_value=28.0,
+            is_above_ema200=True,
+            vol_ok=True,
+            vol_strong=False,
+            fundamental_ok=True,
+            timeframe_confirmation=None,
+            news_sentiment=None,
+            chart_quality_passed=False  # Chart quality failed (Stage 1)
+        )
+        
+        # Should return 'avoid' immediately without ML prediction
+        assert verdict == "avoid"
+        assert "Chart quality failed" in str(justification)
+    
+    def test_predict_verdict_with_confidence_chart_quality_passed_with_model(self):
+        """Test that predict_verdict_with_confidence proceeds to ML prediction when chart quality passed and model exists"""
+        model_path = "models/verdict_model_random_forest.pkl"
+        if not Path(model_path).exists():
+            pytest.skip("Model file not found")
+        
+        service = MLVerdictService(model_path=model_path)
+        if not service.model_loaded:
+            pytest.skip("Model not loaded")
+        
+        # Test with chart quality passed
+        verdict, confidence = service.predict_verdict_with_confidence(
+            signals=[],
+            rsi_value=28.0,
+            is_above_ema200=True,
+            vol_ok=True,
+            vol_strong=False,
+            fundamental_ok=True,
+            timeframe_confirmation=None,
+            news_sentiment=None,
+            chart_quality_passed=True  # Chart quality passed (Stage 1)
+        )
+        
+        # Should return ML verdict (Stage 2)
+        if verdict is not None:
+            assert verdict in ['strong_buy', 'buy', 'watch', 'avoid']
+            assert 0.0 <= confidence <= 1.0
+        
+        # Test with chart quality failed
+        verdict, confidence = service.predict_verdict_with_confidence(
+            signals=[],
+            rsi_value=28.0,
+            is_above_ema200=True,
+            vol_ok=True,
+            vol_strong=False,
+            fundamental_ok=True,
+            timeframe_confirmation=None,
+            news_sentiment=None,
+            chart_quality_passed=False  # Chart quality failed (Stage 1)
+        )
+        
+        # Should return None immediately without ML prediction
+        assert verdict is None
+        assert confidence == 0.0
 
 
 class TestMLPriceService:

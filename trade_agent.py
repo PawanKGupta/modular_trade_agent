@@ -396,7 +396,16 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
             result['strength_score'] = compute_strength_score(result)
             
             # Add ML verdict prediction if ML service is available (for testing only)
-            if _ml_verdict_service and _ml_verdict_service.model_loaded:
+            # Two-Stage Approach: Chart Quality + ML Model
+            # Stage 1: Chart quality filter (already checked in AnalysisService)
+            # Stage 2: ML model prediction (only if chart quality passed)
+            
+            # Check if chart quality passed (hard filter)
+            chart_quality = result.get('chart_quality', {})
+            chart_quality_passed = chart_quality.get('passed', True) if isinstance(chart_quality, dict) else True
+            
+            # Only run ML prediction if chart quality passed (Stage 2)
+            if _ml_verdict_service and _ml_verdict_service.model_loaded and chart_quality_passed:
                 try:
                     # Extract signals and indicators from result
                     signals = result.get('justification', [])
@@ -416,7 +425,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
                     pe = result.get('pe')
                     fundamental_ok = not (pe is not None and pe < 0)
                     
-                    # Get ML prediction
+                    # Get ML prediction (Stage 2: only if chart quality passed)
                     ml_verdict, ml_confidence = _ml_verdict_service.predict_verdict_with_confidence(
                         signals=signals if isinstance(signals, list) else [],
                         rsi_value=rsi_value,
@@ -425,7 +434,8 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
                         vol_strong=vol_strong,
                         fundamental_ok=fundamental_ok,
                         timeframe_confirmation=timeframe_analysis,
-                        news_sentiment=result.get('news_sentiment')
+                        news_sentiment=result.get('news_sentiment'),
+                        chart_quality_passed=chart_quality_passed  # Two-stage approach: pass chart quality status
                     )
                     
                     if ml_verdict:
@@ -434,6 +444,11 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
                         logger.debug(f"ML prediction for {result.get('ticker')}: {ml_verdict} ({ml_confidence:.0%})")
                 except Exception as e:
                     logger.debug(f"ML prediction failed for {result.get('ticker')}: {e}")
+            elif _ml_verdict_service and _ml_verdict_service.model_loaded and not chart_quality_passed:
+                # Chart quality failed - skip ML prediction (Stage 1 filter)
+                logger.debug(f"ML prediction skipped for {result.get('ticker')}: Chart quality failed (two-stage filter)")
+                result['ml_verdict'] = None
+                result['ml_confidence'] = None
     
     # Add backtest scoring if enabled (Phase 4: Use BacktestService)
     if enable_backtest_scoring:

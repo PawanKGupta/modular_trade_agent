@@ -51,6 +51,7 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 - **🆕 Chart Quality Filtering**: Automatically filters stocks with poor chart patterns (gaps, flat movement, extreme candles)
 - **🆕 Dynamic Capital Allocation**: Automatically adjusts position size based on stock liquidity (10% of daily volume max)
 - **🆕 Liquidity-Based Position Sizing**: Ensures safe position sizing based on average daily volume
+- **🆕 Two-Stage ML Approach**: Chart quality filter (Stage 1) + ML model prediction (Stage 2) for improved accuracy
 
 ### 📱 **Enhanced Trade Alerts**
 - **Smart Priority Ranking**: Stocks sorted by trading priority within each category using multi-factor scoring
@@ -69,6 +70,7 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 - **Data Validation**: Ensures sufficient historical data for accurate analysis
 - **🆕 Chart Quality Analysis**: Analyzes gaps, movement, and extreme candles to filter poor-quality charts
 - **🆕 Automatic Capital Adjustment**: Dynamically adjusts capital based on liquidity to ensure safe position sizing
+- **🆕 Two-Stage ML Integration**: ML models only see stocks that pass chart quality filtering, ensuring distribution match
 
 ## 📚 Documentation
 
@@ -83,6 +85,7 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 - 🏗️ **[System Architecture Evolution](documents/SYSTEM_ARCHITECTURE_EVOLUTION.md)** - Complete architectural transformation (Phases 1-4)
 - 🤖 **[ML Implementation Guide](documents/ML_IMPLEMENTATION_GUIDE.md)** - Complete ML setup, training, and monitoring
 - 📊 **[Chart Quality & Capital Adjustment](documents/features/CHART_QUALITY_AND_CAPITAL_ADJUSTMENT.md)** - 🆕 Chart quality filtering and dynamic capital adjustment features
+- 🎯 **[Two-Stage ML Approach](documents/features/TWO_STAGE_CHART_QUALITY_ML_APPROACH.md)** - 🆕 Two-stage approach: Chart quality + ML model
 
 **Quick Links:**
 - [Architecture Guide](documents/architecture/ARCHITECTURE_GUIDE.md) - System design

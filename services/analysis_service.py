@@ -54,7 +54,33 @@ class AnalysisService:
         self.data_service = data_service or DataService()
         self.indicator_service = indicator_service or IndicatorService(self.config)
         self.signal_service = signal_service or SignalService(self.config)
-        self.verdict_service = verdict_service or VerdictService(self.config)
+        
+        # Two-Stage Approach: Use MLVerdictService if ML model is available
+        # Stage 1: Chart quality filter (hard filter)
+        # Stage 2: ML model prediction (only if chart quality passed)
+        if verdict_service is None:
+            # Try to use MLVerdictService if ML model is available
+            try:
+                from services.ml_verdict_service import MLVerdictService
+                from pathlib import Path
+                
+                # Check if ML model exists
+                ml_model_path = getattr(self.config, 'ml_verdict_model_path', 'models/verdict_model_random_forest.pkl')
+                if Path(ml_model_path).exists():
+                    self.verdict_service = MLVerdictService(model_path=ml_model_path, config=self.config)
+                    if self.verdict_service.model_loaded:
+                        logger.info(f"✅ Using MLVerdictService with model: {ml_model_path} (two-stage: chart quality + ML)")
+                    else:
+                        logger.warning(f"⚠️ ML model file exists but failed to load: {ml_model_path}, using VerdictService")
+                        self.verdict_service = VerdictService(self.config)
+                else:
+                    self.verdict_service = VerdictService(self.config)
+                    logger.debug(f"Using VerdictService (no ML model found at: {ml_model_path})")
+            except Exception as e:
+                logger.debug(f"Could not initialize MLVerdictService: {e}, using VerdictService")
+                self.verdict_service = VerdictService(self.config)
+        else:
+            self.verdict_service = verdict_service
     
     def analyze_ticker(
         self,
@@ -267,6 +293,14 @@ class AnalysisService:
                 "liquidity_recommendation": volume_data.get('liquidity_recommendation', {}),
                 "status": "success"
             }
+            
+            # Step 15: Add ML verdict if using MLVerdictService (two-stage approach already enforced)
+            # Note: ML verdict is already included in verdict if MLVerdictService is used
+            # This is for tracking/debugging purposes
+            if hasattr(self.verdict_service, 'model_loaded') and self.verdict_service.model_loaded:
+                # ML verdict is already part of the verdict if MLVerdictService was used
+                # Chart quality filtering is already enforced in determine_verdict()
+                logger.debug(f"{ticker}: Using ML verdict service (two-stage: chart quality + ML)")
             
             logger.debug(f"Analysis completed successfully for {ticker}: {verdict}")
             

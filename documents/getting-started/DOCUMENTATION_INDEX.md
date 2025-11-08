@@ -73,6 +73,7 @@ Welcome! This index helps you find the right documentation quickly.
 - **[DIP_MODE_COMPARISON.md](documents/DIP_MODE_COMPARISON.md)** - Dip-buying mode comparison
 - **[SCORING_IMPROVEMENTS.md](documents/SCORING_IMPROVEMENTS.md)** - Scoring algorithm improvements
 - **[CHART_QUALITY_AND_CAPITAL_ADJUSTMENT.md](documents/features/CHART_QUALITY_AND_CAPITAL_ADJUSTMENT.md)** - 🆕 Chart quality filtering and dynamic capital adjustment
+- **[TWO_STAGE_CHART_QUALITY_ML_APPROACH.md](documents/features/TWO_STAGE_CHART_QUALITY_ML_APPROACH.md)** - 🆕 Two-stage approach: Chart quality + ML model
 
 ### Bug Fixes & Improvements
 - **[BUG_FIXES.md](documents/features/BUG_FIXES.md)** - Complete bug fixes log (summary/index)
