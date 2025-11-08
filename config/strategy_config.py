@@ -34,12 +34,14 @@ class StrategyConfig:
     max_position_volume_ratio: float = 0.10  # 10% of daily volume max
     
     # Chart Quality Configuration
-    chart_quality_enabled: bool = True
+    # ⚠️ IMPORTANT: Chart quality is REQUIRED in production - DO NOT disable in live trading
+    # Chart quality can be disabled ONLY for testing/data collection purposes
+    chart_quality_enabled: bool = True  # REQUIRED in production - filters out bad charts
     chart_quality_min_score: float = 60.0  # Minimum score for acceptance (0-100)
     chart_quality_max_gap_frequency: float = 20.0  # Max gap frequency (%)
     chart_quality_min_daily_range_pct: float = 1.5  # Min daily range (%)
     chart_quality_max_extreme_candle_frequency: float = 15.0  # Max extreme candle frequency (%)
-    chart_quality_enabled_in_backtest: bool = True
+    chart_quality_enabled_in_backtest: bool = True  # Default: enabled (can be disabled for data collection)
     
     # Fundamental Filters
     pe_max_attractive: float = 15.0

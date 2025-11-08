@@ -17,6 +17,15 @@ This document describes the chart quality filtering and dynamic capital adjustme
 ### Purpose
 Automatically filters out stocks with poor chart patterns to improve trade quality and reduce false signals.
 
+### ⚠️ IMPORTANT: Chart Quality is REQUIRED in Production
+
+**Chart quality filtering is ENABLED by default and is REQUIRED in the live trading system.**
+
+- ✅ **Enabled by default** in all live trading operations
+- ✅ **Hard filter** - stocks with poor chart quality are immediately rejected
+- ✅ **Required for production** - DO NOT disable in live trading
+- ⚠️ **Can be disabled for testing/data collection ONLY** - Use `--disable-chart-quality` flag
+
 ### Features
 
 #### 1. Gap Analysis
@@ -49,14 +58,17 @@ Automatically filters out stocks with poor chart patterns to improve trade quali
 ### Configuration
 
 ```bash
-# Chart Quality Settings
-CHART_QUALITY_ENABLED=true
+# Chart Quality Settings (Production)
+# ⚠️ IMPORTANT: Chart quality is REQUIRED in production - DO NOT disable
+CHART_QUALITY_ENABLED=true  # REQUIRED - DO NOT set to false in production
 CHART_QUALITY_MIN_SCORE=60.0
 CHART_QUALITY_MAX_GAP_FREQUENCY=20.0
 CHART_QUALITY_MIN_DAILY_RANGE_PCT=1.5
 CHART_QUALITY_MAX_EXTREME_CANDLE_FREQUENCY=15.0
-CHART_QUALITY_ENABLED_IN_BACKTEST=true
+CHART_QUALITY_ENABLED_IN_BACKTEST=true  # Default: enabled (can be disabled for data collection)
 ```
+
+**⚠️ Warning**: Setting `CHART_QUALITY_ENABLED=false` or `CHART_QUALITY_ENABLED_IN_BACKTEST=false` will disable chart quality filtering, which is **NOT recommended for production**. Only disable for testing/data collection purposes using the `--disable-chart-quality` flag.
 
 ### Usage
 
