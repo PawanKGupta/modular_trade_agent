@@ -324,21 +324,28 @@ class AnalysisService:
             timeframe_confirmation = signal_data['timeframe_confirmation']
             news_sentiment = signal_data['news_sentiment']
             
-            # Step 9: Assess volume (includes execution capital calculation)
-            volume_data = self.verdict_service.assess_volume(df, last)
+            # Step 9: Get indicator values (needed for RSI-based volume adjustment)
+            rsi_value = self.indicator_service.get_rsi_value(last)
+            is_above_ema200 = self.indicator_service.is_above_ema200(last)
             
-            # Step 10: Get recent extremes
+            # Step 10: Assess volume (includes execution capital calculation)
+            # RELAXED VOLUME REQUIREMENTS (2025-11-09): Pass RSI for RSI-based volume threshold adjustment
+            # For RSI < 30 (oversold), volume requirement is reduced to 0.5x
+            volume_data = self.verdict_service.assess_volume(df, last, rsi_value=rsi_value)
+            
+            # Step 11: Get recent extremes
             extremes = self.data_service.get_recent_extremes(df)
             
-            # Step 11: Fetch fundamentals
+            # Step 12: Fetch fundamentals
             fundamentals = self.verdict_service.fetch_fundamentals(ticker)
             pe = fundamentals['pe']
             pb = fundamentals['pb']
-            fundamental_ok = not (pe is not None and pe < 0)
             
-            # Step 12: Get indicator values
-            rsi_value = self.indicator_service.get_rsi_value(last)
-            is_above_ema200 = self.indicator_service.is_above_ema200(last)
+            # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Assess fundamentals with flexible logic
+            # - Keep negative PE filter for "avoid" (loss-making companies)
+            # - But allow "watch" verdict for growth stocks (negative PE) if PB ratio is reasonable (< 5.0)
+            fundamental_assessment = self.verdict_service.assess_fundamentals(pe, pb)
+            fundamental_ok = fundamental_assessment.get('fundamental_ok', not (pe is not None and pe < 0))  # Backward compatibility
             
             # Step 13: Determine verdict (chart quality already checked at Step 3 - should be True here)
             # NOTE: If chart quality failed, we would have returned early at Step 5
@@ -349,10 +356,11 @@ class AnalysisService:
                 is_above_ema200=is_above_ema200,
                 vol_ok=volume_data['vol_ok'],
                 vol_strong=volume_data['vol_strong'],
-                fundamental_ok=fundamental_ok,
+                fundamental_ok=fundamental_ok,  # Backward compatibility
                 timeframe_confirmation=timeframe_confirmation,
                 news_sentiment=news_sentiment,
-                chart_quality_passed=chart_quality_passed  # Should be True at this point (early return if False)
+                chart_quality_passed=chart_quality_passed,  # Should be True at this point (early return if False)
+                fundamental_assessment=fundamental_assessment  # New: flexible fundamental assessment
             )
             
             # Step 12: Apply candle quality check (may downgrade verdict)
@@ -363,6 +371,8 @@ class AnalysisService:
                 justification.append(f"candle_downgrade:{downgrade_reason}")
             
             # Step 13: Calculate trading parameters
+            # CRITICAL REQUIREMENT (2025-11-09): RSI10 < 30 is a key requirement
+            # Trading parameters are ONLY calculated when RSI < 30 (or RSI < 20 if below EMA200)
             current_price = float(last['close'])
             trading_params = self.verdict_service.calculate_trading_parameters(
                 current_price=current_price,
@@ -370,10 +380,13 @@ class AnalysisService:
                 recent_low=extremes['low'],
                 recent_high=extremes['high'],
                 timeframe_confirmation=timeframe_confirmation,
-                df=df
+                df=df,
+                rsi_value=rsi_value,  # Pass RSI for validation
+                is_above_ema200=is_above_ema200  # Pass EMA200 position for threshold selection
             )
             
             # Step 14: Build result
+            # ML TRAINING DATA COLLECTION (2025-11-09): Include fundamental_assessment for ML training
             result = {
                 "ticker": ticker,
                 "verdict": verdict,
@@ -386,6 +399,7 @@ class AnalysisService:
                 "buy_range": trading_params['buy_range'] if trading_params is not None else None,
                 "target": trading_params['target'] if trading_params is not None else None,
                 "stop": trading_params['stop'] if trading_params is not None else None,
+                "trading_params": trading_params,  # Include full trading_params dict for validation
                 "justification": justification,
                 "last_close": round(current_price, 2),
                 "timeframe_analysis": timeframe_confirmation,
@@ -399,16 +413,23 @@ class AnalysisService:
                 "max_capital": volume_data.get('max_capital', 0.0),
                 "capital_adjusted": volume_data.get('capital_adjusted', False),
                 "liquidity_recommendation": volume_data.get('liquidity_recommendation', {}),
+                # ML TRAINING DATA COLLECTION (2025-11-09): Add fundamental assessment and volume flags
+                "fundamental_assessment": fundamental_assessment,  # For ML training
+                "fundamental_ok": fundamental_ok,  # For ML training
+                "vol_ok": volume_data.get('vol_ok', False),  # For ML training
+                "vol_strong": volume_data.get('vol_strong', False),  # For ML training
+                "is_above_ema200": is_above_ema200,  # For ML training
                 "status": "success"
             }
             
-            # Step 15: Add ML verdict if using MLVerdictService (two-stage approach already enforced)
-            # Note: ML verdict is already included in verdict if MLVerdictService is used
-            # This is for tracking/debugging purposes
+            # Step 15: Log ML model status (TEMPORARILY DISABLED - 2025-11-09)
+            # ML model is loaded but not used for verdict determination
+            # Using rule-based logic only until ML model is fully trained
             if hasattr(self.verdict_service, 'model_loaded') and self.verdict_service.model_loaded:
-                # ML verdict is already part of the verdict if MLVerdictService was used
-                # Chart quality filtering is already enforced in determine_verdict()
-                logger.debug(f"{ticker}: Using ML verdict service (two-stage: chart quality + ML)")
+                # ML model is loaded but verdict is determined by rule-based logic
+                # ML predictions are logged for training data collection
+                logger.info(f"{ticker}: ML model loaded but using rule-based logic (ML not fully trained yet)")
+                logger.debug(f"{ticker}: ML predictions logged for training data collection")
             
             logger.debug(f"Analysis completed successfully for {ticker}: {verdict}")
             

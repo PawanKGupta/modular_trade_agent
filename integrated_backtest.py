@@ -663,7 +663,10 @@ def generate_integrated_results(stock_name: str, date_range: Tuple[str, str],
                 'exit_price': pos.exit_price,
                 'exit_reason': pos.exit_reason,
                 'pnl': pos.get_pnl(),
-                'return_pct': pos.get_return_pct()
+                'return_pct': pos.get_return_pct(),
+                'capital': pos.capital,  # Add capital for validation
+                'quantity': pos.quantity,  # Add quantity for validation
+                'is_pyramided': len(pos.fills) > 1  # Indicate if position was pyramided
             } for pos in positions
         ]
     
