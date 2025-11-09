@@ -471,17 +471,54 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
             os.makedirs(out_dir, exist_ok=True)
             out_path = os.path.join(out_dir, f"bulk_analysis_final_{ts}.csv")
             # Keep the most useful fields; include fallbacks
+            # Added: More fields for ML training data collection and verdict analysis (2025-11-09)
             cols = [
                 'ticker','status','verdict','final_verdict','combined_score','strength_score','last_close',
                 'buy_range','target','stop','timeframe_analysis','backtest',
-                'execution_capital','max_capital','capital_adjusted','chart_quality'  # Phase 12: New fields
+                'execution_capital','max_capital','capital_adjusted','chart_quality',  # Phase 12: New fields
+                # Verdict analysis fields
+                'justification','pe','pb','rsi','avg_vol','today_vol',
+                # ML training fields - volume data
+                'volume_analysis','volume_pattern','volume_description','vol_ok','vol_strong','volume_ratio','volume_quality',
+                # ML training fields - signals and indicators
+                'signals','candle_analysis','is_above_ema200',
+                # ML training fields - fundamental data
+                'fundamental_assessment','fundamental_ok',
+                # ML training fields - timeframe data (already in timeframe_analysis but extracted for clarity)
+                'news_sentiment',
+                # ML training fields - chart quality details
+                'chart_quality'
             ]
             def _flatten(row):
                 d = {k: row.get(k) for k in cols if k in row}
                 # Simple stringify for complex fields
-                for k in ('buy_range','timeframe_analysis','backtest'):
-                    if k in d and not isinstance(d[k], (str,int,float)):
+                for k in ('buy_range','timeframe_analysis','backtest','volume_analysis','candle_analysis','news_sentiment','chart_quality','fundamental_assessment'):
+                    if k in d and not isinstance(d[k], (str,int,float,bool)):
                         d[k] = str(d[k])
+                
+                # Extract vol_ok, vol_strong, volume_ratio, volume_quality from volume_analysis if available
+                # But prefer direct fields if they exist (added in analysis_service.py)
+                if 'vol_ok' not in d or d['vol_ok'] is None:
+                    if 'volume_analysis' in d and isinstance(d['volume_analysis'], dict):
+                        vol_analysis = d['volume_analysis']
+                        d['vol_ok'] = vol_analysis.get('vol_ok', None)
+                        d['vol_strong'] = vol_analysis.get('vol_strong', None)
+                        d['volume_ratio'] = vol_analysis.get('volume_ratio', None)
+                        d['volume_quality'] = vol_analysis.get('quality', None)
+                    elif isinstance(row.get('volume_analysis'), dict):
+                        vol_analysis = row.get('volume_analysis')
+                        d['vol_ok'] = vol_analysis.get('vol_ok', None)
+                        d['vol_strong'] = vol_analysis.get('vol_strong', None)
+                        d['volume_ratio'] = vol_analysis.get('volume_ratio', None)
+                        d['volume_quality'] = vol_analysis.get('quality', None)
+                
+                # Extract fundamental assessment fields if available
+                if 'fundamental_assessment' in d and isinstance(d['fundamental_assessment'], dict):
+                    fa = d['fundamental_assessment']
+                    d['fundamental_growth_stock'] = fa.get('fundamental_growth_stock', None)
+                    d['fundamental_avoid'] = fa.get('fundamental_avoid', None)
+                    d['fundamental_reason'] = fa.get('fundamental_reason', None)
+                
                 return d
             df_final = pd.DataFrame([_flatten(r) for r in results if isinstance(r, dict)])
             df_final.to_csv(out_path, index=False)

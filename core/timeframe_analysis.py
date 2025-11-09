@@ -545,17 +545,35 @@ class TimeframeAnalysis:
                 score += 1  # RSI approaching oversold
             
             # Weekly uptrend context (2 points max)
+            # REFINED LOGIC (2025-11-09): Avoid double-counting pullback and support
+            # - Weekly trend up and price near support → +2
+            # - Weekly trend up but mid-range (not at support) → +1
+            # - Weekly trend flat/down → 0
             weekly_oversold = weekly_analysis['oversold_analysis']
             weekly_support = weekly_analysis['support_analysis']
             weekly_reversion = weekly_analysis['reversion_setup']
             
-            # Weekly uptrend confirmation (best case)
-            if 'above_ema_uptrend' in weekly_reversion.get('reasons', []):
-                score += 2  # Weekly also in uptrend - perfect setup
-            elif weekly_oversold['severity'] in ['moderate', 'high']:  # Weekly pullback in uptrend
-                score += 1  # Temporary weekly pullback
-            elif weekly_support['quality'] in ['strong', 'moderate']:  # At weekly support
-                score += 1  # Support holding in uptrend
+            # Check if weekly trend is up
+            is_weekly_uptrend = 'above_ema_uptrend' in weekly_reversion.get('reasons', [])
+            
+            if is_weekly_uptrend:
+                # Weekly trend is up - check if price is near support
+                support_quality = weekly_support.get('quality', 'none')
+                support_distance = weekly_support.get('distance_pct', 999)
+                
+                # Price is "near support" if:
+                # - Support quality is strong/moderate AND
+                # - Distance to support is <= 5% (close to support level)
+                is_near_support = (
+                    support_quality in ['strong', 'moderate'] and
+                    support_distance <= 5.0
+                )
+                
+                if is_near_support:
+                    score += 2  # Weekly trend up and price near support - perfect setup
+                else:
+                    score += 1  # Weekly trend up but mid-range (not at support) - still good
+            # If weekly trend is flat/down, score += 0 (no points)
             
             # Support level confluence (2 points max)
             daily_support = daily_analysis['support_analysis']

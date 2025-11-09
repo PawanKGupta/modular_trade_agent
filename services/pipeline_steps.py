@@ -222,18 +222,26 @@ class DetermineVerdictStep(PipelineStep):
                 context.add_error("No data available for verdict determination")
                 return context
             
-            # Assess volume
-            volume_data = self.verdict_service.assess_volume(df, last)
-            context.set_result('volume_data', volume_data)
-            
-            # Get indicator values
+            # Get indicator values (needed for RSI-based volume adjustment)
             rsi_value = indicators.get('rsi')
             is_above_ema200 = indicators.get('is_above_ema200', False)
+            
+            # Assess volume (with RSI for RSI-based volume threshold adjustment)
+            # RELAXED VOLUME REQUIREMENTS (2025-11-09): Pass RSI for RSI-based adjustment
+            # For RSI < 30 (oversold), volume requirement is reduced to 0.5x
+            volume_data = self.verdict_service.assess_volume(df, last, rsi_value=rsi_value)
+            context.set_result('volume_data', volume_data)
             
             # Get fundamentals if available
             fundamentals = context.get_result('fundamentals', {})
             pe = fundamentals.get('pe') if fundamentals else None
-            fundamental_ok = not (pe is not None and pe < 0)
+            pb = fundamentals.get('pb') if fundamentals else None
+            
+            # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Assess fundamentals with flexible logic
+            # - Keep negative PE filter for "avoid" (loss-making companies)
+            # - But allow "watch" verdict for growth stocks (negative PE) if PB ratio is reasonable (< 5.0)
+            fundamental_assessment = self.verdict_service.assess_fundamentals(pe, pb)
+            fundamental_ok = fundamental_assessment.get('fundamental_ok', not (pe is not None and pe < 0))  # Backward compatibility
             
             # Get timeframe confirmation if available
             timeframe_confirmation = context.get_result('multi_timeframe')
@@ -246,15 +254,18 @@ class DetermineVerdictStep(PipelineStep):
                 is_above_ema200=is_above_ema200,
                 vol_ok=volume_data.get('vol_ok', False),
                 vol_strong=volume_data.get('vol_strong', False),
-                fundamental_ok=fundamental_ok,
+                fundamental_ok=fundamental_ok,  # Backward compatibility
                 timeframe_confirmation=timeframe_confirmation,
-                news_sentiment=news_sentiment
+                news_sentiment=news_sentiment,
+                fundamental_assessment=fundamental_assessment  # New: flexible fundamental assessment
             )
             
             context.set_result('verdict', verdict)
             context.set_result('justification', justification)
             
             # Calculate trading parameters if verdict is favorable
+            # CRITICAL REQUIREMENT (2025-11-09): RSI10 < 30 is a key requirement
+            # Trading parameters are ONLY calculated when RSI < 30 (or RSI < 20 if below EMA200)
             if verdict in ['strong_buy', 'buy']:
                 extremes = data_service.get_recent_extremes(df)
                 current_price = float(last['close'])
@@ -265,7 +276,9 @@ class DetermineVerdictStep(PipelineStep):
                     recent_low=extremes['low'],
                     recent_high=extremes['high'],
                     timeframe_confirmation=timeframe_confirmation,
-                    df=df
+                    df=df,
+                    rsi_value=rsi_value,  # Pass RSI for validation
+                    is_above_ema200=is_above_ema200  # Pass EMA200 position for threshold selection
                 )
                 context.set_result('trading_params', trading_params)
             

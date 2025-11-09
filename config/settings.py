@@ -5,11 +5,15 @@ load_dotenv()
 
 # Config constants
 LOOKBACK_DAYS = 90
-MIN_VOLUME_MULTIPLIER = 1.0
+# RELAXED VOLUME REQUIREMENTS (2025-11-09): Reduced from 1.0 to 0.7 for dip-buying strategy
+# Oversold conditions often have lower volume (selling pressure), so we allow lower volume requirements
+# For RSI < 30 (oversold), volume requirement is further reduced to 0.5x (see volume_analysis.py)
+MIN_VOLUME_MULTIPLIER = 0.7  # Relaxed from 1.0 - current volume >= 70% of average
 VOLUME_LOOKBACK_DAYS = 50  # Days to average for volume calculation (liquidity assessment)
 # Absolute minimum average volume to consider a stock liquid enough (20-day avg)
-# Lowered to minimal safety net - actual capital adjustment handled by LiquidityCapitalService
-MIN_ABSOLUTE_AVG_VOLUME = int(os.getenv("MIN_ABSOLUTE_AVG_VOLUME", "20000"))
+# Lowered to 10000 (2025-11-09) to allow more stocks to pass liquidity filter
+# Actual capital adjustment handled by LiquidityCapitalService
+MIN_ABSOLUTE_AVG_VOLUME = int(os.getenv("MIN_ABSOLUTE_AVG_VOLUME", "10000"))
 
 # Position-to-volume ratio limits (based on stock price category)
 # Only filters out truly illiquid stocks to avoid missing good opportunities

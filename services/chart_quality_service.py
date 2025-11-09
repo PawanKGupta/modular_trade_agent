@@ -39,14 +39,15 @@ class ChartQualityService:
         self.config = config or StrategyConfig.default()
         
         # Chart quality thresholds (from config or env)
+        # RELAXED THRESHOLDS (2025-11-09): Updated defaults to match relaxed thresholds
         self.max_gap_frequency = getattr(self.config, 'chart_quality_max_gap_frequency', 
-                                        float(os.getenv('CHART_QUALITY_MAX_GAP_FREQUENCY', '20.0')))
+                                        float(os.getenv('CHART_QUALITY_MAX_GAP_FREQUENCY', '25.0')))  # Relaxed from 20.0
         self.min_daily_range_pct = getattr(self.config, 'chart_quality_min_daily_range_pct',
-                                          float(os.getenv('CHART_QUALITY_MIN_DAILY_RANGE_PCT', '1.5')))
+                                          float(os.getenv('CHART_QUALITY_MIN_DAILY_RANGE_PCT', '1.0')))  # Relaxed from 1.5
         self.max_extreme_candle_frequency = getattr(self.config, 'chart_quality_max_extreme_candle_frequency',
-                                                   float(os.getenv('CHART_QUALITY_MAX_EXTREME_CANDLE_FREQUENCY', '15.0')))
+                                                   float(os.getenv('CHART_QUALITY_MAX_EXTREME_CANDLE_FREQUENCY', '20.0')))  # Relaxed from 15.0
         self.min_score = getattr(self.config, 'chart_quality_min_score',
-                               float(os.getenv('CHART_QUALITY_MIN_SCORE', '60.0')))
+                               float(os.getenv('CHART_QUALITY_MIN_SCORE', '50.0')))  # Relaxed from 60.0
         self.enabled = getattr(self.config, 'chart_quality_enabled',
                              os.getenv('CHART_QUALITY_ENABLED', 'true').lower() in ('1', 'true', 'yes', 'on'))
     

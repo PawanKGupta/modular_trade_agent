@@ -77,6 +77,70 @@ class VerdictService:
         self.chart_quality_service = ChartQualityService(config=self.config)
         self.liquidity_capital_service = LiquidityCapitalService(config=self.config)
     
+    def assess_fundamentals(
+        self,
+        pe: Optional[float],
+        pb: Optional[float]
+    ) -> Dict[str, Any]:
+        """
+        Assess fundamental quality with flexible logic for growth stocks
+        
+        FLEXIBLE FUNDAMENTAL FILTER (2025-11-09):
+        - Keep negative PE filter for "avoid" (loss-making companies)
+        - But allow "watch" verdict for growth stocks (negative PE) if PB ratio is reasonable (< 5.0)
+        - Allow "buy" verdicts only for profitable companies (PE >= 0)
+        
+        Args:
+            pe: Price-to-Earnings ratio (None if unavailable)
+            pb: Price-to-Book ratio (None if unavailable)
+            
+        Returns:
+            Dict with:
+            - fundamental_ok: bool - True if PE >= 0 (allows "buy" verdicts)
+            - fundamental_growth_stock: bool - True if PE < 0 AND PB < 5.0 (allows "watch" verdicts)
+            - fundamental_avoid: bool - True if PE < 0 AND (PB is None OR PB >= 5.0) (forces "avoid")
+            - fundamental_reason: str - Reason for the assessment
+        """
+        # Default: profitable company (PE >= 0)
+        if pe is None or pe >= 0:
+            return {
+                'fundamental_ok': True,
+                'fundamental_growth_stock': False,
+                'fundamental_avoid': False,
+                'fundamental_reason': 'profitable' if pe is not None else 'pe_unavailable'
+            }
+        
+        # Negative PE (loss-making or growth stock)
+        if pe < 0:
+            # Check PB ratio to distinguish growth stocks from expensive loss-makers
+            # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Use configurable PB threshold
+            pb_threshold = getattr(self.config, 'pb_max_for_growth_stock', 5.0)
+            if pb is not None and pb < pb_threshold:
+                # Growth stock with reasonable PB ratio - allow "watch" verdict
+                return {
+                    'fundamental_ok': False,  # Cannot give "buy" verdict
+                    'fundamental_growth_stock': True,  # Allow "watch" verdict
+                    'fundamental_avoid': False,  # Don't force "avoid"
+                    'fundamental_reason': f'pb={pb:.2f}<{pb_threshold}'
+                }
+            else:
+                # Expensive loss-making company or unknown PB - force "avoid"
+                pb_reason = f'pb={pb:.2f}' if pb is not None else 'pb_unavailable'
+                return {
+                    'fundamental_ok': False,
+                    'fundamental_growth_stock': False,
+                    'fundamental_avoid': True,  # Force "avoid" verdict
+                    'fundamental_reason': f'loss_making_expensive({pb_reason}>={pb_threshold})'
+                }
+        
+        # Should not reach here, but return safe default
+        return {
+            'fundamental_ok': True,
+            'fundamental_growth_stock': False,
+            'fundamental_avoid': False,
+            'fundamental_reason': 'unknown'
+        }
+    
     def fetch_fundamentals(self, ticker: str) -> Dict[str, Optional[float]]:
         """
         Fetch fundamental data (PE, PB ratios)
@@ -217,7 +281,8 @@ class VerdictService:
         self, 
         df: pd.DataFrame, 
         last: pd.Series,
-        disable_liquidity_filter: bool = False
+        disable_liquidity_filter: bool = False,
+        rsi_value: Optional[float] = None
     ) -> Dict[str, Any]:
         """
         Assess volume quality for a stock
@@ -227,18 +292,24 @@ class VerdictService:
             last: Latest row
             disable_liquidity_filter: If True, skip the absolute volume liquidity filter
                                      (useful for backtesting where we want to see all opportunities)
+            rsi_value: Optional RSI value for RSI-based volume threshold adjustment
+                       If RSI < 30 (oversold), volume requirement is reduced to 0.5x
+                       Otherwise, uses base threshold (0.7x after relaxation)
             
         Returns:
             Dict with volume analysis results
         """
         avg_vol = avg_volume(df)  # Uses config volume_lookback_days
         
-        # Intelligent volume analysis with time-awareness
+        # Intelligent volume analysis with time-awareness and RSI-based adjustment
+        # RELAXED VOLUME REQUIREMENTS (2025-11-09): RSI-based volume threshold adjustment
+        # For dip-buying (RSI < 30), volume requirement is further reduced to 0.5x
         volume_analysis = assess_volume_quality_intelligent(
             current_volume=last['volume'],
             avg_volume=avg_vol,
             enable_time_adjustment=True,
-            disable_liquidity_filter=disable_liquidity_filter
+            disable_liquidity_filter=disable_liquidity_filter,
+            rsi_value=rsi_value
         )
         
         vol_ok, vol_strong, volume_description = get_volume_verdict(volume_analysis)
@@ -281,7 +352,8 @@ class VerdictService:
         fundamental_ok: bool,
         timeframe_confirmation: Optional[Dict[str, Any]],
         news_sentiment: Optional[Dict[str, Any]],
-        chart_quality_passed: bool = True
+        chart_quality_passed: bool = True,
+        fundamental_assessment: Optional[Dict[str, Any]] = None
     ) -> Tuple[str, List[str]]:
         """
         Determine verdict (strong_buy/buy/watch/avoid) and justification
@@ -292,10 +364,12 @@ class VerdictService:
             is_above_ema200: Whether price is above EMA200
             vol_ok: Whether volume is adequate
             vol_strong: Whether volume is strong
-            fundamental_ok: Whether fundamentals are acceptable
+            fundamental_ok: Whether fundamentals are acceptable (backward compatibility)
             timeframe_confirmation: MTF confirmation data
             news_sentiment: News sentiment data
             chart_quality_passed: Whether chart quality check passed (hard filter)
+            fundamental_assessment: Optional fundamental assessment dict from assess_fundamentals()
+                                    If provided, overrides fundamental_ok for more flexible logic
             
         Returns:
             Tuple of (verdict, justification_list)
@@ -303,6 +377,24 @@ class VerdictService:
         # Hard filter: Chart quality check
         if not chart_quality_passed:
             return "avoid", ["Chart quality failed - too many gaps/extreme candles/flat movement"]
+        
+        # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Use fundamental_assessment if provided
+        # Otherwise, fall back to fundamental_ok for backward compatibility
+        if fundamental_assessment is not None:
+            fundamental_ok_for_buy = fundamental_assessment.get('fundamental_ok', fundamental_ok)
+            fundamental_growth_stock = fundamental_assessment.get('fundamental_growth_stock', False)
+            fundamental_avoid = fundamental_assessment.get('fundamental_avoid', False)
+            fundamental_reason = fundamental_assessment.get('fundamental_reason', 'unknown')
+        else:
+            # Backward compatibility: use fundamental_ok
+            fundamental_ok_for_buy = fundamental_ok
+            fundamental_growth_stock = False
+            fundamental_avoid = False
+            fundamental_reason = 'profitable' if fundamental_ok else 'loss_making'
+        
+        # Hard filter: Force "avoid" for expensive loss-making companies
+        if fundamental_avoid:
+            return "avoid", [f"Fundamental filter: {fundamental_reason}"]
         
         verdict = "avoid"
         justification = []
@@ -317,7 +409,8 @@ class VerdictService:
         decent_volume = vol_ok
         
         # Entry logic: Works for both above and below EMA200 with appropriate RSI thresholds
-        if rsi_oversold and decent_volume and fundamental_ok:
+        # Use fundamental_ok_for_buy for "buy" verdicts (requires profitable company)
+        if rsi_oversold and decent_volume and fundamental_ok_for_buy:
             # Simple quality-based classification using MTF and patterns
             alignment_score = timeframe_confirmation.get('alignment_score', 0) if timeframe_confirmation else 0
             
@@ -344,11 +437,26 @@ class VerdictService:
         
         elif len(signals) > 0 and vol_ok:
             # Has some signals and volume but not core reversal conditions
-            verdict = "watch"
+            # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Allow "watch" for growth stocks
+            if fundamental_growth_stock:
+                # Growth stock (negative PE but reasonable PB) - allow "watch" verdict
+                verdict = "watch"
+            elif not fundamental_ok_for_buy and not fundamental_growth_stock:
+                # Loss-making company but not a growth stock - "avoid"
+                verdict = "avoid"
+            else:
+                # Normal case: partial signals
+                verdict = "watch"
         
         else:
             # No significant signals
-            verdict = "avoid"
+            # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Allow "watch" for growth stocks with strong conditions
+            if fundamental_growth_stock and (rsi_oversold or vol_strong):
+                # Growth stock with some strong conditions - allow "watch"
+                verdict = "watch"
+            else:
+                # No signals and not a growth stock - "avoid"
+                verdict = "avoid"
         
         # Build justification based on what was found
         if verdict in ["buy", "strong_buy"]:
@@ -377,9 +485,14 @@ class VerdictService:
                 justification.append(f"volume_adequate")
         
         elif verdict == "watch":
-            if not fundamental_ok:
+            # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Add growth stock justification
+            if fundamental_growth_stock:
+                # Growth stock - add to justification
+                justification.append(f"growth_stock({fundamental_reason})")
+            elif not fundamental_ok_for_buy:
                 justification.append("fundamental_red_flag")
-            elif len(signals) > 0:
+            
+            if len(signals) > 0:
                 justification.append("signals:" + ",".join(signals))
             else:
                 justification.append("partial_reversal_setup")
@@ -435,10 +548,15 @@ class VerdictService:
         recent_low: float,
         recent_high: float,
         timeframe_confirmation: Optional[Dict[str, Any]],
-        df: pd.DataFrame
+        df: pd.DataFrame,
+        rsi_value: Optional[float] = None,
+        is_above_ema200: bool = True
     ) -> Optional[Dict[str, Any]]:
         """
         Calculate trading parameters (buy_range, target, stop)
+        
+        CRITICAL REQUIREMENT (2025-11-09): RSI10 < 30 is a key requirement for the dip-buying strategy.
+        Trading parameters are ONLY calculated when RSI < 30 (or RSI < 20 if below EMA200).
         
         Args:
             current_price: Current stock price
@@ -447,11 +565,32 @@ class VerdictService:
             recent_high: Recent high price
             timeframe_confirmation: MTF confirmation data
             df: DataFrame with price data
+            rsi_value: Current RSI value (required for RSI check)
+            is_above_ema200: Whether price is above EMA200 (for threshold selection)
             
         Returns:
-            Dict with buy_range, target, stop values or None if verdict doesn't require trading params
+            Dict with buy_range, target, stop values or None if verdict doesn't require trading params or RSI >= 30
         """
+        # CRITICAL: Only calculate trading parameters for buy/strong_buy verdicts
         if verdict not in ["buy", "strong_buy"]:
+            return None
+        
+        # CRITICAL REQUIREMENT (2025-11-09): RSI10 < 30 is a key requirement
+        # Do NOT calculate trading parameters when RSI >= 30
+        if rsi_value is not None:
+            # Determine RSI threshold based on EMA200 position
+            if is_above_ema200:
+                rsi_threshold = self.config.rsi_oversold  # 30 - Standard oversold in uptrend
+            else:
+                rsi_threshold = self.config.rsi_extreme_oversold  # 20 - Extreme oversold when below trend
+            
+            # Only calculate trading parameters if RSI < threshold
+            if rsi_value >= rsi_threshold:
+                logger.warning(f"Trading parameters NOT calculated: RSI {rsi_value:.1f} >= {rsi_threshold} (RSI10 < {rsi_threshold} required for dip-buying strategy)")
+                return None
+        else:
+            # If RSI is None/unavailable, log warning and don't calculate
+            logger.warning(f"Trading parameters NOT calculated: RSI value is None (RSI10 < 30 required for dip-buying strategy)")
             return None
         
         # Enhanced buy range based on support levels

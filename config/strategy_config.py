@@ -27,7 +27,7 @@ class StrategyConfig:
     min_volume_multiplier: float = 1.0
     volume_multiplier_for_strong: float = 1.2
     volume_lookback_days: int = 50
-    min_absolute_avg_volume: int = 20000  # Lowered to minimal safety net (was 150000)
+    min_absolute_avg_volume: int = 10000  # Lowered to 10000 (2025-11-09) to allow more stocks to pass liquidity filter
     
     # Capital Configuration
     user_capital: float = 200000.0  # Default: 2L
@@ -36,11 +36,16 @@ class StrategyConfig:
     # Chart Quality Configuration
     # ⚠️ IMPORTANT: Chart quality is REQUIRED in production - DO NOT disable in live trading
     # Chart quality can be disabled ONLY for testing/data collection purposes
+    # RELAXED THRESHOLDS (2025-11-09): Adjusted to allow more stocks while maintaining quality
+    # - Increased gap frequency from 20% to 25% (allow more gaps for volatile stocks)
+    # - Decreased min score from 60 to 50 (allow slightly lower scores)
+    # - Decreased min daily range from 1.5% to 1.0% (allow lower volatility stocks)
+    # - Increased extreme candle frequency from 15% to 20% (allow more extreme candles)
     chart_quality_enabled: bool = True  # REQUIRED in production - filters out bad charts
-    chart_quality_min_score: float = 60.0  # Minimum score for acceptance (0-100)
-    chart_quality_max_gap_frequency: float = 20.0  # Max gap frequency (%)
-    chart_quality_min_daily_range_pct: float = 1.5  # Min daily range (%)
-    chart_quality_max_extreme_candle_frequency: float = 15.0  # Max extreme candle frequency (%)
+    chart_quality_min_score: float = 50.0  # Minimum score for acceptance (0-100) - Relaxed from 60.0
+    chart_quality_max_gap_frequency: float = 25.0  # Max gap frequency (%) - Relaxed from 20.0
+    chart_quality_min_daily_range_pct: float = 1.0  # Min daily range (%) - Relaxed from 1.5
+    chart_quality_max_extreme_candle_frequency: float = 20.0  # Max extreme candle frequency (%) - Relaxed from 15.0
     chart_quality_enabled_in_backtest: bool = True  # Default: enabled (can be disabled for data collection)
     
     # Fundamental Filters
@@ -48,6 +53,9 @@ class StrategyConfig:
     pe_max_decent: float = 25.0
     pb_max_attractive: float = 1.5
     pb_max_expensive: float = 10.0
+    # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): PB threshold for growth stocks
+    # Growth stocks (negative PE) are allowed "watch" verdict if PB < this threshold
+    pb_max_for_growth_stock: float = 5.0  # Max PB ratio for growth stocks to allow "watch" verdict
     
     # Multi-Timeframe Analysis
     mtf_alignment_excellent: float = 8.0
@@ -124,7 +132,7 @@ class StrategyConfig:
             min_volume_multiplier=float(os.getenv('MIN_VOLUME_MULTIPLIER', '1.0')),
             volume_multiplier_for_strong=float(os.getenv('VOLUME_MULTIPLIER_FOR_STRONG', '1.2')),
             volume_lookback_days=int(os.getenv('VOLUME_LOOKBACK_DAYS', '50')),
-            min_absolute_avg_volume=int(os.getenv('MIN_ABSOLUTE_AVG_VOLUME', '20000')),
+            min_absolute_avg_volume=int(os.getenv('MIN_ABSOLUTE_AVG_VOLUME', '10000')),  # Lowered to 10000 (2025-11-09)
             
             # Capital
             user_capital=float(os.getenv('USER_CAPITAL', '200000.0')),
@@ -132,10 +140,10 @@ class StrategyConfig:
             
             # Chart Quality
             chart_quality_enabled=os.getenv('CHART_QUALITY_ENABLED', 'true').lower() in ('1', 'true', 'yes', 'on'),
-            chart_quality_min_score=float(os.getenv('CHART_QUALITY_MIN_SCORE', '60.0')),
-            chart_quality_max_gap_frequency=float(os.getenv('CHART_QUALITY_MAX_GAP_FREQUENCY', '20.0')),
-            chart_quality_min_daily_range_pct=float(os.getenv('CHART_QUALITY_MIN_DAILY_RANGE_PCT', '1.5')),
-            chart_quality_max_extreme_candle_frequency=float(os.getenv('CHART_QUALITY_MAX_EXTREME_CANDLE_FREQUENCY', '15.0')),
+            chart_quality_min_score=float(os.getenv('CHART_QUALITY_MIN_SCORE', '50.0')),  # Relaxed from 60.0
+            chart_quality_max_gap_frequency=float(os.getenv('CHART_QUALITY_MAX_GAP_FREQUENCY', '25.0')),  # Relaxed from 20.0
+            chart_quality_min_daily_range_pct=float(os.getenv('CHART_QUALITY_MIN_DAILY_RANGE_PCT', '1.0')),  # Relaxed from 1.5
+            chart_quality_max_extreme_candle_frequency=float(os.getenv('CHART_QUALITY_MAX_EXTREME_CANDLE_FREQUENCY', '20.0')),  # Relaxed from 15.0
             chart_quality_enabled_in_backtest=os.getenv('CHART_QUALITY_ENABLED_IN_BACKTEST', 'true').lower() in ('1', 'true', 'yes', 'on'),
             
             # Fundamentals
@@ -143,6 +151,7 @@ class StrategyConfig:
             pe_max_decent=float(os.getenv('PE_MAX_DECENT', '25.0')),
             pb_max_attractive=float(os.getenv('PB_MAX_ATTRACTIVE', '1.5')),
             pb_max_expensive=float(os.getenv('PB_MAX_EXPENSIVE', '10.0')),
+            pb_max_for_growth_stock=float(os.getenv('PB_MAX_FOR_GROWTH_STOCK', '5.0')),  # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09)
             
             # MTF
             mtf_alignment_excellent=float(os.getenv('MTF_ALIGNMENT_EXCELLENT', '8.0')),

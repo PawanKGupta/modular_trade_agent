@@ -34,20 +34,27 @@ The alignment score is calculated by combining 6 components:
 
 **Weight**: 2 points
 
-**Scoring**:
-- **Weekly in Uptrend** (`above_ema_uptrend` in weekly reversion reasons): **+2 points**
-  - Best case: Weekly timeframe also in uptrend - perfect setup
-- **Weekly Pullback** (moderate/high oversold in weekly): **+1 point**
-  - Temporary weekly pullback in an uptrend
-- **Weekly Support Holding** (strong/moderate support): **+1 point**
-  - Support holding in uptrend context
+**Scoring** (Refined 2025-11-09 to avoid double-counting):
+- **Weekly trend up and price near support**: **+2 points**
+  - Best case: Weekly timeframe in uptrend AND price is near support level (support quality: strong/moderate, distance ≤ 5%)
+  - Perfect setup: Pullback in uptrend testing support
+- **Weekly trend up but mid-range** (not at support): **+1 point**
+  - Weekly timeframe in uptrend but price is not near support (mid-range)
+  - Still good: Uptrend context but not at key support level
+- **Weekly trend flat/down**: **+0 points**
+  - Weekly timeframe not in uptrend (no bonus points)
 
-**Rationale**: Weekly timeframe provides the broader trend context. If the weekly timeframe is in an uptrend, a daily dip becomes a much better buying opportunity (buy the dip in an uptrend).
+**Rationale**: Weekly timeframe provides the broader trend context. If the weekly timeframe is in an uptrend, a daily dip becomes a much better buying opportunity (buy the dip in an uptrend). The refined logic avoids double-counting by:
+1. First checking if weekly trend is up (via `above_ema_uptrend` in reversion reasons)
+2. If uptrend: Check if price is near support (support quality strong/moderate AND distance ≤ 5%)
+   - Near support: +2 points (perfect setup - pullback testing support in uptrend)
+   - Not near support: +1 point (good setup - uptrend but mid-range)
+3. If flat/down: +0 points (no bonus)
 
 **Conditions Checked**:
-- Weekly oversold analysis severity
-- Weekly support analysis quality
-- Weekly reversion setup reasons
+- Weekly reversion setup reasons (to determine if trend is up)
+- Weekly support analysis quality (strong/moderate/weak/none)
+- Weekly support distance (distance_pct in %)
 
 ---
 
@@ -164,10 +171,10 @@ Alignment Score = 0 (initial)
    ├─ High (RSI < 30): +2
    └─ Moderate: +1
 
-2. Weekly Uptrend Context (0-2 points)
-   ├─ Weekly in Uptrend: +2
-   ├─ Weekly Pullback: +1
-   └─ Weekly Support: +1
+2. Weekly Uptrend Context (0-2 points) - REFINED (2025-11-09)
+   ├─ Weekly trend up and price near support: +2
+   ├─ Weekly trend up but mid-range (not at support): +1
+   └─ Weekly trend flat/down: +0
 
 3. Support Level Confluence (0-2 points)
    ├─ Very Close to Strong Support: +2

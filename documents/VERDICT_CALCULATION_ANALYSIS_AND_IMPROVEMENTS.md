@@ -235,6 +235,8 @@ chart_quality_min_daily_range_pct: float = 1.0  # Decreased from 1.5
 chart_quality_max_extreme_candle_frequency: float = 20.0  # Increased from 15.0
 ```
 
+**Status**: ✅ **IMPLEMENTED** (2025-11-09)
+
 **Expected Impact**: +15-20% stocks pass chart quality filter
 
 ---
@@ -260,14 +262,19 @@ chart_quality_max_extreme_candle_frequency: float = 20.0  # Increased from 15.0
 # config/settings.py
 MIN_VOLUME_MULTIPLIER = 0.7  # Decreased from 1.0
 
-# services/verdict_service.py
-# Add RSI-based volume adjustment
+# core/volume_analysis.py
+# Add RSI-based volume adjustment in assess_volume_quality_intelligent()
+base_threshold = MIN_VOLUME_MULTIPLIER  # Default: 0.7x
 if rsi_value is not None and rsi_value < 30:
     # For oversold conditions, allow lower volume
-    volume_multiplier_threshold = 0.5  # 50% of average volume
-else:
-    volume_multiplier_threshold = MIN_VOLUME_MULTIPLIER  # 0.7x
+    base_threshold = 0.5  # 50% of average volume
+
+# services/verdict_service.py
+# Pass RSI value to assess_volume() for RSI-based adjustment
+volume_data = self.verdict_service.assess_volume(df, last, rsi_value=rsi_value)
 ```
+
+**Status**: ✅ **IMPLEMENTED** (2025-11-09)
 
 **Expected Impact**: +20-30% stocks pass volume check
 
@@ -339,24 +346,19 @@ else:
 **Implementation**:
 ```python
 # services/verdict_service.py
-# Make fundamental filter more flexible
-pe = fundamentals.get('pe')
-pb = fundamentals.get('pb')
+# New method: assess_fundamentals()
+def assess_fundamentals(self, pe: Optional[float], pb: Optional[float]) -> Dict[str, Any]:
+    # If PE < 0 (negative PE):
+    #   - Check PB ratio
+    #   - If PB < 5.0: Allow "watch" verdict (growth stock)
+    #   - If PB >= 5.0 or None: Force "avoid" (expensive loss-maker)
+    # If PE >= 0: Allow "buy" verdicts (profitable company)
 
-if pe is not None and pe < 0:
-    # Negative PE = growth stock or loss-making
-    if pb is not None and pb < 5.0:
-        # Reasonable PB ratio → allow "watch" (not "avoid")
-        fundamental_ok = True  # Allow but will be more conservative
-        fundamental_reason = "growth_stock"
-    else:
-        # High PB + negative PE → avoid
-        fundamental_ok = False
-        fundamental_reason = "loss_making_expensive"
-else:
-    fundamental_ok = True
-    fundamental_reason = "profitable"
+# config/strategy_config.py
+pb_max_for_growth_stock: float = 5.0  # Max PB ratio for growth stocks
 ```
+
+**Status**: ✅ **IMPLEMENTED** (2025-11-09)
 
 **Expected Impact**: +5-10% stocks pass fundamental check (growth stocks)
 

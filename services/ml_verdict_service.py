@@ -95,7 +95,8 @@ class MLVerdictService(VerdictService):
         fundamental_ok: bool,
         timeframe_confirmation: Optional[Dict[str, Any]],
         news_sentiment: Optional[Dict[str, Any]],
-        chart_quality_passed: bool = True
+        chart_quality_passed: bool = True,
+        fundamental_assessment: Optional[Dict[str, Any]] = None
     ) -> Tuple[str, List[str]]:
         """
         Determine verdict using ML if available, else rule-based
@@ -110,10 +111,13 @@ class MLVerdictService(VerdictService):
             is_above_ema200: Whether price is above EMA200
             vol_ok: Whether volume is OK
             vol_strong: Whether volume is strong
-            fundamental_ok: Whether fundamentals are OK
+            fundamental_ok: Whether fundamentals are OK (backward compatibility)
             timeframe_confirmation: Multi-timeframe confirmation data
             news_sentiment: News sentiment data
             chart_quality_passed: Whether chart quality check passed (hard filter)
+            fundamental_assessment: Optional fundamental assessment dict from assess_fundamentals()
+                                    If provided, overrides fundamental_ok for more flexible logic
+                                    (FLEXIBLE FUNDAMENTAL FILTER - 2025-11-09)
             
         Returns:
             Tuple of (verdict, justification)
@@ -126,35 +130,56 @@ class MLVerdictService(VerdictService):
             logger.info(f"ML verdict service: Skipping ML prediction (chart quality is mandatory)")
             return "avoid", ["Chart quality failed - too many gaps/extreme candles/flat movement"]
         
-        # Stage 2: ML model prediction (only if chart quality passed)
-        # IMPORTANT: At this point, chart_quality_passed must be True
-        # If it's not, there's a logic error (should have returned "avoid" above)
-        # Try ML prediction only if chart quality passed
+        # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Check fundamental_avoid flag
+        # If fundamental_avoid is True, force "avoid" verdict (expensive loss-making company)
+        if fundamental_assessment is not None:
+            fundamental_avoid = fundamental_assessment.get('fundamental_avoid', False)
+            if fundamental_avoid:
+                fundamental_reason = fundamental_assessment.get('fundamental_reason', 'loss_making_expensive')
+                logger.info(f"ML verdict service: Fundamental filter FAILED - returning 'avoid' immediately (hard filter)")
+                logger.info(f"ML verdict service: Skipping ML prediction (fundamental filter: {fundamental_reason})")
+                return "avoid", [f"Fundamental filter: {fundamental_reason}"]
+        
+        # Stage 2: ML model prediction (TEMPORARILY DISABLED - 2025-11-09)
+        # Using rule-based logic only until ML model is fully trained and calibrated
+        # ML model predictions are logged for future training data collection
+        
+        # TEMPORARY: Use rule-based logic only (2025-11-09)
+        # ML model is not fully trained yet, so we use rule-based logic for now
+        # Log ML prediction for training data collection but don't use it for verdict
         if self.model_loaded:
             try:
-                logger.debug(f"ML verdict service: Chart quality passed - proceeding with ML prediction")
+                logger.info(f"ML verdict service: ML model loaded but using rule-based logic (ML not fully trained yet)")
+                logger.debug(f"ML verdict service: Chart quality passed - would proceed with ML prediction")
+                
+                # Get ML prediction for logging/training data collection (but don't use it)
                 ml_verdict = self._predict_with_ml(
                     signals, rsi_value, is_above_ema200,
                     vol_ok, vol_strong, fundamental_ok,
                     timeframe_confirmation, news_sentiment
                 )
                 if ml_verdict:
-                    justification = self._build_ml_justification(ml_verdict)
-                    logger.debug(f"ML prediction (chart quality passed): {ml_verdict}")
-                    return ml_verdict, justification
+                    ml_justification = self._build_ml_justification(ml_verdict)
+                    logger.info(f"ML verdict service: ML would predict '{ml_verdict}' (not used - using rule-based instead)")
+                    logger.debug(f"ML prediction (for training data): {ml_verdict}, justification: {ml_justification}")
                 else:
-                    logger.debug(f"ML prediction returned None - falling back to rule-based logic")
+                    logger.debug(f"ML prediction returned None - using rule-based logic")
             except Exception as e:
-                logger.warning(f"ML prediction failed: {e}, falling back to rules")
+                logger.warning(f"ML prediction failed: {e}, using rule-based logic")
                 import traceback
                 logger.debug(traceback.format_exc())
+        else:
+            logger.debug(f"ML verdict service: ML model not loaded - using rule-based logic")
         
-        # Fall back to rule-based logic (only if chart quality passed)
+        # Use rule-based logic (only if chart quality passed)
+        # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Pass fundamental_assessment to parent
+        logger.debug(f"ML verdict service: Using rule-based logic for verdict determination")
         return super().determine_verdict(
             signals, rsi_value, is_above_ema200,
             vol_ok, vol_strong, fundamental_ok,
             timeframe_confirmation, news_sentiment,
-            chart_quality_passed=chart_quality_passed
+            chart_quality_passed=chart_quality_passed,
+            fundamental_assessment=fundamental_assessment
         )
     
     def _predict_with_ml(

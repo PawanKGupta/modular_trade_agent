@@ -29,10 +29,10 @@ Filters out stocks with "unclean" daily charts before any other analysis.
 3. **Extreme Candle Analysis**: Detects excessive big red/green candles
 
 ### Criteria
-- **Chart Cleanliness Score**: Must be >= `chart_quality_min_score` (default: 60)
-- **Max Gap Frequency**: Must be < `chart_quality_max_gap_frequency` (default: 0.15 = 15%)
-- **Min Daily Range**: Must be >= `chart_quality_min_daily_range_pct` (default: 0.5%)
-- **Max Extreme Candle Frequency**: Must be < `chart_quality_max_extreme_candle_frequency` (default: 0.20 = 20%)
+- **Chart Cleanliness Score**: Must be >= `chart_quality_min_score` (default: 50, relaxed from 60)
+- **Max Gap Frequency**: Must be < `chart_quality_max_gap_frequency` (default: 25.0%, relaxed from 20.0%)
+- **Min Daily Range**: Must be >= `chart_quality_min_daily_range_pct` (default: 1.0%, relaxed from 1.5%)
+- **Max Extreme Candle Frequency**: Must be < `chart_quality_max_extreme_candle_frequency` (default: 20.0%, relaxed from 15.0%)
 
 ### Result
 - **If FAILED**: Immediately return `"avoid"` verdict with reason
@@ -42,10 +42,10 @@ Filters out stocks with "unclean" daily charts before any other analysis.
 ```python
 # config/strategy_config.py
 chart_quality_enabled = True  # Enable chart quality filtering
-chart_quality_min_score = 60  # Minimum cleanliness score (0-100)
-chart_quality_max_gap_frequency = 0.15  # Max 15% gaps
-chart_quality_min_daily_range_pct = 0.5  # Min 0.5% daily range
-chart_quality_max_extreme_candle_frequency = 0.20  # Max 20% extreme candles
+chart_quality_min_score = 50  # Minimum cleanliness score (0-100) - Relaxed from 60
+chart_quality_max_gap_frequency = 25.0  # Max 25% gaps - Relaxed from 20.0
+chart_quality_min_daily_range_pct = 1.0  # Min 1.0% daily range - Relaxed from 1.5
+chart_quality_max_extreme_candle_frequency = 20.0  # Max 20% extreme candles - Relaxed from 15.0
 ```
 
 ---
