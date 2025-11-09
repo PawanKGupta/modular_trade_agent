@@ -201,7 +201,11 @@ class BacktestService:
         trade_count = stock_result.get('backtest', {}).get('total_trades', 0)
         
         # Get current RSI for dynamic threshold adjustment
-        current_rsi = stock_result.get('rsi', 30)  # Default to 30 if not available
+        current_rsi = stock_result.get('rsi') or 30  # Default to 30 if None or not available
+        
+        # Ensure current_rsi is a number (handle None case)
+        if current_rsi is None:
+            current_rsi = 30
         
         # RSI-based threshold adjustment (more oversold = lower thresholds)
         rsi_factor = 1.0

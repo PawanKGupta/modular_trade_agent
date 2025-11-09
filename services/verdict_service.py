@@ -8,6 +8,7 @@ Extracted from core/analysis.py to improve modularity.
 import pandas as pd
 from typing import Optional, Dict, Any, Tuple, List
 import math
+import threading
 
 from core.volume_analysis import assess_volume_quality_intelligent, get_volume_verdict, analyze_volume_pattern
 from core.candle_analysis import analyze_recent_candle_quality, should_downgrade_signal
@@ -20,9 +21,46 @@ from core.analysis import (
 import yfinance as yf
 
 from utils.logger import logger
+from utils.circuit_breaker import CircuitBreaker
+from utils.retry_handler import exponential_backoff_retry
 from config.strategy_config import StrategyConfig
+from config.settings import (
+    RETRY_MAX_ATTEMPTS, RETRY_BASE_DELAY, RETRY_MAX_DELAY, RETRY_BACKOFF_MULTIPLIER,
+    CIRCUITBREAKER_FAILURE_THRESHOLD, CIRCUITBREAKER_RECOVERY_TIMEOUT,
+    API_RATE_LIMIT_DELAY
+)
 from services.chart_quality_service import ChartQualityService
 from services.liquidity_capital_service import LiquidityCapitalService
+
+# Rate limiting for fundamental data API calls
+# IMPORTANT: Share the same rate limiter as OHLCV data since they hit the same Yahoo Finance API
+# This prevents hitting rate limits by spacing out ALL API calls (OHLCV + fundamental)
+import time
+# Import the rate limiting function from data_fetcher to share the same limiter
+from core.data_fetcher import _enforce_rate_limit
+
+# Circuit breaker configuration for fundamental data API calls
+# Use same configuration as OHLCV data fetching for consistency
+# Create circuit breaker for yfinance fundamental API with configurable parameters
+yfinance_fundamental_circuit_breaker = CircuitBreaker(
+    name="YFinance_Fundamental_API",
+    failure_threshold=CIRCUITBREAKER_FAILURE_THRESHOLD,
+    recovery_timeout=CIRCUITBREAKER_RECOVERY_TIMEOUT
+)
+
+# Create retry decorator with configurable parameters (same as OHLCV data fetching)
+api_retry_configured = exponential_backoff_retry(
+    max_retries=RETRY_MAX_ATTEMPTS,
+    base_delay=RETRY_BASE_DELAY,
+    max_delay=RETRY_MAX_DELAY,
+    backoff_multiplier=RETRY_BACKOFF_MULTIPLIER,
+    jitter=True,
+    exceptions=(Exception,)
+)
+
+# In-memory cache for fundamental data (FIX 3: Cache fundamental data)
+_fundamental_cache = {}
+_cache_lock = threading.Lock()
 
 
 class VerdictService:
@@ -43,6 +81,42 @@ class VerdictService:
         """
         Fetch fundamental data (PE, PB ratios)
         
+        FIX 2: Protected with circuit breaker and retry handler
+        FIX 3: Cached to avoid duplicate API calls
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            Dict with pe and pb values
+        """
+        # FIX 3: Check cache first
+        with _cache_lock:
+            if ticker in _fundamental_cache:
+                logger.debug(f"Using cached fundamental data for {ticker}")
+                return _fundamental_cache[ticker].copy()
+        
+        # FIX 2: Fetch with circuit breaker and retry protection
+        try:
+            data = self._fetch_fundamentals_protected(ticker)
+            
+            # FIX 3: Store in cache
+            with _cache_lock:
+                _fundamental_cache[ticker] = data.copy()
+            
+            return data
+        except Exception as e:
+            logger.warning(f"Failed to fetch fundamental data for {ticker}: {e}")
+            return {'pe': None, 'pb': None}
+    
+    @yfinance_fundamental_circuit_breaker
+    @api_retry_configured
+    def _fetch_fundamentals_protected(self, ticker: str) -> Dict[str, Optional[float]]:
+        """
+        Protected method to fetch fundamental data with circuit breaker and retry
+        
+        FIX 2: This method is protected by circuit breaker and retry handler
+        
         Args:
             ticker: Stock ticker symbol
             
@@ -50,15 +124,47 @@ class VerdictService:
             Dict with pe and pb values
         """
         try:
+            # Rate limiting: Use same rate limiter as OHLCV data (shared API endpoint)
+            # This ensures all Yahoo Finance API calls (OHLCV + fundamental) are spaced out
+            _enforce_rate_limit(api_type=f"Fundamental ({ticker})")
+            
             logger.debug(f"Fetching fundamental data for {ticker}")
-            info = yf.Ticker(ticker).info
+            ticker_obj = yf.Ticker(ticker)
+            info = ticker_obj.info
+            
+            # Handle case where info is None or empty
+            if not info or not isinstance(info, dict):
+                logger.warning(f"Fundamental data for {ticker}: Empty or invalid response from YFinance API")
+                return {'pe': None, 'pb': None}
+            
             pe = info.get('trailingPE', None)
             pb = info.get('priceToBook', None)
-            logger.debug(f"Fundamental data for {ticker}: PE={pe}, PB={pb}")
+            
+            # Log if values are missing (but not an error)
+            if pe is None or pb is None:
+                logger.debug(f"Fundamental data for {ticker}: PE={pe}, PB={pb} (some values may be unavailable)")
+            else:
+                logger.debug(f"Fundamental data for {ticker}: PE={pe}, PB={pb}")
+            
             return {'pe': pe, 'pb': pb}
-        except Exception as e:
-            logger.warning(f"Could not fetch fundamental data for {ticker}: {e}")
+        except KeyError as e:
+            logger.warning(f"Could not fetch fundamental data for {ticker}: Missing key in API response - {e}")
             return {'pe': None, 'pb': None}
+        except AttributeError as e:
+            # Handle "argument of type 'NoneType' is not iterable" or similar
+            logger.warning(f"Could not fetch fundamental data for {ticker}: API response format issue - {e}")
+            return {'pe': None, 'pb': None}
+        except Exception as e:
+            error_msg = str(e)
+            # Provide more specific error messages
+            if 'NoneType' in error_msg:
+                logger.warning(f"Could not fetch fundamental data for {ticker}: API returned None (data may be unavailable for this ticker)")
+            elif '401' in error_msg or 'Unauthorized' in error_msg:
+                logger.warning(f"Could not fetch fundamental data for {ticker}: API authentication error (rate limiting or access issue)")
+            else:
+                logger.warning(f"Could not fetch fundamental data for {ticker}: {error_msg}")
+            # Re-raise to trigger circuit breaker
+            raise
     
     def assess_chart_quality(self, df: pd.DataFrame) -> Dict[str, Any]:
         """

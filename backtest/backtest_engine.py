@@ -61,22 +61,33 @@ class BacktestEngine:
         # Phase 10: Chart quality tracking
         self.chart_quality_failed = False
         self.chart_quality_data = None
+        self._weekly_data = None  # FIX 4: Store weekly data for reuse
+        
+        # RECOMMENDATION 1: Initialize _full_data to None (will be set in _load_data)
+        self._full_data = None
         
         # Load and prepare data
         self._load_data()
         
         # Phase 10: Check chart quality if enabled (after data is loaded)
+        # NOTE: _check_chart_quality now uses _full_data if available
         self._check_chart_quality()
     
     def _check_chart_quality(self):
         """
         Check chart quality and filter out if poor (Phase 10)
+        RECOMMENDATION 1: Use full historical data (including before backtest start) for chart quality
         """
         try:
             from services.chart_quality_service import ChartQualityService
             from config.strategy_config import StrategyConfig
             
-            if self.data is None or self.data.empty:
+            # RECOMMENDATION 1: Use full data (including history before backtest start) for chart quality
+            # This ensures we have enough data for assessment (full period assessment)
+            # Use _full_data if available, otherwise use self.data
+            data_for_chart_quality = self._full_data if (hasattr(self, '_full_data') and self._full_data is not None and not self._full_data.empty) else self.data
+            
+            if data_for_chart_quality is None or data_for_chart_quality.empty:
                 self.chart_quality_failed = False
                 self.chart_quality_data = None
                 return
@@ -90,7 +101,7 @@ class BacktestEngine:
                 return
             
             chart_quality_service = ChartQualityService(config=strategy_config)
-            chart_quality_data = chart_quality_service.assess_chart_quality(self.data)
+            chart_quality_data = chart_quality_service.assess_chart_quality(data_for_chart_quality)
             
             if not chart_quality_data.get('passed', True):
                 reason = chart_quality_data.get('reason', 'Poor chart quality')
@@ -179,25 +190,106 @@ class BacktestEngine:
                 missing_cols = [col for col in required_cols_upper if col not in self.data.columns]
                 raise ValueError(f"Missing required columns: {missing_cols}")
             
-            # Calculate technical indicators
+            # FIX 4: Store weekly data for reuse in integrated backtest (avoid duplicate fetching)
+            # Process weekly data similar to daily data (set index, convert columns)
+            if multi_data.get('weekly') is not None:
+                weekly_data = multi_data['weekly'].copy()
+                # Ensure date column is set as index for weekly data
+                if 'date' in weekly_data.columns:
+                    weekly_data['date'] = pd.to_datetime(weekly_data['date'])
+                    weekly_data = weekly_data.set_index('date')
+                
+                # Ensure we have required columns (convert to proper case)
+                if all(col in weekly_data.columns for col in required_cols_lower):
+                    # Rename to uppercase for compatibility
+                    weekly_data = weekly_data.rename(columns={
+                        'open': 'Open',
+                        'high': 'High',
+                        'low': 'Low',
+                        'close': 'Close',
+                        'volume': 'Volume'
+                    })
+                
+                self._weekly_data = weekly_data
+            else:
+                self._weekly_data = None
+            
+            # RECOMMENDATION 1: Keep full historical data (including before backtest start date)
+            # This ensures we have enough data for chart quality assessment on early signals
+            # Chart quality needs at least 60 days before signal date
+            
+            print(f"Total historical data fetched: {len(self.data)} points")
+            historical_before_start = len(self.data.loc[self.data.index < self.start_date]) if len(self.data) > 0 else 0
+            print(f"Historical data before backtest start: {historical_before_start} trading days")
+            
+            # Calculate technical indicators on full data FIRST (needed for both chart quality and analysis)
+            # This must be done BEFORE filtering to backtest period, so indicators are calculated on full data
             self._calculate_indicators()
             
-            # Check if we have data for the requested backtest period before filtering
+            # Store full data WITH indicators for chart quality and analysis service
+            # This includes history before backtest start date (needed for early signal chart quality)
+            self._full_data = self.data.copy()  # Keep full data with indicators for chart quality assessment
+            
+            # Now filter to backtest period AFTER calculating indicators
+            # This ensures backtest_period_data has all the indicators (EMA200, RSI, etc.)
+            # Note: After dropping NaN, the data might start later than the requested backtest start date
+            # So we need to check if we have data in the requested period, or adjust the period
+            
+            # Check if we have any data in the requested backtest period
             backtest_period_data = self.data.loc[self.start_date:self.end_date]
             
             if backtest_period_data.empty:
-                raise ValueError(f"No data available for requested backtest period: {self.start_date.date()} to {self.end_date.date()}")
+                # After dropping NaN, we might not have data in the requested period
+                # Check what data we actually have
+                if self.data.empty:
+                    raise ValueError(f"No data available for {self.symbol} after indicator calculation (all data dropped as NaN)")
+                
+                # Find the actual date range we have data for
+                actual_start = self.data.index.min()
+                actual_end = self.data.index.max()
+                
+                # Check if the requested period overlaps with available data
+                if actual_end < self.start_date:
+                    raise ValueError(
+                        f"No data available for requested backtest period: {self.start_date.date()} to {self.end_date.date()}\n"
+                        f"Available data period: {actual_start.date()} to {actual_end.date()}\n"
+                        f"This can happen if the backtest start date is before the first valid data point (after dropping NaN for EMA200)"
+                    )
+                elif actual_start > self.end_date:
+                    raise ValueError(
+                        f"No data available for requested backtest period: {self.start_date.date()} to {self.end_date.date()}\n"
+                        f"Available data period: {actual_start.date()} to {actual_end.date()}\n"
+                        f"This can happen if the backtest end date is before the first valid data point"
+                    )
+                else:
+                    # Use the overlapping period
+                    adjusted_start = max(self.start_date, actual_start)
+                    adjusted_end = min(self.end_date, actual_end)
+                    backtest_period_data = self.data.loc[adjusted_start:adjusted_end]
+                    
+                    if backtest_period_data.empty:
+                        raise ValueError(
+                            f"No data available for requested backtest period: {self.start_date.date()} to {self.end_date.date()}\n"
+                            f"Available data period: {actual_start.date()} to {actual_end.date()}\n"
+                            f"Adjusted period: {adjusted_start.date()} to {adjusted_end.date()}"
+                        )
+                    
+                    print(f"⚠️ Adjusted backtest period: {adjusted_start.date()} to {adjusted_end.date()} (requested: {self.start_date.date()} to {self.end_date.date()})")
             
-            print(f"Indicators calculated. Total historical data: {len(self.data)} points")
-            print(f"Backtest period data: {len(backtest_period_data)} trading days")
+            print(f"Backtest period data: {len(backtest_period_data)} trading days (with indicators)")
             
-            # Filter to backtest period
+            # Use filtered data for backtest iteration
+            # Full data (with indicators) is stored in _full_data for chart quality and analysis
             self.data = backtest_period_data
+            
+            # Update start_date and end_date to match actual data (for consistency)
+            self.start_date = self.data.index.min()
+            self.end_date = self.data.index.max()
             
             if len(self.data) < 20:  # Minimum reasonable backtest period
                 raise ValueError(f"Insufficient backtest period data: {len(self.data)} days (need at least 20 days)")
                 
-            print(f"Data loaded successfully for backtest period: {len(self.data)} trading days")
+            print(f"Data loaded successfully: {len(self.data)} trading days in backtest period, {len(self._full_data)} total historical days")
             
         except Exception as e:
             print(f"Error loading data: {e}")

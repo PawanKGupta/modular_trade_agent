@@ -2,17 +2,48 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 import threading
+import time
 
 from utils.logger import logger
 from utils.retry_handler import exponential_backoff_retry
 from utils.circuit_breaker import CircuitBreaker
 from config.settings import (
     RETRY_MAX_ATTEMPTS, RETRY_BASE_DELAY, RETRY_MAX_DELAY, RETRY_BACKOFF_MULTIPLIER,
-    CIRCUITBREAKER_FAILURE_THRESHOLD, CIRCUITBREAKER_RECOVERY_TIMEOUT
+    CIRCUITBREAKER_FAILURE_THRESHOLD, CIRCUITBREAKER_RECOVERY_TIMEOUT,
+    API_RATE_LIMIT_DELAY
 )
 
 # Thread lock for yfinance to prevent concurrent data fetching issues
 _yfinance_lock = threading.Lock()
+
+# Rate limiting: Track last API call time and enforce minimum delay between calls
+# This prevents hitting Yahoo Finance rate limits by spacing out API calls
+_last_api_call_time = 0
+_rate_limit_lock = threading.Lock()
+# Minimum delay between API calls (in seconds) - configurable via API_RATE_LIMIT_DELAY
+# Yahoo Finance typically allows ~2000 requests/hour = ~1 request every 1.8 seconds
+# Default: 0.5 seconds (can be increased if still hitting rate limits)
+MIN_DELAY_BETWEEN_API_CALLS = API_RATE_LIMIT_DELAY
+
+def _enforce_rate_limit(api_type: str = "OHLCV"):
+    """
+    Enforce rate limiting for Yahoo Finance API calls.
+    
+    This function spaces out API calls to prevent hitting rate limits.
+    Should be called before making any Yahoo Finance API call.
+    
+    Args:
+        api_type: Type of API call (for logging purposes)
+    """
+    global _last_api_call_time
+    with _rate_limit_lock:
+        current_time = time.time()
+        time_since_last_call = current_time - _last_api_call_time
+        if time_since_last_call < MIN_DELAY_BETWEEN_API_CALLS:
+            delay_needed = MIN_DELAY_BETWEEN_API_CALLS - time_since_last_call
+            logger.debug(f"Rate limiting: Waiting {delay_needed:.2f}s before {api_type} API call")
+            time.sleep(delay_needed)
+        _last_api_call_time = time.time()
 
 # Create circuit breaker for yfinance API with configurable parameters
 yfinance_circuit_breaker = CircuitBreaker(
@@ -128,6 +159,9 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None, add_current_d
     try:
         logger.debug(f"Fetching data for {ticker} from {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')} [{interval}]")
         
+        # Rate limiting: Enforce minimum delay between API calls to prevent rate limiting
+        _enforce_rate_limit(api_type=f"OHLCV ({ticker})")
+        
         # Use lock to prevent concurrent yfinance calls (not thread-safe)
         with _yfinance_lock:
             df = yf.download(
@@ -202,11 +236,33 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None, add_current_d
                     logger.warning(f"Failed to get current day data for {ticker}: {e}")
         
         # Additional validation - different requirements for different intervals
-        min_required = 50 if interval == '1wk' else 30  # Weekly needs more history, daily needs 30
+        # For dip-buying strategy: Daily is PRIMARY (needs 30 rows for EMA200), Weekly is SECONDARY (flexible)
+        # Weekly data is used for trend confirmation, but analysis can proceed with limited weekly data
+        min_required_daily = 30  # Daily needs minimum for EMA200 calculation
+        min_required_weekly = 20  # Weekly: Reduced from 50 to 20 for newer stocks (dip-buying can work with less)
+        
+        min_required = min_required_weekly if interval == '1wk' else min_required_daily
+        
         if len(df) < min_required:
-            error_msg = f"Insufficient data for {ticker} [{interval}]: only {len(df)} rows (need {min_required})"
-            logger.warning(error_msg)
-            raise ValueError(error_msg)
+            # For weekly data, be more permissive - log warning but don't fail for dip-buying strategy
+            if interval == '1wk':
+                # Weekly data is optional for dip-buying (daily is primary)
+                # Log as INFO instead of WARNING for newer stocks with limited data
+                if len(df) >= 10:  # At least 10 weeks (2.5 months) - still useful
+                    logger.info(f"Weekly data for {ticker}: {len(df)} rows (minimum recommended: {min_required}, but continuing with available data for dip-buying strategy)")
+                    # Return data even if below minimum - MTF analysis will handle gracefully
+                    logger.debug(f"Successfully processed data for {ticker} [{interval}]: {len(df)} rows (below recommended minimum but usable)")
+                    return df
+                else:
+                    # Very limited weekly data (< 10 weeks) - not useful for analysis
+                    error_msg = f"Insufficient weekly data for {ticker}: only {len(df)} rows (minimum: 10 weeks for basic analysis)"
+                    logger.warning(error_msg)
+                    raise ValueError(error_msg)
+            else:
+                # Daily data is critical - must have minimum
+                error_msg = f"Insufficient data for {ticker} [{interval}]: only {len(df)} rows (need {min_required})"
+                logger.warning(error_msg)
+                raise ValueError(error_msg)
         
         logger.debug(f"Successfully processed data for {ticker} [{interval}]: {len(df)} rows")
         return df
@@ -263,11 +319,31 @@ def fetch_multi_timeframe_data(ticker, days=800, end_date=None, add_current_day=
             return None
         
         # Fetch weekly data (need more days for sufficient weekly candles)
+        # For dip-buying strategy: Weekly is optional, daily is primary
+        # Try to fetch weekly data, but continue with daily-only if weekly fails
         try:
             weekly_data = fetch_ohlcv_yf(ticker, days=weekly_days, interval='1wk', end_date=end_date, add_current_day=add_current_day)
             logger.debug(f"Fetched {len(weekly_data)} weekly candles for {ticker} (requested: {weekly_days} days, max_years: {weekly_max_years})")
+            
+            # Validate weekly data quality (but don't fail if below ideal)
+            if len(weekly_data) < 20:
+                logger.info(f"Weekly data for {ticker}: {len(weekly_data)} rows (below ideal 20, but usable for dip-buying strategy)")
+        except ValueError as e:
+            # ValueError means insufficient data - check if it's recoverable
+            error_str = str(e)
+            if 'Insufficient weekly data' in error_str:
+                # Extract the number of rows from error message if possible
+                logger.info(f"Weekly data unavailable for {ticker}: {e} - continuing with daily-only analysis (dip-buying strategy)")
+            else:
+                logger.info(f"Weekly data insufficient for {ticker}: {e} - continuing with daily-only analysis")
+            # Return with daily data only, weekly will be None - MTF analysis will handle gracefully
+            return {
+                'daily': daily_data,
+                'weekly': None
+            }
         except Exception as e:
-            logger.warning(f"Failed to fetch weekly data for {ticker}: {e}")
+            # Other errors (API issues, etc.) - log and continue with daily-only
+            logger.info(f"Failed to fetch weekly data for {ticker}: {e} - continuing with daily-only analysis (dip-buying strategy)")
             # Return with daily data only, weekly will be None
             return {
                 'daily': daily_data,

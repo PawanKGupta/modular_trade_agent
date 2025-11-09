@@ -88,8 +88,18 @@ class TimeframeAnalysis:
         available_data_days = len(df)
         support_lookback = self._get_adaptive_lookback(available_data_days, support_lookback, timeframe)
         
+        # For weekly data with limited history, use adaptive lookback
+        # For dip-buying strategy, we can work with less weekly data
         if len(df) < support_lookback:
-            return None
+            # For weekly timeframe, try with reduced lookback if we have at least 10 rows
+            if timeframe == 'weekly' and len(df) >= 10:
+                # Use available data with reduced lookback (50% of requested)
+                support_lookback = max(int(support_lookback * 0.5), 10)  # At least 10, or 50% of requested
+                logger.debug(f"Weekly data limited ({len(df)} rows), using reduced lookback: {support_lookback} for {timeframe} analysis")
+            else:
+                # Not enough data even with reduced lookback
+                logger.debug(f"Insufficient data for {timeframe} analysis: {len(df)} rows < {support_lookback} lookback")
+                return None
             
         try:
             # Ensure indicators are computed with configurable RSI period

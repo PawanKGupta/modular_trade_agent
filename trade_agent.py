@@ -281,7 +281,11 @@ async def main_async(export_csv=True, enable_multi_timeframe=True, enable_backte
     try:
         from services.async_analysis_service import AsyncAnalysisService
         
-        async_service = AsyncAnalysisService(max_concurrent=10)
+        # Use configurable concurrency from settings
+        # Default: 5 for regular backtesting (balanced), can be increased via MAX_CONCURRENT_ANALYSES env var
+        # For ML training with >3000 stocks, set MAX_CONCURRENT_ANALYSES=10 for faster processing
+        from config.settings import MAX_CONCURRENT_ANALYSES
+        async_service = AsyncAnalysisService(max_concurrent=MAX_CONCURRENT_ANALYSES)
         results = await async_service.analyze_batch_async(
             tickers=tickers,
             enable_multi_timeframe=enable_multi_timeframe,

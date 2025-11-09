@@ -71,6 +71,21 @@ RETRY_BACKOFF_MULTIPLIER = float(os.getenv("RETRY_BACKOFF_MULTIPLIER", "2.0"))
 CIRCUITBREAKER_FAILURE_THRESHOLD = int(os.getenv("CIRCUITBREAKER_FAILURE_THRESHOLD", "3"))
 CIRCUITBREAKER_RECOVERY_TIMEOUT = float(os.getenv("CIRCUITBREAKER_RECOVERY_TIMEOUT", "60.0"))
 
+# Rate Limiting Configuration
+# Minimum delay between API calls to prevent rate limiting
+# Yahoo Finance typically allows ~2000 requests/hour = ~1 request every 1.8 seconds
+# Using 1.0 seconds for more conservative rate limiting (reduces HTTP 401 errors)
+# Can be decreased to 0.5s for faster execution if errors are not an issue
+API_RATE_LIMIT_DELAY = float(os.getenv("API_RATE_LIMIT_DELAY", "1.0"))  # seconds between API calls
+
+# Concurrency Configuration
+# Maximum concurrent API calls/analyses
+# Lower values reduce API rate limiting but slower execution
+# Higher values faster execution but more API rate limiting risk
+# Default: 5 for regular backtesting (balanced), can be increased to 10 for ML training
+# For ML training with >3000 stocks, set MAX_CONCURRENT_ANALYSES=10 in .env for faster processing
+MAX_CONCURRENT_ANALYSES = int(os.getenv("MAX_CONCURRENT_ANALYSES", "5"))  # concurrent analyses
+
 # Telegram API config (put real tokens in .env)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "xxxxxx")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "xxxx")

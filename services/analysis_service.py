@@ -154,49 +154,155 @@ class AnalysisService:
                         logger.warning(f"No data available for {ticker}")
                         return {"ticker": ticker, "status": "no_data"}
             
-            # Step 2: Clip to as_of_date if provided (ensure no future data leaks)
-            df = self.data_service.clip_to_date(df, as_of_date)
+            # Step 2: Ensure sufficient historical data for chart quality assessment
+            # RECOMMENDATION 1: Fetch more historical data before signal date for chart quality
+            # Chart quality needs at least 60 days, but early signals in backtest might not have enough
+            # Solution: If using pre_fetched_daily, it should already have history (from backtest engine)
+            # If not using pre_fetched_daily and we don't have enough data, fetch additional historical data
+            min_days_for_chart_quality = 60
+            chart_quality_lookback_days = 90  # Fetch 90 days before signal date for chart quality (extra buffer)
+            
+            if as_of_date:
+                # For backtesting: Check if we have enough data before signal date
+                df_clipped_to_signal = self.data_service.clip_to_date(df.copy(), as_of_date)
+                days_available = len(df_clipped_to_signal)
+                
+                # If using pre_fetched_daily, it should already have history from backtest engine
+                # Backtest engine fetches data going back before backtest start date (for EMA200)
+                # So pre_fetched_daily should have enough history for early signals
+                if days_available < min_days_for_chart_quality and pre_fetched_daily is None:
+                    # Not enough data AND not using pre_fetched_daily - try to fetch more historical data
+                    logger.warning(f"{ticker}: Insufficient data before {as_of_date} ({days_available} days < {min_days_for_chart_quality} days)")
+                    logger.info(f"{ticker}: Attempting to fetch additional historical data for chart quality assessment...")
+                    
+                    try:
+                        # Fetch additional historical data
+                        from datetime import datetime, timedelta
+                        from core.data_fetcher import fetch_ohlcv_yf
+                        
+                        # Fetch enough days to cover chart quality lookback
+                        additional_data = fetch_ohlcv_yf(
+                            ticker,
+                            end_date=as_of_date,
+                            add_current_day=False,
+                            days=chart_quality_lookback_days
+                        )
+                        
+                        if additional_data is not None and not additional_data.empty:
+                            # Use the data that has more history
+                            if len(additional_data) > days_available:
+                                logger.info(f"{ticker}: Fetched {len(additional_data)} days of historical data for chart quality")
+                                df = additional_data
+                            else:
+                                logger.warning(f"{ticker}: Additional fetch didn't provide more data, using available data")
+                        else:
+                            logger.warning(f"{ticker}: Could not fetch additional data, using available data")
+                    except Exception as e:
+                        logger.warning(f"{ticker}: Failed to fetch additional historical data: {e}, using available data")
+                elif days_available < min_days_for_chart_quality and pre_fetched_daily is not None:
+                    # Using pre_fetched_daily but still not enough data after clipping
+                    # This means the backtest engine data doesn't have enough history before signal date
+                    # This can happen for very early signals - log warning but proceed with available data
+                    logger.warning(f"{ticker}: Pre-fetched data has insufficient history before {as_of_date} ({days_available} days < {min_days_for_chart_quality} days)")
+                    logger.warning(f"{ticker}: Consider fetching more historical data in backtest engine for early signals")
+                
+                # Clip to signal date for chart quality assessment (prevents future data leak)
+                df_for_chart_quality = self.data_service.clip_to_date(df.copy(), as_of_date)
+                logger.debug(f"{ticker}: Clipped data to {as_of_date} for chart quality assessment (prevents future data leak)")
+            else:
+                # Live trading: Use full data
+                df_for_chart_quality = df.copy()
+                logger.debug(f"{ticker}: Using full data for chart quality (live trading - no clipping needed)")
+            
+            # Step 3: Check chart quality on data up to as_of_date (last 60 days BEFORE signal date)
+            # Chart quality analysis uses .tail(60) which gets last 60 rows from dataframe
+            # By clipping first, we ensure .tail(60) gets last 60 days BEFORE signal date (correct!)
+            if len(df_for_chart_quality) >= min_days_for_chart_quality:
+                chart_quality_data = self.verdict_service.assess_chart_quality(df_for_chart_quality)
+                chart_quality_passed = chart_quality_data.get('passed', True)
+                
+                # Log chart quality result for debugging
+                if not chart_quality_passed:
+                    logger.info(f"{ticker}: Chart quality FAILED on data up to {as_of_date or 'latest'} ({len(df_for_chart_quality)} days) - {chart_quality_data.get('reason', 'Poor chart quality')}")
+                else:
+                    logger.debug(f"{ticker}: Chart quality PASSED on data up to {as_of_date or 'latest'} ({len(df_for_chart_quality)} days)")
+            else:
+                # Insufficient data even after trying to fetch more
+                # Use available data with adjusted threshold (if we have at least 30 days)
+                if len(df_for_chart_quality) >= 30:
+                    logger.warning(f"{ticker}: Limited data for chart quality ({len(df_for_chart_quality)} days < {min_days_for_chart_quality} days) - assessing with available data")
+                    chart_quality_data = self.verdict_service.assess_chart_quality(df_for_chart_quality)
+                    chart_quality_passed = chart_quality_data.get('passed', True)
+                    if not chart_quality_passed:
+                        logger.info(f"{ticker}: Chart quality FAILED with limited data ({len(df_for_chart_quality)} days) - {chart_quality_data.get('reason', 'Poor chart quality')}")
+                else:
+                    # Very limited data - assume passed (early signals in backtest)
+                    logger.warning(f"{ticker}: Very limited data for chart quality ({len(df_for_chart_quality)} days < 30 days) - assuming passed")
+                    chart_quality_data = {
+                        'passed': True,
+                        'reason': f'Very limited data ({len(df_for_chart_quality)} days) - chart quality check skipped'
+                    }
+                    chart_quality_passed = True
+            
+            # Step 4: Use clipped data for analysis (same as chart quality assessment)
+            df_for_analysis = df_for_chart_quality.copy()
             if weekly_df is not None:
                 weekly_df = self.data_service.clip_to_date(weekly_df, as_of_date)
             
-            # Step 3: Compute technical indicators (or use pre-calculated if available)
+            # Step 5: Compute technical indicators (or use pre-calculated if available)
+            # RECOMMENDATION 2: Align EMA200 calculation between backtest engine and analysis service
+            # When using pre-fetched data from backtest engine, use EMA200 from that data to ensure consistency
+            # EMA200 is calculated on full data (including history) in backtest engine, which is more accurate
             if pre_calculated_indicators is not None and 'rsi' in pre_calculated_indicators and 'ema200' in pre_calculated_indicators:
                 # Use pre-calculated indicators if available (optimization for integrated backtest)
-                # Still need to compute indicators for other columns, but can skip RSI/EMA200
-                df = self.indicator_service.compute_indicators(df)
-                # Override with pre-calculated values if they exist
+                # RECOMMENDATION 2: When we have pre-calculated indicators from backtest engine,
+                # they were calculated on full data (including history), which is more accurate for EMA200
+                # So we should use those values instead of recalculating on clipped data
+                
+                # Still compute indicators for other columns (volume indicators, etc.)
+                df_for_analysis = self.indicator_service.compute_indicators(df_for_analysis)
+                
+                # Override with pre-calculated values from backtest engine (more accurate)
                 rsi_col = f'rsi{self.config.rsi_period}'
-                if rsi_col in df.columns:
-                    # Update with pre-calculated RSI (if available for the last row)
-                    if 'rsi' in pre_calculated_indicators:
-                        df.iloc[-1, df.columns.get_loc(rsi_col)] = pre_calculated_indicators['rsi']
-                if 'ema200' in df.columns and 'ema200' in pre_calculated_indicators:
-                    df.iloc[-1, df.columns.get_loc('ema200')] = pre_calculated_indicators['ema200']
-                logger.debug(f"Using pre-calculated indicators for {ticker} (optimization)")
+                if rsi_col in df_for_analysis.columns and 'rsi' in pre_calculated_indicators:
+                    # Update with pre-calculated RSI (signal date value from backtest engine)
+                    df_for_analysis.iloc[-1, df_for_analysis.columns.get_loc(rsi_col)] = pre_calculated_indicators['rsi']
+                    logger.debug(f"{ticker}: Using pre-calculated RSI={pre_calculated_indicators['rsi']:.2f} from backtest engine")
+                
+                if 'ema200' in df_for_analysis.columns and 'ema200' in pre_calculated_indicators:
+                    # RECOMMENDATION 2: Use EMA200 from backtest engine (calculated on full data)
+                    # This ensures consistency between backtest engine and analysis service
+                    ema200_from_backtest = pre_calculated_indicators['ema200']
+                    df_for_analysis.iloc[-1, df_for_analysis.columns.get_loc('ema200')] = ema200_from_backtest
+                    logger.debug(f"{ticker}: Using pre-calculated EMA200={ema200_from_backtest:.2f} from backtest engine (aligned)")
+                logger.debug(f"{ticker}: Using pre-calculated indicators from backtest engine (optimization + alignment)")
             else:
-                # Compute indicators normally
-                df = self.indicator_service.compute_indicators(df)
-                if df is None or df.empty:
+                # Compute indicators normally (live trading or when pre-calculated not available)
+                df_for_analysis = self.indicator_service.compute_indicators(df_for_analysis)
+                if df_for_analysis is None or df_for_analysis.empty:
                     logger.error(f"Failed to compute indicators for {ticker}")
                     return {"ticker": ticker, "status": "indicator_error"}
             
-            # Step 4: Check chart quality (hard filter) - early check to save processing
-            chart_quality_data = self.verdict_service.assess_chart_quality(df)
-            chart_quality_passed = chart_quality_data.get('passed', True)
+            # Use df_for_analysis for the rest of the analysis
+            df = df_for_analysis
             
+            # Step 6: Early return if chart quality failed (hard filter)
+            # This prevents any further processing including ML model predictions
             if not chart_quality_passed:
-                logger.info(f"{ticker}: Chart quality failed - {chart_quality_data.get('reason', 'Poor chart quality')}")
+                logger.info(f"{ticker}: Chart quality FAILED (hard filter) - {chart_quality_data.get('reason', 'Poor chart quality')}")
+                logger.info(f"{ticker}: Returning 'avoid' verdict immediately (chart quality filter)")
                 return {
                     "ticker": ticker,
                     "status": "success",
                     "verdict": "avoid",
                     "justification": [f"Chart quality failed: {chart_quality_data.get('reason', 'Poor chart quality')}"],
                     "chart_quality": chart_quality_data,
+                    "chart_quality_passed": False,  # Explicitly set for clarity
                     "rsi": None,
                     "last_close": float(df.iloc[-1]['close']) if len(df) > 0 else 0.0,
                 }
             
-            # Step 5: Get latest and previous rows
+            # Step 7: Get latest and previous rows
             last = self.data_service.get_latest_row(df)
             prev = self.data_service.get_previous_row(df)
             
@@ -204,7 +310,7 @@ class AnalysisService:
                 logger.error(f"Error accessing data rows for {ticker}")
                 return {"ticker": ticker, "status": "data_access_error"}
             
-            # Step 6: Detect signals
+            # Step 8: Detect signals
             signal_data = self.signal_service.detect_all_signals(
                 ticker=ticker,
                 df=df,
@@ -218,23 +324,25 @@ class AnalysisService:
             timeframe_confirmation = signal_data['timeframe_confirmation']
             news_sentiment = signal_data['news_sentiment']
             
-            # Step 7: Assess volume (includes execution capital calculation)
+            # Step 9: Assess volume (includes execution capital calculation)
             volume_data = self.verdict_service.assess_volume(df, last)
             
-            # Step 8: Get recent extremes
+            # Step 10: Get recent extremes
             extremes = self.data_service.get_recent_extremes(df)
             
-            # Step 9: Fetch fundamentals
+            # Step 11: Fetch fundamentals
             fundamentals = self.verdict_service.fetch_fundamentals(ticker)
             pe = fundamentals['pe']
             pb = fundamentals['pb']
             fundamental_ok = not (pe is not None and pe < 0)
             
-            # Step 10: Get indicator values
+            # Step 12: Get indicator values
             rsi_value = self.indicator_service.get_rsi_value(last)
             is_above_ema200 = self.indicator_service.is_above_ema200(last)
             
-            # Step 11: Determine verdict (with chart quality check)
+            # Step 13: Determine verdict (chart quality already checked at Step 3 - should be True here)
+            # NOTE: If chart quality failed, we would have returned early at Step 5
+            # Passing chart_quality_passed=True ensures ML model respects the filter
             verdict, justification = self.verdict_service.determine_verdict(
                 signals=signals,
                 rsi_value=rsi_value,
@@ -244,7 +352,7 @@ class AnalysisService:
                 fundamental_ok=fundamental_ok,
                 timeframe_confirmation=timeframe_confirmation,
                 news_sentiment=news_sentiment,
-                chart_quality_passed=chart_quality_passed
+                chart_quality_passed=chart_quality_passed  # Should be True at this point (early return if False)
             )
             
             # Step 12: Apply candle quality check (may downgrade verdict)

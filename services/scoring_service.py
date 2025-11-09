@@ -176,46 +176,49 @@ class ScoringService:
             priority_score = 0
             
             # 1. Risk-Reward Ratio (most important for profitability)
-            risk_reward = stock_data.get('risk_reward_ratio', 0)
-            if risk_reward >= 4.0:
+            risk_reward = stock_data.get('risk_reward_ratio')
+            if risk_reward is not None and risk_reward >= 4.0:
                 priority_score += 40
-            elif risk_reward >= 3.0:
+            elif risk_reward is not None and risk_reward >= 3.0:
                 priority_score += 30
-            elif risk_reward >= 2.0:
+            elif risk_reward is not None and risk_reward >= 2.0:
                 priority_score += 20
-            elif risk_reward >= 1.5:
+            elif risk_reward is not None and risk_reward >= 1.5:
                 priority_score += 10
             
             # 2. RSI Oversold Level (lower = better for dip buying)
-            rsi = stock_data.get('rsi', 50)
-            if rsi <= 15:
-                priority_score += 25  # Extremely oversold
-            elif rsi <= 20:
-                priority_score += 20  # Very oversold
-            elif rsi <= 25:
-                priority_score += 15  # Oversold
-            elif rsi <= 30:
-                priority_score += 10  # Near oversold
+            rsi = stock_data.get('rsi')
+            if rsi is not None:
+                if rsi <= 15:
+                    priority_score += 25  # Extremely oversold
+                elif rsi <= 20:
+                    priority_score += 20  # Very oversold
+                elif rsi <= 25:
+                    priority_score += 15  # Oversold
+                elif rsi <= 30:
+                    priority_score += 10  # Near oversold
             
             # 3. Volume Strength (higher = more conviction)
-            volume_multiplier = stock_data.get('volume_multiplier', 1.0)
-            if volume_multiplier >= 4.0:
-                priority_score += 20
-            elif volume_multiplier >= 2.0:
-                priority_score += 15
-            elif volume_multiplier >= 1.5:
-                priority_score += 10
-            elif volume_multiplier >= 1.2:
-                priority_score += 5
+            volume_multiplier = stock_data.get('volume_multiplier')
+            if volume_multiplier is not None:
+                if volume_multiplier >= 4.0:
+                    priority_score += 20
+                elif volume_multiplier >= 2.0:
+                    priority_score += 15
+                elif volume_multiplier >= 1.5:
+                    priority_score += 10
+                elif volume_multiplier >= 1.2:
+                    priority_score += 5
             
             # 4. MTF Alignment Score
             timeframe_analysis = stock_data.get('timeframe_analysis', {}) or {}
-            alignment_score = timeframe_analysis.get('alignment_score', 0) if isinstance(timeframe_analysis, dict) else 0
-            priority_score += min(alignment_score, 10)  # Cap at 10 points
+            alignment_score = timeframe_analysis.get('alignment_score') if isinstance(timeframe_analysis, dict) else None
+            if alignment_score is not None:
+                priority_score += min(alignment_score, 10)  # Cap at 10 points
             
             # 5. PE Ratio (lower = better value, but cap the bonus)
-            pe = stock_data.get('pe', 100)
-            if pe and pe > 0:
+            pe = stock_data.get('pe')
+            if pe is not None and pe > 0:
                 if pe <= 15:
                     priority_score += 10
                 elif pe <= 25:
@@ -226,19 +229,23 @@ class ScoringService:
                     priority_score -= 5  # Penalty for expensive stocks
             
             # 6. Backtest Performance (if available)
-            backtest_score = stock_data.get('backtest_score', 0)
-            if backtest_score >= 40:
+            backtest_score = stock_data.get('backtest_score')
+            if backtest_score is not None and backtest_score >= 40:
                 priority_score += 15
-            elif backtest_score >= 30:
+            elif backtest_score is not None and backtest_score >= 30:
                 priority_score += 10
-            elif backtest_score >= 20:
+            elif backtest_score is not None and backtest_score >= 20:
                 priority_score += 5
             
             # 7. Chart Quality (cleaner charts = higher priority)
             chart_quality = stock_data.get('chart_quality', {})
             if chart_quality and isinstance(chart_quality, dict):
-                chart_score = chart_quality.get('score', 0)
+                chart_score = chart_quality.get('score')
                 chart_status = chart_quality.get('status', 'poor')
+                
+                # Ensure chart_score is a number (handle None case)
+                if chart_score is None:
+                    chart_score = 0
                 
                 # Prioritize cleaner charts (only if passed hard filter)
                 if chart_status == 'clean' and chart_score >= 80:

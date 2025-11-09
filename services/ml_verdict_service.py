@@ -120,13 +120,19 @@ class MLVerdictService(VerdictService):
         """
         # Stage 1: Chart quality filter (hard filter)
         # If chart quality fails, immediately return "avoid" without ML prediction
+        # This is a CRITICAL filter - ML model should NEVER predict when chart quality fails
         if not chart_quality_passed:
+            logger.info(f"ML verdict service: Chart quality FAILED - returning 'avoid' immediately (hard filter)")
+            logger.info(f"ML verdict service: Skipping ML prediction (chart quality is mandatory)")
             return "avoid", ["Chart quality failed - too many gaps/extreme candles/flat movement"]
         
         # Stage 2: ML model prediction (only if chart quality passed)
+        # IMPORTANT: At this point, chart_quality_passed must be True
+        # If it's not, there's a logic error (should have returned "avoid" above)
         # Try ML prediction only if chart quality passed
         if self.model_loaded:
             try:
+                logger.debug(f"ML verdict service: Chart quality passed - proceeding with ML prediction")
                 ml_verdict = self._predict_with_ml(
                     signals, rsi_value, is_above_ema200,
                     vol_ok, vol_strong, fundamental_ok,
@@ -136,8 +142,12 @@ class MLVerdictService(VerdictService):
                     justification = self._build_ml_justification(ml_verdict)
                     logger.debug(f"ML prediction (chart quality passed): {ml_verdict}")
                     return ml_verdict, justification
+                else:
+                    logger.debug(f"ML prediction returned None - falling back to rule-based logic")
             except Exception as e:
-                logger.debug(f"ML prediction failed: {e}, falling back to rules")
+                logger.warning(f"ML prediction failed: {e}, falling back to rules")
+                import traceback
+                logger.debug(traceback.format_exc())
         
         # Fall back to rule-based logic (only if chart quality passed)
         return super().determine_verdict(

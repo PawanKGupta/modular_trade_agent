@@ -102,6 +102,10 @@ def run_backtest(stock_name: str, date_range: Tuple[str, str], return_engine: bo
                     next_day = next_day_data.index[0]
                     execution_price = next_day_data.iloc[0]['Open']
                     
+                    # RECOMMENDATION 2: Ensure EMA200 value is from signal date (not execution date)
+                    # Use EMA200 from the signal date row to ensure consistency with analysis service
+                    ema200_value = row['EMA200'] if 'EMA200' in row.index and pd.notna(row['EMA200']) else None
+                    
                     signal = {
                         'signal_date': current_date,
                         'execution_date': next_day, 
@@ -109,12 +113,15 @@ def run_backtest(stock_name: str, date_range: Tuple[str, str], return_engine: bo
                         'reason': entry_reason,
                         'rsi': rsi_value,
                         'close_price': row['Close'],
-                        'ema200': row['EMA200']
+                        'ema200': ema200_value  # EMA200 at signal date (for alignment with analysis service)
                     }
                     potential_signals.append(signal)
                     
-                    # Update engine state to track subsequent entries properly
-                    engine.first_entry_made = True
+                    # NOTE: DO NOT update engine.first_entry_made here!
+                    # The engine state should only be updated when trades are ACTUALLY EXECUTED,
+                    # not when signals are just detected. This prevents labeling signals as "Pyramiding"
+                    # when no previous trade was actually executed.
+                    # State will be updated in run_integrated_backtest when trades are executed.
         
         print(f"✅ Found {len(potential_signals)} potential entry signals")
         
@@ -131,6 +138,7 @@ def run_backtest(stock_name: str, date_range: Tuple[str, str], return_engine: bo
 
 def trade_agent(stock_name: str, buy_date: str, 
                 pre_fetched_data: Optional[pd.DataFrame] = None,
+                pre_fetched_weekly: Optional[pd.DataFrame] = None,
                 pre_calculated_indicators: Optional[Dict] = None) -> SignalResult:
     """
     Ask the analysis engine to compute BUY/WATCH and prices strictly as-of buy_date.
@@ -151,14 +159,29 @@ def trade_agent(stock_name: str, buy_date: str,
         # If pre-fetched data is available, use it to avoid duplicate fetching
         # Convert BacktestEngine data format to match analyze_ticker expectations
         pre_fetched_daily = None
-        pre_fetched_weekly = None
         
         if pre_fetched_data is not None:
             # BacktestEngine uses uppercase column names, convert to lowercase for compatibility
+            # RECOMMENDATION 1: pre_fetched_data from BacktestEngine should already be the full data
+            # (includes history before backtest start date for chart quality assessment)
             pre_fetched_daily = pre_fetched_data.copy()
+            
             if 'Close' in pre_fetched_daily.columns:
                 # Rename columns to lowercase for compatibility
                 pre_fetched_daily = pre_fetched_daily.rename(columns={
+                    'Open': 'open',
+                    'High': 'high',
+                    'Low': 'low',
+                    'Close': 'close',
+                    'Volume': 'volume'
+                })
+        
+        # FIX 4: Use pre_fetched_weekly if provided (reuse weekly data from BacktestEngine)
+        # Convert to lowercase columns if needed
+        if pre_fetched_weekly is not None:
+            if 'Close' in pre_fetched_weekly.columns:
+                # Rename columns to lowercase for compatibility
+                pre_fetched_weekly = pre_fetched_weekly.rename(columns={
                     'Open': 'open',
                     'High': 'high',
                     'Low': 'low',
@@ -308,7 +331,16 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
     print("=" * 60)
     
     # Step 1: Run backtest to get potential buy/re-entry dates and reuse engine data
-    potential_signals, backtest_engine = run_backtest(stock_name, date_range, return_engine=True)
+    # Wrap in try-except to handle BacktestEngine failures gracefully
+    backtest_engine = None
+    potential_signals = []
+    
+    try:
+        potential_signals, backtest_engine = run_backtest(stock_name, date_range, return_engine=True)
+    except Exception as e:
+        print(f"   ⚠️ BacktestEngine failed: {e}")
+        print(f"   ⚠️ Will attempt to fetch data directly for position tracking")
+        # Continue with backtest_engine = None, will use fallback path
     
     if not potential_signals:
         return {
@@ -327,10 +359,13 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
     skipped_signals = 0
     
     # Reuse BacktestEngine data for position tracking (eliminate duplicate fetch)
-    # BacktestEngine already has data loaded with indicators calculated
+    # RECOMMENDATION 1: Use backtest period data (filtered) for position tracking
+    # But use full data (with history) for chart quality assessment in trade_agent
     if backtest_engine and backtest_engine.data is not None:
+        # Use filtered data (backtest period only) for position tracking
         market_data = backtest_engine.data.copy()
-        print(f"   ✓ Reusing BacktestEngine data ({len(market_data)} rows) for position tracking")
+        full_data_count = len(backtest_engine._full_data) if hasattr(backtest_engine, '_full_data') and backtest_engine._full_data is not None else len(market_data)
+        print(f"   ✓ Reusing BacktestEngine data ({len(market_data)} rows in backtest period, {full_data_count} total historical rows) for position tracking")
         
         # Ensure we have EMA9 for target setting (BacktestEngine doesn't calculate EMA9)
         try:
@@ -340,46 +375,106 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
             market_data['EMA9'] = pd.Series(index=market_data.index, dtype=float)
     else:
         # Fallback to fetching if BacktestEngine data not available
+        # FIX 1: Use fetch_ohlcv_yf() instead of direct yf.download() to protect with circuit breaker
         print(f"   ⚠️ BacktestEngine data not available, fetching market data...")
-        import yfinance as yf
-        market_data = yf.download(stock_name, start=start_date, end=end_date, progress=False)
-        if isinstance(market_data.columns, pd.MultiIndex):
-            market_data.columns = market_data.columns.get_level_values(0)
-        # Compute EMA9 for target setting
+        from core.data_fetcher import fetch_ohlcv_yf
         try:
-            market_data['EMA9'] = ta.ema(market_data['Close'], length=9)
-        except Exception:
-            market_data['EMA9'] = pd.Series(index=market_data.index, dtype=float)
+            # Calculate days needed (backtest period + buffer for indicators)
+            start_dt = pd.to_datetime(start_date)
+            end_dt = pd.to_datetime(end_date)
+            days_needed = (end_dt - start_dt).days + 365  # Add buffer for EMA200 calculation
+            
+            # Use protected fetch_ohlcv_yf() instead of direct yf.download()
+            market_data_df = fetch_ohlcv_yf(
+                ticker=stock_name,
+                days=days_needed,
+                interval='1d',
+                end_date=end_date,
+                add_current_day=False  # Backtesting mode - no current day data
+            )
+            
+            if market_data_df is None or market_data_df.empty:
+                raise ValueError(f"Failed to fetch market data for {stock_name}")
+            
+            # Convert to BacktestEngine format (uppercase columns, date index)
+            if 'date' in market_data_df.columns:
+                market_data = market_data_df.set_index('date')
+            else:
+                market_data = market_data_df
+            
+            # Rename columns to uppercase for compatibility with BacktestEngine
+            market_data = market_data.rename(columns={
+                'open': 'Open',
+                'high': 'High',
+                'low': 'Low',
+                'close': 'Close',
+                'volume': 'Volume'
+            })
+            
+            # Compute EMA9 for target setting
+            try:
+                market_data['EMA9'] = ta.ema(market_data['Close'], length=9)
+            except Exception:
+                market_data['EMA9'] = pd.Series(index=market_data.index, dtype=float)
+                
+        except Exception as e:
+            print(f"   ❌ Error fetching market data: {e}")
+            raise
     
     # Step 2: For each identified buy date, validate with trade agent
     for i, signal in enumerate(potential_signals, 1):
         signal_date = signal['signal_date'].strftime('%Y-%m-%d')
         execution_date = signal['execution_date'].strftime('%Y-%m-%d')
         
-        # Determine current position state
+        # Determine current position state (actual executed trades)
         has_open_position = any(not p.is_closed for p in positions)
         
-        # If this is labeled as Pyramiding but we have no open position, treat as potential initial
-        if signal['reason'].startswith('Pyramiding') and not has_open_position:
-            if not (signal['close_price'] > signal['ema200']):
-                # Not eligible as initial (below EMA200) — silently skip
-                skipped_signals += 1
-                continue
-            # Eligible as initial — proceed
-            derived_reason = 'Initial entry'
-        else:
+        # Fix: Correctly label signals based on ACTUAL trade execution, not engine state
+        # The backtest engine's state (first_entry_made) is updated during signal detection,
+        # but we should only label as "Pyramiding" if there's an actual open position.
+        if has_open_position:
+            # We have an open position, so this could be pyramiding
+            # Keep the original reason from signal detection
             derived_reason = signal['reason']
+        else:
+            # No open position, so this should be an initial entry (if executed)
+            # However, the signal reason might say "Pyramiding" because engine state was updated
+            # during signal detection. We'll correct this based on actual execution state.
+            if signal['reason'].startswith('Pyramiding'):
+                # Signal says pyramiding but no position exists - this is a state mismatch
+                # This happens because engine.first_entry_made was updated during signal detection
+                # even though no trade was executed. Treat as initial entry.
+                derived_reason = 'Initial entry (corrected from Pyramiding - no open position)'
+            else:
+                derived_reason = signal['reason']
         
         print(f"\n🔄 Signal {i}/{len(potential_signals)}: {signal_date}")
         print(f"   Reason: {derived_reason}")
-        
+        if signal['reason'] != derived_reason:
+            print(f"   (Original: {signal['reason']})")
+    
         # Validate with trade agent strictly as-of the signal date
+        # RECOMMENDATION 1: Pass full data (includes history before backtest start) for chart quality
         # Pass pre-fetched data from BacktestEngine to avoid duplicate fetching
-        # Note: analyze_ticker still fetches its own data, but this prepares for future optimization
+        # Use _full_data if available (includes history before backtest start date)
+        pre_fetched_data_for_trade_agent = None
+        pre_fetched_weekly_for_trade_agent = None
+        if backtest_engine:
+            # Use full data if available (includes history before backtest start for chart quality)
+            if hasattr(backtest_engine, '_full_data') and backtest_engine._full_data is not None:
+                pre_fetched_data_for_trade_agent = backtest_engine._full_data
+            else:
+                pre_fetched_data_for_trade_agent = backtest_engine.data
+            
+            # FIX 4: Get weekly data from BacktestEngine if available (reuse to avoid duplicate fetching)
+            if hasattr(backtest_engine, '_weekly_data') and backtest_engine._weekly_data is not None:
+                pre_fetched_weekly_for_trade_agent = backtest_engine._weekly_data.copy()
+        
         trade_signal = trade_agent(
             stock_name, 
             signal_date,
-            pre_fetched_data=backtest_engine.data if backtest_engine else None,
+            pre_fetched_data=pre_fetched_data_for_trade_agent,
+            pre_fetched_weekly=pre_fetched_weekly_for_trade_agent,
             pre_calculated_indicators={
                 'rsi': signal.get('rsi'),
                 'ema200': signal.get('ema200')
@@ -395,10 +490,10 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
             if pd.isna(ema9_target) if ema9_target is not None else True:
                 ema9_target = trade_signal.target_price or (signal['execution_price'] * 1.08)
             
-            # Re-entry vs initial logic
+            # Re-entry vs initial logic based on ACTUAL positions (not engine state)
             open_positions = [p for p in positions if not p.is_closed]
             if open_positions:
-                # Add to existing position (averaging)
+                # Add to existing position (pyramiding/re-entry)
                 pos = open_positions[0]
                 pos.add_reentry(
                     add_date=execution_date,
@@ -406,7 +501,8 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
                     add_capital=capital_per_position,
                     new_target=float(ema9_target)
                 )
-                print(f"   ➕ RE-ENTRY: Add at {signal['execution_price']:.2f} | New Avg: {pos.entry_price:.2f} | Target: {pos.target_price:.2f}")
+                print(f"   ➕ RE-ENTRY (PYRAMIDING): Add at {signal['execution_price']:.2f} | New Avg: {pos.entry_price:.2f} | Target: {pos.target_price:.2f}")
+                executed_trades += 1
                 # Continue tracking only up to next signal (if any)
                 # Next tracking will be scheduled below after we compute until_date
             else:
@@ -422,7 +518,7 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
                 positions.append(position)
                 executed_trades += 1
                 
-                print(f"   ✅ TRADE EXECUTED: Buy at {signal['execution_price']:.2f}")
+                print(f"   ✅ TRADE EXECUTED (INITIAL): Buy at {signal['execution_price']:.2f}")
                 print(f"      Target: {position.target_price:.2f}")
                 
                 # Tracking is deferred until we know the next signal date
@@ -430,7 +526,7 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
         else:
             print(f"   ⏸️ TRADE SKIPPED: Trade agent returned {trade_signal.signal_type}")
             skipped_signals += 1
-    
+        
         # After processing this signal, incrementally track any open position up to next signal's execution date
         next_until = None
         if i < len(potential_signals):
