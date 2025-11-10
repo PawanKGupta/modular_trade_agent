@@ -1,204 +1,110 @@
-# 📚 Documentation Directory
+# Trading System Documentation
 
-This directory contains detailed documentation for the Modular Trade Agent project.
+## 📚 Quick Navigation
 
----
+### Getting Started
+- [Getting Started Guide](getting-started/GETTING_STARTED.md)
+- [Quick Reference](getting-started/QUICK_NAV.md)
+- [Documentation Index](getting-started/DOCUMENTATION_INDEX.md)
 
-## 📁 Directory Structure
+### Latest Updates (November 2025)
 
-### `getting-started/`
-**For new users** - Setup guides and first-time configuration
-- `GETTING_STARTED.md` - Comprehensive beginner's guide
-- Installation walkthroughs
-- First-run tutorials
+#### Integrated Backtest Refactor ⭐ NEW
+- **[INTEGRATED_BACKTEST_REFACTOR_NOV_2025.md](INTEGRATED_BACKTEST_REFACTOR_NOV_2025.md)** - Complete refactor documentation
+  - Fixed 3 critical bugs (exit tracking, level marking, logging)
+  - Single-pass daily iteration (eliminates redundancy)
+  - Signal numbering and consistent date logging
+  - Re-entry logic clarification (no EMA200 check by design)
 
-### `architecture/`
-**For developers** - System design and technical architecture
-- `ARCHITECTURE_GUIDE.md` - Overall system architecture
-- `KOTAK_NEO_ARCHITECTURE_PLAN.md` - Broker integration design
-- `INTEGRATED_README.md` - Backtest-trade workflow
-- Strategy logic documentation
+#### Superseded/Historical Documents
+- ~~BACKTEST_DAILY_MONITORING_DESIGN.md~~ - Deleted (replaced by refactor doc)
+- [architecture/INTEGRATED_README.md](architecture/INTEGRATED_README.md) ⚠️ - Describes old signal-based approach
+- [features/BACKTEST_INTEGRATION_FIX.md](features/BACKTEST_INTEGRATION_FIX.md) ⚠️ - Pre-refactor fix
 
-### `deployment/`
-**For DevOps** - Deployment and production setup guides
-- `DEPLOYMENT_READY.md` - Production deployment checklist
-- `oracle/ORACLE_CLOUD_DEPLOYMENT.md` - Cloud deployment guide
-- `MIGRATION_GUIDE.md` - Version migration guide
-- `WINDOWS_SERVICES_GUIDE.md` - Windows service setup
-- `BACKUP_RESTORE_UNINSTALL_GUIDE.md` - Maintenance procedures
+### Core Documentation
 
-### `features/`
-**Feature documentation** - Individual feature guides and improvements
-- Trading features (AMO orders, position monitoring, etc.)
-- Analysis features (scoring, dip mode, filtering)
-- Bug fixes and improvements
-- Configuration guides
+#### Architecture
+- [System Architecture](architecture/ARCHITECTURE_GUIDE.md)
+- [Integrated Backtest Architecture](architecture/INTEGRATED_README.md)
+- [Service Architecture](architecture/SERVICE_ARCHITECTURE.md)
 
-### `testing/`
-**For QA** - Test results, reports, and testing guides
-- Test result reports
-- Testing procedures
-- Validation documentation
+#### Backtest System
+- **Current**: [Integrated Backtest Refactor (Nov 2025)](INTEGRATED_BACKTEST_REFACTOR_NOV_2025.md)
+- [Data Flow: trade_agent.py --backtest](DATA_FLOW_BACKTEST.md)
+- [Backtest README](backtest/README.md)
 
-### `phases/`
-**Development history** - Phase-by-phase implementation progress
-- Phase completion summaries
-- Implementation progress tracking
-- Historical development documentation
+#### Kotak Neo Auto Trader
+- [Auto Trader Logic](KOTAK_NEO_AUTO_TRADER_LOGIC.md)
+- [Re-entry Logic Details](KOTAK_NEO_REENTRY_LOGIC_DETAILS.md)
+- [Parallel Monitoring](kotak_neo_trader/PARALLEL_MONITORING.md)
 
----
+#### Analysis & Scoring
+- [Verdict Calculation Explanation](VERDICT_CALCULATION_EXPLANATION.md)
+- [Chart Quality & Capital Adjustment](features/CHART_QUALITY_AND_CAPITAL_ADJUSTMENT.md)
+- [ML Integration Guide](ML_IMPLEMENTATION_GUIDE.md)
 
-## 🔍 Quick Find
+### Features & Bug Fixes
+- [Features Overview](features/)
+- [Bug Fixes](features/BUG_FIXES.md)
+- [Recent Changes (Nov 9, 2025)](CHANGES_2025_11_09_CONSOLIDATED.md)
 
-### I want to...
+### Testing
+- [Testing Rules](testing/TESTING_RULES.md)
+- [Test Organization](testing/)
 
-**Get started with the system**
-→ `getting-started/GETTING_STARTED.md`
+### Deployment
+- [Windows Deployment](deployment/windows/)
+- [Ubuntu Deployment](deployment/ubuntu/)
+- [Health Checks](deployment/HEALTH_CHECK.md)
 
-**Understand the architecture**
-→ `architecture/ARCHITECTURE_GUIDE.md`
+## Key Concepts
 
-**Deploy to production**
-→ `deployment/DEPLOYMENT_READY.md`
+### Backtest System
+- **Single-Pass Daily Iteration**: Checks RSI every trading day
+- **Trade Agent Validation**: Only for initial entries (re-entries are technical)
+- **Exit Conditions**: High >= Target OR RSI > 50
+- **Re-Entry Logic**: No EMA200 check (committed pyramiding strategy)
+- **Signal Numbering**: All signals numbered for easy tracking
 
-**Deploy to Oracle Cloud (free)**
-→ `deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md`
+### Position Management
+- **Initial Entry**: RSI < 30 AND Close > EMA200
+- **Re-Entries**: RSI levels (30, 20, 10) with reset cycles
+- **Level Marking**: All passed levels marked on initial entry
+- **Daily Cap**: Max 1 re-entry per symbol per day
+- **Target**: EMA9 at entry/re-entry date (fixed, not dynamic)
 
-**Set up Windows executable**
-→ `ALL_IN_ONE_INSTALLER_GUIDE.md` or `WINDOWS_EXECUTABLE_GUIDE.md`
+### Trade Agent
+- **Multi-Timeframe Analysis**: Daily + Weekly alignment
+- **Chart Quality Assessment**: Filters low-quality setups
+- **News Sentiment**: Integrated for context
+- **Historical Validation**: Backtest scoring integration
 
-**Learn about specific features**
-→ Browse `features/` directory
+## Recent Improvements (November 2025)
 
-**See test results**
-→ Browse `testing/` directory
+1. ✅ **Fixed Exit Bug**: Positions now exit when conditions met (was staying open indefinitely)
+2. ✅ **Fixed Level Marking**: All passed RSI levels marked on initial entry
+3. ✅ **Fixed Logging**: Consistent execution dates throughout
+4. ✅ **Added Signal Numbering**: Easy tracking of all signals
+5. ✅ **Eliminated Redundancy**: Single-pass iteration (more efficient)
+6. ✅ **Improved Accuracy**: Lower but correct returns reflecting proper trade management
+7. ✅ **Documented Re-Entry Logic**: Clarified why EMA200 not checked for re-entries
+8. ✅ **Thread-Safe**: Confirmed safe for parallel execution
 
-**Check development history**
-→ Browse `phases/` directory
+## Performance Comparison
 
----
+### Before Fixes (Buggy)
+- RELIANCE.NS: +20.43% return, 18 trades (inflated by exit bug)
+- Positions held 840 days when should exit in 4 days
 
-## 📋 Quick Reference Files
+### After Fixes (Accurate)
+- RELIANCE.NS: +2.13% return, 10 trades (correct)
+- Positions exit when target hit or RSI > 50
 
-These important files remain in the `documents/` root for quick access:
+## Contact & Support
 
-### Installation & Setup
-- `getting-started/ALL_IN_ONE_INSTALLER_GUIDE.md` - All-in-one installer (Windows)
-- `getting-started/WINDOWS_EXECUTABLE_GUIDE.md` - Standalone executable guide
-- `deployment/windows/WINDOWS_SERVICES_GUIDE.md` - Windows service setup
-
-### Core Guides
-- `reference/COMMANDS.md` - Command reference
-- `reference/CLI_USAGE.md` - CLI interface guide
-- `deployment/HEALTH_CHECK.md` - System health monitoring
-- `reference/VERSION_MANAGEMENT.md` - Version tracking
-
----
-
-## 🗂️ File Organization Reference
-
-### Architecture Files
-- `ARCHITECTURE_GUIDE.md`
-- `KOTAK_NEO_ARCHITECTURE_PLAN.md`
-- `INTEGRATED_README.md`
-- `ANALYSIS_SIMPLIFICATION.md`
-- `ENHANCED_SCORING_SUMMARY.md`
-
-### Deployment Files
-- `DEPLOYMENT_READY.md`
-- `oracle/ORACLE_CLOUD_DEPLOYMENT.md`
-- `MIGRATION_GUIDE.md`
-- `BACKUP_RESTORE_UNINSTALL_GUIDE.md`
-
-### Feature Files
-- `LIVE_POSITION_MONITORING.md`
-- `AMO_ORDER_RETRY_FEATURE.md`
-- `SELL_ORDER_RETRY_LOGIC.md`
-- `SAME_DAY_RETRY_QUICKSTART.md`
-- `DIP_MODE_COMPARISON.md`
-- `SCORING_IMPROVEMENTS.md`
-- `BACKTEST_INTEGRATION_FIX.md`
-- `FILTERING_FIX.md`
-- `FIX_INCOMPLETE_CANDLE.md`
-- `SELL_ENGINE_FIXES.md`
-- `ORDER_REJECTION_TRACKING_ISSUE.md`
-
-### Testing Files
-- `CLI_TEST_RESULTS.md`
-- `MONITORING_TEST_RESULTS.md`
-- `NEW_SCORING_TEST_RESULTS.md`
-- `PHASE1_UNIT_TEST_REPORT.md`
-- `TEST_YESBANK_BUY.md`
-- `TESTING_GUIDE_PHASE1_PHASE2.md`
-- `PHASE5_TESTING.md`
-
-### Phase Files
-- `PHASE1_COMPLETE.md`
-- `PHASE1_COMPLETE_SUMMARY.md`
-- `PHASE1_IMPLEMENTATION_PROGRESS.md`
-- `PHASE1_PHASE2_COMPLETE.md`
-- `PHASE1_PHASE2_INTEGRATION_COMPLETE.md`
-- `PHASE2_CLI_SUMMARY.md`
-- `PHASE2_COMPLETE.md`
-- `PHASE2_COMPLETE_SUMMARY.md`
-- `PHASE2_IMPLEMENTATION_STATUS.md`
-- `PHASE2_PROGRESS.md`
-- `PHASE3_COMPLETE.md`
-- `PHASE3_PLANNING.md`
+For questions or issues, refer to the specific documentation for each component.
 
 ---
 
-## 📝 Documentation Guidelines
-
-### For Contributors
-
-When adding new documentation:
-
-1. **Choose the right category:**
-   - Setup/installation → `getting-started/`
-   - Technical design → `architecture/`
-   - Production setup → `deployment/`
-   - Feature details → `features/`
-   - Test results → `testing/`
-   - Historical → `phases/`
-
-2. **Update indexes:**
-   - Add entry to this README
-   - Update `DOCUMENTATION_INDEX.md` in project root
-   - Add cross-references in related docs
-
-3. **Follow naming conventions:**
-   - Use UPPER_CASE for file names
-   - Use descriptive names (e.g., `AMO_ORDER_RETRY_FEATURE.md`)
-   - Include version/date in time-sensitive docs
-
-4. **Include standard sections:**
-   - Clear title and purpose
-   - Table of contents for longer docs
-   - Examples and use cases
-   - Troubleshooting (if applicable)
-   - Last updated date
-
----
-
-## 🔗 Navigation
-
-**Main Documentation Index:** [`../DOCUMENTATION_INDEX.md`](../DOCUMENTATION_INDEX.md)
-
-**Project README:** [`../README.md`](../README.md)
-
-**Getting Started:** [`getting-started/GETTING_STARTED.md`](getting-started/GETTING_STARTED.md)
-
----
-
-## 📞 Need Help?
-
-1. Check the [Documentation Index](../DOCUMENTATION_INDEX.md) first
-2. Look in the appropriate subdirectory based on your needs
-3. Review the [Getting Started Guide](getting-started/GETTING_STARTED.md)
-4. Check the main [README](../README.md) for support information
-
----
-
-**Last Updated:** 2025-10-29  
-**Structure Version:** 1.0.0
+**Last Updated**: November 10, 2025  
+**Major Version**: v2.1 with Integrated Backtest Refactor

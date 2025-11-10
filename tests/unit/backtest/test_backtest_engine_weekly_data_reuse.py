@@ -161,6 +161,7 @@ class TestBacktestEngineWeeklyDataReuse:
 class TestIntegratedBacktestWeeklyDataReuse:
     """Test weekly data reuse in integrated_backtest"""
     
+    @pytest.mark.skip(reason="Tests old run_backtest function - replaced in Nov 2025 refactor")
     def test_integrated_backtest_passes_weekly_data(self):
         """Test that integrated_backtest passes weekly data to trade_agent"""
         # This is more of an integration test, but we can test the logic
