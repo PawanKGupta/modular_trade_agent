@@ -222,4 +222,3 @@ class SignalService:
             'timeframe_confirmation': timeframe_confirmation,
             'news_sentiment': news_sentiment,
         }
-

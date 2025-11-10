@@ -215,5 +215,3 @@ print(f'Second call: {time.time() - start2:.3f}s')  # ~0.502s ✅
 ---
 
 **Status**: ✅ **FIXED** (80% improvement, remaining 4 errors due to concurrent requests)
-
-

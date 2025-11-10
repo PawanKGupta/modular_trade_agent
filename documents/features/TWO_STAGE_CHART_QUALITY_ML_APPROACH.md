@@ -492,7 +492,3 @@ if not chart_quality.get('passed', True):
 - [Chart Quality Usage Guide](CHART_QUALITY_USAGE_GUIDE.md)
 - [Chart Quality ML Impact Analysis](../CHART_QUALITY_ML_IMPACT_ANALYSIS.md)
 - [ML Integration Guide](../architecture/ML_INTEGRATION_GUIDE.md)
-
-
-
-

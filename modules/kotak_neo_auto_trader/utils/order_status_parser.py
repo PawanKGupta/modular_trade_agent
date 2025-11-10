@@ -202,4 +202,3 @@ class OrderStatusParser:
                 return status
         
         return OrderStatus.PENDING
-

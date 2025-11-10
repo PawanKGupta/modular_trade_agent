@@ -43,4 +43,3 @@ MIN_COMBINED_SCORE = 25  # only take rows with final_verdict in {buy,strong_buy}
 
 # Safety
 MIN_QTY = 1
-

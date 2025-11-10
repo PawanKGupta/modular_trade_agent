@@ -251,7 +251,3 @@ config.chart_quality_enabled_in_backtest = True
 - [Chart Quality & Capital Adjustment Features](../features/CHART_QUALITY_AND_CAPITAL_ADJUSTMENT.md)
 - [Configuration Settings](../../new_documentation/configuration/SETTINGS.md)
 - [Backtest Investigation Results](../../BACKTEST_INVESTIGATION_RESULTS.md)
-
-
-
-

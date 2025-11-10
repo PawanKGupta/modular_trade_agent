@@ -507,4 +507,3 @@ if __name__ == "__main__":
     if results.get('total_pnl'):
         print(f"  Total P&L: ${results.get('total_pnl', 0):,.0f}")
         print(f"  Total Return: {results.get('total_return_pct', 0):+.2f}%")
-

@@ -358,4 +358,3 @@ class TestCancelledOrderDetection:
         
         assert counts['executed'] == 1
         assert counts['still_pending'] == 0
-

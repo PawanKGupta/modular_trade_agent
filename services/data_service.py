@@ -251,4 +251,3 @@ class DataService:
         except Exception as e:
             logger.warning(f"Error getting recent extremes: {e}")
             return {'high': 0.0, 'low': 0.0}
-

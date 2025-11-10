@@ -204,4 +204,3 @@ class TestMLVerdictServiceConfigBasedModelSelection:
                 assert "rsi_10" in service.feature_cols
                 assert "ema200" in service.feature_cols
                 assert "volume_ratio" in service.feature_cols
-

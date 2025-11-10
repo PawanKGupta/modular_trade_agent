@@ -306,4 +306,3 @@ All settings are available in `StrategyConfig` with defaults:
 - Integration Tests: ✅ All passing
 
 **Ready for Production**: ✅ Yes
-

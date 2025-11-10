@@ -449,4 +449,3 @@ class AnalysisService:
         except Exception as e:
             logger.error(f"Unexpected error in analyze_ticker for {ticker}: {type(e).__name__}: {e}")
             return {"ticker": ticker, "status": "analysis_error", "error": str(e)}
-

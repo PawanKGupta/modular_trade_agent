@@ -782,4 +782,3 @@ from config.strategy_config import StrategyConfig
 
 **Last Review Date**: 2025-11-07  
 **Next Review Date**: 2026-02-07 (Quarterly)
-

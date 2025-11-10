@@ -138,7 +138,3 @@ chart_quality_data = self.verdict_service.assess_chart_quality(df_for_chart_qual
 **Fix**: Clip data to signal date **FIRST**, then assess chart quality on clipped data.
 
 **Status**: ✅ **FIXED** - No more future data leak in backtesting.
-
-
-
-

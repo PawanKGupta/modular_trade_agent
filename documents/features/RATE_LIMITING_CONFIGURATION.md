@@ -228,5 +228,3 @@ MAX_CONCURRENT_ANALYSES=10  # Faster, but more errors
 ✅ **Can increase concurrency** - for ML training if using `trade_agent.py`
 
 **Recommendation**: Use default settings for regular backtesting, increase `MAX_CONCURRENT_ANALYSES=10` only if using `trade_agent.py` for ML training data collection.
-
-

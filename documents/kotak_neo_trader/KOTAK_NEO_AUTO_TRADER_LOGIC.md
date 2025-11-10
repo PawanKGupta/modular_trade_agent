@@ -284,5 +284,3 @@ This aligns with the auto trader's logic:
 - If no holding exists, it's treated as new entry
 
 The key difference is that the integrated backtest processes signals sequentially and tracks positions in memory, while the auto trader checks holdings from the broker and tracks positions in JSON files.
-
-

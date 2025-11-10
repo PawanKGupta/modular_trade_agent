@@ -199,7 +199,3 @@ def register_model(
         performance: Model performance metrics
     """
     _model_versioning.register_model(config, model_type, model_path, version, performance)
-
-
-
-

@@ -410,4 +410,3 @@ class ChartQualityService:
         
         analysis = self.calculate_chart_cleanliness_score(df)
         return analysis.get('passed', False)
-

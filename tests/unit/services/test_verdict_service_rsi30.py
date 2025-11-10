@@ -182,7 +182,3 @@ class TestVerdictServiceRSI30:
             )
             
             assert result is not None  # Should calculate (RSI < 30)
-
-
-
-

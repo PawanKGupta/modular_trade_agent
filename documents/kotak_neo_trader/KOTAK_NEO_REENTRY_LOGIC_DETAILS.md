@@ -518,4 +518,3 @@ These three mechanisms work together to ensure:
 - **Controlled re-entries**: Not too many in one day
 - **No duplicates**: Avoids placing orders when position already exists
 - **Cycle management**: Allows fresh re-entries after recovery
-

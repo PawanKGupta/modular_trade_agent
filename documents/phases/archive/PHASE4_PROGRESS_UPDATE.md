@@ -119,4 +119,3 @@ data_service = DataService(data_provider=YFinanceProvider())  # Can inject infra
 - `documents/phases/PHASE4_PLAN.md` - Detailed Phase 4 plan
 - `documents/phases/PHASE4_PROGRESS.md` - Initial Phase 4 progress
 - `documents/phases/PHASE4_PROGRESS_UPDATE.md` - This document
-

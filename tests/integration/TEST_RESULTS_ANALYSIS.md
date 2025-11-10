@@ -211,7 +211,3 @@ The test script has been updated to:
 - Handle chart quality assessment with as_of_date
 
 The test is now more robust and provides better insights into system behavior.
-
-
-
-

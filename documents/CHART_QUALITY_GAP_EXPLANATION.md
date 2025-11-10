@@ -198,7 +198,3 @@ Result: 28.3% > 20% = FAILED ❌
 - High gap frequency (> 20%) makes trading risky
 - System correctly identifies this as a problem
 - But ML model integration needs to be fixed to respect this filter
-
-
-
-

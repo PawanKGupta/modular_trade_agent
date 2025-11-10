@@ -415,7 +415,3 @@ class TestPositionStates:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--cov=integrated_backtest", "--cov-report=term-missing"])
-
-
-
-

@@ -424,4 +424,3 @@ The **Alignment Score** is a comprehensive multi-timeframe metric that evaluates
 - Good reversion setup quality
 
 The alignment score is used to determine verdicts (`strong_buy`, `buy`, `watch`, `avoid`) and confirmation levels (`excellent_uptrend_dip`, `good_uptrend_dip`, `fair_uptrend_dip`, `weak_uptrend_dip`, `poor_uptrend_dip`).
-

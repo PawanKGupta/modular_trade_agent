@@ -609,4 +609,3 @@ class TestChartQualityService:
         # Service may handle empty DataFrame differently, just check it returns valid structure
         assert isinstance(result['score'], (int, float))
         assert isinstance(result['status'], str)
-

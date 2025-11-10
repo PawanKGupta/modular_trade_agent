@@ -132,8 +132,3 @@ class BrokerResponseNormalizer:
             return float(order['price'])
         value = cls._extract_field(order, cls.ORDER_FIELD_MAPPING['price'], 0)
         return float(value) if value else 0.0
-
-
-
-
-

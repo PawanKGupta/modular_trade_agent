@@ -447,7 +447,3 @@ python scripts/filter_training_data_by_chart_quality.py \
 - [ML Model Retraining Guide](../ML_MODEL_RETRAINING_GUIDE.md)
 - [Two-Stage Approach Guide](TWO_STAGE_CHART_QUALITY_ML_APPROACH.md)
 - [Chart Quality Usage Guide](CHART_QUALITY_USAGE_GUIDE.md)
-
-
-
-

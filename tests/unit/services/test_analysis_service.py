@@ -330,4 +330,3 @@ class TestVerdictService:
         service = VerdictService()
         assert service is not None
         assert service.config is not None
-

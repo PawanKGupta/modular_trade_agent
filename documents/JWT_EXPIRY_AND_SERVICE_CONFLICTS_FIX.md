@@ -404,8 +404,3 @@ If issues persist:
 2. Verify only unified service is running
 3. Check logs for errors
 4. Run test blueprint: `python modules/kotak_neo_auto_trader/run_trading_service_test.py`
-
-
-
-
-

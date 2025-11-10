@@ -222,4 +222,3 @@ class StrategyConfig:
     
     def __repr__(self) -> str:
         return f"StrategyConfig(rsi_oversold={self.rsi_oversold}, volume_lookback={self.volume_lookback_days}, ...)"
-

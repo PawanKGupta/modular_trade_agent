@@ -39,4 +39,3 @@ class TestMLVerdictServiceRuleBased:
                 assert 'super().determine_verdict(' in content
                 
         assert True  # Test passed if we got here
-

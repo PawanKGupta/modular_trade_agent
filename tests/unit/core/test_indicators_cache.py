@@ -187,7 +187,3 @@ class TestCacheFunctions:
         assert 'max_size' in stats
         assert isinstance(stats['size'], int)
         assert isinstance(stats['max_size'], int)
-
-
-
-

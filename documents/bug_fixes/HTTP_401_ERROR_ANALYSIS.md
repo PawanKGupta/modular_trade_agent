@@ -321,5 +321,3 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None, add_current_d
 
 **Last Updated**: 2025-11-09  
 **Status**: ⚠️ Analysis Complete - Fixes Recommended
-
-

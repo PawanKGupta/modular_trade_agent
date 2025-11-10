@@ -241,4 +241,3 @@ class LiquidityCapitalService:
                 'actual_capital': 0.0,
                 'execution_capital': execution_capital
             }
-

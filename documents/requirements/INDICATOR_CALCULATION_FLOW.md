@@ -250,8 +250,3 @@ def _calculate_indicators(self):
 
 **Last Updated:** 2025-01-XX
 **Status:** Analysis Complete - Awaiting Implementation Decision
-
-
-
-
-

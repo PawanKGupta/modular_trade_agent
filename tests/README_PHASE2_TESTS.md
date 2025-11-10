@@ -173,8 +173,3 @@ Tests use pytest markers:
 2. Add regression tests comparing old vs new behavior
 3. Add E2E tests for complete workflows
 4. Add stress tests for configurable parameters
-
-
-
-
-

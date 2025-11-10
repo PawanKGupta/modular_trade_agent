@@ -303,4 +303,3 @@ def compute_strength_score(entry: Dict[str, Any]) -> float:
     """
     service = ScoringService()
     return service.compute_strength_score(entry)
-

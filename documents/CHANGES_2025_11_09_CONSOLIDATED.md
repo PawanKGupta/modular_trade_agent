@@ -392,4 +392,3 @@ After implementing RSI30 requirement enforcement, the integration test `test_bac
 - Warnings are allowed for data differences and calculation variations
 
 See `documents/REGRESSION_TEST_FIX_2025_11_09.md` for detailed fix documentation.
-

@@ -286,4 +286,3 @@ def add_backtest_scores_to_results_compat(
     """
     service = BacktestService(default_years_back=years_back, dip_mode=dip_mode)
     return service.add_backtest_scores_to_results(stock_results, years_back, dip_mode)
-

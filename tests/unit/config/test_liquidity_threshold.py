@@ -32,4 +32,3 @@ class TestLiquidityThreshold:
         # Since we can't easily test env var override without module reload,
         # we just verify the current value is 10000 (the expected default)
         assert config.min_absolute_avg_volume == 10000
-

@@ -144,7 +144,3 @@ After fix, the test should run without the timeframe_analysis errors.
 **Fixed By**: Auto (AI Assistant)  
 **Reviewed By**: Pending  
 **Merged**: Pending
-
-
-
-

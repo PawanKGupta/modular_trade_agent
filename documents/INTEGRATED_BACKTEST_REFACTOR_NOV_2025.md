@@ -294,4 +294,3 @@ The new implementation produces **lower but more accurate** returns that reflect
 - `KOTAK_NEO_REENTRY_LOGIC_DETAILS.md` - Re-entry logic details (matches backtest)
 - `DATA_FLOW_BACKTEST.md` - Data flow for `trade_agent.py --backtest` (still accurate)
 - `backtest/README.md` - General backtest overview
-

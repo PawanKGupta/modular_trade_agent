@@ -278,4 +278,3 @@ class TestModelVersioningFunctions:
         # Verify registered
         path = get_model_path(config, "verdict")
         # May not find if using default instance, but registration should work
-

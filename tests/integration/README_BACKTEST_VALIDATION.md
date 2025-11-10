@@ -188,7 +188,3 @@ For faster testing, use a shorter period (2-3 years) or a single stock.
 - It does not validate **performance** (returns, win rate, etc.)
 - For performance validation, use the regular backtest reports
 - The test uses the same logic as the production system, ensuring consistency
-
-
-
-

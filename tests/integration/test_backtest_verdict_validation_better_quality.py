@@ -163,4 +163,3 @@ def test_stocks_with_better_chart_quality():
 
 if __name__ == "__main__":
     test_stocks_with_better_chart_quality()
-

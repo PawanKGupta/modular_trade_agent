@@ -169,7 +169,3 @@ def get_indicator_cache_stats() -> Dict[str, Any]:
         'max_size': _indicator_cache.max_size,
         'hit_rate': 'N/A'  # Would need to track hits/misses
     }
-
-
-
-

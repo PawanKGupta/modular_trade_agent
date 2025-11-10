@@ -172,4 +172,3 @@ Testing the buggy version has no value. The new implementation is correct.
 4. 🗑️ Eventually delete `integrated_backtest_old_buggy.py` (kept only for comparison)
 
 The test suite now validates the **correct implementation** only.
-

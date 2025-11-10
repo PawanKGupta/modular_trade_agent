@@ -607,4 +607,3 @@ class VerdictService:
             'target': target,
             'stop': stop
         }
-

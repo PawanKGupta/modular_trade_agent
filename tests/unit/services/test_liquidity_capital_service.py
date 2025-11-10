@@ -579,4 +579,3 @@ class TestLiquidityCapitalService:
         # Should handle gracefully
         assert 'quantity' in result
         assert 'actual_capital' in result
-

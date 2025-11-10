@@ -204,5 +204,3 @@ MAX_CONCURRENT_ANALYSES=10
 ✅ **Error handling** - Graceful error handling, continues processing
 
 **Recommendation**: Use `MAX_CONCURRENT_ANALYSES=10` for ML training data collection to maximize speed while accepting some HTTP 401 errors (which are handled gracefully).
-
-

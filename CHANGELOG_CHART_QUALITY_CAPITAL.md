@@ -251,4 +251,3 @@ This release adds the two-stage approach (Chart Quality + ML Model) to ensure ML
 
 ### Version 1.0.0
 This release adds comprehensive chart quality filtering and dynamic capital adjustment features to improve trade selection and position sizing. All features are fully tested (>90% coverage) and ready for production use.
-
