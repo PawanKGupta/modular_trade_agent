@@ -123,7 +123,7 @@ class TestEnhancedLabelCreation:
     
     def test_label_creation_includes_outcome_features(self):
         """Test that labels include exit_reason, max_drawdown, days_to_exit"""
-        from collect_training_data import create_labels_from_backtest_results
+        from collect_training_data import create_labels_from_backtest_results_with_reentry as create_labels_from_backtest_results
         
         # Create backtest results with positions including outcome features
         backtest_results = {
@@ -132,11 +132,24 @@ class TestEnhancedLabelCreation:
                 'positions': [
                     {
                         'entry_date': '2024-01-15',
+                        'entry_price': 1000.0,
                         'exit_date': '2024-01-22',
+                        'exit_price': 1125.0,
                         'return_pct': 12.5,
                         'exit_reason': 'Target reached',
                         'days_to_exit': 7,
-                        'max_drawdown_pct': -2.3
+                        'max_drawdown_pct': -2.3,
+                        'capital': 50000,
+                        'quantity': 50,
+                        'fills': [
+                            {
+                                'date': pd.Timestamp('2024-01-15'),
+                                'price': 1000.0,
+                                'capital': 50000,
+                                'quantity': 50
+                            }
+                        ],
+                        'is_pyramided': False
                     }
                 ]
             }
@@ -168,7 +181,7 @@ class TestEnhancedLabelCreation:
     
     def test_label_creation_handles_missing_outcome_features(self):
         """Test that label creation handles missing outcome features gracefully"""
-        from collect_training_data import create_labels_from_backtest_results
+        from collect_training_data import create_labels_from_backtest_results_with_reentry as create_labels_from_backtest_results
         
         # Old backtest results without outcome features
         backtest_results = {
@@ -177,8 +190,20 @@ class TestEnhancedLabelCreation:
                 'positions': [
                     {
                         'entry_date': '2024-01-15',
+                        'entry_price': 1000.0,
                         'exit_date': '2024-01-22',
-                        'return_pct': 8.0
+                        'exit_price': 1080.0,
+                        'return_pct': 8.0,
+                        'capital': 50000,
+                        'quantity': 50,
+                        'fills': [
+                            {
+                                'date': pd.Timestamp('2024-01-15'),
+                                'price': 1000.0,
+                                'capital': 50000,
+                                'quantity': 50
+                            }
+                        ]
                         # No exit_reason, days_to_exit, max_drawdown_pct
                     }
                 ]
@@ -201,7 +226,7 @@ class TestEnhancedLabelCreation:
     
     def test_training_data_completeness(self):
         """Test that training data has all expected features"""
-        from collect_training_data import create_labels_from_backtest_results
+        from collect_training_data import create_labels_from_backtest_results_with_reentry as create_labels_from_backtest_results
         
         # Complete backtest results with all features
         backtest_results = {
@@ -210,11 +235,24 @@ class TestEnhancedLabelCreation:
                 'positions': [
                     {
                         'entry_date': '2024-01-15',
+                        'entry_price': 1000.0,
                         'exit_date': '2024-01-25',
+                        'exit_price': 1150.0,
                         'return_pct': 15.0,
                         'exit_reason': 'Target reached',
                         'days_to_exit': 10,
-                        'max_drawdown_pct': -1.5
+                        'max_drawdown_pct': -1.5,
+                        'capital': 50000,
+                        'quantity': 50,
+                        'fills': [
+                            {
+                                'date': pd.Timestamp('2024-01-15'),
+                                'price': 1000.0,
+                                'capital': 50000,
+                                'quantity': 50
+                            }
+                        ],
+                        'is_pyramided': False
                     }
                 ]
             }
