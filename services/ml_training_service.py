@@ -15,7 +15,7 @@ from utils.logger import logger
 
 try:
     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-    from sklearn.model_selection import train_test_split
+    from sklearn.model_selection import train_test_split, GroupKFold, cross_val_score
     from sklearn.metrics import classification_report, accuracy_score, mean_squared_error, r2_score
     from sklearn.preprocessing import StandardScaler
     SKLEARN_AVAILABLE = True
@@ -79,9 +79,13 @@ class MLTrainingService:
         logger.info(f"Loaded {len(df)} training examples")
         
         # Feature columns (exclude labels and metadata)
+        # PHASE 5: Added position_id, sample_weight, fill_quantity for re-entry support
         exclude_cols = [
             'ticker', 'entry_date', 'exit_date', 'label', 
-            'actual_pnl_pct', 'holding_days', 'backtest_date'
+            'actual_pnl_pct', 'holding_days', 'backtest_date',
+            'position_id', 'sample_weight', 'fill_quantity',
+            'initial_entry_date', 'initial_entry_price', 'fill_price',
+            'exit_reason', 'max_drawdown_pct'
         ]
         
         feature_cols = [col for col in df.columns if col not in exclude_cols]
@@ -90,30 +94,74 @@ class MLTrainingService:
         X = df[feature_cols].copy()
         y = df['label'].values
         
+        # Check for re-entry support (Phase 5)
+        has_position_id = 'position_id' in df.columns
+        has_sample_weight = 'sample_weight' in df.columns
+        groups = df['position_id'].values if has_position_id else None
+        sample_weights = df['sample_weight'].values if has_sample_weight else None
+        
+        if has_position_id:
+            logger.info(f"   Re-entry support detected:")
+            logger.info(f"      Unique positions: {df['position_id'].nunique()}")
+            logger.info(f"      Re-entries: {(df.get('is_reentry', False) == True).sum()}")
+            if has_sample_weight:
+                logger.info(f"      Using quantity-based sample weights")
+        
         # Handle missing values
         X = X.fillna(0)  # Simple fill with 0 (can be improved)
         
-        # Check if stratification is possible (need at least 2 samples per class)
-        unique, counts = np.unique(y, return_counts=True)
-        min_class_count = counts.min()
-        
-        # Use stratification only if all classes have at least 2 samples
-        use_stratify = min_class_count >= 2 and test_size > 0
-        
-        if not use_stratify:
-            logger.warning(
-                f"Stratification disabled: smallest class has only {min_class_count} sample(s). "
-                f"Need at least 2 samples per class for stratification."
+        # PHASE 5: Use GroupKFold when position_id is available
+        if has_position_id and groups is not None:
+            logger.info(f"   Using GroupKFold cross-validation (prevents data leakage)")
+            logger.info(f"   All fills from same position will stay together in train OR test")
+            
+            # Use GroupKFold to split by position
+            # This ensures fills from the same position don't leak between train/test
+            gkf = GroupKFold(n_splits=5)
+            
+            # Take the first split as train/test
+            # (All 5 splits respect position grouping)
+            splits = list(gkf.split(X, y, groups))
+            train_idx, test_idx = splits[0]  # Use first fold as train/test
+            
+            X_train, X_test = X.iloc[train_idx].copy(), X.iloc[test_idx].copy()
+            y_train, y_test = y[train_idx], y[test_idx]
+            
+            # Get sample weights for train/test
+            sample_weights_train = sample_weights[train_idx] if sample_weights is not None else None
+            sample_weights_test = sample_weights[test_idx] if sample_weights is not None else None
+            
+            logger.info(f"   Train set: {len(X_train)} examples from {len(np.unique(groups[train_idx]))} positions")
+            logger.info(f"   Test set: {len(X_test)} examples from {len(np.unique(groups[test_idx]))} positions")
+            
+        else:
+            # Fallback to traditional train/test split (backward compatibility)
+            logger.info(f"   Using traditional train/test split")
+            
+            # Check if stratification is possible (need at least 2 samples per class)
+            unique, counts = np.unique(y, return_counts=True)
+            min_class_count = counts.min()
+            
+            # Use stratification only if all classes have at least 2 samples
+            use_stratify = min_class_count >= 2 and test_size > 0
+            
+            if not use_stratify:
+                logger.warning(
+                    f"   Stratification disabled: smallest class has only {min_class_count} sample(s). "
+                    f"   Need at least 2 samples per class for stratification."
+                )
+            
+            # Split train/test
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state, 
+                stratify=y if use_stratify else None
             )
-        
-        # Split train/test
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state, 
-            stratify=y if use_stratify else None
-        )
-        
-        logger.info(f"Train set: {len(X_train)} examples")
-        logger.info(f"Test set: {len(X_test)} examples")
+            
+            sample_weights_train = sample_weights
+            sample_weights_test = None
+            
+            logger.info(f"   Train set: {len(X_train)} examples")
+            logger.info(f"   Test set: {len(X_test)} examples")
         
         # Train model
         if model_type == "random_forest":
@@ -138,7 +186,13 @@ class MLTrainingService:
             raise ValueError(f"Unknown model type: {model_type}")
         
         logger.info(f"Training {model_type} model...")
-        model.fit(X_train, y_train)
+        
+        # PHASE 5: Use sample weights if available (quantity-based weighting)
+        if sample_weights_train is not None:
+            logger.info(f"   Applying quantity-based sample weights to training")
+            model.fit(X_train, y_train, sample_weight=sample_weights_train)
+        else:
+            model.fit(X_train, y_train)
         
         # Evaluate
         y_pred = model.predict(X_test)
@@ -202,9 +256,13 @@ class MLTrainingService:
             raise ValueError("Training data is empty")
         
         # Feature columns (exclude labels and metadata)
+        # PHASE 5: Added re-entry support columns
         exclude_cols = [
             'ticker', 'entry_date', 'exit_date', 'label', 
             'actual_pnl_pct', 'holding_days', 'backtest_date',
+            'position_id', 'sample_weight', 'fill_quantity',
+            'initial_entry_date', 'initial_entry_price', 'fill_price',
+            'exit_reason', 'max_drawdown_pct',
             target_column
         ]
         
@@ -214,13 +272,39 @@ class MLTrainingService:
         X = df[feature_cols].copy()
         y = df[target_column].values
         
+        # Check for re-entry support (Phase 5)
+        has_position_id = 'position_id' in df.columns
+        has_sample_weight = 'sample_weight' in df.columns
+        groups = df['position_id'].values if has_position_id else None
+        sample_weights = df['sample_weight'].values if has_sample_weight else None
+        
+        if has_position_id:
+            logger.info(f"   Re-entry support detected: {df['position_id'].nunique()} unique positions")
+        
         # Handle missing values
         X = X.fillna(0)
         
-        # Split train/test
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state
-        )
+        # PHASE 5: Use GroupKFold when position_id is available
+        if has_position_id and groups is not None:
+            logger.info(f"   Using GroupKFold cross-validation")
+            
+            gkf = GroupKFold(n_splits=5)
+            splits = list(gkf.split(X, y, groups))
+            train_idx, test_idx = splits[0]
+            
+            X_train, X_test = X.iloc[train_idx].copy(), X.iloc[test_idx].copy()
+            y_train, y_test = y[train_idx], y[test_idx]
+            
+            sample_weights_train = sample_weights[train_idx] if sample_weights is not None else None
+            
+            logger.info(f"   Train: {len(X_train)} examples from {len(np.unique(groups[train_idx]))} positions")
+            logger.info(f"   Test: {len(X_test)} examples from {len(np.unique(groups[test_idx]))} positions")
+        else:
+            # Fallback to traditional train/test split
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state
+            )
+            sample_weights_train = sample_weights
         
         # Train model
         if model_type == "random_forest":
@@ -244,7 +328,13 @@ class MLTrainingService:
             raise ValueError(f"Unknown model type: {model_type}")
         
         logger.info(f"Training {model_type} model...")
-        model.fit(X_train, y_train)
+        
+        # PHASE 5: Use sample weights if available
+        if sample_weights_train is not None:
+            logger.info(f"   Applying quantity-based sample weights")
+            model.fit(X_train, y_train, sample_weight=sample_weights_train)
+        else:
+            model.fit(X_train, y_train)
         
         # Evaluate
         y_pred = model.predict(X_test)
