@@ -371,6 +371,24 @@ class MLVerdictService(VerdictService):
         
         features['fundamental_ok'] = 1.0 if fundamental_ok else 0.0
         
+        # ML ENHANCED DIP FEATURES (Phase 5): Add new dip-buying features
+        # These features must match training data for ML prediction to work
+        if indicators:
+            features['dip_depth_from_20d_high_pct'] = float(indicators.get('dip_depth_from_20d_high_pct', 0.0))
+            features['consecutive_red_days'] = float(indicators.get('consecutive_red_days', 0))
+            features['dip_speed_pct_per_day'] = float(indicators.get('dip_speed_pct_per_day', 0.0))
+            features['decline_rate_slowing'] = 1.0 if indicators.get('decline_rate_slowing', False) else 0.0
+            features['volume_green_vs_red_ratio'] = float(indicators.get('volume_green_vs_red_ratio', 1.0))
+            features['support_hold_count'] = float(indicators.get('support_hold_count', 0))
+        else:
+            # Defaults if indicators not available
+            features['dip_depth_from_20d_high_pct'] = 0.0
+            features['consecutive_red_days'] = 0.0
+            features['dip_speed_pct_per_day'] = 0.0
+            features['decline_rate_slowing'] = 0.0
+            features['volume_green_vs_red_ratio'] = 1.0
+            features['support_hold_count'] = 0.0
+        
         return features
     
     def _build_ml_justification(self, verdict: str) -> List[str]:
