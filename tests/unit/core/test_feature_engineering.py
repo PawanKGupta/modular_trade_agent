@@ -342,4 +342,192 @@ class TestAllFeatures:
         assert features['decline_rate_slowing'] == False
         assert features['volume_green_vs_red_ratio'] == 1.0
         assert features['support_hold_count'] == 0
+    
+    def test_with_none_dataframe(self):
+        """Test all features with None DataFrame"""
+        features = calculate_all_dip_features(None)
+        
+        # Should return default values, not crash
+        assert features['dip_depth_from_20d_high_pct'] == 0.0
+        assert features['consecutive_red_days'] == 0
+
+
+class TestEdgeCases:
+    """Test edge cases and exception handling"""
+    
+    def test_dip_depth_with_zero_high(self):
+        """Test dip depth when high is zero"""
+        df = pd.DataFrame({
+            'high': [0, 0, 0],
+            'close': [0, 0, 0]
+        })
+        result = calculate_dip_depth(df)
+        assert result == 0.0  # Triggers line 43: recent_high <= 0
+    
+    def test_dip_depth_all_negative_highs(self):
+        """Test dip depth when all highs are negative"""
+        df = pd.DataFrame({
+            'high': [-10, -20, -30],
+            'close': [-15, -25, -35]
+        })
+        result = calculate_dip_depth(df)
+        assert result == 0.0  # Triggers line 43: recent_high <= 0
+    
+    def test_dip_depth_with_negative_values(self):
+        """Test dip depth handles negative prices gracefully"""
+        df = pd.DataFrame({
+            'high': [-100, -90, -80],
+            'close': [-105, -95, -85]
+        })
+        # Should not crash
+        result = calculate_dip_depth(df)
+        assert isinstance(result, (int, float))
+    
+    def test_volume_ratio_all_green_candles(self):
+        """Test volume ratio when all candles are green"""
+        df = pd.DataFrame({
+            'open': [100, 101, 102, 103, 104],
+            'close': [101, 102, 103, 104, 105],
+            'volume': [1000, 1100, 1200, 1300, 1400]
+        })
+        ratio = calculate_volume_green_vs_red_ratio(df)
+        assert ratio == 1.0  # Default when no red candles
+    
+    def test_volume_ratio_all_red_candles(self):
+        """Test volume ratio when all candles are red"""
+        df = pd.DataFrame({
+            'open': [100, 99, 98, 97, 96],
+            'close': [99, 98, 97, 96, 95],
+            'volume': [1000, 1100, 1200, 1300, 1400]
+        })
+        ratio = calculate_volume_green_vs_red_ratio(df)
+        assert ratio == 1.0  # Default when no green candles
+    
+    def test_support_holds_with_zero_support(self):
+        """Test support holds when support level is zero"""
+        df = pd.DataFrame({
+            'low': [0, 0, 0, 0, 0],
+            'close': [5, 5, 5, 5, 5]
+        })
+        count = count_support_holds(df)
+        assert count == 0  # Should return 0 for invalid support
+    
+    def test_max_drawdown_with_zero_entry_price(self):
+        """Test max drawdown with zero entry price"""
+        result = calculate_max_drawdown(0, [100, 95, 90])
+        assert result == 0.0
+    
+    def test_max_drawdown_with_negative_entry_price(self):
+        """Test max drawdown with negative entry price"""
+        result = calculate_max_drawdown(-100, [95, 90, 85])
+        assert result == 0.0
+    
+    def test_dip_depth_missing_columns(self):
+        """Test dip depth with missing columns triggers exception path"""
+        df = pd.DataFrame({'other_column': [1, 2, 3]})
+        result = calculate_dip_depth(df)
+        assert result == 0.0  # Exception handled, returns default
+    
+    def test_consecutive_red_missing_columns(self):
+        """Test consecutive red days with missing columns"""
+        df = pd.DataFrame({'other_column': [1, 2, 3]})
+        result = calculate_consecutive_red_days(df)
+        assert result == 0  # Exception handled, returns default
+    
+    def test_dip_speed_missing_columns(self):
+        """Test dip speed with missing columns"""
+        df = pd.DataFrame({'other_column': [1, 2, 3]})
+        result = calculate_dip_speed(df)
+        assert result == 0.0  # Exception handled, returns default
+    
+    def test_decline_slowing_missing_columns(self):
+        """Test decline rate slowing with missing columns"""
+        df = pd.DataFrame({'other_column': [1, 2, 3]})
+        result = is_decline_rate_slowing(df)
+        assert result == False  # Exception handled, returns default
+    
+    def test_volume_ratio_missing_columns(self):
+        """Test volume ratio with missing columns"""
+        df = pd.DataFrame({'other_column': [1, 2, 3]})
+        result = calculate_volume_green_vs_red_ratio(df)
+        assert result == 1.0  # Exception handled, returns default
+    
+    def test_support_holds_missing_columns(self):
+        """Test support holds with missing columns"""
+        df = pd.DataFrame({'other_column': [1, 2, 3]})
+        result = count_support_holds(df)
+        assert result == 0  # Exception handled, returns default
+    
+    def test_max_drawdown_exception_handling(self):
+        """Test max drawdown with data that causes exception"""
+        # Pass non-numeric values that might cause issues
+        result = calculate_max_drawdown(1000, [None, 'bad', 990])
+        # Should handle gracefully
+        assert isinstance(result, (int, float))
+    
+    def test_dip_depth_exact_at_high(self):
+        """Test dip depth when current price equals recent high"""
+        df = pd.DataFrame({
+            'high': [100, 105, 103, 107, 110],
+            'close': [100, 105, 103, 107, 110]  # Last close = last high
+        })
+        result = calculate_dip_depth(df)
+        assert result == 0.0  # No dip when at high
+    
+    def test_volume_ratio_with_zero_avg_volume(self):
+        """Test volume ratio handles zero average volume"""
+        df = pd.DataFrame({
+            'open': [100, 101, 99],
+            'close': [101, 100, 100],
+            'volume': [0, 0, 0]  # Zero volume
+        })
+        ratio = calculate_volume_green_vs_red_ratio(df)
+        assert ratio == 1.0  # Should return default
+    
+    def test_dip_speed_single_day_decline(self):
+        """Test dip speed with only 1 day of decline"""
+        df = pd.DataFrame({
+            'close': [100, 100, 100, 95]  # Only last day declines
+        })
+        speed = calculate_dip_speed(df)
+        assert speed >= 0  # Should calculate for 1 day
+    
+    def test_dip_depth_with_negative_high(self):
+        """Test dip depth when recent high is negative"""
+        df = pd.DataFrame({
+            'high': [-10, -5, 0],
+            'close': [-15, -10, -5]
+        })
+        result = calculate_dip_depth(df)
+        assert result >= 0.0  # Should handle negative values gracefully
+    
+    def test_volume_ratio_with_very_small_df(self):
+        """Test volume ratio with DataFrame smaller than lookback"""
+        df = pd.DataFrame({
+            'open': [100, 101],
+            'close': [101, 100],
+            'volume': [1000, 1100]
+        })
+        # Lookback is 10 by default, but df only has 2 rows
+        ratio = calculate_volume_green_vs_red_ratio(df, lookback=10)
+        assert ratio > 0  # Should still work with available data
+    
+    def test_all_functions_with_corrupted_data(self):
+        """Test all functions handle corrupted/NaN data"""
+        import numpy as np
+        df = pd.DataFrame({
+            'open': [100, np.nan, 102],
+            'close': [101, 100, np.nan],
+            'high': [105, np.nan, 107],
+            'low': [95, 96, np.nan],
+            'volume': [1000, np.nan, 1200]
+        })
+        
+        # All functions should handle NaN values without crashing
+        assert calculate_dip_depth(df) >= 0
+        assert calculate_consecutive_red_days(df) >= 0
+        assert calculate_dip_speed(df) >= 0
+        assert isinstance(is_decline_rate_slowing(df), bool)
+        assert calculate_volume_green_vs_red_ratio(df) > 0
+        assert count_support_holds(df) >= 0
 

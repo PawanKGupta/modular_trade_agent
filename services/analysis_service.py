@@ -14,6 +14,7 @@ from services.indicator_service import IndicatorService
 from services.signal_service import SignalService
 from services.verdict_service import VerdictService
 from core.csv_exporter import CSVExporter
+from core.feature_engineering import calculate_all_dip_features
 from utils.logger import logger
 from config.strategy_config import StrategyConfig
 
@@ -286,6 +287,22 @@ class AnalysisService:
             # Use df_for_analysis for the rest of the analysis
             df = df_for_analysis
             
+            # Step 5.5: Calculate ML enhanced dip-buying features
+            # These features help ML distinguish between good dips vs dead cat bounces
+            try:
+                dip_features = calculate_all_dip_features(df)
+                logger.debug(f"{ticker}: Calculated dip features: depth={dip_features['dip_depth_from_20d_high_pct']:.1f}%, consecutive_red={dip_features['consecutive_red_days']}, slowing={dip_features['decline_rate_slowing']}")
+            except Exception as e:
+                logger.warning(f"{ticker}: Failed to calculate dip features: {e}, using defaults")
+                dip_features = {
+                    'dip_depth_from_20d_high_pct': 0.0,
+                    'consecutive_red_days': 0,
+                    'dip_speed_pct_per_day': 0.0,
+                    'decline_rate_slowing': False,
+                    'volume_green_vs_red_ratio': 1.0,
+                    'support_hold_count': 0
+                }
+            
             # Step 6: Early return if chart quality failed (hard filter)
             # This prevents any further processing including ML model predictions
             if not chart_quality_passed:
@@ -419,6 +436,13 @@ class AnalysisService:
                 "vol_ok": volume_data.get('vol_ok', False),  # For ML training
                 "vol_strong": volume_data.get('vol_strong', False),  # For ML training
                 "is_above_ema200": is_above_ema200,  # For ML training
+                # ML ENHANCED DIP FEATURES (2025-01-10): New features for dip-buying strategy
+                "dip_depth_from_20d_high_pct": round(dip_features['dip_depth_from_20d_high_pct'], 2),
+                "consecutive_red_days": dip_features['consecutive_red_days'],
+                "dip_speed_pct_per_day": round(dip_features['dip_speed_pct_per_day'], 2),
+                "decline_rate_slowing": dip_features['decline_rate_slowing'],
+                "volume_green_vs_red_ratio": round(dip_features['volume_green_vs_red_ratio'], 2),
+                "support_hold_count": dip_features['support_hold_count'],
                 "status": "success"
             }
             

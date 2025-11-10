@@ -487,7 +487,10 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
                 # ML training fields - timeframe data (already in timeframe_analysis but extracted for clarity)
                 'news_sentiment',
                 # ML training fields - chart quality details
-                'chart_quality'
+                'chart_quality',
+                # ML ENHANCED DIP FEATURES (2025-01-10): Advanced features for dip-buying strategy
+                'dip_depth_from_20d_high_pct','consecutive_red_days','dip_speed_pct_per_day',
+                'decline_rate_slowing','volume_green_vs_red_ratio','support_hold_count'
             ]
             def _flatten(row):
                 d = {k: row.get(k) for k in cols if k in row}
