@@ -52,7 +52,7 @@ class Position:
         self.exit_price = None
         self.exit_reason = None
         self.is_closed = False
-        
+
         # ML Outcome tracking (Phase 3: ML Enhanced Features)
         self.max_drawdown_pct = 0.0  # Maximum Adverse Excursion (MAE)
         self.daily_lows = []  # Track daily lows for drawdown calculation
@@ -108,24 +108,24 @@ class Position:
     def update_drawdown(self, current_date: str, low_price: float):
         """
         Update max drawdown tracking (ML Enhanced Features - Phase 3).
-        
+
         Tracks the worst unrealized loss during position lifetime.
         This helps ML learn risk patterns.
-        
+
         Args:
             current_date: Current date (YYYY-MM-DD)
             low_price: Intraday low price
         """
         # Track daily low for MAE calculation
         self.daily_lows.append(low_price)
-        
+
         # Calculate unrealized loss from entry
         unrealized_pnl_pct = ((low_price - self.entry_price) / self.entry_price) * 100
-        
+
         # Update max drawdown if this is worse
         if unrealized_pnl_pct < self.max_drawdown_pct:
             self.max_drawdown_pct = unrealized_pnl_pct
-    
+
     def close_position(self, exit_date: str, exit_price: float, exit_reason: str):
         """Close the position"""
         self.exit_date = pd.to_datetime(exit_date)
@@ -142,7 +142,7 @@ class Position:
         if not self.is_closed:
             return 0
         return ((self.exit_price - self.entry_price) / self.entry_price) * 100
-    
+
     def get_days_to_exit(self) -> int:
         """Get number of days from entry to exit (ML Enhanced Features - Phase 3)"""
         if not self.is_closed or self.exit_date is None:
@@ -364,8 +364,8 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
                 exec_price = next_days.iloc[0]['Open']
                 exec_ema9 = next_days.iloc[0]['EMA9']
 
-                # Use EMA9 at execution date as new target
-                new_target = exec_ema9 if not pd.isna(exec_ema9) else exec_price * 1.08
+                # Target is EMA9 (exit condition: High >= EMA9 OR RSI > 50)
+                new_target = exec_ema9
 
                 # Execute re-entry (no trade agent validation)
                 position.add_reentry(exec_date_str, exec_price, capital_per_position, new_target, next_level)
@@ -402,7 +402,8 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
 
                 if validation and validation.get('approved'):
                     # Execute initial entry
-                    target = exec_ema9 if not pd.isna(exec_ema9) else exec_price * 1.08
+                    # Target is EMA9 (exit condition: High >= EMA9 OR RSI > 50)
+                    target = exec_ema9
 
                     position = Position(
                         stock_name=stock_name,
