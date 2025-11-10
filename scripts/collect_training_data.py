@@ -82,12 +82,12 @@ def extract_features_at_date(
             
             # Technical indicators
             'rsi_10': float(last.get('rsi10', 0)) if pd.notna(last.get('rsi10')) else None,
-            'ema200': float(last.get('ema200', 0)) if pd.notna(last.get('ema200')) else None,
-            'price': float(last['close']),
+            # REMOVED: ema200 (redundant with price_above_ema200 boolean)
+            # REMOVED: price (absolute price not useful for ML)
             'price_above_ema200': bool(pd.notna(last.get('ema200')) and last['close'] > last['ema200']),
             
-            # Volume
-            'volume': float(last['volume']),
+            # Volume features
+            # REMOVED: volume (absolute volume redundant with volume_ratio)
             'avg_volume_20': float(df['volume'].tail(20).mean()) if len(df) >= 20 else None,
             'volume_ratio': float(last['volume'] / df['volume'].tail(20).mean()) if len(df) >= 20 and df['volume'].tail(20).mean() > 0 else 1.0,
             'vol_strong': bool(last['volume'] >= 1.5 * df['volume'].tail(20).mean()) if len(df) >= 20 else False,

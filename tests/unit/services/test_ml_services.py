@@ -107,14 +107,15 @@ class TestMLVerdictService:
             df=df
         )
         
-        assert 'volume' in features
-        assert features['volume'] == 1100000
+        # REMOVED FEATURES (Phase 5 cleanup): volume, price, ema200
+        # These were redundant/not useful for ML
+        assert 'volume' not in features  # Removed: absolute volume not useful
         # Default volume_exhaustion_lookback_daily = 10, so feature is avg_volume_10
-        assert 'avg_volume_10' in features
-        assert 'volume_ratio' in features
-        assert 'recent_high_20' in features
-        assert 'recent_low_20' in features
-        assert 'support_distance_pct' in features
+        assert 'avg_volume_10' in features  # Kept: relative metric
+        assert 'volume_ratio' in features  # Kept: relative metric
+        assert 'recent_high_20' in features  # Kept: useful
+        assert 'recent_low_20' in features  # Kept: useful
+        assert 'support_distance_pct' in features  # Kept: useful
     
     def test_predict_verdict_with_confidence_no_model(self):
         """Test prediction when model not loaded"""
