@@ -1,6 +1,7 @@
 {
   "files.eol": "\n",
   "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": true,
   "files.trimTrailingWhitespace": true,
   "[python]": {
     "editor.formatOnSave": true,
@@ -10,6 +11,4 @@
     "files.trimTrailingWhitespace": false
   }
 }
-
-
 
