@@ -52,6 +52,10 @@ class Position:
         self.exit_price = None
         self.exit_reason = None
         self.is_closed = False
+        
+        # ML Outcome tracking (Phase 3: ML Enhanced Features)
+        self.max_drawdown_pct = 0.0  # Maximum Adverse Excursion (MAE)
+        self.daily_lows = []  # Track daily lows for drawdown calculation
 
         # RSI level tracking (matches auto trader)
         # CRITICAL: Mark ALL levels above entry RSI as taken
@@ -101,6 +105,27 @@ class Position:
             'rsi_level': rsi_level
         })
 
+    def update_drawdown(self, current_date: str, low_price: float):
+        """
+        Update max drawdown tracking (ML Enhanced Features - Phase 3).
+        
+        Tracks the worst unrealized loss during position lifetime.
+        This helps ML learn risk patterns.
+        
+        Args:
+            current_date: Current date (YYYY-MM-DD)
+            low_price: Intraday low price
+        """
+        # Track daily low for MAE calculation
+        self.daily_lows.append(low_price)
+        
+        # Calculate unrealized loss from entry
+        unrealized_pnl_pct = ((low_price - self.entry_price) / self.entry_price) * 100
+        
+        # Update max drawdown if this is worse
+        if unrealized_pnl_pct < self.max_drawdown_pct:
+            self.max_drawdown_pct = unrealized_pnl_pct
+    
     def close_position(self, exit_date: str, exit_price: float, exit_reason: str):
         """Close the position"""
         self.exit_date = pd.to_datetime(exit_date)
@@ -117,6 +142,12 @@ class Position:
         if not self.is_closed:
             return 0
         return ((self.exit_price - self.entry_price) / self.entry_price) * 100
+    
+    def get_days_to_exit(self) -> int:
+        """Get number of days from entry to exit (ML Enhanced Features - Phase 3)"""
+        if not self.is_closed or self.exit_date is None:
+            return 0
+        return (self.exit_date - self.entry_date).days
 
 
 def validate_initial_entry_with_trade_agent(stock_name: str, signal_date: str,
@@ -260,10 +291,15 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
         ema9 = row['EMA9']
         close = row['Close']
         high = row['High']
+        low = row['Low']
 
         # Skip if RSI is NaN
         if pd.isna(rsi):
             continue
+
+        # Update drawdown tracking for open positions (ML Enhanced Features - Phase 3)
+        if position and not position.is_closed:
+            position.update_drawdown(date_str, low)
 
         # Check exit conditions first (if position is open)
         if position and not position.is_closed:
@@ -428,6 +464,9 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
                 'quantity': p.quantity,
                 'pnl': p.get_pnl(),
                 'return_pct': p.get_return_pct(),
+                # ML ENHANCED OUTCOME FEATURES (Phase 3)
+                'days_to_exit': p.get_days_to_exit(),
+                'max_drawdown_pct': round(p.max_drawdown_pct, 2),
                 'fills': p.fills,
                 'is_pyramided': len(p.fills) > 1  # Backward compatibility
             })
