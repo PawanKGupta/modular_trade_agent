@@ -53,3 +53,12 @@ NEXT_STEPS_*.md
 # Test output and temporary files
 test_output/
 pending_orders.json
+
+# Backup files
+*_old_buggy.py
+*_v2.py
+test_output.csv
+
+# Model metadata
+models/model_versions.json
+models/verdict_model_features_*.txt
