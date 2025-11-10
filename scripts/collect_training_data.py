@@ -176,9 +176,10 @@ def create_labels_from_backtest_results(backtest_results: Dict) -> List[Dict]:
         try:
             import re
             import numpy as np
+            from pandas import Timestamp
             
-            # Create a safe namespace for eval (only allow numpy types and basic dict/list)
-            safe_dict = {"__builtins__": {}, "dict": dict, "list": list, "np": np}
+            # Create a safe namespace for eval (allow numpy types, pandas Timestamp, and basic dict/list)
+            safe_dict = {"__builtins__": {}, "dict": dict, "list": list, "np": np, "Timestamp": Timestamp}
             
             # Clean up the string - replace np.float64 with float
             # The string might have np.float64(123.45) which needs to become 123.45
@@ -187,12 +188,14 @@ def create_labels_from_backtest_results(backtest_results: Dict) -> List[Dict]:
             # Evaluate safely
             full_results = eval(cleaned, safe_dict)
             
-            # Convert numpy types to Python types
+            # Convert numpy types and Timestamps to Python types
             def convert_numpy_types(obj):
                 if isinstance(obj, dict):
                     return {k: convert_numpy_types(v) for k, v in obj.items()}
                 elif isinstance(obj, list):
                     return [convert_numpy_types(item) for item in obj]
+                elif isinstance(obj, Timestamp):
+                    return obj.strftime('%Y-%m-%d')  # Convert Timestamp to string
                 elif hasattr(obj, 'item'):  # numpy scalar
                     return obj.item()
                 elif isinstance(obj, (np.integer, np.floating)):
