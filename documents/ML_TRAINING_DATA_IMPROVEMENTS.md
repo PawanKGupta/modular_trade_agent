@@ -356,11 +356,11 @@ This ensures training always happens on older data, testing on newer data.
 2. ✅ Add VIX features (DONE - integrated with market regime service)
 3. 📋 Re-train and test (expect improvement to 73-75%) - **NEXT STEP**
 
-### **Phase 3: Refinements (Week 4)**
-1. ✅ Add time-based features
-2. ✅ Add feature interactions
-3. ✅ Implement time-series CV
-4. ✅ Final model (target 75-78% accuracy)
+### **Phase 3: Refinements (Week 4)** ✅ **COMPLETED 2025-11-12**
+1. ✅ Add time-based features (DONE - 8 features: day_of_week, is_monday, is_friday, month, quarter, is_q4, is_month_end, is_quarter_end)
+2. ✅ Add feature interactions (DONE - 4 interactions: rsi_volume, dip_support, extreme_dip, bearish_deep_dip)
+3. ✅ Implement time-series CV (DONE - TimeSeriesSplit for temporal ordering)
+4. 📋 Re-train and evaluate final model (target 75-78% accuracy) - **NEXT STEP**
 
 ---
 

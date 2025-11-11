@@ -483,6 +483,67 @@ class MLVerdictService(VerdictService):
             features['india_vix'] = 20.0  # Average VIX
             features['sector_strength'] = 0.0
 
+        # TIME-BASED FEATURES (2025-11-12): Add temporal patterns
+        # For live predictions, use current date unless analysis_date provided
+        try:
+            from datetime import datetime
+            
+            # Get analysis date from indicators if available (for historical), otherwise use today
+            if indicators and 'analysis_date' in indicators:
+                analysis_datetime = pd.to_datetime(indicators['analysis_date'])
+            else:
+                analysis_datetime = datetime.now()
+            
+            features['day_of_week'] = analysis_datetime.weekday()  # 0=Monday, 6=Sunday
+            features['is_monday'] = 1.0 if analysis_datetime.weekday() == 0 else 0.0
+            features['is_friday'] = 1.0 if analysis_datetime.weekday() == 4 else 0.0
+            features['month'] = analysis_datetime.month
+            features['quarter'] = (analysis_datetime.month - 1) // 3 + 1
+            features['is_q4'] = 1.0 if analysis_datetime.month >= 10 else 0.0
+            features['is_month_end'] = 1.0 if analysis_datetime.day >= 25 else 0.0
+            features['is_quarter_end'] = 1.0 if (analysis_datetime.month in [3, 6, 9, 12] and analysis_datetime.day >= 25) else 0.0
+            
+            logger.debug(f"Added time features: day={features['day_of_week']}, month={features['month']}")
+        except Exception as e:
+            logger.warning(f"Could not add time features: {e}, using defaults")
+            features['day_of_week'] = 0
+            features['is_monday'] = 0.0
+            features['is_friday'] = 0.0
+            features['month'] = 1
+            features['quarter'] = 1
+            features['is_q4'] = 0.0
+            features['is_month_end'] = 0.0
+            features['is_quarter_end'] = 0.0
+
+        # FEATURE INTERACTIONS (2025-11-12): Combine features for stronger signals
+        try:
+            # Interaction 1: RSI + Volume (panic selling with high volume)
+            rsi_feature_name = f'rsi_{self.config.rsi_period if self.config else 10}'
+            features['rsi_volume_interaction'] = features.get(rsi_feature_name, 50.0) * features.get('volume_ratio', 1.0)
+            
+            # Interaction 2: Dip depth + Support distance (deep dip near support)
+            features['dip_support_interaction'] = features.get('dip_depth_from_20d_high_pct', 0.0) * features.get('support_distance_pct', 0.0)
+            
+            # Interaction 3: Extreme dip with high volume (binary flag)
+            features['extreme_dip_high_volume'] = 1.0 if (
+                features.get('dip_depth_from_20d_high_pct', 0.0) > 10.0 and 
+                features.get('volume_ratio', 1.0) > 1.5
+            ) else 0.0
+            
+            # Interaction 4: Bearish market + Deep dip (from backtest analysis)
+            # Bearish markets show 19.8% success vs 13.4% in bullish
+            features['bearish_deep_dip'] = (
+                1.0 if features.get('nifty_trend', 0.0) == -1.0 else 0.0
+            ) * features.get('dip_depth_from_20d_high_pct', 0.0)
+            
+            logger.debug("Added feature interactions")
+        except Exception as e:
+            logger.warning(f"Could not add feature interactions: {e}, using defaults")
+            features['rsi_volume_interaction'] = 0.0
+            features['dip_support_interaction'] = 0.0
+            features['extreme_dip_high_volume'] = 0.0
+            features['bearish_deep_dip'] = 0.0
+
         return features
 
     def _build_ml_justification(self, verdict: str) -> List[str]:

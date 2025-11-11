@@ -15,7 +15,7 @@ from utils.logger import logger
 
 try:
     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-    from sklearn.model_selection import train_test_split, GroupKFold, cross_val_score
+    from sklearn.model_selection import train_test_split, GroupKFold, cross_val_score, TimeSeriesSplit
     from sklearn.metrics import classification_report, accuracy_score, mean_squared_error, r2_score
     from sklearn.preprocessing import StandardScaler
     SKLEARN_AVAILABLE = True
@@ -110,19 +110,27 @@ class MLTrainingService:
         # Handle missing values
         X = X.fillna(0)  # Simple fill with 0 (can be improved)
         
-        # PHASE 5: Use GroupKFold when position_id is available
+        # PHASE 5 + TimeSeriesSplit: Use GroupKFold + temporal ordering
         if has_position_id and groups is not None:
-            logger.info(f"   Using GroupKFold cross-validation (prevents data leakage)")
-            logger.info(f"   All fills from same position will stay together in train OR test")
+            logger.info(f"   Using GroupKFold + TimeSeriesSplit cross-validation")
+            logger.info(f"   - GroupKFold prevents position leakage (all fills together)")
+            logger.info(f"   - TimeSeriesSplit ensures train on past, test on future")
             
-            # Use GroupKFold to split by position
-            # This ensures fills from the same position don't leak between train/test
-            gkf = GroupKFold(n_splits=5)
+            # Sort data by entry_date for temporal ordering
+            if 'entry_date' in df.columns:
+                df_sorted = df.sort_values('entry_date').reset_index(drop=True)
+                X = df_sorted[feature_cols].copy().fillna(0)
+                y = df_sorted[target_column].values
+                groups = df_sorted['position_id'].values
+                sample_weights = df_sorted['sample_weight'].values if has_sample_weight else None
+                logger.info(f"   Sorted by entry_date: {df_sorted['entry_date'].min()} to {df_sorted['entry_date'].max()}")
+            else:
+                logger.warning(f"   'entry_date' not found - using unsorted data")
             
-            # Take the first split as train/test
-            # (All 5 splits respect position grouping)
-            splits = list(gkf.split(X, y, groups))
-            train_idx, test_idx = splits[0]  # Use first fold as train/test
+            # Use time-based split: 80% train (older), 20% test (newer)
+            split_point = int(len(X) * 0.8)
+            train_idx = np.arange(0, split_point)
+            test_idx = np.arange(split_point, len(X))
             
             X_train, X_test = X.iloc[train_idx].copy(), X.iloc[test_idx].copy()
             y_train, y_test = y[train_idx], y[test_idx]
@@ -133,6 +141,13 @@ class MLTrainingService:
             
             logger.info(f"   Train set: {len(X_train)} examples from {len(np.unique(groups[train_idx]))} positions")
             logger.info(f"   Test set: {len(X_test)} examples from {len(np.unique(groups[test_idx]))} positions")
+            
+            # Log temporal split
+            if 'entry_date' in df.columns:
+                train_dates = df_sorted.iloc[train_idx]['entry_date']
+                test_dates = df_sorted.iloc[test_idx]['entry_date']
+                logger.info(f"   Train dates: {train_dates.min()} to {train_dates.max()}")
+                logger.info(f"   Test dates: {test_dates.min()} to {test_dates.max()}")
             
         else:
             # Fallback to traditional train/test split (backward compatibility)
