@@ -21,7 +21,7 @@ class TestMLVerdictServiceRuleBased:
         return StrategyConfig.default()
     
     def test_ml_service_rule_based_logic_implementation(self, config):
-        """Test that ML service implements rule-based logic (integration test)"""
+        """Test that ML service implements rule-based logic with ML monitoring (integration test)"""
         # Test the actual implementation by checking the code structure
         # This test verifies that the changes were made correctly
         
@@ -33,9 +33,12 @@ class TestMLVerdictServiceRuleBased:
             with open(ml_service_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 
-                # Verify that rule-based logic is used
-                assert 'TEMPORARILY DISABLED' in content or 'TEMPORARY: Use rule-based logic only' in content
+                # Verify ML monitoring mode implementation (2025-11-11)
+                # ML predictions are logged but rule-based verdicts are used
+                assert 'DISABLED FOR VERDICT' in content or 'monitoring mode' in content or 'TEMPORARY: Use rule-based logic only' in content
                 assert 'using rule-based logic' in content.lower()
                 assert 'super().determine_verdict(' in content
+                # Verify ML prediction is still collected for monitoring
+                assert '_predict_with_ml' in content or 'ml_prediction' in content.lower()
                 
         assert True  # Test passed if we got here
