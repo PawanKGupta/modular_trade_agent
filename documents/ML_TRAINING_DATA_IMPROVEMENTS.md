@@ -40,9 +40,9 @@ Dip features, support/resistance, volume analysis, fundamentals - comprehensive!
 
 ## ⚠️ **CRITICAL ISSUES** (Must Fix!)
 
-### **🔴 1. Look-Ahead Bias - CRITICAL!**
+### **🔴 1. Look-Ahead Bias - CRITICAL!** ✅ **FIXED 2025-11-12**
 
-**Current Code:**
+**Previous Code:**
 ```python
 df = data_service.fetch_single_timeframe(
     ticker=ticker,
@@ -64,32 +64,40 @@ last = df.iloc[-1]  # ← Using data FROM entry_date
 - Real-world accuracy will be **lower** (maybe 65-68%)
 - Model has seen "future" information during training
 
-**Fix:**
+**Fix (IMPLEMENTED 2025-11-12):**
 ```python
-# Option 1: Use previous day's close
-entry_datetime = datetime.strptime(entry_date, '%Y-%m-%d')
-lookback_date = (entry_datetime - timedelta(days=1)).strftime('%Y-%m-%d')
+# In scripts/collect_training_data.py:extract_features_at_date()
 
+# Calculate signal date (day before entry/execution)
+entry_datetime = datetime.strptime(entry_date, '%Y-%m-%d')
+signal_date = entry_datetime - timedelta(days=1)
+
+# Skip weekends: if signal_date falls on Saturday/Sunday, go back to Friday
+while signal_date.weekday() >= 5:  # 5=Saturday, 6=Sunday
+    signal_date -= timedelta(days=1)
+
+signal_date_str = signal_date.strftime('%Y-%m-%d')
+
+# Fetch data up to SIGNAL date (not entry date!) to avoid look-ahead bias
 df = data_service.fetch_single_timeframe(
     ticker=ticker,
-    end_date=lookback_date,  # ← Day BEFORE fill
+    end_date=signal_date_str,  # ← FIXED: Use signal date, not entry date
     add_current_day=False
 )
-
-# Option 2: Use entry_date but only pre-market data (if available)
-# For Indian market, this means using previous day's data
 ```
 
 **Testing the fix:**
 ```bash
-# Re-collect training data with 1-day offset
-python scripts/collect_training_data.py \
-    --backtest-file backtest_results.csv \
-    --output-file data/ml_training_data_no_lookahead.csv \
-    --lookback-days 1  # New parameter
+# Verify the fix is working
+python scripts/verify_lookahead_fix.py --ticker RELIANCE.NS --entry-date 2024-11-11
+
+# Re-collect training data (fix is automatic now)
+python scripts/collect_training_data.py --backtest-file backtest_results.csv
 ```
 
 **Expected outcome:** Accuracy may drop to 68-70%, but it will be **REAL** accuracy you'll see in live trading.
+
+**Status:** ✅ FIXED - Features now use signal_date (entry_date - 1 trading day)
 
 ---
 
@@ -318,24 +326,24 @@ This ensures training always happens on older data, testing on newer data.
 
 ## 📊 **Priority Ranking**
 
-| Priority | Issue | Expected Impact | Effort |
-|----------|-------|----------------|--------|
-| 🔴 **1** | Fix look-ahead bias | -2 to -4% accuracy (but REAL) | Medium |
-| 🟡 **2** | Add market regime features | +3 to +5% accuracy | High |
-| 🟡 **3** | Add time features | +1 to +2% accuracy | Low |
-| 🟢 **4** | Feature interactions | +1% accuracy | Low |
-| 🟢 **5** | Outcome rate vs absolute | +1 to +2% accuracy | Medium |
-| 🟢 **6** | Time-series CV | Better generalization | Medium |
+| Priority | Issue | Expected Impact | Effort | Status |
+|----------|-------|----------------|--------|---------|
+| 🔴 **1** | Fix look-ahead bias | -2 to -4% accuracy (but REAL) | Medium | ✅ **FIXED 2025-11-12** |
+| 🟡 **2** | Add market regime features | +3 to +5% accuracy | High | 📋 TODO |
+| 🟡 **3** | Add time features | +1 to +2% accuracy | Low | 📋 TODO |
+| 🟢 **4** | Feature interactions | +1% accuracy | Low | 📋 TODO |
+| 🟢 **5** | Outcome rate vs absolute | +1 to +2% accuracy | Medium | 📋 TODO |
+| 🟢 **6** | Time-series CV | Better generalization | Medium | 📋 TODO |
 
 ---
 
 ## 🎯 **Recommended Action Plan**
 
-### **Phase 1: Critical Fixes (Week 1)**
-1. ✅ Fix look-ahead bias (use day-before data)
-2. ✅ Re-collect training data
-3. ✅ Re-train model
-4. ✅ Compare old vs new accuracy (expect drop to 68-70%)
+### **Phase 1: Critical Fixes (Week 1)** ✅ **IN PROGRESS**
+1. ✅ Fix look-ahead bias (use day-before data) - **DONE 2025-11-12**
+2. 📋 Re-collect training data - **NEXT STEP**
+3. 📋 Re-train model
+4. 📋 Compare old vs new accuracy (expect drop to 68-70%)
 
 ### **Phase 2: Market Context (Week 2-3)**
 1. ✅ Add Nifty 50 trend features

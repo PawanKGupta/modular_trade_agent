@@ -8,7 +8,19 @@ Phase 5 Enhancement: Re-entry extraction for ML training
 - Extract features at each fill date (initial entry + all re-entries)
 - Use position-level P&L for all fills (Approach A)
 - Add context features: is_reentry, fill_number, total_fills, position_id
-- Add sample_weight (0.5 for re-entries to reduce overfitting)
+- Quantity-based sample weighting (proportional to share contribution)
+
+LOOK-AHEAD BIAS FIX (2025-11-12):
+=====================================
+Backtest flow:
+  Day X: Signal detected → Day X+1: Execute at open → entry_date = Day X+1
+
+Training data extraction:
+  entry_date = Day X+1 (from backtest)
+  Features extracted from: Day X close data (signal day - what we knew!)
+
+This prevents look-ahead bias where the model would see Day X+1's close data
+that wasn't available when the trading decision was made.
 """
 
 import sys
@@ -43,9 +55,25 @@ def extract_features_at_date(
     """
     Extract features at a specific entry date
 
+    LOOK-AHEAD BIAS FIX (2025-11-12):
+    =====================================
+    In backtest:
+      - Day X: Signal detected (RSI < 30, etc.) using Day X's close data
+      - Day X+1: Trade executed at open price (entry_date = Day X+1)
+
+    In training:
+      - entry_date = Day X+1 (execution day from backtest)
+      - Features should use Day X's close data (signal day = what we knew when deciding!)
+      - NOT Day X+1's close data (that's look-ahead bias!)
+
+    Example:
+      - Signal: Nov 10 evening (had Nov 10 close, volume, RSI)
+      - Entry: Nov 11 morning open (entry_date = "2024-11-11")
+      - Features: Use Nov 10 close data (signal_date = "2024-11-10")
+
     Args:
         ticker: Stock ticker
-        entry_date: Entry date (YYYY-MM-DD)
+        entry_date: Entry date from backtest (YYYY-MM-DD) - execution day!
         data_service: Data service instance
         indicator_service: Indicator service instance
         signal_service: Signal service instance
@@ -55,11 +83,23 @@ def extract_features_at_date(
         Dict with features or None if extraction fails
     """
     try:
-        # Fetch data up to entry date
+        # LOOK-AHEAD BIAS FIX: Calculate signal date (day before entry/execution)
+        entry_datetime = datetime.strptime(entry_date, '%Y-%m-%d')
+        signal_date = entry_datetime - timedelta(days=1)
+
+        # Skip weekends: if signal_date falls on Saturday/Sunday, go back to Friday
+        while signal_date.weekday() >= 5:  # 5=Saturday, 6=Sunday
+            signal_date -= timedelta(days=1)
+
+        signal_date_str = signal_date.strftime('%Y-%m-%d')
+
+        logger.debug(f"{ticker}: Entry={entry_date}, Signal={signal_date_str} (using signal day for features)")
+
+        # Fetch data up to SIGNAL date (not entry date!) to avoid look-ahead bias
         df = data_service.fetch_single_timeframe(
             ticker=ticker,
-            end_date=entry_date,
-            add_current_day=False  # Don't include current day for historical analysis
+            end_date=signal_date_str,  # ← CHANGED: Use signal date, not entry date
+            add_current_day=False
         )
 
         if df is None or df.empty or len(df) < 50:
@@ -70,7 +110,7 @@ def extract_features_at_date(
         if df is None or df.empty:
             return None
 
-        # Get latest row (entry date)
+        # Get latest row (signal date - what we had when making decision)
         last = df.iloc[-1]
 
         # Extract features
@@ -292,12 +332,12 @@ def create_labels_from_backtest_results_with_reentry(backtest_results: Dict) -> 
 
         # Create position ID for cross-validation grouping
         position_id = f"{ticker}_{initial_date_str.replace('-', '')}"
-        
+
         # Calculate total quantity for quantity-based weighting
         total_quantity = sum(float(f.get('quantity', 0)) for f in fills)
-        
+
         logger.info(f"    Processing position: {initial_date_str} ({total_fills} fills, P&L: {pnl_pct:.2f}%)")
-        
+
         # Extract features for EACH fill (initial + re-entries)
         for fill_idx, fill in enumerate(fills):
             fill_date = fill['date']
@@ -368,7 +408,7 @@ def create_labels_from_backtest_results_with_reentry(backtest_results: Dict) -> 
                 features['fill_price_vs_initial_pct'] = ((fill_price - initial_price) / initial_price) * 100
             else:
                 features['fill_price_vs_initial_pct'] = 0.0
-            
+
             # QUANTITY-BASED SAMPLE WEIGHT (Phase 5 Enhancement)
             # Weight by quantity contribution: re-entries at lower prices buy more shares
             # and contribute more to P&L, so they get proportionally higher weight
@@ -378,7 +418,7 @@ def create_labels_from_backtest_results_with_reentry(backtest_results: Dict) -> 
             else:
                 # Fallback to simple weighting if quantity data unavailable
                 features['sample_weight'] = 1.0 if not is_reentry else 0.5
-            
+
             features['fill_quantity'] = fill_quantity  # Add for reference
 
             labeled_examples.append(features)
