@@ -250,10 +250,10 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
                 conf_pct = ml_confidence if ml_confidence > 1 else ml_confidence * 100
             else:
                 conf_pct = 0
-            
+
             # Determine rule verdict (use final_verdict if backtest scoring enabled)
             rule_verdict = stock_data.get('final_verdict') or stock_data.get('verdict', 'unknown')
-            
+
             # Add agreement/disagreement indicator
             agreement_indicator = ""
             if rule_verdict in ['buy', 'strong_buy'] and ml_verdict in ['buy', 'strong_buy']:
@@ -262,7 +262,7 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
                 agreement_indicator = " ⚠️ ONLY ML"  # ML sees opportunity, rules don't
             elif rule_verdict in ['buy', 'strong_buy'] and ml_verdict in ['watch', 'avoid']:
                 agreement_indicator = " ⚠️ ONLY RULE"  # Rules see opportunity, ML doesn't
-            
+
             # Add ML prediction for comparison/monitoring
             ml_emoji = {"strong_buy": "🔥", "buy": "📈", "watch": "👀", "avoid": "❌"}.get(ml_verdict, "🤖")
             lines.append(f"\t🤖 ML: {ml_verdict.upper()} {ml_emoji} ({conf_pct:.0f}% conf){agreement_indicator}")
@@ -532,10 +532,10 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
                       )]
     else:
         # Include stocks where EITHER rule OR ML predicts buy/strong_buy
-        buys = [r for r in results if 
+        buys = [r for r in results if
                 r.get('status') == 'success' and
                 (r.get('verdict') in ['buy', 'strong_buy'] or r.get('ml_verdict') in ['buy', 'strong_buy'])]
-        strong_buys = [r for r in results if 
+        strong_buys = [r for r in results if
                       r.get('status') == 'success' and
                       (r.get('verdict') == 'strong_buy' or r.get('ml_verdict') == 'strong_buy')]
 
@@ -560,12 +560,12 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
         strong_buy_tickers = {r.get('ticker') for r in strong_buys}
         if enable_backtest_scoring:
             # Include if rule says buy OR ml says buy (but not strong_buy)
-            regular_buys = [r for r in buys if 
+            regular_buys = [r for r in buys if
                           r.get('ticker') not in strong_buy_tickers and
                           (r.get('final_verdict') == 'buy' or r.get('ml_verdict') == 'buy')]
         else:
             # Include if rule says buy OR ml says buy (but not strong_buy)
-            regular_buys = [r for r in buys if 
+            regular_buys = [r for r in buys if
                           r.get('ticker') not in strong_buy_tickers and
                           (r.get('verdict') == 'buy' or r.get('ml_verdict') == 'buy')]
 
