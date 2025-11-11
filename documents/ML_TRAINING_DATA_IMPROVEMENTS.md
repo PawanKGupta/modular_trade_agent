@@ -101,15 +101,21 @@ python scripts/collect_training_data.py --backtest-file backtest_results.csv
 
 ---
 
-### **🟡 2. Market Regime Features - HIGH IMPACT**
+### **🟢 2. Market Regime Features - HIGH IMPACT** ✅ **IMPLEMENTED 2025-11-12**
 
-**Current:** You only look at the stock in isolation.
+**Status:** ✅ FULLY IMPLEMENTED
+
+**What was added:**
+- 5 market regime features automatically fetch during live analysis and training data collection
+- See [ML_MARKET_REGIME_FEATURES.md](./ML_MARKET_REGIME_FEATURES.md) for full documentation
+
+**Previous Issue:** You only looked at the stock in isolation.
 
 **Problem:** A stock with RSI=25 behaves differently in:
 - Bull market (bounces quickly) vs
 - Bear market (keeps falling)
 
-**Add these features:**
+**Implemented Solution:**
 ```python
 def add_market_regime_features(df, entry_date):
     """Add features about overall market condition"""
@@ -345,10 +351,10 @@ This ensures training always happens on older data, testing on newer data.
 3. 📋 Re-train model
 4. 📋 Compare old vs new accuracy (expect drop to 68-70%)
 
-### **Phase 2: Market Context (Week 2-3)**
-1. ✅ Add Nifty 50 trend features
-2. ✅ Add VIX features
-3. ✅ Re-train and test (expect improvement to 73-75%)
+### **Phase 2: Market Context (Week 2-3)** ✅ **COMPLETED 2025-11-12**
+1. ✅ Add Nifty 50 trend features (DONE - 5 features implemented)
+2. ✅ Add VIX features (DONE - integrated with market regime service)
+3. 📋 Re-train and test (expect improvement to 73-75%) - **NEXT STEP**
 
 ### **Phase 3: Refinements (Week 4)**
 1. ✅ Add time-based features

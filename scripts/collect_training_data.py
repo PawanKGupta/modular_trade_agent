@@ -182,6 +182,31 @@ def extract_features_at_date(
             features['volume_green_vs_red_ratio'] = 1.0
             features['support_hold_count'] = 0
 
+        # MARKET REGIME FEATURES (2025-11-11): Add broader market context
+        # Uses signal_date (day before entry) to match feature extraction timing
+        try:
+            from services.market_regime_service import get_market_regime_service
+            
+            market_regime_service = get_market_regime_service()
+            market_features = market_regime_service.get_market_regime_features(
+                date=signal_date_str  # Use signal date for consistency
+            )
+            
+            features['nifty_trend'] = market_features['nifty_trend']
+            features['nifty_vs_sma20_pct'] = market_features['nifty_vs_sma20_pct']
+            features['nifty_vs_sma50_pct'] = market_features['nifty_vs_sma50_pct']
+            features['india_vix'] = market_features['india_vix']
+            features['sector_strength'] = market_features['sector_strength']
+            
+            logger.debug(f"{ticker}: Added market regime features (trend={market_features['nifty_trend']}, vix={market_features['india_vix']:.1f})")
+        except Exception as e:
+            logger.warning(f"{ticker}: Failed to fetch market regime features: {e}, using defaults")
+            features['nifty_trend'] = 0.0  # Neutral
+            features['nifty_vs_sma20_pct'] = 0.0
+            features['nifty_vs_sma50_pct'] = 0.0
+            features['india_vix'] = 20.0  # Average VIX
+            features['sector_strength'] = 0.0
+
         return features
 
     except Exception as e:
