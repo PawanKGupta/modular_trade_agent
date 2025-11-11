@@ -1,8 +1,10 @@
 # ML Model Retraining Guide - Enhanced Features
 
-**Date:** 2025-11-10  
+**Date:** 2025-11-11  
 **Branch:** `feature/ml-enhanced-dip-features`  
-**Status:** ⚠️ **IMMEDIATE RETRAINING REQUIRED**  
+**Status:** ✅ **MODEL RETRAINED & DEPLOYED**  
+**Model Accuracy:** 72.5%  
+**Training Data:** 8,490 examples (10 years)  
 
 ---
 
@@ -319,11 +321,51 @@ with open('models/verdict_model_features_enhanced.txt') as f:
 ## 📚 **References**
 
 - Feature Engineering: `core/feature_engineering.py`
-- Feature List: `models/verdict_model_features_enhanced.txt`
+- Feature List: `models/verdict_model_features_random_forest.txt` (25 features)
 - Implementation Guide: `documents/ML_ENHANCED_FEATURES_IMPLEMENTATION.md`
-- Tests: 78 passing (see git log for test files)
+- Tests: 893 passing (including 10 new ML tests)
 
 ---
 
-**Ready to retrain! Start with Step 1 above.** 🚀
+## ✅ **RETRAINING COMPLETE (2025-11-11)**
+
+### **What Was Done:**
+
+**Step 1: Training Data Collection ✓**
+```bash
+Command: python scripts/collect_ml_training_data_full.py --years-back 10
+Results: 8,490 examples, 5,540 positions, 10 years data
+```
+
+**Step 2: Model Training ✓**
+```bash
+Command: python scripts/retrain_models.py --training-data data/ml_training_data_20251111_025209.csv
+Results: 72.5% accuracy, Random Forest, GroupKFold CV
+```
+
+**Step 3: Validation ✓**
+```bash
+Command: python trade_agent.py --backtest
+Results: ML predictions working in Telegram & CSV
+```
+
+### **Model Performance:**
+- **Accuracy:** 72.5%
+- **Best at:** Identifying "watch" signals (86% recall)
+- **Good at:** Avoiding losses (73% recall)
+- **Top feature:** dip_depth_from_20d_high_pct (17.47% importance)
+
+### **Deployment:**
+- Model file: `models/verdict_model_random_forest.pkl`
+- Mode: Monitoring (ML predictions shown, rule-based verdicts used)
+- Integration: Fully automated in `trade_agent.py`
+
+### **Next Steps:**
+1. Monitor ML vs Rule accuracy for 2-4 weeks
+2. Track agreement rate and performance
+3. If ML proves better, enable for production verdicts
+
+---
+
+**Model retrained successfully! Now in production monitoring mode.** 🎉
 
