@@ -255,6 +255,41 @@ This was a bug fixed in commit `0a87b1d`. Update to latest code:
 git pull origin feature/ml-enhanced-dip-features
 ```
 
+### **ML predictions change after backtest?**
+
+**Issue:** Initial ML predictions were being overwritten by legacy code or backtest re-analysis.
+
+**Example:**
+```
+Initial CSV: ml_verdict=buy, ml_confidence=45.9%  ← Correct
+Final CSV:   ml_verdict=watch, ml_confidence=64.7% ❌ Wrong!
+```
+
+**Root Causes (Fixed in 2025-11-12):**
+1. **Legacy duplicate ML code** in `trade_agent.py` `_process_results()` was re-running ML predictions and overwriting initial values.
+2. **Backtest re-analysis** was not preserving initial ML predictions.
+
+**Solution:**
+- Removed duplicate ML prediction code from `trade_agent.py`
+- Implemented ML prediction preservation in `backtest_service.py`:
+  - Captures initial ML values before backtest
+  - Restores them after backtest completes
+  - Ensures TODAY's ML prediction is preserved in final CSV and Telegram
+
+**Verification:**
+```powershell
+# Check that initial and final ML predictions match:
+$initial = Import-Csv analysis_results\bulk_analysis_2025*.csv | Select-Object ticker, ml_verdict, ml_confidence
+$final = Import-Csv analysis_results\bulk_analysis_final_*.csv | Select-Object ticker, ml_verdict, ml_confidence
+
+# Compare (should be identical for ML fields)
+Compare-Object $initial $final -Property ticker, ml_verdict, ml_confidence
+```
+
+**Test Coverage:**
+- `test_backtest_service_ml_preservation.py`: 5 comprehensive tests
+- Validates ML preservation during backtest, errors, and downgrades
+
 ### **Re-train model if:**
 - Accuracy drops below 65%
 - Agreement rate with rules < 50%
@@ -264,6 +299,14 @@ git pull origin feature/ml-enhanced-dip-features
 ---
 
 ## 📝 **Change Log**
+
+### **2025-11-12: Bug Fix - ML Prediction Preservation**
+- **Fixed:** ML predictions being overwritten after backtest
+- **Issue:** Legacy duplicate ML code in `trade_agent.py` was re-running predictions
+- **Solution:** Removed duplicate code + added preservation in `backtest_service.py`
+- **Tests:** Added 5 comprehensive tests for ML preservation
+- **Impact:** CSV and Telegram now correctly show TODAY's ML prediction
+- **Tests:** 898 tests passing (↑5 from previous)
 
 ### **2025-11-11: Initial Deployment**
 - Trained model with 8,490 examples (10 years)

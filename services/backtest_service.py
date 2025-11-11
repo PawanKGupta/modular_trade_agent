@@ -136,6 +136,16 @@ class BacktestService:
                 ticker = stock_result.get('ticker', 'Unknown')
                 logger.info(f"Processing {i}/{len(stock_results)}: {ticker}")
                 
+                # Preserve initial ML predictions (2025-11-11)
+                # Backtest may overwrite these, so save them first
+                # Use dict access to preserve even if None/empty (vs .get() which might lose them)
+                initial_ml_verdict = stock_result.get('ml_verdict', None)
+                initial_ml_confidence = stock_result.get('ml_confidence', None)
+                initial_ml_probabilities = stock_result.get('ml_probabilities', None)
+                has_initial_ml = 'ml_verdict' in stock_result  # Track if ML field exists
+                
+                logger.debug(f"{ticker}: Preserved ML: verdict={initial_ml_verdict}, conf={initial_ml_confidence}")
+                
                 # Run backtest for this stock
                 backtest_data = self.run_stock_backtest(ticker, years_back, dip_mode)
                 
@@ -170,6 +180,19 @@ class BacktestService:
                 # Re-classify based on combined score and key metrics
                 self._reclassify_with_backtest(stock_result, backtest_score, combined_score)
                 
+                # Restore initial ML predictions (2025-11-11)
+                # Ensure live ML prediction is preserved (backtest may have overwritten it)
+                # Restore if we had initial ML data (even if value was None)
+                if has_initial_ml:
+                    stock_result['ml_verdict'] = initial_ml_verdict
+                    stock_result['ml_confidence'] = initial_ml_confidence
+                    stock_result['ml_probabilities'] = initial_ml_probabilities
+                    logger.info(f"{ticker}: ✅ Restored initial ML: {initial_ml_verdict} ({initial_ml_confidence})")
+                else:
+                    logger.debug(f"{ticker}: No initial ML to restore")
+                
+                logger.debug(f"{ticker}: Final values in dict: ml_verdict={stock_result.get('ml_verdict')}, ml_conf={stock_result.get('ml_confidence')}")
+                
                 enhanced_results.append(stock_result)
                 
             except Exception as e:
@@ -179,6 +202,12 @@ class BacktestService:
                     'score': 0,
                     'error': str(e)
                 }
+                # Restore initial ML predictions even on error (2025-11-11)
+                if 'has_initial_ml' in locals() and has_initial_ml:
+                    stock_result['ml_verdict'] = initial_ml_verdict
+                    stock_result['ml_confidence'] = initial_ml_confidence
+                    stock_result['ml_probabilities'] = initial_ml_probabilities
+                    logger.debug(f"Restored ML after error for {ticker}")
                 enhanced_results.append(stock_result)
         
         return enhanced_results
