@@ -241,7 +241,7 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
             confidence_emoji = {"High": "🟢", "Medium": "🟡", "Low": "🟠"}.get(confidence, "⚪")
             lines.append(f"\tConfidence: {confidence_emoji} {confidence}")
 
-        # ML Verdict (monitoring mode - add if available)
+        # ML Verdict (monitoring mode - add if available) - 2025-11-12 Enhanced
         ml_verdict = stock_data.get('ml_verdict')
         ml_confidence = stock_data.get('ml_confidence')
         if ml_verdict and ml_confidence is not None:
@@ -250,9 +250,22 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
                 conf_pct = ml_confidence if ml_confidence > 1 else ml_confidence * 100
             else:
                 conf_pct = 0
+            
+            # Determine rule verdict (use final_verdict if backtest scoring enabled)
+            rule_verdict = stock_data.get('final_verdict') or stock_data.get('verdict', 'unknown')
+            
+            # Add agreement/disagreement indicator
+            agreement_indicator = ""
+            if rule_verdict in ['buy', 'strong_buy'] and ml_verdict in ['buy', 'strong_buy']:
+                agreement_indicator = " ✅"  # Both agree on buy
+            elif rule_verdict in ['watch', 'avoid'] and ml_verdict in ['buy', 'strong_buy']:
+                agreement_indicator = " ⚠️ ONLY ML"  # ML sees opportunity, rules don't
+            elif rule_verdict in ['buy', 'strong_buy'] and ml_verdict in ['watch', 'avoid']:
+                agreement_indicator = " ⚠️ ONLY RULE"  # Rules see opportunity, ML doesn't
+            
             # Add ML prediction for comparison/monitoring
             ml_emoji = {"strong_buy": "🔥", "buy": "📈", "watch": "👀", "avoid": "❌"}.get(ml_verdict, "🤖")
-            lines.append(f"\t🤖 ML: {ml_verdict.upper()} {ml_emoji} ({conf_pct:.0f}% conf)")
+            lines.append(f"\t🤖 ML: {ml_verdict.upper()} {ml_emoji} ({conf_pct:.0f}% conf){agreement_indicator}")
 
         msg = "\n".join(lines) + "\n\n"
         return msg
@@ -497,25 +510,41 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
 
     # Include both 'buy' and 'strong_buy' candidates, but exclude failed analysis
     # Use final_verdict if backtest scoring was enabled, otherwise use original verdict
+    # ALSO include ML buy/strong_buy predictions for monitoring/comparison (2025-11-12)
     if enable_backtest_scoring:
         # Apply filtering with reasonable combined score threshold
+        # Include stocks where EITHER rule OR ML predicts buy/strong_buy
         buys = [r for r in results if
-                r.get('final_verdict') in ['buy', 'strong_buy'] and
                 r.get('status') == 'success' and
-                r.get('combined_score', 0) >= 25]  # Minimum combined score (lowered from 35)
+                (
+                    # Rule-based buy/strong_buy (existing logic)
+                    (r.get('final_verdict') in ['buy', 'strong_buy'] and r.get('combined_score', 0) >= 25) or
+                    # ML buy/strong_buy (new logic for monitoring)
+                    r.get('ml_verdict') in ['buy', 'strong_buy']
+                )]
         strong_buys = [r for r in results if
-                      r.get('final_verdict') == 'strong_buy' and
                       r.get('status') == 'success' and
-                      r.get('combined_score', 0) >= 25]
+                      (
+                          # Rule-based strong_buy
+                          (r.get('final_verdict') == 'strong_buy' and r.get('combined_score', 0) >= 25) or
+                          # ML strong_buy
+                          r.get('ml_verdict') == 'strong_buy'
+                      )]
     else:
-        buys = [r for r in results if r.get('verdict') in ['buy', 'strong_buy'] and r.get('status') == 'success']
-        strong_buys = [r for r in results if r.get('verdict') == 'strong_buy' and r.get('status') == 'success']
+        # Include stocks where EITHER rule OR ML predicts buy/strong_buy
+        buys = [r for r in results if 
+                r.get('status') == 'success' and
+                (r.get('verdict') in ['buy', 'strong_buy'] or r.get('ml_verdict') in ['buy', 'strong_buy'])]
+        strong_buys = [r for r in results if 
+                      r.get('status') == 'success' and
+                      (r.get('verdict') == 'strong_buy' or r.get('ml_verdict') == 'strong_buy')]
 
     # Send Telegram notification with final results (after backtest scoring if enabled)
     if buys:
         msg_prefix = "*Reversal Buy Candidates (today)*"
         if enable_backtest_scoring:
             msg_prefix += " *with Backtest Scoring*"
+        msg_prefix += "\n💡 *Includes: Rule-Based + ML Predictions*"  # 2025-11-12: Clarify inclusion of ML
         msg = msg_prefix + "\n"
 
         # Highlight strong buys first (sorted by priority)
@@ -530,9 +559,15 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
         # Regular buys (exclude stocks already in strong_buys to avoid duplicates)
         strong_buy_tickers = {r.get('ticker') for r in strong_buys}
         if enable_backtest_scoring:
-            regular_buys = [r for r in buys if r.get('final_verdict') == 'buy' and r.get('ticker') not in strong_buy_tickers]
+            # Include if rule says buy OR ml says buy (but not strong_buy)
+            regular_buys = [r for r in buys if 
+                          r.get('ticker') not in strong_buy_tickers and
+                          (r.get('final_verdict') == 'buy' or r.get('ml_verdict') == 'buy')]
         else:
-            regular_buys = [r for r in buys if r.get('verdict') == 'buy' and r.get('ticker') not in strong_buy_tickers]
+            # Include if rule says buy OR ml says buy (but not strong_buy)
+            regular_buys = [r for r in buys if 
+                          r.get('ticker') not in strong_buy_tickers and
+                          (r.get('verdict') == 'buy' or r.get('ml_verdict') == 'buy')]
 
         if regular_buys:
             regular_buys = [r for r in regular_buys if r is not None]  # Filter out None values

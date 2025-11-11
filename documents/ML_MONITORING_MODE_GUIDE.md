@@ -37,10 +37,15 @@ Telegram Alert:
 
 ### **Example Telegram Output:**
 
+**Updated 2025-11-12:** Now includes stocks where EITHER rule OR ML predicts buy!
+
 ```
+*Reversal Buy Candidates (today) with Backtest Scoring*
+💡 *Includes: Rule-Based + ML Predictions*
+
 📈 BUY candidates:
 
-1. STARCEMENT.NS:
+1. STARCEMENT.NS:  ← Rule=BUY, ML=WATCH (disagreement)
    Buy (239.13-240.57)
    Target 267.54 (+10.5%)
    Stop 230.00 (-5.0%)
@@ -56,8 +61,49 @@ Telegram Alert:
    Backtest: 42/100 (+1.4% return, 100% win, 1 trades)
    Combined Score: 33.1/100
    Confidence: 🟠 Low
-   🤖 ML: WATCH 👀 (91% conf)  ← ML MONITORING
+   🤖 ML: WATCH 👀 (91% conf) ⚠️ ONLY RULE
+
+2. TECHM.NS:  ← Rule=WATCH, ML=BUY (NEW! ML opportunity)
+   Buy (1580-1590)
+   Target 1750 (+10.3%)
+   Stop 1520 (-4.5%)
+   RSI:26.5
+   MTF:5/10
+   RR:2.3x
+   ModSupp:1.5% HighRSI
+   Capital: ₹150,000
+   Chart: 85/100 (acceptable)
+   PE:28.5
+   Vol:1.2x
+   News:Pos +0.15 (3)
+   Backtest: 38/100 (+2.8% return, 75% win, 4 trades)
+   Combined Score: 28.5/100
+   Confidence: 🟠 Low
+   🤖 ML: BUY 📈 (78% conf) ⚠️ ONLY ML
+
+3. RELIANCE.NS:  ← Rule=BUY, ML=BUY (agreement!)
+   Buy (2450-2465)
+   Target 2720 (+10.8%)
+   Stop 2350 (-4.3%)
+   RSI:27.8
+   MTF:8/10
+   RR:2.5x
+   StrongSupp:0.8% ExtremeRSI NearSupport
+   Capital: ₹200,000
+   Chart: 95/100 (clean)
+   PE:25.2
+   Vol:1.5x
+   News:Neu +0.05 (2)
+   Backtest: 52/100 (+4.2% return, 85% win, 7 trades)
+   Combined Score: 42.8/100
+   Confidence: 🟡 Medium
+   🤖 ML: BUY 📈 (85% conf) ✅
 ```
+
+**Legend:**
+- ✅ = Both Rule and ML agree
+- ⚠️ ONLY ML = ML sees opportunity, rules don't
+- ⚠️ ONLY RULE = Rules see opportunity, ML doesn't
 
 ---
 
@@ -299,6 +345,16 @@ Compare-Object $initial $final -Property ticker, ml_verdict, ml_confidence
 ---
 
 ## 📝 **Change Log**
+
+### **2025-11-12: Enhancement - Include ML Buy/Strong_Buy in Telegram**
+- **Feature:** Telegram now includes stocks where **EITHER** rule OR ML predicts buy/strong_buy
+- **Visual Indicators:**
+  - `✅` = Rule + ML agree on buy/strong_buy
+  - `⚠️ ONLY ML` = ML predicts buy but rules say watch/avoid
+  - `⚠️ ONLY RULE` = Rules predict buy but ML says watch/avoid
+- **Benefits:** Compare ML vs rule-based predictions side-by-side
+- **Tests:** Added 6 comprehensive tests for ML inclusion logic
+- **Tests:** 904 tests passing (↑6 from previous)
 
 ### **2025-11-12: Bug Fix - ML Prediction Preservation**
 - **Fixed:** ML predictions being overwritten after backtest
