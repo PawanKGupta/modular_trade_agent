@@ -407,7 +407,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
             # ML predictions are now handled in AnalysisService (2025-11-11)
             # No need to re-predict here - just use what analysis_service provided
             # Legacy code removed to prevent overwriting initial ML predictions
-            
+
             # ML verdict and confidence should already be in result from analysis_service
             # If not present, that's OK - stock may not have had ML prediction
             if 'ml_verdict' not in result or result.get('ml_verdict') is None:

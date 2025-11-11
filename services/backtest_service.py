@@ -35,46 +35,46 @@ from core.backtest_scoring import (
 class BacktestService:
     """
     Service for running backtests and calculating backtest scores
-    
+
     Provides methods to:
     - Run backtests for individual stocks
     - Calculate backtest scores from results
     - Add backtest scores to analysis results
-    
+
     This service wraps the core backtest scoring logic,
     providing dependency injection and better testability.
     """
-    
+
     def __init__(self, default_years_back: int = 2, dip_mode: bool = False):
         """
         Initialize backtest service
-        
+
         Args:
             default_years_back: Default number of years for backtesting
             dip_mode: Whether to use dip mode for backtesting
         """
         self.default_years_back = default_years_back
         self.dip_mode = dip_mode
-    
+
     def calculate_backtest_score(self, backtest_results: Dict, dip_mode: Optional[bool] = None) -> float:
         """
         Calculate a backtest score based on performance metrics.
-        
+
         This method delegates to core.backtest_scoring.calculate_backtest_score()
         while providing a service interface.
-        
+
         Args:
             backtest_results: Backtest results dictionary
             dip_mode: Whether to use dip mode (uses instance default if None)
-            
+
         Returns:
             Float score between 0-100
         """
         if dip_mode is None:
             dip_mode = self.dip_mode
-        
+
         return calculate_backtest_score(backtest_results, dip_mode)
-    
+
     def run_stock_backtest(
         self,
         stock_symbol: str,
@@ -83,15 +83,15 @@ class BacktestService:
     ) -> Dict:
         """
         Run backtest for a stock using available method (integrated or simple).
-        
+
         This method delegates to core.backtest_scoring.run_stock_backtest()
         while providing a service interface.
-        
+
         Args:
             stock_symbol: Stock symbol (e.g., "RELIANCE.NS")
             years_back: Number of years to backtest (uses default if None)
             dip_mode: Whether to use dip mode (uses instance default if None)
-            
+
         Returns:
             Dict with backtest results and score
         """
@@ -99,9 +99,9 @@ class BacktestService:
             years_back = self.default_years_back
         if dip_mode is None:
             dip_mode = self.dip_mode
-        
+
         return run_stock_backtest(stock_symbol, years_back, dip_mode)
-    
+
     def add_backtest_scores_to_results(
         self,
         stock_results: List[Dict],
@@ -110,15 +110,15 @@ class BacktestService:
     ) -> List[Dict]:
         """
         Add backtest scores to existing stock analysis results.
-        
+
         This method enhances stock results with historical performance data
         and recalculates combined scores.
-        
+
         Args:
             stock_results: List of stock analysis results
             years_back: Years of historical data to analyze (uses default if None)
             dip_mode: Whether to use dip mode (uses instance default if None)
-            
+
         Returns:
             Enhanced stock results with backtest scores
         """
@@ -126,16 +126,16 @@ class BacktestService:
             years_back = self.default_years_back
         if dip_mode is None:
             dip_mode = self.dip_mode
-        
+
         logger.info(f"Adding backtest scores for {len(stock_results)} stocks...")
-        
+
         enhanced_results = []
-        
+
         for i, stock_result in enumerate(stock_results, 1):
             try:
                 ticker = stock_result.get('ticker', 'Unknown')
                 logger.info(f"Processing {i}/{len(stock_results)}: {ticker}")
-                
+
                 # Preserve initial ML predictions (2025-11-11)
                 # Backtest may overwrite these, so save them first
                 # Use dict access to preserve even if None/empty (vs .get() which might lose them)
@@ -143,12 +143,12 @@ class BacktestService:
                 initial_ml_confidence = stock_result.get('ml_confidence', None)
                 initial_ml_probabilities = stock_result.get('ml_probabilities', None)
                 has_initial_ml = 'ml_verdict' in stock_result  # Track if ML field exists
-                
+
                 logger.debug(f"{ticker}: Preserved ML: verdict={initial_ml_verdict}, conf={initial_ml_confidence}")
-                
+
                 # Run backtest for this stock
                 backtest_data = self.run_stock_backtest(ticker, years_back, dip_mode)
-                
+
                 # Add backtest data to stock result
                 stock_result['backtest'] = {
                     'score': backtest_data.get('backtest_score', 0),
@@ -158,11 +158,11 @@ class BacktestService:
                     'vs_buy_hold': backtest_data.get('vs_buy_hold', 0),
                     'execution_rate': backtest_data.get('execution_rate', 0)
                 }
-                
+
                 # Calculate combined score (50% current analysis + 50% backtest)
                 current_score = stock_result.get('strength_score', 0)
                 backtest_score = backtest_data.get('backtest_score', 0)
-                
+
                 # Use ScoringService for combined score calculation
                 from services.scoring_service import ScoringService
                 from config.strategy_config import StrategyConfig
@@ -173,13 +173,13 @@ class BacktestService:
                     current_weight=0.5,
                     backtest_weight=0.5
                 )
-                
+
                 stock_result['combined_score'] = combined_score
                 stock_result['backtest_score'] = backtest_score
-                
+
                 # Re-classify based on combined score and key metrics
                 self._reclassify_with_backtest(stock_result, backtest_score, combined_score)
-                
+
                 # Restore initial ML predictions (2025-11-11)
                 # Ensure live ML prediction is preserved (backtest may have overwritten it)
                 # Restore if we had initial ML data (even if value was None)
@@ -190,11 +190,11 @@ class BacktestService:
                     logger.info(f"{ticker}: ✅ Restored initial ML: {initial_ml_verdict} ({initial_ml_confidence})")
                 else:
                     logger.debug(f"{ticker}: No initial ML to restore")
-                
+
                 logger.debug(f"{ticker}: Final values in dict: ml_verdict={stock_result.get('ml_verdict')}, ml_conf={stock_result.get('ml_confidence')}")
-                
+
                 enhanced_results.append(stock_result)
-                
+
             except Exception as e:
                 logger.error(f"Error adding backtest score for {stock_result.get('ticker', 'Unknown')}: {e}")
                 # Add stock without backtest score
@@ -209,9 +209,9 @@ class BacktestService:
                     stock_result['ml_probabilities'] = initial_ml_probabilities
                     logger.debug(f"Restored ML after error for {ticker}")
                 enhanced_results.append(stock_result)
-        
+
         return enhanced_results
-    
+
     def _reclassify_with_backtest(
         self,
         stock_result: Dict,
@@ -220,7 +220,7 @@ class BacktestService:
     ) -> None:
         """
         Re-classify stock verdict based on backtest results.
-        
+
         Args:
             stock_result: Stock analysis result (modified in place)
             backtest_score: Backtest score
@@ -228,14 +228,14 @@ class BacktestService:
         """
         # Get trade count for confidence assessment
         trade_count = stock_result.get('backtest', {}).get('total_trades', 0)
-        
+
         # Get current RSI for dynamic threshold adjustment
         current_rsi = stock_result.get('rsi') or 30  # Default to 30 if None or not available
-        
+
         # Ensure current_rsi is a number (handle None case)
         if current_rsi is None:
             current_rsi = 30
-        
+
         # RSI-based threshold adjustment (more oversold = lower thresholds)
         rsi_factor = 1.0
         if current_rsi < 20:  # Extremely oversold
@@ -244,18 +244,18 @@ class BacktestService:
             rsi_factor = 0.8  # 20% lower thresholds
         elif current_rsi < 30:  # Oversold
             rsi_factor = 0.9  # 10% lower thresholds
-        
+
         # Enhanced reclassification with confidence-aware and RSI-adjusted thresholds
         if trade_count >= 5:
             # High confidence thresholds (adjusted by RSI)
             strong_buy_threshold = 60 * rsi_factor
             combined_strong_threshold = 35 * rsi_factor
             combined_exceptional_threshold = 60 * rsi_factor
-            
+
             buy_threshold = 35 * rsi_factor
             combined_buy_threshold = 22 * rsi_factor
             combined_decent_threshold = 35 * rsi_factor
-            
+
             if (backtest_score >= strong_buy_threshold and combined_score >= combined_strong_threshold) or combined_score >= combined_exceptional_threshold:
                 stock_result['final_verdict'] = 'strong_buy'
             elif (backtest_score >= buy_threshold and combined_score >= combined_buy_threshold) or combined_score >= combined_decent_threshold:
@@ -267,22 +267,22 @@ class BacktestService:
             strong_buy_threshold = 65 * rsi_factor
             combined_strong_threshold = 42 * rsi_factor
             combined_exceptional_threshold = 65 * rsi_factor
-            
+
             buy_threshold = 40 * rsi_factor
             combined_buy_threshold = 28 * rsi_factor
             combined_decent_threshold = 45 * rsi_factor
-            
+
             if (backtest_score >= strong_buy_threshold and combined_score >= combined_strong_threshold) or combined_score >= combined_exceptional_threshold:
                 stock_result['final_verdict'] = 'strong_buy'
             elif (backtest_score >= buy_threshold and combined_score >= combined_buy_threshold) or combined_score >= combined_decent_threshold:
                 stock_result['final_verdict'] = 'buy'
             else:
                 stock_result['final_verdict'] = 'watch'
-        
+
         # Log RSI adjustment if applied
         if rsi_factor < 1.0:
             logger.debug(f"{stock_result.get('ticker', 'Unknown')}: RSI={current_rsi:.1f}, applied {(1-rsi_factor)*100:.0f}% threshold reduction")
-        
+
         # Add confidence indicator to result
         confidence_level = "High" if trade_count >= 5 else "Medium" if trade_count >= 2 else "Low"
         stock_result['backtest_confidence'] = confidence_level
