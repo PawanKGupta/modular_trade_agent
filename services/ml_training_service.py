@@ -120,7 +120,7 @@ class MLTrainingService:
             if 'entry_date' in df.columns:
                 df_sorted = df.sort_values('entry_date').reset_index(drop=True)
                 X = df_sorted[feature_cols].copy().fillna(0)
-                y = df_sorted[target_column].values
+                y = df_sorted['label'].values
                 groups = df_sorted['position_id'].values
                 sample_weights = df_sorted['sample_weight'].values if has_sample_weight else None
                 logger.info(f"   Sorted by entry_date: {df_sorted['entry_date'].min()} to {df_sorted['entry_date'].max()}")
