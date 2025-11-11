@@ -18,7 +18,7 @@ sys.path.insert(0, str(project_root / 'scripts'))
 
 class TestRetrainModels:
     """Test retrain_models script"""
-    
+
     @pytest.fixture
     def sample_training_data(self):
         """Create sample training data"""
@@ -50,22 +50,22 @@ class TestRetrainModels:
             'fill_price_vs_initial_pct': [0.0, 0.0, -5.0, 0.0],
             'label': ['buy', 'watch', 'buy', 'strong_buy']
         })
-    
+
     def test_load_training_data(self, sample_training_data, tmp_path):
         """Test loading training data from CSV"""
         # Save sample data to temp file
         training_file = tmp_path / "training_data.csv"
         sample_training_data.to_csv(training_file, index=False)
-        
+
         # Load and verify
         loaded_data = pd.read_csv(training_file)
-        
+
         assert len(loaded_data) == 4
         assert 'label' in loaded_data.columns
         assert 'rsi_10' in loaded_data.columns
         assert 'dip_depth_from_20d_high_pct' in loaded_data.columns
         assert 'is_reentry' in loaded_data.columns
-    
+
     def test_training_data_has_all_features(self, sample_training_data):
         """Test that training data includes all 25 required features"""
         # Expected feature columns (excluding label and metadata)
@@ -82,23 +82,23 @@ class TestRetrainModels:
             'is_reentry', 'fill_number', 'total_fills_in_position',
             'fill_price_vs_initial_pct'
         ]
-        
+
         # Verify all features are present
         for feature in expected_features:
             assert feature in sample_training_data.columns, f"Missing feature: {feature}"
-        
+
         # Verify total is 25 features + label
         feature_cols = [col for col in sample_training_data.columns if col != 'label']
         assert len(feature_cols) == 25
-    
+
     def test_verdict_labels_present(self, sample_training_data):
         """Test that verdict labels are valid"""
         valid_labels = ['strong_buy', 'buy', 'watch', 'avoid']
-        
+
         labels = sample_training_data['label'].unique()
         for label in labels:
             assert label in valid_labels, f"Invalid label: {label}"
-    
+
     def test_reentry_features_included(self, sample_training_data):
         """Test that re-entry context features are included"""
         # Verify re-entry features exist
@@ -106,19 +106,19 @@ class TestRetrainModels:
         assert 'fill_number' in sample_training_data.columns
         assert 'total_fills_in_position' in sample_training_data.columns
         assert 'fill_price_vs_initial_pct' in sample_training_data.columns
-        
+
         # Verify re-entry row has correct values
         reentry_row = sample_training_data[sample_training_data['is_reentry'] == True].iloc[0]
         assert reentry_row['fill_number'] == 2
         assert reentry_row['total_fills_in_position'] == 2
         assert reentry_row['fill_price_vs_initial_pct'] == -5.0  # Re-entry 5% below initial
-        
+
         # Verify initial entry row has correct defaults
         initial_row = sample_training_data[sample_training_data['is_reentry'] == False].iloc[0]
         assert initial_row['fill_number'] == 1
         assert initial_row['total_fills_in_position'] == 1
         assert initial_row['fill_price_vs_initial_pct'] == 0.0
-    
+
     def test_dip_features_included(self, sample_training_data):
         """Test that enhanced dip features are included"""
         dip_features = [
@@ -129,7 +129,7 @@ class TestRetrainModels:
             'volume_green_vs_red_ratio',
             'support_hold_count'
         ]
-        
+
         for feature in dip_features:
             assert feature in sample_training_data.columns
             # Verify values are reasonable
