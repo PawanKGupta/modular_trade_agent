@@ -334,12 +334,12 @@ This ensures training always happens on older data, testing on newer data.
 
 | Priority | Issue | Expected Impact | Effort | Status |
 |----------|-------|----------------|--------|---------|
-| 🔴 **1** | Fix look-ahead bias | -2 to -4% accuracy (but REAL) | Medium | ✅ **FIXED 2025-11-12** |
-| 🟡 **2** | Add market regime features | +3 to +5% accuracy | High | 📋 TODO |
-| 🟡 **3** | Add time features | +1 to +2% accuracy | Low | 📋 TODO |
-| 🟢 **4** | Feature interactions | +1% accuracy | Low | 📋 TODO |
-| 🟢 **5** | Outcome rate vs absolute | +1 to +2% accuracy | Medium | 📋 TODO |
-| 🟢 **6** | Time-series CV | Better generalization | Medium | 📋 TODO |
+| 🔴 **1** | Fix look-ahead bias | -2 to -4% accuracy (but REAL) | Medium | ✅ **DONE 2025-11-12** |
+| 🟡 **2** | Add market regime features | +3 to +5% accuracy | High | ✅ **DONE 2025-11-12** |
+| 🟡 **3** | Add time features | +1 to +2% accuracy | Low | ✅ **DONE 2025-11-12** |
+| 🟢 **4** | Feature interactions | +1% accuracy | Low | ✅ **DONE 2025-11-12** |
+| 🟢 **5** | Outcome rate vs absolute | +1 to +2% accuracy | Medium | ⏸️ **SKIP** (requires re-labeling) |
+| 🟢 **6** | Time-series CV | Better generalization | Medium | ✅ **DONE 2025-11-12** |
 
 ---
 
