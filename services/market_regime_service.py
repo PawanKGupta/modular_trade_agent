@@ -115,12 +115,13 @@ class MarketRegimeService:
             start_date = target_dt - timedelta(days=100)  # Buffer for SMA50
 
             # Fetch data
+            # NOTE: Using unadjusted prices (auto_adjust=False) to match TradingView
             nifty = yf.download(
                 "^NSEI",
                 start=start_date.strftime("%Y-%m-%d"),
                 end=end_date.strftime("%Y-%m-%d"),
                 progress=False,
-                auto_adjust=True,
+                auto_adjust=False,
             )
 
             if nifty.empty:
@@ -186,12 +187,13 @@ class MarketRegimeService:
             end_date = target_dt + timedelta(days=1)
             start_date = target_dt - timedelta(days=5)  # Look back a few days
 
+            # NOTE: Using unadjusted prices (auto_adjust=False) to match TradingView
             vix = yf.download(
                 "^INDIAVIX",
                 start=start_date.strftime("%Y-%m-%d"),
                 end=end_date.strftime("%Y-%m-%d"),
                 progress=False,
-                auto_adjust=True,
+                auto_adjust=False,
             )
 
             if not vix.empty:
