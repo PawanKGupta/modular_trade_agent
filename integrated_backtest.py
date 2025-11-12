@@ -209,7 +209,8 @@ def validate_initial_entry_with_trade_agent(stock_name: str, signal_date: str,
 
 
 def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
-                            capital_per_position: float = 50000) -> Dict:
+                            capital_per_position: float = 50000,
+                            skip_trade_agent_validation: bool = False) -> Dict:
     """
     Single-pass integrated backtest - checks RSI daily and executes trades inline.
 
@@ -219,6 +220,9 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
         stock_name: Stock symbol
         date_range: (start_date, end_date)
         capital_per_position: Capital per position
+        skip_trade_agent_validation: If True, skip trade agent validation and execute
+                                     all signals that meet RSI<30 & price>EMA200.
+                                     Use for ML training data collection. Default: False
 
     Returns:
         Backtest results dictionary
@@ -391,14 +395,20 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
                 exec_price = next_days.iloc[0]['Open']
                 exec_ema9 = next_days.iloc[0]['EMA9']
 
-                # Validate with trade agent
+                # Validate with trade agent (unless skipped for training data collection)
                 print(f"\n🔄 Signal #{signal_count} detected on {date_str}")
                 print(f"   RSI: {rsi:.1f} < 30 | Close: {close:.2f} > EMA200: {ema200:.2f}")
-                print(f"   🤖 Trade Agent analyzing...")
 
-                validation = validate_initial_entry_with_trade_agent(
-                    stock_name, date_str, rsi, ema200, market_data
-                )
+                if skip_trade_agent_validation:
+                    # For training data: Skip trade agent validation, execute all RSI<30 & price>EMA200
+                    print(f"   ⚠️  Training mode: Skipping trade agent validation")
+                    validation = {'approved': True, 'target': exec_ema9}
+                else:
+                    # Normal mode: Validate with trade agent
+                    print(f"   🤖 Trade Agent analyzing...")
+                    validation = validate_initial_entry_with_trade_agent(
+                        stock_name, date_str, rsi, ema200, market_data
+                    )
 
                 if validation and validation.get('approved'):
                     # Execute initial entry
