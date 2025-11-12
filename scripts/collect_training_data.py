@@ -141,6 +141,9 @@ def extract_features_at_date(
             'recent_low_20': float(df['low'].tail(20).min()) if len(df) >= 20 else None,
             'support_distance_pct': float(((last['close'] - df['low'].tail(20).min()) / last['close']) * 100) if len(df) >= 20 else None,
 
+            # Target distance (EMA9 is the exit target)
+            'ema9_distance_pct': float(((last.get('ema9', 0) - last['close']) / last['close']) * 100) if pd.notna(last.get('ema9')) and last['close'] > 0 else None,
+
             # Patterns (simplified)
             'has_hammer': False,  # Will be computed if needed
             'has_bullish_engulfing': False,  # Will be computed if needed
@@ -456,16 +459,22 @@ def create_labels_from_backtest_results_with_reentry(backtest_results: Dict) -> 
                 logger.warning(f"        Error extracting features for {ticker} at {fill_date_str}: {e}")
                 continue
 
-            # Create label based on POSITION-LEVEL outcome (Approach A)
-            # Good trades (>10% gain) = strong_buy
-            # Decent trades (5-10% gain) = buy
-            # Small gains (0-5% gain) = watch
-            # Losses (<0%) = avoid
+            # Create label based on MEAN REVERSION outcome
+            # Strategy: Buy dips when RSI10<30, target EMA9 OR RSI>=50
+            # Exit targets (both are valid success conditions):
+            #   1. EMA9 reached (mean reversion complete)
+            #   2. RSI >= 50 (momentum turned positive)
+            #
+            # Labeling based on profit level:
+            #   - Profit >=5%: strong_buy (excellent execution)
+            #   - Profit 1-5%: buy (successful mean reversion)
+            #   - Profit 0-1%: watch (marginal/barely profitable)
+            #   - Loss <0%: avoid (failed to bounce)
             pnl_pct_value = float(pnl_pct) if hasattr(pnl_pct, '__float__') else pnl_pct
 
-            if pnl_pct_value >= 10:
+            if pnl_pct_value >= 5:
                 label = 'strong_buy'
-            elif pnl_pct_value >= 5:
+            elif pnl_pct_value >= 1:
                 label = 'buy'
             elif pnl_pct_value >= 0:
                 label = 'watch'
