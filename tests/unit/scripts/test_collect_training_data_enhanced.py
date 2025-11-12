@@ -51,29 +51,30 @@ class TestEnhancedFeatureExtraction:
         })
 
         # Configure mocks
-        mock_data.fetch_single_timeframe.return_value = df
         mock_indicator.compute_indicators.return_value = df
         mock_signal.detect_pattern_signals.return_value = []
         mock_verdict.fetch_fundamentals.return_value = {'pe': 15, 'pb': 2}
 
-        # Extract features
-        features = extract_features_at_date(
-            ticker='TEST.NS',
-            entry_date='2024-01-15',
-            data_service=mock_data,
-            indicator_service=mock_indicator,
-            signal_service=mock_signal,
-            verdict_service=mock_verdict
-        )
+        # Mock fetch_ohlcv_yf (used directly in extract_features_at_date)
+        with patch('core.data_fetcher.fetch_ohlcv_yf', return_value=df):
+            # Extract features
+            features = extract_features_at_date(
+                ticker='TEST.NS',
+                entry_date='2024-01-15',
+                data_service=mock_data,
+                indicator_service=mock_indicator,
+                signal_service=mock_signal,
+                verdict_service=mock_verdict
+            )
 
-        # Verify new dip features are present
-        assert features is not None
-        assert 'dip_depth_from_20d_high_pct' in features
-        assert 'consecutive_red_days' in features
-        assert 'dip_speed_pct_per_day' in features
-        assert 'decline_rate_slowing' in features
-        assert 'volume_green_vs_red_ratio' in features
-        assert 'support_hold_count' in features
+            # Verify new dip features are present
+            assert features is not None
+            assert 'dip_depth_from_20d_high_pct' in features
+            assert 'consecutive_red_days' in features
+            assert 'dip_speed_pct_per_day' in features
+            assert 'decline_rate_slowing' in features
+            assert 'volume_green_vs_red_ratio' in features
+            assert 'support_hold_count' in features
 
     def test_extract_features_handles_dip_calculation_error(self):
         """Test that feature extraction handles dip calculation errors gracefully"""
@@ -95,27 +96,28 @@ class TestEnhancedFeatureExtraction:
             'ema200': [95] * 55
         })
 
-        mock_data.fetch_single_timeframe.return_value = df
         mock_indicator.compute_indicators.return_value = df
         mock_signal.detect_pattern_signals.return_value = []
         mock_verdict.fetch_fundamentals.return_value = {'pe': None, 'pb': None}
 
-        # Should not crash, should calculate features even with minimal data
-        features = extract_features_at_date(
-            ticker='TEST.NS',
-            entry_date='2024-01-15',
-            data_service=mock_data,
-            indicator_service=mock_indicator,
-            signal_service=mock_signal,
-            verdict_service=mock_verdict
-        )
+        # Mock fetch_ohlcv_yf (used directly in extract_features_at_date)
+        with patch('core.data_fetcher.fetch_ohlcv_yf', return_value=df):
+            # Should not crash, should calculate features even with minimal data
+            features = extract_features_at_date(
+                ticker='TEST.NS',
+                entry_date='2024-01-15',
+                data_service=mock_data,
+                indicator_service=mock_indicator,
+                signal_service=mock_signal,
+                verdict_service=mock_verdict
+            )
 
-        # Should have dip features (might be calculated or defaults)
-        assert features is not None
-        assert 'dip_depth_from_20d_high_pct' in features
-        assert 'consecutive_red_days' in features
-        assert isinstance(features['dip_depth_from_20d_high_pct'], (int, float))
-        assert isinstance(features['consecutive_red_days'], int)
+            # Should have dip features (might be calculated or defaults)
+            assert features is not None
+            assert 'dip_depth_from_20d_high_pct' in features
+            assert 'consecutive_red_days' in features
+            assert isinstance(features['dip_depth_from_20d_high_pct'], (int, float))
+            assert isinstance(features['consecutive_red_days'], int)
 
 
 class TestEnhancedLabelCreation:
