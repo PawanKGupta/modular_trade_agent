@@ -239,7 +239,9 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
     # Fetch market data with buffer for indicators
     start_dt = pd.to_datetime(start_date)
     end_dt = pd.to_datetime(end_date)
-    days_needed = (end_dt - start_dt).days + 365
+    # EMA200 needs: 200 periods + ~100 warm-up = 300 trading days ≈ 420 calendar days
+    ema_buffer_days = int((200 + 100) * 1.4)  # EMA200 + warm-up, converted to calendar days
+    days_needed = (end_dt - start_dt).days + ema_buffer_days
 
     market_data = fetch_ohlcv_yf(
         ticker=stock_name,
@@ -269,6 +271,26 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
     market_data['EMA9'] = ta.ema(market_data['Close'], length=9)
     market_data['EMA200'] = ta.ema(market_data['Close'], length=200)
 
+    # EMA WARM-UP FIX: Check for sufficient warm-up period before backtest start
+    # EMA needs time to stabilize after initialization - first ~50-100 values may have lag
+    ema_warmup_periods = min(100, int(200 * 0.5))  # 50% of EMA200 period or 100
+    data_before_start = market_data.loc[market_data.index < start_dt]
+
+    if len(data_before_start) < ema_warmup_periods:
+        available_warmup = len(data_before_start)
+        print(f"   ⚠️ EMA Warm-up Warning: Only {available_warmup} periods before backtest start (recommended: {ema_warmup_periods})")
+        print(f"   ⚠️ EMA values at backtest start may have lag")
+
+        # If critical, adjust start date to allow warm-up
+        if available_warmup < 20:
+            earliest_valid = market_data.index.min()
+            adjusted_start = earliest_valid + pd.Timedelta(days=int(ema_warmup_periods * 1.4))
+            if adjusted_start < start_dt:
+                print(f"   ⚠️ Adjusting backtest start to {adjusted_start.date()} for EMA warm-up")
+                start_dt = adjusted_start
+    else:
+        print(f"   ✓ EMA Warm-up: {len(data_before_start)} periods before backtest start (sufficient)")
+
     # Filter to backtest period
     backtest_data = market_data.loc[(market_data.index >= start_dt) & (market_data.index <= end_dt)]
 
@@ -290,6 +312,13 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
     # Iterate through each trading day
     for current_date, row in backtest_data.iterrows():
         date_str = current_date.strftime('%Y-%m-%d')
+
+        # Validate trading day: Check if date is a weekday (Monday=0, Sunday=6)
+        weekday = current_date.weekday()
+        if weekday >= 5:  # Saturday (5) or Sunday (6)
+            print(f"   ⚠️ WARNING: Skipping non-trading day {date_str} (weekend)")
+            continue
+
         rsi = row['RSI10']
         ema200 = row['EMA200']
         ema9 = row['EMA9']
@@ -396,7 +425,9 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
                 exec_ema9 = next_days.iloc[0]['EMA9']
 
                 # Validate with trade agent (unless skipped for training data collection)
-                print(f"\n🔄 Signal #{signal_count} detected on {date_str}")
+                # Additional validation: Verify this is actually a trading day (weekday check already done above)
+                weekday_name = current_date.strftime('%A')
+                print(f"\n🔄 Signal #{signal_count} detected on {date_str} ({weekday_name})")
                 print(f"   RSI: {rsi:.1f} < 30 | Close: {close:.2f} > EMA200: {ema200:.2f}")
 
                 if skip_trade_agent_validation:
