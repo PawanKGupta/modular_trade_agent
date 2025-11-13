@@ -10,6 +10,13 @@ from typing import Dict, Any
 
 from utils.logger import logger
 
+try:
+    from .utils.order_field_extractor import OrderFieldExtractor
+    from .utils.symbol_utils import extract_base_symbol
+except ImportError:
+    from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
+    from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
 DEFAULT_HISTORY_TEMPLATE = {
     "trades": [],  # list of trade entries
     "failed_orders": [],  # orders that failed due to insufficient balance (to retry later)
@@ -217,12 +224,11 @@ def check_manual_buys_of_failed_orders(path: str, orders_client, include_previou
         
         for order in executed_orders:
             # Only check BUY orders
-            txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
-            if txn_type not in ['B', 'BUY']:
+            if not OrderFieldExtractor.is_buy_order(order):
                 continue
             
             # Parse order date
-            order_time_str = order.get('ordDtTm') or order.get('orderTime') or ''
+            order_time_str = OrderFieldExtractor.get_order_time(order)
             try:
                 if order_time_str:
                     order_date = datetime.strptime(order_time_str.split()[0], '%d-%b-%Y').date()
@@ -240,10 +246,9 @@ def check_manual_buys_of_failed_orders(path: str, orders_client, include_previou
             ):
                 continue
             
-            # Extract symbol
-            symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
-            if '-' in symbol:
-                symbol = symbol.split('-')[0]
+            # Extract symbol using utility and symbol utils
+            symbol = OrderFieldExtractor.get_symbol(order)
+            symbol = extract_base_symbol(symbol) if symbol else ''
             symbol = symbol.upper()
             
             if not symbol:
@@ -283,7 +288,7 @@ def check_manual_buys_of_failed_orders(path: str, orders_client, include_previou
                     data['trades'].append(trade_entry)
                     manually_bought.append(symbol)
                     
-                    logger.info(f"✅ Added {symbol} to trade history (manual buy of bot recommendation, qty={qty}, price=₹{avg_price:.2f})")
+                    logger.info(f"Added {symbol} to trade history (manual buy of bot recommendation, qty={qty}, price=₹{avg_price:.2f})")
         
         # Save updated history and remove these from failed orders
         if manually_bought:
@@ -364,3 +369,57 @@ def cleanup_expired_failed_orders(path: str) -> int:
     except Exception as e:
         logger.error(f"Failed to cleanup expired orders: {e}")
         return 0
+
+
+def mark_position_closed(history_path: str, symbol: str, exit_price: float, sell_order_id: str) -> bool:
+    """
+    Mark a position as closed in trade history.
+    
+    Args:
+        history_path: Path to the history file
+        symbol: Trading symbol (base, without suffix)
+        exit_price: Execution price
+        sell_order_id: Order ID
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        history = load_history(history_path)
+        trades = history.get('trades', [])
+        
+        updated = False
+        for trade in trades:
+            trade_symbol = trade.get('symbol', '').upper()
+            if trade_symbol == symbol.upper() and trade.get('status') == 'open':
+                # Mark as closed
+                trade['status'] = 'closed'
+                trade['exit_price'] = exit_price
+                trade['exit_time'] = datetime.now().isoformat()
+                trade['exit_reason'] = 'EMA9_TARGET'
+                trade['sell_order_id'] = sell_order_id
+                
+                # Calculate P&L
+                entry_price = trade.get('entry_price', 0)
+                qty = trade.get('qty', 0)
+                if entry_price and qty:
+                    pnl = (exit_price - entry_price) * qty
+                    pnl_pct = ((exit_price / entry_price) - 1) * 100
+                    trade['pnl'] = pnl
+                    trade['pnl_pct'] = pnl_pct
+                    logger.info(f"Position closed: {symbol} - P&L: ₹{pnl:.2f} ({pnl_pct:+.2f}%)")
+                
+                updated = True
+                break
+        
+        if updated:
+            save_history(history_path, history)
+            logger.info(f"Trade history updated: {symbol} marked as closed")
+            return True
+        else:
+            logger.warning(f"No open position found for {symbol} in trade history")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error marking position closed: {e}")
+        return False

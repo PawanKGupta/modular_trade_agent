@@ -25,8 +25,39 @@ Complete step-by-step commands:
 ### 1. Install Python 3.12+
 
 **Ubuntu/Debian:**
+
+Python 3.12 is not available in the default Ubuntu repositories. You need to use the deadsnakes PPA:
+
 ```bash
-sudo apt-get update && sudo apt-get install -y python3.12 python3.12-venv
+# Install prerequisites
+sudo apt-get update
+sudo apt-get install -y software-properties-common
+
+# Add deadsnakes PPA (provides Python 3.12)
+sudo add-apt-repository ppa:deadsnakes/ppa -y
+
+# Update package lists
+sudo apt-get update
+
+# Install Python 3.12 and venv
+sudo apt-get install -y python3.12 python3.12-venv python3.12-dev
+
+# Install pip for Python 3.12
+curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+
+# Verify installation
+python3.12 --version
+python3.12 -m pip --version
+```
+
+**Alternative: Use the installation script**
+
+We provide a helper script for easier installation:
+
+```bash
+cd ~/modular_trade_agent
+chmod +x scripts/deploy/ubuntu/installers/install_python3.12.sh
+./scripts/deploy/ubuntu/installers/install_python3.12.sh
 ```
 
 **Windows:**
@@ -127,6 +158,41 @@ python -c "import yfinance, selenium, neo_api_client, numpy, pandas; print('Impo
 
 ```bash
 python -m pytest -q
+```
+
+## Troubleshooting
+
+### Ubuntu/Debian: Python 3.12 Installation Issues
+
+**Issue: `E: Unable to locate package python3.12`**
+
+This means the deadsnakes PPA hasn't been added. Make sure you've run:
+```bash
+sudo add-apt-repository ppa:deadsnakes/ppa -y
+sudo apt-get update
+```
+
+**Issue: `E: Unable to locate package python3.12-distutils`**
+
+This is expected - `python3.12-distutils` doesn't exist for Python 3.12. The distutils module was removed in Python 3.12. Simply skip installing it - pip installation will work without it.
+
+**Issue: `python3.12: command not found` after installation**
+
+Make sure you're using `python3.12` explicitly, or set it as default:
+```bash
+# Use python3.12 explicitly
+python3.12 --version
+
+# Or set as default (optional)
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+sudo update-alternatives --set python3 /usr/bin/python3.12
+```
+
+**Issue: pip not found after installing Python 3.12**
+
+Install pip using:
+```bash
+curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 ```
 
 ## Notes

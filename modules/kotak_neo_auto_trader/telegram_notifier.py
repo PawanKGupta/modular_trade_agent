@@ -137,12 +137,12 @@ class TelegramNotifier:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         message = (
-            f"🚫 *ORDER REJECTED*\n\n"
-            f"📊 *Symbol:* `{symbol}`\n"
-            f"📝 *Order ID:* `{order_id}`\n"
-            f"📦 *Quantity:* {quantity}\n"
-            f"⚠️ *Reason:* {rejection_reason}\n"
-            f"⏰ *Time:* {timestamp}\n"
+            f"ORDER REJECTED\n\n"
+            f"Symbol: `{symbol}`\n"
+            f"Order ID: `{order_id}`\n"
+            f"Quantity: {quantity}\n"
+            f"Reason: {rejection_reason}\n"
+            f"Time: {timestamp}\n"
         )
         
         if additional_info:
@@ -179,18 +179,18 @@ class TelegramNotifier:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         message = (
-            f"✅ *ORDER EXECUTED*\n\n"
-            f"📊 *Symbol:* `{symbol}`\n"
-            f"📝 *Order ID:* `{order_id}`\n"
-            f"📦 *Quantity:* {quantity}\n"
+            f"ORDER EXECUTED\n\n"
+            f"Symbol: `{symbol}`\n"
+            f"Order ID: `{order_id}`\n"
+            f"Quantity: {quantity}\n"
         )
         
         if executed_price:
-            message += f"💰 *Price:* ₹{executed_price:.2f}\n"
+            message += f"Price: ₹{executed_price:.2f}\n"
             total_value = executed_price * quantity
-            message += f"💵 *Total Value:* ₹{total_value:,.2f}\n"
+            message += f"Total Value: ₹{total_value:,.2f}\n"
         
-        message += f"⏰ *Time:* {timestamp}\n"
+        message += f"Time: {timestamp}\n"
         
         if additional_info:
             message += "\n*Additional Info:*\n"
@@ -227,12 +227,12 @@ class TelegramNotifier:
         fill_percentage = (filled_qty / total_qty * 100) if total_qty > 0 else 0
         
         message = (
-            f"⚡ *ORDER PARTIALLY FILLED*\n\n"
-            f"📊 *Symbol:* `{symbol}`\n"
-            f"📝 *Order ID:* `{order_id}`\n"
-            f"✅ *Filled:* {filled_qty} / {total_qty} ({fill_percentage:.1f}%)\n"
-            f"⏳ *Remaining:* {remaining_qty}\n"
-            f"⏰ *Time:* {timestamp}\n"
+            f"ORDER PARTIALLY FILLED\n\n"
+            f"Symbol: `{symbol}`\n"
+            f"Order ID: `{order_id}`\n"
+            f"Filled: {filled_qty} / {total_qty} ({fill_percentage:.1f}%)\n"
+            f"Remaining: {remaining_qty}\n"
+            f"Time: {timestamp}\n"
         )
         
         if additional_info:
@@ -264,17 +264,17 @@ class TelegramNotifier:
         
         # Choose emoji based on severity
         emoji_map = {
-            "ERROR": "🔴",
-            "WARNING": "⚠️",
-            "INFO": "ℹ️",
-            "SUCCESS": "✅"
+            "ERROR": "",
+            "WARNING": "",
+            "INFO": "",
+            "SUCCESS": ""
         }
-        emoji = emoji_map.get(severity.upper(), "📢")
+        emoji = emoji_map.get(severity.upper(), "")
         
         message = (
-            f"{emoji} *SYSTEM ALERT: {alert_type}*\n\n"
+            f"{emoji} SYSTEM ALERT: {alert_type}\n\n"
             f"{message_text}\n\n"
-            f"⏰ *Time:* {timestamp}\n"
+            f"Time: {timestamp}\n"
         )
         
         logger.info(f"Sending system alert: {alert_type}")
@@ -306,14 +306,14 @@ class TelegramNotifier:
         date = datetime.now().strftime("%Y-%m-%d")
         
         message = (
-            f"📊 *DAILY TRADING SUMMARY*\n"
-            f"📅 *Date:* {date}\n\n"
-            f"*Order Statistics:*\n"
+            f"DAILY TRADING SUMMARY\n"
+            f"Date: {date}\n\n"
+            f"Order Statistics:\n"
             f"  • Orders Placed: {orders_placed}\n"
-            f"  • ✅ Executed: {orders_executed}\n"
-            f"  • 🚫 Rejected: {orders_rejected}\n"
-            f"  • ⏳ Pending: {orders_pending}\n\n"
-            f"*Tracking Status:*\n"
+            f"  • Executed: {orders_executed}\n"
+            f"  • Rejected: {orders_rejected}\n"
+            f"  • Pending: {orders_pending}\n\n"
+            f"Tracking Status:\n"
             f"  • Active Symbols: {tracked_symbols}\n"
         )
         
@@ -323,7 +323,7 @@ class TelegramNotifier:
                 message += f"  • {key}: {value}\n"
         
         success_rate = (orders_executed / orders_placed * 100) if orders_placed > 0 else 0
-        message += f"\n📈 *Success Rate:* {success_rate:.1f}%"
+        message += f"\nSuccess Rate: {success_rate:.1f}%"
         
         logger.info("Sending daily summary notification")
         return self.send_message(message)
@@ -348,15 +348,15 @@ class TelegramNotifier:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         message = (
-            f"🛑 *TRACKING STOPPED*\n\n"
-            f"📊 *Symbol:* `{symbol}`\n"
-            f"📝 *Reason:* {reason}\n"
+            f"TRACKING STOPPED\n\n"
+            f"Symbol: `{symbol}`\n"
+            f"Reason: {reason}\n"
         )
         
         if tracking_duration:
-            message += f"⏱️ *Duration:* {tracking_duration}\n"
+            message += f"Duration: {tracking_duration}\n"
         
-        message += f"⏰ *Time:* {timestamp}\n"
+        message += f"Time: {timestamp}\n"
         
         logger.info(f"Sending tracking stopped notification for {symbol}")
         return self.send_message(message)
@@ -373,8 +373,8 @@ class TelegramNotifier:
             return False
         
         test_message = (
-            "🤖 *Telegram Notifier Test*\n\n"
-            "Connection successful! ✅\n"
+            "Telegram Notifier Test\n\n"
+            "Connection successful!\n"
             "You will receive notifications here."
         )
         

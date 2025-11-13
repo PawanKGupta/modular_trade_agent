@@ -45,6 +45,7 @@ Welcome! This index helps you find the right documentation quickly.
 ### System Architecture
 - **[ARCHITECTURE_GUIDE.md](documents/ARCHITECTURE_GUIDE.md)** - Overall system architecture
 - **[KOTAK_NEO_ARCHITECTURE_PLAN.md](documents/KOTAK_NEO_ARCHITECTURE_PLAN.md)** - Kotak Neo integration architecture
+- **[PENDING_ORDER_MAINTENANCE_LOGIC.md](documents/architecture/PENDING_ORDER_MAINTENANCE_LOGIC.md)** - 🆕 Pending order lifecycle and maintenance logic
 
 ### Strategy & Logic
 - **[INTEGRATED_README.md](documents/INTEGRATED_README.md)** - Integrated backtest-trade workflow
@@ -73,11 +74,17 @@ Welcome! This index helps you find the right documentation quickly.
 - **[SCORING_IMPROVEMENTS.md](documents/SCORING_IMPROVEMENTS.md)** - Scoring algorithm improvements
 
 ### Bug Fixes & Improvements
+- **[BUG_FIXES.md](documents/features/BUG_FIXES.md)** - Complete bug fixes log (summary/index)
 - **[BACKTEST_INTEGRATION_FIX.md](documents/BACKTEST_INTEGRATION_FIX.md)** - Backtest integration fixes
 - **[FILTERING_FIX.md](documents/FILTERING_FIX.md)** - Signal filtering improvements
 - **[FIX_INCOMPLETE_CANDLE.md](documents/FIX_INCOMPLETE_CANDLE.md)** - Incomplete candle handling
 - **[SELL_ENGINE_FIXES.md](documents/SELL_ENGINE_FIXES.md)** - Sell engine bug fixes
 - **[ORDER_REJECTION_TRACKING_ISSUE.md](documents/ORDER_REJECTION_TRACKING_ISSUE.md)** - Order rejection tracking
+
+#### Recent Bug Fixes (November 2025)
+- **[PENDING_ORDER_MAINTENANCE_LOGIC.md](documents/architecture/PENDING_ORDER_MAINTENANCE_LOGIC.md)** - Architecture: How pending orders are maintained
+- **[TARGET_LOWEST_SAME_VALUE_IMPACT.md](documents/analysis/TARGET_LOWEST_SAME_VALUE_IMPACT.md)** - Analysis: Impact of Target == Lowest EMA9 values
+- **[TARGET_LOWEST_EMA9_FIX_EXAMPLE.md](documents/examples/TARGET_LOWEST_EMA9_FIX_EXAMPLE.md)** - Example: Step-by-step fix demonstration
 
 ---
 
@@ -152,8 +159,14 @@ modular_trade_agent/
 └── documents/                         # Detailed documentation
     ├── getting-started/               # Setup guides
     ├── architecture/                  # Architecture docs
+    │   └── PENDING_ORDER_MAINTENANCE_LOGIC.md  # Order maintenance logic
+    ├── analysis/                      # Analysis & impact studies
+    │   └── TARGET_LOWEST_SAME_VALUE_IMPACT.md  # Bug fix impact analysis
+    ├── examples/                      # Code examples & demonstrations
+    │   └── TARGET_LOWEST_EMA9_FIX_EXAMPLE.md   # Bug fix example walkthrough
     ├── deployment/                    # Deployment guides
     ├── features/                      # Feature documentation
+    │   └── BUG_FIXES.md              # Bug fixes index (summary with links)
     ├── testing/                       # Test results & guides
     └── phases/                        # Development phases
 ```
@@ -191,5 +204,5 @@ Found outdated documentation? Want to improve something?
 
 ---
 
-**Last Updated:** 2025-11-02
+**Last Updated:** 2025-11-07
 **Version:** 25.4.1

@@ -45,7 +45,7 @@ class KotakNeoTrader:
         self.portfolio = None
         self.orders = None
         
-        logger.info("🚀 KotakNeoTrader initialized - ready for login")
+        logger.info("KotakNeoTrader initialized - ready for login")
     
     def login(self) -> bool:
         """
@@ -196,14 +196,14 @@ class KotakNeoTrader:
             return {}
         
         print("\n" + "="*60)
-        logger.info("🎯 COMPLETE TRADING SUMMARY")
+        logger.info("COMPLETE TRADING SUMMARY")
         print("="*60)
         
         summary = {}
         
         # Get portfolio data
         if self.portfolio:
-            logger.info("\n📊 Portfolio Data:")
+            logger.info("\nPortfolio Data:")
             summary['portfolio'] = {
                 'holdings': self.portfolio.get_holdings(),
                 'positions': self.portfolio.get_positions(),
@@ -212,7 +212,7 @@ class KotakNeoTrader:
         
         # Get orders data
         if self.orders:
-            logger.info("\n📋 Orders Data:")
+            logger.info("\nOrders Data:")
             summary['orders'] = {
                 'all_orders': self.orders.get_orders(),
                 'pending_orders': self.orders.get_pending_orders(),
@@ -236,7 +236,7 @@ class KotakNeoTrader:
         if not self.is_logged_in():
             return {"status": "Not logged in"}
         
-        logger.info("⚡ Quick Status Check...")
+        logger.info("Quick Status Check...")
         
         # Quick checks without detailed output
         portfolio_value = self.calculate_portfolio_value()
@@ -264,7 +264,7 @@ class KotakNeoTrader:
         }
         
         logger.info(" Portfolio Value: ₹{portfolio_value or 'N/A'}")
-        logger.info(f"📈 Holdings: {holdings_count}")
+        logger.info(f"Holdings: {holdings_count}")
         logger.info(" Active Positions: {positions_count}")
         logger.info(" Total Orders: {order_count}")
         
@@ -286,7 +286,7 @@ def main():
     """
     Demo function showing the modular trader usage
     """
-    logger.info("🚀 Modular Kotak Neo Trader Demo")
+    logger.info("Modular Kotak Neo Trader Demo")
     print("=" * 50)
     
     # Method 1: Manual login/logout
@@ -294,16 +294,16 @@ def main():
     
     if trader.login():
         # Test individual functions
-        logger.info("\n1️⃣ Portfolio stocks:")
+        logger.info("\n1. Portfolio stocks:")
         trader.get_portfolio_stocks()
         
-        logger.info("\n2️⃣ Existing orders:")
+        logger.info("\n2. Existing orders:")
         trader.get_existing_orders()
         
-        logger.info("\n3️⃣ GTT orders:")
+        logger.info("\n3. GTT orders:")
         trader.get_gtt_orders()
         
-        logger.info("\n⚡ Quick status:")
+        logger.info("\nQuick status:")
         trader.quick_status()
         
         trader.logout()
@@ -312,7 +312,7 @@ def main():
     logger.info("Demo completed!")
     
     # Method 2: Context manager (automatic login/logout)
-    logger.info("\n🔄 Testing context manager...")
+    logger.info("\nTesting context manager...")
     try:
         with KotakNeoTrader() as trader:
             trader.quick_status()

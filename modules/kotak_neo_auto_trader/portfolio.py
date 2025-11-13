@@ -25,16 +25,19 @@ class KotakNeoPortfolio:
     Portfolio management for Kotak Neo API
     """
     
-    def __init__(self, auth: KotakNeoAuth):
+    def __init__(self, auth: KotakNeoAuth, price_manager=None):
         """
         Initialize portfolio manager
         
         Args:
             auth (KotakNeoAuth): Authenticated session instance
+            price_manager: Optional LivePriceCache/LivePriceManager for real-time WebSocket LTP
         """
         self.auth = auth
+        self.price_manager = price_manager
         logger.info("KotakNeoPortfolio initialized")
     
+    @handle_reauth
     def get_holdings(self) -> Optional[Dict]:
         """
         Get portfolio holdings (stocks owned) with fallbacks and raw logging.
@@ -103,20 +106,69 @@ class KotakNeoPortfolio:
                         holding.get('marketValue') or
                         holding.get('market_value') or 0
                     )
+                    
+                    # If LTP is 0 (market closed), try multiple sources in priority order
+                    if ltp == 0 and quantity > 0:
+                        # Priority 1: Try WebSocket LTP (real-time, most accurate)
+                        if self.price_manager:
+                            try:
+                                from .utils.price_manager_utils import get_ltp_from_manager
+                                from .utils.symbol_utils import extract_ticker_base, get_lookup_symbol
+                                
+                                base_symbol = stock_name.replace('-EQ', '').replace('-BE', '').replace('-BL', '').replace('-BZ', '').strip()
+                                ticker = f"{base_symbol}.NS"
+                                lookup_symbol = get_lookup_symbol(stock_name, base_symbol)
+                                
+                                websocket_ltp = get_ltp_from_manager(self.price_manager, lookup_symbol, ticker)
+                                if websocket_ltp and websocket_ltp > 0:
+                                    ltp = websocket_ltp
+                                    logger.debug(f"{stock_name}: Fetched LTP from WebSocket: ₹{ltp:.2f}")
+                            except Exception as e:
+                                logger.debug(f"{stock_name}: WebSocket LTP fetch failed: {e}")
+                        
+                        # Priority 2: Use market_value to calculate effective price (reliable when API provides it)
+                        if ltp == 0 and market_value > 0:
+                            ltp = market_value / quantity
+                            logger.debug(f"{stock_name}: Using market_value/quantity as LTP: ₹{ltp:.2f}")
+                        
+                        # Priority 3: Fallback to yfinance (simple call, no validation)
+                        if ltp == 0:
+                            try:
+                                import yfinance as yf
+                                base_symbol = stock_name.replace('-EQ', '').replace('-BE', '').replace('-BL', '').replace('-BZ', '').strip()
+                                ticker = f"{base_symbol}.NS"
+                                stock = yf.Ticker(ticker)
+                                info = stock.info
+                                # Try to get current price or previous close
+                                yf_ltp = info.get('currentPrice') or info.get('previousClose') or 0
+                                if yf_ltp > 0:
+                                    ltp = yf_ltp
+                                    logger.debug(f"{stock_name}: Fetched LTP from yfinance: ₹{ltp:.2f}")
+                            except Exception as e:
+                                logger.debug(f"{stock_name}: Could not fetch LTP from yfinance: {e}")
+                    
                     if market_value == 0 and quantity > 0:
                         # Compute value when missing using LTP, else avg_price
                         ref = ltp if ltp > 0 else avg_price
                         market_value = ref * quantity
+                    
                     pnl = _num(
                         holding.get('pnl') or
                         holding.get('unrealizedPnl') or
                         holding.get('unrealisedPNL') or 0
                     )
-                    if pnl == 0 and quantity > 0 and avg_price > 0 and ltp > 0:
-                        pnl = (ltp - avg_price) * quantity
-                    logger.info(f"📈 {stock_name}: Qty={quantity}, LTP=₹{ltp:.2f}, Value=₹{market_value:.2f}, P&L=₹{pnl:.2f}")
+                    
+                    # Calculate P&L if not provided by API
+                    if pnl == 0 and quantity > 0 and avg_price > 0:
+                        # Use LTP if available, otherwise use market_value
+                        if ltp > 0:
+                            pnl = (ltp - avg_price) * quantity
+                        elif market_value > 0:
+                            # Calculate P&L from market value (most reliable when API provides it)
+                            pnl = market_value - (avg_price * quantity)
+                    logger.info(f"{stock_name}: Qty={quantity}, LTP=₹{ltp:.2f}, Value=₹{market_value:.2f}, P&L=₹{pnl:.2f}")
                     total_value += market_value
-                logger.info(f"💰 Total Portfolio Value: ₹{total_value:.2f}")
+                logger.info(f"Total Portfolio Value: ₹{total_value:.2f}")
             else:
                 preview = str(holdings)[:300]
                 logger.info(f" No holdings found in portfolio (raw preview: {preview})")
@@ -230,7 +282,7 @@ class KotakNeoPortfolio:
                 data.get('available_margin') or 0
             )
             
-            logger.info(f"💰 Cash: ₹{cash}")
+            logger.info(f"Cash: ₹{cash}")
             logger.info(f" Margin Used: ₹{margin_used}")
             logger.info(f" Margin Available: ₹{margin_available}")
             

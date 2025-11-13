@@ -46,6 +46,7 @@ class KotakNeoMarketData:
             symbol: Trading symbol (e.g., 'RELIANCE-EQ')
             exchange: Exchange segment (NSE/BSE)
             instrument_token: Optional instrument token for faster lookup
+            _retry_count: Internal retry counter for re-auth
             
         Returns:
             Quote data dict or None if failed

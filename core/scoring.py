@@ -1,4 +1,24 @@
 def compute_strength_score(entry):
+    """
+    ⚠️ DEPRECATED in Phase 4: This function is deprecated and will be removed in a future version.
+    
+    For new code, prefer using ScoringService:
+        from services import ScoringService
+        service = ScoringService()
+        score = service.compute_strength_score(entry)
+    
+    Migration guide: See utils.deprecation.get_migration_guide("compute_strength_score")
+    """
+    # Phase 4: Issue deprecation warning
+    import warnings
+    from utils.deprecation import deprecation_notice
+    
+    deprecation_notice(
+        module="core.scoring",
+        function="compute_strength_score",
+        replacement="services.ScoringService.compute_strength_score()",
+        version="Phase 4"
+    )
     score = 0
     verdict = entry.get('verdict')
     

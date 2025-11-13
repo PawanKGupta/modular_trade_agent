@@ -1,14 +1,30 @@
 
 from core.analysis import analyze_ticker, analyze_multiple_tickers
-from core.scoring import compute_strength_score
-from core.telegram import send_telegram
-from core.scrapping import get_stock_list
-from core.csv_exporter import CSVExporter
-from core.backtest_scoring import add_backtest_scores_to_results
+# Phase 4: Use services instead of core modules
+from services import ScoringService, BacktestService, compute_strength_score
+from core.telegram import send_telegram  # TODO Phase 4: Migrate to infrastructure/notifications
+from core.scrapping import get_stock_list  # TODO Phase 4: Migrate to infrastructure/web_scraping
+from core.csv_exporter import CSVExporter  # TODO Phase 4: Migrate to infrastructure/persistence
 from utils.logger import logger
 import os
 from datetime import datetime
 import pandas as pd
+from pathlib import Path
+
+# ML verdict service (optional, for testing only)
+_ml_verdict_service = None
+try:
+    from services.ml_verdict_service import MLVerdictService
+    ml_model_path = Path("models/verdict_model_random_forest.pkl")
+    if ml_model_path.exists():
+        _ml_verdict_service = MLVerdictService(model_path=str(ml_model_path))
+        logger.info("✅ ML verdict service loaded for testing (will include ML predictions in Telegram)")
+    else:
+        logger.info("ℹ️ ML model not found. Run ML training first. Using rule-based only.")
+except ImportError:
+    logger.debug("ML verdict service not available (scikit-learn may not be installed)")
+except Exception as e:
+    logger.warning(f"⚠️ Failed to load ML verdict service: {e}")
 
 def get_stocks():
     stocks = get_stock_list()
@@ -24,73 +40,13 @@ def compute_trading_priority_score(stock_data):
     """
     Compute trading priority score based on key metrics for better buy candidate sorting.
     Higher score = higher priority for trading
+    
+    Phase 4: Now uses ScoringService instead of duplicating logic
     """
     try:
-        if stock_data is None or not isinstance(stock_data, dict):
-            return 0
-        priority_score = 0
-        
-        # 1. Risk-Reward Ratio (most important for profitability)
-        risk_reward = stock_data.get('risk_reward_ratio', 0)
-        if risk_reward >= 4.0:
-            priority_score += 40
-        elif risk_reward >= 3.0:
-            priority_score += 30
-        elif risk_reward >= 2.0:
-            priority_score += 20
-        elif risk_reward >= 1.5:
-            priority_score += 10
-        
-        # 2. RSI Oversold Level (lower = better for dip buying)
-        rsi = stock_data.get('rsi', 50)
-        if rsi <= 15:
-            priority_score += 25  # Extremely oversold
-        elif rsi <= 20:
-            priority_score += 20  # Very oversold
-        elif rsi <= 25:
-            priority_score += 15  # Oversold
-        elif rsi <= 30:
-            priority_score += 10  # Near oversold
-        
-        # 3. Volume Strength (higher = more conviction)
-        volume_multiplier = stock_data.get('volume_multiplier', 1.0)
-        if volume_multiplier >= 4.0:
-            priority_score += 20
-        elif volume_multiplier >= 2.0:
-            priority_score += 15
-        elif volume_multiplier >= 1.5:
-            priority_score += 10
-        elif volume_multiplier >= 1.2:
-            priority_score += 5
-        
-        # 4. MTF Alignment Score
-        timeframe_analysis = stock_data.get('timeframe_analysis', {})
-        alignment_score = timeframe_analysis.get('alignment_score', 0)
-        priority_score += min(alignment_score, 10)  # Cap at 10 points
-        
-        # 5. PE Ratio (lower = better value, but cap the bonus)
-        pe = stock_data.get('pe', 100)
-        if pe and pe > 0:
-            if pe <= 15:
-                priority_score += 10
-            elif pe <= 25:
-                priority_score += 5
-            elif pe <= 35:
-                priority_score += 2
-            elif pe >= 50:
-                priority_score -= 5  # Penalty for expensive stocks
-        
-        # 6. Backtest Performance (if available)
-        backtest_score = stock_data.get('backtest_score', 0)
-        if backtest_score >= 40:
-            priority_score += 15
-        elif backtest_score >= 30:
-            priority_score += 10
-        elif backtest_score >= 20:
-            priority_score += 5
-        
-        return priority_score
-        
+        # Use ScoringService (Phase 4)
+        scoring_service = ScoringService()
+        return scoring_service.compute_trading_priority_score(stock_data)
     except Exception as e:
         logger.warning(f"Error computing priority score: {e}")
         if stock_data is None:
@@ -248,6 +204,14 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
             confidence_emoji = {"High": "🟢", "Medium": "🟡", "Low": "🟠"}.get(confidence, "⚪")
             lines.append(f"\tConfidence: {confidence_emoji} {confidence}")
         
+        # ML Verdict (for testing - add if available)
+        ml_verdict = stock_data.get('ml_verdict')
+        ml_confidence = stock_data.get('ml_confidence')
+        if ml_verdict and ml_confidence is not None:
+            # Add ML prediction for comparison (testing only)
+            ml_emoji = {"strong_buy": "🤖🔥", "buy": "🤖📈", "watch": "🤖👀", "avoid": "🤖❌"}.get(ml_verdict, "🤖")
+            lines.append(f"\t🤖 ML Prediction: {ml_emoji} {ml_verdict.upper()} (confidence: {ml_confidence:.0%})")
+        
         msg = "\n".join(lines) + "\n\n"
         return msg
         
@@ -261,14 +225,56 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
         rsi = stock_data.get('rsi', 0)
         return f"{ticker}: Buy ({buy_low:.2f}, {buy_high:.2f}) Target {target:.2f} Stop {stop:.2f} (rsi={rsi})\n"
 
-def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=False, dip_mode=False):
+async def main_async(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=False, dip_mode=False):
+    """
+    Async main function using async batch analysis
+    
+    This version uses async/await for parallel processing, significantly
+    reducing analysis time for batch operations.
+    """
     tickers = get_stocks()
     
     if not tickers:
         logger.error("No stocks to analyze. Exiting.")
         return
     
-    logger.info(f"Starting analysis for {len(tickers)} stocks (Multi-timeframe: {enable_multi_timeframe}, CSV Export: {export_csv})")
+    logger.info(f"Starting async analysis for {len(tickers)} stocks (Multi-timeframe: {enable_multi_timeframe}, CSV Export: {export_csv})")
+    
+    # Use async batch analysis (Phase 2)
+    try:
+        from services.async_analysis_service import AsyncAnalysisService
+        
+        async_service = AsyncAnalysisService(max_concurrent=10)
+        results = await async_service.analyze_batch_async(
+            tickers=tickers,
+            enable_multi_timeframe=enable_multi_timeframe,
+            export_to_csv=export_csv
+        )
+        
+        logger.info(f"Async analysis complete: {len(results)} results")
+        
+        # Process results (scoring, backtest, Telegram)
+        return _process_results(results, enable_backtest_scoring, dip_mode)
+        
+    except ImportError:
+        logger.warning("Async service not available, falling back to sequential analysis")
+        # Fall back to sequential analysis
+        return main_sequential(export_csv, enable_multi_timeframe, enable_backtest_scoring, dip_mode)
+
+
+def main_sequential(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=False, dip_mode=False):
+    """
+    Sequential main function (backward compatible)
+    
+    Uses traditional sequential analysis for backward compatibility.
+    """
+    tickers = get_stocks()
+    
+    if not tickers:
+        logger.error("No stocks to analyze. Exiting.")
+        return
+    
+    logger.info(f"Starting sequential analysis for {len(tickers)} stocks (Multi-timeframe: {enable_multi_timeframe}, CSV Export: {export_csv})")
     
     # Use batch analysis with CSV export
     if export_csv:
@@ -299,17 +305,106 @@ def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=F
             except Exception as e:
                 logger.error(f"ERROR Unexpected error analyzing {t}: {e}")
                 results.append({"ticker": t, "status": "fatal_error", "error": str(e)})
+    
+    # Continue with scoring and Telegram (same for both async and sequential)
+    return _process_results(results, enable_backtest_scoring, dip_mode)
+
+
+def main(export_csv=True, enable_multi_timeframe=True, enable_backtest_scoring=False, dip_mode=False, use_async=True):
+    """
+    Main function - supports both async and sequential modes
+    
+    Args:
+        export_csv: Export results to CSV
+        enable_multi_timeframe: Enable multi-timeframe analysis
+        enable_backtest_scoring: Enable backtest scoring
+        dip_mode: Enable dip-buying mode
+        use_async: Use async batch analysis (Phase 2 feature, default: True)
+    """
+    if use_async:
+        # Use async analysis (Phase 2)
+        try:
+            import asyncio
+            return asyncio.run(main_async(
+                export_csv=export_csv,
+                enable_multi_timeframe=enable_multi_timeframe,
+                enable_backtest_scoring=enable_backtest_scoring,
+                dip_mode=dip_mode
+            ))
+        except Exception as e:
+            logger.warning(f"Async analysis failed, falling back to sequential: {e}")
+            return main_sequential(
+                export_csv=export_csv,
+                enable_multi_timeframe=enable_multi_timeframe,
+                enable_backtest_scoring=enable_backtest_scoring,
+                dip_mode=dip_mode
+            )
+    else:
+        # Use sequential analysis (backward compatible)
+        return main_sequential(
+            export_csv=export_csv,
+            enable_multi_timeframe=enable_multi_timeframe,
+            enable_backtest_scoring=enable_backtest_scoring,
+            dip_mode=dip_mode
+        )
+
+
+def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
+    """Process analysis results (common for both async and sequential)"""
 
     # Calculate strength scores for all results (needed for backtest scoring)
+    # Also add ML verdict predictions if ML service is available (for testing)
     for result in results:
         if result.get('status') == 'success':
             result['strength_score'] = compute_strength_score(result)
+            
+            # Add ML verdict prediction if ML service is available (for testing only)
+            if _ml_verdict_service and _ml_verdict_service.model_loaded:
+                try:
+                    # Extract signals and indicators from result
+                    signals = result.get('justification', [])
+                    rsi_value = result.get('rsi')
+                    
+                    # Check if price is above EMA200 (would need to compute or get from timeframe_analysis)
+                    timeframe_analysis = result.get('timeframe_analysis', {})
+                    daily_analysis = timeframe_analysis.get('daily_analysis', {})
+                    is_above_ema200 = True  # Default, can be improved
+                    
+                    # Volume analysis
+                    volume_data = result.get('volume_data', {})
+                    vol_ok = volume_data.get('vol_ok', False)
+                    vol_strong = volume_data.get('vol_strong', False)
+                    
+                    # Fundamentals
+                    pe = result.get('pe')
+                    fundamental_ok = not (pe is not None and pe < 0)
+                    
+                    # Get ML prediction
+                    ml_verdict, ml_confidence = _ml_verdict_service.predict_verdict_with_confidence(
+                        signals=signals if isinstance(signals, list) else [],
+                        rsi_value=rsi_value,
+                        is_above_ema200=is_above_ema200,
+                        vol_ok=vol_ok,
+                        vol_strong=vol_strong,
+                        fundamental_ok=fundamental_ok,
+                        timeframe_confirmation=timeframe_analysis,
+                        news_sentiment=result.get('news_sentiment')
+                    )
+                    
+                    if ml_verdict:
+                        result['ml_verdict'] = ml_verdict
+                        result['ml_confidence'] = ml_confidence
+                        logger.debug(f"ML prediction for {result.get('ticker')}: {ml_verdict} ({ml_confidence:.0%})")
+                except Exception as e:
+                    logger.debug(f"ML prediction failed for {result.get('ticker')}: {e}")
     
-    # Add backtest scoring if enabled
+    # Add backtest scoring if enabled (Phase 4: Use BacktestService)
     if enable_backtest_scoring:
         mode_info = " (DIP MODE)" if dip_mode else ""
         logger.info(f"Running backtest scoring analysis{mode_info}...")
-        results = add_backtest_scores_to_results(results, years_back=2, dip_mode=dip_mode)
+        # Use BacktestService (Phase 4)
+        backtest_service = BacktestService(default_years_back=2, dip_mode=dip_mode)
+        results = backtest_service.add_backtest_scores_to_results(results)
         # Re-sort by priority score for better trading decisions
         results = [r for r in results if r is not None]  # Filter out None values
         results.sort(key=lambda x: -compute_trading_priority_score(x))
@@ -401,6 +496,8 @@ if __name__ == "__main__":
     parser.add_argument('--no-mtf', action='store_true', help='Disable multi-timeframe analysis')
     parser.add_argument('--backtest', action='store_true', help='Enable backtest scoring (slower but more accurate)')
     parser.add_argument('--dip-mode', action='store_true', help='Enable dip-buying mode with more permissive thresholds')
+    parser.add_argument('--async', action='store_true', dest='use_async', default=True, help='Use async batch analysis (Phase 2, default: enabled)')
+    parser.add_argument('--no-async', action='store_false', dest='use_async', help='Disable async analysis (use sequential)')
     
     args = parser.parse_args()
     
@@ -408,5 +505,6 @@ if __name__ == "__main__":
         export_csv=not args.no_csv,
         enable_multi_timeframe=not args.no_mtf,
         enable_backtest_scoring=args.backtest,
-        dip_mode=getattr(args, 'dip_mode', False)
+        dip_mode=getattr(args, 'dip_mode', False),
+        use_async=args.use_async
     )
