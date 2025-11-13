@@ -1,6 +1,11 @@
 # 📚 Documentation Directory
 
-This directory contains detailed documentation for the Modular Trade Agent project.
+**Version:** 25.4.2  
+**Last Updated:** November 13, 2025
+
+This directory contains comprehensive documentation for the Modular Trade Agent project (110+ guides).
+
+**🚀 Quick Start:** New users start with [`getting-started/GETTING_STARTED.md`](getting-started/GETTING_STARTED.md)
 
 ---
 

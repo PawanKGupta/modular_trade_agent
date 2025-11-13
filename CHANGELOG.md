@@ -132,6 +132,31 @@ result = analyze_ticker("RELIANCE.NS")  # Still works, delegates to service laye
 
 ---
 
+## [25.4.2] - 2025-11-13
+
+### Changed
+
+- **Documentation Organization** - Improved documentation structure and navigation
+  - Updated `documents/README.md` with version info and better quick navigation
+  - Removed duplicate `new_documentation/` folder (moved to archive)
+  - Validated all 110 documentation files against current branch features
+  - All documented features confirmed to exist in codebase
+
+### Documentation
+
+- Enhanced `documents/README.md` with version tracking and quick start reference
+- Archived duplicate documentation structure
+- Comprehensive validation of all feature documentation
+
+### Impact
+
+- Better documentation navigation
+- No duplicate documentation structures
+- All documentation validated as accurate
+- Clean, organized structure maintained
+
+---
+
 ## [25.4.1] - 2025-11-02
 
 ### Fixed
