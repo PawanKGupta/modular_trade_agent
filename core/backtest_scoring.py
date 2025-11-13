@@ -619,15 +619,26 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip
                         # Get current price (try multiple sources)
                         current_price = stock_result.get('last_close')
                         
-                        # Fallback: Try to get from pre_fetched_df if available
+                        # Fallback 1: Try to get from pre_fetched_df if available
                         if (not current_price or current_price <= 0) and 'pre_fetched_df' in stock_result:
                             try:
                                 pre_df = stock_result['pre_fetched_df']
                                 if pre_df is not None and not pre_df.empty:
                                     current_price = float(pre_df['close'].iloc[-1])
                                     logger.debug(f"  {ticker}: Got current_price from pre_fetched_df: {current_price}")
-                            except:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"  {ticker}: Failed to get price from pre_fetched_df: {e}")
+                        
+                        # Fallback 2: Try to get from stock_info if available
+                        if (not current_price or current_price <= 0) and 'stock_info' in stock_result:
+                            try:
+                                info = stock_result['stock_info']
+                                if isinstance(info, dict):
+                                    current_price = info.get('currentPrice') or info.get('regularMarketPrice')
+                                    if current_price:
+                                        logger.debug(f"  {ticker}: Got current_price from stock_info: {current_price}")
+                            except Exception as e:
+                                logger.debug(f"  {ticker}: Failed to get price from stock_info: {e}")
                         
                         if current_price and current_price > 0:
                             timeframe_confirmation = stock_result.get('timeframe_analysis')
@@ -665,14 +676,27 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip
                             stock_result['stop'] = stop
 
                             logger.info(f"  {ticker}: Calculated - Buy Range: {buy_range}, Target: {target}, Stop: {stop}")
+                        else:
+                            logger.warning(f"  {ticker}: Cannot calculate parameters - current_price is missing or zero")
+                            # Set minimal defaults to prevent 0.00 display errors
+                            # Use a placeholder price if absolutely nothing is available
+                            stock_result['buy_range'] = None
+                            stock_result['target'] = None
+                            stock_result['stop'] = None
 
                     except Exception as calc_error:
                         logger.error(f"  {ticker}: Failed to recalculate parameters: {calc_error}")
                         # Set safe defaults to prevent telegram errors
-                        if current_price:
+                        if current_price and current_price > 0:
                             stock_result['buy_range'] = (round(current_price * 0.995, 2), round(current_price * 1.01, 2))
                             stock_result['stop'] = round(current_price * 0.92, 2)
                             stock_result['target'] = round(current_price * 1.10, 2)
+                        else:
+                            # No valid price available - set None to trigger filtering
+                            logger.error(f"  {ticker}: No valid current_price available, cannot set parameters")
+                            stock_result['buy_range'] = None
+                            stock_result['target'] = None
+                            stock_result['stop'] = None
 
             logger.info(f"  {ticker}: Current={current_score:.1f}, Backtest={backtest_score:.1f}, Combined={combined_score:.1f}, Final={stock_result['final_verdict']}")
 

@@ -58,20 +58,29 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
     try:
         ticker = stock_data.get('ticker', 'N/A')
         buy_range = stock_data.get('buy_range', [0, 0])
+        target = stock_data.get('target', 0)
+        stop = stock_data.get('stop', 0)
+        
+        # Check for invalid/missing trading parameters
+        # Return None to signal this stock should be filtered out
+        if buy_range is None or target is None or stop is None:
+            logger.warning(f"{ticker}: Skipping display - missing trading parameters (buy_range={buy_range}, target={target}, stop={stop})")
+            return None
+        
         if buy_range and len(buy_range) >= 2:
             buy_low, buy_high = buy_range
         else:
             buy_low, buy_high = 0, 0
-        target = stock_data.get('target', 0)
-        stop = stock_data.get('stop', 0)
+        
+        # Additional validation - skip if parameters are zero
+        if buy_low <= 0 or buy_high <= 0 or target <= 0 or stop <= 0:
+            logger.warning(f"{ticker}: Skipping display - invalid trading parameters (zero values)")
+            return None
+        
         rsi = stock_data.get('rsi', 0)
         last_close = stock_data.get('last_close', 0)
 
         # Calculate potential returns with None checks
-        if target is None:
-            target = 0
-        if stop is None:
-            stop = 0
         if last_close is None or last_close == 0:
             last_close = 1  # Avoid division by zero
 
@@ -554,7 +563,8 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
             msg += "\n🔥 *STRONG BUY* (Multi-timeframe confirmed):\n"
             for i, b in enumerate(strong_buys, 1):
                 enhanced_info = get_enhanced_stock_info(b, i)
-                msg += enhanced_info
+                if enhanced_info:  # Skip stocks with invalid parameters
+                    msg += enhanced_info
 
         # Regular buys (exclude stocks already in strong_buys to avoid duplicates)
         strong_buy_tickers = {r.get('ticker') for r in strong_buys}
@@ -575,7 +585,8 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
             msg += "\n📈 *BUY* candidates:\n"
             for i, b in enumerate(regular_buys, 1):
                 enhanced_info = get_enhanced_stock_info(b, i, is_strong_buy=False)
-                msg += enhanced_info
+                if enhanced_info:  # Skip stocks with invalid parameters
+                    msg += enhanced_info
 
         send_telegram(msg)
         scoring_info = " (with backtest scoring)" if enable_backtest_scoring else ""

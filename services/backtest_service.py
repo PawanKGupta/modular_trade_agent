@@ -193,6 +193,66 @@ class BacktestService:
 
                 logger.debug(f"{ticker}: Final values in dict: ml_verdict={stock_result.get('ml_verdict')}, ml_conf={stock_result.get('ml_confidence')}")
 
+                # Calculate trading parameters for ML-only buy/strong_buy signals
+                # (Parameters might be missing if rules rejected but ML approved)
+                ml_verdict = stock_result.get('ml_verdict')
+                if ml_verdict in ['buy', 'strong_buy']:
+                    if not stock_result.get('buy_range') or not stock_result.get('target') or not stock_result.get('stop'):
+                        logger.info(f"{ticker}: Calculating parameters for ML verdict: {ml_verdict}")
+
+                        try:
+                            from core.analysis import calculate_smart_buy_range, calculate_smart_stop_loss, calculate_smart_target
+
+                            current_price = stock_result.get('last_close')
+                            
+                            # Fallback 1: Try to get from pre_fetched_df if available
+                            if (not current_price or current_price <= 0) and 'pre_fetched_df' in stock_result:
+                                try:
+                                    pre_df = stock_result['pre_fetched_df']
+                                    if pre_df is not None and not pre_df.empty:
+                                        current_price = float(pre_df['close'].iloc[-1])
+                                        logger.debug(f"{ticker}: Got current_price from pre_fetched_df: {current_price}")
+                                except Exception as e:
+                                    logger.debug(f"{ticker}: Failed to get price from pre_fetched_df: {e}")
+                            
+                            # Fallback 2: Try to get from stock_info if available
+                            if (not current_price or current_price <= 0) and 'stock_info' in stock_result:
+                                try:
+                                    info = stock_result['stock_info']
+                                    if isinstance(info, dict):
+                                        current_price = info.get('currentPrice') or info.get('regularMarketPrice')
+                                        if current_price:
+                                            logger.debug(f"{ticker}: Got current_price from stock_info: {current_price}")
+                                except Exception as e:
+                                    logger.debug(f"{ticker}: Failed to get price from stock_info: {e}")
+                            
+                            if current_price and current_price > 0:
+                                timeframe_confirmation = stock_result.get('timeframe_analysis')
+
+                                # Calculate parameters
+                                buy_range = calculate_smart_buy_range(current_price, timeframe_confirmation)
+                                recent_low = current_price * 0.92
+                                recent_high = current_price * 1.15
+                                stop = calculate_smart_stop_loss(current_price, recent_low, timeframe_confirmation, None)
+                                target = calculate_smart_target(current_price, stop, ml_verdict, timeframe_confirmation, recent_high)
+
+                                stock_result['buy_range'] = buy_range
+                                stock_result['target'] = target
+                                stock_result['stop'] = stop
+
+                                logger.info(f"{ticker}: ML parameters - Buy: {buy_range}, Target: {target}, Stop: {stop}")
+                            else:
+                                logger.warning(f"{ticker}: Cannot calculate parameters - current_price is missing or zero")
+                                stock_result['buy_range'] = None
+                                stock_result['target'] = None
+                                stock_result['stop'] = None
+                        except Exception as e:
+                            logger.warning(f"{ticker}: Failed to calculate ML parameters: {e}")
+                            # Set None to trigger filtering or special display
+                            stock_result['buy_range'] = None
+                            stock_result['target'] = None
+                            stock_result['stop'] = None
+
                 enhanced_results.append(stock_result)
 
             except Exception as e:
