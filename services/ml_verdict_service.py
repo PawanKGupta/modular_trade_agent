@@ -385,6 +385,16 @@ class MLVerdictService(VerdictService):
                     features['support_distance_pct'] = ((current_price - features[recent_low_feature_name]) / current_price) * 100
                 else:
                     features['support_distance_pct'] = 0.0
+                
+                # EMA9 distance (target proximity) - critical for mean reversion strategy
+                if df is not None and 'ema9' in df.columns:
+                    ema9_value = float(df['ema9'].iloc[-1])
+                    if current_price > 0:
+                        features['ema9_distance_pct'] = ((ema9_value - current_price) / current_price) * 100
+                    else:
+                        features['ema9_distance_pct'] = 0.0
+                else:
+                    features['ema9_distance_pct'] = 0.0
             except:
                 recent_high_feature_name = f'recent_high_{support_lookback}'
                 recent_low_feature_name = f'recent_low_{support_lookback}'
@@ -394,6 +404,7 @@ class MLVerdictService(VerdictService):
                     features['recent_high_20'] = current_price
                     features['recent_low_20'] = current_price
                 features['support_distance_pct'] = 0.0
+                features['ema9_distance_pct'] = 0.0
         else:
             recent_high_feature_name = f'recent_high_{support_lookback}'
             recent_low_feature_name = f'recent_low_{support_lookback}'
@@ -403,6 +414,7 @@ class MLVerdictService(VerdictService):
                 features['recent_high_20'] = current_price
                 features['recent_low_20'] = current_price
             features['support_distance_pct'] = 0.0
+            features['ema9_distance_pct'] = 0.0
 
         # Pattern signals
         features['has_hammer'] = 1.0 if 'hammer' in signals else 0.0
