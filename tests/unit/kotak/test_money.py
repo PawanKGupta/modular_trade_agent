@@ -10,8 +10,11 @@ def test_money_basic_ops_and_validation():
     assert (m2 * 2).to_float() == 100.0
     assert (m1 / 2).to_float() == 50.0
 
-    with pytest.raises(ValueError):
-        Money.from_float(-1.0)
+    # Negative amounts are now allowed (for P&L, losses, etc.)
+    # This was changed to support paper trading P&L calculations
+    negative_money = Money.from_float(-1.0)
+    assert negative_money.to_float() == -1.0
+    
     with pytest.raises(ValueError):
         _ = m1 / 0
 
