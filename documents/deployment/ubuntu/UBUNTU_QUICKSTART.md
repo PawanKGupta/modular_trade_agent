@@ -69,12 +69,26 @@ When prompted, enter:
 - Telegram Bot Token
 - Telegram Chat ID
 
-### Step 4: Choose Options
+### Step 4: Set Timezone to IST
+
+**CRITICAL**: Set server timezone to Indian Standard Time (IST) for correct task scheduling.
+
+```bash
+# Set timezone to IST
+sudo timedatectl set-timezone Asia/Kolkata
+
+# Verify (should show IST, +0530)
+timedatectl | grep "Time zone"
+```
+
+**Why?** If timezone is UTC, your 9 AM tasks will run at 3:30 AM UTC instead of 9 AM IST!
+
+### Step 5: Choose Options
 
 - **Systemd service?** → Yes (for automatic daily execution at 4PM)
 - **Desktop shortcut?** → Yes (if using desktop Ubuntu)
 
-### Step 5: Done!
+### Step 6: Done!
 
 ```bash
 cd ~/modular_trade_agent
@@ -192,6 +206,7 @@ sudo systemctl stop tradeagent-unified.service
 | Python too old | `sudo apt-get install python3.10` |
 | Telegram not working | Check credentials in `cred.env` |
 | Service won't start | Check paths in `/etc/systemd/system/tradeagent-unified.service` |
+| **Tasks not running at 9AM** | **`sudo timedatectl set-timezone Asia/Kolkata`** + restart service |
 
 ### Still Stuck?
 

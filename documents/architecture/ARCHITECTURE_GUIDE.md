@@ -1,39 +1,69 @@
-# Clean Architecture Guide - Trading Agent
+# Architecture Guide - Trading Agent
+
+**Updated:** Phase 4 (2025-11-02)  
+**Status:** Service-based architecture (Phase 1-4 complete)
 
 ## 📐 Architecture Overview
+
+The system uses a **service-based architecture** with clear separation of concerns across multiple layers:
+
+### Service Layer Architecture (Phase 1-4)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    PRESENTATION LAYER                        │
-│  (CLI, Formatters, Validators)                              │
+│  (trade_agent.py, CLI, Telegram, CSV Export)                │
 │  - User interaction                                          │
 │  - Input validation                                          │
 │  - Output formatting                                         │
 └────────────────────────┬────────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────────┐
-│                   APPLICATION LAYER                          │
-│  (Use Cases, Services, DTOs)                                │
-│  - Business workflows                                        │
-│  - Application services                                      │
-│  - Data transformation                                       │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────────┐
-│                     DOMAIN LAYER                             │
-│  (Entities, Value Objects, Interfaces)                      │
-│  - Core business logic                                       │
-│  - Business rules                                            │
-│  - Domain interfaces (ports)                                 │
+│                    SERVICE LAYER (Phase 1-4)                 │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  Analysis Services                                   │    │
+│  │  - AnalysisService (Phase 1)                         │    │
+│  │  - AsyncAnalysisService (Phase 2)                    │    │
+│  │  - AnalysisPipeline (Phase 3)                        │    │
+│  └─────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  Data & Infrastructure Services                      │    │
+│  │  - DataService (Phase 1)                            │    │
+│  │  - IndicatorService (Phase 1)                        │    │
+│  │  - SignalService (Phase 1)                           │    │
+│  │  - VerdictService (Phase 1)                          │    │
+│  │  - ScoringService (Phase 4)                          │    │
+│  │  - BacktestService (Phase 4)                         │    │
+│  └─────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  Infrastructure Support (Phase 2-4)                  │    │
+│  │  - CacheService (Phase 2)                           │    │
+│  │  - AsyncDataService (Phase 2)                        │    │
+│  │  - EventBus (Phase 3)                                │    │
+│  │  - Pipeline Steps (Phase 3)                           │    │
+│  └─────────────────────────────────────────────────────┘    │
 └────────────────────────┬────────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────────┐
 │                 INFRASTRUCTURE LAYER                         │
-│  (Data Providers, Indicators, Notifications)                │
-│  - External systems                                          │
-│  - Database access                                           │
-│  - Third-party APIs                                          │
+│  (src/infrastructure/ + legacy core/ for backward compat)    │
+│  - Data providers (yfinance, etc.)                           │
+│  - Indicator calculators (pandas_ta)                         │
+│  - Notifications (Telegram)                                  │
+│  - Persistence (CSV, databases)                              │
+│  - Web scraping (ChartInk)                                   │
 └─────────────────────────────────────────────────────────────┘
+```
+
+### Legacy Architecture (Deprecated in Phase 4)
+
+```
+⚠️ DEPRECATED: core/ modules are deprecated in Phase 4
+   See documents/phases/PHASE4_MIGRATION_GUIDE.md for migration
+   
+core/analysis.py → services/analysis_service.py
+core/scoring.py → services/scoring_service.py
+core/backtest_scoring.py → services/backtest_service.py
 ```
 
 ## 🎯 Layer Responsibilities

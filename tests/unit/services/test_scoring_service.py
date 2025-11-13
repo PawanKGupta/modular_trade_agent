@@ -1,4 +1,12 @@
-from src.application.services.scoring_service import ScoringService
+import sys
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# Phase 4: Use services package directly (consolidated)
+from services.scoring_service import ScoringService
 
 
 def test_compute_strength_score_with_timeframe():

@@ -130,6 +130,11 @@ class TelegramFormatter:
             priority_emoji = "✅ HIGHEST PRIORITY" if stock.priority_score >= 100 else ""
             lines.append(f"\tPriority:{stock.priority_score:.0f} {priority_emoji}")
         
+        # ML Prediction (if available)
+        ml_info = self._get_ml_info(stock)
+        if ml_info:
+            lines.append(f"\t{ml_info}")
+        
         return "\n".join(lines) + "\n\n"
     
     def format_stock_simple(self, stock: AnalysisResponse) -> str:
@@ -234,3 +239,34 @@ class TelegramFormatter:
         
         label_short = 'Pos' if label == 'positive' else 'Neg' if label == 'negative' else 'Neu'
         return f"News:{label_short} {score:+.2f} ({used})"
+    
+    def _get_ml_info(self, stock: AnalysisResponse) -> str:
+        """Extract ML prediction info from metadata"""
+        if not stock.metadata:
+            return ""
+        
+        # Check for ML verdict in metadata or directly on stock object
+        ml_verdict = stock.metadata.get('ml_verdict')
+        ml_confidence = stock.metadata.get('ml_confidence')
+        verdict_source = stock.metadata.get('verdict_source')
+        rule_verdict = stock.metadata.get('rule_verdict')
+        
+        if not ml_verdict or ml_confidence is None:
+            return ""
+        
+        # Emoji for ML verdict
+        ml_emoji = {
+            "strong_buy": "🤖🔥",
+            "buy": "🤖📈",
+            "watch": "🤖👀",
+            "avoid": "🤖❌"
+        }.get(ml_verdict, "🤖")
+        
+        # Build ML info string
+        ml_info = f"{ml_emoji} ML:{ml_verdict.upper()} ({ml_confidence:.0%})"
+        
+        # Add comparison if ML overrode rule-based verdict
+        if verdict_source == 'ml' and rule_verdict and rule_verdict != ml_verdict:
+            ml_info += f" [was:{rule_verdict}]"
+        
+        return ml_info

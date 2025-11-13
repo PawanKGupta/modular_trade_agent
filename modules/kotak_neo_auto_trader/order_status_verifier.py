@@ -13,7 +13,7 @@ Phase 2 Feature: Automated order status verification every 30 minutes
 
 import time
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 from typing import Optional, Dict, Any, List, Callable
 from pathlib import Path
 
@@ -144,6 +144,7 @@ class OrderStatusVerifier:
                 'checked': 0,
                 'executed': 0,
                 'rejected': 0,
+                'cancelled': 0,
                 'partial': 0,
                 'still_pending': 0
             }
@@ -159,6 +160,7 @@ class OrderStatusVerifier:
                 'checked': len(pending_orders),
                 'executed': 0,
                 'rejected': 0,
+                'cancelled': 0,
                 'partial': 0,
                 'still_pending': len(pending_orders)
             }
@@ -167,6 +169,7 @@ class OrderStatusVerifier:
             'checked': len(pending_orders),
             'executed': 0,
             'rejected': 0,
+            'cancelled': 0,
             'partial': 0,
             'still_pending': 0
         }
@@ -184,8 +187,66 @@ class OrderStatusVerifier:
             )
             
             if not broker_order:
+                # Order not found in active orders - check if it was cancelled/executed
+                # by checking order history (includes cancelled/executed orders)
+                broker_order = self._check_order_history(order_id)
+                
+                if broker_order:
+                    # Found in history - parse status and handle accordingly
+                    broker_status = self._parse_broker_order_status(broker_order)
+                    
+                    if broker_status['status'] == 'CANCELLED':
+                        self._handle_cancellation(
+                            pending_order,
+                            broker_order,
+                            broker_status
+                        )
+                        counts['cancelled'] += 1
+                        continue
+                    elif broker_status['status'] == 'EXECUTED':
+                        self._handle_execution(
+                            pending_order,
+                            broker_order,
+                            broker_status
+                        )
+                        counts['executed'] += 1
+                        continue
+                    elif broker_status['status'] == 'REJECTED':
+                        self._handle_rejection(
+                            pending_order,
+                            broker_order,
+                            broker_status
+                        )
+                        counts['rejected'] += 1
+                        continue
+                
+                # Still not found - check if we should assume cancellation based on time
+                if self._should_assume_cancelled(pending_order):
+                    logger.info(
+                        f"Order {order_id} not found and appears to be broker-cancelled "
+                        f"(placed at {pending_order.get('placed_at', 'unknown')}, "
+                        f"current time after market close)"
+                    )
+                    # Create a mock broker order with cancelled status for handling
+                    mock_cancelled_order = {
+                        'nOrdNo': order_id,
+                        'orderStatus': 'cancelled',
+                        'ordSt': 'cancelled',
+                        'tradingSymbol': pending_order.get('symbol', ''),
+                        'quantity': pending_order.get('qty', 0)
+                    }
+                    broker_status = self._parse_broker_order_status(mock_cancelled_order)
+                    self._handle_cancellation(
+                        pending_order,
+                        mock_cancelled_order,
+                        broker_status
+                    )
+                    counts['cancelled'] += 1
+                    continue
+                
+                # Still not found - log warning and mark as still pending
                 logger.warning(
-                    f"Order {order_id} not found in broker order book. "
+                    f"Order {order_id} not found in broker order book or history. "
                     f"May have been cancelled or expired."
                 )
                 counts['still_pending'] += 1
@@ -210,6 +271,14 @@ class OrderStatusVerifier:
                 )
                 counts['rejected'] += 1
                 
+            elif broker_status['status'] == 'CANCELLED':
+                self._handle_cancellation(
+                    pending_order,
+                    broker_order,
+                    broker_status
+                )
+                counts['cancelled'] += 1
+                
             elif broker_status['status'] == 'PARTIALLY_FILLED':
                 self._handle_partial_fill(
                     pending_order,
@@ -233,6 +302,7 @@ class OrderStatusVerifier:
             f"Verification complete: "
             f"{counts['executed']} executed, "
             f"{counts['rejected']} rejected, "
+            f"{counts.get('cancelled', 0)} cancelled, "
             f"{counts['partial']} partial, "
             f"{counts['still_pending']} still pending"
         )
@@ -247,12 +317,43 @@ class OrderStatusVerifier:
             List of order dicts from broker
         """
         try:
-            response = self.broker_client.order_report()
+            # Handle both NeoAPI client and KotakNeoOrders wrapper
+            if hasattr(self.broker_client, 'order_report'):
+                # Direct NeoAPI client
+                response = self.broker_client.order_report()
+            elif hasattr(self.broker_client, 'get_orders'):
+                # KotakNeoOrders wrapper - use its get_orders() method
+                response = self.broker_client.get_orders()
+            elif hasattr(self.broker_client, 'auth') and hasattr(self.broker_client.auth, 'get_client'):
+                # KotakNeoOrders - access underlying client via auth
+                client = self.broker_client.auth.get_client()
+                if client and hasattr(client, 'order_report'):
+                    response = client.order_report()
+                else:
+                    logger.error(f"Could not access order_report from broker_client.auth.get_client()")
+                    return []
+            else:
+                logger.error(f"broker_client does not have order_report() or get_orders() method. Type: {type(self.broker_client)}")
+                return []
             
             if isinstance(response, list):
                 return response
-            elif isinstance(response, dict) and 'data' in response:
-                return response['data']
+            elif isinstance(response, dict):
+                # Handle dict response - check for 'data' key
+                if 'data' in response:
+                    data = response['data']
+                    if isinstance(data, list):
+                        return data
+                    elif isinstance(data, dict):
+                        # Sometimes data is a dict with order details
+                        return [data] if data else []
+                    return []
+                # Check if response itself is structured as orders
+                if 'orders' in response:
+                    orders = response['orders']
+                    return orders if isinstance(orders, list) else []
+                # Empty dict means no orders
+                return []
             else:
                 logger.error(f"Unexpected broker response format: {type(response)}")
                 return []
@@ -289,6 +390,123 @@ class OrderStatusVerifier:
         
         return None
     
+    def _check_order_history(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Check order history for cancelled/executed orders not in active list.
+        
+        When an order is cancelled by broker (e.g., at market close), it's removed
+        from active orders but still exists in order history. This method checks
+        order_report() (which includes all orders) to detect such cancellations.
+        
+        Note: Kotak Neo API's order_history(order_id) may not work for all orders.
+        We use order_report() to get all orders and filter by order_id.
+        
+        Args:
+            order_id: Order ID to check
+        
+        Returns:
+            Order dict from order_report if found, None otherwise
+        """
+        try:
+            # Use order_report() to get all orders (includes cancelled/executed orders)
+            # Note: order_history(order_id) API may not work for all orders
+            all_orders_response = self._fetch_broker_orders()
+            
+            # Search for order matching order_id in all orders
+            for order in all_orders_response:
+                broker_order_id = (
+                    order.get('nOrdNo') or
+                    order.get('neoOrdNo') or
+                    order.get('orderId') or
+                    order.get('order_id')
+                )
+                if broker_order_id and str(broker_order_id) == str(order_id):
+                    return order
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error checking order history for {order_id}: {e}")
+            return None
+    
+    def _should_assume_cancelled(self, pending_order: Dict[str, Any]) -> bool:
+        """
+        Determine if an order should be assumed cancelled based on timing.
+        
+        Conditions:
+        1. Order not found in active orders or order_report()
+        2. Current time is after market close (15:30)
+        3. At least 30 minutes have passed since market close (grace period for broker processing)
+        4. Order was placed today (same day)
+        5. Order was placed before market close
+        
+        This handles broker auto-cancellations which typically happen:
+        - Around 4:27 PM (most common)
+        - But can also happen at 4:30, 4:45, or 5:00 PM
+        - Or even later in some cases
+        
+        Args:
+            pending_order: Pending order dict with 'placed_at' timestamp
+        
+        Returns:
+            True if order should be assumed cancelled, False otherwise
+        """
+        try:
+            placed_at_str = pending_order.get('placed_at')
+            if not placed_at_str:
+                return False
+            
+            # Parse placed_at timestamp
+            placed_at = datetime.fromisoformat(placed_at_str.replace('Z', '+00:00'))
+            if placed_at.tzinfo:
+                placed_at = placed_at.replace(tzinfo=None)
+            
+            now = datetime.now()
+            current_time = now.time()
+            market_close_time = dt_time(15, 30)  # 3:30 PM
+            market_close_datetime = datetime.combine(now.date(), market_close_time)
+            
+            # Check if current time is after market close
+            if current_time < market_close_time:
+                return False  # Still during market hours, don't assume cancellation
+            
+            # Check if order was placed today
+            if placed_at.date() != now.date():
+                return False  # Order from different day, don't assume cancellation
+            
+            # Check if order was placed before market close today
+            placed_time = placed_at.time()
+            if placed_time > market_close_time:
+                return False  # Order placed after market close (unusual), don't assume
+            
+            # Calculate time elapsed since market close
+            time_since_close = now - market_close_datetime
+            grace_period_minutes = 30  # Wait 30 minutes after market close before assuming cancellation
+            
+            # Check if enough time has passed since market close
+            # This accounts for broker cancellations happening at various times:
+            # - 4:27 PM (most common)
+            # - 4:30 PM
+            # - 4:45 PM
+            # - 5:00 PM
+            # - Or even later
+            if time_since_close.total_seconds() < (grace_period_minutes * 60):
+                return False  # Not enough time has passed, broker might still be processing
+            
+            # Order was placed today, before market close, it's been at least 30 minutes
+            # since market close, and order is not found - likely broker-cancelled
+            logger.debug(
+                f"Assuming cancellation: order placed at {placed_at}, "
+                f"market close was {market_close_datetime}, "
+                f"current time is {now}, "
+                f"time since close: {time_since_close.total_seconds() / 60:.1f} minutes"
+            )
+            return True
+            
+        except Exception as e:
+            logger.debug(f"Error checking if order should be assumed cancelled: {e}")
+            return False
+    
     def _parse_broker_order_status(
         self,
         broker_order: Dict[str, Any]
@@ -313,6 +531,7 @@ class OrderStatusVerifier:
             'executed': 'EXECUTED',
             'rejected': 'REJECTED',
             'cancelled': 'CANCELLED',
+            'canceled': 'CANCELLED',  # American spelling
             'open': 'OPEN',
             'pending': 'PENDING',
             'trigger pending': 'PENDING',
@@ -426,6 +645,49 @@ class OrderStatusVerifier:
             except Exception as e:
                 logger.error(f"Error in rejection callback: {e}")
     
+    def _handle_cancellation(
+        self,
+        pending_order: Dict[str, Any],
+        broker_order: Dict[str, Any],
+        broker_status: Dict[str, Any]
+    ) -> None:
+        """
+        Handle cancelled order.
+        
+        Args:
+            pending_order: Pending order from our tracker
+            broker_order: Order from broker
+            broker_status: Parsed broker status
+        """
+        order_id = pending_order['order_id']
+        symbol = pending_order['symbol']
+        qty = pending_order['qty']
+        
+        logger.info(
+            f"Order CANCELLED: {symbol} x{qty} "
+            f"(order_id: {order_id})"
+        )
+        
+        # Update order tracker
+        self.order_tracker.update_order_status(
+            order_id=order_id,
+            status='CANCELLED'
+        )
+        
+        # Stop tracking this symbol (order cancelled)
+        if self.tracking_scope.is_tracked(symbol):
+            self.tracking_scope.stop_tracking(
+                symbol,
+                reason="Order cancelled"
+            )
+        
+        # Remove from pending (cancellation finalized)
+        self.order_tracker.remove_pending_order(order_id)
+        
+        # Note: Cancellation callback can be added if needed
+        # Similar to rejection callback, but typically cancellations
+        # are handled differently (user-initiated vs broker-initiated)
+    
     def _handle_partial_fill(
         self,
         pending_order: Dict[str, Any],
@@ -488,8 +750,12 @@ class OrderStatusVerifier:
             broker_order = self._find_order_in_broker_orders(order_id, broker_orders)
             
             if not broker_order:
-                logger.warning(f"Order {order_id} not found in broker order book")
-                return None
+                # Check order history for cancelled/executed orders
+                broker_order = self._check_order_history(order_id)
+                
+                if not broker_order:
+                    logger.warning(f"Order {order_id} not found in broker order book or history")
+                    return None
             
             broker_status = self._parse_broker_order_status(broker_order)
             
@@ -498,6 +764,8 @@ class OrderStatusVerifier:
                 self._handle_execution(pending_order, broker_order, broker_status)
             elif broker_status['status'] == 'REJECTED':
                 self._handle_rejection(pending_order, broker_order, broker_status)
+            elif broker_status['status'] == 'CANCELLED':
+                self._handle_cancellation(pending_order, broker_order, broker_status)
             elif broker_status['status'] == 'PARTIALLY_FILLED':
                 self._handle_partial_fill(pending_order, broker_order, broker_status)
             

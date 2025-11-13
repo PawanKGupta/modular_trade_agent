@@ -140,14 +140,14 @@ class KotakNeoOrders:
                         logger.error(f" Order rejected: {response}")
                         return None
                     safe = _sanitize(response)
-                    logger.info(f"✅ Order placed: {safe}")
+                    logger.info(f"Order placed: {safe}")
                     return safe
                 # Non-dict responses: convert to string and treat as success only if indicative
                 resp_text = str(response)
                 if 'error' in resp_text.lower() or 'invalid' in resp_text.lower():
                     logger.error(f" Order rejected/invalid: {resp_text}")
                     return None
-                logger.info(f"✅ Order placed (raw): {resp_text}")
+                logger.info(f"Order placed (raw): {resp_text}")
                 return {"raw": resp_text}
 
             for method_name in ("place_order", "order_place", "placeorder"):
@@ -160,7 +160,7 @@ class KotakNeoOrders:
                 except Exception as e:
                     logger.warning(f"Order placement via {method_name} failed: {e}")
 
-            logger.error(f"❌ Failed to place order for {symbol}: no compatible method/params")
+            logger.error(f"Failed to place order for {symbol}: no compatible method/params")
             return None
         
         except Exception as e:
@@ -218,7 +218,7 @@ class KotakNeoOrders:
             # Kotak Neo uses disclosed_quantity as optional param
             payload["disclosed_quantity"] = "0"
             
-            logger.info(f"📝 Modifying order {order_id}: qty={quantity}, price={price}")
+            logger.info(f"Modifying order {order_id}: qty={quantity}, price={price}")
             
             if hasattr(client, 'modify_order'):
                 response = client.modify_order(**payload)
@@ -226,19 +226,19 @@ class KotakNeoOrders:
                 if isinstance(response, dict):
                     keys_lower = {str(k).lower() for k in response.keys()}
                     if any(k in keys_lower for k in ("error", "errors")):
-                        logger.error(f"❌ Order modification rejected: {response}")
+                        logger.error(f"Order modification rejected: {response}")
                         return None
-                    logger.info(f"✅ Order modified: {response}")
+                    logger.info(f"Order modified: {response}")
                     return response
                 else:
-                    logger.info(f"✅ Order modified (raw): {response}")
+                    logger.info(f"Order modified (raw): {response}")
                     return {"raw": str(response)}
             else:
                 logger.error("modify_order method not available in client")
                 return None
                 
         except Exception as e:
-            logger.error(f"❌ Error modifying order {order_id}: {e}")
+            logger.error(f"Error modifying order {order_id}: {e}")
             return None
     
     @handle_reauth
@@ -274,14 +274,14 @@ class KotakNeoOrders:
                 try:
                     resp = call_method(method_name)
                     if resp:
-                        logger.info(f"✅ Cancelled order {order_id} via {method_name}")
+                        logger.info(f"Cancelled order {order_id} via {method_name}")
                         return resp
                 except Exception as e:
                     logger.warning(f"Cancel via {method_name} failed: {e}")
-            logger.error(f"❌ Failed to cancel order {order_id}")
+            logger.error(f"Failed to cancel order {order_id}")
             return None
         except Exception as e:
-            logger.error(f"❌ Error cancelling order {order_id}: {e}")
+            logger.error(f"Error cancelling order {order_id}: {e}")
             return None
 
     def cancel_pending_buys_for_symbol(self, symbol_variants: list[str]) -> int:
@@ -328,10 +328,11 @@ class KotakNeoOrders:
             logger.info(" Retrieving existing orders...")
             orders = _call_any(["order_report", "get_order_report", "orderBook", "orders", "order_book"]) or {}
             
-            # Check for other errors (auth errors are handled by @handle_reauth decorator)
-            if isinstance(orders, dict) and "error" in orders:
-                logger.error(f" Failed to get orders: {orders['error']}")
-                return None
+            # Check for other errors (not auth errors - handled by decorator)
+            if isinstance(orders, dict):
+                if "error" in orders:
+                    logger.error(f" Failed to get orders: {orders['error']}")
+                    return None
             
             # Process and display orders
             if isinstance(orders, dict) and 'data' in orders and orders['data']:
@@ -399,9 +400,9 @@ class KotakNeoOrders:
                     )
                     
                     if rejection_reason and 'reject' in status.lower():
-                        logger.info(f"📝 Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status} - ❌ Reason: {rejection_reason}")
+                        logger.info(f"Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status} - Reason: {rejection_reason}")
                     else:
-                        logger.info(f"📝 Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status}")
+                        logger.info(f"Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status}")
                     
                     # Count by status
                     order_stats[status] = order_stats.get(status, 0) + 1
@@ -441,28 +442,40 @@ class KotakNeoOrders:
                 order_history = client.order_report()
             
             if "error" in order_history:
-                logger.error(" Failed to get order history: {order_history['error'][0]['message']}")
+                error_msg = order_history['error'][0]['message'] if isinstance(order_history['error'], list) else str(order_history['error'])
+                logger.error(f"Failed to get order history: {error_msg}")
                 return None
             
             # Process and display order history
             if 'data' in order_history and order_history['data']:
                 history_data = order_history['data']
-                logger.info(" Found {len(history_data)} order history entries")
                 
-                for entry in history_data:
-                    order_id = entry.get('neoOrdNo', 'N/A')
-                    symbol = entry.get('tradingSymbol', 'N/A')
-                    status = entry.get('orderStatus', 'N/A')
-                    timestamp = entry.get('orderEntryTime', 'N/A')
-                    
+                # Handle different response formats
+                if isinstance(history_data, list):
+                    logger.info(f"Found {len(history_data)} order history entries")
+                    for entry in history_data:
+                        if isinstance(entry, dict):
+                            order_id = entry.get('neoOrdNo') or entry.get('nOrdNo') or entry.get('orderId', 'N/A')
+                            symbol = entry.get('tradingSymbol', 'N/A')
+                            status = entry.get('orderStatus', 'N/A')
+                            timestamp = entry.get('orderEntryTime', 'N/A')
+                            logger.info(f"{timestamp}: Order {order_id} ({symbol}) - {status}")
+                elif isinstance(history_data, dict):
+                    logger.info("Found 1 order history entry")
+                    order_id = history_data.get('neoOrdNo') or history_data.get('nOrdNo') or history_data.get('orderId', 'N/A')
+                    symbol = history_data.get('tradingSymbol', 'N/A')
+                    status = history_data.get('orderStatus', 'N/A')
+                    timestamp = history_data.get('orderEntryTime', 'N/A')
                     logger.info(f"{timestamp}: Order {order_id} ({symbol}) - {status}")
+                else:
+                    logger.debug(f"Unexpected history_data format: {type(history_data)}")
             else:
                 logger.info("No order history found")
             
             return order_history
             
         except Exception as e:
-            logger.error(" Error getting order history: {e}")
+            logger.error(f"Error getting order history: {e}")
             return None
     
     # GTT retrieval not supported; rely only on open orders via get_orders/get_pending_orders

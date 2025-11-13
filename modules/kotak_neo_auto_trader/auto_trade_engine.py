@@ -77,7 +77,16 @@ class AutoTradeEngine:
         verifier_interval: int = 1800
     ):
         self.env_file = env_file
-        self.auth = auth if auth is not None else KotakNeoAuth(env_file)
+        # IMPORTANT: When used by run_trading_service, auth MUST be provided
+        # Only create new auth for standalone usage (backward compatibility)
+        if auth is None:
+            logger.warning(
+                "AutoTradeEngine: No auth provided - creating new session. "
+                "For run_trading_service, always pass the shared auth session."
+            )
+            self.auth = KotakNeoAuth(env_file)
+        else:
+            self.auth = auth
         self.orders: Optional[KotakNeoOrders] = None
         self.portfolio: Optional[KotakNeoPortfolio] = None
         self.history_path = config.TRADES_HISTORY_PATH
@@ -284,23 +293,23 @@ class AutoTradeEngine:
                                     
                                     if disc.get('trade_type') == 'MANUAL_BUY':
                                         message = (
-                                            f"📈 *MANUAL BUY DETECTED*\n\n"
-                                            f"📊 Symbol: {symbol}\n"
-                                            f"📦 Quantity: +{qty_diff} shares\n"
-                                            f"💼 New Total: {broker_qty} shares\n"
-                                            f"⏰ Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                                            f"ℹ️ Tracking updated automatically"
+                                            f"MANUAL BUY DETECTED\n\n"
+                                            f"Symbol: {symbol}\n"
+                                            f"Quantity: +{qty_diff} shares\n"
+                                            f"New Total: {broker_qty} shares\n"
+                                            f"Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                                            f"Tracking updated automatically"
                                         )
                                         self.telegram_notifier.send_message(message)
                                     
                                     elif disc.get('trade_type') == 'MANUAL_SELL':
                                         message = (
-                                            f"📉 *MANUAL SELL DETECTED*\n\n"
-                                            f"📊 Symbol: {symbol}\n"
-                                            f"📦 Quantity: {qty_diff} shares\n"
-                                            f"💼 Remaining: {broker_qty} shares\n"
-                                            f"⏰ Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                                            f"ℹ️ Tracking updated automatically"
+                                            f"MANUAL SELL DETECTED\n\n"
+                                            f"Symbol: {symbol}\n"
+                                            f"Quantity: {qty_diff} shares\n"
+                                            f"Remaining: {broker_qty} shares\n"
+                                            f"Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                                            f"Tracking updated automatically"
                                         )
                                         self.telegram_notifier.send_message(message)
                         
@@ -392,6 +401,26 @@ class AutoTradeEngine:
 
     # ---------------------- Session ----------------------
     def login(self) -> bool:
+        # If already authenticated, skip login but still initialize components
+        if self.auth.is_authenticated():
+            self.orders = KotakNeoOrders(self.auth)
+            self.portfolio = KotakNeoPortfolio(self.auth)
+            
+            # Initialize scrip master for symbol resolution
+            try:
+                self.scrip_master = KotakNeoScripMaster(
+                    auth_client=self.auth.client if hasattr(self.auth, 'client') else None
+                )
+                self.scrip_master.load_scrip_master(force_download=False)
+                logger.info("Scrip master loaded for buy order symbol resolution")
+            except Exception as e:
+                logger.warning(f"Failed to load scrip master: {e}. Will use symbol fallback.")
+                self.scrip_master = None
+            
+            # Phase 2: Initialize modules
+            self._initialize_phase2_modules()
+            return True
+        
         ok = self.auth.login()
         if ok:
             self.orders = KotakNeoOrders(self.auth)
@@ -482,22 +511,24 @@ class AutoTradeEngine:
         Monitor all open positions for reentry/exit signals.
         
         Args:
-            live_price_manager: Optional LivePriceCache instance to reuse
+            live_price_manager: Optional shared LivePriceCache/LivePriceManager instance
+                               to avoid duplicate auth sessions and WebSocket connections
         
         Returns:
             Dict with monitoring results
         """
         try:
-            from .position_monitor import PositionMonitor
-            from .telegram_notifier import get_telegram_notifier
+            from .position_monitor import PositionMonitor, get_telegram_notifier
             
-            # Create position monitor with shared price manager
+            # Use direct instantiation to pass shared live_price_manager
+            # This avoids creating duplicate auth sessions and WebSocket connections
             telegram = get_telegram_notifier() if self._enable_telegram else None
+            
             monitor = PositionMonitor(
                 history_path=self.history_path,
                 telegram_notifier=telegram,
                 enable_alerts=self._enable_telegram,
-                live_price_manager=live_price_manager,  # Reuse shared instance
+                live_price_manager=live_price_manager,  # Pass shared instance
                 enable_realtime_prices=True
             )
             
@@ -853,7 +884,8 @@ class AutoTradeEngine:
                         break
         
         # Check if order was successful
-        resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp) and 'error' not in resp and 'not_ok' not in str(resp).lower()
+        # Accept responses with nOrdNo (direct order ID) or data/order/raw structures
+        resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'raw' in resp or 'nOrdNo' in resp or 'nordno' in str(resp).lower()) and 'error' not in resp and 'not_ok' not in str(resp).lower()
         
         if not resp_valid:
             logger.error(f"Order placement failed for {broker_symbol}")
@@ -885,7 +917,7 @@ class AutoTradeEngine:
                 # Send notification about uncertain order
                 from core.telegram import send_telegram
                 send_telegram(
-                    f"⚠️ Order placement uncertain\n"
+                    f"Order placement uncertain\n"
                     f"Symbol: {broker_symbol}\n"
                     f"Qty: {qty}\n"
                     f"Order ID not received and not found in order book.\n"
@@ -954,9 +986,20 @@ class AutoTradeEngine:
             "skipped_missing_data": 0,
             "skipped_invalid_qty": 0,
         }
+        
+        # Check if authenticated - if not, try to re-authenticate
+        if not self.auth or not self.auth.is_authenticated():
+            logger.warning("Session expired - attempting re-authentication...")
+            if not self.login():
+                logger.error("Re-authentication failed - cannot proceed")
+                return summary
+            logger.info("Re-authentication successful - proceeding with order placement")
+        
         if not self.orders or not self.portfolio:
-            logger.error("Not logged in")
-            return summary
+            logger.error("Orders or portfolio not initialized - attempting login...")
+            if not self.login():
+                logger.error("Login failed - cannot proceed")
+                return summary
         
         # Pre-flight check: Verify we can fetch holdings before proceeding
         # This prevents duplicate orders if holdings API is down
@@ -1125,10 +1168,10 @@ class AutoTradeEngine:
                 shortfall = max(0.0, required_cash - (avail_cash or 0.0))
                 # Telegram message with emojis
                 telegram_msg = (
-                    f"⚠️ Insufficient balance for {broker_symbol} AMO BUY.\n"
+                    f"Insufficient balance for {broker_symbol} AMO BUY.\n"
                     f"Needed: ₹{required_cash:,.0f} for {qty} @ ₹{close:.2f}.\n"
                     f"Available: ₹{(avail_cash or 0.0):,.0f}. Shortfall: ₹{shortfall:,.0f}.\n\n"
-                    f"🔁 Order saved for retry until 9:15 AM tomorrow (before market opens).\n"
+                    f"Order saved for retry until 9:15 AM tomorrow (before market opens).\n"
                     f"Add balance & run script, or wait for 8 AM scheduled retry."
                 )
                 send_telegram(telegram_msg)
@@ -1180,9 +1223,20 @@ class AutoTradeEngine:
     # ---------------------- Re-entry and exit ----------------------
     def evaluate_reentries_and_exits(self) -> Dict[str, int]:
         summary = {"symbols_evaluated": 0, "exits": 0, "reentries": 0}
+        
+        # Check if authenticated - if not, try to re-authenticate
+        if not self.auth or not self.auth.is_authenticated():
+            logger.warning("Session expired - attempting re-authentication...")
+            if not self.login():
+                logger.error("Re-authentication failed - cannot proceed")
+                return summary
+            logger.info("Re-authentication successful - proceeding with evaluation")
+        
         if not self.orders:
-            logger.error("Not logged in")
-            return summary
+            logger.error("Orders not initialized - attempting login...")
+            if not self.login():
+                logger.error("Login failed - cannot proceed")
+                return summary
         data = load_history(self.history_path)
         trades = data.get('trades', [])
         # Group open trades by symbol
@@ -1287,16 +1341,16 @@ class AutoTradeEngine:
                                     if retry_failed:
                                         # Send Telegram notification for failed retry
                                         telegram_msg = (
-                                            f"❌ *SELL ORDER RETRY FAILED*\n\n"
-                                            f"📊 Symbol: *{symbol}*\n"
-                                            f"💼 Expected Qty: {total_qty}\n"
-                                            f"📦 Available Qty: {actual_qty}\n"
-                                            f"📈 Price: ₹{price:.2f}\n"
-                                            f"📉 RSI10: {rsi:.1f}\n"
-                                            f"📍 EMA9: ₹{ema9:.2f}\n\n"
-                                            f"⚠️ Both initial and retry sell orders failed.\n"
-                                            f"🔧 Manual intervention may be required.\n\n"
-                                            f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                            f"SELL ORDER RETRY FAILED\n\n"
+                                            f"Symbol: *{symbol}*\n"
+                                            f"Expected Qty: {total_qty}\n"
+                                            f"Available Qty: {actual_qty}\n"
+                                            f"Price: ₹{price:.2f}\n"
+                                            f"RSI10: {rsi:.1f}\n"
+                                            f"EMA9: ₹{ema9:.2f}\n\n"
+                                            f"Both initial and retry sell orders failed.\n"
+                                            f"Manual intervention may be required.\n\n"
+                                            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                                         )
                                         send_telegram(telegram_msg)
                                         logger.error(f"Sell order retry FAILED for {symbol} - Telegram alert sent")
@@ -1307,41 +1361,41 @@ class AutoTradeEngine:
                                 else:
                                     # Send Telegram notification when no holdings found
                                     telegram_msg = (
-                                        f"❌ *SELL ORDER RETRY FAILED*\n\n"
-                                        f"📊 Symbol: *{symbol}*\n"
-                                        f"💼 Expected Qty: {total_qty}\n"
-                                        f"📦 Available Qty: 0 (not found in holdings)\n"
-                                        f"📈 Price: ₹{price:.2f}\n\n"
-                                        f"⚠️ Cannot retry - symbol not found in holdings.\n"
-                                        f"🔧 Manual check required.\n\n"
-                                        f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                        f"SELL ORDER RETRY FAILED\n\n"
+                                        f"Symbol: *{symbol}*\n"
+                                        f"Expected Qty: {total_qty}\n"
+                                        f"Available Qty: 0 (not found in holdings)\n"
+                                        f"Price: ₹{price:.2f}\n\n"
+                                        f"Cannot retry - symbol not found in holdings.\n"
+                                        f"Manual check required.\n\n"
+                                        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                                     )
                                     send_telegram(telegram_msg)
                                     logger.error(f"No holdings found for {symbol} - cannot retry sell order - Telegram alert sent")
                             else:
                                 # Send Telegram notification when holdings fetch fails
                                 telegram_msg = (
-                                    f"❌ *SELL ORDER RETRY FAILED*\n\n"
-                                    f"📊 Symbol: *{symbol}*\n"
-                                    f"💼 Expected Qty: {total_qty}\n"
-                                    f"📈 Price: ₹{price:.2f}\n\n"
-                                    f"⚠️ Failed to fetch holdings from broker.\n"
+                                    f"SELL ORDER RETRY FAILED\n\n"
+                                    f"Symbol: *{symbol}*\n"
+                                    f"Expected Qty: {total_qty}\n"
+                                    f"Price: ₹{price:.2f}\n\n"
+                                    f"Failed to fetch holdings from broker.\n"
                                     f"Cannot determine actual available quantity.\n"
-                                    f"🔧 Manual intervention required.\n\n"
-                                    f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                    f"Manual intervention required.\n\n"
+                                    f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                                 )
                                 send_telegram(telegram_msg)
                                 logger.error(f"Failed to fetch holdings for retry - cannot determine actual quantity for {symbol} - Telegram alert sent")
                         except Exception as e:
                             # Send Telegram notification for exception during retry
                             telegram_msg = (
-                                f"❌ *SELL ORDER RETRY EXCEPTION*\n\n"
-                                f"📊 Symbol: *{symbol}*\n"
-                                f"💼 Expected Qty: {total_qty}\n"
-                                f"📈 Price: ₹{price:.2f}\n\n"
-                                f"⚠️ Error: {str(e)[:100]}\n"
-                                f"🔧 Manual intervention required.\n\n"
-                                f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                f"SELL ORDER RETRY EXCEPTION\n\n"
+                                f"Symbol: *{symbol}*\n"
+                                f"Expected Qty: {total_qty}\n"
+                                f"Price: ₹{price:.2f}\n\n"
+                                f"Error: {str(e)[:100]}\n"
+                                f"Manual intervention required.\n\n"
+                                f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                             )
                             send_telegram(telegram_msg)
                             logger.error(f"Error during sell order retry for {symbol}: {e} - Telegram alert sent")
@@ -1450,9 +1504,9 @@ class AutoTradeEngine:
                                             )
                                             
                                             if modify_resp:
-                                                logger.info(f"✅ Sell order updated: {symbol} x{new_total_qty} @ ₹{old_price:.2f}")
+                                                logger.info(f"Sell order updated: {symbol} x{new_total_qty} @ ₹{old_price:.2f}")
                                             else:
-                                                logger.warning(f"⚠️  Failed to modify sell order {old_order_id} - order may need manual update")
+                                                logger.warning(f"Failed to modify sell order {old_order_id} - order may need manual update")
                                             break  # Only update the first matching sell order
                                 else:
                                     logger.debug(f"No active sell order found for {symbol} (will be placed at next sell order run)")

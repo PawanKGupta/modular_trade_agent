@@ -45,18 +45,21 @@ class LivePriceCache:
         auth_client,
         scrip_master,
         stale_threshold_seconds: int = 60,
-        reconnect_delay_seconds: int = 5
+        reconnect_delay_seconds: int = 5,
+        auth=None
     ):
         """
         Initialize live price cache.
         
         Args:
-            auth_client: Authenticated Kotak Neo client
+            auth_client: Authenticated Kotak Neo client (can be stale after re-auth)
             scrip_master: KotakNeoScripMaster instance
             stale_threshold_seconds: Mark data stale after this many seconds
             reconnect_delay_seconds: Wait time before reconnect attempt
+            auth: Optional KotakNeoAuth object to get fresh client after re-auth
         """
         self.client = auth_client
+        self.auth = auth  # Store auth reference to get fresh client after re-auth
         self.scrip_master = scrip_master
         self.stale_threshold = timedelta(seconds=stale_threshold_seconds)
         self.reconnect_delay = reconnect_delay_seconds
@@ -78,8 +81,9 @@ class LivePriceCache:
         # Internal threads/handles
         self._monitor_thread: Optional[threading.Thread] = None
         
-        # Throttle connection logs to avoid spam
-        self._last_connect_log = 0
+        # Log throttling for WebSocket connected messages
+        self._last_connected_log_time: Optional[datetime] = None
+        self._connected_log_throttle_seconds = 60  # Max 1 log per minute
         
         # Stats
         self.stats = {
@@ -160,6 +164,17 @@ class LivePriceCache:
         
         logger.info("Live price cache service stopped")
     
+    def subscribe_to_positions(self, symbols: List[str]):
+        """
+        Subscribe to positions for compatibility with LivePriceManager interface.
+        
+        This is an alias for subscribe() method to maintain compatibility.
+        
+        Args:
+            symbols: List of symbols (e.g., ["RELIANCE", "TCS"])
+        """
+        self.subscribe(symbols)
+    
     def subscribe(self, symbols: List[str]):
         """
         Subscribe to live prices for given symbols.
@@ -213,6 +228,31 @@ class LivePriceCache:
             logger.info("No new symbols to subscribe")
             return
         
+        # Get fresh client if auth is available (handles session expiry)
+        if self.auth and hasattr(self.auth, 'get_client'):
+            fresh_client = self.auth.get_client()
+            if fresh_client and fresh_client != self.client:
+                logger.info("Updating client reference after re-authentication...")
+                self.client = fresh_client
+        
+        # Explicitly attempt to start WebSocket connection if not already connected
+        if not self._ws_connected.is_set():
+            logger.info("WebSocket not connected yet, establishing connection via subscribe()...")
+            try:
+                # Try multiple WebSocket start method names for compatibility
+                if hasattr(self.client, 'start_websocket'):
+                    self.client.start_websocket()
+                elif hasattr(self.client, 'startWebSocket'):
+                    self.client.startWebSocket()
+                elif hasattr(self.client, 'enable_websocket'):
+                    self.client.enable_websocket()
+                elif hasattr(self.client, 'enableWebSocket'):
+                    self.client.enableWebSocket()
+                else:
+                    logger.debug("No explicit WebSocket start method found, SDK may handle it automatically")
+            except Exception as e:
+                logger.debug(f"Explicit WebSocket start not available/needed: {e}")
+        
         # Subscribe via WebSocket
         try:
             # If not connected yet, subscribe() will establish connection automatically
@@ -244,18 +284,9 @@ class LivePriceCache:
             )
             logger.info(f"✓ Subscribed to {len(tokens_to_subscribe)} new instruments")
             
-            # Wait a moment for connection and subscription to be processed
-            time.sleep(1)
-            
-            # Check if connection was established
+            # Wait briefly for connection establishment after subscribing
             if not self._ws_connected.is_set():
-                logger.warning("WebSocket connection not established after subscribe() - waiting...")
-                # Wait up to 5 seconds for connection
-                if self._ws_connected.wait(timeout=5.0):
-                    logger.info("✓ WebSocket connection established")
-                else:
-                    logger.warning("⚠️ WebSocket connection timeout after subscribe()")
-            
+                time.sleep(0.5)  # Brief wait for connection
         except Exception as e:
             logger.error(f"Subscription failed: {e}", exc_info=True)
             self.stats['errors'] += 1
@@ -337,13 +368,13 @@ class LivePriceCache:
             except Exception as e:
                 logger.error(f"Unsubscribe failed: {e}")
     
-    def get_ltp(self, symbol: str, ticker: Optional[str] = None) -> Optional[float]:
+    def get_ltp(self, symbol: str, ticker: str = None) -> Optional[float]:
         """
         Get latest LTP for a symbol.
         
         Args:
-            symbol: Symbol name (e.g., "RELIANCE")
-            ticker: Optional ticker (e.g., "RELIANCE.NS") - not used but kept for compatibility
+            symbol: Symbol name (e.g., "RELIANCE" or "DALBHARAT-EQ")
+            ticker: Optional ticker symbol (e.g., "DALBHARAT.NS") for compatibility
         
         Returns:
             Latest LTP or None if not available/stale
@@ -438,7 +469,11 @@ class LivePriceCache:
             msg_type = message.get('type')
             data = message.get('data')
             
+            # Detect keepalive messages (messages without price data)
+            # These are frequent broker keepalive/ping messages
             if not data:
+                # Keepalive message - log at DEBUG level to reduce log spam
+                logger.debug(f"WebSocket keepalive message: {message}")
                 return
             
             # Parse price data
@@ -504,10 +539,26 @@ class LivePriceCache:
         self._ws_connected.clear()
     
     def _on_open(self, message):
-        """WebSocket open callback."""
+        """WebSocket open callback with throttled logging."""
         if self._shutdown.is_set():
             # Ignore late open during shutdown
             return
+        
+        # Throttle INFO logs to max 1/minute to prevent log spam
+        now = datetime.now()
+        should_log = True
+        
+        if self._last_connected_log_time:
+            time_since_last = (now - self._last_connected_log_time).total_seconds()
+            if time_since_last < self._connected_log_throttle_seconds:
+                should_log = False
+        
+        if should_log:
+            logger.info(f"WebSocket connected: {message}")
+            self._last_connected_log_time = now
+        else:
+            logger.debug(f"WebSocket connected (keepalive): {message}")
+        
         self._ws_connected.set()
         
         # Throttle connection logs to avoid spam from broker keepalive
@@ -539,7 +590,6 @@ class LivePriceCache:
         """Monitor connection and reconnect if needed."""
         logger.info("Connection monitor started")
         
-        # Track if we've ever been connected (to distinguish initial connection from reconnection)
         has_ever_connected = False
         
         while self._ws_running.is_set() and not self._shutdown.is_set():
@@ -549,26 +599,22 @@ class LivePriceCache:
                     if self._shutdown.is_set():
                         break
                     
-                    # If we've been connected before, this is a reconnection
                     if has_ever_connected:
-                        # Only reconnect if we have active subscriptions
+                        # Reconnection logic - only attempt reconnect if WebSocket was previously connected
                         if self._subscribed_tokens:
-                            logger.warning(f"WebSocket disconnected ({len(self._subscribed_tokens)} subscriptions pending), attempting reconnect...")
+                            logger.warning("WebSocket disconnected, attempting reconnect...")
                             self._reconnect()
-                        else:
-                            logger.debug("WebSocket disconnected, but no active subscriptions. Waiting...")
                     else:
-                        # Initial connection - subscribe() will establish it when called
-                        # Just wait for subscriptions to be made
+                        # Initial connection - let subscribe() handle it
+                        # This prevents deadlock where monitor waits for connection,
+                        # but connection waits for subscriptions
                         if self._subscribed_tokens:
-                            logger.debug(f"Initial connection pending ({len(self._subscribed_tokens)} subscriptions) - subscribe() will establish connection")
-                        else:
-                            logger.debug("WebSocket not connected yet, waiting for subscriptions...")
+                            logger.debug("Initial connection pending - subscribe() will establish connection")
                 else:
-                    # Mark that we've been connected at least once
+                    # Connected - mark as ever connected
                     if not has_ever_connected:
                         has_ever_connected = True
-                        logger.info("✅ WebSocket connection established")
+                        logger.info("WebSocket connection established")
                 
                 # Sleep before next check
                 for _ in range(int(max(1, self.reconnect_delay))):
@@ -598,6 +644,13 @@ class LivePriceCache:
             if not self._subscribed_tokens:
                 logger.debug("No subscriptions to reconnect")
                 return
+            
+            # Get fresh client if auth is available (handles session expiry)
+            if self.auth and hasattr(self.auth, 'get_client'):
+                fresh_client = self.auth.get_client()
+                if fresh_client and fresh_client != self.client:
+                    logger.info("Updating client reference after re-authentication...")
+                    self.client = fresh_client
             
             logger.info(f"Reconnecting with {len(self._subscribed_tokens)} subscriptions...")
             

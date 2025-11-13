@@ -352,13 +352,33 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip
     """
     Add backtest scores to existing stock analysis results.
     
+    ⚠️ DEPRECATED in Phase 4: This function is deprecated and will be removed in a future version.
+    
+    For new code, prefer using BacktestService:
+        from services import BacktestService
+        service = BacktestService(default_years_back=years_back, dip_mode=dip_mode)
+        enhanced_results = service.add_backtest_scores_to_results(stock_results)
+    
+    Migration guide: See utils.deprecation.get_migration_guide("add_backtest_scores_to_results")
+    
     Args:
         stock_results: List of stock analysis results
         years_back: Years of historical data to analyze
+        dip_mode: Enable dip-buying mode
         
     Returns:
         Enhanced stock results with backtest scores
     """
+    # Phase 4: Issue deprecation warning
+    import warnings
+    from utils.deprecation import deprecation_notice
+    
+    deprecation_notice(
+        module="core.backtest_scoring",
+        function="add_backtest_scores_to_results",
+        replacement="services.BacktestService.add_backtest_scores_to_results()",
+        version="Phase 4"
+    )
     
     logger.info(f"Adding backtest scores for {len(stock_results)} stocks...")
     

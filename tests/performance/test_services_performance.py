@@ -3,7 +3,8 @@ import random
 import pytest
 
 from src.application.services.filtering_service import FilteringService
-from src.application.services.scoring_service import ScoringService
+# Phase 4: Use services package directly (consolidated)
+from services.scoring_service import ScoringService
 
 
 @pytest.mark.performance

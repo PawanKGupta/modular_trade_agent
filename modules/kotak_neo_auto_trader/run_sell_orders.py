@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-⚠️ DEPRECATED - Use run_trading_service.py instead
+DEPRECATED - Use run_trading_service.py instead
 
 This script is kept for manual fallback only.
 The unified trading service (run_trading_service.py) handles sell orders automatically from 9:15 AM.
@@ -29,18 +29,14 @@ try:
     from .sell_engine import SellOrderManager
     from .auth import KotakNeoAuth
     from .auto_trade_engine import AutoTradeEngine
-    from .live_price_cache import LivePriceCache
     from .live_price_manager import LivePriceManager
-    from .portfolio import KotakNeoPortfolio
-    from .scrip_master import KotakNeoScripMaster
+    from .utils.service_conflict_detector import prevent_service_conflict
 except ImportError:
     from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
     from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
-    from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
     from modules.kotak_neo_auto_trader.live_price_manager import LivePriceManager
-    from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
-    from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
+    from modules.kotak_neo_auto_trader.utils.service_conflict_detector import prevent_service_conflict
 
 
 def is_trading_day() -> bool:
@@ -96,6 +92,11 @@ def main():
     logger.info("SELL ORDER MANAGEMENT SYSTEM")
     logger.info("=" * 60)
     
+    # Check for service conflicts (prevent running with unified service)
+    if not prevent_service_conflict("run_sell_orders.py", is_unified=False):
+        logger.error("Exiting due to service conflict.")
+        sys.exit(1)
+    
     # Check if trading day
     if not is_trading_day() and not args.skip_wait:
         logger.info("Today is not a trading day (weekend). Exiting.")
@@ -114,7 +115,7 @@ def main():
             logger.error("Authentication failed. Exiting.")
             return
         
-        logger.info("✅ Authentication successful")
+        logger.info("Authentication successful")
         
     except Exception as e:
         logger.error(f"Failed to initialize auth: {e}")
@@ -131,41 +132,32 @@ def main():
         orders_response = orders_api.get_orders()
         
         # Extract symbols from open sell orders
+        from .utils.order_field_extractor import OrderFieldExtractor
+        from .utils.order_status_parser import OrderStatusParser
+        from .utils.symbol_utils import extract_base_symbol
+        from .domain.value_objects.order_enums import OrderStatus
+        
         symbols = []
         if orders_response and 'data' in orders_response:
             for order in orders_response['data']:
                 # Check if it's an open sell order
-                status = (order.get('orderStatus') or order.get('ordSt') or order.get('status') or '').lower()
-                txn_type = (order.get('transactionType') or order.get('trnsTp') or order.get('txnType') or '').upper()
-                broker_symbol = (order.get('tradingSymbol') or order.get('trdSym') or order.get('symbol') or '').replace('-EQ', '')
+                status = OrderStatusParser.parse_status(order)
+                txn_type = OrderFieldExtractor.get_transaction_type(order)
+                broker_symbol = OrderFieldExtractor.get_symbol(order)
+                base_symbol = extract_base_symbol(broker_symbol) if broker_symbol else ''
                 
-                if status == 'open' and txn_type == 'S' and broker_symbol:
-                    if broker_symbol not in symbols:
-                        symbols.append(broker_symbol)
+                if status == OrderStatus.OPEN and txn_type == 'S' and base_symbol:
+                    if base_symbol not in symbols:
+                        symbols.append(base_symbol)
         
         if symbols:
-            # Initialize scrip_master and load data
-            scrip_master = KotakNeoScripMaster(exchanges=['NSE'], auth_client=auth.get_client())
-            scrip_master.load_scrip_master()  # Load scrip data
+            # Initialize LivePriceManager with env_file (it handles auth and scrip_master internally)
+            price_manager = LivePriceManager(env_file=args.env)
             
-            # Initialize LivePriceCache (use directly, not via LivePriceManager)
-            price_cache = LivePriceCache(
-                auth_client=auth.client,
-                scrip_master=scrip_master,
-                stale_threshold_seconds=60,
-                reconnect_delay_seconds=5
-            )
+            # Subscribe to positions for real-time prices
+            price_manager.subscribe_to_positions(symbols)
             
-            # Start WebSocket service
-            price_cache.start()
-            logger.info("✅ WebSocket price feed started")
-            
-            # Wait for connection to be established before subscribing
-            logger.info("Waiting for WebSocket connection...")
-            if price_cache.wait_for_connection(timeout=10):
-                logger.info("✅ WebSocket connection established")
-            else:
-                logger.warning("⚠️ WebSocket connection timeout, subscriptions may fail")
+            logger.info(f"LivePriceManager started for {len(symbols)} symbols: {', '.join(symbols)}")
             
             # Subscribe to symbols
             price_cache.subscribe(symbols)
@@ -185,7 +177,7 @@ def main():
     # Initialize sell order manager
     try:
         sell_manager = SellOrderManager(auth, price_manager=price_manager)
-        logger.info("✅ Sell Order Manager initialized")
+        logger.info("Sell Order Manager initialized")
         
     except Exception as e:
         logger.error(f"Failed to initialize Sell Order Manager: {e}")
@@ -204,7 +196,7 @@ def main():
             logger.info("No orders to place. Exiting.")
             return
         
-        logger.info(f"✅ Phase 1 complete: {orders_placed} sell orders placed")
+        logger.info(f"Phase 1 complete: {orders_placed} sell orders placed")
         
         # If run-once mode, exit here
         if args.run_once:
@@ -277,6 +269,13 @@ def main():
         traceback.print_exc()
         
     finally:
+        # Clean up price manager
+        if price_manager:
+            try:
+                price_manager.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping price manager: {e}")
+        
         logger.info("\nSell order management session ended")
 
 
