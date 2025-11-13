@@ -600,15 +600,35 @@ def add_backtest_scores_to_results(stock_results: list, years_back: int = 2, dip
 
             # FIXED: Recalculate trading parameters if verdict was upgraded (Issue #2)
             # Check if verdict was upgraded to buy/strong_buy but parameters are missing
-            if stock_result['final_verdict'] in ['buy', 'strong_buy']:
+            # ALSO check ML verdict (for ML-only buy/strong_buy signals)
+            needs_params = stock_result['final_verdict'] in ['buy', 'strong_buy']
+            
+            # Check ML verdict if available (for "ONLY ML" signals)
+            ml_verdict = stock_result.get('ml_verdict')
+            if ml_verdict and ml_verdict in ['buy', 'strong_buy']:
+                needs_params = True
+                
+            if needs_params:
                 if not stock_result.get('buy_range') or not stock_result.get('target') or not stock_result.get('stop'):
-                    logger.info(f"  {ticker}: Recalculating trading parameters for upgraded verdict")
+                    logger.info(f"  {ticker}: Recalculating trading parameters (verdict: {stock_result['final_verdict']}, ML: {ml_verdict})")
 
                     try:
                         from core.analysis import calculate_smart_buy_range, calculate_smart_stop_loss, calculate_smart_target
                         import pandas as pd
 
+                        # Get current price (try multiple sources)
                         current_price = stock_result.get('last_close')
+                        
+                        # Fallback: Try to get from pre_fetched_df if available
+                        if (not current_price or current_price <= 0) and 'pre_fetched_df' in stock_result:
+                            try:
+                                pre_df = stock_result['pre_fetched_df']
+                                if pre_df is not None and not pre_df.empty:
+                                    current_price = float(pre_df['close'].iloc[-1])
+                                    logger.debug(f"  {ticker}: Got current_price from pre_fetched_df: {current_price}")
+                            except:
+                                pass
+                        
                         if current_price and current_price > 0:
                             timeframe_confirmation = stock_result.get('timeframe_analysis')
 
