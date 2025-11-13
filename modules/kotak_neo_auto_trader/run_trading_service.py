@@ -148,6 +148,117 @@ class TradingService:
             traceback.print_exc()
             return False
     
+    def _initialize_live_prices(self):
+        """
+        Initialize real-time price feed via WebSocket
+        
+        Creates:
+        - Scrip master for symbol/token mapping
+        - LivePriceCache for WebSocket price streaming
+        """
+        try:
+            # Load scrip master
+            logger.info("Loading scrip master...")
+            self.scrip_master = KotakNeoScripMaster(
+                auth_client=self.auth.client,
+                exchanges=['NSE']
+            )
+            self.scrip_master.load_scrip_master(force_download=False)
+            logger.info("✅ Scrip master loaded")
+            
+            # Initialize price cache with WebSocket
+            logger.info("Starting WebSocket price feed...")
+            self.price_cache = LivePriceCache(
+                auth_client=self.auth.client,
+                scrip_master=self.scrip_master,
+                stale_threshold_seconds=60,
+                reconnect_delay_seconds=5
+            )
+            
+            # Start WebSocket service
+            self.price_cache.start()
+            logger.info("✅ WebSocket price feed started")
+            
+            # Wait for connection to be established before subscribing
+            logger.info("Waiting for WebSocket connection...")
+            if self.price_cache.wait_for_connection(timeout=10):
+                logger.info("✅ WebSocket connection established")
+            else:
+                logger.warning("⚠️ WebSocket connection timeout, subscriptions may fail")
+            
+            # Subscribe to any existing open positions
+            self._subscribe_to_open_positions()
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize live prices: {e}")
+            logger.warning("⚠️ Will fall back to yfinance for LTP (15min delayed)")
+            self.price_cache = None
+            self.scrip_master = None
+            # Don't fail initialization - system can work with yfinance fallback
+    
+    def _subscribe_to_open_positions(self):
+        """
+        Subscribe WebSocket to symbols with active pending sell orders.
+        This ensures real-time prices for sell order monitoring.
+        
+        Note: This method is called at startup. The SellOrderManager will
+        subscribe to additional symbols as sell orders are placed during runtime.
+        """
+        if not self.price_cache:
+            logger.warning("⚠️ Price cache not initialized, cannot subscribe to open positions")
+            return
+        
+        try:
+            # Get pending sell orders from broker
+            if not self.auth:
+                logger.warning("⚠️ Auth not initialized, skipping WebSocket subscription")
+                return
+            
+            logger.info("Getting pending sell orders to subscribe to WebSocket...")
+            from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
+            orders_client = KotakNeoOrders(self.auth)
+            pending_orders = orders_client.get_pending_orders()
+            
+            logger.debug(f"Retrieved {len(pending_orders) if pending_orders else 0} pending orders")
+            
+            if not pending_orders:
+                logger.info("No pending orders to subscribe to WebSocket")
+                return
+            
+            # Extract symbols from SELL orders only
+            symbols = set()
+            for order in pending_orders:
+                # Check if this is a SELL order
+                txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
+                if txn_type not in ['S', 'SELL']:
+                    logger.debug(f"Skipping non-SELL order: {txn_type}")
+                    continue
+                
+                # Extract symbol (keep full trading symbol like 'DALBHARAT-EQ' for accurate lookup)
+                symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
+                if not symbol:
+                    logger.debug(f"Order missing symbol: {order}")
+                    continue
+                    
+                # Keep the full symbol (e.g., 'DALBHARAT-EQ') to get correct instrument token
+                # Don't strip the suffix as different segments (-EQ, -BL, etc.) have different tokens
+                symbol = symbol.upper()
+                
+                if symbol:
+                    symbols.add(symbol)
+                    logger.debug(f"Found SELL order for symbol: {symbol}")
+            
+            if symbols:
+                logger.info(f"Subscribing to {len(symbols)} active sell order(s) on WebSocket: {', '.join(sorted(symbols))}")
+                self.price_cache.subscribe(list(symbols))
+                logger.info(f"✅ Subscribed to WebSocket for sell orders: {', '.join(sorted(symbols))}")
+            else:
+                logger.info("No SELL orders found to subscribe (all orders may be BUY or no valid symbols)")
+                
+        except Exception as e:
+            logger.error(f"Failed to subscribe to open positions: {e}", exc_info=True)
+            # Not critical - subscriptions will happen later
+    
     def is_trading_day(self) -> bool:
         """Check if today is a trading day (Monday-Friday)"""
         return datetime.now().weekday() < 5

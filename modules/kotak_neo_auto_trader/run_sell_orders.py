@@ -159,7 +159,13 @@ def main():
             
             logger.info(f"LivePriceManager started for {len(symbols)} symbols: {', '.join(symbols)}")
             
-            # Give it a moment to connect and fetch initial prices
+            # Subscribe to symbols
+            price_cache.subscribe(symbols)
+            price_manager = price_cache  # Use LivePriceCache directly
+            
+            logger.info(f"✅ LivePriceCache started for {len(symbols)} symbols: {', '.join(symbols)}")
+            
+            # Give it a moment to fetch initial prices
             time.sleep(2)
         else:
             logger.info("No open sell orders found, skipping LivePriceManager initialization")

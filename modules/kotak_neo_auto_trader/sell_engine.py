@@ -429,8 +429,21 @@ class SellOrderManager:
                 if ltp is not None:
                     logger.info(f"{base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
                     return ltp
+                
+                # If lookup with broker_symbol failed, try base_symbol as fallback
+                if broker_symbol and lookup_symbol != base_symbol:
+                    ltp = self.price_manager.get_ltp(base_symbol, ticker)
+                    if ltp is not None:
+                        logger.info(f"➡️ {base_symbol} LTP from WebSocket: ₹{ltp:.2f}")
+                        return ltp
+                
+                # Log why WebSocket lookup failed (for debugging)
+                logger.debug(f"WebSocket LTP not found for {lookup_symbol} (symbol may not be subscribed or no price data yet)")
             except Exception as e:
-                logger.debug(f"WebSocket LTP failed for {base_symbol}: {e}")
+                failed_symbol = lookup_symbol if broker_symbol else base_symbol
+                logger.warning(f"WebSocket LTP failed for {failed_symbol}: {e}")
+        else:
+            logger.debug(f"WebSocket price_manager not initialized, falling back to yfinance for {base_symbol}")
         
         # Fallback to yfinance (delayed ~15-20 min)
         try:
@@ -721,8 +734,8 @@ class SellOrderManager:
                     if entry_price and qty:
                         pnl = (exit_price - entry_price) * qty
                         pnl_pct = ((exit_price / entry_price) - 1) * 100
-                        trade['pnl'] = pnl
-                        trade['pnl_pct'] = pnl_pct
+                        trade['pnl'] = round(pnl, 2)
+                        trade['pnl_pct'] = round(pnl_pct, 2)
                         logger.info(f"Position closed: {symbol} - P&L: ₹{pnl:.2f} ({pnl_pct:+.2f}%)")
                     
                     updated = True
@@ -1156,6 +1169,62 @@ class SellOrderManager:
             logger.warning(f"Could not fetch existing orders: {e}. Will proceed with placement.")
             return {}
     
+    def has_completed_sell_order(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Check if a symbol already has a completed/executed sell order
+        
+        Args:
+            symbol: Trading symbol (base, without suffix)
+            
+        Returns:
+            Dict with order_id and price if completed order found, None otherwise
+        """
+        try:
+            symbol_upper = symbol.upper()
+            
+            # Use get_orders() directly to get ALL orders (including completed ones)
+            # get_pending_orders() filters out completed orders, so we can't use it
+            all_orders = self.orders.get_orders()
+            if not all_orders or 'data' not in all_orders:
+                return None
+            
+            for order in all_orders['data']:
+                # Only check SELL orders
+                txn_type = (order.get('trnsTp') or order.get('transactionType') or '').upper()
+                if txn_type not in ['S', 'SELL']:
+                    continue
+                
+                # Extract symbol
+                order_symbol = order.get('trdSym') or order.get('tradingSymbol') or ''
+                if '-' in order_symbol:
+                    order_symbol = order_symbol.split('-')[0]
+                order_symbol = order_symbol.upper()
+                
+                # Check if this is for our symbol
+                if order_symbol == symbol_upper:
+                    # Check order status - completed orders have 'complete' or 'executed' status
+                    status = (
+                        order.get('orderStatus') or 
+                        order.get('ordSt') or 
+                        order.get('status') or 
+                        ''
+                    ).lower()
+                    
+                    if 'complete' in status or 'executed' in status or 'filled' in status:
+                        order_id = order.get('nOrdNo') or order.get('orderId') or ''
+                        order_price = order.get('ordPrc') or order.get('orderPrice') or order.get('prc') or 0
+                        logger.info(f"✅ Found completed sell order for {symbol}: Order ID {order_id}, Status: {status}, Price: ₹{order_price:.2f}")
+                        return {
+                            'order_id': order_id,
+                            'price': float(order_price) if order_price else 0
+                        }
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error checking completed sell orders for {symbol}: {e}")
+            return None
+    
     def run_at_market_open(self) -> int:
         """
         Place sell orders for all open positions at market open
@@ -1357,6 +1426,26 @@ class SellOrderManager:
         
         # Clean up any rejected/cancelled orders before monitoring
         self._cleanup_rejected_orders()
+        
+        # Remove symbols that already have completed sell orders (don't monitor them)
+        symbols_with_completed_orders = []
+        for symbol in list(self.active_sell_orders.keys()):
+            completed_order_info = self.has_completed_sell_order(symbol)
+            if completed_order_info:
+                symbols_with_completed_orders.append(symbol)
+                logger.info(f"✅ Skipping monitoring for {symbol}: Already has completed sell order")
+        
+        # Remove from tracking
+        for symbol in symbols_with_completed_orders:
+            if symbol in self.active_sell_orders:
+                # Mark position as closed if not already
+                order_info = self.active_sell_orders[symbol]
+                order_id = order_info.get('order_id')
+                current_price = order_info.get('target_price', 0)
+                self.mark_position_closed(symbol, current_price, order_id or '')
+                del self.active_sell_orders[symbol]
+            if symbol in self.lowest_ema9:
+                del self.lowest_ema9[symbol]
         
         if not self.active_sell_orders:
             logger.debug("No active sell orders to monitor")
