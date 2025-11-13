@@ -393,6 +393,56 @@ tests/unit/
 
 ---
 
+## 🐛 Post-Training Fixes (Same Day)
+
+After deploying ML model v4, two critical issues were discovered and fixed:
+
+### Issue 1: ML-Only Signals Had Invalid Parameters
+
+**Problem**: Stocks where ML approved (`buy`/`strong_buy`) but rules rejected (`watch`/`avoid`) showed `0.00` for trading parameters.
+
+Example:
+```
+GENUSPAPER.NS:
+ Buy (0.00-0.00)           ❌ Invalid
+ Target 0.00 (+-100.0%)    ❌ Invalid
+ Stop 0.00 (-100.0%)       ❌ Invalid
+ 🤖 ML: BUY 📈 (44% conf) ⚠️ ONLY ML
+```
+
+**Root Cause**: Parameter calculation only checked rule-based verdict, not ML verdict. Also lacked price fallbacks.
+
+**Fix**: 
+- Added ML verdict check in `core/backtest_scoring.py` and `services/backtest_service.py`
+- Implemented price fallbacks: `last_close` → `pre_fetched_df` → `stock_info`
+- Filter invalid parameters from Telegram display
+
+**Result**: All ML-only signals now have valid parameters ✅
+
+### Issue 2: Incomplete Telegram Messages
+
+**Problem**: Users only received last 2-3 stocks instead of complete message (14 stocks).
+
+**Root Cause**: Telegram 4096-character limit. Old logic split at arbitrary positions, cutting stock info in half.
+
+**Fix**: Intelligent splitting at stock boundaries in `core/telegram.py`
+- Preserves complete stock information
+- Includes header in all parts
+- Logs "Sending part 1/2" for transparency
+
+**Result**: Users receive complete messages in multiple parts ✅
+
+### Verification
+
+✅ All "ONLY ML" stocks have valid parameters  
+✅ Complete messages delivered (multiple parts if needed)  
+✅ No Telegram API errors  
+✅ 13 new unit tests added
+
+**See**: [Detailed fix documentation](bug_fixes/ML_PARAMETER_CALCULATION_AND_TELEGRAM_SPLITTING_FIX.md)
+
+---
+
 ## 📞 Contact / Support
 
 For questions or issues with ML model v4:
