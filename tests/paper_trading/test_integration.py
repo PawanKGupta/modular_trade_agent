@@ -276,6 +276,7 @@ class TestEdgeCases:
         """Create broker for edge case testing"""
         config = PaperTradingConfig(
             initial_capital=10000.0,  # Small capital
+            max_position_size=5000.0,  # Adjust max position size for small capital
             enable_slippage=False,
             enable_fees=False,
             price_source="mock",

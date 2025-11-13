@@ -461,10 +461,22 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
     def _save_order(self, order: Order) -> None:
         """Save order to storage"""
         order_dict = order.to_dict()
-
+        
+        # Convert price to float for JSON serialization
+        if order_dict.get("price"):
+            price_str = str(order_dict["price"])
+            price_clean = price_str.replace("₹", "").replace(",", "").strip()
+            order_dict["price"] = float(price_clean) if price_clean else None
+        
+        # Convert executed_price to float
+        if order_dict.get("executed_price"):
+            exec_price_str = str(order_dict["executed_price"])
+            exec_price_clean = exec_price_str.replace("₹", "").replace(",", "").strip()
+            order_dict["executed_price"] = float(exec_price_clean) if exec_price_clean else None
+        
         # Check if order exists
         existing = self.store.get_order_by_id(order.order_id)
-
+        
         if existing:
             # Update existing order
             self.store.update_order(order.order_id, order_dict)
@@ -518,12 +530,25 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
     def _dict_to_order(self, order_dict: Dict) -> Order:
         """Convert dictionary to Order entity"""
+        # Parse price - handle both numeric and formatted strings (for backward compatibility)
+        price = None
+        if order_dict.get("price"):
+            price_val = order_dict["price"]
+            if isinstance(price_val, (int, float)):
+                price = Money(float(price_val))
+            else:
+                # Handle formatted string (backward compatibility)
+                price_str = str(price_val)
+                price_clean = price_str.replace("₹", "").replace(",", "").strip()
+                if price_clean:
+                    price = Money(float(price_clean))
+        
         order = Order(
             symbol=order_dict["symbol"],
             quantity=order_dict["quantity"],
             order_type=OrderType[order_dict["order_type"]],
             transaction_type=TransactionType[order_dict["transaction_type"]],
-            price=Money(float(order_dict["price"])) if order_dict.get("price") else None,
+            price=price,
             order_id=order_dict.get("order_id"),
             status=OrderStatus[order_dict["status"]],
             remarks=order_dict.get("remarks", "")
