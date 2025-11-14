@@ -159,4 +159,3 @@ class IndicatorService:
             'is_oversold': self.is_rsi_oversold(row),
             'is_above_ema200': self.is_above_ema200(row),
         }
-

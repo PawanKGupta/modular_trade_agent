@@ -48,6 +48,11 @@ class AnalysisResponse:
     priority_score: float = 0.0
     error_message: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # Chart quality and capital fields
+    chart_quality: Optional[Dict[str, Any]] = None
+    execution_capital: float = 0.0
+    max_capital: float = 0.0
+    capital_adjusted: bool = False
     
     @classmethod
     def from_analysis_result(cls, result: AnalysisResult) -> 'AnalysisResponse':
@@ -92,6 +97,7 @@ class AnalysisResponse:
             'ticker': self.ticker,
             'status': self.status,
             'verdict': self.verdict,
+            'final_verdict': self.final_verdict,
             'timestamp': self.timestamp.isoformat(),
             'last_close': self.last_close,
             'buy_range': self.buy_range,
@@ -103,6 +109,10 @@ class AnalysisResponse:
             'combined_score': self.combined_score,
             'priority_score': self.priority_score,
             'error_message': self.error_message,
+            'chart_quality': self.chart_quality,
+            'execution_capital': self.execution_capital,
+            'max_capital': self.max_capital,
+            'capital_adjusted': self.capital_adjusted,
             'metadata': self.metadata
         }
     

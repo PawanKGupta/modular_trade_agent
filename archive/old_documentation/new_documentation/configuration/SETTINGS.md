@@ -7,7 +7,7 @@ Where to put secrets/keys
 - Kotak Neo: set broker creds in modules/kotak_neo_auto_trader/kotak_neo.env and pass with --env when running unified service.
 
 Global settings (config/settings.py)
-- MIN_ABSOLUTE_AVG_VOLUME (env, default 150000): Minimum 20-day avg volume to consider a symbol liquid.
+- MIN_ABSOLUTE_AVG_VOLUME (env, default 20000): Minimum 20-day avg volume to consider a symbol liquid (lowered to minimal safety net).
 - NEWS_SENTIMENT_ENABLED (env, default true): Toggle news sentiment filter.
 - NEWS_SENTIMENT_LOOKBACK_DAYS (env, default 30): News window for sentiment aggregation.
 - NEWS_SENTIMENT_MIN_ARTICLES (env, default 2): Minimum articles required to score sentiment.
@@ -20,6 +20,19 @@ Global settings (config/settings.py)
 - RETRY_BACKOFF_MULTIPLIER (env, default 2.0): Exponential backoff factor.
 - CIRCUITBREAKER_FAILURE_THRESHOLD (env, default 3): Trip threshold.
 - CIRCUITBREAKER_RECOVERY_TIMEOUT (env, default 60.0): Half-open after seconds.
+
+Chart Quality Settings (config/strategy_config.py)
+- CHART_QUALITY_ENABLED (env, default true): Enable/disable chart quality filtering.
+- CHART_QUALITY_MIN_SCORE (env, default 60.0): Minimum chart quality score (0-100) for acceptance.
+- CHART_QUALITY_MAX_GAP_FREQUENCY (env, default 20.0): Maximum gap frequency (%) before filtering.
+- CHART_QUALITY_MIN_DAILY_RANGE_PCT (env, default 1.5): Minimum daily range (%) to avoid flat charts.
+- CHART_QUALITY_MAX_EXTREME_CANDLE_FREQUENCY (env, default 15.0): Maximum extreme candle frequency (%) before filtering.
+- CHART_QUALITY_ENABLED_IN_BACKTEST (env, default true): Enable chart quality filtering in backtests.
+
+Capital & Liquidity Settings (config/strategy_config.py)
+- USER_CAPITAL (env, default 200000.0): User's configured capital per trade (₹200,000 = 2L).
+- MAX_POSITION_VOLUME_RATIO (env, default 0.10): Maximum position size as % of daily volume (10% default).
+- MIN_ABSOLUTE_AVG_VOLUME (env, default 20000): Minimum average volume for minimal safety net.
 
 Other strategy constants (code defaults)
 - RSI_OVERSOLD=30, RSI_NEAR_OVERSOLD=40
@@ -37,16 +50,30 @@ Broker configuration (modules/kotak_neo_auto_trader/kotak_neo.env)
 
 Auto Trader module settings (modules/kotak_neo_auto_trader/config.py)
 - MAX_PORTFOLIO_SIZE (default 6)
-- CAPITAL_PER_TRADE (default 100000)
+- CAPITAL_PER_TRADE (default 100000) — Note: This is overridden by execution_capital from analysis CSV
 - MIN_COMBINED_SCORE (default 25) — from analysis CSV to accept entries
 - DEFAULT_EXCHANGE (NSE), DEFAULT_PRODUCT (CNC), DEFAULT_VARIETY (AMO)
+
+Note: The auto trader now uses `execution_capital` from the analysis CSV, which is automatically calculated based on stock liquidity. If `execution_capital` is not available, it falls back to `CAPITAL_PER_TRADE`.
 
 How to override
 - Create a .env in repo root for global settings:
   ```env
-  MIN_ABSOLUTE_AVG_VOLUME=200000
+  MIN_ABSOLUTE_AVG_VOLUME=20000
   NEWS_SENTIMENT_ENABLED=false
   RETRY_MAX_ATTEMPTS=5
+  
+  # Chart Quality Settings
+  CHART_QUALITY_ENABLED=true
+  CHART_QUALITY_MIN_SCORE=60.0
+  CHART_QUALITY_MAX_GAP_FREQUENCY=20.0
+  CHART_QUALITY_MIN_DAILY_RANGE_PCT=1.5
+  CHART_QUALITY_MAX_EXTREME_CANDLE_FREQUENCY=15.0
+  CHART_QUALITY_ENABLED_IN_BACKTEST=true
+  
+  # Capital & Liquidity Settings
+  USER_CAPITAL=200000.0
+  MAX_POSITION_VOLUME_RATIO=0.10
   ```
 - Put Telegram in cred.env (or .env):
   ```env

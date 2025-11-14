@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 from utils.logger import logger
 from core.indicators import compute_indicators
+from config.strategy_config import StrategyConfig
+from typing import Optional
 
 class TimeframeAnalysis:
     """
@@ -10,43 +12,122 @@ class TimeframeAnalysis:
     Focuses on oversold conditions, support levels, and exhaustion patterns
     """
     
-    def __init__(self):
-        self.support_lookback = 20  # periods for support/resistance analysis
-        self.volume_lookback = 10   # periods for volume trend analysis
-        self.oversold_threshold = 30  # RSI threshold for oversold condition
-        self.weekly_oversold_threshold = 40  # Weekly RSI threshold
+    def __init__(self, config: Optional[StrategyConfig] = None):
+        """
+        Initialize TimeframeAnalysis with configurable parameters
+        
+        Args:
+            config: StrategyConfig instance (uses default if None)
+        """
+        # Get config if not provided
+        if config is None:
+            config = StrategyConfig.default()
+        
+        self.config = config
+        
+        # Use configurable lookback values
+        self.support_lookback_daily = config.support_resistance_lookback_daily
+        self.support_lookback_weekly = config.support_resistance_lookback_weekly
+        self.volume_lookback_daily = config.volume_exhaustion_lookback_daily
+        self.volume_lookback_weekly = config.volume_exhaustion_lookback_weekly
+        
+        # RSI thresholds from config
+        self.oversold_threshold = config.rsi_oversold  # Daily RSI threshold
+        self.weekly_oversold_threshold = 40  # Weekly RSI threshold (can be made configurable later)
+    
+    def _get_support_lookback(self, timeframe: str) -> int:
+        """Get support/resistance lookback for given timeframe"""
+        return self.support_lookback_weekly if timeframe == 'weekly' else self.support_lookback_daily
+    
+    def _get_volume_lookback(self, timeframe: str) -> int:
+        """Get volume exhaustion lookback for given timeframe"""
+        return self.volume_lookback_weekly if timeframe == 'weekly' else self.volume_lookback_daily
+    
+    def _get_adaptive_lookback(self, available_data_days: int, base_lookback: int, timeframe: str) -> int:
+        """
+        Adaptive lookback based on available data
+        Aligned with data fetching strategy: Daily max 5 years, Weekly max 3 years
+        Only runs if enable_adaptive_lookback is True (configurable)
+        """
+        # Check if adaptive logic is enabled
+        if not self.config.enable_adaptive_lookback:
+            return base_lookback  # Return default if disabled
+
+        if timeframe == 'weekly':
+            # Weekly: 3 years fetched (~156 candles), use up to 50 periods (~1 year)
+            if available_data_days >= 1095:  # 3 years (weekly fetch max)
+                return int(min(base_lookback * 2.5, 50))  # Use up to 50 periods
+            elif available_data_days >= 730:  # 2 years
+                return int(min(base_lookback * 2, 40))
+            else:
+                return base_lookback  # Default
+        else:  # daily
+            # Daily: 5 years fetched (~1,250 days), use up to 50 periods (~2.5 months)
+            if available_data_days >= 1825:  # 5 years (daily fetch max)
+                return int(min(base_lookback * 2.5, 50))  # Use up to 50 periods
+            elif available_data_days >= 1095:  # 3 years
+                return int(min(base_lookback * 1.5, 30))
+            else:
+                return base_lookback  # Default (20 periods)
+
+        return base_lookback  # Default fallback
     
     def analyze_dip_conditions(self, df, timeframe='daily'):
         """
         Analyze dip-buying conditions for a given timeframe
         Returns analysis focused on oversold conditions and support levels
         """
-        if df is None or len(df) < self.support_lookback:
+        # Get appropriate lookback for this timeframe
+        support_lookback = self._get_support_lookback(timeframe)
+        
+        # Check if df is valid (not None and not empty)
+        if df is None or df.empty:
             return None
+        
+        # Apply adaptive logic if enabled
+        available_data_days = len(df)
+        support_lookback = self._get_adaptive_lookback(available_data_days, support_lookback, timeframe)
+        
+        # For weekly data with limited history, use adaptive lookback
+        # For dip-buying strategy, we can work with less weekly data
+        if len(df) < support_lookback:
+            # For weekly timeframe, try with reduced lookback if we have at least 10 rows
+            if timeframe == 'weekly' and len(df) >= 10:
+                # Use available data with reduced lookback (50% of requested)
+                support_lookback = max(int(support_lookback * 0.5), 10)  # At least 10, or 50% of requested
+                logger.debug(f"Weekly data limited ({len(df)} rows), using reduced lookback: {support_lookback} for {timeframe} analysis")
+            else:
+                # Not enough data even with reduced lookback
+                logger.debug(f"Insufficient data for {timeframe} analysis: {len(df)} rows < {support_lookback} lookback")
+                return None
             
         try:
-            # Ensure indicators are computed
-            df = compute_indicators(df)
+            # Ensure indicators are computed with configurable RSI period
+            df = compute_indicators(df, rsi_period=self.config.rsi_period, config=self.config)
             if df is None:
                 return None
                 
             last = df.iloc[-1]
             
             # Support and resistance level analysis
-            support_analysis = self._analyze_support_levels(df, timeframe)
-            resistance_analysis = self._analyze_resistance_levels(df, timeframe)
+            support_analysis = self._analyze_support_levels(df, timeframe, support_lookback)
+            resistance_analysis = self._analyze_resistance_levels(df, timeframe, support_lookback)
             
             # Oversold condition analysis
             oversold_analysis = self._analyze_oversold_conditions(df, timeframe)
             
             # Volume exhaustion analysis  
-            volume_exhaustion = self._analyze_volume_exhaustion(df)
+            volume_exhaustion = self._analyze_volume_exhaustion(df, timeframe)
             
             # Selling pressure analysis
             selling_pressure = self._analyze_selling_pressure(df)
             
             # Mean reversion setup quality
             reversion_setup = self._analyze_reversion_setup(df, timeframe)
+            
+            # Get RSI column name based on config
+            rsi_col = f'rsi{self.config.rsi_period}'
+            rsi_value = last[rsi_col] if rsi_col in last.index else last.get('rsi10')
             
             return {
                 'timeframe': timeframe,
@@ -57,17 +138,23 @@ class TimeframeAnalysis:
                 'selling_pressure': selling_pressure,
                 'reversion_setup': reversion_setup,
                 'current_price': round(last['close'], 2),
-                'rsi': round(last['rsi10'], 2) if not pd.isna(last['rsi10']) else None
+                'rsi': round(rsi_value, 2) if not pd.isna(rsi_value) else None
             }
             
         except Exception as e:
             logger.error(f"Error analyzing {timeframe} trend: {e}")
             return None
     
-    def _analyze_support_levels(self, df, timeframe):
+    def _analyze_support_levels(self, df, timeframe, support_lookback=None):
         """Analyze support levels and price position relative to them"""
+        if support_lookback is None:
+            support_lookback = self._get_support_lookback(timeframe)
+        
+        # Ensure support_lookback is an integer
+        support_lookback = int(support_lookback)
+        
         try:
-            recent_data = df.tail(self.support_lookback)
+            recent_data = df.tail(support_lookback)
             current_price = df.iloc[-1]['close']
             
             # Find support levels (recent lows)
@@ -110,10 +197,16 @@ class TimeframeAnalysis:
             logger.error(f"Error in support analysis: {e}")
             return {'quality': 'unknown', 'distance_pct': 999, 'support_holding': False}
     
-    def _analyze_resistance_levels(self, df, timeframe):
+    def _analyze_resistance_levels(self, df, timeframe, support_lookback=None):
         """Analyze resistance levels and price position relative to them"""
+        if support_lookback is None:
+            support_lookback = self._get_support_lookback(timeframe)
+        
+        # Ensure support_lookback is an integer
+        support_lookback = int(support_lookback)
+        
         try:
-            recent_data = df.tail(self.support_lookback)
+            recent_data = df.tail(support_lookback)
             current_price = df.iloc[-1]['close']
             
             # Find resistance levels (recent highs)
@@ -160,7 +253,9 @@ class TimeframeAnalysis:
         """Analyze oversold conditions for mean reversion opportunities"""
         try:
             last = df.iloc[-1]
-            current_rsi = last['rsi10']
+            # Get RSI column name based on config
+            rsi_col = f'rsi{self.config.rsi_period}'
+            current_rsi = last[rsi_col] if rsi_col in last.index else last.get('rsi10')
             
             if pd.isna(current_rsi):
                 return {'condition': 'unknown', 'severity': 'none', 'duration': 0}
@@ -183,7 +278,8 @@ class TimeframeAnalysis:
                 severity = 'none'
             
             # Duration of oversold condition
-            rsi_series = df['rsi10'].tail(10).dropna()
+            rsi_col = f'rsi{self.config.rsi_period}'
+            rsi_series = df[rsi_col].tail(10).dropna() if rsi_col in df.columns else df.get('rsi10', pd.Series()).tail(10).dropna()
             oversold_duration = 0
             if len(rsi_series) > 0:
                 # Convert to list for safe iteration
@@ -197,7 +293,8 @@ class TimeframeAnalysis:
             # RSI divergence check (price making new lows while RSI doesn't)
             if len(df) >= 10:
                 recent_prices = df['close'].tail(10)
-                recent_rsi = df['rsi10'].tail(10).dropna()
+                rsi_col = f'rsi{self.config.rsi_period}'
+                recent_rsi = df[rsi_col].tail(10).dropna() if rsi_col in df.columns else df.get('rsi10', pd.Series()).tail(10).dropna()
                 
                 if len(recent_rsi) >= 5:
                     price_new_low = recent_prices.iloc[-1] <= recent_prices.iloc[-5:].min()
@@ -220,10 +317,11 @@ class TimeframeAnalysis:
             logger.error(f"Error in oversold analysis: {e}")
             return {'condition': 'unknown', 'severity': 'none', 'duration': 0, 'bullish_divergence': False}
     
-    def _analyze_volume_exhaustion(self, df):
+    def _analyze_volume_exhaustion(self, df, timeframe='daily'):
         """Analyze volume patterns for signs of selling exhaustion"""
         try:
-            recent_volume = df['volume'].tail(self.volume_lookback)
+            volume_lookback = self._get_volume_lookback(timeframe)
+            recent_volume = df['volume'].tail(volume_lookback)
             current_volume = df['volume'].iloc[-1]
             avg_volume = recent_volume.mean()
             
@@ -348,7 +446,9 @@ class TimeframeAnalysis:
         try:
             current_data = df.iloc[-1]
             current_price = current_data['close']
-            current_rsi = current_data['rsi10']
+            # Get RSI column name based on config
+            rsi_col = f'rsi{self.config.rsi_period}'
+            current_rsi = current_data[rsi_col] if rsi_col in current_data.index else current_data.get('rsi10')
             
             if pd.isna(current_rsi):
                 return {'quality': 'poor', 'score': 0, 'reasons': []}
@@ -445,17 +545,35 @@ class TimeframeAnalysis:
                 score += 1  # RSI approaching oversold
             
             # Weekly uptrend context (2 points max)
+            # REFINED LOGIC (2025-11-09): Avoid double-counting pullback and support
+            # - Weekly trend up and price near support → +2
+            # - Weekly trend up but mid-range (not at support) → +1
+            # - Weekly trend flat/down → 0
             weekly_oversold = weekly_analysis['oversold_analysis']
             weekly_support = weekly_analysis['support_analysis']
             weekly_reversion = weekly_analysis['reversion_setup']
             
-            # Weekly uptrend confirmation (best case)
-            if 'above_ema_uptrend' in weekly_reversion.get('reasons', []):
-                score += 2  # Weekly also in uptrend - perfect setup
-            elif weekly_oversold['severity'] in ['moderate', 'high']:  # Weekly pullback in uptrend
-                score += 1  # Temporary weekly pullback
-            elif weekly_support['quality'] in ['strong', 'moderate']:  # At weekly support
-                score += 1  # Support holding in uptrend
+            # Check if weekly trend is up
+            is_weekly_uptrend = 'above_ema_uptrend' in weekly_reversion.get('reasons', [])
+            
+            if is_weekly_uptrend:
+                # Weekly trend is up - check if price is near support
+                support_quality = weekly_support.get('quality', 'none')
+                support_distance = weekly_support.get('distance_pct', 999)
+                
+                # Price is "near support" if:
+                # - Support quality is strong/moderate AND
+                # - Distance to support is <= 5% (close to support level)
+                is_near_support = (
+                    support_quality in ['strong', 'moderate'] and
+                    support_distance <= 5.0
+                )
+                
+                if is_near_support:
+                    score += 2  # Weekly trend up and price near support - perfect setup
+                else:
+                    score += 1  # Weekly trend up but mid-range (not at support) - still good
+            # If weekly trend is flat/down, score += 0 (no points)
             
             # Support level confluence (2 points max)
             daily_support = daily_analysis['support_analysis']

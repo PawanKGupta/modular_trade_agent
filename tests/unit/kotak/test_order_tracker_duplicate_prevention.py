@@ -221,4 +221,3 @@ class TestOrderTrackerDuplicatePrevention:
         pending = order_tracker.get_pending_orders()
         assert len(pending) == 1
         assert pending[0]['order_id'] == "12345"
-

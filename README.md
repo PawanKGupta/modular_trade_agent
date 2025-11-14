@@ -39,15 +39,21 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 ### 🎯 **Simplified Core Reversal Strategy**
 - **RSI < 30 Oversold Filtering**: Only considers truly oversold conditions (RSI10 period)
 - **EMA200 Uptrend Confirmation**: Ensures stocks are above long-term moving average (800+ days data for accuracy)
-- **Volume Quality Filter**: Minimum 80% of average volume (20-day) for liquidity assurance
-- **Fundamental Safety Check**: Avoids stocks with negative earnings (PE < 0)
+- **Volume Quality Filter**: Minimum 70% of average volume (20-day) for liquidity, 50% for RSI < 30 oversold conditions
+- **Fundamental Safety Check**: Flexible filter - avoids loss-making companies (PE < 0 + PB > 5.0), allows growth stocks (PE < 0 + PB < 5.0) with "watch" verdict
+- **RSI30 Requirement**: Trading parameters only calculated when RSI < 30 (enforced for dip-buying strategy)
 - **TradingView-Accurate EMA200**: Enhanced data fetching ensures calculation matches TradingView within 0.2%
+- **Rule-Based Logic**: ML model temporarily disabled, using rule-based logic only until ML is fully trained
 
 ### 💰 **Advanced Risk Management**
 - **Support-Based Stop Losses**: Stops placed just below key support levels (5-6% typical)
 - **Resistance-Aware Targets**: Profit targets respect overhead resistance levels
 - **Dynamic Buy Ranges**: Tight 0.6% entry ranges for precise execution
 - **Risk-Reward Optimization**: Targets 2-4x risk-reward ratios
+- **🆕 Chart Quality Filtering**: Automatically filters stocks with poor chart patterns (gaps, flat movement, extreme candles)
+- **🆕 Dynamic Capital Allocation**: Automatically adjusts position size based on stock liquidity (10% of daily volume max)
+- **🆕 Liquidity-Based Position Sizing**: Ensures safe position sizing based on average daily volume
+- **🆕 Two-Stage ML Approach**: Chart quality filter (Stage 1) + ML model prediction (Stage 2) for improved accuracy
 
 ### 📱 **Enhanced Trade Alerts**
 - **Smart Priority Ranking**: Stocks sorted by trading priority within each category using multi-factor scoring
@@ -60,10 +66,13 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 - **Smart Filtering**: Only sends alerts for stocks that pass all validation checks
 
 ### 🔧 **Enhanced System Features**
-- **CSV Export System**: Complete analysis data export for record-keeping
-- **Quality Filtering**: Multiple layers of fundamental, volume, and setup filters  
+- **CSV Export System**: Complete analysis data export for record-keeping (includes chart quality and capital info)
+- **Quality Filtering**: Multiple layers of fundamental, volume, setup, and chart quality filters  
 - **Robust Error Handling**: Circuit breakers and exponential backoff retry logic
 - **Data Validation**: Ensures sufficient historical data for accurate analysis
+- **🆕 Chart Quality Analysis**: Analyzes gaps, movement, and extreme candles to filter poor-quality charts
+- **🆕 Automatic Capital Adjustment**: Dynamically adjusts capital based on liquidity to ensure safe position sizing
+- **🆕 Two-Stage ML Integration**: ML models only see stocks that pass chart quality filtering, ensuring distribution match
 
 ## 📚 Documentation
 
@@ -77,6 +86,8 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 **⭐ Comprehensive Guides (NEW):**
 - 🏗️ **[System Architecture Evolution](documents/SYSTEM_ARCHITECTURE_EVOLUTION.md)** - Complete architectural transformation (Phases 1-4)
 - 🤖 **[ML Implementation Guide](documents/ML_IMPLEMENTATION_GUIDE.md)** - Complete ML setup, training, and monitoring
+- 📊 **[Chart Quality & Capital Adjustment](documents/features/CHART_QUALITY_AND_CAPITAL_ADJUSTMENT.md)** - 🆕 Chart quality filtering and dynamic capital adjustment features
+- 🎯 **[Two-Stage ML Approach](documents/features/TWO_STAGE_CHART_QUALITY_ML_APPROACH.md)** - 🆕 Two-stage approach: Chart quality + ML model
 
 **Quick Links:**
 - [Architecture Guide](documents/architecture/ARCHITECTURE_GUIDE.md) - System design
@@ -136,6 +147,19 @@ A professional-grade **cloud-automated trading system** for Indian stock markets
 The system supports various configuration options through environment variables:
 
 ```env
+# Chart Quality Configuration
+CHART_QUALITY_ENABLED=true
+CHART_QUALITY_MIN_SCORE=60.0
+CHART_QUALITY_MAX_GAP_FREQUENCY=20.0
+CHART_QUALITY_MIN_DAILY_RANGE_PCT=1.5
+CHART_QUALITY_MAX_EXTREME_CANDLE_FREQUENCY=15.0
+CHART_QUALITY_ENABLED_IN_BACKTEST=true
+
+# Capital & Liquidity Configuration
+USER_CAPITAL=200000.0
+MAX_POSITION_VOLUME_RATIO=0.10
+MIN_ABSOLUTE_AVG_VOLUME=10000  # Lowered from 20,000 to allow more stocks
+
 # Retry Configuration
 RETRY_MAX_ATTEMPTS=3
 RETRY_BASE_DELAY=1.0
@@ -164,9 +188,10 @@ Modify `config/settings.py` to adjust trading parameters:
 
 ```python
 LOOKBACK_DAYS = 90                    # Historical data period
-MIN_VOLUME_MULTIPLIER = 1.0           # Minimum volume threshold
-RSI_OVERSOLD = 30                     # RSI oversold level
+MIN_VOLUME_MULTIPLIER = 0.7           # Minimum volume threshold (relaxed for dip-buying)
+RSI_OVERSOLD = 30                     # RSI oversold level (required for trading parameters)
 VOLUME_MULTIPLIER_FOR_STRONG = 1.2    # Strong volume threshold
+MIN_ABSOLUTE_AVG_VOLUME = 10000       # Minimum absolute average volume (lowered from 20,000)
 ```
 
 ## 🚀 Usage

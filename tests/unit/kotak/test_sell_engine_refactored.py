@@ -532,4 +532,3 @@ class TestRefactoredSellEngineMethods:
             
             # Verify existing lowest_ema9 preserved (not overwritten)
             assert sell_manager.lowest_ema9['RELIANCE'] == 2480.0
-

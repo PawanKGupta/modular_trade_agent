@@ -332,5 +332,3 @@ class TestOrderStateManager:
         assert result is True
         assert state_manager.active_sell_orders["RELIANCE"]["target_price"] == 2550.0
         assert "last_updated" in state_manager.active_sell_orders["RELIANCE"]
-
-

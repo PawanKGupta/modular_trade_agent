@@ -296,4 +296,3 @@ class AsyncAnalysisService:
         )
         
         return results
-

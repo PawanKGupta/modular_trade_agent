@@ -456,4 +456,3 @@ class AuthGuard:
     def call(self, api_call: Callable, *args, **kwargs) -> Optional[Any]:
         """Call an API method with automatic re-auth handling."""
         return call_with_reauth(self.auth, api_call, *args, **kwargs)
-

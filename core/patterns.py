@@ -1,5 +1,8 @@
 import numpy as np
 from ta.trend import ADXIndicator
+from typing import Optional
+from config.strategy_config import StrategyConfig
+
 
 def is_hammer(row):
     op, cl, hi, lo = row['open'], row['close'], row['high'], row['low']
@@ -10,14 +13,27 @@ def is_hammer(row):
         body = 1e-6
     return (lower_shadow > 2 * body) and (upper_shadow < body * 0.8)
 
+
 def is_bullish_engulfing(prev, curr):
     try:
         return (prev['close'] < prev['open']) and (curr['close'] > curr['open']) and (curr['close'] >= prev['open']) and (curr['open'] <= prev['close'])
     except Exception:
         return False
 
-def bullish_divergence(df):
-    look = 10
+
+def bullish_divergence(df, rsi_period: int = 10, lookback_period: int = 10):
+    """
+    Detect bullish divergence pattern
+    
+    Args:
+        df: DataFrame with price and RSI data
+        rsi_period: RSI calculation period (default: 10)
+        lookback_period: Lookback period for divergence detection (default: 10)
+    
+    Returns:
+        bool: True if bullish divergence detected, False otherwise
+    """
+    look = lookback_period
     if len(df) < look + 1:
         return False
 
@@ -33,9 +49,17 @@ def bullish_divergence(df):
     if price_ll >= price_prev_min:
         return False
 
-    rsi_now = sub.loc[idx_price_ll, 'rsi10']
+    # Use configurable RSI column name
+    rsi_col = f'rsi{rsi_period}'
+    # Fallback to 'rsi10' for backward compatibility
+    if rsi_col not in sub.columns and 'rsi10' in sub.columns:
+        rsi_col = 'rsi10'
+    elif rsi_col not in sub.columns:
+        return False  # RSI column doesn't exist
+    
+    rsi_now = sub.loc[idx_price_ll, rsi_col]
     earlier_idx = prev_window['low'].idxmin()
-    rsi_earlier = prev_window.loc[earlier_idx, 'rsi10']
+    rsi_earlier = prev_window.loc[earlier_idx, rsi_col]
 
     if np.isnan(rsi_now) or np.isnan(rsi_earlier):
         return False

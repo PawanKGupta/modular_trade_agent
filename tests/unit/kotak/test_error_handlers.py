@@ -157,5 +157,3 @@ class TestBrokerErrorHandler:
             result = handler.check_result("success")
         
         assert result == "success"
-
-

@@ -1,11 +1,20 @@
 # Integrated Backtest-Trade Agent Workflow
 
-## Overview
+> **⚠️ STATUS: PARTIALLY OUTDATED**  
+> This document describes the OLD architecture (signal-based approach with BacktestEngine).  
+> **Current implementation** uses a **single-pass daily iteration** approach.  
+> See: `../INTEGRATED_BACKTEST_REFACTOR_NOV_2025.md` for the latest architecture.
 
-The Integrated Backtest-Trade Agent Workflow combines the power of historical backtesting with live trade agent analysis to create a comprehensive testing and analysis framework. This system coordinates two main modules:
+---
 
-1. **Backtesting Module** (`run_backtest`) - Identifies potential entry/re-entry dates based on EMA200 + RSI10 strategy
-2. **Trade Agent Module** (`trade_agent`) - Validates signals using advanced multi-timeframe analysis
+## Overview (Historical - Pre-November 2025)
+
+The OLD Integrated Backtest-Trade Agent Workflow combined historical backtesting with live trade agent analysis:
+
+1. **Backtesting Module** (`BacktestEngine`) - Generated potential entry/re-entry signals based on EMA200 + RSI10 strategy
+2. **Trade Agent Module** (`trade_agent`) - Validated signals using advanced multi-timeframe analysis
+
+**This approach was replaced in November 2025** with a more efficient single-pass implementation.
 
 ## Key Features
 
@@ -33,9 +42,22 @@ The Integrated Backtest-Trade Agent Workflow combines the power of historical ba
 4. Trade Agent verdicts are computed strictly as-of the signal date
 5. Tracking is incremental between signals; final pass closes any remaining open position at period end if target not reached
 
-## Architecture
+## Current Architecture (November 2025)
 
-### Core Components
+**See**: `../INTEGRATED_BACKTEST_REFACTOR_NOV_2025.md`
+
+Key changes:
+- ✅ Single-pass daily iteration (no BacktestEngine signal generation)
+- ✅ Inline entry/re-entry/exit checks
+- ✅ Fixed 3 critical bugs (exit tracking, level marking, logging)
+- ✅ Signal numbering for easy tracking
+- ✅ Thread-safe by design
+
+---
+
+## OLD Architecture (Pre-November 2025)
+
+### Core Components (Historical)
 
 #### 1. `run_backtest(stock_name, date_range)`
 - **Input**: Stock symbol and date range

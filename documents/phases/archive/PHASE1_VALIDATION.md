@@ -279,4 +279,3 @@ Validation Summary
 
 Phase 1 refactoring is validated and ready to use!
 ```
-

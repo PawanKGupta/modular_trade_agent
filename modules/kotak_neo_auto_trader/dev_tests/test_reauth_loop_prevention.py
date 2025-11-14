@@ -170,4 +170,3 @@ def test_reauth_loop_prevention():
 
 if __name__ == "__main__":
     test_reauth_loop_prevention()
-

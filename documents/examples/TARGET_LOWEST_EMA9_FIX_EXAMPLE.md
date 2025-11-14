@@ -142,5 +142,3 @@ order_info = {'target_price': 0.0, ...}
 4. **Tracking**: Lowest EMA9 is properly tracked even after service restart
 
 This ensures that monitoring always has valid values to work with, even when `target_price` is corrupted due to the duplicate registration bug.
-
-

@@ -8,7 +8,7 @@ from core.timeframe_analysis import TimeframeAnalysis
 from core.csv_exporter import CSVExporter
 from core.volume_analysis import assess_volume_quality_intelligent, get_volume_verdict, analyze_volume_pattern
 from core.candle_analysis import analyze_recent_candle_quality, should_downgrade_signal, get_candle_quality_summary
-from config.settings import RSI_OVERSOLD, MIN_VOLUME_MULTIPLIER, VOLUME_MULTIPLIER_FOR_STRONG, VOLUME_LOOKBACK_DAYS
+from config.settings import MIN_VOLUME_MULTIPLIER, VOLUME_MULTIPLIER_FOR_STRONG, VOLUME_LOOKBACK_DAYS
 from config.settings import (
     NEWS_SENTIMENT_ENABLED,
     NEWS_SENTIMENT_POS_THRESHOLD,
@@ -357,7 +357,7 @@ def calculate_smart_target(current_price, stop_price, verdict, timeframe_confirm
         # Fallback to simple calculation
         return round(current_price * 1.10, 2)
 
-def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv_exporter=None, as_of_date=None):
+def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv_exporter=None, as_of_date=None, config=None, pre_fetched_data=None, pre_calculated_indicators=None):
     """
     Analyze a ticker - backward compatible wrapper using new service layer.
     
@@ -379,7 +379,21 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
         result = asyncio.run(analyze())[0]
     
     Migration guide: See utils.deprecation.get_migration_guide("analyze_ticker")
+    
+    Args:
+        ticker: Stock ticker symbol
+        enable_multi_timeframe: Enable multi-timeframe analysis
+        export_to_csv: Export results to CSV
+        csv_exporter: CSV exporter instance
+        as_of_date: Analysis date (for backtesting)
+        config: StrategyConfig instance (uses default if None)
+        pre_fetched_data: Optional pre-fetched daily DataFrame (from BacktestEngine)
+        pre_calculated_indicators: Optional dict with pre-calculated indicators (rsi, ema200, etc.)
     """
+    # Get config if not provided
+    if config is None:
+        config = StrategyConfig.default()
+    
     # Phase 4: Issue deprecation warning
     import warnings
     from utils.deprecation import deprecation_notice
@@ -394,7 +408,7 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
         # Try using new service layer (Phase 1 refactoring)
         try:
             from services.analysis_service import AnalysisService
-            service = AnalysisService()
+            service = AnalysisService(config=config)
             return service.analyze_ticker(
                 ticker=ticker,
                 enable_multi_timeframe=enable_multi_timeframe,
@@ -409,8 +423,8 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
         # Legacy implementation (original code preserved for backward compatibility)
         logger.debug(f"Starting analysis for {ticker} (legacy mode)")
         
-        # Initialize timeframe analyzer
-        tf_analyzer = TimeframeAnalysis() if enable_multi_timeframe else None
+        # Initialize timeframe analyzer with config
+        tf_analyzer = TimeframeAnalysis(config=config) if enable_multi_timeframe else None
         
         # Disable current day data addition during backtesting (when as_of_date is provided)
         add_current_day = as_of_date is None  # Only add current day for live analysis
@@ -418,7 +432,7 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
         # Fetch data - multi-timeframe if enabled, single timeframe otherwise
         multi_data = None  # Initialize to prevent NameError
         if enable_multi_timeframe:
-            multi_data = fetch_multi_timeframe_data(ticker, end_date=as_of_date, add_current_day=add_current_day)
+            multi_data = fetch_multi_timeframe_data(ticker, end_date=as_of_date, add_current_day=add_current_day, config=config)
             if multi_data is None or multi_data.get('daily') is None:
                 logger.warning(f"No multi-timeframe data available for {ticker}")
                 return {"ticker": ticker, "status": "no_data"}
@@ -484,10 +498,17 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
     if prev is not None and is_bullish_engulfing(prev, last):
         signals.append("bullish_engulfing")
 
-    if last['rsi10'] is not None and last['rsi10'] < RSI_OVERSOLD:
+    # Use configurable RSI period and threshold
+    rsi_col = f'rsi{config.rsi_period}'
+    # Fallback to 'rsi10' for backward compatibility
+    if rsi_col not in last.index and 'rsi10' in last.index:
+        rsi_col = 'rsi10'
+    
+    if rsi_col in last.index and last[rsi_col] is not None and last[rsi_col] < config.rsi_oversold:
         signals.append("rsi_oversold")
 
-    if bullish_divergence(df):
+    # Use configurable RSI period for pattern detection
+    if bullish_divergence(df, rsi_period=config.rsi_period, lookback_period=10):
         signals.append("bullish_divergence")
         
     # Add uptrend dip-buying timeframe confirmation signals
@@ -540,12 +561,19 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
     above_trend = pd.notna(last['ema200']) and last['close'] > last['ema200']  # Above EMA200
     
     # Smart RSI threshold: Stricter when below EMA200 (more risk)
+    # Use configurable thresholds from StrategyConfig
     if above_trend:
-        rsi_threshold = RSI_OVERSOLD  # 30 - Standard oversold in uptrend
+        rsi_threshold = config.rsi_oversold  # Default: 30 - Standard oversold in uptrend
     else:
-        rsi_threshold = 20  # Extreme oversold required when below trend
+        rsi_threshold = config.rsi_extreme_oversold  # Default: 20 - Extreme oversold required when below trend
+    
+    # Use configurable RSI column name
+    rsi_col = f'rsi{config.rsi_period}'
+    # Fallback to 'rsi10' for backward compatibility
+    if rsi_col not in last.index and 'rsi10' in last.index:
+        rsi_col = 'rsi10'
         
-    rsi_oversold = pd.notna(last['rsi10']) and last['rsi10'] < rsi_threshold
+    rsi_oversold = pd.notna(last.get(rsi_col)) and last.get(rsi_col) < rsi_threshold if rsi_col in last.index else False
     decent_volume = vol_ok  # Use intelligent volume analysis
     
     # Avoid stocks with negative earnings (fundamental red flag)
@@ -668,7 +696,16 @@ def analyze_ticker(ticker, enable_multi_timeframe=True, export_to_csv=False, csv
 
     # Final result compilation with error handling
     try:
-        rsi_value = None if math.isnan(last['rsi10']) else round(last['rsi10'], 2)
+        # Use configurable RSI column name
+        rsi_col = f'rsi{config.rsi_period}'
+        # Fallback to 'rsi10' for backward compatibility
+        if rsi_col not in last.index and 'rsi10' in last.index:
+            rsi_col = 'rsi10'
+        
+        rsi_value = None
+        if rsi_col in last.index:
+            rsi_val = last[rsi_col]
+            rsi_value = None if (pd.isna(rsi_val) or math.isnan(rsi_val)) else round(float(rsi_val), 2)
         
         result = {
             "ticker": ticker,

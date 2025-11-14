@@ -399,4 +399,3 @@ bus.subscribe(EventType.ANALYSIS_COMPLETED, my_handler)
 - `documents/phases/PHASE3_COMPLETE.md` - Phase 3 events & pipeline
 - `documents/phases/PHASE4_MIGRATION_GUIDE.md` - Migration guide
 - `documents/architecture/DESIGN_ANALYSIS_AND_RECOMMENDATIONS.md` - Original analysis
-

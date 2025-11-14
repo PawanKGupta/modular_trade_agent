@@ -6,7 +6,7 @@ __pycache__/
 *.sqlite3
 .DS_Store
 .idea/
-.vscode/
+# .vscode/ - Now tracked for workspace settings (line endings, formatter)
 cred.env
 analysis_results/
 logs/
@@ -33,3 +33,32 @@ data/
 .coverage.*
 htmlcov/
 .pytest_cache/
+
+# IDE directories
+.cursor/
+
+# Model files (large binary files)
+*.pkl
+models/*.pkl
+
+# Temporary analysis and report files
+*_ANALYSIS_REPORT.md
+*_INVESTIGATION_RESULTS.md
+*_IMPACT_ANALYSIS.md
+*_SUMMARY.md
+*_STATUS.md
+*_RESULTS.md
+NEXT_STEPS_*.md
+
+# Test output and temporary files
+test_output/
+pending_orders.json
+
+# Backup files
+*_old_buggy.py
+*_v2.py
+test_output.csv
+
+# Model metadata
+models/model_versions.json
+models/verdict_model_features_*.txt

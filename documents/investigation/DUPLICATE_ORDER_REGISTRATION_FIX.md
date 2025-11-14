@@ -147,4 +147,3 @@ Duplicates can still occur if:
 - **Before**: Duplicate orders created on every service restart or `run_at_market_open()` call
 - **After**: Duplicates prevented at both registration layers
 - **Risk**: Low - fixes are defensive and don't change existing behavior for legitimate cases
-

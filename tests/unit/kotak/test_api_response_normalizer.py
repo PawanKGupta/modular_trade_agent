@@ -161,5 +161,3 @@ class TestBrokerResponseNormalizer:
         assert '_original' in normalized
         assert normalized['_original']['neoOrdNo'] == '12345'
         assert normalized['_original']['customField'] == 'customValue'
-
-
