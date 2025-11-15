@@ -69,14 +69,14 @@ class MLVerdictService(VerdictService):
                 # Load feature columns if available
                 # Try multiple possible filenames for backward compatibility
                 model_stem = Path(model_path).stem
-                
+
                 # Extract model type from filename (e.g., "verdict_model_random_forest" -> "random_forest")
                 model_type = None
                 if 'random_forest' in model_stem:
                     model_type = 'random_forest'
                 elif 'xgboost' in model_stem:
                     model_type = 'xgboost'
-                
+
                 possible_paths = [
                     # Current format: verdict_model_features_{model_type}.txt (from training service)
                     Path(model_path).parent / f"verdict_model_features_{model_type}.txt" if model_type else None,
@@ -85,19 +85,24 @@ class MLVerdictService(VerdictService):
                     # Legacy format: verdict_model_features_enhanced.txt
                     Path(model_path).parent / "verdict_model_features_enhanced.txt",
                 ]
-                
+
                 feature_cols_path = None
                 for path in possible_paths:
                     if path and path.exists():
                         feature_cols_path = path
                         break
-                
+
                 if feature_cols_path:
                     with open(feature_cols_path, 'r') as f:
                         self.feature_cols = [line.strip() for line in f if line.strip()]
                     logger.info(f"   Loaded {len(self.feature_cols)} feature columns from {feature_cols_path.name}")
                 else:
-                    logger.warning("Feature columns file not found. Will extract features dynamically.")
+                    # Try to get feature names from the model itself (scikit-learn stores them)
+                    if hasattr(self.model, 'feature_names_in_'):
+                        self.feature_cols = list(self.model.feature_names_in_)
+                        logger.info(f"   Loaded {len(self.feature_cols)} feature columns from model (feature_names_in_)")
+                    else:
+                        logger.warning("Feature columns file not found and model doesn't have feature_names_in_. Will extract features dynamically.")
 
             except Exception as e:
                 logger.warning(f"⚠️ Failed to load ML model: {e}, using rule-based logic")
@@ -409,7 +414,7 @@ class MLVerdictService(VerdictService):
                     features['support_distance_pct'] = ((current_price - features[recent_low_feature_name]) / current_price) * 100
                 else:
                     features['support_distance_pct'] = 0.0
-                
+
                 # EMA9 distance (target proximity) - critical for mean reversion strategy
                 if df is not None and 'ema9' in df.columns:
                     ema9_value = float(df['ema9'].iloc[-1])
@@ -489,24 +494,24 @@ class MLVerdictService(VerdictService):
         # Expected improvement: +3-5% accuracy based on backtest analysis
         try:
             from services.market_regime_service import get_market_regime_service
-            
+
             # Get date from indicators if available (for historical analysis)
             # Otherwise use current date (for live trading)
             analysis_date = indicators.get('analysis_date') if indicators else None
-            
+
             market_regime_service = get_market_regime_service()
             market_features = market_regime_service.get_market_regime_features(
                 date=analysis_date,
                 sector=indicators.get('sector') if indicators else None
             )
-            
+
             # Add market regime features
             features['nifty_trend'] = market_features['nifty_trend']
             features['nifty_vs_sma20_pct'] = market_features['nifty_vs_sma20_pct']
             features['nifty_vs_sma50_pct'] = market_features['nifty_vs_sma50_pct']
             features['india_vix'] = market_features['india_vix']
             features['sector_strength'] = market_features['sector_strength']
-            
+
             logger.debug(f"Added market regime features: trend={market_features['nifty_trend']}, "
                         f"vs_sma20={market_features['nifty_vs_sma20_pct']:.2f}%, "
                         f"vix={market_features['india_vix']:.1f}")
@@ -523,13 +528,13 @@ class MLVerdictService(VerdictService):
         # For live predictions, use current date unless analysis_date provided
         try:
             from datetime import datetime
-            
+
             # Get analysis date from indicators if available (for historical), otherwise use today
             if indicators and 'analysis_date' in indicators:
                 analysis_datetime = pd.to_datetime(indicators['analysis_date'])
             else:
                 analysis_datetime = datetime.now()
-            
+
             features['day_of_week'] = analysis_datetime.weekday()  # 0=Monday, 6=Sunday
             features['is_monday'] = 1.0 if analysis_datetime.weekday() == 0 else 0.0
             features['is_friday'] = 1.0 if analysis_datetime.weekday() == 4 else 0.0
@@ -538,7 +543,7 @@ class MLVerdictService(VerdictService):
             features['is_q4'] = 1.0 if analysis_datetime.month >= 10 else 0.0
             features['is_month_end'] = 1.0 if analysis_datetime.day >= 25 else 0.0
             features['is_quarter_end'] = 1.0 if (analysis_datetime.month in [3, 6, 9, 12] and analysis_datetime.day >= 25) else 0.0
-            
+
             logger.debug(f"Added time features: day={features['day_of_week']}, month={features['month']}")
         except Exception as e:
             logger.warning(f"Could not add time features: {e}, using defaults")
@@ -556,22 +561,22 @@ class MLVerdictService(VerdictService):
             # Interaction 1: RSI + Volume (panic selling with high volume)
             rsi_feature_name = f'rsi_{self.config.rsi_period if self.config else 10}'
             features['rsi_volume_interaction'] = features.get(rsi_feature_name, 50.0) * features.get('volume_ratio', 1.0)
-            
+
             # Interaction 2: Dip depth + Support distance (deep dip near support)
             features['dip_support_interaction'] = features.get('dip_depth_from_20d_high_pct', 0.0) * features.get('support_distance_pct', 0.0)
-            
+
             # Interaction 3: Extreme dip with high volume (binary flag)
             features['extreme_dip_high_volume'] = 1.0 if (
-                features.get('dip_depth_from_20d_high_pct', 0.0) > 10.0 and 
+                features.get('dip_depth_from_20d_high_pct', 0.0) > 10.0 and
                 features.get('volume_ratio', 1.0) > 1.5
             ) else 0.0
-            
+
             # Interaction 4: Bearish market + Deep dip (from backtest analysis)
             # Bearish markets show 19.8% success vs 13.4% in bullish
             features['bearish_deep_dip'] = (
                 1.0 if features.get('nifty_trend', 0.0) == -1.0 else 0.0
             ) * features.get('dip_depth_from_20d_high_pct', 0.0)
-            
+
             logger.debug("Added feature interactions")
         except Exception as e:
             logger.warning(f"Could not add feature interactions: {e}, using defaults")
