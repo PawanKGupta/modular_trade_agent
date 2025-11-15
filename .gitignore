@@ -38,8 +38,10 @@ htmlcov/
 .cursor/
 
 # Model files (large binary files)
+# Ignore temporary/test model files, but allow production models tracked by Git LFS
 *.pkl
-models/*.pkl
+# Production models in models/ directory are tracked by Git LFS
+!models/*.pkl
 
 # Temporary analysis and report files
 *_ANALYSIS_REPORT.md
