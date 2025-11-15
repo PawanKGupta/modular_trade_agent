@@ -407,14 +407,27 @@ class AnalysisService:
             if hasattr(self.verdict_service, 'get_last_ml_prediction'):
                 ml_prediction = self.verdict_service.get_last_ml_prediction()
                 if ml_prediction:
-                    logger.info(f"{ticker}: ✅ ML prediction retrieved - {ml_prediction['ml_verdict']} ({ml_prediction['ml_confidence']:.1%})")
+                    # Safely format ML confidence (handle MagicMock in tests)
+                    try:
+                        ml_confidence = ml_prediction.get('ml_confidence')
+                        if isinstance(ml_confidence, (int, float)):
+                            confidence_str = f"{ml_confidence:.1%}"
+                        else:
+                            confidence_str = str(ml_confidence)
+                        ml_verdict = ml_prediction.get('ml_verdict', 'unknown')
+                        logger.info(f"{ticker}: ✅ ML prediction retrieved - {ml_verdict} ({confidence_str})")
+                    except (TypeError, ValueError, AttributeError):
+                        # Fallback if formatting fails (e.g., MagicMock in tests)
+                        logger.info(f"{ticker}: ✅ ML prediction retrieved - {ml_prediction.get('ml_verdict', 'unknown')}")
+
                     # Check if ML verdict was used (confidence >= threshold)
                     if hasattr(self.verdict_service, 'ml_confidence_threshold'):
                         threshold = self.verdict_service.ml_confidence_threshold
                     else:
                         threshold = getattr(self.config, 'ml_confidence_threshold', 0.5)
 
-                    if ml_prediction.get('ml_confidence', 0) >= threshold:
+                    ml_confidence_val = ml_prediction.get('ml_confidence', 0)
+                    if isinstance(ml_confidence_val, (int, float)) and ml_confidence_val >= threshold:
                         verdict_source = 'ml'
                     else:
                         verdict_source = 'rule_based'
@@ -486,7 +499,7 @@ class AnalysisService:
                 "support_hold_count": int(dip_features.get('support_hold_count', 0)),
                 # ML PREDICTION (2025-11-11): Add ML prediction info for Telegram display
                 "ml_verdict": ml_prediction.get('ml_verdict') if ml_prediction else None,
-                "ml_confidence": round(ml_prediction.get('ml_confidence') * 100, 1) if ml_prediction else None,
+                "ml_confidence": round(float(ml_prediction.get('ml_confidence', 0)) * 100, 1) if ml_prediction and isinstance(ml_prediction.get('ml_confidence'), (int, float)) else None,
                 "ml_probabilities": ml_prediction.get('ml_probabilities') if ml_prediction else None,
                 "rule_verdict": verdict,  # Rule-based verdict (for comparison)
                 "verdict_source": verdict_source,  # 'ml' or 'rule_based'
