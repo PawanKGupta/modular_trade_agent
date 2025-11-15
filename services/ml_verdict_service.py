@@ -67,11 +67,35 @@ class MLVerdictService(VerdictService):
                 logger.info(f"✅ ML verdict model loaded from {model_path}")
 
                 # Load feature columns if available
-                feature_cols_path = Path(model_path).parent / f"{Path(model_path).stem.replace('model_', '')}_features.txt"
-                if feature_cols_path.exists():
+                # Try multiple possible filenames for backward compatibility
+                model_stem = Path(model_path).stem
+                
+                # Extract model type from filename (e.g., "verdict_model_random_forest" -> "random_forest")
+                model_type = None
+                if 'random_forest' in model_stem:
+                    model_type = 'random_forest'
+                elif 'xgboost' in model_stem:
+                    model_type = 'xgboost'
+                
+                possible_paths = [
+                    # Current format: verdict_model_features_{model_type}.txt (from training service)
+                    Path(model_path).parent / f"verdict_model_features_{model_type}.txt" if model_type else None,
+                    # Alternative format: {stem}_features.txt
+                    Path(model_path).parent / f"{model_stem.replace('model_', '')}_features.txt",
+                    # Legacy format: verdict_model_features_enhanced.txt
+                    Path(model_path).parent / "verdict_model_features_enhanced.txt",
+                ]
+                
+                feature_cols_path = None
+                for path in possible_paths:
+                    if path and path.exists():
+                        feature_cols_path = path
+                        break
+                
+                if feature_cols_path:
                     with open(feature_cols_path, 'r') as f:
                         self.feature_cols = [line.strip() for line in f if line.strip()]
-                    logger.info(f"   Loaded {len(self.feature_cols)} feature columns")
+                    logger.info(f"   Loaded {len(self.feature_cols)} feature columns from {feature_cols_path.name}")
                 else:
                     logger.warning("Feature columns file not found. Will extract features dynamically.")
 
