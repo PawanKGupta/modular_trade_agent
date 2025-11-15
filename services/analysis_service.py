@@ -291,7 +291,14 @@ class AnalysisService:
             # These features help ML distinguish between good dips vs dead cat bounces
             try:
                 dip_features = calculate_all_dip_features(df)
-                logger.debug(f"{ticker}: Calculated dip features: depth={dip_features['dip_depth_from_20d_high_pct']:.1f}%, consecutive_red={dip_features['consecutive_red_days']}, slowing={dip_features['decline_rate_slowing']}")
+                # Safe logging - ensure values are numeric before formatting
+                try:
+                    depth = float(dip_features.get('dip_depth_from_20d_high_pct', 0))
+                    red_days = int(dip_features.get('consecutive_red_days', 0))
+                    slowing = bool(dip_features.get('decline_rate_slowing', False))
+                    logger.debug(f"{ticker}: Calculated dip features: depth={depth:.1f}%, consecutive_red={red_days}, slowing={slowing}")
+                except (ValueError, TypeError, KeyError):
+                    logger.debug(f"{ticker}: Calculated dip features (formatting skipped)")
             except Exception as e:
                 logger.warning(f"{ticker}: Failed to calculate dip features: {e}, using defaults")
                 dip_features = {
@@ -396,10 +403,34 @@ class AnalysisService:
 
             # Retrieve ML prediction info (if MLVerdictService is used and ML model is loaded)
             ml_prediction = None
+            verdict_source = 'rule_based'  # Default to rule-based
             if hasattr(self.verdict_service, 'get_last_ml_prediction'):
                 ml_prediction = self.verdict_service.get_last_ml_prediction()
                 if ml_prediction:
-                    logger.info(f"{ticker}: ✅ ML prediction retrieved - {ml_prediction['ml_verdict']} ({ml_prediction['ml_confidence']:.1%})")
+                    # Safely format ML confidence (handle MagicMock in tests)
+                    try:
+                        ml_confidence = ml_prediction.get('ml_confidence')
+                        if isinstance(ml_confidence, (int, float)):
+                            confidence_str = f"{ml_confidence:.1%}"
+                        else:
+                            confidence_str = str(ml_confidence)
+                        ml_verdict = ml_prediction.get('ml_verdict', 'unknown')
+                        logger.info(f"{ticker}: ✅ ML prediction retrieved - {ml_verdict} ({confidence_str})")
+                    except (TypeError, ValueError, AttributeError):
+                        # Fallback if formatting fails (e.g., MagicMock in tests)
+                        logger.info(f"{ticker}: ✅ ML prediction retrieved - {ml_prediction.get('ml_verdict', 'unknown')}")
+
+                    # Check if ML verdict was used (confidence >= threshold)
+                    if hasattr(self.verdict_service, 'ml_confidence_threshold'):
+                        threshold = self.verdict_service.ml_confidence_threshold
+                    else:
+                        threshold = getattr(self.config, 'ml_confidence_threshold', 0.5)
+
+                    ml_confidence_val = ml_prediction.get('ml_confidence', 0)
+                    if isinstance(ml_confidence_val, (int, float)) and ml_confidence_val >= threshold:
+                        verdict_source = 'ml'
+                    else:
+                        verdict_source = 'rule_based'
                 else:
                     logger.warning(f"{ticker}: ⚠️ ML prediction NOT available (returned None)")
 
@@ -460,16 +491,18 @@ class AnalysisService:
                 "vol_strong": volume_data.get('vol_strong', False),  # For ML training
                 "is_above_ema200": is_above_ema200,  # For ML training
                 # ML ENHANCED DIP FEATURES (2025-01-10): New features for dip-buying strategy
-                "dip_depth_from_20d_high_pct": round(dip_features['dip_depth_from_20d_high_pct'], 2),
-                "consecutive_red_days": dip_features['consecutive_red_days'],
-                "dip_speed_pct_per_day": round(dip_features['dip_speed_pct_per_day'], 2),
-                "decline_rate_slowing": dip_features['decline_rate_slowing'],
-                "volume_green_vs_red_ratio": round(dip_features['volume_green_vs_red_ratio'], 2),
-                "support_hold_count": dip_features['support_hold_count'],
+                "dip_depth_from_20d_high_pct": round(float(dip_features.get('dip_depth_from_20d_high_pct', 0)), 2),
+                "consecutive_red_days": int(dip_features.get('consecutive_red_days', 0)),
+                "dip_speed_pct_per_day": round(float(dip_features.get('dip_speed_pct_per_day', 0)), 2),
+                "decline_rate_slowing": bool(dip_features.get('decline_rate_slowing', False)),
+                "volume_green_vs_red_ratio": round(float(dip_features.get('volume_green_vs_red_ratio', 1.0)), 2),
+                "support_hold_count": int(dip_features.get('support_hold_count', 0)),
                 # ML PREDICTION (2025-11-11): Add ML prediction info for Telegram display
                 "ml_verdict": ml_prediction.get('ml_verdict') if ml_prediction else None,
-                "ml_confidence": round(ml_prediction.get('ml_confidence') * 100, 1) if ml_prediction else None,
+                "ml_confidence": round(float(ml_prediction.get('ml_confidence', 0)) * 100, 1) if ml_prediction and isinstance(ml_prediction.get('ml_confidence'), (int, float)) else None,
                 "ml_probabilities": ml_prediction.get('ml_probabilities') if ml_prediction else None,
+                "rule_verdict": verdict,  # Rule-based verdict (for comparison)
+                "verdict_source": verdict_source,  # 'ml' or 'rule_based'
                 "status": "success"
             }
 
