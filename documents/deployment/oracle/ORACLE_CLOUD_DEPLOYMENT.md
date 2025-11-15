@@ -156,10 +156,28 @@ sudo apt update && sudo apt upgrade -y
 # Install Python and dependencies
 sudo apt install -y python3.12 python3-pip python3.12-venv git cron
 
+# Install Chromium browser (required for stock scraping)
+sudo apt install -y chromium-browser chromium-chromedriver
+
+# Install Chromium dependencies for headless mode
+# Note: Package names may vary by Ubuntu version
+sudo apt install -y \
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+    libdrm2 libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 \
+    libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 || \
+sudo apt install -y \
+    libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
+    libdrm2 libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 \
+    libxfixes3 libxrandr2 libgbm1 libasound2t64 libpango-1.0-0 libcairo2
+
 # Clone your repository
 cd /home/ubuntu
 git clone https://github.com/PawanKGupta/modular_trade_agent.git
 cd modular_trade_agent
+
+# Install Git LFS (required for ML model files)
+sudo apt install -y git-lfs
+git lfs install
 
 # Create and activate virtual environment
 python3.12 -m venv .venv
@@ -170,6 +188,9 @@ pip install -r requirements.txt
 
 # Optional: Install development dependencies (for testing)
 # pip install -r requirements-dev.txt
+
+# Pull ML model files (if using Git LFS)
+git lfs pull
 
 # Setup credentials
 # For paper trading (default), only cred.env is needed (Telegram alerts)
@@ -323,7 +344,13 @@ echo "🚀 Setting up Trading System on Oracle Cloud..."
 sudo apt update && sudo apt upgrade -y
 
 # Install dependencies
-sudo apt install -y python3.12 python3-pip python3.12-venv git cron curl
+sudo apt install -y python3.12 python3-pip python3.12-venv git cron curl git-lfs
+
+# Install Chromium browser (required for stock scraping)
+sudo apt install -y chromium-browser chromium-chromedriver \
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+    libdrm2 libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 \
+    libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2
 
 # Clone repository
 cd /home/ubuntu
@@ -333,6 +360,10 @@ if [ ! -d "modular_trade_agent" ]; then
 fi
 
 cd modular_trade_agent
+
+# Setup Git LFS for ML model files
+git lfs install
+git lfs pull
 
 # Create and activate virtual environment
 python3.12 -m venv .venv
@@ -578,6 +609,56 @@ Create alarms for:
 With **24 GB RAM** vs GCP's 1 GB!
 
 ## 🆘 Troubleshooting
+
+### Issue: "Chrome/Chromium binary not found"
+
+**Error:**
+```
+ERROR — scrapping — Chrome/Chromium binary not found. Please install Chromium: sudo apt-get install chromium-browser
+```
+
+**Solution:**
+```bash
+# Install Chromium and dependencies
+sudo apt-get update
+
+# Install Chromium and dependencies
+# Ubuntu will automatically select correct package versions (with/without t64 suffix)
+sudo apt-get install -y chromium-browser chromium-chromedriver \
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+    libdrm2 libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 \
+    libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2
+
+# Verify installation
+chromium-browser --version || chromium --version
+```
+
+### Issue: "Failed to load ML model: 118"
+
+**Error:**
+```
+WARNING — ml_verdict_service — ⚠️ Failed to load ML model: 118, using rule-based logic
+```
+
+**Solution:**
+```bash
+cd /home/ubuntu/modular_trade_agent
+
+# Install Git LFS if not already installed
+sudo apt install -y git-lfs
+git lfs install
+
+# Pull ML model files from Git LFS
+git lfs pull
+
+# Verify model file exists
+ls -la models/verdict_model_random_forest.pkl
+
+# If still missing, you may need to:
+# 1. Ensure you're on the correct branch that has the model
+# 2. Or copy the model file manually from your local machine:
+#    scp models/verdict_model_random_forest.pkl ubuntu@YOUR_SERVER_IP:~/modular_trade_agent/models/
+```
 
 ### Issue: "Out of capacity" for Ampere instances
 
