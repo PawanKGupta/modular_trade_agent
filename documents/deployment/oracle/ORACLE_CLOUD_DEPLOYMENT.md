@@ -36,6 +36,34 @@ Oracle Cloud offers one of the most generous free tiers available - perfect for 
 
 **Winner: Oracle Cloud! 🏆**
 
+## 💰 Capital Requirements for Paper Trading
+
+### Strategy Configuration
+- **Capital per stock**: ₹2,00,000 (2 lakh)
+- **Max stocks in portfolio**: 6
+- **Pyramiding**: Averaging down on dips (RSI < 20, RSI < 10)
+
+### Capital Calculation
+
+| Scenario | Capital per Stock | Total for 6 Stocks |
+|----------|------------------|-------------------|
+| **Best Case** (no averaging) | ₹2,00,000 | ₹12,00,000 |
+| **Average Case** (1 average down) | ₹4,00,000 | ₹24,00,000 |
+| **Worst Case** (2 average downs) | ₹6,00,000 | ₹36,00,000 |
+| **Recommended** (with buffer) | - | **₹30,00,000** |
+
+**Capital Breakdown:**
+- Base requirement: ₹12,00,000 (6 stocks × ₹2,00,000)
+- Pyramiding buffer: ₹18,00,000 (for averaging down)
+- **Total recommended: ₹30,00,000**
+
+This capital allocation ensures you can:
+- Enter 6 stocks with ₹2,00,000 each
+- Average down 1-2 times per stock if needed
+- Handle worst-case scenarios for most positions
+
+---
+
 ## 🚀 Quick Start Deployment
 
 ### Step 1: Create Oracle Cloud Account
@@ -126,24 +154,35 @@ ssh ubuntu@$INSTANCE_IP
 sudo apt update && sudo apt upgrade -y
 
 # Install Python and dependencies
-sudo apt install -y python3.12 python3-pip git cron
+sudo apt install -y python3.12 python3-pip python3.12-venv git cron
 
 # Clone your repository
 cd /home/ubuntu
-git clone https://github.com/your-username/modular_trade_agent.git
+git clone https://github.com/PawanKGupta/modular_trade_agent.git
 cd modular_trade_agent
 
+# Create and activate virtual environment
+python3.12 -m venv .venv
+source .venv/bin/activate
+
 # Install Python requirements
-pip3 install -r requirements.txt
+pip install -r requirements.txt
+
+# Optional: Install development dependencies (for testing)
+# pip install -r requirements-dev.txt
 
 # Setup credentials
+# For paper trading (default), only cred.env is needed (Telegram alerts)
 # Option 1: Upload via SCP
-# scp modules/kotak_neo_auto_trader/kotak_neo.env ubuntu@$INSTANCE_IP:~/modular_trade_agent/modules/kotak_neo_auto_trader/
 # scp cred.env ubuntu@$INSTANCE_IP:~/modular_trade_agent/
 
 # Option 2: Create manually on VM
-nano modules/kotak_neo_auto_trader/kotak_neo.env
 nano cred.env
+
+# OPTIONAL: Kotak Neo credentials (ONLY for live trading service - production)
+# Only create kotak_neo.env if you want to deploy with real money trading
+# WARNING: Live trading executes real trades with real money!
+# nano modules/kotak_neo_auto_trader/kotak_neo.env
 
 # Create directories
 mkdir -p data analysis_results logs
@@ -156,28 +195,64 @@ mkdir -p data analysis_results logs
 crontab -e
 
 # Add these lines:
-# Analysis and buy orders (Mon-Fri 4:00 PM IST = 10:30 AM UTC)
-30 10 * * 1-5 cd /home/ubuntu/modular_trade_agent && /usr/bin/python3 -m src.presentation.cli.application analyze --backtest >> /home/ubuntu/logs/analysis.log 2>&1
-35 10 * * 1-5 cd /home/ubuntu/modular_trade_agent && /usr/bin/python3 -m modules.kotak_neo_auto_trader.run_auto_trade --env modules/kotak_neo_auto_trader/kotak_neo.env >> /home/ubuntu/logs/buy-orders.log 2>&1
+# Analysis (Mon-Fri 4:00 PM IST = 10:30 AM UTC)
+30 10 * * 1-5 cd /home/ubuntu/modular_trade_agent && source .venv/bin/activate && python -m src.presentation.cli.application analyze --backtest >> /home/ubuntu/logs/analysis.log 2>&1
 
-# Sell engine (Mon-Fri 9:15 AM IST = 3:45 AM UTC)
-45 3 * * 1-5 cd /home/ubuntu/modular_trade_agent && /usr/bin/python3 -m modules.kotak_neo_auto_trader.run_sell_orders >> /home/ubuntu/logs/sell-engine.log 2>&1
+# Unified Paper Trading Service (RECOMMENDED - Default)
+# Mon-Fri, runs all day from 9:00 AM IST = 3:30 AM UTC
+# Note: Paper trading doesn't require Kotak Neo credentials - safe for testing
+# Capital: ₹30,00,000 (for 6 stocks × ₹2,00,000 each with pyramiding buffer)
+30 3 * * 1-5 cd /home/ubuntu/modular_trade_agent && source .venv/bin/activate && python -m modules.kotak_neo_auto_trader.run_trading_service_paper --capital 3000000 >> /home/ubuntu/logs/tradeagent-unified.log 2>&1
+
+# OPTIONAL: Live Trading Service (PRODUCTION ONLY - Requires Kotak Neo credentials)
+# Uncomment ONLY if you want to deploy with real money trading
+# WARNING: This will execute real trades with real money!
+# 30 3 * * 1-5 cd /home/ubuntu/modular_trade_agent && source .venv/bin/activate && python -m modules.kotak_neo_auto_trader.run_trading_service --env modules/kotak_neo_auto_trader/kotak_neo.env >> /home/ubuntu/logs/tradeagent-unified.log 2>&1
+
+# Alternative: Separate services (if not using unified service)
+# Buy orders (Mon-Fri 4:05 PM IST = 10:35 AM UTC) - DEPRECATED, use unified service instead
+# 35 10 * * 1-5 cd /home/ubuntu/modular_trade_agent && source .venv/bin/activate && python -m modules.kotak_neo_auto_trader.run_auto_trade --env modules/kotak_neo_auto_trader/kotak_neo.env >> /home/ubuntu/logs/buy-orders.log 2>&1
+
+# Sell engine (Mon-Fri 9:15 AM IST = 3:45 AM UTC) - DEPRECATED, use unified service instead
+# 45 3 * * 1-5 cd /home/ubuntu/modular_trade_agent && source .venv/bin/activate && python -m modules.kotak_neo_auto_trader.run_sell_orders >> /home/ubuntu/logs/sell-engine.log 2>&1
 
 # Save and exit (Ctrl+X, Y, Enter)
 ```
 
 ### Step 6: Setup as Systemd Service (Alternative to Cron)
 
+**Service Options:**
+
+1. **Paper Trading Service (RECOMMENDED - Default)**
+   - Service: `run_trading_service_paper.py`
+   - **No broker login required** - safe for testing without real money
+   - Uses virtual capital: ₹30,00,000 (for 6 stocks × ₹2,00,000 each with pyramiding buffer)
+   - Perfect for testing and development
+   - **Capital breakdown**: ₹2,00,000 per stock × 6 stocks = ₹12,00,000 base + ₹18,00,000 buffer for pyramiding
+
+2. **Live Trading Service (OPTIONAL - Production Only)**
+   - Service: `run_trading_service.py`
+   - **Requires Kotak Neo credentials** (`kotak_neo.env`)
+   - **Executes real trades with real money** ⚠️
+   - Only use when ready for production deployment
+
+**Both services:**
+- Maintain a single persistent session all day (no JWT expiry issues)
+- Run all trading tasks automatically at scheduled times
+- Replace multiple separate cron jobs with one service
+
 For better reliability, use systemd:
 
 ```bash
-# Create service for sell engine
-sudo nano /etc/systemd/system/trading-sell-engine.service
+# Create service for unified trading service
+sudo nano /etc/systemd/system/tradeagent-unified.service
 ```
+
+**Option 1: Paper Trading Service (Default - Recommended)**
 
 ```ini
 [Unit]
-Description=Trading Sell Engine
+Description=Unified Paper Trading Service (TradeAgent)
 After=network.target
 
 [Service]
@@ -185,11 +260,35 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/modular_trade_agent
 Environment="PYTHONPATH=/home/ubuntu/modular_trade_agent"
-ExecStart=/usr/bin/python3 -m modules.kotak_neo_auto_trader.run_sell_orders
+ExecStart=/bin/bash -c 'cd /home/ubuntu/modular_trade_agent && source .venv/bin/activate && python -m modules.kotak_neo_auto_trader.run_trading_service_paper --capital 3000000'
 Restart=always
 RestartSec=60
-StandardOutput=append:/home/ubuntu/logs/sell-engine.log
-StandardError=append:/home/ubuntu/logs/sell-engine-error.log
+StandardOutput=append:/home/ubuntu/logs/tradeagent-unified.log
+StandardError=append:/home/ubuntu/logs/tradeagent-unified-error.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Option 2: Live Trading Service (Production Only - Optional)**
+
+⚠️ **WARNING: This executes real trades with real money!**
+
+```ini
+[Unit]
+Description=Unified Live Trading Service (TradeAgent - Production)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/modular_trade_agent
+Environment="PYTHONPATH=/home/ubuntu/modular_trade_agent"
+ExecStart=/bin/bash -c 'cd /home/ubuntu/modular_trade_agent && source .venv/bin/activate && python -m modules.kotak_neo_auto_trader.run_trading_service --env modules/kotak_neo_auto_trader/kotak_neo.env'
+Restart=always
+RestartSec=60
+StandardOutput=append:/home/ubuntu/logs/tradeagent-unified.log
+StandardError=append:/home/ubuntu/logs/tradeagent-unified-error.log
 
 [Install]
 WantedBy=multi-user.target
@@ -198,11 +297,14 @@ WantedBy=multi-user.target
 ```bash
 # Enable and start
 sudo systemctl daemon-reload
-sudo systemctl enable trading-sell-engine
-sudo systemctl start trading-sell-engine
+sudo systemctl enable tradeagent-unified
+sudo systemctl start tradeagent-unified
 
 # Check status
-sudo systemctl status trading-sell-engine
+sudo systemctl status tradeagent-unified
+
+# View logs
+sudo journalctl -u tradeagent-unified -f
 ```
 
 ## 📦 One-Click Setup Script
@@ -221,7 +323,7 @@ echo "🚀 Setting up Trading System on Oracle Cloud..."
 sudo apt update && sudo apt upgrade -y
 
 # Install dependencies
-sudo apt install -y python3.12 python3-pip git cron curl
+sudo apt install -y python3.12 python3-pip python3.12-venv git cron curl
 
 # Clone repository
 cd /home/ubuntu
@@ -232,38 +334,87 @@ fi
 
 cd modular_trade_agent
 
+# Create and activate virtual environment
+python3.12 -m venv .venv
+source .venv/bin/activate
+
 # Install Python requirements
-pip3 install -r requirements.txt
+pip install -r requirements.txt
+
+# Optional: Install development dependencies (for testing)
+# pip install -r requirements-dev.txt
 
 # Create directories
 mkdir -p data analysis_results logs modules/kotak_neo_auto_trader
 
 # Setup credentials
 echo "📝 Setting up credentials..."
-echo "Create modules/kotak_neo_auto_trader/kotak_neo.env with your Kotak Neo credentials"
-echo "Create cred.env with your Telegram credentials"
-echo "Press Enter when done..."
-read
+echo ""
+echo "DEFAULT: Paper Trading (Recommended)"
+echo "  - Only cred.env is needed (Telegram alerts)"
+echo "  - No broker login required"
+echo "  - Safe for testing without real money"
+echo ""
+echo "OPTIONAL: Live Trading (Production Only)"
+echo "  - Requires kotak_neo.env (Kotak Neo credentials)"
+echo "  - WARNING: Executes real trades with real money!"
+echo "  - Only use when ready for production deployment"
+echo ""
+echo "Create cred.env with your Telegram credentials:"
+read -p "Press Enter to continue..."
+nano cred.env
+
+echo ""
+read -p "Do you want to set up live trading (requires Kotak Neo credentials)? [y/N] " setup_live
+if [[ $setup_live =~ ^[Yy]$ ]]; then
+    echo "⚠️  WARNING: Live trading will execute real trades with real money!"
+    read -p "Are you sure you want to continue? [y/N] " confirm
+    if [[ $confirm =~ ^[Yy]$ ]]; then
+        nano modules/kotak_neo_auto_trader/kotak_neo.env
+        echo "✅ Live trading credentials configured"
+    else
+        echo "Skipping live trading setup"
+    fi
+else
+    echo "Using paper trading (default) - no broker credentials needed"
+fi
 
 # Setup cron jobs
 (crontab -l 2>/dev/null; cat << 'EOF'
-# Trading System - Analysis and Buy Orders (Mon-Fri 4:00 PM IST)
-30 10 * * 1-5 cd /home/ubuntu/modular_trade_agent && /usr/bin/python3 -m src.presentation.cli.application analyze --backtest >> /home/ubuntu/logs/analysis.log 2>&1
-35 10 * * 1-5 cd /home/ubuntu/modular_trade_agent && /usr/bin/python3 -m modules.kotak_neo_auto_trader.run_auto_trade --env modules/kotak_neo_auto_trader/kotak_neo.env >> /home/ubuntu/logs/buy-orders.log 2>&1
+# Trading System - Analysis (Mon-Fri 4:00 PM IST = 10:30 AM UTC)
+30 10 * * 1-5 cd /home/ubuntu/modular_trade_agent && source .venv/bin/activate && python -m src.presentation.cli.application analyze --backtest >> /home/ubuntu/logs/analysis.log 2>&1
 
-# Trading System - Sell Engine (Mon-Fri 9:15 AM IST)
-45 3 * * 1-5 cd /home/ubuntu/modular_trade_agent && /usr/bin/python3 -m modules.kotak_neo_auto_trader.run_sell_orders >> /home/ubuntu/logs/sell-engine.log 2>&1
+# Trading System - Unified Paper Trading Service (RECOMMENDED - Default)
+# Mon-Fri, runs all day from 9:00 AM IST = 3:30 AM UTC
+# Capital: ₹30,00,000 (for 6 stocks × ₹2,00,000 each with pyramiding buffer)
+30 3 * * 1-5 cd /home/ubuntu/modular_trade_agent && source .venv/bin/activate && python -m modules.kotak_neo_auto_trader.run_trading_service_paper --capital 3000000 >> /home/ubuntu/logs/tradeagent-unified.log 2>&1
+
+# OPTIONAL: Live Trading Service (PRODUCTION ONLY - Uncomment if using live trading)
+# WARNING: This will execute real trades with real money!
+# 30 3 * * 1-5 cd /home/ubuntu/modular_trade_agent && source .venv/bin/activate && python -m modules.kotak_neo_auto_trader.run_trading_service --env modules/kotak_neo_auto_trader/kotak_neo.env >> /home/ubuntu/logs/tradeagent-unified.log 2>&1
 EOF
 ) | crontab -
 
 echo "✅ Setup complete!"
 echo ""
 echo "📋 Next steps:"
-echo "1. Add your credentials to:"
-echo "   - modules/kotak_neo_auto_trader/kotak_neo.env"
-echo "   - cred.env"
-echo "2. Test: cd modular_trade_agent && python3 -m src.presentation.cli.application analyze --backtest"
-echo "3. View logs: tail -f /home/ubuntu/logs/*.log"
+echo "1. Activate virtual environment: source .venv/bin/activate"
+echo "2. Add your Telegram credentials to cred.env (for alerts)"
+echo "   Note: Kotak Neo credentials NOT needed for paper trading"
+echo "3. Test analysis: python -m src.presentation.cli.application analyze --backtest"
+echo "4. Test paper trading service: python -m modules.kotak_neo_auto_trader.run_trading_service_paper --capital 3000000"
+echo "5. View logs: tail -f /home/ubuntu/logs/*.log"
+echo ""
+echo "💡 Paper Trading Configuration:"
+echo "   - Virtual capital: ₹30,00,000"
+echo "   - Strategy: 6 stocks max, ₹2,00,000 per stock"
+echo "   - Pyramiding: Supports averaging down (RSI < 20, RSI < 10)"
+echo "   - Capital breakdown: ₹12,00,000 base + ₹18,00,000 buffer for pyramiding"
+echo ""
+echo "💡 Paper Trading Benefits:"
+echo "   - No broker login required"
+echo "   - Safe testing without real money"
+echo "   - Same workflows as live trading"
 echo ""
 echo "🎉 Your trading system is ready on Oracle Cloud (FREE)!"
 ```
