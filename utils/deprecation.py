@@ -200,4 +200,3 @@ Benefits:
     }
     
     return guides.get(function_name, f"No migration guide available for {function_name}")
-

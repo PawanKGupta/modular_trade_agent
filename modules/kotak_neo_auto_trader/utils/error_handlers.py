@@ -141,4 +141,3 @@ class BrokerErrorHandler:
         if result is None:
             return self.default_return
         return result
-

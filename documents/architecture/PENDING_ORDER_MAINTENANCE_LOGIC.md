@@ -373,5 +373,3 @@ The pending order maintenance system provides:
 ✅ **Reconciliation**: EOD cleanup reconciles with broker state  
 
 This ensures orders are tracked accurately from placement through execution/rejection, with automatic cleanup to prevent data accumulation.
-
-

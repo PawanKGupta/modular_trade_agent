@@ -1,6 +1,12 @@
 # Backtest Integration Fix - Final Summary
 
-## Issue
+> **📅 Document Date**: Pre-November 2025  
+> **Status**: Historical - Implementation details may have changed with the November 2025 refactor.  
+> See: `../INTEGRATED_BACKTEST_REFACTOR_NOV_2025.md` for current implementation.
+
+---
+
+## Issue (Historical)
 The new CLI was not using the correct legacy backtest logic, resulting in different backtest scores and trade counts compared to the legacy `trade_agent.py` script.
 
 ## Root Cause

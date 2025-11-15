@@ -221,5 +221,3 @@ class TestOrderFieldExtractor:
         assert OrderFieldExtractor.get_price(order) == 2100.50
         assert OrderFieldExtractor.is_sell_order(order) is True
         assert OrderFieldExtractor.is_buy_order(order) is False
-
-

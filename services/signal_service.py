@@ -26,7 +26,7 @@ class SignalService:
             config: Strategy configuration (uses default if None)
         """
         self.config = config or StrategyConfig.default()
-        self.tf_analyzer = TimeframeAnalysis()
+        self.tf_analyzer = TimeframeAnalysis(config=self.config)
     
     def detect_pattern_signals(
         self, 
@@ -56,8 +56,8 @@ class SignalService:
             if prev is not None and is_bullish_engulfing(prev, last):
                 signals.append("bullish_engulfing")
             
-            # Bullish divergence
-            if bullish_divergence(df):
+            # Bullish divergence - use configurable RSI period
+            if bullish_divergence(df, rsi_period=self.config.rsi_period, lookback_period=10):
                 signals.append("bullish_divergence")
                 
         except Exception as e:
@@ -222,4 +222,3 @@ class SignalService:
             'timeframe_confirmation': timeframe_confirmation,
             'news_sentiment': news_sentiment,
         }
-

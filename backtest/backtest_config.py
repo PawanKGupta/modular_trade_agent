@@ -4,6 +4,8 @@ Backtest Configuration Module
 This module contains all configuration settings for the backtesting system.
 """
 
+from typing import Optional
+
 class BacktestConfig:
     """Configuration class for backtesting parameters"""
     
@@ -34,6 +36,40 @@ class BacktestConfig:
     # Reporting Settings
     DETAILED_LOGGING = True   # Enable detailed logging of trades
     EXPORT_TRADES = True      # Export individual trades to CSV
+    
+    @classmethod
+    def from_strategy_config(cls, strategy_config) -> 'BacktestConfig':
+        """
+        Create BacktestConfig from StrategyConfig to sync RSI period
+        
+        Args:
+            strategy_config: StrategyConfig instance
+        
+        Returns:
+            BacktestConfig instance with synced RSI period
+        """
+        config = cls()
+        # Sync RSI period from StrategyConfig
+        config.RSI_PERIOD = strategy_config.rsi_period
+        # Sync RSI thresholds if available
+        if hasattr(strategy_config, 'rsi_oversold'):
+            config.RSI_OVERSOLD_LEVEL_1 = int(strategy_config.rsi_oversold)
+        if hasattr(strategy_config, 'rsi_extreme_oversold'):
+            config.RSI_OVERSOLD_LEVEL_2 = int(strategy_config.rsi_extreme_oversold)
+            # Level 3 can be half of extreme oversold
+            config.RSI_OVERSOLD_LEVEL_3 = int(strategy_config.rsi_extreme_oversold / 2)
+        return config
+    
+    @classmethod
+    def default_synced(cls) -> 'BacktestConfig':
+        """
+        Create BacktestConfig synced with default StrategyConfig
+        
+        Returns:
+            BacktestConfig instance synced with StrategyConfig.default()
+        """
+        from config.strategy_config import StrategyConfig
+        return cls.from_strategy_config(StrategyConfig.default())
     
     @classmethod
     def get_config_dict(cls):
