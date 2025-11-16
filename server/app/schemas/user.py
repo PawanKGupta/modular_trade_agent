@@ -31,3 +31,18 @@ class BrokerCredsRequest(BaseModel):
 class BrokerTestResponse(BaseModel):
     ok: bool
     message: str | None = None
+
+
+class BrokerCredsInfo(BaseModel):
+    """Information about stored broker credentials."""
+
+    has_creds: bool
+    api_key: str | None = None  # Full value when requested
+    api_secret: str | None = None  # Full value when requested
+    mobile_number: str | None = None
+    password: str | None = None
+    mpin: str | None = None
+    totp_secret: str | None = None
+    environment: str | None = None
+    api_key_masked: str | None = None  # e.g., "****1234" (last 4 chars)
+    api_secret_masked: str | None = None  # e.g., "****5678"

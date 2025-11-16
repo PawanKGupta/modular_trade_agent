@@ -47,6 +47,22 @@ export const handlers = [
 	http.get(API('/user/broker/status'), async () => {
 		return HttpResponse.json({ broker: 'kotak-neo', status: 'Connected' });
 	}),
+	http.get(API('/user/broker/creds/info'), async ({ request }) => {
+		const url = new URL(request.url);
+		const showFull = url.searchParams.get('show_full') === 'true';
+		if (showFull) {
+			return HttpResponse.json({
+				has_creds: true,
+				api_key: 'test-api-key-1234',
+				api_secret: 'test-api-secret-5678',
+				mobile_number: '9876543210',
+				password: 'testpassword',
+				mpin: '1234',
+				environment: 'prod'
+			});
+		}
+		return HttpResponse.json({ has_creds: true, api_key_masked: '****1234', api_secret_masked: '****5678' });
+	}),
 	// orders
 	http.get(API('/user/orders'), async ({ request }) => {
 		const url = new URL(request.url);

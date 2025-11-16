@@ -1,17 +1,20 @@
-# ruff: noqa: B008, PLR0913, PLR0911, PLR0912
+# ruff: noqa: B008, PLR0913, PLR0911, PLR0912, PLC0415
+import ast
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import TradeMode, Users
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
-from ..core.crypto import encrypt_blob
+from ..core.crypto import decrypt_blob, encrypt_blob
 from ..core.deps import get_current_user, get_db
-from ..schemas.user import BrokerCredsRequest, BrokerTestResponse
+from ..schemas.user import BrokerCredsInfo, BrokerCredsRequest, BrokerTestResponse
 
 router = APIRouter()
 
@@ -58,12 +61,34 @@ def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
     try:
         # Step 1: Initialize client (validates consumer_key/consumer_secret format)
         try:
+            # Ensure all required parameters are strings, not None
+            consumer_key = str(creds.consumer_key).strip() if creds.consumer_key else ""
+            consumer_secret = str(creds.consumer_secret).strip() if creds.consumer_secret else ""
+            environment = str(creds.environment).strip() if creds.environment else "prod"
+
+            if not consumer_key or not consumer_secret:
+                return False, "Consumer key and secret cannot be empty"
+
             client = NeoAPI(
-                consumer_key=creds.consumer_key,
-                consumer_secret=creds.consumer_secret,
-                environment=creds.environment,
+                consumer_key=consumer_key,
+                consumer_secret=consumer_secret,
+                environment=environment,
                 neo_fin_key="neotradeapi",
             )
+
+            # Validate client was created successfully
+            if client is None:
+                return False, "Failed to create client: SDK returned None"
+
+        except TypeError as te:
+            error_msg = str(te) if te else "Type error"
+            if "NoneType" in error_msg or "concatenate" in error_msg.lower():
+                return (
+                    False,
+                    "SDK initialization error: Invalid consumer_key or consumer_secret format. "
+                    "Please check your credentials.",
+                )
+            return False, f"SDK type error during initialization: {error_msg}"
         except Exception as e:
             error_str = str(e) if e is not None else "Unknown error"
             return False, f"Failed to initialize client: {error_str}"
@@ -100,7 +125,27 @@ def _test_kotak_neo_login(client, creds: KotakNeoCreds) -> tuple[bool, str]:
         if not mobile or not password:
             return False, "Mobile number and password cannot be empty"
 
-        login_response = client.login(mobilenumber=mobile, password=password)
+        # Call login with explicit string conversion to avoid SDK internal None concatenation
+        try:
+            login_response = client.login(mobilenumber=mobile, password=password)
+        except TypeError as te:
+            # SDK might be trying to concatenate None with string internally
+            error_msg = str(te) if te else "Type error in SDK"
+            if "NoneType" in error_msg or "concatenate" in error_msg.lower():
+                return (
+                    False,
+                    "SDK error: Invalid client state. "
+                    "Ensure consumer_key and consumer_secret are valid "
+                    "and client is properly initialized.",
+                )
+            return False, f"SDK type error: {error_msg}"
+        except AttributeError as ae:
+            # SDK might be missing required attributes
+            error_msg = str(ae) if ae else "Attribute error in SDK"
+            return (
+                False,
+                f"SDK attribute error: {error_msg}. Client may not be properly initialized.",
+            )
 
         if login_response is None:
             return False, "Login failed: No response from server"
@@ -117,6 +162,16 @@ def _test_kotak_neo_login(client, creds: KotakNeoCreds) -> tuple[bool, str]:
 
         return False, "2FA credentials (MPIN or TOTP) required"
 
+    except TypeError as te:
+        # Catch TypeError specifically (the "can only concatenate str" error)
+        error_msg = str(te) if te else "Type error"
+        if "NoneType" in error_msg or "concatenate" in error_msg.lower():
+            return (
+                False,
+                "SDK internal error: Invalid client configuration. "
+                "Please verify your consumer_key and consumer_secret are correct.",
+            )
+        return False, f"Type error: {error_msg}"
     except Exception as e:
         error_str = str(e) if e is not None else "Unknown error"
         return False, f"Login error: {error_str}"
@@ -164,17 +219,31 @@ def save_broker_creds(
 ) -> dict[str, str]:
     repo = SettingsRepository(db)
     settings = repo.ensure_default(current.id)
+
+    # Store all credentials (basic + full auth if provided)
     creds_blob = {
         "api_key": payload.api_key,
         "api_secret": payload.api_secret,
     }
+    # Add full auth credentials if provided
+    if payload.mobile_number:
+        creds_blob["mobile_number"] = payload.mobile_number
+    if payload.password:
+        creds_blob["password"] = payload.password
+    if payload.mpin:
+        creds_blob["mpin"] = payload.mpin
+    if payload.totp_secret:
+        creds_blob["totp_secret"] = payload.totp_secret
+    if payload.environment:
+        creds_blob["environment"] = payload.environment
+
     settings = repo.update(
         settings,
         broker=payload.broker,
         broker_status="Stored",
     )
     # store encrypted creds
-    settings.broker_creds_encrypted = encrypt_blob(str(creds_blob).encode("utf-8"))
+    settings.broker_creds_encrypted = encrypt_blob(json.dumps(creds_blob).encode("utf-8"))
     db.commit()
     return {"status": "ok"}
 
@@ -237,3 +306,71 @@ def broker_status(
     repo = SettingsRepository(db)
     settings = repo.ensure_default(current.id)
     return {"broker": settings.broker, "status": settings.broker_status}
+
+
+@router.get("/creds/info", response_model=BrokerCredsInfo)
+def get_broker_creds_info(
+    show_full: Annotated[bool, Query(description="Show full credentials (not masked)")] = False,
+    db: Session = Depends(get_db),  # noqa: B008
+    current: Users = Depends(get_current_user),  # noqa: B008
+) -> BrokerCredsInfo:
+    """
+    Get information about stored broker credentials.
+    By default returns masked versions. Set show_full=true to get full values.
+    """
+
+    repo = SettingsRepository(db)
+    settings = repo.ensure_default(current.id)
+
+    if not settings.broker_creds_encrypted:
+        return BrokerCredsInfo(has_creds=False)
+
+    # Decrypt and extract info
+    try:
+        decrypted = decrypt_blob(settings.broker_creds_encrypted)
+        if not decrypted:
+            return BrokerCredsInfo(has_creds=False)
+
+        # Parse the stored credentials (stored as JSON)
+        creds_str = decrypted.decode("utf-8")
+        try:
+            creds_dict = json.loads(creds_str)
+        except json.JSONDecodeError:
+            # Fallback to ast.literal_eval for old format
+            if creds_str.startswith("{"):
+                creds_dict = ast.literal_eval(creds_str)
+            else:
+                return BrokerCredsInfo(has_creds=False)
+
+        api_key = creds_dict.get("api_key", "")
+        api_secret = creds_dict.get("api_secret", "")
+
+        # Mask credentials: show last 4 characters
+        MASK_LENGTH = 4
+
+        def mask_value(value: str) -> str:
+            if not value or len(value) < MASK_LENGTH:
+                return "****"
+            return "****" + value[-MASK_LENGTH:]
+
+        # Return full or masked based on query param
+        if show_full:
+            return BrokerCredsInfo(
+                has_creds=True,
+                api_key=api_key if api_key else None,
+                api_secret=api_secret if api_secret else None,
+                mobile_number=creds_dict.get("mobile_number"),
+                password=creds_dict.get("password"),
+                mpin=creds_dict.get("mpin"),
+                totp_secret=creds_dict.get("totp_secret"),
+                environment=creds_dict.get("environment", "prod"),
+            )
+        else:
+            return BrokerCredsInfo(
+                has_creds=True,
+                api_key_masked=mask_value(api_key) if api_key else None,
+                api_secret_masked=mask_value(api_secret) if api_secret else None,
+            )
+    except Exception:
+        # If decryption fails, assume no valid creds
+        return BrokerCredsInfo(has_creds=False)

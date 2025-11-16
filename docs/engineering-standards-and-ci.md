@@ -292,20 +292,37 @@ cd web; npx playwright install chromium; npm run test:e2e
 
 ### Broker Integration
 - POST `/api/v1/user/broker/creds` — Save encrypted broker credentials
-  - Body: `{ broker: str, api_key: str, api_secret: str }`
+  - Body: `{ broker: str, api_key: str, api_secret: str, mobile_number?: str, password?: str, mpin?: str, totp_secret?: str, environment?: str }`
   - Returns: `{ status: "ok" }`
   - Credentials are encrypted server-side using Fernet (symmetric encryption) and stored in `user_settings.broker_creds_encrypted`
+  - Supports saving basic credentials (api_key/api_secret) or full authentication credentials (including mobile, password, MPIN)
 - POST `/api/v1/user/broker/test` — Test broker connection
-  - Body: `{ broker: str, api_key: str, api_secret: str }`
+  - Body: `{ broker: str, api_key: str, api_secret: str, mobile_number?: str, password?: str, mpin?: str, totp_secret?: str, environment?: str }`
   - Returns: `{ ok: bool, message: str }`
-  - Currently validates that keys are non-empty; future: actual API call to broker
+  - **Basic test**: Only requires `api_key` and `api_secret` - validates client initialization
+  - **Full test**: Requires `mobile_number`, `password`, and `mpin` - performs actual login and 2FA authentication with Kotak Neo SDK
+  - Uses existing `neo_api_client` SDK integration for real authentication testing
 - GET `/api/v1/user/broker/status` — Get current broker connection status
   - Returns: `{ broker: str | null, status: str | null }`
+- GET `/api/v1/user/broker/creds/info` — Get stored broker credentials information
+  - Query params: `show_full: bool` (default: false)
+  - Returns masked credentials by default (last 4 characters visible)
+  - Returns full credentials when `show_full=true` (for viewing/editing)
+  - Returns: `{ has_creds: bool, api_key?: str, api_secret?: str, mobile_number?: str, password?: str, mpin?: str, api_key_masked?: str, api_secret_masked?: str }`
 
 **Security Notes:**
 - Credentials are encrypted at rest using `cryptography.fernet` with a key derived from `ENCRYPTION_KEY` env var (or auto-generated for dev)
 - Encryption key should be set via environment variable in production: `ENCRYPTION_KEY=<base64-encoded-32-byte-key>`
-- Credentials are never returned to the client; only status is exposed
+- Full credentials are only returned when explicitly requested via `show_full=true` query parameter
+- Masked credentials (last 4 characters) are shown by default for security
+- Credentials are isolated per user (row-level security via `user_id`)
+
+**UI Features:**
+- Settings page shows stored credentials on page load (masked by default)
+- "Show/Hide Full Credentials" toggle to view/edit all stored values
+- Supports saving and updating all credential types (basic + full auth)
+- Connection test supports both basic (client init) and full (login + 2FA) modes
+- Test button automatically uses stored credentials if available
 
 ### Signals
 - GET `/api/v1/signals/buying-zone`
