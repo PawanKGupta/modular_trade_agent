@@ -181,6 +181,104 @@ class TestAnalysisService:
         assert result is not None
         assert result['status'] == 'indicator_error'
         assert result['ticker'] == 'TEST.NS'
+    
+    @patch('pathlib.Path')
+    @patch('services.ml_verdict_service.MLVerdictService')
+    def test_initialization_uses_ml_verdict_service_when_model_exists(self, mock_ml_service_class, mock_path_class):
+        """Test that AnalysisService automatically uses MLVerdictService when ML model exists"""
+        from services.verdict_service import VerdictService
+        
+        # Mock Path.exists to return True for ML model
+        mock_path = MagicMock()
+        mock_path.exists.return_value = True
+        
+        def path_side_effect(path_str):
+            return mock_path
+        
+        mock_path_class.side_effect = path_side_effect
+        
+        # Mock MLVerdictService
+        mock_ml_service = MagicMock()
+        mock_ml_service.model_loaded = True
+        mock_ml_service_class.return_value = mock_ml_service
+        
+        # Create AnalysisService (should use MLVerdictService)
+        service = AnalysisService()
+        
+        # Verify MLVerdictService was called
+        mock_ml_service_class.assert_called_once()
+        assert service.verdict_service == mock_ml_service
+    
+    @patch('pathlib.Path')
+    def test_initialization_uses_verdict_service_when_model_not_exists(self, mock_path_class):
+        """Test that AnalysisService uses VerdictService when ML model doesn't exist"""
+        from services.verdict_service import VerdictService
+        
+        # Mock Path.exists to return False for ML model
+        mock_path = MagicMock()
+        mock_path.exists.return_value = False
+        
+        def path_side_effect(path_str):
+            return mock_path
+        
+        mock_path_class.side_effect = path_side_effect
+        
+        # Create AnalysisService (should use VerdictService)
+        service = AnalysisService()
+        
+        # Verify VerdictService is used (not MLVerdictService)
+        assert isinstance(service.verdict_service, VerdictService)
+        assert not hasattr(service.verdict_service, 'model_loaded') or not service.verdict_service.model_loaded
+    
+    @patch('pathlib.Path')
+    @patch('services.ml_verdict_service.MLVerdictService')
+    def test_initialization_falls_back_to_verdict_service_on_ml_init_error(self, mock_ml_service_class, mock_path_class):
+        """Test that AnalysisService falls back to VerdictService when MLVerdictService initialization fails"""
+        from services.verdict_service import VerdictService
+        
+        # Mock Path.exists to return True for ML model
+        mock_path = MagicMock()
+        mock_path.exists.return_value = True
+        
+        def path_side_effect(path_str):
+            return mock_path
+        
+        mock_path_class.side_effect = path_side_effect
+        
+        # Mock MLVerdictService to raise exception
+        mock_ml_service_class.side_effect = Exception("ML service initialization failed")
+        
+        # Create AnalysisService (should fall back to VerdictService)
+        service = AnalysisService()
+        
+        # Verify VerdictService is used (fallback)
+        assert isinstance(service.verdict_service, VerdictService)
+    
+    @patch('pathlib.Path')
+    @patch('services.ml_verdict_service.MLVerdictService')
+    def test_initialization_falls_back_when_model_fails_to_load(self, mock_ml_service_class, mock_path_class):
+        """Test that AnalysisService falls back to VerdictService when ML model fails to load"""
+        from services.verdict_service import VerdictService
+        
+        # Mock Path.exists to return True for ML model
+        mock_path = MagicMock()
+        mock_path.exists.return_value = True
+        
+        def path_side_effect(path_str):
+            return mock_path
+        
+        mock_path_class.side_effect = path_side_effect
+        
+        # Mock MLVerdictService with model_loaded=False
+        mock_ml_service = MagicMock()
+        mock_ml_service.model_loaded = False  # Model failed to load
+        mock_ml_service_class.return_value = mock_ml_service
+        
+        # Create AnalysisService (should fall back to VerdictService)
+        service = AnalysisService()
+        
+        # Verify VerdictService is used (fallback)
+        assert isinstance(service.verdict_service, VerdictService)
 
 
 class TestDataService:
@@ -232,4 +330,3 @@ class TestVerdictService:
         service = VerdictService()
         assert service is not None
         assert service.config is not None
-

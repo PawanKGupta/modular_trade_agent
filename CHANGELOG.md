@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [25.7.0] - 2025-11-09
+
+### Added
+- **RSI30 Requirement Enforcement**: Trading parameters only calculated when RSI < 30 (above EMA200) or RSI < 20 (below EMA200)
+- **Single Stock Backtest Script**: New script `scripts/run_single_stock_backtest.py` for testing individual stocks
+- **Enhanced CSV Export**: Added 30+ fields for ML training data collection (justification, pe, pb, rsi, volume analysis, etc.)
+- **Unit Tests**: Added comprehensive unit tests for ML disabled logic, RSI30 requirement, and liquidity threshold
+- **Regression Test Fix**: Fixed `test_backtest_validation_default` to handle RSI30 requirement and pyramiding trades
+
+### Changed
+- **ML Model Disabled**: Temporarily disabled ML model for verdict determination, using rule-based logic only until ML is fully trained
+- **Liquidity Threshold Lowered**: Minimum absolute average volume reduced from 20,000 to 10,000 to allow more stocks
+- **Chart Quality Thresholds Relaxed**: 
+  - Gap frequency: 25% max (was 20%)
+  - Chart score: 50 minimum (was 60)
+  - Daily range: 1.0% minimum (was 1.5%)
+  - Extreme candles: 20% max (was 15%)
+- **Volume Requirements Relaxed**: 
+  - Minimum volume: 70% of average (was 80%)
+  - For RSI < 30 oversold conditions: 50% of average (RSI-based adjustment)
+- **Weekly Uptrend Context Refined**: 
+  - Weekly trend up and price near support → +2 points
+  - Weekly trend up but mid-range → +1 point
+  - Weekly trend flat/down → 0 points
+- **Fundamental Filter Flexible**: 
+  - Allows "watch" verdict for growth stocks (negative PE) if PB ratio < 5.0
+  - Still forces "avoid" for loss-making companies (negative PE + PB > 5.0)
+- **Trade Execution Validation**: Updated to handle pyramiding trades correctly (entry_price is average for pyramided positions)
+
+### Fixed
+- **Regression Test**: Fixed `test_backtest_validation_default` to account for RSI30 requirement and rule-based logic differences
+- **Trading Parameters Validation**: Updated to check individual fields and handle RSI30 requirement correctly
+- **Volume Check Validation**: Downgraded to warnings (RSI-based volume adjustment allows lower volume when RSI < 30)
+- **Verdict Mismatch Validation**: Differentiated significant vs minor mismatches, downgraded minor mismatches to warnings
+- **Capital Validation**: Added capital/quantity to position data, handle missing capital gracefully
+- **Entry Price Validation**: Increased tolerance and handle pyramiding correctly
+
+### Documentation
+- **Consolidated Changes Document**: Created `documents/CHANGES_2025_11_09_CONSOLIDATED.md` summarizing all changes
+- **Regression Test Fix Documentation**: Added `documents/REGRESSION_TEST_FIX_2025_11_09.md`
+- **Verdict Watch Analysis**: Added `documents/VERDICT_WATCH_ANALYSIS.md` documenting root cause analysis
+
 ## [25.6.0] - 2025-11-02
 
 ### Added (Phase 4: Cleanup & Consolidation)

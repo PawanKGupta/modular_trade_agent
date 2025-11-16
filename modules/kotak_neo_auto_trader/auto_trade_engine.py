@@ -64,6 +64,7 @@ class Recommendation:
     ticker: str  # e.g. RELIANCE.NS
     verdict: str  # strong_buy|buy|watch
     last_close: float
+    execution_capital: Optional[float] = None  # Phase 11: Dynamic capital based on liquidity
 
 
 class AutoTradeEngine:
@@ -156,13 +157,41 @@ class AutoTradeEngine:
             for _, row in df_buy.iterrows():
                 ticker = str(row.get('ticker','')).strip().upper()
                 last_close = float(row.get('last_close', 0) or 0)
-                recs.append(Recommendation(ticker=ticker, verdict=row[verdict_col], last_close=last_close))
+                # Phase 11: Load execution_capital from CSV if available
+                execution_capital = row.get('execution_capital')
+                if execution_capital is not None:
+                    try:
+                        execution_capital = float(execution_capital) if execution_capital != '' else None
+                    except (ValueError, TypeError):
+                        execution_capital = None
+                recs.append(Recommendation(
+                    ticker=ticker, 
+                    verdict=row[verdict_col], 
+                    last_close=last_close,
+                    execution_capital=execution_capital
+                ))
             logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path}")
             return recs
         # Otherwise, DO NOT recompute; trust the CSV that trade_agent produced
         if 'verdict' in df.columns:
             df_buy = df[df['verdict'].astype(str).str.lower().isin(['buy','strong_buy'])]
-            recs = [Recommendation(ticker=str(row.get('ticker','')).strip().upper(), verdict=str(row.get('verdict','')).lower(), last_close=float(row.get('last_close', 0) or 0)) for _, row in df_buy.iterrows()]
+            recs = []
+            for _, row in df_buy.iterrows():
+                ticker = str(row.get('ticker','')).strip().upper()
+                last_close = float(row.get('last_close', 0) or 0)
+                # Phase 11: Load execution_capital from CSV if available
+                execution_capital = row.get('execution_capital')
+                if execution_capital is not None:
+                    try:
+                        execution_capital = float(execution_capital) if execution_capital != '' else None
+                    except (ValueError, TypeError):
+                        execution_capital = None
+                recs.append(Recommendation(
+                    ticker=ticker, 
+                    verdict=str(row.get('verdict','')).lower(), 
+                    last_close=last_close,
+                    execution_capital=execution_capital
+                ))
             logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path} (raw verdicts)")
             return recs
         logger.warning(f"CSV {csv_path} missing 'final_verdict' and 'verdict' columns; no recommendations loaded")
@@ -190,6 +219,43 @@ class AutoTradeEngine:
         return self.load_latest_recommendations_from_csv(latest)
 
     @staticmethod
+    def calculate_execution_capital(ticker: str, close: float, avg_volume: float) -> float:
+        """
+        Phase 11: Calculate execution capital based on liquidity.
+        
+        Args:
+            ticker: Stock ticker (e.g., RELIANCE.NS)
+            close: Current close price
+            avg_volume: Average daily volume
+            
+        Returns:
+            Execution capital to use for this trade
+        """
+        try:
+            from services.liquidity_capital_service import LiquidityCapitalService
+            from config.strategy_config import StrategyConfig
+            
+            config = StrategyConfig.default()
+            liquidity_service = LiquidityCapitalService(config=config)
+            
+            capital_data = liquidity_service.calculate_execution_capital(
+                avg_volume=avg_volume,
+                stock_price=close
+            )
+            execution_capital = capital_data.get('execution_capital', config.user_capital)
+            
+            # Fallback to config if calculation failed
+            if execution_capital <= 0:
+                from modules.kotak_neo_auto_trader import config as kotak_config
+                execution_capital = kotak_config.CAPITAL_PER_TRADE
+            
+            return execution_capital
+        except Exception as e:
+            logger.warning(f"Failed to calculate execution capital for {ticker}: {e}, using default")
+            from modules.kotak_neo_auto_trader import config as kotak_config
+            return kotak_config.CAPITAL_PER_TRADE
+    
+    @staticmethod
     def get_daily_indicators(ticker: str) -> Optional[Dict[str, Any]]:
         try:
             from sys import path as sys_path
@@ -200,15 +266,25 @@ class AutoTradeEngine:
             from config.settings import VOLUME_LOOKBACK_DAYS
             
             df = fetch_ohlcv_yf(ticker, days=800, interval='1d', add_current_day=False)
-            df = compute_indicators(df)
+            # Use configurable RSI period from StrategyConfig
+            from config.strategy_config import StrategyConfig
+            strategy_config = StrategyConfig.default()
+            df = compute_indicators(df, rsi_period=strategy_config.rsi_period)
             if df is None or df.empty:
                 return None
             last = df.iloc[-1]
             # Calculate average volume over configurable period (default: 50 days)
             avg_vol = df['volume'].tail(VOLUME_LOOKBACK_DAYS).mean() if 'volume' in df.columns else 0
+            
+            # Use configurable RSI column name
+            rsi_col = f'rsi{strategy_config.rsi_period}'
+            # Fallback to 'rsi10' for backward compatibility
+            if rsi_col not in last.index and 'rsi10' in last.index:
+                rsi_col = 'rsi10'
+            
             return {
                 'close': float(last['close']),
-                'rsi10': float(last['rsi10']),
+                'rsi10': float(last[rsi_col]) if rsi_col in last.index else 0.0,  # Keep 'rsi10' key for backward compatibility
                 'ema9': float(df['close'].ewm(span=config.EMA_SHORT).mean().iloc[-1]) if 'ema9' not in df.columns else float(last.get('ema9', 0)),
                 'ema200': float(last['ema200']) if 'ema200' in df.columns else float(df['close'].ewm(span=config.EMA_LONG).mean().iloc[-1]),
                 'avg_volume': float(avg_vol)
@@ -1081,7 +1157,14 @@ class AutoTradeEngine:
                     logger.warning(f"Skipping retry {symbol}: invalid close price {close}")
                     continue
                 
-                qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / close))
+                # Phase 11: Use execution_capital if available in failed_order, otherwise calculate
+                execution_capital = failed_order.get('execution_capital')
+                if not execution_capital or execution_capital <= 0:
+                    avg_vol = ind.get('avg_volume', 0)
+                    execution_capital = AutoTradeEngine.calculate_execution_capital(ticker, close, avg_vol)
+                    logger.debug(f"Calculated execution_capital for retry {symbol}: ₹{execution_capital:,.0f}")
+                
+                qty = max(config.MIN_QTY, floor(execution_capital / close))
                 
                 # Check position-to-volume ratio (liquidity filter)
                 avg_vol = ind.get('avg_volume', 0)
@@ -1151,7 +1234,26 @@ class AutoTradeEngine:
                 logger.warning(f"Skipping {rec.ticker}: invalid close price {close}")
                 summary["skipped_invalid_qty"] += 1
                 continue
-            qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / close))
+            
+            # Phase 11: Use execution_capital from recommendation, or calculate if not available
+            execution_capital = rec.execution_capital
+            if not execution_capital or execution_capital <= 0:
+                avg_vol = ind.get('avg_volume', 0)
+                execution_capital = AutoTradeEngine.calculate_execution_capital(rec.ticker, close, avg_vol)
+                logger.debug(f"Calculated execution_capital for {rec.ticker}: ₹{execution_capital:,.0f}")
+            else:
+                logger.info(f"Using execution_capital from CSV for {rec.ticker}: ₹{execution_capital:,.0f}")
+            
+            # Phase 11: Log if capital was adjusted from user_capital
+            from config.strategy_config import StrategyConfig
+            strategy_config = StrategyConfig.default()
+            if execution_capital < strategy_config.user_capital:
+                logger.info(
+                    f"{broker_symbol}: Capital adjusted due to liquidity: "
+                    f"₹{execution_capital:,.0f} (requested: ₹{strategy_config.user_capital:,.0f})"
+                )
+            
+            qty = max(config.MIN_QTY, floor(execution_capital / close))
             
             # Check position-to-volume ratio (liquidity filter)
             avg_vol = ind.get('avg_volume', 0)
@@ -1197,6 +1299,7 @@ class AutoTradeEngine:
                     'rsi10': ind.get('rsi10'),
                     'ema9': ind.get('ema9'),
                     'ema200': ind.get('ema200'),
+                    'execution_capital': execution_capital,  # Phase 11: Save execution_capital for retry
                 }
                 add_failed_order(self.history_path, failed_order_info)
                 summary["failed_balance"] += 1
@@ -1442,7 +1545,13 @@ class AutoTradeEngine:
                 if self.reentries_today(symbol) >= 1:
                     logger.info(f"Re-entry daily cap reached for {symbol}; skipping today")
                     continue
-                qty = max(config.MIN_QTY, floor(config.CAPITAL_PER_TRADE / price))
+                
+                # Phase 11: Calculate execution_capital for re-entry based on current liquidity
+                avg_vol = ind.get('avg_volume', 0)
+                execution_capital = AutoTradeEngine.calculate_execution_capital(ticker, price, avg_vol)
+                logger.debug(f"Calculated execution_capital for re-entry {symbol}: ₹{execution_capital:,.0f}")
+                
+                qty = max(config.MIN_QTY, floor(execution_capital / price))
                 # Balance check for re-entry
                 affordable = self.get_affordable_qty(price)
                 if affordable < 1:

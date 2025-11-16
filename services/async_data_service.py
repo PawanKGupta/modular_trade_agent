@@ -205,4 +205,3 @@ class AsyncDataService:
         logger.info(f"Fetched data for {successful}/{len(tickers)} tickers")
         
         return data_map
-

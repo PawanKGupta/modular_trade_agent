@@ -17,7 +17,8 @@ load_dotenv()
 class StrategyConfig:
     """Centralized strategy configuration parameters"""
     
-    # RSI Thresholds
+    # RSI Configuration
+    rsi_period: int = 10  # RSI calculation period (default: 10 for short-term strategy)
     rsi_oversold: float = 30.0
     rsi_extreme_oversold: float = 20.0
     rsi_near_oversold: float = 40.0
@@ -26,13 +27,35 @@ class StrategyConfig:
     min_volume_multiplier: float = 1.0
     volume_multiplier_for_strong: float = 1.2
     volume_lookback_days: int = 50
-    min_absolute_avg_volume: int = 150000
+    min_absolute_avg_volume: int = 10000  # Lowered to 10000 (2025-11-09) to allow more stocks to pass liquidity filter
+    
+    # Capital Configuration
+    user_capital: float = 200000.0  # Default: 2L
+    max_position_volume_ratio: float = 0.10  # 10% of daily volume max
+    
+    # Chart Quality Configuration
+    # ⚠️ IMPORTANT: Chart quality is REQUIRED in production - DO NOT disable in live trading
+    # Chart quality can be disabled ONLY for testing/data collection purposes
+    # RELAXED THRESHOLDS (2025-11-09): Adjusted to allow more stocks while maintaining quality
+    # - Increased gap frequency from 20% to 25% (allow more gaps for volatile stocks)
+    # - Decreased min score from 60 to 50 (allow slightly lower scores)
+    # - Decreased min daily range from 1.5% to 1.0% (allow lower volatility stocks)
+    # - Increased extreme candle frequency from 15% to 20% (allow more extreme candles)
+    chart_quality_enabled: bool = True  # REQUIRED in production - filters out bad charts
+    chart_quality_min_score: float = 50.0  # Minimum score for acceptance (0-100) - Relaxed from 60.0
+    chart_quality_max_gap_frequency: float = 25.0  # Max gap frequency (%) - Relaxed from 20.0
+    chart_quality_min_daily_range_pct: float = 1.0  # Min daily range (%) - Relaxed from 1.5
+    chart_quality_max_extreme_candle_frequency: float = 20.0  # Max extreme candle frequency (%) - Relaxed from 15.0
+    chart_quality_enabled_in_backtest: bool = True  # Default: enabled (can be disabled for data collection)
     
     # Fundamental Filters
     pe_max_attractive: float = 15.0
     pe_max_decent: float = 25.0
     pb_max_attractive: float = 1.5
     pb_max_expensive: float = 10.0
+    # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): PB threshold for growth stocks
+    # Growth stocks (negative PE) are allowed "watch" verdict if PB < this threshold
+    pb_max_for_growth_stock: float = 5.0  # Max PB ratio for growth stocks to allow "watch" verdict
     
     # Multi-Timeframe Analysis
     mtf_alignment_excellent: float = 8.0
@@ -66,6 +89,21 @@ class StrategyConfig:
     # Backtest Scoring Weights
     backtest_weight: float = 0.5  # 50% historical, 50% current analysis
     
+    # Support/Resistance Lookback Configuration
+    support_resistance_lookback_daily: int = 20  # Daily timeframe lookback periods
+    support_resistance_lookback_weekly: int = 50  # Weekly timeframe lookback periods
+    
+    # Volume Exhaustion Lookback Configuration
+    volume_exhaustion_lookback_daily: int = 10  # Daily timeframe volume exhaustion lookback
+    volume_exhaustion_lookback_weekly: int = 20  # Weekly timeframe volume exhaustion lookback
+    
+    # Data Fetching Configuration
+    data_fetch_daily_max_years: int = 5  # Maximum years to fetch for daily data
+    data_fetch_weekly_max_years: int = 3  # Maximum years to fetch for weekly data
+    
+    # Adaptive Logic Configuration
+    enable_adaptive_lookback: bool = True  # Enable adaptive lookback based on available data
+    
     # News Sentiment
     news_sentiment_enabled: bool = True
     news_sentiment_lookback_days: int = 30
@@ -84,7 +122,8 @@ class StrategyConfig:
     def from_env(cls) -> 'StrategyConfig':
         """Load configuration from environment variables with defaults"""
         return cls(
-            # RSI thresholds
+            # RSI configuration
+            rsi_period=int(os.getenv('RSI_PERIOD', '10')),
             rsi_oversold=float(os.getenv('RSI_OVERSOLD', '30.0')),
             rsi_extreme_oversold=float(os.getenv('RSI_EXTREME_OVERSOLD', '20.0')),
             rsi_near_oversold=float(os.getenv('RSI_NEAR_OVERSOLD', '40.0')),
@@ -93,13 +132,26 @@ class StrategyConfig:
             min_volume_multiplier=float(os.getenv('MIN_VOLUME_MULTIPLIER', '1.0')),
             volume_multiplier_for_strong=float(os.getenv('VOLUME_MULTIPLIER_FOR_STRONG', '1.2')),
             volume_lookback_days=int(os.getenv('VOLUME_LOOKBACK_DAYS', '50')),
-            min_absolute_avg_volume=int(os.getenv('MIN_ABSOLUTE_AVG_VOLUME', '150000')),
+            min_absolute_avg_volume=int(os.getenv('MIN_ABSOLUTE_AVG_VOLUME', '10000')),  # Lowered to 10000 (2025-11-09)
+            
+            # Capital
+            user_capital=float(os.getenv('USER_CAPITAL', '200000.0')),
+            max_position_volume_ratio=float(os.getenv('MAX_POSITION_VOLUME_RATIO', '0.10')),
+            
+            # Chart Quality
+            chart_quality_enabled=os.getenv('CHART_QUALITY_ENABLED', 'true').lower() in ('1', 'true', 'yes', 'on'),
+            chart_quality_min_score=float(os.getenv('CHART_QUALITY_MIN_SCORE', '50.0')),  # Relaxed from 60.0
+            chart_quality_max_gap_frequency=float(os.getenv('CHART_QUALITY_MAX_GAP_FREQUENCY', '25.0')),  # Relaxed from 20.0
+            chart_quality_min_daily_range_pct=float(os.getenv('CHART_QUALITY_MIN_DAILY_RANGE_PCT', '1.0')),  # Relaxed from 1.5
+            chart_quality_max_extreme_candle_frequency=float(os.getenv('CHART_QUALITY_MAX_EXTREME_CANDLE_FREQUENCY', '20.0')),  # Relaxed from 15.0
+            chart_quality_enabled_in_backtest=os.getenv('CHART_QUALITY_ENABLED_IN_BACKTEST', 'true').lower() in ('1', 'true', 'yes', 'on'),
             
             # Fundamentals
             pe_max_attractive=float(os.getenv('PE_MAX_ATTRACTIVE', '15.0')),
             pe_max_decent=float(os.getenv('PE_MAX_DECENT', '25.0')),
             pb_max_attractive=float(os.getenv('PB_MAX_ATTRACTIVE', '1.5')),
             pb_max_expensive=float(os.getenv('PB_MAX_EXPENSIVE', '10.0')),
+            pb_max_for_growth_stock=float(os.getenv('PB_MAX_FOR_GROWTH_STOCK', '5.0')),  # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09)
             
             # MTF
             mtf_alignment_excellent=float(os.getenv('MTF_ALIGNMENT_EXCELLENT', '8.0')),
@@ -146,6 +198,21 @@ class StrategyConfig:
             ml_price_model_path=os.getenv('ML_PRICE_MODEL_PATH', 'models/price_model_random_forest.pkl'),
             ml_confidence_threshold=float(os.getenv('ML_CONFIDENCE_THRESHOLD', '0.5')),
             ml_combine_with_rules=os.getenv('ML_COMBINE_WITH_RULES', 'true').lower() in ('1', 'true', 'yes', 'on'),
+            
+            # Support/Resistance Lookback
+            support_resistance_lookback_daily=int(os.getenv('SUPPORT_RESISTANCE_LOOKBACK_DAILY', '20')),
+            support_resistance_lookback_weekly=int(os.getenv('SUPPORT_RESISTANCE_LOOKBACK_WEEKLY', '50')),
+            
+            # Volume Exhaustion Lookback
+            volume_exhaustion_lookback_daily=int(os.getenv('VOLUME_EXHAUSTION_LOOKBACK_DAILY', '10')),
+            volume_exhaustion_lookback_weekly=int(os.getenv('VOLUME_EXHAUSTION_LOOKBACK_WEEKLY', '20')),
+            
+            # Data Fetching
+            data_fetch_daily_max_years=int(os.getenv('DATA_FETCH_DAILY_MAX_YEARS', '5')),
+            data_fetch_weekly_max_years=int(os.getenv('DATA_FETCH_WEEKLY_MAX_YEARS', '3')),
+            
+            # Adaptive Logic
+            enable_adaptive_lookback=os.getenv('ENABLE_ADAPTIVE_LOOKBACK', 'true').lower() in ('1', 'true', 'yes', 'on'),
         )
     
     @classmethod
@@ -155,4 +222,3 @@ class StrategyConfig:
     
     def __repr__(self) -> str:
         return f"StrategyConfig(rsi_oversold={self.rsi_oversold}, volume_lookback={self.volume_lookback_days}, ...)"
-

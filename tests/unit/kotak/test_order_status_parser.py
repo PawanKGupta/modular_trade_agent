@@ -207,4 +207,3 @@ class TestOrderStatusParser:
         }
         assert OrderStatusParser.is_cancelled(order) is True
         assert OrderStatusParser.is_terminal(order) is True
-

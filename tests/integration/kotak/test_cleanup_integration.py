@@ -474,4 +474,3 @@ class TestEndToEndCleanupFlow:
             
             # INFY still tracked (open)
             assert 'INFY' in manager.active_sell_orders
-

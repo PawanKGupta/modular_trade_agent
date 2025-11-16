@@ -73,16 +73,23 @@ def assess_volume_quality_intelligent(
     current_volume: float, 
     avg_volume: float,
     current_hour: Optional[int] = None,
-    enable_time_adjustment: bool = True
+    enable_time_adjustment: bool = True,
+    disable_liquidity_filter: bool = False,
+    rsi_value: Optional[float] = None
 ) -> Dict[str, any]:
     """
-    Intelligent volume quality assessment with time-awareness
+    Intelligent volume quality assessment with time-awareness and RSI-based adjustment
     
     Args:
         current_volume: Current/today's volume
         avg_volume: Average volume (typically 20-day)
         current_hour: Current market hour (None for auto-detect)
         enable_time_adjustment: Enable time-based adjustments
+        disable_liquidity_filter: If True, skip the absolute volume liquidity filter
+                                  (useful for backtesting where we want to see all opportunities)
+        rsi_value: Optional RSI value for RSI-based volume threshold adjustment
+                   If RSI < 30 (oversold), volume requirement is reduced to 0.5x
+                   Otherwise, uses base threshold (MIN_VOLUME_MULTIPLIER, default: 0.7x)
         
     Returns:
         Dict with volume analysis results
@@ -99,8 +106,11 @@ def assess_volume_quality_intelligent(
             'reason': 'No historical volume data'
         }
     
-    # Check absolute volume first (liquidity filter)
-    if avg_volume < MIN_ABSOLUTE_AVG_VOLUME:
+    # Check absolute volume first (liquidity filter) - now minimal safety net only
+    # Actual capital adjustment handled by LiquidityCapitalService
+    # This check is kept as a minimal safety net for truly illiquid stocks
+    # Skip this check if disable_liquidity_filter is True (for backtesting)
+    if not disable_liquidity_filter and avg_volume < MIN_ABSOLUTE_AVG_VOLUME:
         return {
             'ratio': round(current_volume / avg_volume, 2) if avg_volume > 0 else 0,
             'quality': 'illiquid',
@@ -114,9 +124,26 @@ def assess_volume_quality_intelligent(
     
     base_ratio = current_volume / avg_volume
     
+    # RSI-based volume threshold adjustment (2025-11-09)
+    # For dip-buying (RSI < 30), volume requirement is further reduced to 0.5x
+    # Oversold conditions often have lower volume (selling pressure)
+    base_threshold = MIN_VOLUME_MULTIPLIER  # Default: 0.7x (relaxed from 1.0x)
+    
+    # Apply RSI-based adjustment if RSI is provided and indicates oversold condition
+    if rsi_value is not None:
+        try:
+            rsi_float = float(rsi_value)
+            if rsi_float < 30:
+                # Oversold condition: reduce volume requirement to 0.5x
+                base_threshold = 0.5
+                logger.debug(f"Volume threshold adjusted for oversold (RSI={rsi_float:.1f}): {base_threshold}x")
+        except (TypeError, ValueError):
+            # If RSI value cannot be converted to float, use default threshold
+            logger.debug(f"RSI value invalid for volume adjustment: {rsi_value}, using default threshold")
+    
     # Time adjustment
     time_adjusted = False
-    adjusted_threshold = MIN_VOLUME_MULTIPLIER
+    adjusted_threshold = base_threshold
     
     if enable_time_adjustment:
         # Get the time to use for analysis (support both hour int and fractional time)
@@ -131,14 +158,17 @@ def assess_volume_quality_intelligent(
         
         if should_adjust and is_market_time and analysis_time < VOLUME_MARKET_CLOSE_HOUR:
             time_factor = get_intraday_volume_factor(analysis_time)
-            adjusted_threshold = MIN_VOLUME_MULTIPLIER * time_factor
+            adjusted_threshold = base_threshold * time_factor
+            # Ensure adjusted threshold doesn't go below flexible threshold (0.4x)
             adjusted_threshold = max(adjusted_threshold, VOLUME_FLEXIBLE_THRESHOLD)
             time_adjusted = True
             current_hour = int(analysis_time)  # Store as int for return value
             
-            logger.debug(f"Volume time adjustment: time={analysis_time:.1f}, factor={time_factor:.2f}, threshold={adjusted_threshold:.2f}")
+            logger.debug(f"Volume time adjustment: time={analysis_time:.1f}, factor={time_factor:.2f}, base={base_threshold:.2f}, threshold={adjusted_threshold:.2f}")
     
     # Volume quality assessment
+    # RELAXED VOLUME REQUIREMENTS (2025-11-09): Use adjusted_threshold (which includes RSI-based adjustment)
+    # The threshold has already been adjusted based on RSI (0.5x for RSI < 30, 0.7x otherwise)
     quality = 'poor'
     score = 0
     passes = False
@@ -154,8 +184,10 @@ def assess_volume_quality_intelligent(
     elif base_ratio >= VOLUME_QUALITY_FAIR:
         quality = 'fair'
         score = 1
+        # For fair quality, check if it meets the adjusted threshold (RSI-aware)
         passes = base_ratio >= adjusted_threshold
     elif base_ratio >= adjusted_threshold:
+        # Volume meets the adjusted threshold (which may be 0.5x for oversold or 0.7x normally)
         quality = 'minimal'
         score = 1
         passes = True
