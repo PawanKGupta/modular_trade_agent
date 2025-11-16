@@ -140,7 +140,8 @@ class TestLoggingIntegration:
         assert log_context["order_id"] == 12345
         assert log_context["action"] == "place_order"
         assert log_context["price"] == 2500.50
-        assert log_context["user_id"] == sample_user_with_full_setup.id
+        # user_id is stored in the record, not context JSON
+        assert logs[0].user_id == sample_user_with_full_setup.id
         assert log_context["log_module"] == "context_test"
 
     def test_multiple_users_log_isolation(

@@ -172,8 +172,9 @@ class TestMultiUserTradingService:
 
         status = service.get_service_status(sample_user_with_settings.id)
         assert status is not None
-        assert "user_id" in status
-        assert status["user_id"] == sample_user_with_settings.id
+        # get_service_status returns ServiceStatus object, not dict
+        assert status.user_id == sample_user_with_settings.id
+        assert status.service_running is True
 
     def test_thread_safety(self, db_session, sample_user_with_settings):
         """Test thread-safe operations"""
@@ -273,6 +274,7 @@ class TestMultiUserTradingService:
 
         assert status1 is not None
         assert status2 is not None
-        assert status1["user_id"] == user1.id
-        assert status2["user_id"] == user2.id
+        # get_service_status returns ServiceStatus object, not dict
+        assert status1.user_id == user1.id
+        assert status2.user_id == user2.id
 

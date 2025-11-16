@@ -253,7 +253,9 @@ class TestDatabaseLogHandler:
         assert logs[0].level == "INFO"
         assert logs[0].message == "Test message"
         assert logs[0].module == "test_module"
-        assert logs[0].context == {"custom_field": "custom_value"}
+        # Context may include additional fields like log_module, taskName
+        assert "custom_field" in logs[0].context
+        assert logs[0].context["custom_field"] == "custom_value"
 
     def test_handler_emit_all_levels(self, db_session):
         """Test handler emits all log levels"""
