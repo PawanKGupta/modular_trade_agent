@@ -37,7 +37,7 @@ export async function createUser(payload: CreateUserPayload): Promise<AdminUser>
 }
 
 export async function updateUser(id: number, payload: UpdateUserPayload): Promise<AdminUser> {
-	const { data } = await api.put<AdminUser>(`/admin/users/${id}`, payload);
+	const { data } = await api.patch<AdminUser>(`/admin/users/${id}`, payload);
 	return data;
 }
 
