@@ -75,7 +75,11 @@ class AutoTradeEngine:
         enable_verifier: bool = True,
         enable_telegram: bool = True,
         enable_eod_cleanup: bool = True,
-        verifier_interval: int = 1800
+        verifier_interval: int = 1800,
+        # Phase 2.3: User context parameters
+        user_id: Optional[int] = None,
+        db_session=None,
+        strategy_config=None,  # StrategyConfig instance
     ):
         self.env_file = env_file
         # IMPORTANT: When used by run_trading_service, auth MUST be provided
@@ -88,9 +92,36 @@ class AutoTradeEngine:
             self.auth = KotakNeoAuth(env_file)
         else:
             self.auth = auth
+        
+        # Phase 2.3: User context
+        self.user_id = user_id
+        self.db = db_session
+        
+        # Phase 2.3: User-specific configuration
+        if strategy_config is None:
+            # Fallback to default config for backward compatibility
+            from config.strategy_config import StrategyConfig
+            self.strategy_config = StrategyConfig.default()
+            logger.warning(
+                "AutoTradeEngine: No strategy_config provided - using default. "
+                "For multi-user support, always pass user-specific config."
+            )
+        else:
+            self.strategy_config = strategy_config
+        
         self.orders: Optional[KotakNeoOrders] = None
         self.portfolio: Optional[KotakNeoPortfolio] = None
-        self.history_path = config.TRADES_HISTORY_PATH
+        
+        # Phase 2.3: Use repository instead of file-based storage
+        if self.db:
+            # Use database repositories
+            self.history_path = None  # No longer using file-based storage
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
+            self.orders_repo = OrdersRepository(self.db)
+        else:
+            # Backward compatibility: file-based storage
+            self.history_path = config.TRADES_HISTORY_PATH
+            self.orders_repo = None
         
         # Initialize scrip master for symbol resolution
         self.scrip_master: Optional[KotakNeoScripMaster] = None

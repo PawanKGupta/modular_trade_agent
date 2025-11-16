@@ -55,12 +55,52 @@ except ImportError:
 
 class TradingService:
     """
-    Unified trading service that runs all tasks with single persistent session
+    Unified trading service that runs all tasks with single persistent session.
+    
+    Phase 2.3: Now supports user-specific configuration and database integration.
     """
     
-    def __init__(self, env_file: str = "modules/kotak_neo_auto_trader/kotak_neo.env"):
-        """Initialize trading service"""
+    def __init__(
+        self,
+        user_id: int,
+        db_session,
+        broker_creds: dict,
+        strategy_config=None,  # StrategyConfig instance
+        env_file: str | None = None,  # Deprecated: kept for backward compatibility
+    ):
+        """
+        Initialize trading service with user context.
+        
+        Args:
+            user_id: User ID for this service instance
+            db_session: SQLAlchemy database session
+            broker_creds: Decrypted broker credentials dict
+            strategy_config: User-specific StrategyConfig (optional, will be loaded if not provided)
+            env_file: Deprecated - kept for backward compatibility only
+        """
+        self.user_id = user_id
+        self.db = db_session
+        self.broker_creds = broker_creds
+        
+        # Load user-specific configuration if not provided
+        if strategy_config is None:
+            from src.infrastructure.persistence.user_trading_config_repository import (
+                UserTradingConfigRepository,
+            )
+            from src.application.services.config_converter import (
+                user_config_to_strategy_config,
+            )
+            
+            config_repo = UserTradingConfigRepository(db_session)
+            user_config = config_repo.get_or_create_default(user_id)
+            self.strategy_config = user_config_to_strategy_config(user_config)
+        else:
+            self.strategy_config = strategy_config
+        
+        # Backward compatibility: env_file is deprecated but may be used for auth
         self.env_file = env_file
+        
+        # Initialize components
         self.auth: Optional[KotakNeoAuth] = None
         self.engine: Optional[AutoTradeEngine] = None
         self.sell_manager: Optional[SellOrderManager] = None
@@ -78,6 +118,12 @@ class TradingService:
             'sell_monitor_started': False,
             'position_monitor': {}  # Track hourly runs
         }
+        
+        # User-scoped logger
+        from src.infrastructure.logging import get_user_logger
+        self.logger = get_user_logger(
+            user_id=user_id, db=db_session, module="TradingService"
+        )
         
     def setup_signal_handlers(self):
         """Setup graceful shutdown handlers"""
@@ -105,18 +151,52 @@ class TradingService:
                 return False
             
             # Initialize authentication
-            logger.info("Authenticating with Kotak Neo...")
-            self.auth = KotakNeoAuth(self.env_file)
+            self.logger.info("Authenticating with Kotak Neo...", action="initialize")
+            
+            # Phase 2.3: Use broker credentials from database instead of env_file
+            if self.broker_creds:
+                # Create auth from credentials dict
+                # Note: KotakNeoAuth may need to be updated to accept credentials dict
+                # For now, we'll use env_file if available, otherwise create temp env
+                if self.env_file:
+                    self.auth = KotakNeoAuth(self.env_file)
+                else:
+                    # TODO: Update KotakNeoAuth to accept credentials dict directly
+                    # For now, fallback to env_file creation
+                    self.logger.warning(
+                        "Using env_file fallback - KotakNeoAuth should accept credentials dict",
+                        action="initialize",
+                    )
+                    # Create temporary env file or update auth to accept dict
+                    # This is a temporary solution until auth is refactored
+                    raise NotImplementedError(
+                        "KotakNeoAuth needs to be updated to accept credentials dict"
+                    )
+            else:
+                if not self.env_file:
+                    self.logger.error(
+                        "No broker credentials or env_file provided", action="initialize"
+                    )
+                    return False
+                self.auth = KotakNeoAuth(self.env_file)
             
             if not self.auth.login():
-                logger.error("Authentication failed")
+                self.logger.error("Authentication failed", action="initialize")
                 return False
             
-            logger.info("Authentication successful - session active for the day")
+            self.logger.info(
+                "Authentication successful - session active for the day", action="initialize"
+            )
             
-            # Initialize trading engine
-            logger.info("Initializing trading engine...")
-            self.engine = AutoTradeEngine(env_file=self.env_file, auth=self.auth)
+            # Initialize trading engine with user config
+            self.logger.info("Initializing trading engine...", action="initialize")
+            self.engine = AutoTradeEngine(
+                env_file=self.env_file,
+                auth=self.auth,
+                user_id=self.user_id,
+                db_session=self.db,
+                strategy_config=self.strategy_config,
+            )
             
             # Initialize engine (creates portfolio, orders, etc.)
             # Since auth is already logged in, this just initializes components without re-auth
