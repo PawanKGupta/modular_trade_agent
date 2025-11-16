@@ -21,6 +21,27 @@ export const handlers = [
 		const body = (await request.json()) as any;
 		return HttpResponse.json({ trade_mode: body['trade_mode'] ?? 'paper', broker: body['broker'] ?? null, broker_status: null });
 	}),
+	// orders
+	http.get(API('/user/orders'), async ({ request }) => {
+		const url = new URL(request.url);
+		const status = url.searchParams.get('status') ?? 'amo';
+		const now = new Date().toISOString();
+		const byStatus: Record<string, any[]> = {
+			amo: [
+				{ id: 101, symbol: 'INFY', side: 'buy', qty: 10, price: 1500, status: 'amo', created_at: now, updated_at: now },
+			],
+			ongoing: [
+				{ id: 201, symbol: 'RELIANCE', side: 'buy', qty: 5, price: 2400, status: 'ongoing', created_at: now, updated_at: now },
+			],
+			sell: [
+				{ id: 301, symbol: 'TCS', side: 'sell', qty: 3, price: 3600, status: 'sell', created_at: now, updated_at: now },
+			],
+			closed: [
+				{ id: 401, symbol: 'HDFCBANK', side: 'buy', qty: 2, price: 1500, status: 'closed', created_at: now, updated_at: now },
+			],
+		};
+		return HttpResponse.json(byStatus[status] ?? []);
+	}),
 	// admin users
 	http.get(API('/admin/users'), async () => {
 		return HttpResponse.json([
