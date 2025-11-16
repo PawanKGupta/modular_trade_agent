@@ -12,10 +12,18 @@ class ActivityRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def recent(self, user_id: int | None, limit: int = 200) -> list[Activity]:
+    def recent(
+        self,
+        user_id: int | None,
+        limit: int = 200,
+        level: str | None = None,
+    ) -> list[Activity]:
         stmt = select(Activity).order_by(Activity.ts.desc()).limit(limit)
         if user_id is not None:
             stmt = stmt.where(Activity.user_id == user_id)
+        if level:
+            # use the "type" column to represent level (info|warn|error)
+            stmt = stmt.where(Activity.type == level)
         return list(self.db.execute(stmt).scalars().all())
 
     def append(

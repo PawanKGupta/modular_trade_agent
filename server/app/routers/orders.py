@@ -13,7 +13,7 @@ from ..schemas.orders import OrderResponse
 router = APIRouter()
 
 
-@router.get("", response_model=list[OrderResponse])
+@router.get("/", response_model=list[OrderResponse])
 def list_orders(
     status: Annotated[Literal["amo", "ongoing", "sell", "closed"] | None, Query()] = None,
     db: Session = Depends(get_db),  # noqa: B008 - FastAPI dependency injection

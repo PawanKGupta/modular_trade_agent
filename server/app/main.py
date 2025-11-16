@@ -13,7 +13,7 @@ from src.infrastructure.db.base import Base
 from src.infrastructure.db.session import engine
 
 from .core.config import settings
-from .routers import admin, auth, orders, signals, user
+from .routers import activity, admin, auth, orders, pnl, signals, targets, user
 
 # Ensure project root is on sys.path so `src.*` imports work when running from server/
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -84,5 +84,8 @@ async def log_exceptions(request: Request, call_next):
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(user.router, prefix="/api/v1/user", tags=["user"])
 app.include_router(orders.router, prefix="/api/v1/user/orders", tags=["orders"])
+app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
+app.include_router(activity.router, prefix="/api/v1/user/activity", tags=["activity"])
+app.include_router(targets.router, prefix="/api/v1/user/targets", tags=["targets"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(signals.router, prefix="/api/v1/signals", tags=["signals"])
