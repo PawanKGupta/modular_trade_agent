@@ -89,6 +89,10 @@ export const handlers = [
 		const body = (await request.json()) as any;
 		return HttpResponse.json({ id: Number(params.id), email: 'updated@example.com', name: body.name ?? null, role: body.role ?? 'user', is_active: body.is_active ?? true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
 	}),
+	http.patch(API('/admin/users/:id'), async ({ params, request }) => {
+		const body = (await request.json()) as any;
+		return HttpResponse.json({ id: Number(params.id), email: 'updated@example.com', name: body.name ?? null, role: body.role ?? 'user', is_active: body.is_active ?? true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+	}),
 	http.delete(API('/admin/users/:id'), async () => {
 		return HttpResponse.json({ ok: true });
 	}),
