@@ -10,11 +10,12 @@ Tests for:
 
 import threading
 import time
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.application.services.multi_user_trading_service import MultiUserTradingService
-from src.infrastructure.db.models import ServiceStatus, TradeMode, UserSettings, Users
+from src.infrastructure.db.models import TradeMode, Users, UserSettings
 from src.infrastructure.db.timezone_utils import ist_now
 
 
@@ -35,10 +36,25 @@ def sample_user(db_session):
 @pytest.fixture
 def sample_user_with_settings(db_session, sample_user):
     """Create a user with settings configured"""
+    import json
+
+    from server.app.core.crypto import encrypt_blob
+
+    # Create properly encrypted credentials
+    creds_dict = {
+        "api_key": "test_key",
+        "api_secret": "test_secret",
+        "mobile_number": "9876543210",
+        "password": "test_pass",
+        "mpin": "1234",
+        "environment": "prod",
+    }
+    encrypted_creds = encrypt_blob(json.dumps(creds_dict).encode("utf-8"))
+
     settings = UserSettings(
         user_id=sample_user.id,
         trade_mode=TradeMode.BROKER,
-        broker_creds_encrypted=b"encrypted_creds",
+        broker_creds_encrypted=encrypted_creds,
     )
     db_session.add(settings)
     db_session.commit()
@@ -62,20 +78,28 @@ class TestMultiUserTradingService:
         with pytest.raises(ValueError, match="User settings not found"):
             service.start_service(sample_user.id)
 
-    def test_start_service_wrong_trade_mode(self, db_session, sample_user):
-        """Test starting service with wrong trade mode"""
+    def test_start_service_paper_mode(self, db_session, sample_user):
+        """Test starting service with paper mode (no credentials needed)"""
         settings = UserSettings(
             user_id=sample_user.id,
             trade_mode=TradeMode.PAPER,
-            broker_creds_encrypted=b"encrypted",
+            broker_creds_encrypted=None,  # Paper mode doesn't need credentials
         )
         db_session.add(settings)
         db_session.commit()
 
         service = MultiUserTradingService(db=db_session)
 
-        with pytest.raises(ValueError, match="broker mode required"):
-            service.start_service(sample_user.id)
+        # Paper mode should work (will fail at TradingService init, but that's expected)
+        # The important thing is that it doesn't fail at credential check
+        with patch(
+            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+        ) as mock_service_class:
+            mock_service = MagicMock()
+            mock_service_class.return_value = mock_service
+
+            result = service.start_service(sample_user.id)
+            assert result is True  # Should succeed (mocked TradingService)
 
     def test_start_service_missing_credentials(self, db_session, sample_user):
         """Test starting service without broker credentials"""
@@ -94,41 +118,59 @@ class TestMultiUserTradingService:
 
     def test_start_service_success(self, db_session, sample_user_with_settings):
         """Test successful service start"""
+        from unittest.mock import MagicMock, patch
+
         service = MultiUserTradingService(db=db_session)
 
-        # Start service (will fail at actual TradingService init, but should update status)
-        result = service.start_service(sample_user_with_settings.id)
+        # Mock TradingService to avoid actual initialization
+        with patch(
+            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+        ) as mock_service_class:
+            mock_service = MagicMock()
+            mock_service_class.return_value = mock_service
 
-        # Service status should be updated
-        from src.infrastructure.persistence.service_status_repository import (
-            ServiceStatusRepository,
-        )
+            # Start service (should succeed with mocked TradingService)
+            result = service.start_service(sample_user_with_settings.id)
 
-        status_repo = ServiceStatusRepository(db_session)
-        status = status_repo.get(sample_user_with_settings.id)
-        assert status is not None
-        assert status.service_running is True
+            # Service status should be updated
+            from src.infrastructure.persistence.service_status_repository import (
+                ServiceStatusRepository,
+            )
 
-        # Check logs were created
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
+            status_repo = ServiceStatusRepository(db_session)
+            status = status_repo.get(sample_user_with_settings.id)
+            assert status is not None
+            assert status.service_running is True
 
-        log_repo = ServiceLogRepository(db_session)
-        logs = log_repo.list(user_id=sample_user_with_settings.id, limit=10)
-        assert len(logs) > 0
-        assert any("Starting trading service" in log.message for log in logs)
+            # Check logs were created
+            from src.infrastructure.persistence.service_log_repository import (
+                ServiceLogRepository,
+            )
+
+            log_repo = ServiceLogRepository(db_session)
+            logs = log_repo.list(user_id=sample_user_with_settings.id, limit=10)
+            assert len(logs) > 0
+            assert any("Starting trading service" in log.message for log in logs)
 
     def test_start_service_already_running(self, db_session, sample_user_with_settings):
         """Test starting service that's already running"""
+        from unittest.mock import MagicMock, patch
+
         service = MultiUserTradingService(db=db_session)
 
-        # Start service first time
-        service.start_service(sample_user_with_settings.id)
+        # Mock TradingService to avoid actual initialization
+        with patch(
+            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+        ) as mock_service_class:
+            mock_service = MagicMock()
+            mock_service_class.return_value = mock_service
 
-        # Try to start again (should return True if already running)
-        result = service.start_service(sample_user_with_settings.id)
-        assert result is True
+            # Start service first time
+            service.start_service(sample_user_with_settings.id)
+
+            # Try to start again (should return True if already running)
+            result = service.start_service(sample_user_with_settings.id)
+            assert result is True
 
     def test_stop_service_not_started(self, db_session, sample_user):
         """Test stopping service that was never started"""
@@ -139,10 +181,19 @@ class TestMultiUserTradingService:
 
     def test_stop_service_success(self, db_session, sample_user_with_settings):
         """Test successful service stop"""
+        from unittest.mock import MagicMock, patch
+
         service = MultiUserTradingService(db=db_session)
 
-        # Start service first
-        service.start_service(sample_user_with_settings.id)
+        # Mock TradingService to avoid actual initialization
+        with patch(
+            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+        ) as mock_service_class:
+            mock_service = MagicMock()
+            mock_service_class.return_value = mock_service
+
+            # Start service first
+            service.start_service(sample_user_with_settings.id)
 
         # Stop service
         result = service.stop_service(sample_user_with_settings.id)
@@ -166,9 +217,18 @@ class TestMultiUserTradingService:
 
     def test_get_service_status_started(self, db_session, sample_user_with_settings):
         """Test getting status for started service"""
+        from unittest.mock import MagicMock, patch
+
         service = MultiUserTradingService(db=db_session)
 
-        service.start_service(sample_user_with_settings.id)
+        # Mock TradingService to avoid actual initialization
+        with patch(
+            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+        ) as mock_service_class:
+            mock_service = MagicMock()
+            mock_service_class.return_value = mock_service
+
+            service.start_service(sample_user_with_settings.id)
 
         status = service.get_service_status(sample_user_with_settings.id)
         assert status is not None
@@ -178,39 +238,48 @@ class TestMultiUserTradingService:
 
     def test_thread_safety(self, db_session, sample_user_with_settings):
         """Test thread-safe operations"""
+        from unittest.mock import MagicMock, patch
+
         service = MultiUserTradingService(db=db_session)
         results = []
 
-        def start_service():
-            try:
-                result = service.start_service(sample_user_with_settings.id)
-                results.append(("start", result))
-            except Exception as e:
-                results.append(("start_error", str(e)))
+        # Mock TradingService to avoid actual initialization
+        with patch(
+            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+        ) as mock_service_class:
+            mock_service = MagicMock()
+            mock_service_class.return_value = mock_service
 
-        def stop_service():
-            time.sleep(0.1)  # Small delay
-            try:
-                result = service.stop_service(sample_user_with_settings.id)
-                results.append(("stop", result))
-            except Exception as e:
-                results.append(("stop_error", str(e)))
+            def start_service():
+                try:
+                    result = service.start_service(sample_user_with_settings.id)
+                    results.append(("start", result))
+                except Exception as e:
+                    results.append(("start_error", str(e)))
 
-        # Run concurrent operations
-        threads = [
-            threading.Thread(target=start_service),
-            threading.Thread(target=start_service),
-            threading.Thread(target=stop_service),
-        ]
+            def stop_service():
+                time.sleep(0.1)  # Small delay
+                try:
+                    result = service.stop_service(sample_user_with_settings.id)
+                    results.append(("stop", result))
+                except Exception as e:
+                    results.append(("stop_error", str(e)))
 
-        for t in threads:
-            t.start()
+            # Run concurrent operations
+            threads = [
+                threading.Thread(target=start_service),
+                threading.Thread(target=start_service),
+                threading.Thread(target=stop_service),
+            ]
 
-        for t in threads:
-            t.join()
+            for t in threads:
+                t.start()
 
-        # Should not have raised exceptions
-        assert not any("error" in r[0] for r in results)
+            for t in threads:
+                t.join()
+
+            # Should not have raised exceptions
+            assert not any("error" in r[0] for r in results)
 
     def test_error_logging_on_start_failure(self, db_session, sample_user):
         """Test that errors are logged when service start fails"""
@@ -234,6 +303,11 @@ class TestMultiUserTradingService:
 
     def test_multiple_users_isolation(self, db_session):
         """Test that multiple users' services are isolated"""
+        import json
+        from unittest.mock import MagicMock, patch
+
+        from server.app.core.crypto import encrypt_blob
+
         # Create two users
         user1 = Users(
             email="user1@example.com",
@@ -248,25 +322,44 @@ class TestMultiUserTradingService:
         db_session.add_all([user1, user2])
         db_session.commit()
 
+        # Create properly encrypted credentials for both
+        creds1 = encrypt_blob(
+            json.dumps({"api_key": "key1", "api_secret": "secret1", "environment": "prod"}).encode(
+                "utf-8"
+            )
+        )
+        creds2 = encrypt_blob(
+            json.dumps({"api_key": "key2", "api_secret": "secret2", "environment": "prod"}).encode(
+                "utf-8"
+            )
+        )
+
         # Create settings for both
         settings1 = UserSettings(
             user_id=user1.id,
             trade_mode=TradeMode.BROKER,
-            broker_creds_encrypted=b"creds1",
+            broker_creds_encrypted=creds1,
         )
         settings2 = UserSettings(
             user_id=user2.id,
             trade_mode=TradeMode.BROKER,
-            broker_creds_encrypted=b"creds2",
+            broker_creds_encrypted=creds2,
         )
         db_session.add_all([settings1, settings2])
         db_session.commit()
 
         service = MultiUserTradingService(db=db_session)
 
-        # Start both services
-        service.start_service(user1.id)
-        service.start_service(user2.id)
+        # Mock TradingService to avoid actual initialization
+        with patch(
+            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+        ) as mock_service_class:
+            mock_service = MagicMock()
+            mock_service_class.return_value = mock_service
+
+            # Start both services
+            service.start_service(user1.id)
+            service.start_service(user2.id)
 
         # Check both have separate status
         status1 = service.get_service_status(user1.id)
@@ -277,4 +370,3 @@ class TestMultiUserTradingService:
         # get_service_status returns ServiceStatus object, not dict
         assert status1.user_id == user1.id
         assert status2.user_id == user2.id
-

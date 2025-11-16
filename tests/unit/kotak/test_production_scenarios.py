@@ -14,24 +14,24 @@ Run with: pytest tests/unit/kotak/test_production_scenarios.py -v
 """
 
 import sys
-from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
-import unittest
 import threading
-import time
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.kotak_neo_auto_trader.run_trading_service import TradingService
+import tempfile
+
 from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
-import tempfile
+from modules.kotak_neo_auto_trader.run_trading_service import TradingService
 
 
 class TestServiceInitialization(unittest.TestCase):
     """Test service initialization scenarios"""
-    
+
     def setUp(self):
         """Set up test fixtures"""
         self.tmp_dir = Path(tempfile.mkdtemp())
@@ -43,16 +43,17 @@ class TestServiceInitialization(unittest.TestCase):
             "KOTAK_PASSWORD=pass123\n"
             "KOTAK_MPIN=123456\n"
             "KOTAK_ENVIRONMENT=sandbox\n",
-            encoding="utf-8"
+            encoding="utf-8",
         )
-    
+
     def tearDown(self):
         """Clean up test fixtures"""
         import shutil
+
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
-    
-    @patch('modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth')
-    @patch('modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine')
+
+    @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine")
     def test_service_initialization_creates_single_auth(self, mock_engine_class, mock_auth_class):
         """Test that service creates single auth session"""
         mock_auth = Mock(spec=KotakNeoAuth)
@@ -60,64 +61,86 @@ class TestServiceInitialization(unittest.TestCase):
         mock_auth.is_logged_in = True
         mock_auth.client = Mock()
         mock_auth.get_client.return_value = mock_auth.client
-        
+
         mock_auth_class.return_value = mock_auth
-        
+
         mock_engine = Mock()
         mock_engine.login.return_value = True
         mock_engine.portfolio = Mock()
         mock_engine_class.return_value = mock_engine
-        
-        service = TradingService(env_file=str(self.env_path))
+
+        from sqlalchemy.orm import Session
+
+        from src.infrastructure.db.models import Users
+
+        # Create a mock db_session
+        mock_db = MagicMock(spec=Session)
+        mock_user = Users(id=1, email="test@example.com", password_hash="test", role="user")
+
+        service = TradingService(
+            user_id=1,
+            db_session=mock_db,
+            broker_creds=None,
+            strategy_config=None,
+            env_file=str(self.env_path),
+        )
         result = service.initialize()
-        
+
         # Should create auth once
         mock_auth_class.assert_called_once()
         # Should pass auth to engine
-        mock_engine_class.assert_called_once_with(env_file=str(self.env_path), auth=mock_auth)
+        mock_engine_class.assert_called_once_with(
+            env_file=str(self.env_path),
+            auth=mock_auth,
+            user_id=1,
+            db_session=mock_db,
+            strategy_config=None,
+        )
         self.assertTrue(result)
 
 
 class TestConcurrentTasks(unittest.TestCase):
     """Test concurrent task scenarios"""
-    
+
     def setUp(self):
         """Set up test fixtures"""
         self.mock_auth = Mock(spec=KotakNeoAuth)
         self.mock_auth.is_authenticated.return_value = True
         self.mock_auth.login.return_value = True
-        
+
         self.engine = AutoTradeEngine(auth=self.mock_auth)
         self.engine.orders = Mock()
         self.engine.portfolio = Mock()
-        self.engine.portfolio.get_holdings.return_value = {'data': []}
-        self.engine.portfolio.get_limits.return_value = {'data': {'day': {'used': 0, 'available': 100000}}}
-    
+        self.engine.portfolio.get_holdings.return_value = {"data": []}
+        self.engine.portfolio.get_limits.return_value = {
+            "data": {"day": {"used": 0, "available": 100000}}
+        }
+
     def test_concurrent_place_new_entries(self):
         """Test concurrent place_new_entries calls"""
         results = []
         results_lock = threading.Lock()
-        
+
         def place_orders():
             recs = []
             result = self.engine.place_new_entries(recs)
             with results_lock:
                 results.append(result)
-        
+
         # Create multiple threads
         threads = []
         for _ in range(3):
             t = threading.Thread(target=place_orders)
             threads.append(t)
-        
+
         # Start all threads
         for t in threads:
             t.start()
-        
+
         # Wait for all threads
         for t in threads:
             t.join(timeout=5.0)
-        
+
         # All should complete successfully
         self.assertEqual(len(results), 3)
         self.assertTrue(all(r is not None for r in results))
@@ -125,63 +148,67 @@ class TestConcurrentTasks(unittest.TestCase):
 
 class TestNetworkFailures(unittest.TestCase):
     """Test network failure scenarios"""
-    
+
     def setUp(self):
         """Set up test fixtures"""
         self.mock_auth = Mock(spec=KotakNeoAuth)
         self.mock_auth.is_authenticated.return_value = True
         self.mock_auth.login.return_value = True
-        
+
         self.engine = AutoTradeEngine(auth=self.mock_auth)
         self.engine.orders = Mock()
         self.engine.portfolio = Mock()
-        self.engine.portfolio.get_limits.return_value = {'data': {'day': {'used': 0, 'available': 100000}}}
-    
+        self.engine.portfolio.get_limits.return_value = {
+            "data": {"day": {"used": 0, "available": 100000}}
+        }
+
     def test_network_failure_during_holdings_fetch(self):
         """Test network failure during holdings fetch"""
         # Mock to return None instead of raising exception (get_holdings handles None)
         self.engine.portfolio.get_holdings.return_value = None
-        
+
         recs = []
         result = self.engine.place_new_entries(recs)
-        
+
         # Should handle gracefully and return empty summary
         self.assertIsNotNone(result)
-        self.assertEqual(result.get('placed', 0), 0)
+        self.assertEqual(result.get("placed", 0), 0)
 
 
 class TestBrokerAPIFailures(unittest.TestCase):
     """Test broker API failure scenarios"""
-    
+
     def setUp(self):
         """Set up test fixtures"""
         self.mock_auth = Mock(spec=KotakNeoAuth)
         self.mock_auth.is_authenticated.return_value = True
         self.mock_auth.login.return_value = True
-        
+
         self.engine = AutoTradeEngine(auth=self.mock_auth)
         self.engine.orders = Mock()
         self.engine.portfolio = Mock()
-        self.engine.portfolio.get_limits.return_value = {'data': {'day': {'used': 0, 'available': 100000}}}
-    
+        self.engine.portfolio.get_limits.return_value = {
+            "data": {"day": {"used": 0, "available": 100000}}
+        }
+
     def test_broker_api_error_response(self):
         """Test broker API error response"""
         self.engine.portfolio.get_holdings.return_value = {
-            'code': '500',
-            'message': 'Internal server error'
+            "code": "500",
+            "message": "Internal server error",
         }
-        
+
         recs = []
         result = self.engine.place_new_entries(recs)
-        
+
         # Should handle gracefully
         self.assertIsNotNone(result)
-        self.assertEqual(result.get('placed', 0), 0)
+        self.assertEqual(result.get("placed", 0), 0)
 
 
 class TestServiceRestart(unittest.TestCase):
     """Test service restart scenarios"""
-    
+
     def setUp(self):
         """Set up test fixtures"""
         self.tmp_dir = Path(tempfile.mkdtemp())
@@ -193,15 +220,16 @@ class TestServiceRestart(unittest.TestCase):
             "KOTAK_PASSWORD=pass123\n"
             "KOTAK_MPIN=123456\n"
             "KOTAK_ENVIRONMENT=sandbox\n",
-            encoding="utf-8"
+            encoding="utf-8",
         )
-    
+
     def tearDown(self):
         """Clean up test fixtures"""
         import shutil
+
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
-    
-    @patch('modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth')
+
+    @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
     def test_service_restart_creates_fresh_session(self, mock_auth_class):
         """Test that service restart creates fresh auth session"""
         mock_auth = Mock(spec=KotakNeoAuth)
@@ -209,19 +237,36 @@ class TestServiceRestart(unittest.TestCase):
         mock_auth.is_logged_in = True
         mock_auth.client = Mock()
         mock_auth.get_client.return_value = mock_auth.client
-        
+
         mock_auth_class.return_value = mock_auth
-        
+
         # First service instance
-        service1 = TradingService(env_file=str(self.env_path))
+        from sqlalchemy.orm import Session
+
+        # Create a mock db_session
+        mock_db = MagicMock(spec=Session)
+
+        service1 = TradingService(
+            user_id=1,
+            db_session=mock_db,
+            broker_creds=None,
+            strategy_config=None,
+            env_file=str(self.env_path),
+        )
         service1.initialize()
-        
+
         first_call_count = mock_auth_class.call_count
-        
+
         # Second service instance (restart)
-        service2 = TradingService(env_file=str(self.env_path))
+        service2 = TradingService(
+            user_id=1,
+            db_session=mock_db,
+            broker_creds=None,
+            strategy_config=None,
+            env_file=str(self.env_path),
+        )
         service2.initialize()
-        
+
         # Should create new auth session (call count should increase)
         self.assertGreater(mock_auth_class.call_count, first_call_count)
         self.assertEqual(mock_auth_class.call_count, 2)
@@ -229,39 +274,41 @@ class TestServiceRestart(unittest.TestCase):
 
 class TestLongRunningOperations(unittest.TestCase):
     """Test long-running operation scenarios"""
-    
+
     def setUp(self):
         """Set up test fixtures"""
         self.mock_auth = Mock(spec=KotakNeoAuth)
         self.mock_auth.is_authenticated.return_value = True
         self.mock_auth.login.return_value = True
-        
+
         self.engine = AutoTradeEngine(auth=self.mock_auth)
         self.engine.orders = Mock()
         self.engine.portfolio = Mock()
-        self.engine.portfolio.get_holdings.return_value = {'data': []}
-        self.engine.portfolio.get_limits.return_value = {'data': {'day': {'used': 0, 'available': 100000}}}
-    
+        self.engine.portfolio.get_holdings.return_value = {"data": []}
+        self.engine.portfolio.get_limits.return_value = {
+            "data": {"day": {"used": 0, "available": 100000}}
+        }
+
     def test_long_running_operation_with_session_expiry(self):
         """Test long-running operation that spans session expiry"""
         # Simulate session expiry during operation
-        call_count = {'count': 0}
-        
+        call_count = {"count": 0}
+
         def mock_get_holdings():
-            call_count['count'] += 1
-            if call_count['count'] == 1:
-                return {'code': '900901', 'message': 'JWT token expired'}
-            return {'data': []}
-        
+            call_count["count"] += 1
+            if call_count["count"] == 1:
+                return {"code": "900901", "message": "JWT token expired"}
+            return {"data": []}
+
         self.engine.portfolio.get_holdings = mock_get_holdings
         self.mock_auth.force_relogin.return_value = True
-        
+
         recs = []
         result = self.engine.place_new_entries(recs)
-        
+
         # Should handle session expiry and retry
         self.assertIsNotNone(result)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

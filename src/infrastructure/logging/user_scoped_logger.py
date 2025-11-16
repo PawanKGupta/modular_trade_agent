@@ -7,9 +7,7 @@ Provides user-aware logging with database and file handlers.
 from __future__ import annotations
 
 import logging
-import traceback
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -24,7 +22,7 @@ from src.infrastructure.logging.user_file_log_handler import (
 class UserScopedLogger:
     """
     Logger wrapper that adds user context to all logs.
-    
+
     Provides:
     - Database logging (structured logs in ServiceLog table)
     - File logging (per-user log files)
@@ -41,7 +39,7 @@ class UserScopedLogger:
     ):
         """
         Initialize user-scoped logger.
-        
+
         Args:
             user_id: User ID for log context
             base_logger: Base Python logger to wrap
@@ -77,12 +75,12 @@ class UserScopedLogger:
     def error(
         self,
         message: str,
-        exc_info: Optional[Exception] = None,
+        exc_info: Exception | None = None,
         **context: Any,
     ) -> None:
         """
         Log error message with user context and exception capture.
-        
+
         Args:
             message: Error message
             exc_info: Exception object to capture (optional)
@@ -95,12 +93,12 @@ class UserScopedLogger:
     def critical(
         self,
         message: str,
-        exc_info: Optional[Exception] = None,
+        exc_info: Exception | None = None,
         **context: Any,
     ) -> None:
         """
         Log critical message with user context and exception capture.
-        
+
         Args:
             message: Critical message
             exc_info: Exception object to capture (optional)
@@ -115,11 +113,11 @@ class UserScopedLogger:
         level: int,
         message: str,
         context: dict[str, Any],
-        exc_info: Optional[Exception] = None,
+        exc_info: Exception | None = None,
     ) -> None:
         """
         Internal logging with user context.
-        
+
         Args:
             level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
             message: Log message
@@ -130,6 +128,11 @@ class UserScopedLogger:
         log_context = context.copy()
         log_context["user_id"] = self.user_id
         log_context["log_module"] = self.module  # Use 'log_module' to avoid LogRecord conflict
+
+        # Convert exc_info to proper format if it's an Exception object
+        # Python logging expects exc_info to be: None, True, or (type, value, traceback) tuple
+        if exc_info and isinstance(exc_info, BaseException):
+            exc_info = (type(exc_info), exc_info, exc_info.__traceback__)
 
         # Create log record with context
         record = logging.LogRecord(
@@ -161,7 +164,7 @@ class UserScopedLogger:
     def _capture_exception(self, exception: Exception, context: dict[str, Any]) -> None:
         """
         Capture exception with full context to ErrorLog table.
-        
+
         Args:
             exception: Exception to capture
             context: Additional context data
@@ -184,7 +187,7 @@ class UserScopedLogger:
     def set_module(self, module: str) -> None:
         """
         Update module name for subsequent logs.
-        
+
         Args:
             module: New module name
         """
@@ -202,22 +205,17 @@ class UserScopedLogger:
         self.error_file_handler.close()
 
 
-def get_user_logger(
-    user_id: int, db: Session, module: str = "unknown"
-) -> UserScopedLogger:
+def get_user_logger(user_id: int, db: Session, module: str = "unknown") -> UserScopedLogger:
     """
     Factory function to create a user-scoped logger.
-    
+
     Args:
         user_id: User ID for log context
         db: Database session
         module: Module/component name
-        
+
     Returns:
         UserScopedLogger instance
     """
     base_logger = logging.getLogger(f"TradeAgent.User{user_id}")
-    return UserScopedLogger(
-        user_id=user_id, base_logger=base_logger, db=db, module=module
-    )
-
+    return UserScopedLogger(user_id=user_id, base_logger=base_logger, db=db, module=module)

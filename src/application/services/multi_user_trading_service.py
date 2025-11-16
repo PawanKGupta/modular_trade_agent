@@ -11,7 +11,6 @@ import threading
 
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.logging import get_user_logger
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
@@ -41,6 +40,7 @@ class MultiUserTradingService:
         self.db = db
         self._services: dict[int, any] = {}  # user_id -> TradingService instance
         self._locks: dict[int, threading.Lock] = {}  # user_id -> service lock
+        self._temp_env_files: dict[int, str] = {}  # user_id -> temp env file path (for cleanup)
         self._service_status_repo = ServiceStatusRepository(db)
         self._settings_repo = SettingsRepository(db)
         self._config_repo = UserTradingConfigRepository(db)
@@ -72,9 +72,7 @@ class MultiUserTradingService:
 
             try:
                 # Get user-specific logger
-                user_logger = get_user_logger(
-                    user_id=user_id, db=self.db, module="TradingService"
-                )
+                user_logger = get_user_logger(user_id=user_id, db=self.db, module="TradingService")
                 user_logger.info("Starting trading service", action="start_service")
 
                 # Load user settings
@@ -83,31 +81,53 @@ class MultiUserTradingService:
                     user_logger.error("User settings not found", action="start_service")
                     raise ValueError(f"User settings not found for user_id={user_id}")
 
-                # Check trade mode
-                if settings.trade_mode.value != "broker":
-                    user_logger.warning(
-                        "Service start failed - not in broker mode",
-                        trade_mode=settings.trade_mode.value,
+                # Phase 2.4: Handle broker vs paper mode
+                temp_env_file = None
+                broker_creds = None
+
+                if settings.trade_mode.value == "broker":
+                    # Broker mode: requires encrypted credentials
+                    if not settings.broker_creds_encrypted:
+                        user_logger.error("No broker credentials stored", action="start_service")
+                        raise ValueError(f"No broker credentials stored for user_id={user_id}")
+
+                    from src.application.services.broker_credentials import (
+                        create_temp_env_file,
+                        decrypt_broker_credentials,
+                    )
+
+                    broker_creds_dict = decrypt_broker_credentials(settings.broker_creds_encrypted)
+                    if not broker_creds_dict:
+                        user_logger.error(
+                            "Failed to decrypt broker credentials", action="start_service"
+                        )
+                        raise ValueError(
+                            f"Failed to decrypt broker credentials for user_id={user_id}"
+                        )
+
+                    # Create temporary env file for KotakNeoAuth (maintains backward compatibility)
+                    temp_env_file = create_temp_env_file(broker_creds_dict)
+                    self._temp_env_files[user_id] = temp_env_file  # Track for cleanup
+                    broker_creds = broker_creds_dict  # Pass dict for future use
+
+                    user_logger.info(
+                        "Broker mode: credentials loaded and decrypted", action="start_service"
+                    )
+                elif settings.trade_mode.value == "paper":
+                    # Paper mode: uses simulated trading, no broker credentials needed
+                    user_logger.info(
+                        "Paper mode: using simulated trading (no broker credentials required)",
+                        action="start_service",
+                    )
+                    # Paper mode will use MockBrokerAdapter or similar
+                else:
+                    user_logger.error(
+                        f"Unknown trade mode: {settings.trade_mode.value}",
                         action="start_service",
                     )
                     raise ValueError(
-                        f"User {user_id} is in {settings.trade_mode.value} mode, "
-                        "broker mode required for trading service"
+                        f"Unknown trade mode: {settings.trade_mode.value} for user_id={user_id}"
                     )
-
-                # Load broker credentials
-                if not settings.broker_creds_encrypted:
-                    user_logger.error(
-                        "No broker credentials stored", action="start_service"
-                    )
-                    raise ValueError(f"No broker credentials stored for user_id={user_id}")
-
-                # TODO: Decrypt broker credentials (Phase 2.4)
-                # For now, we'll need to handle this - broker_creds should be a dict
-                # broker_creds = decrypt_broker_creds(settings.broker_creds_encrypted)
-                # Temporary: create broker_creds dict from encrypted data
-                # This is a placeholder until Phase 2.4 implements proper decryption
-                broker_creds = {}  # TODO: Decrypt from settings.broker_creds_encrypted
 
                 # Load user trading configuration and convert to StrategyConfig
                 user_config = self._config_repo.get_or_create_default(user_id)
@@ -127,7 +147,7 @@ class MultiUserTradingService:
                     db_session=self.db,
                     broker_creds=broker_creds,
                     strategy_config=strategy_config,
-                    env_file=None,  # Will use broker_creds instead (Phase 2.4)
+                    env_file=temp_env_file,  # Temporary env file from decrypted credentials
                 )
 
                 # Store service instance
@@ -151,9 +171,7 @@ class MultiUserTradingService:
 
             except Exception as e:
                 # Log error and update status
-                user_logger = get_user_logger(
-                    user_id=user_id, db=self.db, module="TradingService"
-                )
+                user_logger = get_user_logger(user_id=user_id, db=self.db, module="TradingService")
                 user_logger.error(
                     "Failed to start trading service",
                     exc_info=e,
@@ -183,9 +201,7 @@ class MultiUserTradingService:
 
             try:
                 # Get user-specific logger
-                user_logger = get_user_logger(
-                    user_id=user_id, db=self.db, module="TradingService"
-                )
+                user_logger = get_user_logger(user_id=user_id, db=self.db, module="TradingService")
                 user_logger.info("Stopping trading service", action="stop_service")
 
                 service = self._services[user_id]
@@ -200,6 +216,21 @@ class MultiUserTradingService:
                 # Remove service instance
                 del self._services[user_id]
 
+                # Clean up temporary env file (Phase 2.4)
+                if user_id in self._temp_env_files:
+                    import os
+
+                    temp_file = self._temp_env_files[user_id]
+                    try:
+                        if os.path.exists(temp_file):
+                            os.unlink(temp_file)
+                    except Exception as cleanup_error:
+                        user_logger.warning(
+                            f"Failed to cleanup temp env file: {cleanup_error}",
+                            action="stop_service",
+                        )
+                    del self._temp_env_files[user_id]
+
                 # Update service status
                 self._service_status_repo.update_running(user_id, running=False)
                 self._service_status_repo.update_heartbeat(user_id)
@@ -209,9 +240,7 @@ class MultiUserTradingService:
 
             except Exception as e:
                 # Log error
-                user_logger = get_user_logger(
-                    user_id=user_id, db=self.db, module="TradingService"
-                )
+                user_logger = get_user_logger(user_id=user_id, db=self.db, module="TradingService")
                 user_logger.error(
                     "Failed to stop trading service",
                     exc_info=e,

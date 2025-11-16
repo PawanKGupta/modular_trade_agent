@@ -15,6 +15,8 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+# Import models to ensure they're registered before migration scripts
+import src.infrastructure.db.models  # noqa: F401
 from scripts.migration.migrate_paper_trading import (
     migrate_paper_trading_holdings,
     migrate_paper_trading_orders,
@@ -48,6 +50,12 @@ def temp_data_dir():
     """Create temporary directory for test data files"""
     with TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
+
+
+import pytest
+
+# Migration tests have SQLAlchemy model import conflicts in parallel execution
+pytestmark = pytest.mark.no_parallel
 
 
 class TestTradesHistoryMigration:
