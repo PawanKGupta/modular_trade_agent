@@ -80,16 +80,20 @@ def user_config_to_strategy_config(user_config: UserTradingConfig) -> StrategyCo
         volume_exhaustion_lookback_daily=10,
         volume_exhaustion_lookback_weekly=20,
         # Data Fetching Configuration (use defaults - not in UserTradingConfig yet)
-        max_retries=3,
-        retry_delay_seconds=2,
-        request_timeout_seconds=30,
-        # News Sentiment (use defaults - not in UserTradingConfig yet)
+        data_fetch_daily_max_years=5,
+        data_fetch_weekly_max_years=3,
+        enable_adaptive_lookback=True,
+        # News Sentiment
         news_sentiment_enabled=user_config.news_sentiment_enabled,
         news_sentiment_lookback_days=user_config.news_sentiment_lookback_days,
         news_sentiment_min_articles=user_config.news_sentiment_min_articles,
         news_sentiment_pos_threshold=user_config.news_sentiment_pos_threshold,
         news_sentiment_neg_threshold=user_config.news_sentiment_neg_threshold,
-        # ML Configuration (use defaults - not in StrategyConfig yet)
-        # ml_enabled, ml_model_version, ml_confidence_threshold handled separately
+        # ML Configuration (use defaults - not fully in StrategyConfig yet)
+        ml_enabled=False,  # User config has ml_enabled but StrategyConfig uses different structure
+        ml_verdict_model_path="models/verdict_model_random_forest.pkl",
+        ml_price_model_path="models/price_model_random_forest.pkl",
+        ml_confidence_threshold=user_config.ml_confidence_threshold,
+        ml_combine_with_rules=user_config.ml_combine_with_rules,
     )
 

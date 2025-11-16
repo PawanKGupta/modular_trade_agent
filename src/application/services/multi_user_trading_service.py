@@ -134,10 +134,8 @@ class MultiUserTradingService:
                 self._services[user_id] = service
 
                 # Update service status
-                status = self._service_status_repo.get_or_create(user_id)
-                status.service_running = True
-                status.last_heartbeat = ist_now()
-                self._service_status_repo.update(status)
+                self._service_status_repo.update_running(user_id, running=True)
+                self._service_status_repo.update_heartbeat(user_id)
 
                 user_logger.info("Trading service started successfully", action="start_service")
 
@@ -162,11 +160,8 @@ class MultiUserTradingService:
                     action="start_service",
                 )
 
-                status = self._service_status_repo.get_or_create(user_id)
-                status.service_running = False
-                status.error_count += 1
-                status.last_error = str(e)
-                self._service_status_repo.update(status)
+                self._service_status_repo.update_running(user_id, running=False)
+                self._service_status_repo.increment_error(user_id, error_message=str(e))
                 raise
 
     def stop_service(self, user_id: int) -> bool:
@@ -206,10 +201,8 @@ class MultiUserTradingService:
                 del self._services[user_id]
 
                 # Update service status
-                status = self._service_status_repo.get_or_create(user_id)
-                status.service_running = False
-                status.last_heartbeat = ist_now()
-                self._service_status_repo.update(status)
+                self._service_status_repo.update_running(user_id, running=False)
+                self._service_status_repo.update_heartbeat(user_id)
 
                 user_logger.info("Trading service stopped successfully", action="stop_service")
                 return True
@@ -225,10 +218,7 @@ class MultiUserTradingService:
                     action="stop_service",
                 )
 
-                status = self._service_status_repo.get_or_create(user_id)
-                status.error_count += 1
-                status.last_error = str(e)
-                self._service_status_repo.update(status)
+                self._service_status_repo.increment_error(user_id, error_message=str(e))
                 return False
 
     def get_service_status(self, user_id: int) -> any | None:
