@@ -1,0 +1,10 @@
+{
+  "initial_capital": 100000.0,
+  "enable_slippage": false,
+  "slippage_percentage": 0.2,
+  "execution_delay_ms": 100,
+  "enable_fees": false,
+  "enforce_market_hours": false,
+  "storage_path": "paper_trading/test",
+  "price_source": "mock"
+}

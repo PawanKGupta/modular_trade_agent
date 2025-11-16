@@ -37,6 +37,13 @@ htmlcov/
 # IDE directories
 .cursor/
 
+# Web artifacts
+web/node_modules/
+web/.vite/
+web/dist/
+web/coverage/
+web/.cache/
+
 # Model files (large binary files)
 # Ignore temporary/test model files, but allow production models tracked by Git LFS
 *.pkl

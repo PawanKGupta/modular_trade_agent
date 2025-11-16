@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+	--bg: #0b0f14;
+	--panel: #121923;
+	--text: #e6edf3;
+	--muted: #9aa4af;
+	--accent: #4fc3f7;
+}
+
+html, body, #root {
+	height: 100%;
+}
+
+body {
+	background: var(--bg);
+	color: var(--text);
+}

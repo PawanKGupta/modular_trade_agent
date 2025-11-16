@@ -24,3 +24,8 @@ xgboost>=2.0.0; python_version >= "3.9"
 
 # Kotak Neo API client (pinned to commit); only install on Python < 3.12 due to numpy==1.24.2 pin in upstream
 git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client; python_version < "3.12"
+
+# Database & migrations
+SQLAlchemy==2.0.36
+alembic==1.14.0
+passlib[bcrypt]==1.7.4
