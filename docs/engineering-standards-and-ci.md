@@ -226,6 +226,45 @@ cd web; npm run dev:api8000
 $env:VITE_API_URL="http://localhost:8000"; cd web; npm run dev
 ```
 
+---
+
+## Implemented API Endpoints (New/Updated)
+
+### Auth
+- POST `/api/v1/auth/signup` → { access_token, token_type }
+- POST `/api/v1/auth/login` → { access_token, token_type }
+- GET `/api/v1/auth/me` → current user profile
+
+### User Settings
+- GET `/api/v1/user/settings`
+- PUT `/api/v1/user/settings`
+
+### Orders
+- GET `/api/v1/user/orders/` — Query params: `status=amo|ongoing|sell|closed`
+  - Returns: list of orders for the authenticated user, filtered by status if provided
+
+### PnL
+- GET `/api/v1/user/pnl/daily` — Query params (optional): `start=YYYY-MM-DD`, `end=YYYY-MM-DD`
+  - Returns: array of `{ date, pnl }` for the authenticated user
+- GET `/api/v1/user/pnl/summary` — same optional params
+  - Returns: `{ totalPnl, daysGreen, daysRed }`
+
+### Activity
+- GET `/api/v1/user/activity/` — Query param: `level=info|warn|error|all` (default `all`)
+  - Returns: recent activity rows for the authenticated user
+
+### Targets
+- GET `/api/v1/user/targets/`
+  - Returns: list of targets (currently placeholder empty list until persistence is added)
+
+### Signals
+- GET `/api/v1/signals/buying-zone`
+  - Returns: buying-zone signals (DB-backed)
+
+Notes
+- All “user/*” endpoints are row-scoped by the authenticated user; app-level isolation enforced via `get_current_user` and repository filters on `user_id`.
+- For development, SQLite is used; for production, recommend PostgreSQL (optionally add RLS as an additional layer).
+
 ### Dev Experience
 - ESLint v9 flat config (`eslint.config.js`) with TypeScript, React, Hooks, and `jsx-a11y`
 - Prettier formatting aligned with repo conventions
