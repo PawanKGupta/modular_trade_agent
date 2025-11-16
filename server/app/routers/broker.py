@@ -65,7 +65,8 @@ def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
                 neo_fin_key="neotradeapi",
             )
         except Exception as e:
-            return False, f"Failed to initialize client: {str(e)}"
+            error_str = str(e) if e is not None else "Unknown error"
+            return False, f"Failed to initialize client: {error_str}"
 
         # Step 2: If full credentials provided, test login
         has_full_creds = (
@@ -82,13 +83,24 @@ def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
         return _test_kotak_neo_login(client, creds)
 
     except Exception as e:
-        return False, f"Connection test failed: {str(e)}"
+        error_str = str(e) if e is not None else "Unknown error"
+        return False, f"Connection test failed: {error_str}"
 
 
 def _test_kotak_neo_login(client, creds: KotakNeoCreds) -> tuple[bool, str]:
     """Test Kotak Neo login and 2FA."""
     try:
-        login_response = client.login(mobilenumber=creds.mobile_number, password=creds.password)
+        # Validate credentials are not None or empty
+        if not creds.mobile_number or not creds.password:
+            return False, "Mobile number and password are required for login"
+
+        mobile = str(creds.mobile_number).strip()
+        password = str(creds.password).strip()
+
+        if not mobile or not password:
+            return False, "Mobile number and password cannot be empty"
+
+        login_response = client.login(mobilenumber=mobile, password=password)
 
         if login_response is None:
             return False, "Login failed: No response from server"
@@ -106,13 +118,18 @@ def _test_kotak_neo_login(client, creds: KotakNeoCreds) -> tuple[bool, str]:
         return False, "2FA credentials (MPIN or TOTP) required"
 
     except Exception as e:
-        return False, f"Login error: {str(e)}"
+        error_str = str(e) if e is not None else "Unknown error"
+        return False, f"Login error: {error_str}"
 
 
 def _test_kotak_neo_2fa(client, mpin: str) -> tuple[bool, str]:
     """Test Kotak Neo 2FA with MPIN."""
     try:
-        session_response = client.session_2fa(OTP=mpin)
+        if not mpin or not mpin.strip():
+            return False, "MPIN is required for 2FA"
+
+        mpin_str = str(mpin).strip()
+        session_response = client.session_2fa(OTP=mpin_str)
         if session_response is None:
             return True, "Connection successful (session already active)"
 
@@ -122,11 +139,12 @@ def _test_kotak_neo_2fa(client, mpin: str) -> tuple[bool, str]:
 
         return True, "Connection successful"
     except Exception as e:
-        error_msg = str(e).lower()
+        error_str = str(e) if e is not None else "Unknown error"
+        error_msg = error_str.lower()
         # Handle SDK internal errors (NoneType.get) - treat as session already active
         if "nonetype" in error_msg and "get" in error_msg:
             return True, "Connection successful (session already active)"
-        return False, f"2FA failed: {str(e)}"
+        return False, f"2FA failed: {error_str}"
 
 
 def _extract_error_message(error: dict | list | str) -> str:
