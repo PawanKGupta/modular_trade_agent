@@ -12,6 +12,7 @@ import threading
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.logging import get_user_logger
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.user_trading_config_repository import (
@@ -43,6 +44,9 @@ class MultiUserTradingService:
         self._service_status_repo = ServiceStatusRepository(db)
         self._settings_repo = SettingsRepository(db)
         self._config_repo = UserTradingConfigRepository(db)
+        self._logger = get_user_logger(
+            user_id=0, db=db, module="MultiUserTradingService"
+        )  # System-level logger
 
     def start_service(self, user_id: int) -> bool:
         """
@@ -67,13 +71,25 @@ class MultiUserTradingService:
                     return True  # Already running
 
             try:
+                # Get user-specific logger
+                user_logger = get_user_logger(
+                    user_id=user_id, db=self.db, module="TradingService"
+                )
+                user_logger.info("Starting trading service", action="start_service")
+
                 # Load user settings
                 settings = self._settings_repo.get_by_user_id(user_id)
                 if not settings:
+                    user_logger.error("User settings not found", action="start_service")
                     raise ValueError(f"User settings not found for user_id={user_id}")
 
                 # Check trade mode
                 if settings.trade_mode.value != "broker":
+                    user_logger.warning(
+                        "Service start failed - not in broker mode",
+                        trade_mode=settings.trade_mode.value,
+                        action="start_service",
+                    )
                     raise ValueError(
                         f"User {user_id} is in {settings.trade_mode.value} mode, "
                         "broker mode required for trading service"
@@ -81,6 +97,9 @@ class MultiUserTradingService:
 
                 # Load broker credentials
                 if not settings.broker_creds_encrypted:
+                    user_logger.error(
+                        "No broker credentials stored", action="start_service"
+                    )
                     raise ValueError(f"No broker credentials stored for user_id={user_id}")
 
                 # TODO: Decrypt broker credentials
@@ -109,6 +128,8 @@ class MultiUserTradingService:
                 status.last_heartbeat = ist_now()
                 self._service_status_repo.update(status)
 
+                user_logger.info("Trading service started successfully", action="start_service")
+
                 # TODO: Start service in background thread
                 # service_thread = threading.Thread(
                 #     target=service.run,
@@ -121,6 +142,15 @@ class MultiUserTradingService:
 
             except Exception as e:
                 # Log error and update status
+                user_logger = get_user_logger(
+                    user_id=user_id, db=self.db, module="TradingService"
+                )
+                user_logger.error(
+                    "Failed to start trading service",
+                    exc_info=e,
+                    action="start_service",
+                )
+
                 status = self._service_status_repo.get_or_create(user_id)
                 status.service_running = False
                 status.error_count += 1
@@ -146,6 +176,12 @@ class MultiUserTradingService:
                 return False  # Service not running
 
             try:
+                # Get user-specific logger
+                user_logger = get_user_logger(
+                    user_id=user_id, db=self.db, module="TradingService"
+                )
+                user_logger.info("Stopping trading service", action="stop_service")
+
                 service = self._services[user_id]
 
                 # Request shutdown
@@ -164,10 +200,20 @@ class MultiUserTradingService:
                 status.last_heartbeat = ist_now()
                 self._service_status_repo.update(status)
 
+                user_logger.info("Trading service stopped successfully", action="stop_service")
                 return True
 
             except Exception as e:
                 # Log error
+                user_logger = get_user_logger(
+                    user_id=user_id, db=self.db, module="TradingService"
+                )
+                user_logger.error(
+                    "Failed to stop trading service",
+                    exc_info=e,
+                    action="stop_service",
+                )
+
                 status = self._service_status_repo.get_or_create(user_id)
                 status.error_count += 1
                 status.last_error = str(e)
