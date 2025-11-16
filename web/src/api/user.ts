@@ -21,8 +21,19 @@ export async function saveBrokerCreds(broker: string, api_key: string, api_secre
 	return res.data as { status: string };
 }
 
-export async function testBrokerConnection(broker: string, api_key: string, api_secret: string): Promise<{ ok: boolean; message?: string }> {
-	const res = await api.post('/user/broker/test', { broker, api_key, api_secret });
+export type BrokerTestRequest = {
+	broker: string;
+	api_key: string;
+	api_secret: string;
+	mobile_number?: string;
+	password?: string;
+	mpin?: string;
+	totp_secret?: string;
+	environment?: string;
+};
+
+export async function testBrokerConnection(payload: BrokerTestRequest): Promise<{ ok: boolean; message?: string }> {
+	const res = await api.post('/user/broker/test', payload);
 	return res.data as { ok: boolean; message?: string };
 }
 

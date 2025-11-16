@@ -12,6 +12,10 @@ export function SettingsPage() {
 	});
 	const [apiKey, setApiKey] = useState('');
 	const [apiSecret, setApiSecret] = useState('');
+	const [mobileNumber, setMobileNumber] = useState('');
+	const [password, setPassword] = useState('');
+	const [mpin, setMpin] = useState('');
+	const [testMode, setTestMode] = useState<'basic' | 'full'>('basic');
 	const [brokerMsg, setBrokerMsg] = useState<string | null>(null);
 	const [testing, setTesting] = useState(false);
 	const [status, setStatus] = useState<{ broker: string | null; status: string | null } | null>(null);
@@ -47,16 +51,50 @@ export function SettingsPage() {
 						<label className="block text-sm mb-1">Broker</label>
 						<input className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]" value={form.broker ?? ''} onChange={(e) => setForm({ ...form, broker: e.target.value })} placeholder="kotak-neo" />
 					</div>
-					<div className="grid grid-cols-1 gap-3">
+					<div className="space-y-3">
+						<h3 className="text-sm font-semibold mt-4">Basic Credentials</h3>
 						<div>
-							<label className="block text-sm mb-1">API Key</label>
+							<label className="block text-sm mb-1">API Key (Consumer Key)</label>
 							<input className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Enter API Key" />
 						</div>
 						<div>
-							<label className="block text-sm mb-1">API Secret</label>
+							<label className="block text-sm mb-1">API Secret (Consumer Secret)</label>
 							<input className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]" type="password" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} placeholder="Enter API Secret" />
 						</div>
-						<div className="flex gap-2">
+
+						<div className="mt-4">
+							<label className="block text-sm font-semibold mb-2">Connection Test Mode</label>
+							<div className="flex items-center gap-4 mb-3">
+								<label className="flex items-center gap-2">
+									<input type="radio" checked={testMode === 'basic'} onChange={() => setTestMode('basic')} />
+									<span className="text-sm">Basic Test (API Key/Secret only)</span>
+								</label>
+								<label className="flex items-center gap-2">
+									<input type="radio" checked={testMode === 'full'} onChange={() => setTestMode('full')} />
+									<span className="text-sm">Full Test (with Login & 2FA)</span>
+								</label>
+							</div>
+						</div>
+
+						{testMode === 'full' && (
+							<div className="space-y-3 mt-4 p-4 border border-[#1e293b] rounded">
+								<h4 className="text-sm font-semibold">Full Authentication Credentials</h4>
+								<div>
+									<label className="block text-sm mb-1">Mobile Number</label>
+									<input className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]" type="tel" value={mobileNumber} onChange={(e) => setMobileNumber(e.target.value)} placeholder="Enter mobile number" />
+								</div>
+								<div>
+									<label className="block text-sm mb-1">Password</label>
+									<input className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password" />
+								</div>
+								<div>
+									<label className="block text-sm mb-1">MPIN (for 2FA)</label>
+									<input className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]" type="password" value={mpin} onChange={(e) => setMpin(e.target.value)} placeholder="Enter MPIN" />
+								</div>
+							</div>
+						)}
+
+						<div className="flex gap-2 mt-4">
 							<button
 								className="bg-blue-600 text-white px-3 py-2 rounded disabled:opacity-50"
 								onClick={async () => {
@@ -72,19 +110,44 @@ export function SettingsPage() {
 								className="bg-emerald-600 text-white px-3 py-2 rounded disabled:opacity-50"
 								onClick={async () => {
 									setTesting(true);
-									const res = await testBrokerConnection(form.broker ?? 'kotak-neo', apiKey, apiSecret);
-									setBrokerMsg(res.message ?? (res.ok ? 'OK' : 'Failed'));
-									setTesting(false);
-									const s = await getBrokerStatus().catch(() => null);
-									if (s) setStatus(s);
+									setBrokerMsg(null);
+									try {
+										const payload: any = {
+											broker: form.broker ?? 'kotak-neo',
+											api_key: apiKey,
+											api_secret: apiSecret,
+										};
+										if (testMode === 'full') {
+											payload.mobile_number = mobileNumber;
+											payload.password = password;
+											payload.mpin = mpin;
+										}
+										const res = await testBrokerConnection(payload);
+										setBrokerMsg(res.message ?? (res.ok ? 'Connection successful!' : 'Connection failed'));
+										const s = await getBrokerStatus().catch(() => null);
+										if (s) setStatus(s);
+									} catch (error: any) {
+										setBrokerMsg(error?.message || 'Test failed');
+									} finally {
+										setTesting(false);
+									}
 								}}
-								disabled={!apiKey || !apiSecret || testing}
+								disabled={
+									!apiKey ||
+									!apiSecret ||
+									testing ||
+									(testMode === 'full' && (!mobileNumber || !password || !mpin))
+								}
 							>
-								{testing ? 'Testing...' : 'Test Connection'}
+								{testing ? 'Testing...' : testMode === 'full' ? 'Test Full Connection' : 'Test Basic Connection'}
 							</button>
 						</div>
-						{brokerMsg && <div className="text-sm">{brokerMsg}</div>}
-						{status && <div className="text-sm text-[var(--muted)]">Status: {status.status ?? 'Unknown'}</div>}
+						{brokerMsg && (
+							<div className={`text-sm mt-2 ${brokerMsg.includes('successful') || brokerMsg.includes('OK') ? 'text-green-400' : 'text-red-400'}`}>
+								{brokerMsg}
+							</div>
+						)}
+						{status && <div className="text-sm text-[var(--muted)] mt-2">Status: {status.status ?? 'Unknown'}</div>}
 					</div>
 				</div>
 			)}

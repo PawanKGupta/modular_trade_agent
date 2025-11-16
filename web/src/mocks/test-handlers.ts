@@ -27,8 +27,20 @@ export const handlers = [
 	}),
 	http.post(API('/user/broker/test'), async ({ request }) => {
 		const body = (await request.json()) as any;
-		if (body.api_key && body.api_secret) {
-			return HttpResponse.json({ ok: true, message: 'Broker connection successful' });
+		if (!body.api_key || !body.api_secret) {
+			return HttpResponse.json({ ok: false, message: 'API key and secret are required' }, { status: 400 });
+		}
+		// Basic test (only api_key/api_secret)
+		if (!body.mobile_number || !body.password || !body.mpin) {
+			return HttpResponse.json({
+				ok: true,
+				message: 'Client initialized successfully (full login test requires mobile, password, and MPIN)'
+			});
+		}
+		// Full test (with login credentials)
+		// Mock: accept any non-empty values for testing
+		if (body.mobile_number && body.password && body.mpin) {
+			return HttpResponse.json({ ok: true, message: 'Connection successful' });
 		}
 		return HttpResponse.json({ ok: false, message: 'Invalid credentials' }, { status: 400 });
 	}),
