@@ -13,7 +13,7 @@ from src.infrastructure.db.base import Base
 from src.infrastructure.db.session import engine
 
 from .core.config import settings
-from .routers import admin, auth, signals, user
+from .routers import admin, auth, orders, signals, user
 
 # Ensure project root is on sys.path so `src.*` imports work when running from server/
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -62,9 +62,7 @@ async def ensure_db_schema():
     try:
         inspector = inspect(engine)
         if not inspector.has_table("users"):
-            print(
-                "[Startup] Database schema not found. Creating tables via Base.metadata.create_all()"
-            )
+            print("[Startup] Database schema missing; creating via metadata.create_all()")
             Base.metadata.create_all(bind=engine)
     except Exception as e:
         print(f"[Startup] Failed to ensure DB schema: {e}")
@@ -85,5 +83,6 @@ async def log_exceptions(request: Request, call_next):
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(user.router, prefix="/api/v1/user", tags=["user"])
+app.include_router(orders.router, prefix="/api/v1/user/orders", tags=["orders"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(signals.router, prefix="/api/v1/signals", tags=["signals"])
