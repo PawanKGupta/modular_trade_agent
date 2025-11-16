@@ -92,18 +92,9 @@ class UserFileLogHandler(logging.FileHandler):
             # Add user context to message if not already present
             msg = record.getMessage()
             if f"[User {self.user_id}]" not in msg:
-                # Create a new record with updated message
-                new_record = logging.LogRecord(
-                    name=record.name,
-                    level=record.levelno,
-                    pathname=record.pathname,
-                    lineno=record.lineno,
-                    msg=f"[User {self.user_id}] {record.msg}",
-                    args=record.args,
-                    exc_info=record.exc_info,
-                )
-                new_record.__dict__.update(record.__dict__)
-                record = new_record
+                # Update the message in the record
+                record.msg = f"[User {self.user_id}] {record.msg}"
+                record.args = ()  # Clear args since we've formatted the message
 
             super().emit(record)
 
