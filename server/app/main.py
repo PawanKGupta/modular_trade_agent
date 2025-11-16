@@ -10,7 +10,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import inspect
 
 from src.infrastructure.db.base import Base
-from src.infrastructure.db.session import engine
+from src.infrastructure.db.models import UserRole, Users
+from src.infrastructure.db.session import SessionLocal, engine
+from src.infrastructure.persistence.user_repository import UserRepository
 
 from .core.config import settings
 from .routers import activity, admin, auth, orders, pnl, signals, targets, user
@@ -64,6 +66,20 @@ async def ensure_db_schema():
         if not inspector.has_table("users"):
             print("[Startup] Database schema missing; creating via metadata.create_all()")
             Base.metadata.create_all(bind=engine)
+        # Bootstrap admin if database is empty and env variables are provided
+        with SessionLocal() as db:
+            users_count = db.query(Users).count()
+            if users_count == 0 and settings.admin_email and settings.admin_password:
+                try:
+                    print(f"[Startup] No users found. Creating admin user {settings.admin_email}")
+                    UserRepository(db).create_user(
+                        email=settings.admin_email,
+                        password=settings.admin_password,
+                        name=settings.admin_name,
+                        role=UserRole.ADMIN,
+                    )
+                except Exception as e:
+                    print(f"[Startup] Failed to create admin user: {e}")
     except Exception as e:
         print(f"[Startup] Failed to ensure DB schema: {e}")
         raise

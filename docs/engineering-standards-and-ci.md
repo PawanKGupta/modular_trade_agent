@@ -265,6 +265,18 @@ Notes
 - All “user/*” endpoints are row-scoped by the authenticated user; app-level isolation enforced via `get_current_user` and repository filters on `user_id`.
 - For development, SQLite is used; for production, recommend PostgreSQL (optionally add RLS as an additional layer).
 
+### Admin bootstrap (one-time)
+- If the database has zero users on startup and the following env vars are set, an admin will be created automatically:
+  - `ADMIN_EMAIL`, `ADMIN_PASSWORD` (optional `ADMIN_NAME`)
+- Example (PowerShell):
+```powershell
+$env:ADMIN_EMAIL="admin@example.com"
+$env:ADMIN_PASSWORD="StrongPassword123!"
+$env:ADMIN_NAME="Admin"
+.\.venv\Scripts\python.exe -m uvicorn server.app.main:app --port 8000 --reload
+```
+This runs only when there are no users; subsequent restarts won’t create duplicates.
+
 ### Dev Experience
 - ESLint v9 flat config (`eslint.config.js`) with TypeScript, React, Hooks, and `jsx-a11y`
 - Prettier formatting aligned with repo conventions
