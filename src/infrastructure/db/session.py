@@ -1,4 +1,5 @@
 import os
+import sys
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -12,6 +13,22 @@ from .base import Base  # Declarative base
 DB_URL = os.getenv("DB_URL", "sqlite:///./data/app.db")
 is_sqlite = DB_URL.startswith("sqlite")
 is_memory = is_sqlite and (":memory:" in DB_URL or DB_URL.rstrip("/") in {"sqlite://", "sqlite:/"})
+
+# Safety check: Warn if tests might be using production database
+# Tests should NEVER use this shared engine - they should create their own test engines
+if not is_memory and "pytest" in sys.modules:
+    import warnings
+
+    real_db_path = os.path.abspath(os.path.join(os.getcwd(), "data", "app.db"))
+    if DB_URL.startswith("sqlite:///"):
+        db_path = DB_URL.replace("sqlite:///", "", 1)
+        if os.path.abspath(db_path) == real_db_path:
+            warnings.warn(
+                f"WARNING: Tests are running with production database URL: {DB_URL}. "
+                "Tests should set DB_URL='sqlite:///:memory:' before importing this module.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
 if is_memory:
     # In-memory SQLite across threads requires StaticPool and check_same_thread=False

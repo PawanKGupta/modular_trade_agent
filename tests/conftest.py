@@ -13,9 +13,15 @@ def clean_db_after_test():
     """
     Ensure each test runs with an isolated in-memory DB schema and cleans up afterward.
     Drops all tables after each test to avoid cross-test contamination.
+
+    CRITICAL: This fixture MUST use a separate test engine, NOT the shared engine from
+    session.py, to prevent accidentally dropping tables from the production database.
     """
-    # Prefer in-memory SQLite for isolation unless a test overrides DB_URL
-    os.environ.setdefault("DB_URL", "sqlite:///:memory:")
+    # CRITICAL: Force in-memory database BEFORE any imports that might use DB_URL
+    # This prevents the shared session.py engine from connecting to the real database
+    original_db_url = os.environ.get("DB_URL")
+    os.environ["DB_URL"] = "sqlite:///:memory:"
+
     # Safety guard: prevent tests from using the real app DB path
     db_url = os.environ.get("DB_URL", "")
     if db_url.startswith("sqlite:///"):
@@ -23,31 +29,47 @@ def clean_db_after_test():
         real_db = os.path.abspath(os.path.join(os.getcwd(), "data", "app.db"))
         if os.path.abspath(db_path) == real_db:
             raise RuntimeError(f"Tests must not run against real DB: {db_path}")
+
     # Make sure project root is importable
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if root not in sys.path:
         sys.path.append(root)
-    try:
-        # Models are already imported at module level
-        from src.infrastructure.db.base import Base
-        from src.infrastructure.db.session import engine
 
-        # Create fresh schema for each test (some tests also explicitly reset)
+    # Create a SEPARATE test engine - do NOT use the shared engine from session.py
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from src.infrastructure.db.base import Base
+
+    test_engine = create_engine(
+        "sqlite:///:memory:",
+        echo=False,
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    try:
+        # Create fresh schema for each test using the test engine
         try:
-            Base.metadata.drop_all(bind=engine)
+            Base.metadata.drop_all(bind=test_engine)
         except Exception:
             pass
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.create_all(bind=test_engine)
         yield
     finally:
-        # Teardown: drop schema and close out any lingering state
+        # Teardown: drop schema from test engine only
         try:
-            from src.infrastructure.db.base import Base as _Base
-            from src.infrastructure.db.session import engine as _engine
-
-            _Base.metadata.drop_all(bind=_engine)
+            Base.metadata.drop_all(bind=test_engine)
         except Exception:
             pass
+        test_engine.dispose()
+
+        # Restore original DB_URL if it was set
+        if original_db_url is not None:
+            os.environ["DB_URL"] = original_db_url
+        elif "DB_URL" in os.environ:
+            del os.environ["DB_URL"]
         # If a file-based SQLite URL was used in a test (e.g., overridden to a tmp file),
         # remove the file to avoid residue. We only remove if path exists and is within a temp directory.
         db_url = os.environ.get("DB_URL", "")
