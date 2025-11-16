@@ -48,5 +48,3 @@ describe('LoginPage', () => {
 		await waitFor(() => expect(screen.getByText(/invalid credentials|login failed/i)).toBeInTheDocument());
 	});
 });
-
-

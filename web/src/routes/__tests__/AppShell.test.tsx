@@ -31,5 +31,3 @@ describe('AppShell', () => {
 		await screen.findByText('LoginForm');
 	});
 });
-
-

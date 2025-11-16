@@ -33,5 +33,3 @@ describe('SignupPage', () => {
 
 	// Additional error path tests can be added by asserting non-navigation or error banners if UI changes
 });
-
-

@@ -24,5 +24,3 @@ export function setAccessToken(token: string | null) {
 		localStorage.removeItem('ta_access_token');
 	}
 }
-
-
