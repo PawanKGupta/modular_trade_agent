@@ -137,3 +137,57 @@ GitHub Actions:
 - Enforce mypy on more subpackages (reduce ignores/gradually raise strictness)
 - Add Playwright E2E smoke tests to CI
 - Separate Makefile/Noxfile (Linux/macOS) mirroring PowerShell `scripts/dev.ps1`
+
+---
+
+## Scope Checklist (What this doc covers)
+
+- Coding standards for Server (black/ruff/mypy, layering, practices)
+- Coding standards for Web (ESLint v9 flat, Prettier, TS strict, structure)
+- Tooling setup (.editorconfig, pyproject, mypy.ini, pre-commit, dev requirements)
+- Web tooling/migration (eslint.config.js, Prettier config, tsconfig types)
+- CI workflows (API and Web jobs; lint/typecheck/test; coverage ≥80% gates)
+- Local developer workflow (PowerShell script for setup/lint/typecheck/test)
+- Test DB stability change (file-backed SQLite for API tests)
+- Repository hygiene (.gitignore entries for web build/vendor/coverage output)
+- Troubleshooting (pre-commit hooks and how they interact with vendor files)
+
+If you add new checks or workflows, update the relevant sections above and this checklist.
+
+---
+
+## Implemented UI Features (Web App)
+
+### Auth and Session
+- Login (`/login`) with API integration; error states surfaced
+- Signup (`/signup`) with API integration; error/validation surfaced
+- Session store using Zustand (`src/state/sessionStore.ts`) tracks auth and user profile
+- Protected routes via `RequireAuth` component and React Router guards
+- App shell (`AppShell`) shows logged-in email, logout action clears session and navigates to login
+
+### Dashboard Pages
+- Buying Zone (`/dashboard/buying-zone`):
+  - Fetches signals via `src/api/signals.ts` (React Query under the hood via component usage)
+  - Displays symbols and filters/criteria (RSI10 < 30, price > EMA200, etc.)
+  - Clean JSX rendering (escaped `>{' '}` usage where needed)
+- Settings (`/dashboard/settings`):
+  - Loads current user settings from API (`trade_mode`, broker config/state)
+  - Edit and save settings (PUT) with optimistic UX and success/error handling
+- PnL, Orders, Activity, Targets, Dashboard Home:
+  - Implemented as scaffolded placeholders (routes+components) ready for data wiring
+
+### API Clients and Routing
+- Axios client with base config (`src/api/client.ts`)
+- API modules for `auth`, `user`, `signals` (`src/api/*.ts`)
+- Centralized routing in `src/router.tsx` with nested dashboard routes
+
+### Testing (UI)
+- Vitest + React Testing Library + MSW
+  - `src/test/setup.ts` boots MSW handlers (`src/mocks/test-handlers.ts`)
+  - Unit/integration tests for Login, Signup, Settings, Buying Zone, RequireAuth, AppShell
+  - Coverage on relevant UI modules ~95% (threshold gate in CI is ≥80%)
+
+### Dev Experience
+- ESLint v9 flat config (`eslint.config.js`) with TypeScript, React, Hooks, and `jsx-a11y`
+- Prettier formatting aligned with repo conventions
+- Vite + React + TS + Tailwind configured; `@` alias to `src/`
