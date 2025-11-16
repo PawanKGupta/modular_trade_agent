@@ -173,7 +173,15 @@ If you add new checks or workflows, update the relevant sections above and this 
 - Settings (`/dashboard/settings`):
   - Loads current user settings from API (`trade_mode`, broker config/state)
   - Edit and save settings (PUT) with optimistic UX and success/error handling
-- PnL, Orders, Activity, Targets, Dashboard Home:
+- Orders (`/dashboard/orders`):
+  - Tabbed view for AMO, Ongoing, Sell, Closed
+  - Data via `src/api/orders.ts` with status filter; React Query caching per tab
+  - Empty and loading states handled
+- Admin • Users (`/dashboard/admin/users`):
+  - RBAC-guarded page (visible only for admins)
+  - List existing users, create new users, update role/active, delete user
+  - React Query for data and invalidation on mutations; API in `src/api/admin.ts`
+- PnL, Activity, Targets, Dashboard Home:
   - Implemented as scaffolded placeholders (routes+components) ready for data wiring
 
 ### API Clients and Routing
@@ -184,8 +192,22 @@ If you add new checks or workflows, update the relevant sections above and this 
 ### Testing (UI)
 - Vitest + React Testing Library + MSW
   - `src/test/setup.ts` boots MSW handlers (`src/mocks/test-handlers.ts`)
-  - Unit/integration tests for Login, Signup, Settings, Buying Zone, RequireAuth, AppShell
-  - Coverage on relevant UI modules ~95% (threshold gate in CI is ≥80%)
+  - Unit/integration tests for Login, Signup, Settings, Buying Zone, RequireAuth, AppShell, Admin Users, Orders
+  - Coverage on relevant UI modules >90% locally (threshold gate in CI is ≥80%)
+
+### Developer Commands (Web UI)
+- Lint:
+```powershell
+cd web; npm run lint
+```
+- Typecheck:
+```powershell
+cd web; npm run typecheck
+```
+- Tests with coverage:
+```powershell
+cd web; npm run test
+```
 
 ### Dev Experience
 - ESLint v9 flat config (`eslint.config.js`) with TypeScript, React, Hooks, and `jsx-a11y`
