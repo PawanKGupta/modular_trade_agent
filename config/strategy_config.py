@@ -31,6 +31,7 @@ class StrategyConfig:
     
     # Capital Configuration
     user_capital: float = 200000.0  # Default: 2L
+    max_portfolio_size: int = 6  # Maximum number of positions in portfolio
     max_position_volume_ratio: float = 0.10  # 10% of daily volume max
     
     # Chart Quality Configuration
@@ -118,6 +119,18 @@ class StrategyConfig:
     ml_confidence_threshold: float = 0.5  # 50% confidence threshold
     ml_combine_with_rules: bool = True  # Combine ML with rule-based logic
     
+    # Order Defaults
+    default_exchange: str = "NSE"  # Default exchange
+    default_product: str = "CNC"  # Default product type
+    default_order_type: str = "MARKET"  # Default order type
+    default_variety: str = "AMO"  # Default order variety
+    default_validity: str = "DAY"  # Default order validity
+    
+    # Behavior Settings
+    exit_on_ema9_or_rsi50: bool = True  # Exit when price >= EMA9 or RSI > 50
+    allow_duplicate_recommendations_same_day: bool = False  # Allow duplicate recommendations
+    min_combined_score: int = 25  # Minimum combined score for recommendations
+    
     @classmethod
     def from_env(cls) -> 'StrategyConfig':
         """Load configuration from environment variables with defaults"""
@@ -136,6 +149,7 @@ class StrategyConfig:
             
             # Capital
             user_capital=float(os.getenv('USER_CAPITAL', '200000.0')),
+            max_portfolio_size=int(os.getenv('MAX_PORTFOLIO_SIZE', '6')),
             max_position_volume_ratio=float(os.getenv('MAX_POSITION_VOLUME_RATIO', '0.10')),
             
             # Chart Quality
@@ -213,6 +227,18 @@ class StrategyConfig:
             
             # Adaptive Logic
             enable_adaptive_lookback=os.getenv('ENABLE_ADAPTIVE_LOOKBACK', 'true').lower() in ('1', 'true', 'yes', 'on'),
+            
+            # Order Defaults
+            default_exchange=os.getenv('DEFAULT_EXCHANGE', 'NSE'),
+            default_product=os.getenv('DEFAULT_PRODUCT', 'CNC'),
+            default_order_type=os.getenv('DEFAULT_ORDER_TYPE', 'MARKET'),
+            default_variety=os.getenv('DEFAULT_VARIETY', 'AMO'),
+            default_validity=os.getenv('DEFAULT_VALIDITY', 'DAY'),
+            
+            # Behavior Settings
+            exit_on_ema9_or_rsi50=os.getenv('EXIT_ON_EMA9_OR_RSI50', 'true').lower() in ('1', 'true', 'yes', 'on'),
+            allow_duplicate_recommendations_same_day=os.getenv('ALLOW_DUPLICATE_RECOMMENDATIONS_SAME_DAY', 'false').lower() in ('1', 'true', 'yes', 'on'),
+            min_combined_score=int(os.getenv('MIN_COMBINED_SCORE', '25')),
         )
     
     @classmethod

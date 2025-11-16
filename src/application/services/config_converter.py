@@ -33,6 +33,7 @@ def user_config_to_strategy_config(user_config: UserTradingConfig) -> StrategyCo
         min_absolute_avg_volume=user_config.min_absolute_avg_volume,
         # Capital Configuration
         user_capital=user_config.user_capital,
+        max_portfolio_size=user_config.max_portfolio_size,
         max_position_volume_ratio=user_config.max_position_volume_ratio,
         # Chart Quality Configuration
         chart_quality_enabled=user_config.chart_quality_enabled,
@@ -95,5 +96,15 @@ def user_config_to_strategy_config(user_config: UserTradingConfig) -> StrategyCo
         ml_price_model_path="models/price_model_random_forest.pkl",
         ml_confidence_threshold=user_config.ml_confidence_threshold,
         ml_combine_with_rules=user_config.ml_combine_with_rules,
+        # Order Defaults
+        default_exchange=user_config.default_exchange,
+        default_product=user_config.default_product,
+        default_order_type=user_config.default_order_type,
+        default_variety=user_config.default_variety,
+        default_validity=user_config.default_validity,
+        # Behavior Settings
+        exit_on_ema9_or_rsi50=user_config.exit_on_ema9_or_rsi50,
+        allow_duplicate_recommendations_same_day=user_config.allow_duplicate_recommendations_same_day,
+        min_combined_score=user_config.min_combined_score,
     )
 
