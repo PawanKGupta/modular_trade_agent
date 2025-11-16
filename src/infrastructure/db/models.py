@@ -90,7 +90,10 @@ class Orders(Base):
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
     price: Mapped[float | None] = mapped_column(Float, nullable=True)  # limit price
     status: Mapped[OrderStatus] = mapped_column(
-        SAEnum(OrderStatus), index=True, nullable=False, default=OrderStatus.AMO
+        SAEnum(OrderStatus, values_callable=lambda x: [e.value for e in x]),
+        index=True,
+        nullable=False,
+        default=OrderStatus.AMO,
     )
     avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     placed_at: Mapped[datetime] = mapped_column(

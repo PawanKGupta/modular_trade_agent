@@ -3,6 +3,10 @@ import sys
 
 import pytest
 
+# Import models ONCE at module level to ensure they're registered before any fixtures
+# This prevents SQLAlchemy registry conflicts when models are imported multiple times
+import src.infrastructure.db.models  # noqa: F401
+
 
 @pytest.fixture(autouse=True)
 def clean_db_after_test():
@@ -24,8 +28,7 @@ def clean_db_after_test():
     if root not in sys.path:
         sys.path.append(root)
     try:
-        # Import models to ensure they're registered before creating schema
-        import src.infrastructure.db.models  # noqa: F401
+        # Models are already imported at module level
         from src.infrastructure.db.base import Base
         from src.infrastructure.db.session import engine
 
@@ -94,9 +97,7 @@ def db_session():
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
-    # Import models to ensure they're registered before creating schema
-    import src.infrastructure.db.models  # noqa: F401
-
+    # Models are already imported at module level
     Base.metadata.create_all(bind=engine)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     db = SessionLocal()
