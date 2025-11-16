@@ -266,19 +266,21 @@ class AutoTradeEngine:
             from services.liquidity_capital_service import LiquidityCapitalService
             from config.strategy_config import StrategyConfig
             
-            config = StrategyConfig.default()
-            liquidity_service = LiquidityCapitalService(config=config)
+            # Phase 2.3: Static method uses default config for backward compatibility
+            # Instance methods should pass strategy_config as parameter if needed
+            strategy_config = StrategyConfig.default()
+            
+            liquidity_service = LiquidityCapitalService(config=strategy_config)
             
             capital_data = liquidity_service.calculate_execution_capital(
                 avg_volume=avg_volume,
                 stock_price=close
             )
-            execution_capital = capital_data.get('execution_capital', config.user_capital)
+            execution_capital = capital_data.get('execution_capital', strategy_config.user_capital)
             
-            # Fallback to config if calculation failed
+            # Fallback to strategy_config if calculation failed
             if execution_capital <= 0:
-                from modules.kotak_neo_auto_trader import config as kotak_config
-                execution_capital = kotak_config.CAPITAL_PER_TRADE
+                execution_capital = strategy_config.user_capital
             
             return execution_capital
         except Exception as e:
@@ -1156,8 +1158,8 @@ class AutoTradeEngine:
                     current_count = len(self.current_symbols_in_portfolio())
                 except Exception:
                     current_count = self.portfolio_size()
-                if current_count >= config.MAX_PORTFOLIO_SIZE:
-                    logger.info(f"Portfolio limit reached ({current_count}/{config.MAX_PORTFOLIO_SIZE}); skipping failed order retries")
+                if current_count >= self.strategy_config.max_portfolio_size:
+                    logger.info(f"Portfolio limit reached ({current_count}/{self.strategy_config.max_portfolio_size}); skipping failed order retries")
                     break
                 
                 symbol = failed_order.get('symbol')
@@ -1235,8 +1237,8 @@ class AutoTradeEngine:
                 current_count = len(self.current_symbols_in_portfolio())
             except Exception:
                 current_count = self.portfolio_size()
-            if current_count >= config.MAX_PORTFOLIO_SIZE:
-                logger.info(f"Portfolio limit reached ({current_count}/{config.MAX_PORTFOLIO_SIZE}); skipping further entries")
+            if current_count >= self.strategy_config.max_portfolio_size:
+                logger.info(f"Portfolio limit reached ({current_count}/{self.strategy_config.max_portfolio_size}); skipping further entries")
                 summary["skipped_portfolio_limit"] += 1
                 break
             summary["attempted"] += 1
@@ -1276,12 +1278,10 @@ class AutoTradeEngine:
                 logger.info(f"Using execution_capital from CSV for {rec.ticker}: ₹{execution_capital:,.0f}")
             
             # Phase 11: Log if capital was adjusted from user_capital
-            from config.strategy_config import StrategyConfig
-            strategy_config = StrategyConfig.default()
-            if execution_capital < strategy_config.user_capital:
+            if execution_capital < self.strategy_config.user_capital:
                 logger.info(
                     f"{broker_symbol}: Capital adjusted due to liquidity: "
-                    f"₹{execution_capital:,.0f} (requested: ₹{strategy_config.user_capital:,.0f})"
+                    f"₹{execution_capital:,.0f} (requested: ₹{self.strategy_config.user_capital:,.0f})"
                 )
             
             qty = max(config.MIN_QTY, floor(execution_capital / close))
@@ -1400,15 +1400,15 @@ class AutoTradeEngine:
             ema9 = ind['ema9']
 
             # Exit conditions
-            if config.EXIT_ON_EMA9_OR_RSI50 and (price >= ema9 or rsi > 50):
+            if self.strategy_config.exit_on_ema9_or_rsi50 and (price >= ema9 or rsi > 50):
                 total_qty = sum(e.get('qty', 0) for e in entries)
                 if total_qty > 0:
                     resp = self.orders.place_market_sell(
                         symbol=symbol,
                         quantity=total_qty,
-                        variety=config.DEFAULT_VARIETY,
-                        exchange=config.DEFAULT_EXCHANGE,
-                        product=config.DEFAULT_PRODUCT,
+                        variety=self.strategy_config.default_variety,
+                        exchange=self.strategy_config.default_exchange,
+                        product=self.strategy_config.default_product,
                     )
                     
                     # Check if order was rejected due to insufficient quantity
@@ -1458,9 +1458,9 @@ class AutoTradeEngine:
                                     resp = self.orders.place_market_sell(
                                         symbol=symbol,
                                         quantity=actual_qty,
-                                        variety=config.DEFAULT_VARIETY,
-                                        exchange=config.DEFAULT_EXCHANGE,
-                                        product=config.DEFAULT_PRODUCT,
+                                        variety=self.strategy_config.default_variety,
+                                        exchange=self.strategy_config.default_exchange,
+                                        product=self.strategy_config.default_product,
                                     )
                                     
                                     # Check if retry also failed
@@ -1600,9 +1600,9 @@ class AutoTradeEngine:
                     resp = self.orders.place_market_buy(
                         symbol=place_symbol,
                         quantity=qty,
-                        variety=config.DEFAULT_VARIETY,
-                        exchange=config.DEFAULT_EXCHANGE,
-                        product=config.DEFAULT_PRODUCT,
+                        variety=self.strategy_config.default_variety,
+                        exchange=self.strategy_config.default_exchange,
+                        product=self.strategy_config.default_product,
                     )
                     # Record new averaging entry only if order succeeded
                     # Accept responses with nOrdNo (direct order ID) or data/order/raw structures
