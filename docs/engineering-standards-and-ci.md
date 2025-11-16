@@ -173,6 +173,12 @@ If you add new checks or workflows, update the relevant sections above and this 
 - Settings (`/dashboard/settings`):
   - Loads current user settings from API (`trade_mode`, broker config/state)
   - Edit and save settings (PUT) with optimistic UX and success/error handling
+  - Broker integration:
+    - Form fields for API key/secret (when trade_mode is "broker")
+    - "Save Credentials" button to encrypt and store broker credentials
+    - "Test Connection" button to validate broker credentials
+    - Live status display (Connected/Disconnected/Stored/Error)
+    - API client in `src/api/user.ts` with broker-specific methods
 - Orders (`/dashboard/orders`):
   - Tabbed view for AMO, Ongoing, Sell, Closed
   - Data via `src/api/orders.ts` with status filter; React Query caching per tab
@@ -181,12 +187,21 @@ If you add new checks or workflows, update the relevant sections above and this 
   - RBAC-guarded page (visible only for admins)
   - List existing users, create new users, update role/active, delete user
   - React Query for data and invalidation on mutations; API in `src/api/admin.ts`
-- PnL, Activity, Targets, Dashboard Home:
-  - Implemented as scaffolded placeholders (routes+components) ready for data wiring
+- PnL (`/dashboard/pnl`):
+  - Daily PnL table and summary (total, days green/red) via `src/api/pnl.ts`
+  - React Query with date range support
+- Activity (`/dashboard/activity`):
+  - Activity log with level filter (info/warn/error/all) via `src/api/activity.ts`
+  - React Query with level query param
+- Targets (`/dashboard/targets`):
+  - Targets list via `src/api/targets.ts` (currently placeholder until persistence added)
+- Dashboard Home (`/dashboard`):
+  - Placeholder overview page
 
 ### API Clients and Routing
 - Axios client with base config (`src/api/client.ts`)
-- API modules for `auth`, `user`, `signals` (`src/api/*.ts`)
+- API modules for `auth`, `user`, `signals`, `orders`, `pnl`, `activity`, `targets`, `admin` (`src/api/*.ts`)
+- Broker integration methods in `src/api/user.ts`: `saveBrokerCreds()`, `testBrokerConnection()`, `getBrokerStatus()`
 - Centralized routing in `src/router.tsx` with nested dashboard routes
 
 ### Testing (UI)
@@ -274,6 +289,23 @@ cd web; npx playwright install chromium; npm run test:e2e
 ### Targets
 - GET `/api/v1/user/targets/`
   - Returns: list of targets (currently placeholder empty list until persistence is added)
+
+### Broker Integration
+- POST `/api/v1/user/broker/creds` — Save encrypted broker credentials
+  - Body: `{ broker: str, api_key: str, api_secret: str }`
+  - Returns: `{ status: "ok" }`
+  - Credentials are encrypted server-side using Fernet (symmetric encryption) and stored in `user_settings.broker_creds_encrypted`
+- POST `/api/v1/user/broker/test` — Test broker connection
+  - Body: `{ broker: str, api_key: str, api_secret: str }`
+  - Returns: `{ ok: bool, message: str }`
+  - Currently validates that keys are non-empty; future: actual API call to broker
+- GET `/api/v1/user/broker/status` — Get current broker connection status
+  - Returns: `{ broker: str | null, status: str | null }`
+
+**Security Notes:**
+- Credentials are encrypted at rest using `cryptography.fernet` with a key derived from `ENCRYPTION_KEY` env var (or auto-generated for dev)
+- Encryption key should be set via environment variable in production: `ENCRYPTION_KEY=<base64-encoded-32-byte-key>`
+- Credentials are never returned to the client; only status is exposed
 
 ### Signals
 - GET `/api/v1/signals/buying-zone`
