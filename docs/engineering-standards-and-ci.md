@@ -277,6 +277,14 @@ $env:ADMIN_NAME="Admin"
 ```
 This runs only when there are no users; subsequent restarts won’t create duplicates.
 
+### One-off admin creation script
+You can also create or promote an admin manually:
+```powershell
+# optional: $env:DB_URL="sqlite:///./data/app.db"
+.\.venv\Scripts\python.exe scripts\create_admin.py --email admin@example.com --password "StrongPassword123!" --name "Admin"
+```
+If the user exists, the script promotes them to admin and activates the account.
+
 ### Dev Experience
 - ESLint v9 flat config (`eslint.config.js`) with TypeScript, React, Hooks, and `jsx-a11y`
 - Prettier formatting aligned with repo conventions
