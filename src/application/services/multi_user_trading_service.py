@@ -102,25 +102,36 @@ class MultiUserTradingService:
                     )
                     raise ValueError(f"No broker credentials stored for user_id={user_id}")
 
-                # TODO: Decrypt broker credentials
+                # TODO: Decrypt broker credentials (Phase 2.4)
+                # For now, we'll need to handle this - broker_creds should be a dict
                 # broker_creds = decrypt_broker_creds(settings.broker_creds_encrypted)
+                # Temporary: create broker_creds dict from encrypted data
+                # This is a placeholder until Phase 2.4 implements proper decryption
+                broker_creds = {}  # TODO: Decrypt from settings.broker_creds_encrypted
 
-                # Load user trading configuration
-                # TODO: Use user_config when initializing TradingService (2.3)
-                _user_config = self._config_repo.get_or_create_default(user_id)
+                # Load user trading configuration and convert to StrategyConfig
+                user_config = self._config_repo.get_or_create_default(user_id)
+                from src.application.services.config_converter import (
+                    user_config_to_strategy_config,
+                )
 
-                # TODO: Initialize TradingService with user context
-                # This will be implemented in 2.3 User Context Integration
-                # For now, we'll create a placeholder
-                # service = TradingService(
-                #     user_id=user_id,
-                #     db=self.db,
-                #     broker_creds=broker_creds,
-                #     user_config=user_config
-                # )
+                strategy_config = user_config_to_strategy_config(user_config)
+
+                # Initialize TradingService with user context (Phase 2.3)
+                from modules.kotak_neo_auto_trader.run_trading_service import (
+                    TradingService,
+                )
+
+                service = TradingService(
+                    user_id=user_id,
+                    db_session=self.db,
+                    broker_creds=broker_creds,
+                    strategy_config=strategy_config,
+                    env_file=None,  # Will use broker_creds instead (Phase 2.4)
+                )
 
                 # Store service instance
-                # self._services[user_id] = service
+                self._services[user_id] = service
 
                 # Update service status
                 status = self._service_status_repo.get_or_create(user_id)
