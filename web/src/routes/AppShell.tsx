@@ -24,7 +24,7 @@ export function AppShell() {
 					<Link to="/dashboard/targets">Targets</Link>
 					<Link to="/dashboard/activity">Activity</Link>
 					<Link to="/dashboard/settings">Settings</Link>
-					{isAdmin && <Link to="/dashboard/admin">Admin</Link>}
+					{isAdmin && <Link to="/dashboard/admin/users">Admin • Users</Link>}
 				</nav>
 			</aside>
 			<main className="p-6">

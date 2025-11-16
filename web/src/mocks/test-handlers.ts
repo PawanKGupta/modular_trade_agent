@@ -11,7 +11,7 @@ export const handlers = [
 		return HttpResponse.json({ access_token: 'test-token', token_type: 'bearer' });
 	}),
 	http.get(API('/auth/me'), async () => {
-		return HttpResponse.json({ id: 1, email: 'test@example.com', roles: ['user'] });
+		return HttpResponse.json({ id: 1, email: 'test@example.com', roles: ['admin'] });
 	}),
 	// settings
 	http.get(API('/user/settings'), async () => {
@@ -20,6 +20,24 @@ export const handlers = [
 	http.put(API('/user/settings'), async ({ request }) => {
 		const body = (await request.json()) as any;
 		return HttpResponse.json({ trade_mode: body['trade_mode'] ?? 'paper', broker: body['broker'] ?? null, broker_status: null });
+	}),
+	// admin users
+	http.get(API('/admin/users'), async () => {
+		return HttpResponse.json([
+			{ id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+			{ id: 2, email: 'user@example.com', name: 'User', role: 'user', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+		]);
+	}),
+	http.post(API('/admin/users'), async ({ request }) => {
+		const body = (await request.json()) as any;
+		return HttpResponse.json({ id: Math.floor(Math.random() * 10000), email: body.email, name: body.name ?? null, role: body.role ?? 'user', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+	}),
+	http.put(API('/admin/users/:id'), async ({ params, request }) => {
+		const body = (await request.json()) as any;
+		return HttpResponse.json({ id: Number(params.id), email: 'updated@example.com', name: body.name ?? null, role: body.role ?? 'user', is_active: body.is_active ?? true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+	}),
+	http.delete(API('/admin/users/:id'), async () => {
+		return HttpResponse.json({ ok: true });
 	}),
 	// signals
 	http.get(API('/signals/buying-zone'), async () => {

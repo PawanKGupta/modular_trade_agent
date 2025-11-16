@@ -9,6 +9,7 @@ import { PnlPage } from './routes/dashboard/PnlPage';
 import { TargetsPage } from './routes/dashboard/TargetsPage';
 import { ActivityPage } from './routes/dashboard/ActivityPage';
 import { SettingsPage } from './routes/dashboard/SettingsPage';
+import { AdminUsersPage } from './routes/dashboard/AdminUsersPage';
 import { RequireAuth } from './routes/RequireAuth';
 
 export function createAppRouter() {
@@ -31,6 +32,7 @@ export function createAppRouter() {
 				{ path: 'targets', element: <TargetsPage /> },
 				{ path: 'activity', element: <ActivityPage /> },
 				{ path: 'settings', element: <SettingsPage /> },
+				{ path: 'admin/users', element: <AdminUsersPage /> },
 			],
 		},
 	]);
