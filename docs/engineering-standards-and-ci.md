@@ -208,6 +208,23 @@ cd web; npm run typecheck
 ```powershell
 cd web; npm run test
 ```
+- Run UI against local API on port 8001:
+```powershell
+cd web; npm run dev:api8001
+```
+  - Alternatively set the env before starting dev:
+```powershell
+$env:VITE_API_URL="http://localhost:8001"; cd web; npm run dev
+```
+
+- Run UI against local API on port 8000:
+```powershell
+cd web; npm run dev:api8000
+```
+  - Alternatively:
+```powershell
+$env:VITE_API_URL="http://localhost:8000"; cd web; npm run dev
+```
 
 ### Dev Experience
 - ESLint v9 flat config (`eslint.config.js`) with TypeScript, React, Hooks, and `jsx-a11y`

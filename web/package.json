@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5173",
+    "dev:api8001": "set VITE_API_URL=http://localhost:8001&& vite --port 5173",
+    "dev:api8000": "set VITE_API_URL=http://localhost:8000&& vite --port 5173",
     "build": "tsc -b && vite build",
     "preview": "vite preview --port 5173",
     "lint": "eslint .",
