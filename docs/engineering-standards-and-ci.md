@@ -194,6 +194,10 @@ If you add new checks or workflows, update the relevant sections above and this 
   - `src/test/setup.ts` boots MSW handlers (`src/mocks/test-handlers.ts`)
   - Unit/integration tests for Login, Signup, Settings, Buying Zone, RequireAuth, AppShell, Admin Users, Orders
   - Coverage on relevant UI modules >90% locally (threshold gate in CI is ≥80%)
+ - Playwright E2E (smoke)
+   - Config: `web/playwright.config.ts`
+   - Smoke spec: `web/tests/e2e/smoke.spec.ts` (auth → dashboard → admin → orders tabs)
+   - CI workflow: `.github/workflows/web-e2e.yml` (starts API + Vite and runs E2E)
 
 ### Developer Commands (Web UI)
 - Lint:
@@ -224,6 +228,20 @@ cd web; npm run dev:api8000
   - Alternatively:
 ```powershell
 $env:VITE_API_URL="http://localhost:8000"; cd web; npm run dev
+```
+
+### Run E2E locally
+1) Start API:
+```powershell
+$env:DB_URL="sqlite:///./data/e2e.db"; .\.venv\Scripts\python.exe -m uvicorn server.app.main:app --port 8000 --reload
+```
+2) Start Vite (new shell):
+```powershell
+cd web; $env:VITE_API_URL="http://localhost:8000"; npm run dev
+```
+3) In another shell, run Playwright:
+```powershell
+cd web; npx playwright install chromium; npm run test:e2e
 ```
 
 ---
