@@ -67,6 +67,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from server.app.core.deps import get_db
 from server.app.main import app
@@ -75,8 +76,13 @@ from src.infrastructure.db.base import Base
 
 @pytest.fixture(scope="function")
 def db_session():
-    # In-memory SQLite for tests
-    engine = create_engine("sqlite:///:memory:", future=True)
+    # In-memory SQLite for tests across threads
+    engine = create_engine(
+        "sqlite://",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(bind=engine)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     db = SessionLocal()
