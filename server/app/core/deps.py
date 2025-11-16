@@ -1,3 +1,4 @@
+# ruff: noqa: B008
 from collections.abc import Generator
 
 from fastapi import Depends, HTTPException, status

@@ -1,3 +1,4 @@
+# ruff: noqa: B008
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -41,7 +42,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.exception(f"Signup failed: {e}")
-        raise HTTPException(status_code=500, detail="Signup failed")
+        raise HTTPException(status_code=500, detail="Signup failed") from e
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -75,9 +76,9 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         return TokenResponse(access_token=access_token)
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
         logger.exception("Login failed")
-        raise HTTPException(status_code=500, detail="Login failed")
+        raise HTTPException(status_code=500, detail="Login failed") from e
 
 
 @router.get("/me", response_model=MeResponse)

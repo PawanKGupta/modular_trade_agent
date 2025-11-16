@@ -21,6 +21,20 @@ export const handlers = [
 		const body = (await request.json()) as any;
 		return HttpResponse.json({ trade_mode: body['trade_mode'] ?? 'paper', broker: body['broker'] ?? null, broker_status: null });
 	}),
+	// broker
+	http.post(API('/user/broker/creds'), async () => {
+		return HttpResponse.json({ status: 'ok' });
+	}),
+	http.post(API('/user/broker/test'), async ({ request }) => {
+		const body = (await request.json()) as any;
+		if (body.api_key && body.api_secret) {
+			return HttpResponse.json({ ok: true, message: 'Broker connection successful' });
+		}
+		return HttpResponse.json({ ok: false, message: 'Invalid credentials' }, { status: 400 });
+	}),
+	http.get(API('/user/broker/status'), async () => {
+		return HttpResponse.json({ broker: 'kotak-neo', status: 'Connected' });
+	}),
 	// orders
 	http.get(API('/user/orders'), async ({ request }) => {
 		const url = new URL(request.url);

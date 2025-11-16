@@ -18,7 +18,7 @@ def list_orders(
     status: Annotated[Literal["amo", "ongoing", "sell", "closed"] | None, Query()] = None,
     db: Session = Depends(get_db),  # noqa: B008 - FastAPI dependency injection
     current: Users = Depends(get_current_user),  # noqa: B008 - FastAPI dependency injection
-):
+) -> list[OrderResponse]:
     repo = OrdersRepository(db)
     db_status = DbOrderStatus(status) if status else None
     items = repo.list(current.id, db_status)
@@ -27,12 +27,12 @@ def list_orders(
         OrderResponse(
             id=o.id,
             symbol=o.symbol,
-            side=o.side,
+            side=o.side if o.side in ("buy", "sell") else "buy",  # type: ignore[arg-type]
             quantity=o.quantity,
             price=o.price,
             status=o.status.value,
             created_at=o.placed_at.isoformat() if o.placed_at else None,
-            updated_at=(o.updated_at.isoformat() if getattr(o, "updated_at", None) else None),
+            updated_at=o.closed_at.isoformat() if o.closed_at else None,
         )
         for o in items
     ]

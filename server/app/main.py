@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import traceback
+import uuid
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI, Request
@@ -15,7 +16,7 @@ from src.infrastructure.db.session import SessionLocal, engine
 from src.infrastructure.persistence.user_repository import UserRepository
 
 from .core.config import settings
-from .routers import activity, admin, auth, orders, pnl, signals, targets, user
+from .routers import activity, admin, auth, broker, orders, pnl, signals, targets, user
 
 # Ensure project root is on sys.path so `src.*` imports work when running from server/
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -87,20 +88,26 @@ async def ensure_db_schema():
 
 @app.middleware("http")
 async def log_exceptions(request: Request, call_next):
+    req_id = str(uuid.uuid4())
+    request.state.request_id = req_id
     try:
         response = await call_next(request)
+        response.headers["X-Request-ID"] = req_id
         return response
     except Exception as exc:
         # Log full traceback for debugging 500s
-        print("Unhandled exception:", exc)
+        print(f"Unhandled exception [{req_id}]:", exc)
         traceback.print_exc()
-        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+        return JSONResponse(
+            status_code=500, content={"detail": "Internal Server Error", "request_id": req_id}
+        )
 
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(user.router, prefix="/api/v1/user", tags=["user"])
 app.include_router(orders.router, prefix="/api/v1/user/orders", tags=["orders"])
 app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
+app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])
 app.include_router(activity.router, prefix="/api/v1/user/activity", tags=["activity"])
 app.include_router(targets.router, prefix="/api/v1/user/targets", tags=["targets"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
