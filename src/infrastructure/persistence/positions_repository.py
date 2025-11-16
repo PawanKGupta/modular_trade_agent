@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import builtins
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Positions
+from src.infrastructure.db.timezone_utils import ist_now
 
 
 class PositionsRepository:
@@ -27,7 +29,15 @@ class PositionsRepository:
         )
         return list(self.db.execute(stmt).scalars().all())
 
-    def upsert(self, *, user_id: int, symbol: str, quantity: float, avg_price: float) -> Positions:
+    def upsert(
+        self,
+        *,
+        user_id: int,
+        symbol: str,
+        quantity: float,
+        avg_price: float,
+        opened_at: datetime | None = None,
+    ) -> Positions:
         pos = self.get_by_symbol(user_id, symbol)
         if pos:
             pos.quantity = quantity
@@ -39,8 +49,26 @@ class PositionsRepository:
                 quantity=quantity,
                 avg_price=avg_price,
                 unrealized_pnl=0.0,
+                opened_at=opened_at or ist_now(),
             )
             self.db.add(pos)
         self.db.commit()
         self.db.refresh(pos)
         return pos
+
+    def count_open(self, user_id: int) -> int:
+        """Count open positions for a user"""
+        stmt = select(Positions).where(Positions.user_id == user_id, Positions.closed_at.is_(None))
+        return len(list(self.db.execute(stmt).scalars().all()))
+
+    def bulk_create(self, positions: list[dict]) -> list[Positions]:
+        """Bulk create positions (for migration)"""
+        created_positions = []
+        for pos_data in positions:
+            position = Positions(**pos_data)
+            self.db.add(position)
+            created_positions.append(position)
+        self.db.commit()
+        for position in created_positions:
+            self.db.refresh(position)
+        return created_positions

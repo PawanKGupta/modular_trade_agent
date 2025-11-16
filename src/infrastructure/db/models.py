@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+from .timezone_utils import ist_now
 
 
 class UserRole(str, Enum):
@@ -36,12 +37,14 @@ class Users(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(SAEnum(UserRole), default=UserRole.USER, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
     )
 
-    settings: Mapped[UserSettings] = relationship(back_populates="user", uselist=False)
+    settings: Mapped[UserSettings] = relationship(
+        "src.infrastructure.db.models.UserSettings", back_populates="user", uselist=False
+    )
 
 
 class TradeMode(str, Enum):
@@ -61,12 +64,14 @@ class UserSettings(Base):
     )  # Connected/Disconnected/Error
     # Store encrypted credentials blob server-side; do not expose to client
     broker_creds_encrypted: Mapped[bytes | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
     )
 
-    user: Mapped[Users] = relationship(back_populates="settings")
+    user: Mapped[Users] = relationship(
+        "src.infrastructure.db.models.Users", back_populates="settings"
+    )
 
 
 class OrderStatus(str, Enum):
@@ -89,7 +94,7 @@ class Orders(Base):
     )
     avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     placed_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, index=True, nullable=False
+        DateTime, default=ist_now, index=True, nullable=False
     )
     filled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -101,6 +106,10 @@ class Orders(Base):
     broker_order_id: Mapped[str | None] = mapped_column(
         String(64), nullable=True
     )  # Broker's order ID
+    # Metadata JSON field for additional trade information
+    order_metadata: Mapped[dict | None] = mapped_column(
+        "metadata", JSON, nullable=True
+    )  # Store placed_symbol, signal_type, exit_note, etc.
 
     __table_args__ = (
         Index("ix_orders_user_status_symbol_time", "user_id", "status", "symbol", "placed_at"),
@@ -115,7 +124,7 @@ class Positions(Base):
     avg_price: Mapped[float] = mapped_column(Float, nullable=False)
     unrealized_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     opened_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, index=True, nullable=False
+        DateTime, default=ist_now, index=True, nullable=False
     )
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -127,9 +136,7 @@ class Fills(Base):
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True, nullable=False)
     qty: Mapped[float] = mapped_column(Float, nullable=False)
     price: Mapped[float] = mapped_column(Float, nullable=False)
-    ts: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, index=True, nullable=False
-    )
+    ts: Mapped[datetime] = mapped_column(DateTime, default=ist_now, index=True, nullable=False)
 
 
 class PnlDaily(Base):
@@ -153,9 +160,7 @@ class Signals(Base):
     clean_chart: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     monthly_support_dist: Mapped[float | None] = mapped_column(Float, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    ts: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, index=True, nullable=False
-    )
+    ts: Mapped[datetime] = mapped_column(DateTime, default=ist_now, index=True, nullable=False)
 
     __table_args__ = (Index("ix_signals_symbol_ts", "symbol", "ts"),)
 
@@ -168,9 +173,7 @@ class Activity(Base):
     )  # order_placed, order_filled, error, etc.
     ref_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     details_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    ts: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, index=True, nullable=False
-    )
+    ts: Mapped[datetime] = mapped_column(DateTime, default=ist_now, index=True, nullable=False)
 
 
 # Phase 1.1: New models for multi-user service architecture
@@ -190,9 +193,9 @@ class ServiceStatus(Base):
     last_task_execution: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
     )
 
 
@@ -205,7 +208,7 @@ class ServiceTaskExecution(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     task_name: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     executed_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, index=True, nullable=False
+        DateTime, default=ist_now, index=True, nullable=False
     )
     status: Mapped[str] = mapped_column(
         String(16), index=True, nullable=False
@@ -232,7 +235,7 @@ class ServiceLog(Base):
     message: Mapped[str] = mapped_column(String(1024), nullable=False)
     context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, index=True, nullable=False
+        DateTime, default=ist_now, index=True, nullable=False
     )
 
     __table_args__ = (
@@ -256,7 +259,7 @@ class ErrorLog(Base):
     resolved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     resolution_notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, index=True, nullable=False
+        DateTime, default=ist_now, index=True, nullable=False
     )
 
     __table_args__ = (
@@ -334,9 +337,9 @@ class UserTradingConfig(Base):
     # Scheduling Preferences (JSON field for flexibility)
     task_schedule: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
     )
 
 
@@ -355,7 +358,7 @@ class MLTrainingJob(Base):
     )  # 'verdict_classifier', 'price_regressor'
     algorithm: Mapped[str] = mapped_column(String(32), nullable=False)  # 'random_forest', 'xgboost'
     training_data_path: Mapped[str] = mapped_column(String(512), nullable=False)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     model_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -377,7 +380,7 @@ class MLModel(Base):
     accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
     training_job_id: Mapped[int] = mapped_column(ForeignKey("ml_training_jobs.id"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
 
     __table_args__ = (UniqueConstraint("model_type", "version", name="uq_ml_models_type_version"),)
@@ -406,9 +409,9 @@ class UserNotificationPreferences(Base):
     # Quiet hours (optional)
     quiet_hours_start: Mapped[time | None] = mapped_column(Time, nullable=True)
     quiet_hours_end: Mapped[time | None] = mapped_column(Time, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
     )
 
 
@@ -430,7 +433,7 @@ class Notification(Base):
     read: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
     read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, index=True, nullable=False
+        DateTime, default=ist_now, index=True, nullable=False
     )
     # Delivery status
     telegram_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -458,7 +461,7 @@ class AuditLog(Base):
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)  # IPv6 max length
     user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, index=True, nullable=False
+        DateTime, default=ist_now, index=True, nullable=False
     )
 
     __table_args__ = (

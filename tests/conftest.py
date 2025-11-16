@@ -24,6 +24,8 @@ def clean_db_after_test():
     if root not in sys.path:
         sys.path.append(root)
     try:
+        # Import models to ensure they're registered before creating schema
+        import src.infrastructure.db.models  # noqa: F401
         from src.infrastructure.db.base import Base
         from src.infrastructure.db.session import engine
 
@@ -83,6 +85,18 @@ def db_session():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    # Enable foreign key constraints for SQLite
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    # Import models to ensure they're registered before creating schema
+    import src.infrastructure.db.models  # noqa: F401
+
     Base.metadata.create_all(bind=engine)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     db = SessionLocal()

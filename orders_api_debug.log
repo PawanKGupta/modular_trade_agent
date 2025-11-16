@@ -1,0 +1,6 @@
+[ORDERS API] === ENTRY POINT === status=amo, user_id=1, email=admin@example.com
+[ORDERS API] Found 0 orders for user_id=1
+[ORDERS API] === ENTRY POINT === status=closed, user_id=1, email=admin@example.com
+[ORDERS API] Found 6 orders for user_id=1
+[ORDERS API] === ENTRY POINT === status=closed, user_id=1, email=admin@example.com
+[ORDERS API] Found 6 orders for user_id=1

@@ -16,7 +16,18 @@ from src.infrastructure.db.session import SessionLocal, engine
 from src.infrastructure.persistence.user_repository import UserRepository
 
 from .core.config import settings
-from .routers import activity, admin, auth, broker, orders, pnl, signals, targets, user
+from .routers import (
+    activity,
+    admin,
+    auth,
+    broker,
+    orders,
+    pnl,
+    signals,
+    targets,
+    trading_config,
+    user,
+)
 
 # Ensure project root is on sys.path so `src.*` imports work when running from server/
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -105,6 +116,7 @@ async def log_exceptions(request: Request, call_next):
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(user.router, prefix="/api/v1/user", tags=["user"])
+app.include_router(trading_config.router, prefix="/api/v1/user", tags=["trading-config"])
 app.include_router(orders.router, prefix="/api/v1/user/orders", tags=["orders"])
 app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
 app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])
