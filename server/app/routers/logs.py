@@ -30,7 +30,8 @@ def _parse_datetime(value: str | None) -> datetime | None:
         # Support both date-only (YYYY-MM-DD) and full ISO strings.
         if len(value) == DATE_ONLY_LENGTH:
             return datetime.fromisoformat(f"{value}T00:00:00")
-        return datetime.fromisoformat(value)
+        normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
+        return datetime.fromisoformat(normalized)
     except ValueError as exc:  # pragma: no cover - defensive
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
