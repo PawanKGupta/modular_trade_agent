@@ -43,7 +43,7 @@ class Users(Base):
     )
 
     settings: Mapped[UserSettings] = relationship(
-        "src.infrastructure.db.models.UserSettings", back_populates="user", uselist=False
+        "UserSettings", back_populates="user", uselist=False
     )
 
 
@@ -69,9 +69,7 @@ class UserSettings(Base):
         DateTime, default=ist_now, onupdate=ist_now, nullable=False
     )
 
-    user: Mapped[Users] = relationship(
-        "src.infrastructure.db.models.Users", back_populates="settings"
-    )
+    user: Mapped[Users] = relationship("Users", back_populates="settings")
 
 
 class OrderStatus(str, Enum):
