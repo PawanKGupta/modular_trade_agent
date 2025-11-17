@@ -5,6 +5,7 @@ import {
 } from '@/api/service';
 import { IndividualServiceControls } from './IndividualServiceControls';
 import { getServiceStatus, type ServiceStatus } from '@/api/service';
+import { useSessionStore } from '@/state/sessionStore';
 
 interface IndividualServicesSectionProps {
 	unifiedServiceRunning: boolean;
@@ -13,6 +14,7 @@ interface IndividualServicesSectionProps {
 export function IndividualServicesSection({
 	unifiedServiceRunning,
 }: IndividualServicesSectionProps) {
+	const { isAdmin } = useSessionStore();
 	const { data: individualStatus, isLoading } = useQuery<IndividualServicesStatus>({
 		queryKey: ['individualServicesStatus'],
 		queryFn: getIndividualServicesStatus,
@@ -38,8 +40,10 @@ export function IndividualServicesSection({
 		);
 	}
 
-	// Filter out analysis service (admin-only, will be shown separately)
-	const userServices = serviceEntries.filter(([taskName]) => taskName !== 'analysis');
+	// Filter out analysis service for non-admin users (admin-only service)
+	const userServices = serviceEntries.filter(
+		([taskName]) => isAdmin || taskName !== 'analysis'
+	);
 
 	return (
 		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">

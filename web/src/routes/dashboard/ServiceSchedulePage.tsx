@@ -12,7 +12,7 @@ import { useSessionStore } from '@/state/sessionStore';
 
 export function ServiceSchedulePage() {
 	const qc = useQueryClient();
-	const { user } = useSessionStore();
+	const { user, isAdmin } = useSessionStore();
 	const [editingSchedule, setEditingSchedule] = useState<string | null>(null);
 	const [editForm, setEditForm] = useState<Partial<ServiceSchedule>>({});
 	const [showRestartBanner, setShowRestartBanner] = useState(false);
@@ -103,7 +103,7 @@ export function ServiceSchedulePage() {
 		eod_cleanup: 'End-of-Day Cleanup',
 	};
 
-	if (!user || user.role !== 'admin') {
+	if (!user || !isAdmin) {
 		return (
 			<div className="p-4">
 				<div className="text-red-400">Access denied. Admin privileges required.</div>
