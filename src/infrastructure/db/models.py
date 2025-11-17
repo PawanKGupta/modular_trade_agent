@@ -64,6 +64,8 @@ class UserSettings(Base):
     )  # Connected/Disconnected/Error
     # Store encrypted credentials blob server-side; do not expose to client
     broker_creds_encrypted: Mapped[bytes | None] = mapped_column(nullable=True)
+    # UI preferences (e.g., column selections, view preferences)
+    ui_preferences: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=ist_now, onupdate=ist_now, nullable=False
@@ -154,6 +156,7 @@ class PnlDaily(Base):
 class Signals(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    # Technical indicators
     rsi10: Mapped[float | None] = mapped_column(Float, nullable=True)
     ema9: Mapped[float | None] = mapped_column(Float, nullable=True)
     ema200: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -161,6 +164,46 @@ class Signals(Base):
     clean_chart: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     monthly_support_dist: Mapped[float | None] = mapped_column(Float, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Scoring fields
+    backtest_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    combined_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    strength_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    priority_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # ML fields
+    ml_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ml_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ml_probabilities: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Trading parameters
+    buy_range: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {low, high}
+    target: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_close: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Fundamental data
+    pe: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fundamental_assessment: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fundamental_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Volume data
+    avg_vol: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    today_vol: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    volume_analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    volume_pattern: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    volume_description: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    vol_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    volume_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Analysis metadata
+    verdict: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # buy, avoid, strong_buy, etc.
+    signals: Mapped[list | None] = mapped_column(JSON, nullable=True)  # List of signal strings
+    justification: Mapped[list | None] = mapped_column(
+        JSON, nullable=True
+    )  # List of justification strings
+    timeframe_analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    news_sentiment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    candle_analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    chart_quality: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Timestamp
     ts: Mapped[datetime] = mapped_column(DateTime, default=ist_now, index=True, nullable=False)
 
     __table_args__ = (Index("ix_signals_symbol_ts", "symbol", "ts"),)

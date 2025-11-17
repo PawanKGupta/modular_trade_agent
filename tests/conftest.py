@@ -397,3 +397,22 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.e2e)
         else:
             item.add_marker(pytest.mark.unit)
+
+
+def pytest_configure_node(node):
+    """
+    Called when a worker node is being set up for parallel execution.
+    Ensures models are imported once per worker to avoid SQLAlchemy registry conflicts.
+    """
+    # Force import models in each worker process to ensure proper registration
+    # This prevents "Multiple classes found for path" errors in parallel execution
+    try:
+        # Clear any existing registry conflicts by ensuring fresh import
+        from sqlalchemy.orm import configure_mappers
+
+        import src.infrastructure.db.models  # noqa: F401
+
+        configure_mappers()
+    except Exception:
+        # If there's an issue, it will be caught in the actual test
+        pass

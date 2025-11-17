@@ -111,16 +111,66 @@ class DualSignalsWriter:
         # DB
         models = []
         for s in rows:
+            # Extract trading params if available
+            trading_params = s.get("trading_params") or {}
+            buy_range = (
+                trading_params.get("buy_range") if isinstance(trading_params, dict) else None
+            )
+
             models.append(
                 SignalsModel(
                     symbol=s.get("symbol") or s.get("ticker"),
-                    rsi10=s.get("rsi10"),
+                    # Technical indicators
+                    rsi10=s.get("rsi10") or s.get("rsi"),
                     ema9=s.get("ema9"),
                     ema200=s.get("ema200"),
                     distance_to_ema9=s.get("distance_to_ema9"),
                     clean_chart=s.get("clean_chart"),
                     monthly_support_dist=s.get("monthly_support_dist"),
                     confidence=s.get("confidence"),
+                    # Scoring fields
+                    backtest_score=s.get("backtest_score") or s.get("backtest"),
+                    combined_score=s.get("combined_score"),
+                    strength_score=s.get("strength_score"),
+                    priority_score=s.get("priority_score"),
+                    # ML fields
+                    ml_verdict=s.get("ml_verdict"),
+                    ml_confidence=s.get("ml_confidence"),
+                    ml_probabilities=s.get("ml_probabilities"),
+                    # Trading parameters
+                    buy_range=buy_range,
+                    target=(
+                        trading_params.get("target")
+                        if isinstance(trading_params, dict)
+                        else s.get("target")
+                    ),
+                    stop=(
+                        trading_params.get("stop")
+                        if isinstance(trading_params, dict)
+                        else s.get("stop")
+                    ),
+                    last_close=s.get("last_close"),
+                    # Fundamental data
+                    pe=s.get("pe"),
+                    pb=s.get("pb"),
+                    fundamental_assessment=s.get("fundamental_assessment"),
+                    fundamental_ok=s.get("fundamental_ok"),
+                    # Volume data
+                    avg_vol=s.get("avg_vol"),
+                    today_vol=s.get("today_vol"),
+                    volume_analysis=s.get("volume_analysis"),
+                    volume_pattern=s.get("volume_pattern"),
+                    volume_description=s.get("volume_description"),
+                    vol_ok=s.get("vol_ok"),
+                    volume_ratio=s.get("volume_ratio"),
+                    # Analysis metadata
+                    verdict=s.get("verdict") or s.get("final_verdict"),
+                    signals=s.get("signals"),
+                    justification=s.get("justification"),
+                    timeframe_analysis=s.get("timeframe_analysis"),
+                    news_sentiment=s.get("news_sentiment"),
+                    candle_analysis=s.get("candle_analysis"),
+                    chart_quality=s.get("chart_quality"),
                 )
             )
         db_count = self.db_repo.add_many(models) if models else 0

@@ -474,8 +474,67 @@ http.post(API('/auth/refresh'), async () => {
 	// signals
 	http.get(API('/signals/buying-zone'), async () => {
 		return HttpResponse.json([
-			{ id: 1, symbol: 'TCS', rsi10: 25.2, ema9: 100, ema200: 90, distance_to_ema9: 5, clean_chart: true, monthly_support_dist: 1.2, confidence: 0.7, ts: new Date().toISOString() },
+			{
+				id: 1,
+				symbol: 'TCS',
+				rsi10: 25.2,
+				ema9: 100,
+				ema200: 90,
+				distance_to_ema9: 5,
+				clean_chart: true,
+				monthly_support_dist: 1.2,
+				confidence: 0.7,
+				backtest_score: 75.5,
+				combined_score: 80.0,
+				strength_score: 65.0,
+				priority_score: 70.0,
+				ml_verdict: 'buy',
+				ml_confidence: 0.85,
+				ml_probabilities: { buy: 0.85, avoid: 0.15 },
+				buy_range: { low: 95.0, high: 100.0 },
+				target: 110.0,
+				stop: 90.0,
+				last_close: 98.5,
+				pe: 25.5,
+				pb: 3.2,
+				fundamental_assessment: 'good',
+				fundamental_ok: true,
+				avg_vol: 1000000,
+				today_vol: 1200000,
+				vol_ok: true,
+				volume_ratio: 1.2,
+				verdict: 'buy',
+				signals: ['rsi_oversold', 'ema_dip'],
+				justification: ['RSI below 30', 'Price near EMA9'],
+				ts: new Date().toISOString(),
+			},
+			{
+				id: 2,
+				symbol: 'INFY',
+				rsi10: 28.5,
+				ema9: 1500,
+				ema200: 1450,
+				distance_to_ema9: -2.5,
+				clean_chart: false,
+				monthly_support_dist: 0.8,
+				confidence: 0.6,
+				backtest_score: 60.0,
+				combined_score: 65.0,
+				ml_verdict: 'avoid',
+				ml_confidence: 0.55,
+				last_close: 1495.0,
+				verdict: 'avoid',
+				ts: new Date().toISOString(),
+			},
 		]);
+	}),
+	// buying zone columns
+	http.get(API('/user/buying-zone-columns'), async () => {
+		return HttpResponse.json({ columns: [] });
+	}),
+	http.put(API('/user/buying-zone-columns'), async ({ request }) => {
+		const body = await request.json();
+		return HttpResponse.json({ columns: (body as { columns: string[] }).columns });
 	}),
 	// trading config
 	http.get(API('/user/trading-config'), async () => {

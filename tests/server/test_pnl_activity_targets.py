@@ -1,4 +1,5 @@
 import os
+import uuid
 from datetime import date, timedelta
 
 from fastapi.testclient import TestClient
@@ -12,9 +13,11 @@ from src.infrastructure.db.session import SessionLocal  # noqa: E402
 
 def _auth_client() -> tuple[TestClient, dict]:
     client = TestClient(app)
+    # Use unique email to avoid conflicts
+    unique_email = f"pat_tester_{uuid.uuid4().hex[:8]}@example.com"
     s = client.post(
         "/api/v1/auth/signup",
-        json={"email": "pat_tester@example.com", "password": "secret123"},
+        json={"email": unique_email, "password": "secret123"},
     )
     assert s.status_code == 200, s.text
     token = s.json()["access_token"]

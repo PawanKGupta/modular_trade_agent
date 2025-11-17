@@ -34,6 +34,7 @@ class SettingsRepository:
         broker: str | None = None,
         broker_status: str | None = None,
         broker_creds_encrypted: bytes | None = None,
+        ui_preferences: dict | None = None,
     ) -> UserSettings:
         if trade_mode is not None:
             settings.trade_mode = trade_mode
@@ -43,6 +44,24 @@ class SettingsRepository:
             settings.broker_status = broker_status
         if broker_creds_encrypted is not None:
             settings.broker_creds_encrypted = broker_creds_encrypted
+        if ui_preferences is not None:
+            settings.ui_preferences = ui_preferences
         self.db.commit()
         self.db.refresh(settings)
         return settings
+
+    def get_ui_preferences(self, user_id: int) -> dict:
+        """Get UI preferences for a user, returning empty dict if not set."""
+        settings = self.get_by_user_id(user_id)
+        if settings and settings.ui_preferences:
+            return settings.ui_preferences
+        return {}
+
+    def update_ui_preferences(self, user_id: int, preferences: dict) -> dict:
+        """Update UI preferences for a user, merging with existing preferences."""
+        settings = self.ensure_default(user_id)
+        current_prefs = settings.ui_preferences or {}
+        # Merge with existing preferences
+        merged_prefs = {**current_prefs, **preferences}
+        settings = self.update(settings, ui_preferences=merged_prefs)
+        return settings.ui_preferences or {}

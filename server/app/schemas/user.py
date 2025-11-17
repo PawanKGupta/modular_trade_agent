@@ -17,7 +17,7 @@ class SettingsUpdateRequest(BaseModel):
 
 
 class BrokerCredsRequest(BaseModel):
-    broker: Literal["kotak-neo"] = "kotak-neo"
+    broker: str = Field(default="kotak-neo", description="Broker name (e.g., 'kotak-neo')")
     api_key: str = Field(min_length=1, description="Consumer Key (KOTAK_CONSUMER_KEY)")
     api_secret: str = Field(min_length=1, description="Consumer Secret (KOTAK_CONSUMER_SECRET)")
     # Optional fields for full Kotak Neo authentication test
