@@ -15,22 +15,22 @@ export function AppShell() {
 	return (
 		<div className="min-h-screen grid grid-cols-[240px_1fr]">
 			<aside className="bg-[var(--panel)] p-4">
-				<div className="font-semibold mb-3">Trade Agent</div>
+				<div className="font-semibold mb-3 text-[var(--text)]">Trade Agent</div>
 				<nav className="flex flex-col gap-2 text-sm">
-					<Link to="/dashboard">Overview</Link>
-					<Link to="/dashboard/buying-zone">Buying Zone</Link>
-					<Link to="/dashboard/orders">Orders</Link>
-					<Link to="/dashboard/pnl">PnL</Link>
-					<Link to="/dashboard/targets">Targets</Link>
-					<Link to="/dashboard/activity">Activity</Link>
-					<Link to="/dashboard/service">Service Status</Link>
-					<Link to="/dashboard/logs">Logs</Link>
-					<Link to="/dashboard/trading-config">Trading Config</Link>
-					<Link to="/dashboard/settings">Settings</Link>
+					<Link to="/dashboard" className="text-[var(--text)] hover:text-[var(--accent)]">Overview</Link>
+					<Link to="/dashboard/buying-zone" className="text-[var(--text)] hover:text-[var(--accent)]">Buying Zone</Link>
+					<Link to="/dashboard/orders" className="text-[var(--text)] hover:text-[var(--accent)]">Orders</Link>
+					<Link to="/dashboard/pnl" className="text-[var(--text)] hover:text-[var(--accent)]">PnL</Link>
+					<Link to="/dashboard/targets" className="text-[var(--text)] hover:text-[var(--accent)]">Targets</Link>
+					<Link to="/dashboard/activity" className="text-[var(--text)] hover:text-[var(--accent)]">Activity</Link>
+					<Link to="/dashboard/service" className="text-[var(--text)] hover:text-[var(--accent)]">Service Status</Link>
+					<Link to="/dashboard/logs" className="text-[var(--text)] hover:text-[var(--accent)]">Logs</Link>
+					<Link to="/dashboard/trading-config" className="text-[var(--text)] hover:text-[var(--accent)]">Trading Config</Link>
+					<Link to="/dashboard/settings" className="text-[var(--text)] hover:text-[var(--accent)]">Settings</Link>
 					{isAdmin && (
 						<>
-							<Link to="/dashboard/admin/users">Admin • Users</Link>
-							<Link to="/dashboard/admin/ml">Admin • ML Training</Link>
+							<Link to="/dashboard/admin/users" className="text-[var(--text)] hover:text-[var(--accent)]">Admin • Users</Link>
+							<Link to="/dashboard/admin/ml" className="text-[var(--text)] hover:text-[var(--accent)]">Admin • ML Training</Link>
 						</>
 					)}
 				</nav>

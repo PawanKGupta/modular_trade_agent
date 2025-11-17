@@ -80,6 +80,48 @@ Refreshing the dashboard wiped the in-memory Zustand session store and the UI im
 
 ---
 
+## Bug #60: Text Not Visible on White Backgrounds (HIGH)
+
+**Date Fixed**: November 17, 2025
+**Status**: ✅ Fixed
+
+### Description
+Across all dashboard pages, text was invisible because components used default Tailwind classes (`bg-white`, `bg-gray-50`, `border`) that created white/light backgrounds, while the app uses a dark theme with light text (`var(--text): #e6edf3`). This caused white text on white backgrounds, making all content unreadable.
+
+### Root Cause
+- Components like `AdminUsersPage`, `OrdersPage`, `PnlPage`, `TargetsPage`, and `ActivityPage` used default Tailwind utility classes that assume a light theme.
+- Input fields, select dropdowns, table headers, and panel containers had white/light gray backgrounds without explicit text colors.
+- The app's dark theme CSS variables (`--text`, `--panel`, `--muted`) were defined but not consistently applied across all components.
+
+### Fix Applied
+**Files Updated:**
+- `web/src/routes/dashboard/AdminUsersPage.tsx`
+- `web/src/routes/dashboard/OrdersPage.tsx`
+- `web/src/routes/dashboard/PnlPage.tsx`
+- `web/src/routes/dashboard/TargetsPage.tsx`
+- `web/src/routes/dashboard/ActivityPage.tsx`
+- `web/src/routes/AppShell.tsx`
+
+**Changes:**
+- Replaced `bg-white` and `bg-gray-50` with `bg-[var(--panel)]` and `bg-[#0f172a]` for dark backgrounds.
+- Added explicit `text-[var(--text)]` to all text elements (headings, table cells, labels).
+- Updated input/select fields to use `bg-[#0f1720] border border-[#1e293b] text-[var(--text)]`.
+- Changed table headers from `bg-gray-50` to `bg-[#0f172a] text-[var(--muted)]`.
+- Updated borders to use `border-[#1e293b]` for consistent dark theme styling.
+- Added hover states to navigation links: `hover:text-[var(--accent)]`.
+
+### Test Coverage
+- Manual visual verification across all affected pages.
+- Existing unit tests continue to pass (styling changes don't affect functionality).
+
+### Impact
+- All text is now visible and readable across the entire dashboard.
+- Consistent dark theme styling throughout the application.
+- Better UX with proper contrast ratios for accessibility.
+- Navigation links now have clear hover feedback.
+
+---
+
 ## Bug #1: Reentry Logic After RSI Reset (CRITICAL)
 
 **Date Fixed**: October 31, 2024

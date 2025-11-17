@@ -47,34 +47,34 @@ export function AdminUsersPage() {
 
 	return (
 		<div className="p-4 space-y-6">
-			<h1 className="text-xl font-semibold">Users</h1>
+			<h1 className="text-xl font-semibold text-[var(--text)]">Users</h1>
 
-			<div className="rounded border p-4">
-				<h2 className="font-medium mb-2">Create user</h2>
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-4">
+				<h2 className="font-medium mb-2 text-[var(--text)]">Create user</h2>
 				<div className="flex flex-col gap-2 max-w-xl">
 					<input
-						className="border rounded px-2 py-1"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)] placeholder:text-[var(--muted)]"
 						type="email"
 						placeholder="Email"
 						value={newUser.email}
 						onChange={(e) => setNewUser((s) => ({ ...s, email: e.target.value }))}
 					/>
 					<input
-						className="border rounded px-2 py-1"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)] placeholder:text-[var(--muted)]"
 						type="password"
 						placeholder="Password"
 						value={newUser.password}
 						onChange={(e) => setNewUser((s) => ({ ...s, password: e.target.value }))}
 					/>
 					<input
-						className="border rounded px-2 py-1"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)] placeholder:text-[var(--muted)]"
 						type="text"
 						placeholder="Name (optional)"
 						value={newUser.name}
 						onChange={(e) => setNewUser((s) => ({ ...s, name: e.target.value }))}
 					/>
 					<select
-						className="border rounded px-2 py-1 w-40"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 w-40 text-[var(--text)]"
 						value={newUser.role ?? 'user'}
 						onChange={(e) => setNewUser((s) => ({ ...s, role: e.target.value as 'user' | 'admin' }))}
 					>
@@ -88,18 +88,18 @@ export function AdminUsersPage() {
 					>
 						{createMut.isPending ? 'Creating...' : 'Create'}
 					</button>
-					{createMut.isError && <div className="text-red-600 text-sm">Create failed</div>}
+					{createMut.isError && <div className="text-red-400 text-sm">Create failed</div>}
 				</div>
 			</div>
 
-			<div className="rounded border">
-				<div className="flex items-center justify-between px-4 py-2 border-b">
-					<h2 className="font-medium">All users</h2>
-					{isLoading && <span className="text-sm text-gray-500">Loading...</span>}
-					{isError && <span className="text-sm text-red-600">Error loading users</span>}
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
+				<div className="flex items-center justify-between px-4 py-2 border-b border-[#1e293b]">
+					<h2 className="font-medium text-[var(--text)]">All users</h2>
+					{isLoading && <span className="text-sm text-[var(--muted)]">Loading...</span>}
+					{isError && <span className="text-sm text-red-400">Error loading users</span>}
 				</div>
 				<table className="w-full text-sm">
-					<thead className="bg-gray-50">
+					<thead className="bg-[#0f172a] text-[var(--muted)]">
 						<tr>
 							<th className="text-left p-2">Email</th>
 							<th className="text-left p-2">Name</th>
@@ -110,12 +110,12 @@ export function AdminUsersPage() {
 					</thead>
 					<tbody>
 						{(data ?? []).map((u) => (
-							<tr key={u.id} className="border-t">
-								<td className="p-2">{u.email}</td>
-								<td className="p-2">{u.name ?? '-'}</td>
+							<tr key={u.id} className="border-t border-[#1e293b]">
+								<td className="p-2 text-[var(--text)]">{u.email}</td>
+								<td className="p-2 text-[var(--text)]">{u.name ?? '-'}</td>
 								<td className="p-2">
 									<select
-										className="border rounded px-2 py-1"
+										className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)]"
 										value={u.role}
 										onChange={(e) => updateMut.mutate({ id: u.id, payload: { role: e.target.value as any } })}
 									>
@@ -128,11 +128,12 @@ export function AdminUsersPage() {
 										type="checkbox"
 										checked={u.is_active}
 										onChange={(e) => updateMut.mutate({ id: u.id, payload: { is_active: e.target.checked } })}
+										className="accent-blue-600"
 									/>
 								</td>
 								<td className="p-2">
 									<button
-										className="text-red-600 hover:underline disabled:opacity-50"
+										className="text-red-400 hover:text-red-300 hover:underline disabled:opacity-50"
 										onClick={() => deleteMut.mutate(u.id)}
 										disabled={deleteMut.isPending}
 									>
@@ -143,7 +144,7 @@ export function AdminUsersPage() {
 						))}
 						{(data ?? []).length === 0 && !isLoading && (
 							<tr>
-								<td className="p-2 text-gray-500" colSpan={5}>
+								<td className="p-2 text-[var(--muted)]" colSpan={5}>
 									No users found
 								</td>
 							</tr>

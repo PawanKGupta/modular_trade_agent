@@ -17,10 +17,15 @@ export function ActivityPage() {
 
 	return (
 		<div className="p-4 space-y-4">
-			<h1 className="text-xl font-semibold">Activity</h1>
+			<h1 className="text-xl font-semibold text-[var(--text)]">Activity</h1>
 			<div className="flex items-center gap-2">
-				<label htmlFor="level" className="text-sm">Level</label>
-				<select id="level" className="border rounded px-2 py-1" value={level} onChange={(e) => setLevel(e.target.value as any)}>
+				<label htmlFor="level" className="text-sm text-[var(--text)]">Level</label>
+				<select
+					id="level"
+					className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)]"
+					value={level}
+					onChange={(e) => setLevel(e.target.value as any)}
+				>
 					{LEVELS.map((l) => (
 						<option key={l} value={l}>
 							{l}
@@ -28,14 +33,14 @@ export function ActivityPage() {
 					))}
 				</select>
 			</div>
-			<div className="rounded border">
-				<div className="flex items-center justify-between px-3 py-2 border-b">
-					<div className="font-medium">Recent Activity</div>
-					{isLoading && <span className="text-sm text-gray-500">Loading...</span>}
-					{isError && <span className="text-sm text-red-600">Failed to load</span>}
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
+				<div className="flex items-center justify-between px-3 py-2 border-b border-[#1e293b]">
+					<div className="font-medium text-[var(--text)]">Recent Activity</div>
+					{isLoading && <span className="text-sm text-[var(--muted)]">Loading...</span>}
+					{isError && <span className="text-sm text-red-400">Failed to load</span>}
 				</div>
 				<table className="w-full text-sm">
-					<thead className="bg-gray-50">
+					<thead className="bg-[#0f172a] text-[var(--muted)]">
 						<tr>
 							<th className="text-left p-2">Time</th>
 							<th className="text-left p-2">Event</th>
@@ -45,16 +50,16 @@ export function ActivityPage() {
 					</thead>
 					<tbody>
 						{(data ?? []).map((a) => (
-							<tr key={a.id} className="border-t">
-								<td className="p-2">{new Date(a.ts).toLocaleString()}</td>
-								<td className="p-2">{a.event}</td>
-								<td className="p-2">{a.detail ?? '-'}</td>
-								<td className="p-2">{a.level ?? 'info'}</td>
+							<tr key={a.id} className="border-t border-[#1e293b]">
+								<td className="p-2 text-[var(--text)]">{new Date(a.ts).toLocaleString()}</td>
+								<td className="p-2 text-[var(--text)]">{a.event}</td>
+								<td className="p-2 text-[var(--text)]">{a.detail ?? '-'}</td>
+								<td className="p-2 text-[var(--text)]">{a.level ?? 'info'}</td>
 							</tr>
 						))}
 						{(data ?? []).length === 0 && !isLoading && (
 							<tr>
-								<td className="p-2 text-gray-500" colSpan={4}>
+								<td className="p-2 text-[var(--muted)]" colSpan={4}>
 									No activity
 								</td>
 							</tr>

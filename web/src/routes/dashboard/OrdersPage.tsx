@@ -32,12 +32,16 @@ export function OrdersPage() {
 
 	return (
 		<div className="p-4 space-y-4">
-			<h1 className="text-xl font-semibold">Orders</h1>
+			<h1 className="text-xl font-semibold text-[var(--text)]">Orders</h1>
 			<div className="flex gap-2">
 				{TABS.map((t) => (
 					<button
 						key={t.key}
-						className={`px-3 py-1 rounded border ${tab === t.key ? 'bg-blue-600 text-white' : 'bg-white'}`}
+						className={`px-3 py-1 rounded border ${
+							tab === t.key
+								? 'bg-blue-600 text-white border-blue-600'
+								: 'bg-[var(--panel)] text-[var(--text)] border-[#1e293b] hover:bg-[#0f1720]'
+						}`}
 						onClick={() => setTab(t.key)}
 						aria-pressed={tab === t.key}
 					>
@@ -45,14 +49,14 @@ export function OrdersPage() {
 					</button>
 				))}
 			</div>
-			<div className="rounded border">
-				<div className="flex items-center justify-between px-3 py-2 border-b">
-					<div className="font-medium">{TABS.find((t) => t.key === tab)?.label} Orders</div>
-					{isLoading && <span className="text-sm text-gray-500">Loading...</span>}
-					{isError && <span className="text-sm text-red-600">Failed to load orders</span>}
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
+				<div className="flex items-center justify-between px-3 py-2 border-b border-[#1e293b]">
+					<div className="font-medium text-[var(--text)]">{TABS.find((t) => t.key === tab)?.label} Orders</div>
+					{isLoading && <span className="text-sm text-[var(--muted)]">Loading...</span>}
+					{isError && <span className="text-sm text-red-400">Failed to load orders</span>}
 				</div>
 				<table className="w-full text-sm">
-					<thead className="bg-gray-50">
+					<thead className="bg-[#0f172a] text-[var(--muted)]">
 						<tr>
 							<th className="text-left p-2">Symbol</th>
 							<th className="text-left p-2">Side</th>
@@ -63,17 +67,17 @@ export function OrdersPage() {
 					</thead>
 					<tbody>
 						{orders.map((o) => (
-							<tr key={o.id} className="border-t">
-								<td className="p-2">{o.symbol}</td>
-								<td className="p-2">{o.side}</td>
-								<td className="p-2">{o.qty}</td>
-								<td className="p-2">{formatPrice(o.price)}</td>
-								<td className="p-2">{o.status}</td>
+							<tr key={o.id} className="border-t border-[#1e293b]">
+								<td className="p-2 text-[var(--text)]">{o.symbol}</td>
+								<td className="p-2 text-[var(--text)]">{o.side}</td>
+								<td className="p-2 text-[var(--text)]">{o.qty}</td>
+								<td className="p-2 text-[var(--text)]">{formatPrice(o.price)}</td>
+								<td className="p-2 text-[var(--text)]">{o.status}</td>
 							</tr>
 						))}
 						{orders.length === 0 && !isLoading && (
 							<tr>
-								<td className="p-2 text-gray-500" colSpan={5}>
+								<td className="p-2 text-[var(--muted)]" colSpan={5}>
 									No orders
 								</td>
 							</tr>
