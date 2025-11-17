@@ -12,7 +12,7 @@ import threading
 
 from sqlalchemy.orm import Session
 
-from modules.kotak_neo_auto_trader.run_trading_service import TradingService
+import modules.kotak_neo_auto_trader.run_trading_service as trading_service_module
 from src.application.services.broker_credentials import (
     create_temp_env_file,
     decrypt_broker_credentials,
@@ -135,7 +135,7 @@ class MultiUserTradingService:
                 user_config = self._config_repo.get_or_create_default(user_id)
                 strategy_config = user_config_to_strategy_config(user_config)
 
-                service = TradingService(
+                service = trading_service_module.TradingService(
                     user_id=user_id,
                     db_session=self.db,
                     broker_creds=broker_creds,
