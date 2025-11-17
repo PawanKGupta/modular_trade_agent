@@ -1,0 +1,201 @@
+import { useState } from 'react';
+import {
+	type IndividualServiceStatus,
+	startIndividualService,
+	stopIndividualService,
+	runTaskOnce,
+} from '@/api/service';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { formatTimeAgo } from '@/utils/time';
+
+interface IndividualServiceControlsProps {
+	service: IndividualServiceStatus;
+	unifiedServiceRunning: boolean;
+}
+
+const TASK_DISPLAY_NAMES: Record<string, string> = {
+	premarket_retry: 'Pre-market Retry',
+	sell_monitor: 'Sell Monitor',
+	position_monitor: 'Position Monitor',
+	analysis: 'Analysis',
+	buy_orders: 'Buy Orders',
+	eod_cleanup: 'End-of-Day Cleanup',
+};
+
+const TASK_DESCRIPTIONS: Record<string, string> = {
+	premarket_retry: 'Retries failed orders from previous day',
+	sell_monitor: 'Places sell orders and monitors them continuously',
+	position_monitor: 'Monitors positions hourly for reentry/exit signals',
+	analysis: 'Analyzes stocks and generates recommendations',
+	buy_orders: 'Places AMO buy orders for the next day',
+	eod_cleanup: 'End-of-day cleanup and reset for the next day',
+};
+
+export function IndividualServiceControls({
+	service,
+	unifiedServiceRunning,
+}: IndividualServiceControlsProps) {
+	const qc = useQueryClient();
+	const [showConflictWarning, setShowConflictWarning] = useState(false);
+	const [conflictMessage, setConflictMessage] = useState<string | null>(null);
+
+	const startMutation = useMutation({
+		mutationFn: (taskName: string) => startIndividualService({ task_name: taskName }),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ['individualServicesStatus'] });
+			qc.invalidateQueries({ queryKey: ['serviceTasks'] });
+		},
+	});
+
+	const stopMutation = useMutation({
+		mutationFn: (taskName: string) => stopIndividualService({ task_name: taskName }),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ['individualServicesStatus'] });
+			qc.invalidateQueries({ queryKey: ['serviceTasks'] });
+		},
+	});
+
+	const runOnceMutation = useMutation({
+		mutationFn: (taskName: string) => runTaskOnce({ task_name: taskName }),
+		onSuccess: (response) => {
+			if (response.has_conflict) {
+				setConflictMessage(response.conflict_message || 'Conflict detected');
+				setShowConflictWarning(true);
+				setTimeout(() => setShowConflictWarning(false), 5000);
+			}
+			qc.invalidateQueries({ queryKey: ['individualServicesStatus'] });
+			qc.invalidateQueries({ queryKey: ['serviceTasks'] });
+		},
+	});
+
+	const taskDisplayName = TASK_DISPLAY_NAMES[service.task_name] || service.task_name;
+	const taskDescription = TASK_DESCRIPTIONS[service.task_name] || '';
+
+	const canStartIndividual = !unifiedServiceRunning && !service.is_running;
+	const canRunOnce = !service.is_running; // Can run once even if unified is running
+
+	const handleRunOnce = () => {
+		runOnceMutation.mutate(service.task_name);
+	};
+
+	const handleStart = () => {
+		startMutation.mutate(service.task_name);
+	};
+
+	const handleStop = () => {
+		stopMutation.mutate(service.task_name);
+	};
+
+	return (
+		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-4">
+			<div className="flex items-start justify-between mb-3">
+				<div className="flex-1">
+					<div className="flex items-center gap-2 mb-1">
+						<h3 className="text-base font-semibold text-[var(--text)]">{taskDisplayName}</h3>
+						<div
+							className={`px-2 py-0.5 rounded text-xs font-medium ${
+								service.is_running
+									? 'bg-green-500/20 text-green-400'
+									: 'bg-gray-500/20 text-gray-400'
+							}`}
+						>
+							{service.is_running ? 'Running' : 'Stopped'}
+						</div>
+						{!service.schedule_enabled && (
+							<div className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-500/20 text-yellow-400">
+								Disabled
+							</div>
+						)}
+					</div>
+					{taskDescription && (
+						<p className="text-sm text-[var(--muted)] mb-2">{taskDescription}</p>
+					)}
+				</div>
+			</div>
+
+			{/* Status Info */}
+			<div className="grid grid-cols-2 gap-3 mb-3 text-sm">
+				{service.last_execution_at && (
+					<div>
+						<div className="text-[var(--muted)] mb-1">Last Execution</div>
+						<div className="text-[var(--text)]">
+							{formatTimeAgo(
+								Math.floor(
+									(Date.now() - new Date(service.last_execution_at).getTime()) / 1000
+								)
+							)}
+						</div>
+					</div>
+				)}
+				{service.next_execution_at && (
+					<div>
+						<div className="text-[var(--muted)] mb-1">Next Execution</div>
+						<div className="text-[var(--text)]">
+							{formatTimeAgo(
+								Math.floor(
+									(Date.now() - new Date(service.next_execution_at).getTime()) / 1000
+								)
+							)}
+						</div>
+					</div>
+				)}
+			</div>
+
+			{/* Conflict Warning */}
+			{showConflictWarning && conflictMessage && (
+				<div className="mb-3 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-sm text-yellow-400">
+					⚠️ {conflictMessage}
+				</div>
+			)}
+
+			{/* Action Buttons */}
+			<div className="flex gap-2">
+				<button
+					onClick={handleStart}
+					disabled={!canStartIndividual || startMutation.isPending || stopMutation.isPending}
+					className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+						!canStartIndividual || startMutation.isPending || stopMutation.isPending
+							? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+							: 'bg-green-600 hover:bg-green-700 text-white'
+					}`}
+					title={
+						unifiedServiceRunning
+							? 'Cannot start individual service when unified service is running'
+							: service.is_running
+								? 'Service is already running'
+								: 'Start this service'
+					}
+				>
+					{startMutation.isPending ? 'Starting...' : 'Start Service'}
+				</button>
+				<button
+					onClick={handleStop}
+					disabled={!service.is_running || startMutation.isPending || stopMutation.isPending}
+					className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+						!service.is_running || startMutation.isPending || stopMutation.isPending
+							? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+							: 'bg-red-600 hover:bg-red-700 text-white'
+					}`}
+				>
+					{stopMutation.isPending ? 'Stopping...' : 'Stop Service'}
+				</button>
+				<button
+					onClick={handleRunOnce}
+					disabled={!canRunOnce || runOnceMutation.isPending}
+					className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+						!canRunOnce || runOnceMutation.isPending
+							? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+							: 'bg-blue-600 hover:bg-blue-700 text-white'
+					}`}
+					title={
+						service.is_running
+							? 'Service is already running'
+							: 'Run this task once immediately'
+					}
+				>
+					{runOnceMutation.isPending ? 'Running...' : 'Run Once'}
+				</button>
+			</div>
+		</div>
+	);
+}

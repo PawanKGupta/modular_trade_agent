@@ -46,4 +46,3 @@ def get_ltp_from_manager(
             if ticker:
                 return price_manager.get_ltp(symbol, ticker)
             return None
-

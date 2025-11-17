@@ -173,4 +173,3 @@ class OrderFieldExtractor:
         """
         txn_type = OrderFieldExtractor.get_transaction_type(order)
         return txn_type in ["S", "SELL"]
-

@@ -184,7 +184,9 @@ def update_service_schedule(
         except (ValueError, IndexError) as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid schedule_time format. Expected HH:MM, got: {payload.schedule_time}",
+                detail=(
+                    f"Invalid schedule_time format. Expected HH:MM, got: {payload.schedule_time}"
+                ),
             ) from e
 
         end_time_obj = None
@@ -265,7 +267,9 @@ def enable_service_schedule(
     """Enable a service schedule (admin only)"""
     try:
         schedule_repo = ServiceScheduleRepository(db)
-        schedule = schedule_repo.update_enabled(task_name, enabled=True, updated_by_user_id=current.id)
+        schedule = schedule_repo.update_enabled(
+            task_name, enabled=True, updated_by_user_id=current.id
+        )
         if not schedule:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

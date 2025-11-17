@@ -94,7 +94,12 @@ class IndividualServicesStatusResponse(BaseModel):
 class StartIndividualServiceRequest(BaseModel):
     """Request to start individual service"""
 
-    task_name: str = Field(..., description="Task name: premarket_retry, sell_monitor, position_monitor, buy_orders, eod_cleanup")
+    task_name: str = Field(
+        ...,
+        description=(
+            "Task name: premarket_retry, sell_monitor, position_monitor, buy_orders, eod_cleanup"
+        ),
+    )
 
 
 class StartIndividualServiceResponse(BaseModel):
@@ -168,7 +173,9 @@ class UpdateServiceScheduleRequest(BaseModel):
     enabled: bool = Field(default=True)
     is_hourly: bool = Field(default=False)
     is_continuous: bool = Field(default=False)
-    end_time: str | None = Field(None, description="End time in HH:MM format (for continuous tasks)")
+    end_time: str | None = Field(
+        None, description="End time in HH:MM format (for continuous tasks)"
+    )
     description: str | None = None
 
 

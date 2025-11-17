@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from src.application.services.conflict_detection_service import ConflictDetectionService
 from src.application.services.individual_service_manager import IndividualServiceManager
 from src.application.services.multi_user_trading_service import MultiUserTradingService
 from src.infrastructure.db.models import Users
@@ -17,8 +18,8 @@ from src.infrastructure.persistence.service_task_repository import ServiceTaskRe
 
 from ..core.deps import get_current_user, get_db
 from ..schemas.service import (
-    IndividualServiceStatus,
     IndividualServicesStatusResponse,
+    IndividualServiceStatus,
     RunOnceRequest,
     RunOnceResponse,
     ServiceLogResponse,
@@ -218,8 +219,6 @@ def run_task_once(
 ):
     """Run a task once immediately (run once execution)"""
     try:
-        from src.application.services.conflict_detection_service import ConflictDetectionService
-
         conflict_service = ConflictDetectionService(db)
         has_conflict, conflict_message = conflict_service.check_conflict(
             current.id, request.task_name

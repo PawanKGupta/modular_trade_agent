@@ -5,16 +5,16 @@ from .audit_log_repository import AuditLogRepository
 from .csv_repository import CSVRepository
 from .error_log_repository import ErrorLogRepository
 from .fills_repository import FillsRepository
+from .individual_service_status_repository import IndividualServiceStatusRepository
+from .individual_service_task_execution_repository import (
+    IndividualServiceTaskExecutionRepository,
+)
 from .ml_model_repository import MLModelRepository
 from .ml_training_job_repository import MLTrainingJobRepository
 from .notification_repository import NotificationRepository
 from .orders_repository import OrdersRepository
 from .pnl_repository import PnlRepository
 from .positions_repository import PositionsRepository
-from .individual_service_status_repository import IndividualServiceStatusRepository
-from .individual_service_task_execution_repository import (
-    IndividualServiceTaskExecutionRepository,
-)
 from .service_log_repository import ServiceLogRepository
 from .service_schedule_repository import ServiceScheduleRepository
 from .service_status_repository import ServiceStatusRepository
