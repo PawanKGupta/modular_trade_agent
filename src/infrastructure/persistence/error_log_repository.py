@@ -161,3 +161,16 @@ class ErrorLogRepository:
             self.db.delete(error)
         self.db.commit()
         return count
+
+    def delete_old_errors_for_all(self, before_date: datetime, resolved_only: bool = True) -> int:
+        """Delete old error logs across all users."""
+        stmt = select(ErrorLog).where(ErrorLog.occurred_at < before_date)
+        if resolved_only:
+            stmt = stmt.where(ErrorLog.resolved.is_(True))
+
+        errors_to_delete = list(self.db.execute(stmt).scalars().all())
+        count = len(errors_to_delete)
+        for error in errors_to_delete:
+            self.db.delete(error)
+        self.db.commit()
+        return count

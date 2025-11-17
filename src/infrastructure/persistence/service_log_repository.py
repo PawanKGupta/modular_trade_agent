@@ -164,3 +164,13 @@ class ServiceLogRepository:
             self.db.delete(log)
         self.db.commit()
         return count
+
+    def delete_old_logs_for_all(self, before_date: datetime) -> int:
+        """Delete logs for all users older than specified date."""
+        stmt = select(ServiceLog).where(ServiceLog.timestamp < before_date)
+        logs_to_delete = list(self.db.execute(stmt).scalars().all())
+        count = len(logs_to_delete)
+        for log in logs_to_delete:
+            self.db.delete(log)
+        self.db.commit()
+        return count

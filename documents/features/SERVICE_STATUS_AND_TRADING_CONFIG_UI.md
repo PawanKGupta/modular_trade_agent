@@ -248,6 +248,7 @@ Implementation lives in `server/app/routers/logs.py` with schemas under `server/
 3. Admins toggle “Scope → All users” to expose the `user_id` filter, global data, and “Resolve” buttons.
 4. Clicking **Resolve** prompts for optional notes, calls `/admin/logs/errors/{id}/resolve`, and refreshes the table.
 5. Expanded error rows reveal traceback, context, and resolution metadata for quick triage.
+6. A background retention worker purges service/error logs older than **90 days** to keep the database lean (configurable via `LOG_RETENTION_DAYS`).
 
 ### Tests
 | Layer | Files |

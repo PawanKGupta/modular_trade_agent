@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 import os
 import sys
@@ -10,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import inspect
 
+from src.application.services.log_retention_service import LogRetentionService
 from src.infrastructure.db.base import Base
 from src.infrastructure.db.models import UserRole, Users
 from src.infrastructure.db.session import SessionLocal, engine
@@ -130,3 +133,28 @@ app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(ml.router, prefix="/api/v1", tags=["admin-ml"])
 app.include_router(logs.router, prefix="/api/v1", tags=["logs"])
 app.include_router(signals.router, prefix="/api/v1/signals", tags=["signals"])
+
+
+async def _log_retention_worker():
+    """Periodically purge old logs/errors based on retention policy."""
+    while True:
+        try:
+            with SessionLocal() as db:
+                LogRetentionService(db).purge_older_than(settings.log_retention_days)
+        except Exception:
+            logging.exception("Log retention cleanup failed")
+        await asyncio.sleep(24 * 60 * 60)
+
+
+@app.on_event("startup")
+async def start_log_retention_worker():
+    app.state.log_retention_task = asyncio.create_task(_log_retention_worker())
+
+
+@app.on_event("shutdown")
+async def stop_log_retention_worker():
+    task = getattr(app.state, "log_retention_task", None)
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
