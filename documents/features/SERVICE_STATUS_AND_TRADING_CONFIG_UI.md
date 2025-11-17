@@ -2,16 +2,17 @@
 
 **Version**: 1.0
 **Last Updated**: 2025-11-17
-**Status**: ✅ Phase 3 UI shipped (Service Mgmt + Trading Config)
+**Status**: ✅ Phase 3 UI shipped (Service Mgmt + Trading Config + ML Training + Log Viewer)
 
 ---
 
 ## Overview
 
-Phase 3 introduces two high-visibility dashboards in the Modular Trade Agent web app:
+Phase 3 introduces three high-visibility dashboards in the Modular Trade Agent web app:
 
 1. **Service Status Dashboard** – live view of the per-user trading service, with controls, task history, and recent logs.
 2. **Trading Configuration Workspace** – full-fidelity editor for every user-scoped strategy parameter, including presets and deltas vs defaults.
+3. **Log Management Dashboard** – unified view of structured service logs and error reports (user + admin scopes) with resolution workflow.
 
 This document explains how to access the pages, what each widget does, the supporting APIs/tests, and how to demo the flow for stakeholders.
 
@@ -25,6 +26,7 @@ This document explains how to access the pages, what each widget does, the suppo
 | Service Status UI | `/dashboard/service` | Loads `ServiceStatusPage.tsx` with React Query auto-refresh. |
 | Trading Config UI | `/dashboard/config` | Loads `TradingConfigPage.tsx` with TanStack Query + mutations. |
 | ML Training UI (admin) | `/dashboard/admin/ml` | Loads `MLTrainingPage.tsx` for managing training jobs + models. |
+| Log Management UI | `/dashboard/logs` | Loads `LogViewerPage.tsx` with user/admin scopes, filters, and error resolution. |
 
 **Auth requirement**: Both routes are nested under the authenticated dashboard router. Users must be logged in; requests automatically include the JWT via the shared API client.
 
@@ -215,7 +217,63 @@ npm run dev:mock
 
 ---
 
-## 4. Documentation & Hand-offs
+## 4. Log Management Dashboard (Phase 3.5)
+
+### Snapshot
+- **Path**: `/dashboard/logs`
+- **Audience**: All users (self view) + admins (“All users” scope with resolution controls)
+- **Purpose**: Provide a one-stop view of structured service logs and error/exception reports with filtering, search, export, and resolution workflow.
+
+### Components
+| Widget | File | Notes |
+| --- | --- | --- |
+| Page shell | `LogViewerPage.tsx` | Handles filters, admin scope toggle, fetches service/error logs via TanStack Query. |
+| Service log table | `LogTable.tsx` | Displays timestamp, level, module, message, and JSON context. |
+| Error log table | `ErrorLogTable.tsx` | Expandable rows with traceback/context/resolution notes plus admin-only “Resolve” CTA. |
+
+### Backend Contracts
+| Endpoint | Method | Description |
+| --- | --- | --- |
+| `/api/v1/user/logs` | `GET` | Current user’s structured logs with level/module/search/date filters + limits. |
+| `/api/v1/user/logs/errors` | `GET` | Current user’s error logs with resolved filter and date range. |
+| `/api/v1/admin/logs` | `GET` | Admin view across users (optional `user_id`) with the same filters. |
+| `/api/v1/admin/logs/errors` | `GET` | Admin error view with `user_id`, `resolved`, search, and date filters. |
+| `/api/v1/admin/logs/errors/{id}/resolve` | `POST` | Marks an error as resolved, capturing optional notes and resolver ID. |
+
+Implementation lives in `server/app/routers/logs.py` with schemas under `server/app/schemas/logs.py`. Repository helpers (`ServiceLogRepository`, `ErrorLogRepository`) gained search + admin listing helpers.
+
+### Workflow
+1. Users land on `/dashboard/logs` and immediately see their own logs/errors (auto fetch).
+2. Filters (level/module/search/date/limit) run entirely client-side and refetch on change.
+3. Admins toggle “Scope → All users” to expose the `user_id` filter, global data, and “Resolve” buttons.
+4. Clicking **Resolve** prompts for optional notes, calls `/admin/logs/errors/{id}/resolve`, and refreshes the table.
+5. Expanded error rows reveal traceback, context, and resolution metadata for quick triage.
+
+### Tests
+| Layer | Files |
+| --- | --- |
+| Backend API | `tests/unit/server/test_logs_api.py` |
+| Frontend unit | `web/src/routes/__tests__/LogViewerPage.test.tsx` |
+| Frontend integration | `web/src/routes/__tests__/LogViewerPage.integration.test.tsx` |
+| E2E | `web/tests/e2e/log-viewer.spec.ts` |
+
+### Demo Tips
+```bash
+# Backend
+uvicorn server.app.main:app --reload
+
+# Frontend (with MSW mocks)
+cd web
+npm run dev:mock
+# Visit http://localhost:4173/dashboard/logs
+```
+- Demonstrate level/search filters on the Service Logs table.
+- Toggle scope to “All Users”, enter a user ID, and show the admin data set.
+- Click “Resolve” on an unresolved error to showcase the prompt + updated badge/resolution notes.
+
+---
+
+## 5. Documentation & Hand-offs
 
 - This guide is linked from `documents/getting-started/GETTING_STARTED.md#dashboard-access`.
 - Update release notes referencing “Phase 3 UI” should point here for screenshots and API/testing context.
@@ -223,7 +281,7 @@ npm run dev:mock
 
 ---
 
-## 5. Known Limitations & Next Steps
+## 6. Known Limitations & Next Steps
 
 | Area | Status | Planned Follow-up |
 | --- | --- | --- |
@@ -233,7 +291,7 @@ npm run dev:mock
 
 ---
 
-## 6. Change Log
+## 7. Change Log
 
 | Date | Change | Author |
 | --- | --- | --- |

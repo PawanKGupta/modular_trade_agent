@@ -36,6 +36,144 @@ const mlModels = [
 	},
 ];
 
+const loggedInUserId = 1;
+
+type ServiceLogMock = {
+	id: number;
+	user_id: number;
+	level: string;
+	module: string;
+	message: string;
+	context: Record<string, unknown> | null;
+	timestamp: string;
+};
+
+type ErrorLogMock = {
+	id: number;
+	user_id: number;
+	error_type: string;
+	error_message: string;
+	traceback: string | null;
+	context: Record<string, unknown> | null;
+	resolved: boolean;
+	resolved_at: string | null;
+	resolved_by: number | null;
+	resolution_notes: string | null;
+	occurred_at: string;
+};
+
+const serviceLogs: ServiceLogMock[] = [
+	{
+		id: 1,
+		user_id: 1,
+		level: 'INFO',
+		module: 'scheduler.analysis',
+		message: 'Analysis task finished successfully',
+		context: { task: 'analysis', duration: '32s' },
+		timestamp: new Date(Date.now() - 60_000).toISOString(),
+	},
+	{
+		id: 2,
+		user_id: 2,
+		level: 'ERROR',
+		module: 'scheduler.sell',
+		message: 'Sell task failed: insufficient funds',
+		context: { task: 'sell' },
+		timestamp: new Date(Date.now() - 90_000).toISOString(),
+	},
+];
+
+const errorLogs: ErrorLogMock[] = [
+	{
+		id: 1,
+		user_id: 1,
+		error_type: 'ValueError',
+		error_message: 'Unable to parse symbol',
+		traceback: 'ValueError: Unable to parse symbol\n    at analysis.py:123',
+		context: { symbol: '????' },
+		resolved: false,
+		resolved_at: null,
+		resolved_by: null,
+		resolution_notes: null,
+		occurred_at: new Date(Date.now() - 120_000).toISOString(),
+	},
+	{
+		id: 2,
+		user_id: 2,
+		error_type: 'RuntimeError',
+		error_message: 'Websocket disconnected',
+		traceback: 'RuntimeError: Connection lost\n    at live_price.py:87',
+		context: { connection: 'WebSocket' },
+		resolved: true,
+		resolved_at: new Date(Date.now() - 60_000).toISOString(),
+		resolved_by: 1,
+		resolution_notes: 'Restarted WS client',
+		occurred_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+	},
+];
+
+const filterServiceLogs = (logs: ServiceLogMock[], url: URL) => {
+	const level = url.searchParams.get('level');
+	const module = url.searchParams.get('module');
+	const search = url.searchParams.get('search')?.toLowerCase();
+	const start = url.searchParams.get('start_time');
+	const end = url.searchParams.get('end_time');
+	const limit = Number(url.searchParams.get('limit') ?? '200');
+
+	let filtered = [...logs];
+	if (level) {
+		filtered = filtered.filter((log) => log.level === level);
+	}
+	if (module) {
+		filtered = filtered.filter((log) => log.module.includes(module));
+	}
+	if (search) {
+		filtered = filtered.filter(
+			(log) =>
+				log.message.toLowerCase().includes(search) ||
+				log.module.toLowerCase().includes(search)
+		);
+	}
+	if (start) {
+		const startTs = Date.parse(start);
+		filtered = filtered.filter((log) => Date.parse(log.timestamp) >= startTs);
+	}
+	if (end) {
+		const endTs = Date.parse(end);
+		filtered = filtered.filter((log) => Date.parse(log.timestamp) <= endTs);
+	}
+	return filtered.slice(0, Number.isNaN(limit) ? filtered.length : limit);
+};
+
+const filterErrorLogs = (logs: ErrorLogMock[], url: URL) => {
+	const resolvedParam = url.searchParams.get('resolved');
+	const search = url.searchParams.get('search')?.toLowerCase();
+	const start = url.searchParams.get('start_time');
+	const end = url.searchParams.get('end_time');
+	const limit = Number(url.searchParams.get('limit') ?? '100');
+
+	let filtered = [...logs];
+	if (resolvedParam === 'true') {
+		filtered = filtered.filter((log) => log.resolved);
+	} else if (resolvedParam === 'false') {
+		filtered = filtered.filter((log) => !log.resolved);
+	}
+	if (search) {
+		filtered = filtered.filter((log) =>
+			log.error_message.toLowerCase().includes(search)
+		);
+	}
+	if (start) {
+		const startTs = Date.parse(start);
+		filtered = filtered.filter((log) => Date.parse(log.occurred_at) >= startTs);
+	}
+	if (end) {
+		const endTs = Date.parse(end);
+		filtered = filtered.filter((log) => Date.parse(log.occurred_at) <= endTs);
+	}
+	return filtered.slice(0, Number.isNaN(limit) ? filtered.length : limit);
+};
+
 export const handlers = [
 	// auth
 	http.post(API('/auth/login'), async ({ request }) => {
@@ -233,6 +371,47 @@ export const handlers = [
 			filtered = filtered.filter((l) => l.module === module);
 		}
 		return HttpResponse.json({ logs: filtered, total: filtered.length, limit: 100 });
+	}),
+	http.get(API('/user/logs'), async ({ request }) => {
+		const url = new URL(request.url);
+		const filtered = serviceLogs.filter((log) => log.user_id === loggedInUserId);
+		return HttpResponse.json({ logs: filterServiceLogs(filtered, url) });
+	}),
+	http.get(API('/user/logs/errors'), async ({ request }) => {
+		const url = new URL(request.url);
+		const filtered = errorLogs.filter((log) => log.user_id === loggedInUserId);
+		return HttpResponse.json({ errors: filterErrorLogs(filtered, url) });
+	}),
+	http.get(API('/admin/logs'), async ({ request }) => {
+		const url = new URL(request.url);
+		const userId = url.searchParams.get('user_id');
+		let logs = [...serviceLogs];
+		if (userId) {
+			logs = logs.filter((log) => log.user_id === Number(userId));
+		}
+		return HttpResponse.json({ logs: filterServiceLogs(logs, url) });
+	}),
+	http.get(API('/admin/logs/errors'), async ({ request }) => {
+		const url = new URL(request.url);
+		const userId = url.searchParams.get('user_id');
+		let logs = [...errorLogs];
+		if (userId) {
+			logs = logs.filter((log) => log.user_id === Number(userId));
+		}
+		return HttpResponse.json({ errors: filterErrorLogs(logs, url) });
+	}),
+	http.post(API('/admin/logs/errors/:id/resolve'), async ({ params, request }) => {
+		const errorId = Number(params.id);
+		const payload = (await request.json()) as { notes?: string };
+		const error = errorLogs.find((entry) => entry.id === errorId);
+		if (!error) {
+			return HttpResponse.json({ detail: 'Not found' }, { status: 404 });
+		}
+		error.resolved = true;
+		error.resolved_at = new Date().toISOString();
+		error.resolved_by = loggedInUserId;
+		error.resolution_notes = payload?.notes ?? null;
+		return HttpResponse.json({ message: 'Error marked as resolved', error });
 	}),
 	// activity
 	http.get(API('/user/activity'), async ({ request }) => {

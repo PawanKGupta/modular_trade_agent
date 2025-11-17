@@ -1,10 +1,12 @@
 """Repository for ErrorLog management"""
 
+# ruff: noqa: PLR0913
+
 from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import ErrorLog
@@ -44,6 +46,17 @@ class ErrorLogRepository:
         """Get error log by ID"""
         return self.db.get(ErrorLog, error_id)
 
+    def _apply_search(self, stmt, search: str | None):
+        if search:
+            pattern = f"%{search}%"
+            stmt = stmt.where(
+                or_(
+                    ErrorLog.error_message.ilike(pattern),
+                    ErrorLog.error_type.ilike(pattern),
+                )
+            )
+        return stmt
+
     def list(
         self,
         user_id: int,
@@ -51,6 +64,7 @@ class ErrorLogRepository:
         error_type: str | None = None,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
+        search: str | None = None,
         limit: int = 100,
     ) -> list[ErrorLog]:
         """List error logs for a user with filters"""
@@ -64,7 +78,34 @@ class ErrorLogRepository:
             stmt = stmt.where(ErrorLog.occurred_at >= start_time)
         if end_time:
             stmt = stmt.where(ErrorLog.occurred_at <= end_time)
+        stmt = self._apply_search(stmt, search)
 
+        stmt = stmt.order_by(desc(ErrorLog.occurred_at)).limit(limit)
+        return list(self.db.execute(stmt).scalars().all())
+
+    def list_all(
+        self,
+        user_id: int | None = None,
+        resolved: bool | None = None,
+        error_type: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        search: str | None = None,
+        limit: int = 100,
+    ) -> list[ErrorLog]:
+        """Admin: list error logs across users."""
+        stmt = select(ErrorLog)
+        if user_id:
+            stmt = stmt.where(ErrorLog.user_id == user_id)
+        if resolved is not None:
+            stmt = stmt.where(ErrorLog.resolved == resolved)
+        if error_type:
+            stmt = stmt.where(ErrorLog.error_type == error_type)
+        if start_time:
+            stmt = stmt.where(ErrorLog.occurred_at >= start_time)
+        if end_time:
+            stmt = stmt.where(ErrorLog.occurred_at <= end_time)
+        stmt = self._apply_search(stmt, search)
         stmt = stmt.order_by(desc(ErrorLog.occurred_at)).limit(limit)
         return list(self.db.execute(stmt).scalars().all())
 
@@ -97,7 +138,7 @@ class ErrorLogRepository:
         """Count unresolved errors for a user"""
         stmt = select(ErrorLog).where(
             ErrorLog.user_id == user_id,
-            ErrorLog.resolved == False,
+            ErrorLog.resolved.is_(False),
         )
         return len(list(self.db.execute(stmt).scalars().all()))
 
@@ -112,7 +153,7 @@ class ErrorLogRepository:
             )
         )
         if resolved_only:
-            stmt = stmt.where(ErrorLog.resolved == True)
+            stmt = stmt.where(ErrorLog.resolved.is_(True))
 
         errors_to_delete = list(self.db.execute(stmt).scalars().all())
         count = len(errors_to_delete)

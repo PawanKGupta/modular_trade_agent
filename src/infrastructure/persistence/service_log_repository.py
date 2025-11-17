@@ -1,11 +1,13 @@
 """Repository for ServiceLog management"""
 
+# ruff: noqa: PLR0913
+
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import ServiceLog
@@ -45,6 +47,17 @@ class ServiceLogRepository:
         """Get log entry by ID"""
         return self.db.get(ServiceLog, log_id)
 
+    def _apply_search(self, stmt, search: str | None):
+        if search:
+            pattern = f"%{search}%"
+            stmt = stmt.where(
+                or_(
+                    ServiceLog.message.ilike(pattern),
+                    ServiceLog.module.ilike(pattern),
+                )
+            )
+        return stmt
+
     def list(
         self,
         user_id: int,
@@ -52,6 +65,7 @@ class ServiceLogRepository:
         module: str | None = None,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
+        search: str | None = None,
         limit: int = 1000,
     ) -> list[ServiceLog]:
         """List log entries for a user with filters"""
@@ -65,7 +79,34 @@ class ServiceLogRepository:
             stmt = stmt.where(ServiceLog.timestamp >= start_time)
         if end_time:
             stmt = stmt.where(ServiceLog.timestamp <= end_time)
+        stmt = self._apply_search(stmt, search)
 
+        stmt = stmt.order_by(desc(ServiceLog.timestamp)).limit(limit)
+        return list(self.db.execute(stmt).scalars().all())
+
+    def list_all(
+        self,
+        user_id: int | None = None,
+        level: str | None = None,
+        module: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        search: str | None = None,
+        limit: int = 1000,
+    ) -> list[ServiceLog]:
+        """Admin: list logs across users with optional filters."""
+        stmt = select(ServiceLog)
+        if user_id:
+            stmt = stmt.where(ServiceLog.user_id == user_id)
+        if level:
+            stmt = stmt.where(ServiceLog.level == level)
+        if module:
+            stmt = stmt.where(ServiceLog.module == module)
+        if start_time:
+            stmt = stmt.where(ServiceLog.timestamp >= start_time)
+        if end_time:
+            stmt = stmt.where(ServiceLog.timestamp <= end_time)
+        stmt = self._apply_search(stmt, search)
         stmt = stmt.order_by(desc(ServiceLog.timestamp)).limit(limit)
         return list(self.db.execute(stmt).scalars().all())
 

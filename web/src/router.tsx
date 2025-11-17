@@ -13,6 +13,7 @@ import { ServiceStatusPage } from './routes/dashboard/ServiceStatusPage';
 import { TradingConfigPage } from './routes/dashboard/TradingConfigPage';
 import { AdminUsersPage } from './routes/dashboard/AdminUsersPage';
 import { MLTrainingPage } from './routes/dashboard/MLTrainingPage';
+import { LogViewerPage } from './routes/dashboard/LogViewerPage';
 import { RequireAuth } from './routes/RequireAuth';
 
 export function createAppRouter() {
@@ -36,6 +37,7 @@ export function createAppRouter() {
 				{ path: 'activity', element: <ActivityPage /> },
 				{ path: 'service', element: <ServiceStatusPage /> },
 				{ path: 'trading-config', element: <TradingConfigPage /> },
+				{ path: 'logs', element: <LogViewerPage /> },
 				{ path: 'settings', element: <SettingsPage /> },
 				{ path: 'admin/users', element: <AdminUsersPage /> },
 				{ path: 'admin/ml', element: <MLTrainingPage /> },
