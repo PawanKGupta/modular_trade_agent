@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from src.application.services.individual_service_manager import IndividualServiceManager
 from src.application.services.multi_user_trading_service import MultiUserTradingService
 from src.infrastructure.db.models import Users
 from src.infrastructure.db.timezone_utils import ist_now
@@ -16,11 +17,19 @@ from src.infrastructure.persistence.service_task_repository import ServiceTaskRe
 
 from ..core.deps import get_current_user, get_db
 from ..schemas.service import (
+    IndividualServiceStatus,
+    IndividualServicesStatusResponse,
+    RunOnceRequest,
+    RunOnceResponse,
     ServiceLogResponse,
     ServiceLogsResponse,
     ServiceStartResponse,
     ServiceStatusResponse,
     ServiceStopResponse,
+    StartIndividualServiceRequest,
+    StartIndividualServiceResponse,
+    StopIndividualServiceRequest,
+    StopIndividualServiceResponse,
     TaskExecutionResponse,
     TaskHistoryResponse,
 )
@@ -31,6 +40,13 @@ router = APIRouter()
 def get_trading_service(db: Session = Depends(get_db)) -> MultiUserTradingService:
     """Dependency to get MultiUserTradingService instance"""
     return MultiUserTradingService(db)
+
+
+def get_individual_service_manager(
+    db: Session = Depends(get_db),
+) -> IndividualServiceManager:
+    """Dependency to get IndividualServiceManager instance"""
+    return IndividualServiceManager(db)
 
 
 @router.post("/service/start", response_model=ServiceStartResponse)
@@ -100,7 +116,7 @@ def get_service_status(
     current: Users = Depends(get_current_user),
     trading_service: MultiUserTradingService = Depends(get_trading_service),
 ):
-    """Get service status and health for current user"""
+    """Get unified service status and health for current user"""
     try:
         status_obj = trading_service.get_service_status(current.id)
         if not status_obj:
@@ -120,6 +136,115 @@ def get_service_status(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting service status: {str(e)}",
+        ) from e
+
+
+@router.get("/service/individual/status", response_model=IndividualServicesStatusResponse)
+def get_individual_services_status(
+    db: Session = Depends(get_db),
+    current: Users = Depends(get_current_user),
+    service_manager: IndividualServiceManager = Depends(get_individual_service_manager),
+):
+    """Get status of all individual services for current user"""
+    try:
+        status_dict = service_manager.get_status(current.id)
+        services = {
+            task_name: IndividualServiceStatus(
+                task_name=task_name,
+                is_running=info["is_running"],
+                started_at=info["started_at"],
+                last_execution_at=info["last_execution_at"],
+                next_execution_at=info["next_execution_at"],
+                process_id=info["process_id"],
+                schedule_enabled=info["schedule_enabled"],
+            )
+            for task_name, info in status_dict.items()
+        }
+        return IndividualServicesStatusResponse(services=services)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting individual services status: {str(e)}",
+        ) from e
+
+
+@router.post("/service/individual/start", response_model=StartIndividualServiceResponse)
+def start_individual_service(
+    request: StartIndividualServiceRequest,
+    db: Session = Depends(get_db),
+    current: Users = Depends(get_current_user),
+    service_manager: IndividualServiceManager = Depends(get_individual_service_manager),
+):
+    """Start an individual service for current user"""
+    try:
+        success, message = service_manager.start_service(current.id, request.task_name)
+        return StartIndividualServiceResponse(success=success, message=message)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error starting individual service: {str(e)}",
+        ) from e
+
+
+@router.post("/service/individual/stop", response_model=StopIndividualServiceResponse)
+def stop_individual_service(
+    request: StopIndividualServiceRequest,
+    db: Session = Depends(get_db),
+    current: Users = Depends(get_current_user),
+    service_manager: IndividualServiceManager = Depends(get_individual_service_manager),
+):
+    """Stop an individual service for current user"""
+    try:
+        success, message = service_manager.stop_service(current.id, request.task_name)
+        return StopIndividualServiceResponse(success=success, message=message)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error stopping individual service: {str(e)}",
+        ) from e
+
+
+@router.post("/service/individual/run-once", response_model=RunOnceResponse)
+def run_task_once(
+    request: RunOnceRequest,
+    db: Session = Depends(get_db),
+    current: Users = Depends(get_current_user),
+    service_manager: IndividualServiceManager = Depends(get_individual_service_manager),
+):
+    """Run a task once immediately (run once execution)"""
+    try:
+        from src.application.services.conflict_detection_service import ConflictDetectionService
+
+        conflict_service = ConflictDetectionService(db)
+        has_conflict, conflict_message = conflict_service.check_conflict(
+            current.id, request.task_name
+        )
+
+        success, message, details = service_manager.run_once(
+            current.id, request.task_name, request.execution_type
+        )
+
+        return RunOnceResponse(
+            success=success,
+            message=message,
+            execution_id=details.get("execution_id"),
+            has_conflict=has_conflict,
+            conflict_message=conflict_message if has_conflict else None,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error running task: {str(e)}",
         ) from e
 
 

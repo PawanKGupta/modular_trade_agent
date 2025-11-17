@@ -83,3 +83,80 @@ export async function getServiceLogs(params?: {
 	const { data } = await api.get<ServiceLogs>('/user/service/logs', { params });
 	return data;
 }
+
+// Individual Service Management
+
+export interface IndividualServiceStatus {
+	task_name: string;
+	is_running: boolean;
+	started_at: string | null;
+	last_execution_at: string | null;
+	next_execution_at: string | null;
+	process_id: number | null;
+	schedule_enabled: boolean;
+}
+
+export interface IndividualServicesStatus {
+	services: Record<string, IndividualServiceStatus>;
+}
+
+export interface StartIndividualServiceRequest {
+	task_name: string;
+}
+
+export interface StartIndividualServiceResponse {
+	success: boolean;
+	message: string;
+}
+
+export interface StopIndividualServiceRequest {
+	task_name: string;
+}
+
+export interface StopIndividualServiceResponse {
+	success: boolean;
+	message: string;
+}
+
+export interface RunOnceRequest {
+	task_name: string;
+	execution_type?: 'run_once' | 'manual';
+}
+
+export interface RunOnceResponse {
+	success: boolean;
+	message: string;
+	execution_id: number | null;
+	has_conflict: boolean;
+	conflict_message: string | null;
+}
+
+export async function getIndividualServicesStatus(): Promise<IndividualServicesStatus> {
+	const { data } = await api.get<IndividualServicesStatus>('/user/service/individual/status');
+	return data;
+}
+
+export async function startIndividualService(
+	request: StartIndividualServiceRequest
+): Promise<StartIndividualServiceResponse> {
+	const { data } = await api.post<StartIndividualServiceResponse>(
+		'/user/service/individual/start',
+		request
+	);
+	return data;
+}
+
+export async function stopIndividualService(
+	request: StopIndividualServiceRequest
+): Promise<StopIndividualServiceResponse> {
+	const { data } = await api.post<StopIndividualServiceResponse>(
+		'/user/service/individual/stop',
+		request
+	);
+	return data;
+}
+
+export async function runTaskOnce(request: RunOnceRequest): Promise<RunOnceResponse> {
+	const { data } = await api.post<RunOnceResponse>('/user/service/individual/run-once', request);
+	return data;
+}

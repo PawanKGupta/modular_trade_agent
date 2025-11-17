@@ -253,3 +253,4 @@ class TestMLVerdictServiceFeatureNamesFallback:
             assert len(service.feature_cols) == 3
             assert "rsi_10" in service.feature_cols
             assert "dip_depth_from_20d_high_pct" in service.feature_cols
+

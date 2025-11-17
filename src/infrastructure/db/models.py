@@ -511,3 +511,89 @@ class AuditLog(Base):
     __table_args__ = (
         Index("ix_audit_logs_user_timestamp_type", "user_id", "timestamp", "resource_type"),
     )
+
+
+class ServiceSchedule(Base):
+    """Service schedule configuration (admin-editable, applies to all users)"""
+
+    __tablename__ = "service_schedules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_name: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False
+    )  # premarket_retry, sell_monitor, position_monitor, analysis, buy_orders, eod_cleanup
+    schedule_time: Mapped[time] = mapped_column(Time, nullable=False)  # HH:MM in IST
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_hourly: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )  # For position_monitor (runs hourly at :30)
+    is_continuous: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )  # For sell_monitor (runs continuously)
+    end_time: Mapped[time | None] = mapped_column(Time, nullable=True)  # For continuous tasks
+    description: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )  # Admin who last updated
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
+
+    __table_args__ = (UniqueConstraint("task_name", name="uq_service_schedule_task_name"),)
+
+
+class IndividualServiceStatus(Base):
+    """Individual service status tracking per user"""
+
+    __tablename__ = "individual_service_status"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    task_name: Mapped[str] = mapped_column(
+        String(64), index=True, nullable=False
+    )  # premarket_retry, sell_monitor, position_monitor, buy_orders, eod_cleanup
+    is_running: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_execution_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_execution_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    process_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # OS process ID
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "task_name", name="uq_individual_service_user_task"),
+        Index("ix_individual_service_user_task", "user_id", "task_name"),
+    )
+
+
+class IndividualServiceTaskExecution(Base):
+    """Individual service task execution history per user"""
+
+    __tablename__ = "individual_service_task_execution"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    task_name: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    executed_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, index=True, nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), index=True, nullable=False
+    )  # 'success', 'failed', 'skipped', 'running'
+    duration_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    execution_type: Mapped[str] = mapped_column(
+        String(16), default="scheduled", nullable=False
+    )  # 'scheduled', 'run_once', 'manual'
+
+    __table_args__ = (
+        Index(
+            "ix_individual_service_task_user_name_time",
+            "user_id",
+            "task_name",
+            "executed_at",
+        ),
+    )

@@ -5,6 +5,7 @@ import { formatTimeAgo } from '@/utils/time';
 import { ServiceControls } from './ServiceControls';
 import { ServiceTasksTable } from './ServiceTasksTable';
 import { ServiceLogsViewer } from './ServiceLogsViewer';
+import { IndividualServicesSection } from './IndividualServicesSection';
 
 export function ServiceStatusPage() {
 	const qc = useQueryClient();
@@ -147,6 +148,9 @@ export function ServiceStatusPage() {
 					/>
 				</div>
 			</div>
+
+			{/* Individual Services Section */}
+			<IndividualServicesSection unifiedServiceRunning={isRunning} />
 
 			{/* Task Execution History */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">

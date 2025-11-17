@@ -946,4 +946,170 @@ test: {
 
 ---
 
-*Last Updated: November 18, 2025*
+## Bug #68: Timezone Comparison Errors in Conflict Detection and Schedule Manager (HIGH)
+
+**Date Fixed**: January 2025
+**Status**: ✅ Fixed
+
+### Description
+Multiple services raised `TypeError: can't compare offset-naive and offset-aware datetimes` when comparing datetime objects. This occurred in:
+- `ConflictDetectionService.check_conflict()` - comparing task execution times
+- `ConflictDetectionService.is_task_running()` - checking recent task executions
+- `ScheduleManager.calculate_next_execution()` - calculating next execution times
+
+### Root Cause
+- SQLite returns naive datetimes from the database (no timezone info)
+- `ist_now()` returns timezone-aware datetimes (IST timezone)
+- Python cannot directly compare naive and timezone-aware datetimes
+- `datetime.combine()` creates naive datetimes, but comparisons were made with timezone-aware datetimes
+
+### Fix Applied
+**Files Updated:**
+- `src/application/services/conflict_detection_service.py`
+- `src/application/services/schedule_manager.py`
+
+**Changes:**
+
+1. **ConflictDetectionService** - Normalize database datetimes to timezone-aware before comparison:
+```python
+# Normalize executed_at to timezone-aware if it's naive
+executed_at = task.executed_at
+if executed_at.tzinfo is None:
+    executed_at = executed_at.replace(tzinfo=IST)
+if executed_at >= cutoff_time:
+    # ... comparison logic
+```
+
+2. **ScheduleManager** - Preserve timezone when using `datetime.combine()`:
+```python
+result = datetime.combine(current_date, schedule.schedule_time)
+schedule_datetime = result.replace(tzinfo=current_time.tzinfo) if current_time.tzinfo else result
+```
+
+### Test Coverage
+- `test_check_conflict_recent_task_execution` - PASSING
+- `test_list_schedules_success` - PASSING
+- All schedule manager tests - PASSING
+
+### Impact
+- No more timezone comparison errors
+- Proper conflict detection between unified and individual services
+- Accurate next execution time calculations
+- Better reliability in production
+
+---
+
+## Bug #69: Test Login Failures Due to Incorrect Password Hashing (MEDIUM)
+
+**Date Fixed**: January 2025
+**Status**: ✅ Fixed
+
+### Description
+Multiple test files failed with HTTP 401 (Unauthorized) errors during login. Tests in `test_admin_schedules_api.py` and `test_individual_service_api.py` were unable to authenticate users created by fixtures.
+
+### Root Cause
+- Test fixtures created users directly with `password_hash="hashed_password"` (plain string, not a real hash)
+- Login helper tried to signup first, which would create a user with properly hashed password
+- If user already existed (409 Conflict), login would fail because stored hash didn't match the password being used
+- In parallel execution, this caused race conditions and authentication failures
+
+### Fix Applied
+**Files Updated:**
+- `tests/unit/server/test_admin_schedules_api.py`
+- `tests/unit/server/test_individual_service_api.py`
+
+**Changes:**
+
+1. **Fixtures** - Use `UserRepository.create_user()` with proper password hashing:
+```python
+@pytest.fixture
+def admin_user(db_session):
+    """Create an admin user for testing"""
+    return UserRepository(db_session).create_user(
+        email="admin@example.com",
+        password="password123",
+        role=UserRole.ADMIN,
+    )
+```
+
+2. **Login Helper** - Handle existing users gracefully:
+```python
+def login(client: TestClient, email: str, password: str) -> str:
+    """Helper to login and get token"""
+    # Try signup first (in case user doesn't exist)
+    signup_response = client.post(
+        "/api/v1/auth/signup",
+        json={"email": email, "password": password},
+    )
+    # If user already exists (409), that's fine - just proceed to login
+    if signup_response.status_code == 200:
+        return signup_response.json()["access_token"]
+
+    # User exists, so login
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert response.status_code == 200, f"Login failed: {response.text}"
+    return response.json()["access_token"]
+```
+
+### Test Coverage
+- All admin schedule API tests - PASSING
+- All individual service API tests - PASSING
+- No more authentication failures in parallel execution
+
+### Impact
+- Reliable test authentication
+- Proper password hashing in test fixtures
+- Better test isolation
+- No race conditions in parallel test execution
+
+---
+
+## Bug #70: Invalid Time Test Causing ValueError (LOW)
+
+**Date Fixed**: January 2025
+**Status**: ✅ Fixed
+
+### Description
+Test `test_validate_schedule_invalid_time` failed with `ValueError: hour must be in 0..23` because it tried to create `time(25, 0)`, which is invalid in Python's time constructor.
+
+### Root Cause
+- Test attempted to create an invalid time object to test validation logic
+- Python's `time()` constructor validates hours (0-23) and raises ValueError before validation logic can run
+- Test couldn't reach the actual validation code being tested
+
+### Fix Applied
+**Files Updated:**
+- `tests/unit/application/test_schedule_manager.py`
+
+**Changes:**
+- Changed test to use a valid time that fails business hours validation instead:
+```python
+def test_validate_schedule_invalid_time(db_session, schedule_manager):
+    """Test validation fails for time outside business hours"""
+    # Test with time outside business hours (9:00 - 18:00) for non-continuous, non-hourly tasks
+    is_valid, message = schedule_manager.validate_schedule(
+        task_name="premarket_retry",
+        schedule_time=time(8, 0),  # Before business hours
+        is_hourly=False,
+        is_continuous=False,
+        end_time=None,
+    )
+    assert not is_valid
+    assert "business hours" in message.lower() or "9:00" in message or "18:00" in message
+```
+
+### Test Coverage
+- `test_validate_schedule_invalid_time` - PASSING
+- Validates actual validation logic without triggering Python's time constructor error
+
+### Impact
+- Test properly validates schedule validation logic
+- No more ValueError from invalid time construction
+- Better test coverage of validation rules
+
+---
+
+*Last Updated: January 2025*

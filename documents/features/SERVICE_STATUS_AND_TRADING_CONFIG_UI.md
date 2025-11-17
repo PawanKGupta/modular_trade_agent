@@ -1,8 +1,8 @@
 # Service Status & Trading Configuration UI Guide
 
-**Version**: 1.0
-**Last Updated**: 2025-11-17
-**Status**: ✅ Phase 3 UI shipped (Service Mgmt + Trading Config + ML Training + Log Viewer)
+**Version**: 2.0
+**Last Updated**: 2025-11-18
+**Status**: ✅ Phase 3 UI shipped (Service Mgmt + Trading Config + ML Training + Log Viewer + Individual Service Management)
 
 ---
 
@@ -10,9 +10,11 @@
 
 Phase 3 introduces three high-visibility dashboards in the Modular Trade Agent web app:
 
-1. **Service Status Dashboard** – live view of the per-user trading service, with controls, task history, and recent logs.
+1. **Service Status Dashboard** – live view of the per-user trading service, with controls, task history, recent logs, and individual service management.
 2. **Trading Configuration Workspace** – full-fidelity editor for every user-scoped strategy parameter, including presets and deltas vs defaults.
 3. **Log Management Dashboard** – unified view of structured service logs and error reports (user + admin scopes) with resolution workflow.
+4. **Individual Service Management** – run individual trading tasks independently, with conflict detection and schedule management.
+5. **Admin Schedule Management** – configure service schedules, enable/disable tasks, and manage execution times (admin-only).
 
 This document explains how to access the pages, what each widget does, the supporting APIs/tests, and how to demo the flow for stakeholders.
 
@@ -23,10 +25,11 @@ This document explains how to access the pages, what each widget does, the suppo
 | Flow | Path | Description |
 | --- | --- | --- |
 | Main layout | `web/src/routes/AppShell.tsx` | Adds “Service Status” + “Trading Config” links to the sidebar. |
-| Service Status UI | `/dashboard/service` | Loads `ServiceStatusPage.tsx` with React Query auto-refresh. |
+| Service Status UI | `/dashboard/service` | Loads `ServiceStatusPage.tsx` with React Query auto-refresh and individual service controls. |
 | Trading Config UI | `/dashboard/config` | Loads `TradingConfigPage.tsx` with TanStack Query + mutations. |
 | ML Training UI (admin) | `/dashboard/admin/ml` | Loads `MLTrainingPage.tsx` for managing training jobs + models. |
 | Log Management UI | `/dashboard/logs` | Loads `LogViewerPage.tsx` with user/admin scopes, filters, and error resolution. |
+| Schedule Management UI (admin) | `/dashboard/admin/schedules` | Loads `ServiceSchedulePage.tsx` for managing service schedules. |
 
 **Auth requirement**: Both routes are nested under the authenticated dashboard router. Users must be logged in; requests automatically include the JWT via the shared API client.
 
@@ -42,6 +45,8 @@ This document explains how to access the pages, what each widget does, the suppo
 | --- | --- | --- |
 | Status card | `ServiceStatusPage.tsx` | Shows `service_running`, uptime, heartbeat, error count, and last task time. Auto-refreshes every 15s (faster when running). |
 | Controls | `ServiceControls.tsx` | Start/Stop buttons with optimistic UI, disabled states, spinner feedback. |
+| Individual Services | `IndividualServicesSection.tsx` | Grid of individual service cards with start/stop/run-once controls. |
+| Individual Service Card | `IndividualServiceControls.tsx` | Per-service control card with status, last execution, next execution, and action buttons. |
 | Task History | `ServiceTasksTable.tsx` | Paginated table of the last 50 executions, filterable by status + task. Rows expand to show payload metadata. |
 | Logs Viewer | `ServiceLogsViewer.tsx` | Filter by level/module, shows timestamped log lines with copy-to-clipboard. |
 
@@ -52,8 +57,17 @@ This document explains how to access the pages, what each widget does, the suppo
 | `/api/v1/user/service/status` | `GET` | Returns `ServiceStatusResponse` (running flag, timestamps, heartbeat, error counts). |
 | `/api/v1/user/service/start` | `POST` | Starts or queues the per-user worker. Returns updated status snapshot. |
 | `/api/v1/user/service/stop` | `POST` | Gracefully stops the worker and flushes tasks. |
+| `/api/v1/user/service/individual/status` | `GET` | Returns status of all individual services for the user. |
+| `/api/v1/user/service/individual/start` | `POST` | Starts an individual service (only when unified service is not running). |
+| `/api/v1/user/service/individual/stop` | `POST` | Stops an individual service. |
+| `/api/v1/user/service/individual/run-once` | `POST` | Runs a task once immediately (with conflict detection). |
 | `/api/v1/user/service/tasks` | `GET` | Returns paginated `ServiceTaskExecution` history + filters. |
 | `/api/v1/user/service/logs` | `GET` | Returns recent structured logs with optional level/module filters. |
+| `/api/v1/admin/schedules` | `GET` | Returns all service schedules (admin-only). |
+| `/api/v1/admin/schedules/{task_name}` | `GET` | Returns schedule for a specific task (admin-only). |
+| `/api/v1/admin/schedules/{task_name}` | `PUT` | Updates service schedule (admin-only). |
+| `/api/v1/admin/schedules/{task_name}/enable` | `POST` | Enables a service schedule (admin-only). |
+| `/api/v1/admin/schedules/{task_name}/disable` | `POST` | Disables a service schedule (admin-only). |
 
 All endpoints live in `server/app/routers/service.py` with schemas defined under `server/app/schemas/service.py`.
 
