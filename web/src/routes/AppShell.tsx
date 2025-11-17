@@ -26,7 +26,12 @@ export function AppShell() {
 					<Link to="/dashboard/service">Service Status</Link>
 					<Link to="/dashboard/trading-config">Trading Config</Link>
 					<Link to="/dashboard/settings">Settings</Link>
-					{isAdmin && <Link to="/dashboard/admin/users">Admin • Users</Link>}
+					{isAdmin && (
+						<>
+							<Link to="/dashboard/admin/users">Admin • Users</Link>
+							<Link to="/dashboard/admin/ml">Admin • ML Training</Link>
+						</>
+					)}
 				</nav>
 			</aside>
 			<main className="p-6">

@@ -333,6 +333,7 @@ Prefer a UI instead of editing configs by hand? The new Phase 3 dashboards let y
    ```
 3. Visit **`http://localhost:4173/dashboard/service`** for the live **Service Status** console (start/stop buttons, task history, structured logs).
 4. Visit **`http://localhost:4173/dashboard/config`** for the **Trading Configuration Workspace** (presets, validation hints, sticky save banner).
+5. Admins can visit **`http://localhost:4173/dashboard/admin/ml`** for the **ML Training Management** dashboard (launch jobs, monitor progress, activate model versions).
 
 📘 Detailed screenshots + workflows: [SERVICE_STATUS_AND_TRADING_CONFIG_UI.md](../features/SERVICE_STATUS_AND_TRADING_CONFIG_UI.md)
 

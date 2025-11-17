@@ -2,6 +2,40 @@ import { http, HttpResponse } from 'msw';
 
 const API = (path: string) => `http://localhost:8000/api/v1${path}`;
 
+let mlJobIdCounter = 2;
+let mlModelIdCounter = 2;
+
+const mlTrainingJobs = [
+	{
+		id: 1,
+		started_by: 1,
+		status: 'completed',
+		model_type: 'verdict_classifier',
+		algorithm: 'xgboost',
+		training_data_path: 'data/training/verdict_classifier.csv',
+		started_at: new Date(Date.now() - 60_000).toISOString(),
+		completed_at: new Date(Date.now() - 30_000).toISOString(),
+		model_path: 'models/verdict_classifier/xgboost-v1.json',
+		accuracy: 0.82,
+		error_message: null,
+		logs: 'Training completed with accuracy 0.82',
+	},
+];
+
+const mlModels = [
+	{
+		id: 1,
+		model_type: 'verdict_classifier',
+		version: 'v1',
+		model_path: 'models/verdict_classifier/xgboost-v1.json',
+		accuracy: 0.82,
+		training_job_id: 1,
+		is_active: true,
+		created_at: new Date(Date.now() - 30_000).toISOString(),
+		created_by: 1,
+	},
+];
+
 export const handlers = [
 	// auth
 	http.post(API('/auth/login'), async ({ request }) => {
@@ -380,6 +414,89 @@ export const handlers = [
 			ml_model_version: null,
 			ml_confidence_threshold: 0.7,
 			ml_combine_with_rules: true,
+		});
+	}),
+	// admin ml training
+	http.get(API('/admin/ml/jobs'), async ({ request }) => {
+		const url = new URL(request.url);
+		const statusFilter = url.searchParams.get('status');
+		const modelType = url.searchParams.get('model_type');
+		let jobs = [...mlTrainingJobs];
+		if (statusFilter) {
+			jobs = jobs.filter((job) => job.status === statusFilter);
+		}
+		if (modelType) {
+			jobs = jobs.filter((job) => job.model_type === modelType);
+		}
+		return HttpResponse.json({ jobs });
+	}),
+	http.get(API('/admin/ml/jobs/:id'), async ({ params }) => {
+		const job = mlTrainingJobs.find((j) => j.id === Number(params.id));
+		if (!job) {
+			return HttpResponse.json({ detail: 'Training job not found' }, { status: 404 });
+		}
+		return HttpResponse.json(job);
+	}),
+	http.post(API('/admin/ml/train'), async ({ request }) => {
+		const body = (await request.json()) as any;
+		const newJob = {
+			id: mlJobIdCounter++,
+			started_by: 1,
+			status: 'completed',
+			model_type: body.model_type ?? 'verdict_classifier',
+			algorithm: body.algorithm ?? 'xgboost',
+			training_data_path: body.training_data_path ?? 'data/training/verdict_classifier.csv',
+			started_at: new Date().toISOString(),
+			completed_at: new Date(Date.now() + 2000).toISOString(),
+			model_path: `models/${body.model_type ?? 'verdict_classifier'}/${body.algorithm ?? 'xgboost'}-v${mlModelIdCounter}.json`,
+			accuracy: 0.81,
+			error_message: null,
+			logs: 'Mock training completed.',
+		};
+		mlTrainingJobs.unshift(newJob);
+
+		const newModel = {
+			id: mlModelIdCounter++,
+			model_type: newJob.model_type,
+			version: `v${mlModelIdCounter - 1}`,
+			model_path: newJob.model_path,
+			accuracy: newJob.accuracy,
+			training_job_id: newJob.id,
+			is_active: false,
+			created_at: new Date().toISOString(),
+			created_by: 1,
+		};
+		mlModels.unshift(newModel);
+		return HttpResponse.json(newJob, { status: 201 });
+	}),
+	http.get(API('/admin/ml/models'), async ({ request }) => {
+		const url = new URL(request.url);
+		const modelType = url.searchParams.get('model_type');
+		const active = url.searchParams.get('active');
+		let models = [...mlModels];
+		if (modelType) {
+			models = models.filter((model) => model.model_type === modelType);
+		}
+		if (active !== null) {
+			const activeBool = active === 'true';
+			models = models.filter((model) => model.is_active === activeBool);
+		}
+		return HttpResponse.json({ models });
+	}),
+	http.post(API('/admin/ml/models/:id/activate'), async ({ params }) => {
+		const modelId = Number(params.id);
+		const model = mlModels.find((m) => m.id === modelId);
+		if (!model) {
+			return HttpResponse.json({ detail: 'Model not found' }, { status: 404 });
+		}
+		mlModels.forEach((m) => {
+			if (m.model_type === model.model_type) {
+				m.is_active = m.id === modelId;
+			}
+		});
+		return HttpResponse.json({
+			message: `Model ${model.version} activated for ${model.model_type}`,
+			model: { ...model, is_active: true },
 		});
 	}),
 ];

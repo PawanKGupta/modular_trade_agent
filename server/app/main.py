@@ -21,6 +21,7 @@ from .routers import (
     admin,
     auth,
     broker,
+    ml,
     orders,
     pnl,
     service,
@@ -125,4 +126,5 @@ app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])
 app.include_router(activity.router, prefix="/api/v1/user/activity", tags=["activity"])
 app.include_router(targets.router, prefix="/api/v1/user/targets", tags=["targets"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(ml.router, prefix="/api/v1", tags=["admin-ml"])
 app.include_router(signals.router, prefix="/api/v1/signals", tags=["signals"])

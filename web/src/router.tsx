@@ -12,6 +12,7 @@ import { SettingsPage } from './routes/dashboard/SettingsPage';
 import { ServiceStatusPage } from './routes/dashboard/ServiceStatusPage';
 import { TradingConfigPage } from './routes/dashboard/TradingConfigPage';
 import { AdminUsersPage } from './routes/dashboard/AdminUsersPage';
+import { MLTrainingPage } from './routes/dashboard/MLTrainingPage';
 import { RequireAuth } from './routes/RequireAuth';
 
 export function createAppRouter() {
@@ -37,6 +38,7 @@ export function createAppRouter() {
 				{ path: 'trading-config', element: <TradingConfigPage /> },
 				{ path: 'settings', element: <SettingsPage /> },
 				{ path: 'admin/users', element: <AdminUsersPage /> },
+				{ path: 'admin/ml', element: <MLTrainingPage /> },
 			],
 		},
 	]);

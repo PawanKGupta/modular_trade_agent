@@ -24,6 +24,7 @@ This document explains how to access the pages, what each widget does, the suppo
 | Main layout | `web/src/routes/AppShell.tsx` | Adds “Service Status” + “Trading Config” links to the sidebar. |
 | Service Status UI | `/dashboard/service` | Loads `ServiceStatusPage.tsx` with React Query auto-refresh. |
 | Trading Config UI | `/dashboard/config` | Loads `TradingConfigPage.tsx` with TanStack Query + mutations. |
+| ML Training UI (admin) | `/dashboard/admin/ml` | Loads `MLTrainingPage.tsx` for managing training jobs + models. |
 
 **Auth requirement**: Both routes are nested under the authenticated dashboard router. Users must be logged in; requests automatically include the JWT via the shared API client.
 
@@ -152,7 +153,69 @@ During demos, highlight:
 
 ---
 
-## 3. Documentation & Hand-offs
+## 3. ML Training Management Dashboard (Phase 3.4)
+
+### Snapshot
+- **Path**: `/dashboard/admin/ml`
+- **Audience**: Admins only (link hidden unless `isAdmin`)
+- **Purpose**: Kick off ML training jobs, observe history, manage/activate model versions that user configs consume.
+
+### Components
+| Widget | File | Notes |
+| --- | --- | --- |
+| Training form | `MLTrainingForm.tsx` | Validates path + JSON hyperparameters, optional notes, auto-activate toggle. |
+| Jobs table | `MLTrainingJobsTable.tsx` | Shows job ID, type, algorithm, status badge, accuracy, timestamps. Auto-refresh 12s + manual refresh. |
+| Models table | `MLModelsTable.tsx` | Lists versions, accuracy, active state with Activate button (per-row loading). |
+| Page shell | `MLTrainingPage.tsx` | Coordinates TanStack Query hooks, start/activate mutations, and section layout. |
+
+### Backend Contracts
+| Endpoint | Method | Description |
+| --- | --- | --- |
+| `/api/v1/admin/ml/train` | `POST` | Starts a new job (admin only). Uses FastAPI `BackgroundTasks` with a fresh `SessionLocal` so long-running jobs never reuse closed request sessions. |
+| `/api/v1/admin/ml/jobs` | `GET` | List jobs w/ optional status/model filters. |
+| `/api/v1/admin/ml/jobs/{id}` | `GET` | Fetch a single job (detail view). |
+| `/api/v1/admin/ml/models` | `GET` | List trained models (supports `model_type` + `active`). |
+| `/api/v1/admin/ml/models/{id}/activate` | `POST` | Sets model active; deactivates siblings of same type. |
+
+Implementation lives in:
+- `src/application/services/ml_training_service.py`
+- `server/app/routers/ml.py`
+- `server/app/schemas/ml.py`
+
+### Training Workflow
+1. Admin fills out the training form (model type, algorithm, data path, hyperparams JSON, optional notes).
+2. Submit → `startTrainingJob` mutation posts to `/train`.
+3. Backend creates `MLTrainingJob` row, runs simulated training, writes artifact JSON under `models/{type}/{algorithm}-vN.json`, and creates an `MLModel` record.
+4. Jobs + models queries auto-refresh so the UI reflects completion.
+5. Admin can activate any inactive model; first model of each type auto-activates.
+6. Users select `ml_model_version` (or default to active) via Trading Config.
+
+### Tests
+| Layer | Files |
+| --- | --- |
+| Backend unit | `tests/unit/application/test_ml_training_service.py` |
+| Backend API | `tests/unit/server/test_ml_training_api.py` |
+| Frontend unit | `web/src/routes/__tests__/MLTrainingForm.test.tsx`, `web/src/routes/__tests__/MLTrainingPage.test.tsx` |
+| Frontend integration | `web/src/routes/__tests__/MLTrainingPage.integration.test.tsx` |
+| E2E | `web/tests/e2e/ml-training.spec.ts` |
+
+### Demo Tips
+```bash
+# Backend (FastAPI)
+uvicorn server.app.main:app --reload
+
+# Frontend with mocks
+cd web
+npm run dev:mock
+# Visit http://localhost:4173/dashboard/admin/ml
+```
+- Start a job → watch table update (MSW returns deterministic job/model data)
+- Activate another model to show state badge swap
+- Highlight integration with Trading Config (users can enable ML + pick version)
+
+---
+
+## 4. Documentation & Hand-offs
 
 - This guide is linked from `documents/getting-started/GETTING_STARTED.md#dashboard-access`.
 - Update release notes referencing “Phase 3 UI” should point here for screenshots and API/testing context.
@@ -160,17 +223,17 @@ During demos, highlight:
 
 ---
 
-## 4. Known Limitations & Next Steps
+## 5. Known Limitations & Next Steps
 
 | Area | Status | Planned Follow-up |
 | --- | --- | --- |
 | Real-time log streaming | ❌ Pending | WebSocket endpoint (`/user/logs/stream`) still TODO in Phase 3.5. |
-| Multi-user admin view | ❌ Not yet implemented | Current UI is scoped per user; admin dashboards will be introduced alongside Phase 3.4. |
+| Admin ML training workspace | ✅ Delivered | Future iterations will add advanced scheduling (cron/backfill) and richer hyperparameter templates. |
 | Config diff history | 🚧 Planned | Only current vs default is shown; historical snapshots will be tackled when audit trail UI is ready. |
 
 ---
 
-## 5. Change Log
+## 6. Change Log
 
 | Date | Change | Author |
 | --- | --- | --- |
