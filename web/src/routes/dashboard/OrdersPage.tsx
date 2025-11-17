@@ -9,6 +9,14 @@ const TABS: { key: OrderStatus; label: string }[] = [
 	{ key: 'closed', label: 'Closed' },
 ];
 
+const formatPrice = (value: number | null | undefined): string => {
+	if (typeof value !== 'number' || Number.isNaN(value)) {
+		return '—';
+	}
+	const truncated = Math.trunc(value * 100) / 100;
+	return truncated.toFixed(2);
+};
+
 export function OrdersPage() {
 	const [tab, setTab] = useState<OrderStatus>('amo');
 	const { data, isLoading, isError } = useQuery({
@@ -59,7 +67,7 @@ export function OrdersPage() {
 								<td className="p-2">{o.symbol}</td>
 								<td className="p-2">{o.side}</td>
 								<td className="p-2">{o.qty}</td>
-								<td className="p-2">{o.price}</td>
+								<td className="p-2">{formatPrice(o.price)}</td>
 								<td className="p-2">{o.status}</td>
 							</tr>
 						))}

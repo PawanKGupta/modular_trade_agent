@@ -10,6 +10,7 @@ describe('OrdersPage', () => {
 		// Default AMO
 		await screen.findByText(/AMO Orders/i);
 		await screen.findByText('INFY');
+		await screen.findByText('1500.00');
 
 		// Ongoing
 		fireEvent.click(screen.getByRole('button', { name: 'Ongoing' }));

@@ -1,17 +1,60 @@
 # Bug Fixes Log
 
-**Note**: This document tracks historical bugs fixed in v1.0-v2.0 (separate task architecture).  
+**Note**: This document tracks historical bugs fixed in v1.0-v2.0 (separate task architecture).
 v2.1+ uses the unified continuous service (run_trading_service.py).
 
-This document serves as an **index/summary** of all bugs discovered and fixed in the automated trading system.  
+This document serves as an **index/summary** of all bugs discovered and fixed in the automated trading system.
 For detailed documentation, architecture explanations, and examples, see the **Related Documentation** links in each bug entry.
+
+---
+
+## Bug #58: Orders Dashboard Price Precision (MEDIUM)
+
+**Date Fixed**: November 17, 2025
+**Status**: ✅ Fixed
+
+### Description
+The Orders dashboard rendered raw floating-point values returned by the API. Some prices showed arbitrary precision such as `1592.5355166940217`, which is confusing when operators expect two-decimal currency formatting.
+
+### Root Cause
+`web/src/routes/dashboard/OrdersPage.tsx` displayed `order.price` directly inside the table. Since the backend stores IEEE 754 floats, values kept the original binary precision and were not rounded or truncated before rendering.
+
+### Expected Behavior
+All monetary values shown on the Orders page should follow the product spec in the mockups:
+
+1. Clamp/truncate to two decimal places (₹xx.yy)
+2. Fall back to an em dash when `null`/`NaN`
+3. Apply consistent formatting across all order tabs
+
+### Fix Applied
+Added a `formatPrice()` helper that truncates to two decimals and returns an em dash when the value is missing:
+
+```tsx
+const formatPrice = (value: number | null | undefined): string => {
+	if (typeof value !== 'number' || Number.isNaN(value)) {
+		return '—';
+	}
+	const truncated = Math.trunc(value * 100) / 100;
+	return truncated.toFixed(2);
+};
+```
+
+The Orders table now calls `formatPrice(o.price)` for every row.
+
+### Test Coverage
+- `web/src/routes/__tests__/OrdersPage.test.tsx` asserts the AMO tab renders `1500.00`, guarding against regressions.
+
+### Impact
+- Consistent currency formatting across AMO/ongoing/sell/closed tabs
+- Better UX during manual QA and customer demos
+- Prevents future regressions by codifying expected formatting in unit tests
 
 ---
 
 ## Bug #1: Reentry Logic After RSI Reset (CRITICAL)
 
-**Date Fixed**: October 31, 2024  
-**Severity**: Critical  
+**Date Fixed**: October 31, 2024
+**Severity**: Critical
 **Status**: ✅ Fixed
 
 ### Description
@@ -28,7 +71,7 @@ After a reset cycle:
 4. Immediately trigger reentry at RSI < 30
 
 ### Fix Applied
-**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`  
+**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
 **Lines**: 1330-1344
 
 ```python
@@ -66,8 +109,8 @@ else:
 
 ## Bug #2: Order Validation - nOrdNo Not Recognized (HIGH)
 
-**Date Fixed**: October 31, 2024  
-**Severity**: High  
+**Date Fixed**: October 31, 2024
+**Severity**: High
 **Status**: ✅ Fixed
 
 ### Description
@@ -89,7 +132,7 @@ System should recognize any response containing:
 - Valid HTTP status code
 
 ### Fix Applied
-**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`  
+**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
 **Line**: 1375
 
 **Before**:
@@ -117,8 +160,8 @@ resp_valid = isinstance(resp, dict) and ('data' in resp or 'order' in resp or 'r
 
 ## Bug #3: Sell Order Not Updated After Reentry (CRITICAL)
 
-**Date Fixed**: October 31, 2024  
-**Severity**: Critical  
+**Date Fixed**: October 31, 2024
+**Severity**: Critical
 **Status**: ✅ Fixed
 
 ### Description
@@ -146,18 +189,18 @@ After reentry:
 4. Log the update for audit
 
 ### Fix Applied
-**File**: `modules/kotak_neo_auto_trader/orders.py`  
+**File**: `modules/kotak_neo_auto_trader/orders.py`
 **Lines**: 191-235 (new method)
 
 Added `modify_order()` method:
 ```python
-def modify_order(self, order_id: str, price: float = None, quantity: int = None, 
+def modify_order(self, order_id: str, price: float = None, quantity: int = None,
                  trigger_price: float = 0, validity: str = "DAY") -> Optional[Dict]:
     """Modify an existing order's price and/or quantity."""
     client = self.auth.get_client()
     if not client:
         return None
-    
+
     try:
         payload = {"order_id": order_id}
         if price is not None:
@@ -169,9 +212,9 @@ def modify_order(self, order_id: str, price: float = None, quantity: int = None,
         if validity:
             payload["validity"] = validity
         payload["disclosed_quantity"] = 0
-        
+
         logger.info(f"📝 Modifying order {order_id}: qty={quantity}, price={price}")
-        
+
         if hasattr(client, 'modify_order'):
             response = client.modify_order(**payload)
             # Validation and logging...
@@ -181,7 +224,7 @@ def modify_order(self, order_id: str, price: float = None, quantity: int = None,
         return None
 ```
 
-**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`  
+**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
 **Lines**: 1383-1421
 
 Added automatic sell order update after reentry:
@@ -197,19 +240,19 @@ try:
                 old_order_id = order.get('neoOrdNo') or order.get('nOrdNo') or order.get('orderId')
                 old_qty = int(order.get('quantity') or order.get('qty') or 0)
                 old_price = float(order.get('price') or order.get('prc') or 0)
-                
+
                 if old_order_id and old_qty > 0:
                     new_total_qty = old_qty + qty
                     logger.info(f"Found existing sell order for {symbol}: {old_qty} shares @ ₹{old_price:.2f}")
                     logger.info(f"Updating to new total: {old_qty} + {qty} (reentry) = {new_total_qty} shares")
-                    
+
                     # Modify order with new quantity
                     modify_resp = self.orders.modify_order(
                         order_id=str(old_order_id),
                         quantity=new_total_qty,
                         price=old_price
                     )
-                    
+
                     if modify_resp:
                         logger.info(f"✅ Sell order updated: {symbol} x{new_total_qty} @ ₹{old_price:.2f}")
                     break
@@ -233,8 +276,8 @@ except Exception as e:
 
 ## Bug #4: Trade History Not Updated After Reentry (HIGH)
 
-**Date Fixed**: October 31, 2024  
-**Severity**: High  
+**Date Fixed**: October 31, 2024
+**Severity**: High
 **Status**: ✅ Fixed
 
 ### Description
@@ -253,7 +296,7 @@ After reentry:
 3. Maintain complete history of position builds
 
 ### Fix Applied
-**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`  
+**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
 **Lines**: 1423-1442
 
 Added automatic trade history update:
@@ -266,7 +309,7 @@ try:
         new_total_qty = old_qty + qty
         e['qty'] = new_total_qty
         logger.info(f"Trade history updated: {symbol} qty {old_qty} → {new_total_qty}")
-        
+
         # Also add reentry metadata for tracking
         if 'reentries' not in e:
             e['reentries'] = []
@@ -298,8 +341,8 @@ except Exception as e:
 
 ## Bug #5: Scheduled Task Timeout Configuration (MEDIUM)
 
-**Date Fixed**: October 31, 2024  
-**Severity**: Medium  
+**Date Fixed**: October 31, 2024
+**Severity**: Medium
 **Status**: ✅ Fixed
 
 ### Description
@@ -355,10 +398,10 @@ Windows Task Scheduler best practices:
 
 ## Summary Statistics
 
-**Total Bugs Fixed**: 5  
-**Critical Severity**: 3  
-**High Severity**: 1  
-**Medium Severity**: 1  
+**Total Bugs Fixed**: 5
+**Critical Severity**: 3
+**High Severity**: 1
+**Medium Severity**: 1
 
 **Components Affected**:
 - Reentry logic (auto_trade_engine.py)
@@ -386,7 +429,7 @@ All fixes have been tested with:
 
 **Current System Status**: Fully Operational ✅
 
-**Date**: October 31, 2024  
+**Date**: October 31, 2024
 **Version**: 2.0 (Post-Bug Fixes)
 
 ---
@@ -415,11 +458,11 @@ All fixes have been tested with:
 
 ## Test Results
 
-**Test Suite**: `tests/test_bug_fixes_oct31.py`  
-**Status**: ✅ All tests passing  
-**Tests Run**: 22  
-**Tests Passed**: 22  
-**Tests Failed**: 0  
+**Test Suite**: `tests/test_bug_fixes_oct31.py`
+**Status**: ✅ All tests passing
+**Tests Run**: 22
+**Tests Passed**: 22
+**Tests Failed**: 0
 
 ### Test Coverage by Bug
 
@@ -474,8 +517,8 @@ All fixes have been tested with:
 
 ## Bug #6: Duplicate Order Registration (HIGH)
 
-**Date Fixed**: November 7, 2025  
-**Severity**: High  
+**Date Fixed**: November 7, 2025
+**Severity**: High
 **Status**: ✅ Fixed
 
 ### Description
@@ -487,7 +530,7 @@ Same order_id was being registered multiple times in `pending_orders.json`, crea
 - When `run_at_market_open()` found existing orders from broker, it re-registered them
 
 ### Fix Applied
-**Files**: 
+**Files**:
 - `modules/kotak_neo_auto_trader/order_tracker.py` - Added duplicate check in `add_pending_order()`
 - `modules/kotak_neo_auto_trader/order_state_manager.py` - Added duplicate check and proper return after price update in `register_sell_order()`
 
@@ -503,8 +546,8 @@ Same order_id was being registered multiple times in `pending_orders.json`, crea
 
 ## Bug #7: Target and Lowest EMA9 Showing ₹0.00 (MEDIUM)
 
-**Date Fixed**: November 7, 2025  
-**Severity**: Medium  
+**Date Fixed**: November 7, 2025
+**Severity**: Medium
 **Status**: ✅ Fixed
 
 ### Description
@@ -534,8 +577,8 @@ When monitoring sell orders, Target and Lowest EMA9 values showed ₹0.00 instea
 
 ## Bug #8: Unknown Broker Status Warning for CANCELLED Orders (MEDIUM)
 
-**Date Fixed**: November 7, 2025  
-**Severity**: Medium  
+**Date Fixed**: November 7, 2025
+**Severity**: Medium
 **Status**: ✅ Fixed
 
 ### Description
