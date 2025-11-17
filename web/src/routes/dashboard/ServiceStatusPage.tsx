@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { getServiceStatus, getTaskHistory, getServiceLogs, startService, stopService, type ServiceStatus, type TaskExecution, type ServiceLog } from '@/api/service';
+import { formatTimeAgo } from '@/utils/time';
 import { ServiceControls } from './ServiceControls';
 import { ServiceTasksTable } from './ServiceTasksTable';
 import { ServiceLogsViewer } from './ServiceLogsViewer';
@@ -68,12 +69,13 @@ export function ServiceStatusPage() {
 	return (
 		<div className="p-4 space-y-6">
 			<div className="flex items-center justify-between">
-				<h1 className="text-xl font-semibold">Service Status</h1>
-				<label className="flex items-center gap-2 text-sm">
+				<h1 className="text-xl font-semibold text-[var(--text)]">Service Status</h1>
+				<label className="flex items-center gap-2 text-sm text-[var(--text)]">
 					<input
 						type="checkbox"
 						checked={autoRefresh}
 						onChange={(e) => setAutoRefresh(e.target.checked)}
+						className="accent-blue-600"
 					/>
 					<span>Auto-refresh</span>
 				</label>
@@ -82,7 +84,7 @@ export function ServiceStatusPage() {
 			{/* Service Status Card */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
 				<div className="flex items-center justify-between mb-4">
-					<h2 className="text-lg font-semibold">Service Health</h2>
+					<h2 className="text-lg font-semibold text-[var(--text)]">Service Health</h2>
 					<div className={`px-3 py-1 rounded-full text-sm font-medium ${isRunning ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
 						{isRunning ? '● Running' : '● Stopped'}
 					</div>
@@ -91,12 +93,12 @@ export function ServiceStatusPage() {
 				<div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
 					<div>
 						<div className="text-sm text-[var(--muted)] mb-1">Last Heartbeat</div>
-						<div className="text-sm">
+						<div className="text-sm text-[var(--text)]">
 							{lastHeartbeat ? (
 								<>
 									{lastHeartbeat.toLocaleString()}
 									<span className="text-[var(--muted)] ml-2">
-										({Math.floor((Date.now() - lastHeartbeat.getTime()) / 1000)}s ago)
+										({formatTimeAgo(Math.floor((Date.now() - lastHeartbeat.getTime()) / 1000))})
 									</span>
 								</>
 							) : (
@@ -106,12 +108,12 @@ export function ServiceStatusPage() {
 					</div>
 					<div>
 						<div className="text-sm text-[var(--muted)] mb-1">Last Task Execution</div>
-						<div className="text-sm">
+						<div className="text-sm text-[var(--text)]">
 							{lastTaskExecution ? (
 								<>
 									{lastTaskExecution.toLocaleString()}
 									<span className="text-[var(--muted)] ml-2">
-										({Math.floor((Date.now() - lastTaskExecution.getTime()) / 1000)}s ago)
+										({formatTimeAgo(Math.floor((Date.now() - lastTaskExecution.getTime()) / 1000))})
 									</span>
 								</>
 							) : (
@@ -148,13 +150,13 @@ export function ServiceStatusPage() {
 
 			{/* Task Execution History */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
-				<h2 className="text-lg font-semibold mb-4">Task Execution History</h2>
+				<h2 className="text-lg font-semibold mb-4 text-[var(--text)]">Task Execution History</h2>
 				<ServiceTasksTable tasks={taskHistory?.tasks ?? []} isLoading={tasksLoading} />
 			</div>
 
 			{/* Service Logs */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
-				<h2 className="text-lg font-semibold mb-4">Recent Service Logs</h2>
+				<h2 className="text-lg font-semibold mb-4 text-[var(--text)]">Recent Service Logs</h2>
 				<ServiceLogsViewer logs={logs?.logs ?? []} isLoading={logsLoading} />
 			</div>
 		</div>

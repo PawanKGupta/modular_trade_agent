@@ -122,6 +122,49 @@ Across all dashboard pages, text was invisible because components used default T
 
 ---
 
+## Bug #61: Time Display Format in Service Status Page (MEDIUM)
+
+**Date Fixed**: November 17, 2025
+**Status**: ✅ Fixed
+
+### Description
+The Service Status page displayed time in raw seconds format (e.g., "4238s ago"), which was not user-friendly. Users expected a more readable format like "32 sec ago", "1 min ago", or "1hr ago" depending on the duration.
+
+### Root Cause
+- The time calculation used `Math.floor((Date.now() - timestamp.getTime()) / 1000)` to get seconds, then displayed it as `{seconds}s ago`.
+- No formatting logic existed to convert seconds into human-readable units (seconds, minutes, hours).
+
+### Fix Applied
+**Files Updated:**
+- `web/src/routes/dashboard/ServiceStatusPage.tsx`
+- `web/src/routes/dashboard/ServiceTasksTable.tsx`
+- `web/src/utils/time.ts` (new utility file)
+- `web/src/utils/__tests__/time.test.ts` (new test file)
+
+**Changes:**
+- Created `formatTimeAgo()` utility function that formats seconds into:
+  - `< 60 seconds`: "32 sec ago"
+  - `>= 60 seconds but < 3600`: "1 min ago", "2 min ago", etc.
+  - `>= 3600 seconds`: "1hr ago", "2hr ago", etc.
+- Updated "Last Heartbeat" and "Last Task Execution" displays to use `formatTimeAgo()`.
+- Added explicit text colors to ensure all text is visible in dark theme.
+- Added comprehensive unit tests for the time formatting function.
+
+### Test Coverage
+- Unit tests in `web/src/utils/__tests__/time.test.ts` covering:
+  - Seconds < 60: "32 sec ago"
+  - Seconds 60-3599: "1 min ago", "2 min ago", etc.
+  - Seconds >= 3600: "1hr ago", "2hr ago", etc.
+- Manual verification with various time values (32s, 69s, 3678s, 4238s).
+
+### Impact
+- More intuitive and readable time displays.
+- Consistent formatting across all time-related displays.
+- Better user experience when monitoring service status.
+- Reusable utility function for future time formatting needs.
+
+---
+
 ## Bug #1: Reentry Logic After RSI Reset (CRITICAL)
 
 **Date Fixed**: October 31, 2024
