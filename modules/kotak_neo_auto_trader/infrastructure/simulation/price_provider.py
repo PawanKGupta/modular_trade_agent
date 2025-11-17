@@ -3,24 +3,32 @@ Price Provider
 Provides live/mock prices for paper trading simulation
 """
 
-from typing import Dict, Optional
-from datetime import datetime, timedelta
-from threading import Lock
 import random
-
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Lock
+
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
-from utils.logger import logger
+from utils.logger import logger  # noqa: E402
 
 # Import existing data fetcher
 try:
     from core.data_fetcher import DataFetcher
+
     HAS_DATA_FETCHER = True
 except ImportError:
     HAS_DATA_FETCHER = False
-    logger.warning("⚠️ DataFetcher not available, using mock prices")
+    logger.warning("⚠️ DataFetcher not available, will attempt YFinance provider")
+
+try:
+    from src.infrastructure.data_providers.yfinance_provider import YFinanceProvider
+
+    HAS_YFINANCE_PROVIDER = True
+except ImportError:
+    HAS_YFINANCE_PROVIDER = False
+    logger.warning("⚠️ YFinance provider not available; live prices may be limited")
 
 
 class PriceProvider:
@@ -33,11 +41,7 @@ class PriceProvider:
     - 'historical': Replay historical data (future enhancement)
     """
 
-    def __init__(
-        self,
-        mode: str = "live",
-        cache_duration_seconds: int = 5
-    ):
+    def __init__(self, mode: str = "live", cache_duration_seconds: int = 5):
         """
         Initialize price provider
 
@@ -49,24 +53,32 @@ class PriceProvider:
         self.cache_duration = timedelta(seconds=cache_duration_seconds)
 
         # Price cache
-        self._price_cache: Dict[str, tuple[float, datetime]] = {}
+        self._price_cache: dict[str, tuple[float, datetime]] = {}
         self._lock = Lock()
 
         # Initialize data fetcher if available
         self.data_fetcher = None
-        if mode == "live" and HAS_DATA_FETCHER:
-            try:
-                self.data_fetcher = DataFetcher()
-                logger.info("✅ Price provider initialized with live data")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to initialize DataFetcher: {e}")
-                logger.warning("Falling back to mock prices")
+        self.yfinance_provider = None
+        if mode == "live":
+            if HAS_DATA_FETCHER:
+                try:
+                    self.data_fetcher = DataFetcher()
+                    logger.info("✅ Price provider initialized with broker data fetcher")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to initialize DataFetcher: {e}")
+                    self.data_fetcher = None
+            if self.data_fetcher is None and HAS_YFINANCE_PROVIDER:
+                try:
+                    self.yfinance_provider = YFinanceProvider()
+                    logger.info("✅ Falling back to YFinance provider for live prices")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to initialize YFinance provider: {e}")
+                    self.yfinance_provider = None
+            if self.data_fetcher is None and self.yfinance_provider is None:
+                logger.warning("⚠️ No live data providers available; using mock prices")
                 self.mode = "mock"
-        elif mode == "live" and not HAS_DATA_FETCHER:
-            logger.warning("⚠️ Live mode requested but DataFetcher not available")
-            self.mode = "mock"
 
-    def get_price(self, symbol: str) -> Optional[float]:
+    def get_price(self, symbol: str) -> float | None:
         """
         Get current price for a symbol
 
@@ -93,7 +105,7 @@ class PriceProvider:
 
         return price
 
-    def get_prices(self, symbols: list[str]) -> Dict[str, float]:
+    def get_prices(self, symbols: list[str]) -> dict[str, float]:
         """
         Get prices for multiple symbols
 
@@ -110,7 +122,7 @@ class PriceProvider:
                 prices[symbol] = price
         return prices
 
-    def _fetch_price(self, symbol: str) -> Optional[float]:
+    def _fetch_price(self, symbol: str) -> float | None:
         """
         Fetch price based on mode
 
@@ -128,7 +140,7 @@ class PriceProvider:
             logger.error(f"❌ Unknown price mode: {self.mode}")
             return None
 
-    def _fetch_live_price(self, symbol: str) -> Optional[float]:
+    def _fetch_live_price(self, symbol: str) -> float | None:
         """
         Fetch live price using data fetcher
 
@@ -138,30 +150,40 @@ class PriceProvider:
         Returns:
             Current price or None
         """
-        if not self.data_fetcher:
-            logger.warning(f"⚠️ DataFetcher not available for {symbol}")
-            return self._fetch_mock_price(symbol)
+        price = None
+        if self.data_fetcher:
+            try:
+                data = self.data_fetcher.fetch_data_yfinance(
+                    symbol=symbol, period="1d", interval="1m"
+                )
+
+                if data is not None and not data.empty:
+                    latest_price = float(data["close"].iloc[-1])
+                    logger.debug(f"📊 Fetched live price for {symbol}: ₹{latest_price:.2f}")
+                    return latest_price
+                logger.warning(f"⚠️ No broker data available for {symbol}")
+            except Exception as e:
+                logger.error(f"❌ Error fetching broker price for {symbol}: {e}")
+
+        price = self._fetch_yfinance_price(symbol)
+        if price is not None:
+            return price
+
+        logger.warning(f"⚠️ Live providers unavailable for {symbol}; falling back to mock")
+        return None
+
+    def _fetch_yfinance_price(self, symbol: str) -> float | None:
+        """Fetch live price via YFinance provider."""
+        if not self.yfinance_provider:
+            return None
 
         try:
-            # Use existing data fetcher to get latest price
-            # Assuming it has a method to get latest price
-            data = self.data_fetcher.fetch_data_yfinance(
-                symbol=symbol,
-                period="1d",
-                interval="1m"
-            )
-
-            if data is not None and not data.empty:
-                # Get latest close price
-                latest_price = float(data['close'].iloc[-1])
-                logger.debug(f"📊 Fetched live price for {symbol}: ₹{latest_price:.2f}")
-                return latest_price
-            else:
-                logger.warning(f"⚠️ No data available for {symbol}")
-                return None
-
-        except Exception as e:
-            logger.error(f"❌ Error fetching price for {symbol}: {e}")
+            price = self.yfinance_provider.fetch_current_price(symbol)
+            if price is not None:
+                logger.debug(f"📊 YFinance price for {symbol}: ₹{price:.2f}")
+            return price
+        except Exception as exc:
+            logger.error(f"❌ Error fetching YFinance price for {symbol}: {exc}")
             return None
 
     def _fetch_mock_price(self, symbol: str) -> float:
@@ -179,7 +201,7 @@ class PriceProvider:
         base_price = sum(ord(c) for c in symbol) * 10
 
         # Add some randomness (±5%)
-        variation = random.uniform(-0.05, 0.05)
+        variation = random.uniform(-0.05, 0.05)  # noqa: S311 - pseudo random acceptable for mock
         price = base_price * (1 + variation)
 
         logger.debug(f"📊 Generated mock price for {symbol}: ₹{price:.2f}")
@@ -203,13 +225,12 @@ class PriceProvider:
             self._price_cache.clear()
             logger.debug("🗑️ Price cache cleared")
 
-    def get_cache_info(self) -> Dict:
+    def get_cache_info(self) -> dict:
         """Get cache statistics"""
         with self._lock:
             now = datetime.now()
             valid_count = sum(
-                1 for _, (_, ts) in self._price_cache.items()
-                if now - ts < self.cache_duration
+                1 for _, (_, ts) in self._price_cache.items() if now - ts < self.cache_duration
             )
 
             return {
@@ -218,4 +239,3 @@ class PriceProvider:
                 "mode": self.mode,
                 "cache_duration_seconds": self.cache_duration.total_seconds(),
             }
-

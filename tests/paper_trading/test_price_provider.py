@@ -3,6 +3,8 @@ Test Price Provider
 """
 
 import pytest
+
+import modules.kotak_neo_auto_trader.infrastructure.simulation.price_provider as price_mod
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PriceProvider
 
 
@@ -83,7 +85,23 @@ class TestPriceProvider:
         # Should be close (within reasonable range due to randomness)
         assert abs(price1 - price2) < price1 * 0.1  # Within 10%
 
+    def test_live_mode_falls_back_to_yfinance(self, monkeypatch):
+        """Ensure live mode uses YFinance fallback instead of mock."""
+        monkeypatch.setattr(price_mod, "HAS_DATA_FETCHER", False, raising=False)
+        monkeypatch.setattr(price_mod, "HAS_YFINANCE_PROVIDER", True, raising=False)
+
+        class DummyYF:
+            def fetch_current_price(self, symbol):
+                return 123.45
+
+        monkeypatch.setattr(price_mod, "YFinanceProvider", lambda: DummyYF(), raising=False)
+
+        provider = price_mod.PriceProvider(mode="live")
+        assert provider.mode == "live"
+
+        price = provider.get_price("ANY")
+        assert price == 123.45
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

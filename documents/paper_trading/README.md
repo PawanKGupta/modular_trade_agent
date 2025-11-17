@@ -182,6 +182,8 @@ config = PaperTradingConfig(
 )
 ```
 
+> **Price feed behavior:** When `price_source="live"` the paper broker first tries the broker `DataFetcher` for prices. If that dependency or its credentials are missing, it automatically falls back to the built-in YFinance provider. Only if both providers are unavailable will it drop to mock prices, so you always get the best available feed without extra configuration.
+
 ## 💾 Data Storage
 
 All data persists in JSON files:
@@ -293,7 +295,7 @@ holding = broker.get_holding(symbol)
 | `PaperTradingConfig` | Configuration management |
 | `OrderSimulator` | Execution with slippage/fees |
 | `PortfolioManager` | Holdings and P&L tracking |
-| `PriceProvider` | Price feed (live/mock) |
+| `PriceProvider` | Price feed (live → broker data, fallback to YFinance, then mock) |
 | `PaperTradeStore` | Data persistence |
 | `PaperTradeReporter` | Reports and analytics |
 
@@ -326,4 +328,3 @@ holding = broker.get_holding(symbol)
 ---
 
 **Remember**: Paper trading is for learning and testing. Real trading involves actual risk. Trade responsibly!
-
