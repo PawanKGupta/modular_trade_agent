@@ -7,10 +7,17 @@ and proper lifecycle management.
 
 from __future__ import annotations
 
+import os
 import threading
 
 from sqlalchemy.orm import Session
 
+from modules.kotak_neo_auto_trader.run_trading_service import TradingService
+from src.application.services.broker_credentials import (
+    create_temp_env_file,
+    decrypt_broker_credentials,
+)
+from src.application.services.config_converter import user_config_to_strategy_config
 from src.infrastructure.logging import get_user_logger
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
@@ -91,11 +98,6 @@ class MultiUserTradingService:
                         user_logger.error("No broker credentials stored", action="start_service")
                         raise ValueError(f"No broker credentials stored for user_id={user_id}")
 
-                    from src.application.services.broker_credentials import (
-                        create_temp_env_file,
-                        decrypt_broker_credentials,
-                    )
-
                     broker_creds_dict = decrypt_broker_credentials(settings.broker_creds_encrypted)
                     if not broker_creds_dict:
                         user_logger.error(
@@ -131,16 +133,7 @@ class MultiUserTradingService:
 
                 # Load user trading configuration and convert to StrategyConfig
                 user_config = self._config_repo.get_or_create_default(user_id)
-                from src.application.services.config_converter import (
-                    user_config_to_strategy_config,
-                )
-
                 strategy_config = user_config_to_strategy_config(user_config)
-
-                # Initialize TradingService with user context (Phase 2.3)
-                from modules.kotak_neo_auto_trader.run_trading_service import (
-                    TradingService,
-                )
 
                 service = TradingService(
                     user_id=user_id,
@@ -193,33 +186,26 @@ class MultiUserTradingService:
             True if service stopped successfully, False otherwise
         """
         if user_id not in self._locks:
-            return False  # Service was never started
+            # Create lock to make stop idempotent even if service was never started
+            self._locks[user_id] = threading.Lock()
 
         with self._locks[user_id]:
-            if user_id not in self._services:
-                return False  # Service not running
+            service = self._services.pop(user_id, None)
 
             try:
                 # Get user-specific logger
                 user_logger = get_user_logger(user_id=user_id, db=self.db, module="TradingService")
                 user_logger.info("Stopping trading service", action="stop_service")
 
-                service = self._services[user_id]
-
                 # Request shutdown
-                if hasattr(service, "shutdown_requested"):
+                if service and hasattr(service, "shutdown_requested"):
                     service.shutdown_requested = True
 
                 # Wait for service to stop (with timeout)
                 # TODO: Implement graceful shutdown
 
-                # Remove service instance
-                del self._services[user_id]
-
                 # Clean up temporary env file (Phase 2.4)
                 if user_id in self._temp_env_files:
-                    import os
-
                     temp_file = self._temp_env_files[user_id]
                     try:
                         if os.path.exists(temp_file):

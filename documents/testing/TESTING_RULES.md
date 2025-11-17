@@ -1,7 +1,7 @@
 # Testing Rules & Guidelines
 
-**Version:** 1.0  
-**Last Updated:** 2025-11-07  
+**Version:** 1.0
+**Last Updated:** 2025-11-07
 **Status:** Active
 
 ---
@@ -107,10 +107,10 @@ def test_analysis_service_returns_buy_verdict():
     service = AnalysisService()
     ticker = "RELIANCE.NS"
     mock_data = create_mock_stock_data(rsi=25.0, price_above_ema200=True)
-    
+
     # Act: Execute the code under test
     result = service.analyze_ticker(ticker)
-    
+
     # Assert: Verify the expected outcome
     assert result.verdict == "buy"
     assert result.rsi == 25.0
@@ -181,12 +181,12 @@ def test_analyze_ticker_success():
         'price': 2450.0,
         'ema200': 2400.0
     }
-    
+
     service = AnalysisService(data_service=mock_data_service)
-    
+
     # Act
     result = service.analyze_ticker("RELIANCE.NS")
-    
+
     # Assert
     assert result.status == "success"
     assert result.verdict == "buy"
@@ -203,10 +203,10 @@ def test_analysis_service_integration():
     """Test analysis service with real service dependencies."""
     # Arrange
     service = AnalysisService()  # Uses real dependencies
-    
+
     # Act
     result = service.analyze_ticker("RELIANCE.NS")
-    
+
     # Assert
     assert result.status in ["success", "error"]  # May fail due to external factors
     if result.status == "success":
@@ -243,9 +243,9 @@ async def test_async_batch_analysis():
     """Test async batch analysis."""
     service = AsyncAnalysisService()
     tickers = ["RELIANCE.NS", "INFY.NS", "TCS.NS"]
-    
+
     results = await service.analyze_batch_async(tickers)
-    
+
     assert len(results) == 3
     assert all(r.status == "success" for r in results)
 ```
@@ -259,10 +259,10 @@ def test_with_mocked_api():
     """Test with mocked external API."""
     with patch('services.data_service.yfinance.download') as mock_download:
         mock_download.return_value = create_mock_dataframe()
-        
+
         service = AnalysisService()
         result = service.analyze_ticker("RELIANCE.NS")
-        
+
         mock_download.assert_called_once_with("RELIANCE.NS", period="1y")
         assert result.status == "success"
 ```
@@ -277,9 +277,9 @@ def test_raises_data_error_when_no_data():
     """Test that DataError is raised when no data available."""
     mock_data_service = Mock()
     mock_data_service.fetch_stock_data.side_effect = DataError("No data")
-    
+
     service = AnalysisService(data_service=mock_data_service)
-    
+
     with pytest.raises(DataError, match="No data"):
         service.analyze_ticker("INVALID.NS")
 ```
@@ -305,10 +305,10 @@ def test_with_fixtures(sample_stock, sample_analysis_result):
 def test_csv_export(tmp_path):
     """Test CSV export to temporary file."""
     output_file = tmp_path / "test_export.csv"
-    
+
     service = AnalysisService()
     service.export_to_csv("RELIANCE.NS", output_file)
-    
+
     assert output_file.exists()
     # Verify file contents
 ```
@@ -324,7 +324,7 @@ def test_with_mock_data():
         'data': create_mock_ohlcv_data(),
         'indicators': {'rsi': 28.5, 'ema200': 2400.0}
     }
-    
+
     with patch('services.data_service.fetch_data', return_value=mock_response):
         # Test implementation
         pass
@@ -341,10 +341,10 @@ def test_regression_against_golden():
     """Test against golden file for regression detection."""
     golden_file = Path("tests/data/golden/backtest_regression.json")
     expected = json.loads(golden_file.read_text())
-    
+
     # Run analysis
     result = run_analysis("RELIANCE.NS")
-    
+
     # Compare with golden file
     assert result.verdict == expected['verdict']
     assert abs(result.rsi - expected['rsi']) < 0.1
@@ -362,6 +362,31 @@ def test_regression_against_golden():
 ---
 
 ## Running Tests
+
+### Environment Setup
+
+- **Database isolation (unit/integration)**: To prevent accidental writes to `data/app.db`, set `DB_URL` to an in-memory or throwaway file _before_ importing server modules that touch `SessionLocal`:
+  ```powershell
+  # For pure unit/integration tests (no FastAPI client):
+  $env:DB_URL = "sqlite:///:memory:"
+
+  # For server tests that need a shared file:
+  $env:DB_URL = "sqlite:///./tests/test.db"
+  Remove-Item .\tests\test.db -ErrorAction SilentlyContinue  # optional cleanup
+  ```
+  FastAPI’s startup hook creates schema automatically if the file is empty.
+- **Seed data (server tests)**: Suites under `tests/server/` expect a fresh DB with no prior data; they seed their own rows through the API. If you want to reuse a file-based DB between runs, make sure it is cleared/recreated. For a fully seeded DB (targets, signals, ML rows) run the Phase 1–3 migration scripts, e.g.:
+  ```powershell
+  $env:DB_URL="sqlite:///./tests/test_seeded.db"
+  python scripts/migration/migrate_trades_history.py --apply --user-id <id> ...
+  ```
+- **UTF‑8 logging on Windows**: Some tests emit ✓/₹/📈 via `logging`. Ensure the console and Python both use UTF‑8 to avoid `UnicodeEncodeError` in xdist workers:
+  ```powershell
+  chcp 65001
+  $env:PYTHONIOENCODING = "utf-8"
+  $env:PYTHONUTF8 = "1"
+  ```
+- **Cleaning residue**: If file-backed test DBs or `data/test_api_*.db` exist from prior runs, delete them before re-running to avoid “database is locked” errors.
 
 ### Basic Commands
 
@@ -462,7 +487,7 @@ Coverage is configured in `pytest.ini`:
 ```ini
 [coverage:run]
 source = src
-omit = 
+omit =
     */tests/*
     */test_*
     */__pycache__/*

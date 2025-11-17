@@ -23,6 +23,8 @@ export function AppShell() {
 					<Link to="/dashboard/pnl">PnL</Link>
 					<Link to="/dashboard/targets">Targets</Link>
 					<Link to="/dashboard/activity">Activity</Link>
+					<Link to="/dashboard/service">Service Status</Link>
+					<Link to="/dashboard/trading-config">Trading Config</Link>
 					<Link to="/dashboard/settings">Settings</Link>
 					{isAdmin && <Link to="/dashboard/admin/users">Admin • Users</Link>}
 				</nav>

@@ -1,7 +1,13 @@
+# ruff: noqa: E402, PLC0415, E501
+
 import os
 import sys
 
 import pytest
+
+# Ensure Unicode logs render on Windows/CI environments
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+os.environ.setdefault("PYTHONUTF8", "1")
 
 # Import models ONCE at module level to ensure they're registered before any fixtures
 # This prevents SQLAlchemy registry conflicts when models are imported multiple times

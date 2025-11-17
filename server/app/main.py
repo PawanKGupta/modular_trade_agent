@@ -23,6 +23,7 @@ from .routers import (
     broker,
     orders,
     pnl,
+    service,
     signals,
     targets,
     trading_config,
@@ -117,6 +118,7 @@ async def log_exceptions(request: Request, call_next):
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(user.router, prefix="/api/v1/user", tags=["user"])
 app.include_router(trading_config.router, prefix="/api/v1/user", tags=["trading-config"])
+app.include_router(service.router, prefix="/api/v1/user", tags=["service"])
 app.include_router(orders.router, prefix="/api/v1/user/orders", tags=["orders"])
 app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
 app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])

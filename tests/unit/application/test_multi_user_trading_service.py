@@ -1,3 +1,5 @@
+# ruff: noqa: PLC0415
+
 """
 Unit tests for MultiUserTradingService
 
@@ -130,7 +132,7 @@ class TestMultiUserTradingService:
             mock_service_class.return_value = mock_service
 
             # Start service (should succeed with mocked TradingService)
-            result = service.start_service(sample_user_with_settings.id)
+            service.start_service(sample_user_with_settings.id)
 
             # Service status should be updated
             from src.infrastructure.persistence.service_status_repository import (
@@ -177,7 +179,8 @@ class TestMultiUserTradingService:
         service = MultiUserTradingService(db=db_session)
 
         result = service.stop_service(sample_user.id)
-        assert result is False
+        # Idempotent stop returns True even if nothing was running, but should not error
+        assert result is True
 
     def test_stop_service_success(self, db_session, sample_user_with_settings):
         """Test successful service stop"""

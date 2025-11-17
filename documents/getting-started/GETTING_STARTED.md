@@ -36,7 +36,7 @@ The **Modular Trade Agent** is an automated trading analysis system that:
 
 **Option 1: Use the Pre-Built Executable (No Python Required!)**
 
-1. Download `ModularTradeAgent.exe` 
+1. Download `ModularTradeAgent.exe`
 2. Double-click to run
 3. Follow the on-screen prompts
 4. Done! ✅
@@ -317,6 +317,27 @@ LOOKBACK_DAYS = 90             # Change historical period
 
 ---
 
+### 5. Monitor & Configure via the Web Dashboard (Phase 3)
+
+Prefer a UI instead of editing configs by hand? The new Phase 3 dashboards let you manage everything visually.
+
+1. **Start the backend** (FastAPI):
+   ```bash
+   uvicorn server.app.main:app --reload
+   ```
+2. **Start the frontend**:
+   ```bash
+   cd web
+   npm install
+   npm run dev -- --host 0.0.0.0 --port 4173
+   ```
+3. Visit **`http://localhost:4173/dashboard/service`** for the live **Service Status** console (start/stop buttons, task history, structured logs).
+4. Visit **`http://localhost:4173/dashboard/config`** for the **Trading Configuration Workspace** (presets, validation hints, sticky save banner).
+
+📘 Detailed screenshots + workflows: [SERVICE_STATUS_AND_TRADING_CONFIG_UI.md](../features/SERVICE_STATUS_AND_TRADING_CONFIG_UI.md)
+
+---
+
 ## Common Issues
 
 ### Issue 1: "Python not found"
@@ -454,5 +475,5 @@ python -c "from core.telegram import send_telegram; send_telegram('Test from Win
 
 ---
 
-**Last Updated:** 2025-10-29  
+**Last Updated:** 2025-10-29
 **Version:** 26.1.1

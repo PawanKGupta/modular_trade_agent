@@ -95,6 +95,111 @@ export const handlers = [
 	http.get(API('/user/pnl/summary'), async () => {
 		return HttpResponse.json({ totalPnl: 155.75, daysGreen: 2, daysRed: 1 });
 	}),
+	// service
+	http.get(API('/user/service/status'), async () => {
+		return HttpResponse.json({
+			service_running: true,
+			last_heartbeat: new Date().toISOString(),
+			last_task_execution: new Date(Date.now() - 60000).toISOString(),
+			error_count: 0,
+			last_error: null,
+			updated_at: new Date().toISOString(),
+		});
+	}),
+	http.post(API('/user/service/start'), async () => {
+		return HttpResponse.json({
+			success: true,
+			message: 'Trading service started successfully',
+			service_running: true,
+		});
+	}),
+	http.post(API('/user/service/stop'), async () => {
+		return HttpResponse.json({
+			success: true,
+			message: 'Trading service stopped successfully',
+			service_running: false,
+		});
+	}),
+	http.get(API('/user/service/tasks'), async ({ request }) => {
+		const url = new URL(request.url);
+		const taskName = url.searchParams.get('task_name');
+		const status = url.searchParams.get('status');
+		const now = new Date().toISOString();
+		const tasks = [
+			{
+				id: 1,
+				task_name: 'premarket_retry',
+				executed_at: now,
+				status: 'success',
+				duration_seconds: 1.5,
+				details: { symbols_processed: 5 },
+			},
+			{
+				id: 2,
+				task_name: 'analysis',
+				executed_at: new Date(Date.now() - 300000).toISOString(),
+				status: 'success',
+				duration_seconds: 2.3,
+				details: null,
+			},
+			{
+				id: 3,
+				task_name: 'buy_orders',
+				executed_at: new Date(Date.now() - 600000).toISOString(),
+				status: 'failed',
+				duration_seconds: 0.5,
+				details: { error: 'Network timeout' },
+			},
+		];
+		let filtered = tasks;
+		if (taskName) {
+			filtered = filtered.filter((t) => t.task_name === taskName);
+		}
+		if (status) {
+			filtered = filtered.filter((t) => t.status === status);
+		}
+		return HttpResponse.json({ tasks: filtered, total: filtered.length });
+	}),
+	http.get(API('/user/service/logs'), async ({ request }) => {
+		const url = new URL(request.url);
+		const level = url.searchParams.get('level');
+		const module = url.searchParams.get('module');
+		const now = new Date().toISOString();
+		const logs = [
+			{
+				id: 1,
+				level: 'INFO',
+				module: 'TradingService',
+				message: 'Service started successfully',
+				context: { action: 'start_service' },
+				timestamp: now,
+			},
+			{
+				id: 2,
+				level: 'ERROR',
+				module: 'TradingService',
+				message: 'Failed to place order',
+				context: { symbol: 'RELIANCE', error: 'Insufficient funds' },
+				timestamp: new Date(Date.now() - 300000).toISOString(),
+			},
+			{
+				id: 3,
+				level: 'WARNING',
+				module: 'AutoTradeEngine',
+				message: 'Low volume detected',
+				context: { symbol: 'TCS', volume: 1000 },
+				timestamp: new Date(Date.now() - 600000).toISOString(),
+			},
+		];
+		let filtered = logs;
+		if (level) {
+			filtered = filtered.filter((l) => l.level === level);
+		}
+		if (module) {
+			filtered = filtered.filter((l) => l.module === module);
+		}
+		return HttpResponse.json({ logs: filtered, total: filtered.length, limit: 100 });
+	}),
 	// activity
 	http.get(API('/user/activity'), async ({ request }) => {
 		const url = new URL(request.url);
@@ -143,5 +248,138 @@ export const handlers = [
 		return HttpResponse.json([
 			{ id: 1, symbol: 'TCS', rsi10: 25.2, ema9: 100, ema200: 90, distance_to_ema9: 5, clean_chart: true, monthly_support_dist: 1.2, confidence: 0.7, ts: new Date().toISOString() },
 		]);
+	}),
+	// trading config
+	http.get(API('/user/trading-config'), async () => {
+		return HttpResponse.json({
+			rsi_period: 10,
+			rsi_oversold: 30.0,
+			rsi_extreme_oversold: 20.0,
+			rsi_near_oversold: 40.0,
+			user_capital: 200000.0,
+			max_portfolio_size: 6,
+			max_position_volume_ratio: 0.1,
+			min_absolute_avg_volume: 10000,
+			chart_quality_enabled: true,
+			chart_quality_min_score: 50.0,
+			chart_quality_max_gap_frequency: 25.0,
+			chart_quality_min_daily_range_pct: 1.0,
+			chart_quality_max_extreme_candle_frequency: 20.0,
+			default_stop_loss_pct: 0.08,
+			tight_stop_loss_pct: 0.06,
+			min_stop_loss_pct: 0.03,
+			default_target_pct: 0.1,
+			strong_buy_target_pct: 0.12,
+			excellent_target_pct: 0.15,
+			strong_buy_risk_reward: 3.0,
+			buy_risk_reward: 2.5,
+			excellent_risk_reward: 3.5,
+			default_exchange: 'NSE',
+			default_product: 'CNC',
+			default_order_type: 'MARKET',
+			default_variety: 'AMO',
+			default_validity: 'DAY',
+			allow_duplicate_recommendations_same_day: false,
+			exit_on_ema9_or_rsi50: true,
+			min_combined_score: 50,
+			news_sentiment_enabled: false,
+			news_sentiment_lookback_days: 7,
+			news_sentiment_min_articles: 3,
+			news_sentiment_pos_threshold: 0.6,
+			news_sentiment_neg_threshold: -0.4,
+			ml_enabled: false,
+			ml_model_version: null,
+			ml_confidence_threshold: 0.7,
+			ml_combine_with_rules: true,
+		});
+	}),
+	http.put(API('/user/trading-config'), async ({ request }) => {
+		const body = (await request.json()) as any;
+		// Return updated config (merge with defaults)
+		return HttpResponse.json({
+			rsi_period: body.rsi_period ?? 10,
+			rsi_oversold: body.rsi_oversold ?? 30.0,
+			rsi_extreme_oversold: body.rsi_extreme_oversold ?? 20.0,
+			rsi_near_oversold: body.rsi_near_oversold ?? 40.0,
+			user_capital: body.user_capital ?? 200000.0,
+			max_portfolio_size: body.max_portfolio_size ?? 6,
+			max_position_volume_ratio: body.max_position_volume_ratio ?? 0.1,
+			min_absolute_avg_volume: body.min_absolute_avg_volume ?? 10000,
+			chart_quality_enabled: body.chart_quality_enabled ?? true,
+			chart_quality_min_score: body.chart_quality_min_score ?? 50.0,
+			chart_quality_max_gap_frequency: body.chart_quality_max_gap_frequency ?? 25.0,
+			chart_quality_min_daily_range_pct: body.chart_quality_min_daily_range_pct ?? 1.0,
+			chart_quality_max_extreme_candle_frequency: body.chart_quality_max_extreme_candle_frequency ?? 20.0,
+			default_stop_loss_pct: body.default_stop_loss_pct ?? 0.08,
+			tight_stop_loss_pct: body.tight_stop_loss_pct ?? 0.06,
+			min_stop_loss_pct: body.min_stop_loss_pct ?? 0.03,
+			default_target_pct: body.default_target_pct ?? 0.1,
+			strong_buy_target_pct: body.strong_buy_target_pct ?? 0.12,
+			excellent_target_pct: body.excellent_target_pct ?? 0.15,
+			strong_buy_risk_reward: body.strong_buy_risk_reward ?? 3.0,
+			buy_risk_reward: body.buy_risk_reward ?? 2.5,
+			excellent_risk_reward: body.excellent_risk_reward ?? 3.5,
+			default_exchange: body.default_exchange ?? 'NSE',
+			default_product: body.default_product ?? 'CNC',
+			default_order_type: body.default_order_type ?? 'MARKET',
+			default_variety: body.default_variety ?? 'AMO',
+			default_validity: body.default_validity ?? 'DAY',
+			allow_duplicate_recommendations_same_day: body.allow_duplicate_recommendations_same_day ?? false,
+			exit_on_ema9_or_rsi50: body.exit_on_ema9_or_rsi50 ?? true,
+			min_combined_score: body.min_combined_score ?? 50,
+			news_sentiment_enabled: body.news_sentiment_enabled ?? false,
+			news_sentiment_lookback_days: body.news_sentiment_lookback_days ?? 7,
+			news_sentiment_min_articles: body.news_sentiment_min_articles ?? 3,
+			news_sentiment_pos_threshold: body.news_sentiment_pos_threshold ?? 0.6,
+			news_sentiment_neg_threshold: body.news_sentiment_neg_threshold ?? -0.4,
+			ml_enabled: body.ml_enabled ?? false,
+			ml_model_version: body.ml_model_version ?? null,
+			ml_confidence_threshold: body.ml_confidence_threshold ?? 0.7,
+			ml_combine_with_rules: body.ml_combine_with_rules ?? true,
+		});
+	}),
+	http.post(API('/user/trading-config/reset'), async () => {
+		// Return default config
+		return HttpResponse.json({
+			rsi_period: 10,
+			rsi_oversold: 30.0,
+			rsi_extreme_oversold: 20.0,
+			rsi_near_oversold: 40.0,
+			user_capital: 200000.0,
+			max_portfolio_size: 6,
+			max_position_volume_ratio: 0.1,
+			min_absolute_avg_volume: 10000,
+			chart_quality_enabled: true,
+			chart_quality_min_score: 50.0,
+			chart_quality_max_gap_frequency: 25.0,
+			chart_quality_min_daily_range_pct: 1.0,
+			chart_quality_max_extreme_candle_frequency: 20.0,
+			default_stop_loss_pct: 0.08,
+			tight_stop_loss_pct: 0.06,
+			min_stop_loss_pct: 0.03,
+			default_target_pct: 0.1,
+			strong_buy_target_pct: 0.12,
+			excellent_target_pct: 0.15,
+			strong_buy_risk_reward: 3.0,
+			buy_risk_reward: 2.5,
+			excellent_risk_reward: 3.5,
+			default_exchange: 'NSE',
+			default_product: 'CNC',
+			default_order_type: 'MARKET',
+			default_variety: 'AMO',
+			default_validity: 'DAY',
+			allow_duplicate_recommendations_same_day: false,
+			exit_on_ema9_or_rsi50: true,
+			min_combined_score: 50,
+			news_sentiment_enabled: false,
+			news_sentiment_lookback_days: 7,
+			news_sentiment_min_articles: 3,
+			news_sentiment_pos_threshold: 0.6,
+			news_sentiment_neg_threshold: -0.4,
+			ml_enabled: false,
+			ml_model_version: null,
+			ml_confidence_threshold: 0.7,
+			ml_combine_with_rules: true,
+		});
 	}),
 ];
