@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, constr
 class MLTrainingRequest(BaseModel):
     """Request payload for starting an ML training job."""
 
+    model_config = ConfigDict(protected_namespaces=())
+
     model_type: Literal["verdict_classifier", "price_regressor"]
     algorithm: Literal["random_forest", "xgboost", "logistic_regression"]
     training_data_path: constr(min_length=1, strip_whitespace=True, max_length=512)
@@ -20,7 +22,7 @@ class MLTrainingRequest(BaseModel):
 class MLTrainingJobResponse(BaseModel):
     """Serialized ML training job."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     id: int
     started_by: int
@@ -41,7 +43,7 @@ class MLTrainingJobsResponse(BaseModel):
 
 
 class MLModelResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     id: int
     model_type: str
