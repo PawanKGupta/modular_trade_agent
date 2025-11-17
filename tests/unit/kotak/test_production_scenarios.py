@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """
 Unit tests for production scenarios.
 
@@ -13,16 +14,18 @@ Tests cover:
 Run with: pytest tests/unit/kotak/test_production_scenarios.py -v
 """
 
+import shutil
 import sys
+import tempfile
 import threading
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+from sqlalchemy.orm import Session
+
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
-
-import tempfile
 
 from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
@@ -48,8 +51,6 @@ class TestServiceInitialization(unittest.TestCase):
 
     def tearDown(self):
         """Clean up test fixtures"""
-        import shutil
-
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
@@ -69,13 +70,8 @@ class TestServiceInitialization(unittest.TestCase):
         mock_engine.portfolio = Mock()
         mock_engine_class.return_value = mock_engine
 
-        from sqlalchemy.orm import Session
-
-        from src.infrastructure.db.models import Users
-
         # Create a mock db_session
         mock_db = MagicMock(spec=Session)
-        mock_user = Users(id=1, email="test@example.com", password_hash="test", role="user")
 
         service = TradingService(
             user_id=1,
@@ -88,14 +84,14 @@ class TestServiceInitialization(unittest.TestCase):
 
         # Should create auth once
         mock_auth_class.assert_called_once()
-        # Should pass auth to engine
-        mock_engine_class.assert_called_once_with(
-            env_file=str(self.env_path),
-            auth=mock_auth,
-            user_id=1,
-            db_session=mock_db,
-            strategy_config=None,
-        )
+        # Should pass auth and config to engine
+        mock_engine_class.assert_called_once()
+        _, kwargs = mock_engine_class.call_args
+        self.assertEqual(kwargs.get("env_file"), str(self.env_path))
+        self.assertIs(kwargs.get("auth"), mock_auth)
+        self.assertEqual(kwargs.get("user_id"), 1)
+        self.assertIs(kwargs.get("db_session"), mock_db)
+        self.assertIsNotNone(kwargs.get("strategy_config"))
         self.assertTrue(result)
 
 
@@ -225,8 +221,6 @@ class TestServiceRestart(unittest.TestCase):
 
     def tearDown(self):
         """Clean up test fixtures"""
-        import shutil
-
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
@@ -241,8 +235,6 @@ class TestServiceRestart(unittest.TestCase):
         mock_auth_class.return_value = mock_auth
 
         # First service instance
-        from sqlalchemy.orm import Session
-
         # Create a mock db_session
         mock_db = MagicMock(spec=Session)
 

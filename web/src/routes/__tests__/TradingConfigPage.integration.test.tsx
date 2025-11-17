@@ -80,22 +80,24 @@ describe('TradingConfigPage Integration', () => {
 			expect(screen.getByText(/Trading Configuration/i)).toBeInTheDocument();
 		});
 
-		// Modify RSI period
-		const rsiPeriodInput = screen.getByLabelText(/RSI Period/i);
+		const rsiPeriodInput = await screen.findByLabelText(/RSI Period/i);
 		fireEvent.change(rsiPeriodInput, { target: { value: '15' } });
 
 		// Verify unsaved changes indicator appears
 		await waitFor(() => {
-			expect(screen.getByText(/Unsaved changes/i)).toBeInTheDocument();
+			expect(screen.getByText(/You have unsaved changes/i)).toBeInTheDocument();
 		});
 
 		// Click save
-		const saveButton = screen.getByRole('button', { name: /Save Changes/i });
+		const [saveButton] = screen.getAllByRole('button', { name: /Save Changes/i });
 		fireEvent.click(saveButton);
 
 		// Verify API was called with correct update
 		await waitFor(() => {
-			expect(tradingConfigApi.updateTradingConfig).toHaveBeenCalledWith({ rsi_period: 15 });
+			expect(tradingConfigApi.updateTradingConfig).toHaveBeenCalledWith(
+				expect.objectContaining({ rsi_period: 15 }),
+				expect.any(Object)
+			);
 		});
 	});
 
@@ -113,17 +115,17 @@ describe('TradingConfigPage Integration', () => {
 		});
 
 		// Modify multiple fields
-		const rsiPeriodInput = screen.getByLabelText(/RSI Period/i);
+		const rsiPeriodInput = await screen.findByLabelText(/RSI Period/i);
 		fireEvent.change(rsiPeriodInput, { target: { value: '15' } });
 
-		const capitalInput = screen.getByLabelText(/Capital per Trade/i);
+		const capitalInput = await screen.findByLabelText(/Capital per Trade/i);
 		fireEvent.change(capitalInput, { target: { value: '250000' } });
 
-		const portfolioSizeInput = screen.getByLabelText(/Max Portfolio Size/i);
+		const portfolioSizeInput = await screen.findByLabelText(/Max Portfolio Size/i);
 		fireEvent.change(portfolioSizeInput, { target: { value: '8' } });
 
 		// Save
-		const saveButton = screen.getByRole('button', { name: /Save Changes/i });
+		const [saveButton] = screen.getAllByRole('button', { name: /Save Changes/i });
 		fireEvent.click(saveButton);
 
 		// Verify all updates were sent
@@ -133,7 +135,8 @@ describe('TradingConfigPage Integration', () => {
 					rsi_period: 15,
 					user_capital: 250000,
 					max_portfolio_size: 8,
-				})
+				}),
+				expect.any(Object)
 			);
 		});
 	});
@@ -152,17 +155,17 @@ describe('TradingConfigPage Integration', () => {
 		});
 
 		// Find and click preset button
-		const presetButtons = screen.getAllByRole('button', { name: /Apply Preset/i });
+		const presetButtons = await screen.findAllByRole('button', { name: /Apply Preset/i });
 		if (presetButtons.length > 0) {
 			fireEvent.click(presetButtons[0]);
 
 			// Verify unsaved changes appear
 			await waitFor(() => {
-				expect(screen.getByText(/Unsaved changes/i)).toBeInTheDocument();
+				expect(screen.getByText(/You have unsaved changes/i)).toBeInTheDocument();
 			});
 
 			// Save
-			const saveButton = screen.getByRole('button', { name: /Save Changes/i });
+			const [saveButton] = screen.getAllByRole('button', { name: /Save Changes/i });
 			fireEvent.click(saveButton);
 
 			// Verify update was called
@@ -186,7 +189,7 @@ describe('TradingConfigPage Integration', () => {
 		});
 
 		// Modify a field
-		const rsiPeriodInput = screen.getByLabelText(/RSI Period/i);
+		const rsiPeriodInput = await screen.findByLabelText(/RSI Period/i);
 		fireEvent.change(rsiPeriodInput, { target: { value: '15' } });
 
 		// Wait for sticky bar
@@ -223,7 +226,7 @@ describe('TradingConfigPage Integration', () => {
 		});
 
 		// Click reset
-		const resetButton = screen.getByRole('button', { name: /Reset to Defaults/i });
+		const [resetButton] = await screen.findAllByRole('button', { name: /Reset to Defaults/i });
 		fireEvent.click(resetButton);
 
 		// Verify reset API was called

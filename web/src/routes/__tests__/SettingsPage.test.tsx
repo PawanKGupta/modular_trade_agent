@@ -4,9 +4,30 @@ import { SettingsPage } from '../dashboard/SettingsPage';
 import { withProviders } from '@/test/utils';
 
 describe('SettingsPage', () => {
+	const renderPage = () =>
+		render(
+			withProviders(
+				<MemoryRouter initialEntries={['/dashboard/settings']}>
+					<SettingsPage />
+				</MemoryRouter>
+			)
+		);
+
+	const switchToBroker = async (options?: { showFull?: boolean }) => {
+		await screen.findByText(/Trading mode/i);
+		const brokerRadio = screen.getByLabelText(/Kotak Neo/i);
+		fireEvent.click(brokerRadio);
+
+		if (options?.showFull) {
+			const toggleButtons = await screen.findAllByRole('button', { name: /Full Credentials/i });
+			fireEvent.click(toggleButtons[0]);
+			await screen.findByRole('button', { name: /Hide Full Credentials/i });
+		}
+	};
+
 	it('loads default Paper and saves Broker', async () => {
-		render(withProviders(<MemoryRouter initialEntries={['/dashboard/settings']}><SettingsPage /></MemoryRouter>));
-		expect(await screen.findByText(/Trading mode/i)).toBeInTheDocument();
+		renderPage();
+		await screen.findByText(/Trading mode/i);
 		// default paper checked
 		const paper = screen.getByLabelText(/Paper Trade/i) as HTMLInputElement;
 		expect(paper.checked).toBe(true);
@@ -21,41 +42,30 @@ describe('SettingsPage', () => {
 	});
 
 	it('shows broker credentials section when broker mode is selected', async () => {
-		render(withProviders(<MemoryRouter initialEntries={['/dashboard/settings']}><SettingsPage /></MemoryRouter>));
-		await screen.findByText(/Trading mode/i);
-
-		// Switch to broker mode
-		const brokerRadio = screen.getByLabelText(/Kotak Neo/i);
-		fireEvent.click(brokerRadio);
+		renderPage();
+		await switchToBroker();
 
 		// Should show broker credentials section
 		await waitFor(() => {
 			expect(screen.getByText(/Basic Credentials/i)).toBeInTheDocument();
-			expect(screen.getByText(/API Key/i)).toBeInTheDocument();
-			expect(screen.getByText(/API Secret/i)).toBeInTheDocument();
+			expect(screen.getByText(/API Key \(Consumer Key\)/i)).toBeInTheDocument();
+			expect(screen.getByText(/API Secret \(Consumer Secret\)/i)).toBeInTheDocument();
 			expect(screen.getByText(/Full Authentication Credentials/i)).toBeInTheDocument();
 		});
 	});
 
 	it('allows saving broker credentials', async () => {
-		render(withProviders(<MemoryRouter initialEntries={['/dashboard/settings']}><SettingsPage /></MemoryRouter>));
-		await screen.findByText(/Trading mode/i);
+		renderPage();
+		await switchToBroker({ showFull: true });
 
-		// Switch to broker mode
-		const brokerRadio = screen.getByLabelText(/Kotak Neo/i);
-		fireEvent.click(brokerRadio);
-
-		await waitFor(() => screen.getByPlaceholderText(/Enter API Key/i));
-
-		// Enter credentials
-		const apiKeyInput = screen.getByPlaceholderText(/Enter API Key/i);
+		const apiKeyInput = await screen.findByPlaceholderText(/Enter API Key/i);
 		const apiSecretInput = screen.getByPlaceholderText(/Enter API Secret/i);
 
 		fireEvent.change(apiKeyInput, { target: { value: 'test-api-key' } });
 		fireEvent.change(apiSecretInput, { target: { value: 'test-api-secret' } });
 
 		// Save credentials
-		const saveCredsBtn = screen.getByRole('button', { name: /Save Credentials/i });
+		const saveCredsBtn = screen.getByRole('button', { name: /Update Credentials/i });
 		fireEvent.click(saveCredsBtn);
 
 		await waitFor(() => {
@@ -64,35 +74,22 @@ describe('SettingsPage', () => {
 	});
 
 	it('shows stored credentials indicator when credentials exist', async () => {
-		render(withProviders(<MemoryRouter initialEntries={['/dashboard/settings']}><SettingsPage /></MemoryRouter>));
-		await screen.findByText(/Trading mode/i);
-
-		// Switch to broker mode
-		const brokerRadio = screen.getByLabelText(/Kotak Neo/i);
-		fireEvent.click(brokerRadio);
+		renderPage();
+		await switchToBroker();
 
 		// Should show "Show Full Credentials" button if credentials are stored
 		await waitFor(() => {
-			const showBtn = screen.queryByText(/Show Full Credentials/i);
-			// May or may not be present depending on mock data
-			if (showBtn) {
-				expect(showBtn).toBeInTheDocument();
-			}
+			const showBtns = screen.getAllByRole('button', { name: /Show Full Credentials/i });
+			expect(showBtns.length).toBeGreaterThan(0);
+			expect(screen.getByText(/Credentials stored/i)).toBeInTheDocument();
 		});
 	});
 
 	it('allows testing basic connection', async () => {
-		render(withProviders(<MemoryRouter initialEntries={['/dashboard/settings']}><SettingsPage /></MemoryRouter>));
-		await screen.findByText(/Trading mode/i);
+		renderPage();
+		await switchToBroker({ showFull: true });
 
-		// Switch to broker mode
-		const brokerRadio = screen.getByLabelText(/Kotak Neo/i);
-		fireEvent.click(brokerRadio);
-
-		await waitFor(() => screen.getByPlaceholderText(/Enter API Key/i));
-
-		// Enter credentials
-		const apiKeyInput = screen.getByPlaceholderText(/Enter API Key/i);
+		const apiKeyInput = await screen.findByPlaceholderText(/Enter API Key/i);
 		const apiSecretInput = screen.getByPlaceholderText(/Enter API Secret/i);
 
 		fireEvent.change(apiKeyInput, { target: { value: 'test-key' } });
@@ -114,17 +111,10 @@ describe('SettingsPage', () => {
 	});
 
 	it('allows testing full connection', async () => {
-		render(withProviders(<MemoryRouter initialEntries={['/dashboard/settings']}><SettingsPage /></MemoryRouter>));
-		await screen.findByText(/Trading mode/i);
+		renderPage();
+		await switchToBroker({ showFull: true });
 
-		// Switch to broker mode
-		const brokerRadio = screen.getByLabelText(/Kotak Neo/i);
-		fireEvent.click(brokerRadio);
-
-		await waitFor(() => screen.getByPlaceholderText(/Enter API Key/i));
-
-		// Enter basic credentials
-		const apiKeyInput = screen.getByPlaceholderText(/Enter API Key/i);
+		const apiKeyInput = await screen.findByPlaceholderText(/Enter API Key/i);
 		const apiSecretInput = screen.getByPlaceholderText(/Enter API Secret/i);
 
 		fireEvent.change(apiKeyInput, { target: { value: 'test-key' } });
@@ -134,15 +124,7 @@ describe('SettingsPage', () => {
 		const fullTestRadio = screen.getByLabelText(/Full Test/i);
 		fireEvent.click(fullTestRadio);
 
-		await waitFor(() => {
-			// Should show full auth fields
-			expect(screen.getByPlaceholderText(/Enter mobile number/i)).toBeInTheDocument();
-			expect(screen.getByPlaceholderText(/Enter password/i)).toBeInTheDocument();
-			expect(screen.getByPlaceholderText(/Enter MPIN/i)).toBeInTheDocument();
-		});
-
-		// Enter full auth credentials
-		const mobileInput = screen.getByPlaceholderText(/Enter mobile number/i);
+		const mobileInput = await screen.findByPlaceholderText(/Enter mobile number/i);
 		const passwordInput = screen.getByPlaceholderText(/Enter password/i);
 		const mpinInput = screen.getByPlaceholderText(/Enter MPIN/i);
 
