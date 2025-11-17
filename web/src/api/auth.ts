@@ -1,4 +1,4 @@
-import { api, setAccessToken } from './client';
+import { api, setAccessToken, setRefreshToken } from './client';
 
 export type MeResponse = {
 	id: number;
@@ -7,18 +7,31 @@ export type MeResponse = {
 	roles: ('admin' | 'user')[];
 };
 
+type TokenResponse = {
+	access_token: string;
+	refresh_token?: string | null;
+	token_type?: string;
+};
+
+function persistTokens(tokens: TokenResponse) {
+	const access = tokens.access_token;
+	const refresh = tokens.refresh_token ?? null;
+	if (access) {
+		setAccessToken(access);
+	}
+	setRefreshToken(refresh);
+}
+
 export async function signup(email: string, password: string, name?: string) {
-	const res = await api.post('/auth/signup', { email, password, name });
-	const token = res.data?.access_token as string;
-	setAccessToken(token);
-	return token;
+	const res = await api.post<TokenResponse>('/auth/signup', { email, password, name });
+	persistTokens(res.data);
+	return res.data;
 }
 
 export async function login(email: string, password: string) {
-	const res = await api.post('/auth/login', { email, password });
-	const token = res.data?.access_token as string;
-	setAccessToken(token);
-	return token;
+	const res = await api.post<TokenResponse>('/auth/login', { email, password });
+	persistTokens(res.data);
+	return res.data;
 }
 
 export async function me(): Promise<MeResponse> {
@@ -28,4 +41,5 @@ export async function me(): Promise<MeResponse> {
 
 export function logout() {
 	setAccessToken(null);
+	setRefreshToken(null);
 }

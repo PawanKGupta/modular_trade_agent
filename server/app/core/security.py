@@ -25,15 +25,27 @@ def hash_password(plain: str) -> str:
     return bcrypt.hash(_truncate_for_bcrypt(plain))
 
 
-def create_access_token(
-    subject: str, extra: dict[str, Any] | None = None, expires_minutes: int = None
+def create_jwt_token(
+    subject: str,
+    *,
+    extra: dict[str, Any] | None = None,
+    expires_minutes: int | None = None,
+    expires_days: int | None = None,
 ) -> str:
-    if expires_minutes is None:
+    """Create a signed JWT token."""
+    if expires_minutes is None and expires_days is None:
         expires_minutes = settings.jwt_access_minutes
-    exp = datetime.now(tz=UTC) + timedelta(minutes=expires_minutes)
-    to_encode = {"sub": subject, "exp": exp}
+
+    exp = datetime.now(tz=UTC)
+    if expires_minutes is not None:
+        exp += timedelta(minutes=expires_minutes)
+    if expires_days is not None:
+        exp += timedelta(days=expires_days)
+
+    to_encode: dict[str, Any] = {"sub": subject, "exp": exp}
     if extra:
         to_encode.update(extra)
+
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 

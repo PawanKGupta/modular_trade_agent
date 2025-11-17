@@ -8,9 +8,16 @@ from src.infrastructure.db.models import UserRole, Users
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.user_repository import UserRepository
 
+from ..core.config import settings
 from ..core.deps import get_current_user, get_db
-from ..core.security import create_access_token, verify_password
-from ..schemas.auth import LoginRequest, MeResponse, SignupRequest, TokenResponse
+from ..core.security import create_jwt_token, decode_token, verify_password
+from ..schemas.auth import (
+    LoginRequest,
+    MeResponse,
+    RefreshRequest,
+    SignupRequest,
+    TokenResponse,
+)
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
@@ -33,11 +40,17 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         logger.info(f"User created id={user.id}, creating default settings...")
         SettingsRepository(db).ensure_default(user.id)
         logger.info("Default settings created, issuing token...")
-        access_token = create_access_token(
-            str(user.id), extra={"uid": user.id, "roles": [user.role.value]}
+        access_token = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value]},
+        )
+        refresh_token = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value], "type": "refresh"},
+            expires_days=settings.jwt_refresh_days,
         )
         logger.info("Signup success")
-        return TokenResponse(access_token=access_token)
+        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
     except HTTPException:
         raise
     except Exception as e:
@@ -70,10 +83,16 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
             )
-        access_token = create_access_token(
-            str(user.id), extra={"uid": user.id, "roles": [user.role.value]}
+        access_token = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value]},
         )
-        return TokenResponse(access_token=access_token)
+        refresh_token = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value], "type": "refresh"},
+            expires_days=settings.jwt_refresh_days,
+        )
+        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
     except HTTPException:
         raise
     except Exception as e:
@@ -89,3 +108,45 @@ def me(current: Users = Depends(get_current_user)):
         name=current.name,
         roles=[current.role.value],
     )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)):
+    """
+    Exchange a valid refresh token for a new access token pair.
+    """
+    try:
+        if not payload.refresh_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Missing refresh token"
+            )
+        decoded = decode_token(payload.refresh_token)
+        if not decoded or decoded.get("type") != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token",
+            )
+        user_id = decoded.get("uid")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token",
+            )
+        user = UserRepository(db).get_by_id(int(user_id))
+        if not user or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
+        access_token = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value]},
+        )
+        new_refresh = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value], "type": "refresh"},
+            expires_days=settings.jwt_refresh_days,
+        )
+        return TokenResponse(access_token=access_token, refresh_token=new_refresh)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Refresh token exchange failed")
+        raise HTTPException(status_code=500, detail="Refresh failed") from exc

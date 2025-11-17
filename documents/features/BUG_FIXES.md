@@ -51,6 +51,35 @@ The Orders table now calls `formatPrice(o.price)` for every row.
 
 ---
 
+## Bug #59: Session Lost After Browser Refresh (HIGH)
+
+**Date Fixed**: November 17, 2025
+**Status**: ✅ Fixed
+
+### Description
+Refreshing the dashboard wiped the in-memory Zustand session store and the UI immediately redirected to `/login`. Users had to re-enter credentials even though their refresh token was still valid.
+
+### Root Cause
+- The frontend only persisted the short-lived access token (`ta_access_token`) in `localStorage`.
+- On reload, `useSessionStore.initialize()` looked for an access token only; if absent, it assumed the user was logged out.
+- The API offered no `/auth/refresh` endpoint nor refresh tokens, so there was no way to mint a new access token without re-entering credentials.
+
+### Fix Applied
+- Backend:
+  - Added long-lived refresh tokens via `create_jwt_token(..., expires_days=settings.jwt_refresh_days)` during signup/login.
+  - Created `/api/v1/auth/refresh` endpoint with a dedicated `RefreshRequest` schema and verification logic (`type="refresh"` claims, user checks).
+- Frontend:
+  - Stored both `ta_access_token` and `ta_refresh_token` and added an Axios response interceptor that transparently exchanges a refresh token on 401s.
+  - `useSessionStore.initialize()` now calls `requestTokenRefresh()` whenever only a refresh token is available, preventing logout on reload.
+  - Added regression test `web/src/state/__tests__/sessionStore.test.ts` to ensure initialization falls back to the refresh token path.
+
+### Impact
+- Seamless session continuity across hard reloads.
+- Reduced customer friction during demos and manual testing.
+- Clearer contract between frontend and backend regarding token lifetimes and refresh cadence.
+
+---
+
 ## Bug #1: Reentry Logic After RSI Reset (CRITICAL)
 
 **Date Fixed**: October 31, 2024

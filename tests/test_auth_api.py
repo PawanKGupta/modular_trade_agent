@@ -1,4 +1,4 @@
-from server.app.core.security import create_access_token
+from server.app.core.security import create_jwt_token
 from src.infrastructure.db.models import UserRole
 from src.infrastructure.persistence.user_repository import UserRepository
 
@@ -33,7 +33,7 @@ def test_admin_users_requires_admin(client, db_session):
     u = UserRepository(db_session).create_user(
         email="admin@example.com", password="Secret123", role=UserRole.ADMIN
     )
-    admin_token = create_access_token(str(u.id), extra={"uid": u.id, "roles": [u.role.value]})
+    admin_token = create_jwt_token(str(u.id), extra={"uid": u.id, "roles": [u.role.value]})
 
     # Access admin list
     resp = client.get("/api/v1/admin/users", headers={"Authorization": f"Bearer {admin_token}"})

@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415
 import os
 import sys
 
@@ -39,8 +40,16 @@ def test_signup_login_me_and_settings():
         "/api/v1/auth/signup", json={"email": email, "password": "Secret123", "name": "U1"}
     )
     assert resp.status_code == 200, resp.text
-    token = resp.json()["access_token"]
+    tokens = resp.json()
+    token = tokens["access_token"]
+    assert tokens["refresh_token"]
     headers = {"Authorization": f"Bearer {token}"}
+    # refresh token exchange
+    refresh = client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert refresh.status_code == 200
+    refreshed = refresh.json()
+    assert refreshed["access_token"]
+    assert refreshed["refresh_token"]
     # me
     me = client.get("/api/v1/auth/me", headers=headers)
     assert me.status_code == 200
@@ -74,7 +83,7 @@ def test_admin_endpoints_and_constraints():
         json={"email": f"n{random.randint(1, 1_000_000)}@example.com", "password": "Secret123"},
     )
     # create two admins directly via repo
-    from server.app.core.security import create_access_token
+    from server.app.core.security import create_jwt_token
     from src.infrastructure.db.models import UserRole
     from src.infrastructure.db.session import SessionLocal
     from src.infrastructure.persistence.user_repository import UserRepository
@@ -90,7 +99,7 @@ def test_admin_endpoints_and_constraints():
     a1_id, a2_id = a1.id, a2.id
     db.close()
     # token for a1
-    admin_token = create_access_token(str(a1_id), extra={"uid": a1_id, "roles": ["admin"]})
+    admin_token = create_jwt_token(str(a1_id), extra={"uid": a1_id, "roles": ["admin"]})
     ah = {"Authorization": f"Bearer {admin_token}"}
     # list users
     lst = client.get("/api/v1/admin/users", headers=ah)

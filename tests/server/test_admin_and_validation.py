@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415
 import os
 import random
 import sys
@@ -29,7 +30,7 @@ def make_client():
 def test_admin_create_and_update_and_forbidden_for_non_admin():
     client = make_client()
     # create admin directly via repo and get token
-    from server.app.core.security import create_access_token
+    from server.app.core.security import create_jwt_token
     from src.infrastructure.db.models import UserRole
     from src.infrastructure.db.session import SessionLocal
     from src.infrastructure.persistence.user_repository import UserRepository
@@ -40,7 +41,7 @@ def test_admin_create_and_update_and_forbidden_for_non_admin():
         f"adm{random.randint(1, 1_000_000)}@example.com", "Admin123", role=UserRole.ADMIN
     )
     db.close()
-    admin_token = create_access_token(str(admin.id), extra={"uid": admin.id, "roles": ["admin"]})
+    admin_token = create_jwt_token(str(admin.id), extra={"uid": admin.id, "roles": ["admin"]})
     ah = {"Authorization": f"Bearer {admin_token}"}
     # admin: create user
     email_new = f"user{random.randint(1, 1_000_000)}@example.com"

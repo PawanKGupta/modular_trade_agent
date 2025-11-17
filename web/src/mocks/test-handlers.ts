@@ -176,11 +176,26 @@ const filterErrorLogs = (logs: ErrorLogMock[], url: URL) => {
 
 export const handlers = [
 	// auth
-	http.post(API('/auth/login'), async ({ request }) => {
-		return HttpResponse.json({ access_token: 'test-token', token_type: 'bearer' });
+http.post(API('/auth/login'), async () => {
+		return HttpResponse.json({
+			access_token: 'test-token',
+			refresh_token: 'refresh-token',
+			token_type: 'bearer',
+		});
 	}),
-	http.post(API('/auth/signup'), async () => {
-		return HttpResponse.json({ access_token: 'test-token', token_type: 'bearer' });
+http.post(API('/auth/signup'), async () => {
+		return HttpResponse.json({
+			access_token: 'test-token',
+			refresh_token: 'refresh-token',
+			token_type: 'bearer',
+		});
+	}),
+http.post(API('/auth/refresh'), async () => {
+		return HttpResponse.json({
+			access_token: 'test-token-2',
+			refresh_token: 'refresh-token-2',
+			token_type: 'bearer',
+		});
 	}),
 	http.get(API('/auth/me'), async () => {
 		return HttpResponse.json({ id: 1, email: 'test@example.com', roles: ['admin'] });
