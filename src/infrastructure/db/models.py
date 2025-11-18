@@ -203,6 +203,31 @@ class Signals(Base):
     news_sentiment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     candle_analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     chart_quality: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Additional analysis fields
+    final_verdict: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # Verdict after backtest reclassification
+    rule_verdict: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # Rule-based verdict
+    verdict_source: Mapped[str | None] = mapped_column(
+        String(16), nullable=True
+    )  # 'ml' or 'rule_based'
+    backtest_confidence: Mapped[str | None] = mapped_column(
+        String(16), nullable=True
+    )  # 'Low', 'Medium', 'High'
+    vol_strong: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_above_ema200: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Dip buying features
+    dip_depth_from_20d_high_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    consecutive_red_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dip_speed_pct_per_day: Mapped[float | None] = mapped_column(Float, nullable=True)
+    decline_rate_slowing: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    volume_green_vs_red_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    support_hold_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Additional metadata
+    liquidity_recommendation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    trading_params: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Timestamp
     ts: Mapped[datetime] = mapped_column(DateTime, default=ist_now, index=True, nullable=False)
 

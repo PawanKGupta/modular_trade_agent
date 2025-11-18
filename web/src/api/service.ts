@@ -94,6 +94,9 @@ export interface IndividualServiceStatus {
 	next_execution_at: string | null;
 	process_id: number | null;
 	schedule_enabled: boolean;
+	last_execution_status: 'success' | 'failed' | 'skipped' | 'running' | null;
+	last_execution_duration: number | null;
+	last_execution_details: Record<string, any> | null;
 }
 
 export interface IndividualServicesStatus {

@@ -83,6 +83,9 @@ class IndividualServiceStatus(BaseModel):
     next_execution_at: datetime | None = None
     process_id: int | None = None
     schedule_enabled: bool = True
+    last_execution_status: Literal["success", "failed", "skipped", "running"] | None = None
+    last_execution_duration: float | None = None
+    last_execution_details: dict[str, Any] | None = None
 
 
 class IndividualServicesStatusResponse(BaseModel):

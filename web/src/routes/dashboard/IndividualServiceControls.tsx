@@ -76,14 +76,27 @@ export function IndividualServiceControls({
 			}
 			qc.invalidateQueries({ queryKey: ['individualServicesStatus'] });
 			qc.invalidateQueries({ queryKey: ['serviceTasks'] });
+			qc.invalidateQueries({ queryKey: ['buying-zone'] });
 		},
 	});
 
 	const taskDisplayName = TASK_DISPLAY_NAMES[service.task_name] || service.task_name;
 	const taskDescription = TASK_DESCRIPTIONS[service.task_name] || '';
+	const lastSummary =
+		(service.last_execution_details?.analysis_summary as
+			| {
+					inserted?: number;
+					updated?: number;
+					skipped?: number;
+					processed?: number;
+					error?: string;
+				}
+			| undefined) ?? undefined;
 
 	const canStartIndividual = !unifiedServiceRunning && !service.is_running;
-	const canRunOnce = !service.is_running; // Can run once even if unified is running
+	// "Run Once" is disabled if service is running OR if there's a "running" execution
+	const isRunOnceRunning = service.last_execution_status === 'running';
+	const canRunOnce = !service.is_running && !isRunOnceRunning; // Can run once even if unified is running
 
 	const handleRunOnce = () => {
 		runOnceMutation.mutate(service.task_name);
@@ -139,6 +152,39 @@ export function IndividualServiceControls({
 					</div>
 				)}
 			</div>
+			{service.last_execution_status && (
+				<div className="mb-3">
+					<div className="text-[var(--muted)] mb-1">Last Result</div>
+					<div
+						className={`text-sm font-medium ${
+							service.last_execution_status === 'success'
+								? 'text-green-400'
+								: service.last_execution_status === 'failed'
+									? 'text-red-400'
+									: service.last_execution_status === 'running'
+										? 'text-blue-400'
+										: 'text-yellow-400'
+						}`}
+					>
+						{service.last_execution_status === 'success'
+							? 'Success'
+							: service.last_execution_status === 'failed'
+								? 'Failed'
+								: service.last_execution_status === 'running'
+									? 'Running'
+									: 'Skipped'}
+						{typeof service.last_execution_duration === 'number' &&
+							` • ${service.last_execution_duration.toFixed(1)}s`}
+					</div>
+					{lastSummary && (
+						<div className="text-xs text-[var(--muted)] mt-1">
+							Processed {lastSummary.processed ?? 0} • Inserted {lastSummary.inserted ?? 0} • Updated{' '}
+							{lastSummary.updated ?? 0}
+							{lastSummary.error && <span className="text-red-400 ml-1">({lastSummary.error})</span>}
+						</div>
+					)}
+				</div>
+			)}
 
 			{/* Conflict Warning */}
 			{showConflictWarning && conflictMessage && (
@@ -180,19 +226,21 @@ export function IndividualServiceControls({
 				</button>
 				<button
 					onClick={handleRunOnce}
-					disabled={!canRunOnce || runOnceMutation.isPending}
+					disabled={!canRunOnce || runOnceMutation.isPending || isRunOnceRunning}
 					className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-						!canRunOnce || runOnceMutation.isPending
+						!canRunOnce || runOnceMutation.isPending || isRunOnceRunning
 							? 'bg-gray-600 text-gray-400 cursor-not-allowed'
 							: 'bg-blue-600 hover:bg-blue-700 text-white'
 					}`}
 					title={
 						service.is_running
 							? 'Service is already running'
-							: 'Run this task once immediately'
+							: isRunOnceRunning
+								? 'Task is currently running'
+								: 'Run this task once immediately'
 					}
 				>
-					{runOnceMutation.isPending ? 'Running...' : 'Run Once'}
+					{runOnceMutation.isPending || isRunOnceRunning ? 'Running...' : 'Run Once'}
 				</button>
 			</div>
 		</div>

@@ -158,6 +158,9 @@ def get_individual_services_status(
                 next_execution_at=info["next_execution_at"],
                 process_id=info["process_id"],
                 schedule_enabled=info["schedule_enabled"],
+                last_execution_status=info.get("last_execution_status"),
+                last_execution_duration=info.get("last_execution_duration"),
+                last_execution_details=info.get("last_execution_details"),
             )
             for task_name, info in status_dict.items()
         }

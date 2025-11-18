@@ -5,6 +5,8 @@ Manages individual service lifecycle, execution, and process management.
 
 from __future__ import annotations
 
+import ast
+import json
 import os
 import signal
 import subprocess
@@ -17,12 +19,12 @@ from sqlalchemy.orm import Session
 
 # Import trading service module at top level to avoid linting issues
 import modules.kotak_neo_auto_trader.run_trading_service as trading_service_module  # noqa: PLC0415
-from src.application.services.broker_credentials import (
-    decrypt_broker_credentials,
-)
+from src.application.services.analysis_deduplication_service import AnalysisDeduplicationService
+from src.application.services.broker_credentials import decrypt_broker_credentials
 from src.application.services.config_converter import user_config_to_strategy_config
 from src.application.services.conflict_detection_service import ConflictDetectionService
 from src.application.services.schedule_manager import ScheduleManager
+from src.application.services.task_execution_wrapper import execute_task
 from src.infrastructure.logging import get_user_logger
 from src.infrastructure.persistence.individual_service_status_repository import (
     IndividualServiceStatusRepository,
@@ -250,7 +252,10 @@ class IndividualServiceManager:
 
             # Get broker credentials if needed
             broker_creds = None
-            if settings.trade_mode.value == "broker":
+            requires_broker_creds = (
+                task_name != "analysis" and settings.trade_mode.value == "broker"
+            )
+            if requires_broker_creds:
                 if not settings.broker_creds_encrypted:
                     raise ValueError(f"No broker credentials stored for user_id={user_id}")
                 broker_creds = decrypt_broker_credentials(settings.broker_creds_encrypted)
@@ -268,15 +273,19 @@ class IndividualServiceManager:
 
             # Update execution record
             duration = time.time() - start_time
-            self._execution_repo.db.refresh(
-                self._execution_repo.get(execution_id)
-            )  # Refresh to get latest
             execution = self._execution_repo.get(execution_id)
             if execution:
                 execution.status = "success"
                 execution.duration_seconds = duration
                 execution.details = result
                 self._execution_repo.db.commit()
+                # Ensure the commit is fully written to disk (SQLite)
+                self._execution_repo.db.flush()
+                logger.info(
+                    f"Updated execution {execution_id} status to 'success' in database",
+                    action="run_once",
+                    task_name=task_name,
+                )
 
             # Update last execution time
             self._status_repo.update_last_execution(user_id, task_name)
@@ -288,28 +297,71 @@ class IndividualServiceManager:
 
         except Exception as e:
             duration = time.time() - start_time
-            logger.error(f"Task execution failed: {task_name}", exc_info=e, action="run_once")
+            error_details = {"error": str(e), "error_type": type(e).__name__}
+            # Include traceback for better debugging
+            import traceback
 
-            # Update execution record
-            execution = self._execution_repo.get(execution_id)
-            if execution:
-                execution.status = "failed"
-                execution.duration_seconds = duration
-                execution.details = {"error": str(e)}
-                self._execution_repo.db.commit()
+            error_details["traceback"] = traceback.format_exc()
+
+            logger.error(
+                f"Task execution failed: {task_name}",
+                exc_info=e,
+                action="run_once",
+                task_name=task_name,
+            )
+
+            # Update execution record - ensure we get fresh copy and update
+            try:
+                execution = self._execution_repo.get(execution_id)
+                if execution:
+                    execution.status = "failed"
+                    execution.duration_seconds = duration
+                    execution.details = error_details
+                    self._execution_repo.db.commit()
+                    # Flush to ensure changes are immediately visible to other sessions
+                    self._execution_repo.db.flush()
+                    logger.info(
+                        f"Updated execution {execution_id} status to 'failed' in database",
+                        action="run_once",
+                        task_name=task_name,
+                    )
+                else:
+                    logger.error(
+                        f"Execution {execution_id} not found when trying to update status to 'failed'",
+                        action="run_once",
+                        task_name=task_name,
+                    )
+            except Exception as db_error:
+                logger.error(
+                    f"Failed to update execution {execution_id} status to 'failed': {db_error}",
+                    exc_info=db_error,
+                    action="run_once",
+                    task_name=task_name,
+                )
 
         finally:
-            # Remove thread reference
+            # Small delay to ensure database commit is fully written and visible
+            # This helps with SQLite transaction isolation between threads
+            time.sleep(0.2)
+            # Remove thread reference after ensuring commit is visible
             thread_key = (user_id, task_name)
             if thread_key in self._run_once_threads:
                 del self._run_once_threads[thread_key]
+                logger.debug(
+                    f"Removed thread reference for {task_name}",
+                    action="run_once",
+                    task_name=task_name,
+                )
 
     def _execute_task_logic(
         self, user_id: int, task_name: str, broker_creds: dict | None, strategy_config, settings
     ) -> dict:
         """Execute the actual task logic"""
 
-        # Create TradingService instance (same as unified service)
+        if task_name == "analysis":
+            return self._run_analysis_task(user_id=user_id)
+
+        # Create TradingService instance (same as unified service) for broker-dependent tasks
         service = trading_service_module.TradingService(
             user_id=user_id,
             db_session=self.db,
@@ -341,6 +393,545 @@ class IndividualServiceManager:
         else:
             raise ValueError(f"Unknown task name: {task_name}")
 
+    def _run_analysis_task(self, user_id: int) -> dict:
+        """Execute the analysis task without requiring broker credentials"""
+        logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+
+        try:
+            max_retries = 3
+            base_delay = 30.0  # seconds
+            timeout_seconds = 1800  # 30 minutes
+
+            trade_agent_path = project_root / "trade_agent.py"
+            if not trade_agent_path.exists():
+                error_msg = f"trade_agent.py not found at {trade_agent_path}. Cannot run analysis."
+                logger.error(error_msg, action="run_analysis")
+                raise FileNotFoundError(error_msg)
+
+            results_dir = project_root / "analysis_results"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            results_json_path = results_dir / "latest_results.json"
+            if results_json_path.exists():
+                try:
+                    results_json_path.unlink()
+                except OSError:
+                    logger.warning(
+                        f"Unable to remove previous analysis results file: {results_json_path}",
+                        action="run_analysis",
+                        task_name="analysis",
+                    )
+
+            cmd = [
+                sys.executable,
+                str(trade_agent_path),
+                "--backtest",
+                "--json-output",
+                str(results_json_path),
+            ]
+            logger.info(f"Running analysis: {' '.join(cmd)}", action="run_analysis")
+
+            with execute_task(user_id, self.db, "analysis", logger) as task_context:
+                task_context["timeout_seconds"] = timeout_seconds
+                task_context["max_retries"] = max_retries
+
+                for attempt in range(max_retries):
+                    try:
+                        if attempt > 0:
+                            delay = base_delay * attempt
+                            logger.info(
+                                f"Retrying analysis attempt {attempt + 1}/{max_retries} in {delay:.0f}s",
+                                action="run_analysis",
+                                task_name="analysis",
+                            )
+                            time.sleep(delay)
+
+                        logger.info(
+                            "Starting analysis subprocess (trade_agent.py --backtest)",
+                            action="run_analysis",
+                            task_name="analysis",
+                        )
+                        result = subprocess.run(
+                            cmd,
+                            check=False,
+                            cwd=str(project_root),
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            timeout=timeout_seconds,
+                        )
+
+                        task_context["return_code"] = result.returncode
+                        stdout_tail = (
+                            result.stdout[-500:]
+                            if result.stdout and len(result.stdout) > 500
+                            else result.stdout
+                        )
+                        stderr_tail = (
+                            result.stderr[-500:]
+                            if result.stderr and len(result.stderr) > 500
+                            else result.stderr
+                        )
+
+                        if result.returncode == 0:
+                            logger.info(
+                                "Analysis subprocess completed successfully",
+                                action="run_analysis",
+                                task_name="analysis",
+                            )
+                            task_context["success"] = True
+                            if stdout_tail:
+                                task_context["stdout_tail"] = stdout_tail
+
+                            # Load and persist results (this may take time, but subprocess already completed)
+                            analysis_results = []
+                            summary = {"processed": 0, "inserted": 0, "updated": 0, "skipped": 0}
+                            try:
+                                analysis_results = self._load_analysis_results(
+                                    results_json_path, logger
+                                )
+                                summary = self._persist_analysis_results(analysis_results, logger)
+                                logger.info(
+                                    f"Analysis results persisted: {summary}",
+                                    action="run_analysis",
+                                    task_name="analysis",
+                                )
+                            except Exception as persist_error:
+                                # Log error but don't fail - subprocess already completed successfully
+                                logger.error(
+                                    f"Failed to persist analysis results (but subprocess completed): {persist_error}",
+                                    exc_info=persist_error,
+                                    action="run_analysis",
+                                    task_name="analysis",
+                                )
+                                summary["error"] = str(persist_error)
+
+                            task_context["analysis_summary"] = summary
+                            task_context["results_count"] = len(analysis_results)
+
+                            return {
+                                "task": "analysis",
+                                "status": "completed",
+                                "stdout_tail": stdout_tail,
+                                "analysis_summary": summary,
+                                "results_count": len(analysis_results),
+                            }
+
+                        error_msg = f"Analysis failed with return code {result.returncode}"
+                        if stderr_tail:
+                            error_msg += f"\nSTDERR (tail):\n{stderr_tail}"
+                        if stdout_tail:
+                            error_msg += f"\nSTDOUT (tail):\n{stdout_tail}"
+                        task_context["error_message"] = error_msg
+
+                        if (
+                            self._looks_like_network_error(result.stdout, result.stderr)
+                            and attempt < max_retries - 1
+                        ):
+                            logger.warning(
+                                f"{error_msg}\nDetected transient/network issue. Retrying...",
+                                action="run_analysis",
+                                task_name="analysis",
+                            )
+                            continue
+
+                        raise RuntimeError(error_msg)
+
+                    except subprocess.TimeoutExpired:
+                        timeout_msg = (
+                            f"Analysis timed out after {timeout_seconds} seconds "
+                            f"(attempt {attempt + 1}/{max_retries})"
+                        )
+                        logger.error(
+                            timeout_msg,
+                            action="run_analysis",
+                            task_name="analysis",
+                        )
+                        task_context["timeout"] = True
+                        if attempt < max_retries - 1:
+                            continue
+                        raise RuntimeError(timeout_msg)
+
+                    except Exception as e:
+                        logger.error(
+                            f"Analysis subprocess failed: {e}",
+                            exc_info=e,
+                            action="run_analysis",
+                            task_name="analysis",
+                        )
+                        task_context["exception"] = str(e)
+                        if (
+                            isinstance(e, RuntimeError)
+                            and "network" in str(e).lower()
+                            and attempt < max_retries - 1
+                        ):
+                            continue
+                        raise
+
+                raise RuntimeError("Analysis failed after all retry attempts")
+
+        except Exception as e:
+            # Log the error with full context
+            logger.error(
+                f"Analysis task failed: {str(e)}",
+                exc_info=e,
+                action="run_analysis",
+                task_name="analysis",
+            )
+            raise
+
+    @staticmethod
+    def _looks_like_network_error(stdout: str | None, stderr: str | None) -> bool:
+        """Heuristic to detect network-related errors so we can retry safely"""
+        combined = ((stdout or "") + (stderr or "")).lower()
+        network_keywords = ["timeout", "connection", "socket", "network", "urllib3", "recv_into"]
+        return any(keyword in combined for keyword in network_keywords)
+
+    def _load_analysis_results(self, results_path: Path, logger) -> list[dict]:
+        """Load analysis results from JSON file produced by trade_agent"""
+        if not results_path.exists():
+            logger.warning(
+                f"Analysis results JSON not found at {results_path}",
+                action="run_analysis",
+                task_name="analysis",
+            )
+            return []
+
+        try:
+            with results_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and "results" in data:
+                data = data["results"]
+            if not isinstance(data, list):
+                logger.warning(
+                    "Analysis results JSON format invalid (expected list)",
+                    action="run_analysis",
+                    task_name="analysis",
+                )
+                return []
+
+            return data
+        except Exception as e:
+            logger.error(
+                f"Failed to load analysis results JSON: {e}",
+                exc_info=e,
+                action="run_analysis",
+                task_name="analysis",
+            )
+            return []
+
+    def _persist_analysis_results(self, results: list[dict], logger) -> dict[str, int]:
+        """Persist analysis results to Signals table using deduplication rules"""
+        logger.info(
+            f"Starting persistence: {len(results)} results to process",
+            action="run_analysis",
+            task_name="analysis",
+        )
+
+        processed_rows = []
+        for row in results:
+            if not isinstance(row, dict) or row.get("status") not in {"success", None}:
+                continue
+
+            verdict = row.get("final_verdict") or row.get("verdict") or row.get("ml_verdict")
+            if verdict not in {"buy", "strong_buy"}:
+                continue
+
+            normalized = self._normalize_analysis_row(row)
+            if normalized:
+                processed_rows.append(normalized)
+
+        summary = {
+            "processed": len(processed_rows),
+            "inserted": 0,
+            "updated": 0,
+            "skipped": len(results) - len(processed_rows),
+        }
+
+        logger.info(
+            f"Normalized {len(processed_rows)} rows from {len(results)} results",
+            action="run_analysis",
+            task_name="analysis",
+        )
+
+        if not processed_rows:
+            logger.warning(
+                "No processed rows to persist to Signals table",
+                action="run_analysis",
+                task_name="analysis",
+            )
+            return summary
+
+        try:
+            dedup_service = AnalysisDeduplicationService(self.db)
+
+            should_update = dedup_service.should_update_signals()
+            logger.info(
+                f"should_update_signals() returned: {should_update}",
+                action="run_analysis",
+                task_name="analysis",
+            )
+
+            if not should_update:
+                from datetime import time as time_class  # noqa: PLC0415
+
+                from src.infrastructure.db.timezone_utils import ist_now
+
+                now = ist_now()
+                current_time = now.time()
+                reason = "unknown"
+                if dedup_service.is_weekend_or_holiday(now.date()):
+                    if current_time >= time_class(9, 0):
+                        reason = "weekend/holiday (after 9AM)"
+                    else:
+                        reason = "weekend/holiday (unexpected - should allow before 9AM)"
+                elif time_class(9, 0) <= current_time < time_class(16, 0):
+                    reason = (
+                        f"during trading hours (9AM-4PM, current time: {now.strftime('%H:%M:%S')})"
+                    )
+                else:
+                    reason = (
+                        f"unexpected time restriction (current time: {now.strftime('%H:%M:%S')})"
+                    )
+
+                logger.warning(
+                    f"Signals update skipped: {reason}. Analysis completed but results not persisted to Signals table.",
+                    action="run_analysis",
+                    task_name="analysis",
+                )
+                summary["skipped_reason"] = reason
+                summary["skipped"] = len(processed_rows)
+                return summary
+
+            logger.info(
+                f"Calling deduplicate_and_update_signals with {len(processed_rows)} signals",
+                action="run_analysis",
+                task_name="analysis",
+            )
+            # Skip time check since we already checked it above
+            counts = dedup_service.deduplicate_and_update_signals(
+                processed_rows, skip_time_check=True
+            )
+            logger.info(
+                f"deduplicate_and_update_signals returned: {counts}",
+                action="run_analysis",
+                task_name="analysis",
+            )
+            summary.update(counts)
+            logger.info(
+                f"Signals updated successfully: {summary}",
+                action="run_analysis",
+                task_name="analysis",
+            )
+            return summary
+        except Exception as e:
+            logger.error(
+                f"Failed to persist analysis results: {e}",
+                exc_info=e,
+                action="run_analysis",
+                task_name="analysis",
+            )
+            summary["error"] = str(e)
+            return summary
+
+    def _normalize_analysis_row(self, row: dict) -> dict | None:
+        """Normalize raw analysis result for persistence"""
+        ticker = row.get("ticker") or row.get("symbol")
+        if not ticker:
+            return None
+
+        normalized: dict[str, object] = {"ticker": ticker, "symbol": ticker.replace(".NS", "")}
+
+        if "rsi10" in row:
+            normalized["rsi10"] = row.get("rsi10")
+        elif "rsi" in row:
+            normalized["rsi10"] = row.get("rsi")
+
+        if "ema9" in row:
+            normalized["ema9"] = row.get("ema9")
+        if "ema200" in row:
+            normalized["ema200"] = row.get("ema200")
+        if "distance_to_ema9" in row:
+            normalized["distance_to_ema9"] = row.get("distance_to_ema9")
+
+        if "volume_ratio" not in normalized:
+            volume_analysis = row.get("volume_analysis")
+            if isinstance(volume_analysis, dict):
+                volume_ratio = volume_analysis.get("ratio")
+                if volume_ratio is not None:
+                    normalized["volume_ratio"] = volume_ratio
+
+        if "clean_chart" not in normalized:
+            chart_quality = row.get("chart_quality")
+            if isinstance(chart_quality, dict):
+                clean_status = (
+                    chart_quality.get("status") == "clean" or chart_quality.get("passed") is True
+                )
+                if clean_status:
+                    normalized["clean_chart"] = True
+                elif "passed" in chart_quality:
+                    normalized["clean_chart"] = chart_quality.get("passed")
+
+        if "monthly_support_dist" not in normalized:
+            timeframe_analysis = row.get("timeframe_analysis")
+            if isinstance(timeframe_analysis, dict):
+                daily_analysis = timeframe_analysis.get("daily_analysis", {})
+                if isinstance(daily_analysis, dict):
+                    support_analysis = daily_analysis.get("support_analysis", {})
+                    if isinstance(support_analysis, dict):
+                        support_dist = support_analysis.get("distance_pct")
+                        if support_dist is not None:
+                            normalized["monthly_support_dist"] = support_dist
+
+        if "backtest_score" not in normalized:
+            if "backtest_score" in row:
+                normalized["backtest_score"] = row.get("backtest_score")
+            else:
+                backtest = row.get("backtest")
+                if isinstance(backtest, dict):
+                    normalized["backtest_score"] = backtest.get("score")
+                elif isinstance(backtest, (int, float)):
+                    normalized["backtest_score"] = backtest
+        allowed_keys = {
+            "rsi10",
+            "rsi",
+            "ema9",
+            "ema200",
+            "distance_to_ema9",
+            "clean_chart",
+            "monthly_support_dist",
+            "confidence",
+            "backtest_score",
+            "combined_score",
+            "strength_score",
+            "priority_score",
+            "ml_verdict",
+            "ml_confidence",
+            "ml_probabilities",
+            "buy_range",
+            "target",
+            "stop",
+            "last_close",
+            "pe",
+            "pb",
+            "fundamental_assessment",
+            "fundamental_ok",
+            "avg_vol",
+            "today_vol",
+            "volume_analysis",
+            "volume_pattern",
+            "volume_description",
+            "vol_ok",
+            "volume_ratio",
+            "verdict",
+            "final_verdict",
+            "rule_verdict",
+            "verdict_source",
+            "backtest_confidence",
+            "vol_strong",
+            "is_above_ema200",
+            "dip_depth_from_20d_high_pct",
+            "consecutive_red_days",
+            "dip_speed_pct_per_day",
+            "decline_rate_slowing",
+            "volume_green_vs_red_ratio",
+            "support_hold_count",
+            "signals",
+            "justification",
+            "timeframe_analysis",
+            "news_sentiment",
+            "candle_analysis",
+            "chart_quality",
+            "execution_capital",
+            "max_capital",
+            "capital_adjusted",
+            "liquidity_recommendation",
+            "trading_params",
+        }
+
+        # Boolean fields that need conversion from string to bool
+        boolean_fields = {
+            "clean_chart",
+            "fundamental_ok",
+            "vol_ok",
+            "vol_strong",
+            "is_above_ema200",
+            "decline_rate_slowing",
+            "capital_adjusted",
+        }
+
+        for key in allowed_keys:
+            # Skip if already set from special handling above
+            if key in normalized:
+                continue
+            if key not in row:
+                continue
+            value = row.get(key)
+
+            if key in boolean_fields and isinstance(value, str):
+                value = value.lower() in ("true", "1", "yes", "on")
+            elif key in {
+                "buy_range",
+                "volume_analysis",
+                "timeframe_analysis",
+                "signals",
+                "news_sentiment",
+                "candle_analysis",
+                "liquidity_recommendation",
+                "trading_params",
+                "chart_quality",
+                "ml_probabilities",
+            }:
+                value = self._parse_structured_field(value)
+
+            normalized[key] = value
+
+        if "priority_score" not in normalized:
+            normalized["priority_score"] = row.get("priority_score") or row.get("combined_score")
+
+        if "ts" not in normalized:
+            normalized["ts"] = row.get("ts") or row.get("timestamp")
+            if normalized["ts"] is None:
+                from src.infrastructure.db.timezone_utils import ist_now
+
+                normalized["ts"] = ist_now()
+
+        return normalized
+
+    def _parse_structured_field(self, value: object) -> object:
+        """Attempt to parse structured data stored as string"""
+        if isinstance(value, (dict, list)):
+            return value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                try:
+                    return ast.literal_eval(text)
+                except (ValueError, SyntaxError):
+                    if "-" in text:
+                        parsed = self._parse_buy_range(text)
+                        if parsed:
+                            return parsed
+            return text
+        return value
+
+    @staticmethod
+    def _parse_buy_range(value: str) -> dict | None:
+        """Parse simple 'low-high' range strings into dict"""
+        segments = value.split("-")
+        if len(segments) != 2:
+            return None
+        try:
+            low = float(segments[0].strip())
+            high = float(segments[1].strip())
+            return {"low": low, "high": high}
+        except ValueError:
+            return None
+
     def _spawn_service_process(self, user_id: int, task_name: str) -> subprocess.Popen:
         """Spawn a separate process for individual service"""
         # Create script path
@@ -369,6 +960,10 @@ class IndividualServiceManager:
 
     def get_status(self, user_id: int) -> dict:
         """Get status of all individual services for a user"""
+        # Expire all cached objects to ensure we get fresh data from database
+        # This is important because execution status is updated in separate threads
+        self.db.expire_all()
+
         services = self._status_repo.list_by_user(user_id)
         schedules = self._schedule_manager.get_all_schedules()
 
@@ -380,6 +975,21 @@ class IndividualServiceManager:
         for schedule in schedules:
             task_name = schedule.task_name
             service = service_statuses.get(task_name)
+            # Query fresh from database to get latest execution status
+            # Use raw SQL to bypass session cache and see commits from other threads
+            latest_execution_raw = self._execution_repo.get_latest_status_raw(user_id, task_name)
+
+            # Get the full ORM object if we need it, but use raw status for checking
+            latest_execution = self._execution_repo.get_latest(user_id, task_name)
+
+            # Override status from raw query if available (more reliable across threads)
+            if latest_execution_raw and latest_execution:
+                latest_execution.status = latest_execution_raw["status"]
+                # Update other fields from raw query
+                if latest_execution_raw.get("details"):
+                    latest_execution.details = latest_execution_raw["details"]
+                if latest_execution_raw.get("duration_seconds") is not None:
+                    latest_execution.duration_seconds = latest_execution_raw["duration_seconds"]
 
             next_execution = (
                 self._schedule_manager.calculate_next_execution(task_name)
@@ -387,20 +997,213 @@ class IndividualServiceManager:
                 else None
             )
 
-            result[task_name] = {
+            # Use execution record's executed_at if service status doesn't have last_execution_at
+            last_execution_at = None
+            if service and service.last_execution_at:
+                last_execution_at = service.last_execution_at.isoformat()
+            elif latest_execution and latest_execution.executed_at:
+                last_execution_at = latest_execution.executed_at.isoformat()
+
+            # Check if thread is still running for "run once" tasks
+            thread_key = (user_id, task_name)
+            thread = self._run_once_threads.get(thread_key)
+            thread_is_alive = thread.is_alive() if thread else False
+
+            # If execution status is "running" but thread is not alive, query fresh from database
+            if latest_execution and latest_execution.status == "running" and not thread_is_alive:
+                # Thread finished but DB might not be updated yet, or we have stale data
+                # Use raw SQL to get truly fresh status (bypasses all session caching)
+                latest_execution_raw = self._execution_repo.get_latest_status_raw(
+                    user_id, task_name
+                )
+                if latest_execution_raw:
+                    # Update the execution object with fresh status from raw query
+                    latest_execution.status = latest_execution_raw["status"]
+                    if latest_execution_raw.get("details"):
+                        latest_execution.details = latest_execution_raw["details"]
+                    if latest_execution_raw.get("duration_seconds") is not None:
+                        latest_execution.duration_seconds = latest_execution_raw["duration_seconds"]
+                else:
+                    # No execution found, get fresh ORM object
+                    self.db.expire_all()
+                    latest_execution = self._execution_repo.get_latest(user_id, task_name)
+
+                # Log for debugging
+                if latest_execution:
+                    logger = get_user_logger(
+                        user_id=user_id, db=self.db, module="IndividualService"
+                    )
+                    logger.debug(
+                        f"Thread finished for {task_name}, refreshed execution status: {latest_execution.status}",
+                        action="get_status",
+                        task_name=task_name,
+                    )
+
+            # Check for stale "running" executions (timeout check)
+            # Use raw SQL to check actual database status (bypasses session cache)
+            if latest_execution_raw and latest_execution_raw["status"] == "running":
+                from datetime import timedelta  # noqa: PLC0415
+
+                from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
+
+                # Normalize executed_at to timezone-aware if it's naive
+                executed_at = latest_execution_raw["executed_at"]
+                if executed_at.tzinfo is None:
+                    executed_at = executed_at.replace(tzinfo=IST)
+
+                execution_age = ist_now() - executed_at
+                # Use 5 minutes timeout for all tasks (for debugging - can increase later)
+                timeout_minutes = 5
+                if execution_age > timedelta(minutes=timeout_minutes):
+                    # Mark stale execution as failed (regardless of thread status)
+                    logger = get_user_logger(
+                        user_id=user_id, db=self.db, module="IndividualService"
+                    )
+                    logger.warning(
+                        f"Detected stale 'running' execution for {task_name} (age: {execution_age.total_seconds():.0f}s, thread_alive: {thread_is_alive}). Marking as failed.",
+                        action="get_status",
+                        task_name=task_name,
+                    )
+                    # Use raw SQL to update status directly (bypasses session issues)
+                    from sqlalchemy import text  # noqa: PLC0415
+
+                    update_sql = text(
+                        """
+                        UPDATE individual_service_task_execution
+                        SET status = 'failed',
+                            details = json_object(
+                                'error', 'Execution timed out or process crashed',
+                                'stale_execution', 1,
+                                'age_seconds', :age_seconds,
+                                'thread_was_alive', :thread_alive
+                            )
+                        WHERE id = :execution_id AND status = 'running'
+                    """
+                    )
+                    self.db.execute(
+                        update_sql,
+                        {
+                            "execution_id": latest_execution_raw["id"],
+                            "age_seconds": execution_age.total_seconds(),
+                            "thread_alive": 1 if thread_is_alive else 0,
+                        },
+                    )
+                    self.db.commit()
+                    # Refresh the raw status after update
+                    latest_execution_raw = self._execution_repo.get_latest_status_raw(
+                        user_id, task_name
+                    )
+                    if latest_execution_raw and latest_execution:
+                        latest_execution.status = latest_execution_raw["status"]
+                        latest_execution.details = latest_execution_raw.get("details")
+                    # Clean up thread reference if it exists
+                    if thread_key in self._run_once_threads:
+                        del self._run_once_threads[thread_key]
+
+            # Process ID is only relevant for "start service" (long-running), not "run once"
+            # Only check process if service is marked as running (from "start service")
+            process_id = None
+            if service and service.is_running and service.process_id:
+                # Only check process existence for services started via "start service"
+                process_exists = False
+                try:
+                    if os.name == "nt":  # Windows
+                        proc_result = subprocess.run(
+                            ["tasklist", "/FI", f"PID eq {service.process_id}"],
+                            capture_output=True,
+                            text=True,
+                            timeout=2,
+                            check=False,
+                        )
+                        process_exists = (
+                            proc_result.returncode == 0
+                            and proc_result.stdout
+                            and str(service.process_id) in proc_result.stdout
+                        )
+                    else:  # Unix/Linux
+                        proc_path = Path(f"/proc/{service.process_id}")
+                        if proc_path.exists():
+                            process_exists = True
+                        else:
+                            proc_result = subprocess.run(
+                                ["kill", "-0", str(service.process_id)],
+                                capture_output=True,
+                                timeout=2,
+                                check=False,
+                            )
+                            process_exists = proc_result.returncode == 0
+                except (subprocess.TimeoutExpired, FileNotFoundError, OSError, PermissionError):
+                    # Can't check, assume exists
+                    process_exists = True
+
+                if process_exists:
+                    process_id = service.process_id
+                else:
+                    # Process doesn't exist, mark service as stopped
+                    logger = get_user_logger(
+                        user_id=user_id, db=self.db, module="IndividualService"
+                    )
+                    logger.warning(
+                        f"Process {service.process_id} for {task_name} no longer exists. Marking service as stopped.",
+                        action="get_status",
+                        task_name=task_name,
+                    )
+                    self._status_repo.mark_stopped(user_id, task_name)
+                    service = self._status_repo.get_by_user_and_task(user_id, task_name)
+
+            # Determine actual execution status - use raw status (most reliable)
+            actual_execution_status = None
+            if latest_execution_raw:
+                actual_execution_status = latest_execution_raw["status"]
+            elif latest_execution:
+                actual_execution_status = latest_execution.status
+
+            # Final safety check: if status is still "running" after 5 minutes, force it to "failed" in response
+            # (even if database update didn't work)
+            if actual_execution_status == "running" and latest_execution_raw:
+                from datetime import timedelta  # noqa: PLC0415
+
+                from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
+
+                executed_at = latest_execution_raw["executed_at"]
+                if executed_at.tzinfo is None:
+                    executed_at = executed_at.replace(tzinfo=IST)
+                execution_age = ist_now() - executed_at
+
+                # Use 5 minutes timeout for all tasks (for debugging - can increase later)
+                timeout_minutes = 5
+                if execution_age > timedelta(minutes=timeout_minutes):
+                    # Force status to failed in response (safety override)
+                    actual_execution_status = "failed"
+                    logger = get_user_logger(
+                        user_id=user_id, db=self.db, module="IndividualService"
+                    )
+                    logger.warning(
+                        f"Forcing execution status to 'failed' in response for {task_name} (age: {execution_age.total_seconds():.0f}s) - database update may have failed",
+                        action="get_status",
+                        task_name=task_name,
+                    )
+
+            result_data = {
                 "is_running": service.is_running if service else False,
                 "started_at": (
                     service.started_at.isoformat() if service and service.started_at else None
                 ),
-                "last_execution_at": (
-                    service.last_execution_at.isoformat()
-                    if service and service.last_execution_at
-                    else None
-                ),
+                "last_execution_at": last_execution_at,
                 "next_execution_at": (next_execution.isoformat() if next_execution else None),
-                "process_id": service.process_id if service else None,
+                "process_id": process_id,
                 "schedule_enabled": schedule.enabled,
             }
+            if latest_execution:
+                result_data["last_execution_status"] = actual_execution_status
+                result_data["last_execution_duration"] = latest_execution.duration_seconds
+                result_data["last_execution_details"] = latest_execution.details
+            else:
+                result_data["last_execution_status"] = None
+                result_data["last_execution_duration"] = None
+                result_data["last_execution_details"] = None
+
+            result[task_name] = result_data
 
         return result
 

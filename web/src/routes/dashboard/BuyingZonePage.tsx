@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useMemo, useEffect } from 'react';
-import { getBuyingZone, getBuyingZoneColumns, saveBuyingZoneColumns, type BuyingZoneItem } from '@/api/signals';
+import { getBuyingZone, getBuyingZoneColumns, saveBuyingZoneColumns, type BuyingZoneItem, type DateFilter } from '@/api/signals';
 
 type ColumnKey =
 	| 'symbol'
@@ -30,6 +30,18 @@ type ColumnKey =
 	| 'vol_ok'
 	| 'volume_ratio'
 	| 'verdict'
+	| 'final_verdict'
+	| 'rule_verdict'
+	| 'verdict_source'
+	| 'backtest_confidence'
+	| 'vol_strong'
+	| 'is_above_ema200'
+	| 'dip_depth_from_20d_high_pct'
+	| 'consecutive_red_days'
+	| 'dip_speed_pct_per_day'
+	| 'decline_rate_slowing'
+	| 'volume_green_vs_red_ratio'
+	| 'support_hold_count'
 	| 'ts';
 
 interface ColumnDef {
@@ -84,20 +96,37 @@ const ALL_COLUMNS: ColumnDef[] = [
 	{ key: 'volume_ratio', label: 'Volume Ratio', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
 	// Analysis metadata
 	{ key: 'verdict', label: 'Verdict', formatter: (v) => (v ?? '-') },
+	{ key: 'final_verdict', label: 'Final Verdict', formatter: (v) => (v ?? '-') },
+	{ key: 'rule_verdict', label: 'Rule Verdict', formatter: (v) => (v ?? '-') },
+	{ key: 'verdict_source', label: 'Verdict Source', formatter: (v) => (v ?? '-') },
+	{ key: 'backtest_confidence', label: 'Backtest Confidence', formatter: (v) => (v ?? '-') },
+	// Additional analysis fields
+	{ key: 'vol_strong', label: 'Vol Strong', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
+	{ key: 'is_above_ema200', label: 'Above EMA200', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
+	// Dip buying features
+	{ key: 'dip_depth_from_20d_high_pct', label: 'Dip Depth %', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'consecutive_red_days', label: 'Red Days', formatter: (v) => (v != null ? v.toString() : '-') },
+	{ key: 'dip_speed_pct_per_day', label: 'Dip Speed %/Day', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'decline_rate_slowing', label: 'Decline Slowing', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
+	{ key: 'volume_green_vs_red_ratio', label: 'Vol G/R Ratio', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'support_hold_count', label: 'Support Holds', formatter: (v) => (v != null ? v.toString() : '-') },
+	// Timestamp
 	{ key: 'ts', label: 'As of', formatter: (v) => new Date(v).toLocaleString() },
 ];
 
 const MIN_COLUMNS = 5;
-const MAX_COLUMNS = 10;
+const MAX_COLUMNS = 20;
 
 // Default columns: Symbol, Distance to EMA9, Backtest, Confidence, ML Confidence
 const DEFAULT_COLUMNS: ColumnKey[] = ['symbol', 'distance_to_ema9', 'backtest_score', 'confidence', 'ml_confidence'];
 
 export function BuyingZonePage() {
 	const qc = useQueryClient();
+	const [dateFilter, setDateFilter] = useState<DateFilter>(null);
+
 	const { data, isLoading, error } = useQuery<BuyingZoneItem[]>({
-		queryKey: ['buying-zone'],
-		queryFn: () => getBuyingZone(100),
+		queryKey: ['buying-zone', dateFilter],
+		queryFn: () => getBuyingZone(100, dateFilter),
 	});
 
 	// Load saved columns from API
@@ -196,7 +225,21 @@ export function BuyingZonePage() {
 		<div className="p-4 space-y-4">
 			<div className="flex items-center justify-between">
 				<h1 className="text-xl font-semibold text-[var(--text)]">Buying Zone</h1>
-				<div className="flex items-center gap-2">
+				<div className="flex items-center gap-4">
+					{/* Date Filter */}
+					<div className="flex items-center gap-2">
+						<label className="text-sm text-[var(--muted)]">Date Filter:</label>
+						<select
+							value={dateFilter || ''}
+							onChange={(e) => setDateFilter((e.target.value || null) as DateFilter)}
+							className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-1.5 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+						>
+							<option value="">All (Recent)</option>
+							<option value="today">Today</option>
+							<option value="yesterday">Yesterday</option>
+							<option value="last_10_days">Last 10 Days</option>
+						</select>
+					</div>
 					<span className="text-sm text-[var(--muted)]">
 						{selectedColumns.size} / {MAX_COLUMNS} columns
 					</span>
@@ -303,6 +346,17 @@ export function BuyingZonePage() {
 					</div>
 				)}
 			</div>
+
+			{/* Results Count */}
+			{(data ?? []).length > 0 && (
+				<div className="text-sm text-[var(--muted)]">
+					Showing {data.length} signal{data.length === 1 ? '' : 's'}
+					{dateFilter === 'today' && ' from today'}
+					{dateFilter === 'yesterday' && ' from yesterday'}
+					{dateFilter === 'last_10_days' && ' from last 10 days'}
+					{!dateFilter && ' (most recent)'}
+				</div>
+			)}
 
 			{/* Table */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg overflow-hidden">

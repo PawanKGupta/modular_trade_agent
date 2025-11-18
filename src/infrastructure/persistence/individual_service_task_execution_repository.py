@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, text
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import IndividualServiceTaskExecution
@@ -82,6 +84,66 @@ class IndividualServiceTaskExecutionRepository:
 
         stmt = stmt.order_by(desc(IndividualServiceTaskExecution.executed_at)).limit(1)
         return self.db.execute(stmt).scalar_one_or_none()
+
+    def get_latest_status_raw(self, user_id: int, task_name: str) -> dict | None:
+        """Get latest execution status using raw SQL to bypass session cache.
+
+        Returns dict with: id, status, executed_at, duration_seconds, details
+        """
+        # Use raw SQL to bypass SQLAlchemy session cache
+        # This ensures we see commits from other threads immediately
+        sql = text(
+            """
+            SELECT id, status, executed_at, duration_seconds, details
+            FROM individual_service_task_execution
+            WHERE user_id = :user_id AND task_name = :task_name
+            ORDER BY executed_at DESC
+            LIMIT 1
+        """
+        )
+        result = self.db.execute(sql, {"user_id": user_id, "task_name": task_name}).fetchone()
+        if result:
+            # Parse datetime field (SQLite may return datetime as string or object)
+            executed_at = result[2]
+            if isinstance(executed_at, str):
+                try:
+                    # Try parsing ISO format datetime string
+                    if "Z" in executed_at:
+                        executed_at = datetime.fromisoformat(executed_at.replace("Z", "+00:00"))
+                    else:
+                        executed_at = datetime.fromisoformat(executed_at)
+                except (ValueError, AttributeError):
+                    # Fallback: try parsing common SQLite datetime formats
+                    try:
+                        executed_at = datetime.strptime(executed_at, "%Y-%m-%d %H:%M:%S.%f")
+                    except ValueError:
+                        try:
+                            executed_at = datetime.strptime(executed_at, "%Y-%m-%d %H:%M:%S")
+                        except ValueError:
+                            # If all parsing fails, return as-is (will cause error but better than crashing)
+                            executed_at = result[2]
+            # If it's already a datetime object, use it as-is
+            elif not isinstance(executed_at, datetime):
+                executed_at = None
+
+            # Parse JSON details field (SQLite returns JSON as string)
+            details = result[4]
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details) if details else None
+                except (json.JSONDecodeError, TypeError):
+                    details = None
+            elif details is None:
+                details = None
+
+            return {
+                "id": result[0],
+                "status": result[1],
+                "executed_at": executed_at,
+                "duration_seconds": result[3],
+                "details": details,
+            }
+        return None
 
     def get_running_tasks(
         self, user_id: int, task_name: str | None = None

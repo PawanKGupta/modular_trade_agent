@@ -40,18 +40,41 @@ export type BuyingZoneItem = {
 	volume_ratio?: number | null;
 	// Analysis metadata
 	verdict?: string | null;
+	final_verdict?: string | null;
+	rule_verdict?: string | null;
+	verdict_source?: string | null;
+	backtest_confidence?: string | null;
 	signals?: string[] | null;
 	justification?: string[] | null;
 	timeframe_analysis?: Record<string, any> | null;
 	news_sentiment?: Record<string, any> | null;
 	candle_analysis?: Record<string, any> | null;
 	chart_quality?: Record<string, any> | null;
+	// Additional analysis fields
+	vol_strong?: boolean | null;
+	is_above_ema200?: boolean | null;
+	// Dip buying features
+	dip_depth_from_20d_high_pct?: number | null;
+	consecutive_red_days?: number | null;
+	dip_speed_pct_per_day?: number | null;
+	decline_rate_slowing?: boolean | null;
+	volume_green_vs_red_ratio?: number | null;
+	support_hold_count?: number | null;
+	// Additional metadata
+	liquidity_recommendation?: Record<string, any> | null;
+	trading_params?: Record<string, any> | null;
 	// Timestamp
 	ts: string;
 };
 
-export async function getBuyingZone(limit = 100): Promise<BuyingZoneItem[]> {
-	const res = await api.get('/signals/buying-zone', { params: { limit } });
+export type DateFilter = 'today' | 'yesterday' | 'last_10_days' | null;
+
+export async function getBuyingZone(limit = 100, dateFilter: DateFilter = null): Promise<BuyingZoneItem[]> {
+	const params: Record<string, any> = { limit };
+	if (dateFilter) {
+		params.date_filter = dateFilter;
+	}
+	const res = await api.get('/signals/buying-zone', { params });
 	return res.data as BuyingZoneItem[];
 }
 
