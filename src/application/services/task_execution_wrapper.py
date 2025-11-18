@@ -22,6 +22,7 @@ def execute_task(
     db_session,
     task_name: str,
     logger=None,
+    track_execution: bool = True,
 ):
     """
     Context manager for executing a task with automatic logging to database.
@@ -37,17 +38,21 @@ def execute_task(
         db_session: Database session
         task_name: Name of the task (e.g., "premarket_retry", "analysis")
         logger: Optional logger instance (will create one if not provided)
+        track_execution: If True, log execution to service_task_execution table.
+                        Set to False when called from individual services (they track separately).
 
     Yields:
         dict: Task context that can be updated with details
     """
     task_start = time.time()
-    task_repo = ServiceTaskRepository(db_session)
-    status_repo = ServiceStatusRepository(db_session)
     task_context: dict[str, Any] = {}
 
     if logger is None:
         logger = get_user_logger(user_id=user_id, db=db_session, module="TaskExecution")
+
+    # Only create repositories if we're tracking execution
+    task_repo = ServiceTaskRepository(db_session) if track_execution else None
+    status_repo = ServiceStatusRepository(db_session) if track_execution else None
 
     try:
         logger.info(f"Starting task: {task_name}", action=task_name)
@@ -55,14 +60,15 @@ def execute_task(
 
         # Task completed successfully
         duration = time.time() - task_start
-        task_repo.create(
-            user_id=user_id,
-            task_name=task_name,
-            status="success",
-            duration_seconds=duration,
-            details=task_context,
-        )
-        status_repo.update_task_execution(user_id)
+        if track_execution and task_repo and status_repo:
+            task_repo.create(
+                user_id=user_id,
+                task_name=task_name,
+                status="success",
+                duration_seconds=duration,
+                details=task_context,
+            )
+            status_repo.update_task_execution(user_id)
         logger.info(
             f"Task completed: {task_name} (duration: {duration:.2f}s)",
             action=task_name,
@@ -78,15 +84,16 @@ def execute_task(
             **task_context,
         }
 
-        task_repo.create(
-            user_id=user_id,
-            task_name=task_name,
-            status="failed",
-            duration_seconds=duration,
-            details=error_details,
-        )
-        status_repo.update_task_execution(user_id)
-        status_repo.increment_error(user_id, error_message=str(e))
+        if track_execution and task_repo and status_repo:
+            task_repo.create(
+                user_id=user_id,
+                task_name=task_name,
+                status="failed",
+                duration_seconds=duration,
+                details=error_details,
+            )
+            status_repo.update_task_execution(user_id)
+            status_repo.increment_error(user_id, error_message=str(e))
 
         logger.error(
             f"Task failed: {task_name} (duration: {duration:.2f}s)",

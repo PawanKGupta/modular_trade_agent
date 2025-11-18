@@ -56,6 +56,7 @@ export interface ServiceSchedule {
 	is_hourly: boolean;
 	is_continuous: boolean;
 	end_time: string | null; // HH:MM format
+	schedule_type: 'daily' | 'once'; // 'daily' runs every day, 'once' runs once and stops
 	description: string | null;
 	updated_by: number | null;
 	updated_at: string;
@@ -72,6 +73,7 @@ export interface UpdateServiceSchedulePayload {
 	is_hourly?: boolean;
 	is_continuous?: boolean;
 	end_time?: string | null; // HH:MM format
+	schedule_type?: 'daily' | 'once';
 	description?: string | null;
 }
 

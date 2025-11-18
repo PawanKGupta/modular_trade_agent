@@ -68,6 +68,7 @@ class TradingService:
         broker_creds: dict,
         strategy_config=None,  # StrategyConfig instance
         env_file: str | None = None,  # Deprecated: kept for backward compatibility
+        skip_execution_tracking: bool = False,  # Set to True when called from individual services
     ):
         """
         Initialize trading service with user context.
@@ -82,6 +83,7 @@ class TradingService:
         self.user_id = user_id
         self.db = db_session
         self.broker_creds = broker_creds
+        self.skip_execution_tracking = skip_execution_tracking
 
         # Load user-specific configuration if not provided
         if strategy_config is None:
@@ -373,7 +375,13 @@ class TradingService:
         """9:00 AM - Retry failed orders from previous day"""
         from src.application.services.task_execution_wrapper import execute_task
 
-        with execute_task(self.user_id, self.db, "premarket_retry", self.logger) as task_context:
+        with execute_task(
+            self.user_id,
+            self.db,
+            "premarket_retry",
+            self.logger,
+            track_execution=not self.skip_execution_tracking,
+        ) as task_context:
             logger.info("")
             logger.info("=" * 80)
             logger.info("TASK: PRE-MARKET RETRY (9:00 AM)")
@@ -399,7 +407,13 @@ class TradingService:
 
         # Only log to database on first start, not on every monitoring cycle
         if not self.tasks_completed["sell_monitor_started"]:
-            with execute_task(self.user_id, self.db, "sell_monitor", self.logger) as task_context:
+            with execute_task(
+                self.user_id,
+                self.db,
+                "sell_monitor",
+                self.logger,
+                track_execution=not self.skip_execution_tracking,
+            ) as task_context:
                 logger.info("")
                 logger.info("=" * 80)
                 logger.info("TASK: SELL ORDER PLACEMENT (9:15 AM)")
@@ -484,7 +498,13 @@ class TradingService:
             )
             return
 
-        with execute_task(self.user_id, self.db, "position_monitor", self.logger) as task_context:
+        with execute_task(
+            self.user_id,
+            self.db,
+            "position_monitor",
+            self.logger,
+            track_execution=not self.skip_execution_tracking,
+        ) as task_context:
             logger.info("")
             logger.info("=" * 80)
             logger.info(f"TASK: POSITION MONITOR ({current_hour}:30)")
@@ -507,7 +527,13 @@ class TradingService:
         base_delay = 30.0  # Start with 30 seconds delay
         timeout_seconds = 1800  # 30 minutes timeout for market analysis
 
-        with execute_task(self.user_id, self.db, "analysis", self.logger) as task_context:
+        with execute_task(
+            self.user_id,
+            self.db,
+            "analysis",
+            self.logger,
+            track_execution=not self.skip_execution_tracking,
+        ) as task_context:
             task_context["max_retries"] = max_retries
             task_context["timeout_seconds"] = timeout_seconds
 
@@ -639,7 +665,13 @@ class TradingService:
         """4:05 PM - Place AMO buy orders for next day"""
         from src.application.services.task_execution_wrapper import execute_task
 
-        with execute_task(self.user_id, self.db, "buy_orders", self.logger) as task_context:
+        with execute_task(
+            self.user_id,
+            self.db,
+            "buy_orders",
+            self.logger,
+            track_execution=not self.skip_execution_tracking,
+        ) as task_context:
             logger.info("")
             logger.info("=" * 80)
             logger.info("TASK: PLACE BUY ORDERS (4:05 PM)")
@@ -662,7 +694,13 @@ class TradingService:
         """6:00 PM - End-of-day cleanup"""
         from src.application.services.task_execution_wrapper import execute_task
 
-        with execute_task(self.user_id, self.db, "eod_cleanup", self.logger) as task_context:
+        with execute_task(
+            self.user_id,
+            self.db,
+            "eod_cleanup",
+            self.logger,
+            track_execution=not self.skip_execution_tracking,
+        ) as task_context:
             logger.info("")
             logger.info("=" * 80)
             logger.info("TASK: END-OF-DAY CLEANUP (6:00 PM)")

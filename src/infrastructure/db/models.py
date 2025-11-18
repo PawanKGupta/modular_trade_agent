@@ -30,6 +30,13 @@ class UserRole(str, Enum):
     USER = "user"
 
 
+class ScheduleType(str, Enum):
+    """Schedule type for service execution"""
+
+    DAILY = "daily"  # Runs every day at scheduled time
+    ONCE = "once"  # Runs once at scheduled time and stops
+
+
 class Users(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
@@ -556,6 +563,9 @@ class ServiceSchedule(Base):
         Boolean, default=False, nullable=False
     )  # For sell_monitor (runs continuously)
     end_time: Mapped[time | None] = mapped_column(Time, nullable=True)  # For continuous tasks
+    schedule_type: Mapped[str] = mapped_column(
+        String(16), default="daily", nullable=False
+    )  # "daily" or "once" - daily runs every day, once runs once and stops
     description: Mapped[str | None] = mapped_column(String(512), nullable=True)
     updated_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"), nullable=True

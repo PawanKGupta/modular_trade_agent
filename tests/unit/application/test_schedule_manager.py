@@ -36,6 +36,7 @@ def sample_schedules(db_session):
             is_hourly=False,
             is_continuous=False,
             end_time=None,
+            schedule_type="daily",
             description="Retries failed orders",
             created_at=ist_now(),
             updated_at=ist_now(),
@@ -47,6 +48,7 @@ def sample_schedules(db_session):
             is_hourly=True,
             is_continuous=False,
             end_time=time(15, 30),
+            schedule_type="daily",
             description="Hourly position monitoring",
             created_at=ist_now(),
             updated_at=ist_now(),
@@ -58,6 +60,7 @@ def sample_schedules(db_session):
             is_hourly=False,
             is_continuous=True,
             end_time=time(15, 30),
+            schedule_type="daily",
             description="Continuous sell monitoring",
             created_at=ist_now(),
             updated_at=ist_now(),
@@ -170,6 +173,7 @@ def test_validate_schedule_valid(db_session, schedule_manager):
         is_hourly=False,
         is_continuous=False,
         end_time=None,
+        schedule_type="daily",
     )
     assert is_valid is True
     assert message == ""
@@ -184,9 +188,100 @@ def test_validate_schedule_invalid_time(db_session, schedule_manager):
         is_hourly=False,
         is_continuous=False,
         end_time=None,
+        schedule_type="daily",
     )
     assert not is_valid
     assert "business hours" in message.lower() or "9:00" in message or "18:00" in message
+
+
+def test_validate_schedule_once_with_hourly_invalid(db_session, schedule_manager):
+    """Test that schedule_type 'once' cannot be combined with hourly execution"""
+    is_valid, message = schedule_manager.validate_schedule(
+        task_name="analysis",
+        schedule_time=time(16, 0),
+        is_hourly=True,
+        is_continuous=False,
+        end_time=None,
+        schedule_type="once",
+    )
+    assert not is_valid
+    assert "cannot be combined with hourly" in message.lower()
+
+
+def test_validate_schedule_once_with_continuous_invalid(db_session, schedule_manager):
+    """Test that schedule_type 'once' cannot be combined with continuous execution"""
+    is_valid, message = schedule_manager.validate_schedule(
+        task_name="sell_monitor",
+        schedule_time=time(9, 15),
+        is_hourly=False,
+        is_continuous=True,
+        end_time=time(15, 30),
+        schedule_type="once",
+    )
+    assert not is_valid
+    assert "cannot be combined with continuous" in message.lower()
+
+
+def test_validate_schedule_once_with_end_time_invalid(db_session, schedule_manager):
+    """Test that schedule_type 'once' cannot have an end time"""
+    is_valid, message = schedule_manager.validate_schedule(
+        task_name="analysis",
+        schedule_time=time(16, 0),
+        is_hourly=False,
+        is_continuous=False,
+        end_time=time(17, 0),
+        schedule_type="once",
+    )
+    assert not is_valid
+    assert "cannot have an end time" in message.lower()
+
+
+def test_validate_schedule_analysis_flexible_time(db_session, schedule_manager):
+    """Test analysis service can be scheduled between 4PM-9AM"""
+    # Test 2:40 AM - should be allowed
+    is_valid, message = schedule_manager.validate_schedule(
+        task_name="analysis",
+        schedule_time=time(2, 40),
+        is_hourly=False,
+        is_continuous=False,
+        end_time=None,
+        schedule_type="daily",
+    )
+    assert is_valid, f"2:40 AM should be valid for analysis: {message}"
+
+    # Test 4:00 PM - should be allowed
+    is_valid, message = schedule_manager.validate_schedule(
+        task_name="analysis",
+        schedule_time=time(16, 0),
+        is_hourly=False,
+        is_continuous=False,
+        end_time=None,
+        schedule_type="daily",
+    )
+    assert is_valid, f"4:00 PM should be valid for analysis: {message}"
+
+    # Test 9:00 AM - should be allowed (boundary)
+    is_valid, message = schedule_manager.validate_schedule(
+        task_name="analysis",
+        schedule_time=time(9, 0),
+        is_hourly=False,
+        is_continuous=False,
+        end_time=None,
+        schedule_type="daily",
+    )
+    assert is_valid, f"9:00 AM should be valid for analysis: {message}"
+
+    # Test 10:00 AM - should NOT be allowed (between 9AM and 4PM)
+    is_valid, message = schedule_manager.validate_schedule(
+        task_name="analysis",
+        schedule_time=time(10, 0),
+        is_hourly=False,
+        is_continuous=False,
+        end_time=None,
+        schedule_type="daily",
+    )
+    assert not is_valid
+    assert "off-trading hours" in message.lower() or "4:00 PM" in message
 
 
 def test_validate_schedule_position_monitor_hourly(db_session, schedule_manager):
@@ -197,6 +292,7 @@ def test_validate_schedule_position_monitor_hourly(db_session, schedule_manager)
         is_hourly=True,
         is_continuous=False,
         end_time=None,
+        schedule_type="daily",
     )
     assert is_valid is False
     assert ":30" in message or "30" in message
@@ -210,6 +306,7 @@ def test_validate_schedule_sell_monitor_continuous(db_session, schedule_manager)
         is_hourly=False,
         is_continuous=True,
         end_time=time(9, 15),  # End before start
+        schedule_type="daily",
     )
     assert is_valid is False
     assert "before" in message.lower() or "start" in message.lower()
@@ -223,6 +320,7 @@ def test_validate_schedule_invalid_task_name(db_session, schedule_manager):
         is_hourly=False,
         is_continuous=False,
         end_time=None,
+        schedule_type="daily",
     )
     assert is_valid is False
     assert "invalid" in message.lower()

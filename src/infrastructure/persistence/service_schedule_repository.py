@@ -45,6 +45,7 @@ class ServiceScheduleRepository:
         is_hourly: bool = False,
         is_continuous: bool = False,
         end_time: time | None = None,
+        schedule_type: str = "daily",
         description: str | None = None,
         updated_by: int | None = None,
     ) -> ServiceSchedule:
@@ -57,6 +58,7 @@ class ServiceScheduleRepository:
             schedule.is_hourly = is_hourly
             schedule.is_continuous = is_continuous
             schedule.end_time = end_time
+            schedule.schedule_type = schedule_type
             if description is not None:
                 schedule.description = description
             if updated_by is not None:
@@ -71,6 +73,7 @@ class ServiceScheduleRepository:
                 is_hourly=is_hourly,
                 is_continuous=is_continuous,
                 end_time=end_time,
+                schedule_type=schedule_type,
                 description=description,
                 updated_by=updated_by,
             )

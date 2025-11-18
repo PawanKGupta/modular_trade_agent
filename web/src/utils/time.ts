@@ -34,3 +34,21 @@ export function formatTimeAgo(seconds: number): string {
 	}
 	return `${value} ${pluralizedUnit} ago`;
 }
+
+/**
+ * Formats a duration in seconds to a human-readable duration string.
+ * Examples:
+ * - 32.5 seconds -> "32.5s"
+ * - 69 seconds -> "1.2m"
+ * - 3678 seconds -> "1.0h"
+ * - 125 seconds -> "2.1m"
+ */
+export function formatDuration(seconds: number): string {
+	if (seconds < 60) {
+		return `${seconds.toFixed(1)}s`;
+	} else if (seconds < 3600) {
+		return `${(seconds / 60).toFixed(1)}m`;
+	} else {
+		return `${(seconds / 3600).toFixed(1)}h`;
+	}
+}

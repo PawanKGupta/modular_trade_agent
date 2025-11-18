@@ -373,3 +373,61 @@ class TestTaskExecutionIntegration:
         assert task.details["error_type"] == "RuntimeError"
         assert task.details["error_message"] == "Something went wrong"
         assert task.details["step"] == "initialization"  # Context preserved
+
+    def test_execute_task_with_track_execution_false(self, db_session, test_user, mock_logger):
+        """Test that track_execution=False skips database logging"""
+        from src.infrastructure.persistence.service_task_repository import ServiceTaskRepository
+
+        # Execute task with tracking disabled
+        with execute_task(
+            test_user.id, db_session, "untracked_task", mock_logger, track_execution=False
+        ) as ctx:
+            ctx["test"] = "value"
+            time.sleep(0.01)
+
+        # Verify task was NOT logged to database
+        task_repo = ServiceTaskRepository(db_session)
+        tasks = task_repo.list(test_user.id, task_name="untracked_task", limit=1)
+
+        assert len(tasks) == 0
+
+        # Verify logger was still called
+        assert mock_logger.info.called
+
+    def test_execute_task_with_track_execution_false_on_failure(
+        self, db_session, test_user, mock_logger
+    ):
+        """Test that track_execution=False skips database logging even on failure"""
+        from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
+        from src.infrastructure.persistence.service_task_repository import ServiceTaskRepository
+
+        initial_error_count = 0
+        status_repo = ServiceStatusRepository(db_session)
+        status = status_repo.get_or_create(test_user.id)
+        if status:
+            initial_error_count = status.error_count
+
+        # Execute task with tracking disabled, should fail
+        with pytest.raises(ValueError):
+            with execute_task(
+                test_user.id,
+                db_session,
+                "untracked_failed_task",
+                mock_logger,
+                track_execution=False,
+            ) as ctx:
+                ctx["test"] = "value"
+                raise ValueError("Test error")
+
+        # Verify task was NOT logged to database
+        task_repo = ServiceTaskRepository(db_session)
+        tasks = task_repo.list(test_user.id, task_name="untracked_failed_task", limit=1)
+
+        assert len(tasks) == 0
+
+        # Verify error count was NOT incremented
+        updated_status = status_repo.get(test_user.id)
+        assert updated_status.error_count == initial_error_count
+
+        # Verify logger was still called
+        assert mock_logger.error.called

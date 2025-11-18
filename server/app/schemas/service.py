@@ -157,6 +157,7 @@ class ServiceScheduleResponse(BaseModel):
     is_hourly: bool
     is_continuous: bool
     end_time: str | None = None  # HH:MM format
+    schedule_type: str = "daily"  # "daily" or "once"
     description: str | None = None
     updated_by: int | None = None
     updated_at: datetime
@@ -178,6 +179,9 @@ class UpdateServiceScheduleRequest(BaseModel):
     is_continuous: bool = Field(default=False)
     end_time: str | None = Field(
         None, description="End time in HH:MM format (for continuous tasks)"
+    )
+    schedule_type: str = Field(
+        default="daily", description="'daily' runs every day, 'once' runs once and stops"
     )
     description: str | None = None
 

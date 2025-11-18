@@ -154,6 +154,94 @@ The following fields were added to store comprehensive analysis results:
 
 ---
 
+---
+
+## Execution Tracking Separation Fix
+
+### Date: 2025-01-20
+
+### Summary
+Fixed duplicate execution tracking issue where individual services were writing to both `service_task_execution` (unified service) and `individual_service_task_execution` tables, causing conflicts and confusion.
+
+### Issue
+When individual services executed tasks, they created records in both:
+1. `individual_service_task_execution` (intended)
+2. `service_task_execution` (unintended - for unified service only)
+
+This happened because individual services call `TradingService` methods which use the `execute_task` wrapper that always writes to `service_task_execution`.
+
+### Fix
+1. **Added `track_execution` parameter** to `execute_task()` wrapper (defaults to `True` for backward compatibility)
+   - When `False`, skips writing to `service_task_execution` table
+   - Logging still occurs, only database tracking is skipped
+
+2. **Added `skip_execution_tracking` parameter** to `TradingService.__init__()`
+   - When `True`, all `execute_task` calls skip unified service tracking
+   - Individual services pass this flag when creating `TradingService` instances
+
+3. **Updated all `execute_task` calls** in `TradingService` to respect the flag
+   - Passes `track_execution=not self.skip_execution_tracking`
+
+4. **Updated `IndividualServiceManager`** to pass `skip_execution_tracking=True`
+   - Individual services now only write to `individual_service_task_execution`
+
+### Files Modified
+- `src/application/services/task_execution_wrapper.py`
+- `src/application/services/individual_service_manager.py`
+- `modules/kotak_neo_auto_trader/run_trading_service.py`
+- `scripts/run_individual_service.py` (added execution tracking for scheduled runs)
+
+### Testing
+- Added tests for `track_execution=False` parameter
+- Verified no duplicate records created
+- Verified unified service still tracks correctly
+- Added tests for `formatDuration()` utility function
+
+---
+
+## Duration Formatting Improvement
+
+### Date: 2025-01-20
+
+### Summary
+Improved duration display in UI to show minutes and hours instead of always showing seconds.
+
+### Fix
+- Added `formatDuration()` function in `web/src/utils/time.ts`
+  - < 60 seconds: "X.Xs" (e.g., "32.5s")
+  - < 3600 seconds: "X.Xm" (e.g., "1.2m", "59.5m")
+  - >= 3600 seconds: "X.Xh" (e.g., "1.0h", "2.5h")
+- Updated `IndividualServiceControls` to use `formatDuration()` for execution duration display
+
+### Files Modified
+- `web/src/utils/time.ts`
+- `web/src/routes/dashboard/IndividualServiceControls.tsx`
+- `web/src/utils/__tests__/time.test.ts` (added tests)
+
+---
+
+## Schedule Type Validation
+
+### Date: 2025-01-20
+
+### Summary
+Added validation to prevent invalid combinations of schedule type and execution type.
+
+### Fix
+- Added validation in `ScheduleManager.validate_schedule()`:
+  - If `schedule_type == "once"`, then `is_hourly` and `is_continuous` must be `False`
+  - If `schedule_type == "once"`, then `end_time` must be `None`
+- Updated UI to disable execution dropdown when schedule type is "once"
+- Added tests for validation rules
+
+### Files Modified
+- `src/application/services/schedule_manager.py`
+- `server/app/routers/admin.py`
+- `web/src/routes/dashboard/ServiceSchedulePage.tsx`
+- `tests/unit/application/test_schedule_manager.py`
+
+---
+
 ## Related Documentation
 - [Individual Service Management User Guide](../features/INDIVIDUAL_SERVICE_MANAGEMENT_USER_GUIDE.md)
 - [Individual Service Management Implementation Plan](../features/INDIVIDUAL_SERVICE_MANAGEMENT_IMPLEMENTATION_PLAN.md)

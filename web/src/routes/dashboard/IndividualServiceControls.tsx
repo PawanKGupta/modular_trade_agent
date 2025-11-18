@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import {
 	type IndividualServiceStatus,
+	type IndividualServicesStatus,
 	startIndividualService,
 	stopIndividualService,
 	runTaskOnce,
 } from '@/api/service';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { formatTimeAgo } from '@/utils/time';
+import { formatTimeAgo, formatDuration } from '@/utils/time';
 
 interface IndividualServiceControlsProps {
 	service: IndividualServiceStatus;
@@ -52,16 +53,62 @@ export function IndividualServiceControls({
 
 	const startMutation = useMutation({
 		mutationFn: (taskName: string) => startIndividualService({ task_name: taskName }),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ['individualServicesStatus'] });
+		onSuccess: (response, taskName) => {
+			if (response.success) {
+				qc.setQueryData<IndividualServicesStatus>(
+					['individualServicesStatus'],
+					(old) => {
+						if (!old || !old.services || !old.services[taskName]) {
+							return old;
+						}
+						return {
+							...old,
+							services: {
+								...old.services,
+								[taskName]: {
+									...old.services[taskName],
+									is_running: true,
+									started_at: new Date().toISOString(),
+								},
+							},
+						};
+					}
+				);
+				setTimeout(() => {
+					qc.refetchQueries({ queryKey: ['individualServicesStatus'] });
+				}, 500);
+			}
 			qc.invalidateQueries({ queryKey: ['serviceTasks'] });
 		},
 	});
 
 	const stopMutation = useMutation({
 		mutationFn: (taskName: string) => stopIndividualService({ task_name: taskName }),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ['individualServicesStatus'] });
+		onSuccess: (response, taskName) => {
+			if (response.success) {
+				// Optimistically update the cache immediately
+				qc.setQueryData<IndividualServicesStatus>(
+					['individualServicesStatus'],
+					(old) => {
+						if (!old || !old.services || !old.services[taskName]) return old;
+						return {
+							...old,
+							services: {
+								...old.services,
+								[taskName]: {
+									...old.services[taskName],
+									is_running: false,
+									started_at: null,
+								},
+							},
+						};
+					}
+				);
+				// Refetch after a delay to get the latest data from server
+				setTimeout(() => {
+					qc.refetchQueries({ queryKey: ['individualServicesStatus'] });
+				}, 500);
+			}
 			qc.invalidateQueries({ queryKey: ['serviceTasks'] });
 		},
 	});
@@ -174,7 +221,7 @@ export function IndividualServiceControls({
 									? 'Running'
 									: 'Skipped'}
 						{typeof service.last_execution_duration === 'number' &&
-							` • ${service.last_execution_duration.toFixed(1)}s`}
+							` • ${formatDuration(service.last_execution_duration)}`}
 					</div>
 					{lastSummary && (
 						<div className="text-xs text-[var(--muted)] mt-1">

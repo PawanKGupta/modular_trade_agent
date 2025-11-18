@@ -145,6 +145,7 @@ class ScheduleManager:
         is_hourly: bool = False,
         is_continuous: bool = False,
         end_time: time | None = None,
+        schedule_type: str = "daily",
     ) -> tuple[bool, str]:
         """
         Validate schedule configuration.
@@ -158,6 +159,19 @@ class ScheduleManager:
         ):
             return False, "Invalid time format"
 
+        # Validate schedule_type
+        if schedule_type not in ("daily", "once"):
+            return False, "Schedule type must be 'daily' or 'once'"
+
+        # If schedule_type is "once", hourly and continuous must be False
+        if schedule_type == "once":
+            if is_hourly:
+                return False, "Schedule type 'once' cannot be combined with hourly execution"
+            if is_continuous:
+                return False, "Schedule type 'once' cannot be combined with continuous execution"
+            if end_time:
+                return False, "Schedule type 'once' cannot have an end time"
+
         # Position monitor: must be at :30 minutes if hourly
         if task_name == "position_monitor" and is_hourly:
             if schedule_time.minute != POSITION_MONITOR_MINUTE:
@@ -168,9 +182,17 @@ class ScheduleManager:
             if end_time and schedule_time >= end_time:
                 return False, "Start time must be before end time for continuous tasks"
 
-        # Business hours validation (9:00 - 18:00) for non-continuous, non-hourly tasks
+        # Business hours validation for non-continuous, non-hourly tasks
         if not is_continuous and not is_hourly:
-            if schedule_time < time(9, 0) or schedule_time > time(18, 0):
+            # Analysis service: allow off-trading hours (4PM-9AM, i.e., >= 16:00 or <= 09:00)
+            if task_name == "analysis":
+                if time(9, 0) < schedule_time < time(16, 0):
+                    return (
+                        False,
+                        "Analysis service must be scheduled during off-trading hours (4:00 PM - 9:00 AM)",
+                    )
+            # Other tasks: 9:00 AM - 6:00 PM
+            elif schedule_time < time(9, 0) or schedule_time > time(18, 0):
                 return False, "Schedule time must be between 9:00 AM and 6:00 PM"
 
         # Valid task names

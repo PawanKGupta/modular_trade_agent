@@ -113,6 +113,7 @@ def list_service_schedules(
                     is_hourly=schedule.is_hourly,
                     is_continuous=schedule.is_continuous,
                     end_time=schedule.end_time.strftime("%H:%M") if schedule.end_time else None,
+                    schedule_type=schedule.schedule_type,
                     description=schedule.description,
                     updated_by=schedule.updated_by,
                     updated_at=schedule.updated_at,
@@ -151,6 +152,7 @@ def get_service_schedule(
             is_hourly=schedule.is_hourly,
             is_continuous=schedule.is_continuous,
             end_time=schedule.end_time.strftime("%H:%M") if schedule.end_time else None,
+            schedule_type=schedule.schedule_type,
             description=schedule.description,
             updated_by=schedule.updated_by,
             updated_at=schedule.updated_at,
@@ -207,6 +209,7 @@ def update_service_schedule(
             is_hourly=payload.is_hourly,
             is_continuous=payload.is_continuous,
             end_time=end_time_obj,
+            schedule_type=payload.schedule_type,
         )
         if not is_valid:
             raise HTTPException(
@@ -223,8 +226,9 @@ def update_service_schedule(
             is_hourly=payload.is_hourly,
             is_continuous=payload.is_continuous,
             end_time=end_time_obj,
+            schedule_type=payload.schedule_type,
             description=payload.description,
-            updated_by_user_id=current.id,
+            updated_by=current.id,
         )
 
         next_execution = schedule_manager.calculate_next_execution(task_name)
@@ -236,6 +240,7 @@ def update_service_schedule(
             is_hourly=schedule.is_hourly,
             is_continuous=schedule.is_continuous,
             end_time=schedule.end_time.strftime("%H:%M") if schedule.end_time else None,
+            schedule_type=schedule.schedule_type,
             description=schedule.description,
             updated_by=schedule.updated_by,
             updated_at=schedule.updated_at,
@@ -267,9 +272,7 @@ def enable_service_schedule(
     """Enable a service schedule (admin only)"""
     try:
         schedule_repo = ServiceScheduleRepository(db)
-        schedule = schedule_repo.update_enabled(
-            task_name, enabled=True, updated_by_user_id=current.id
-        )
+        schedule = schedule_repo.update_enabled(task_name, enabled=True, updated_by=current.id)
         if not schedule:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -285,6 +288,7 @@ def enable_service_schedule(
             is_hourly=schedule.is_hourly,
             is_continuous=schedule.is_continuous,
             end_time=schedule.end_time.strftime("%H:%M") if schedule.end_time else None,
+            schedule_type=schedule.schedule_type,
             description=schedule.description,
             updated_by=schedule.updated_by,
             updated_at=schedule.updated_at,
@@ -316,9 +320,7 @@ def disable_service_schedule(
     """Disable a service schedule (admin only)"""
     try:
         schedule_repo = ServiceScheduleRepository(db)
-        schedule = schedule_repo.update_enabled(
-            task_name, enabled=False, updated_by_user_id=current.id
-        )
+        schedule = schedule_repo.update_enabled(task_name, enabled=False, updated_by=current.id)
         if not schedule:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -334,6 +336,7 @@ def disable_service_schedule(
             is_hourly=schedule.is_hourly,
             is_continuous=schedule.is_continuous,
             end_time=schedule.end_time.strftime("%H:%M") if schedule.end_time else None,
+            schedule_type=schedule.schedule_type,
             description=schedule.description,
             updated_by=schedule.updated_by,
             updated_at=schedule.updated_at,

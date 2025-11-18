@@ -95,18 +95,37 @@ class IndividualServiceManager:
             process = self._spawn_service_process(user_id, task_name)
             process_id = process.pid
 
+            # Small delay to ensure process has started
+            time.sleep(0.1)
+
+            # Check if process is still alive (hasn't crashed immediately)
+            if process.poll() is not None:
+                # Process already terminated (likely an error)
+                return_code = process.returncode
+                error_msg = f"Process terminated immediately with code {return_code}"
+                logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+                logger.error(
+                    f"Failed to start {task_name}: {error_msg}",
+                    action="start_individual_service",
+                )
+                return False, f"Failed to start service: {error_msg}"
+
             # Update status
             self._status_repo.mark_running(user_id, task_name, process_id=process_id)
+            # Commit to ensure status is immediately visible to other sessions
+            self.db.commit()
             next_execution = self._schedule_manager.calculate_next_execution(task_name)
             if next_execution:
                 self._status_repo.update_next_execution(user_id, task_name, next_execution)
+                self.db.commit()
 
             # Store process reference
             self._processes[(user_id, task_name)] = process
 
             logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
             logger.info(
-                f"Started individual service: {task_name}", action="start_individual_service"
+                f"Started individual service: {task_name} (PID: {process_id})",
+                action="start_individual_service",
             )
 
             return True, f"Service '{task_name}' started successfully"
@@ -166,6 +185,8 @@ class IndividualServiceManager:
 
             # Update status
             self._status_repo.mark_stopped(user_id, task_name)
+            # Commit to ensure status is immediately visible to other sessions
+            self.db.commit()
 
             logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
             logger.info(
@@ -362,12 +383,14 @@ class IndividualServiceManager:
             return self._run_analysis_task(user_id=user_id)
 
         # Create TradingService instance (same as unified service) for broker-dependent tasks
+        # Skip execution tracking since individual services track separately
         service = trading_service_module.TradingService(
             user_id=user_id,
             db_session=self.db,
             broker_creds=broker_creds,
             strategy_config=strategy_config,
-            env_file=None,  # Will use broker_creds dict
+            env_file=None,
+            skip_execution_tracking=True,
         )
 
         # Initialize service
@@ -937,6 +960,9 @@ class IndividualServiceManager:
         # Create script path
         script_path = project_root / "scripts" / "run_individual_service.py"
 
+        if not script_path.exists():
+            raise FileNotFoundError(f"Script not found: {script_path}")
+
         # Build command
         cmd = [
             sys.executable,
@@ -947,6 +973,26 @@ class IndividualServiceManager:
             task_name,
         ]
 
+        logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+        logger.debug(
+            f"Spawning process: {' '.join(cmd)}",
+            action="spawn_process",
+            task_name=task_name,
+        )
+
+        # Get DB_URL from environment to pass to child process
+        import os
+
+        env = os.environ.copy()
+        db_url = os.getenv("DB_URL")
+        if db_url:
+            env["DB_URL"] = db_url
+            logger.debug(
+                f"Passing DB_URL={db_url} to child process",
+                action="spawn_process",
+                task_name=task_name,
+            )
+
         # Spawn process
         process = subprocess.Popen(
             cmd,
@@ -954,6 +1000,13 @@ class IndividualServiceManager:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=env,  # Pass environment variables including DB_URL
+        )
+
+        logger.debug(
+            f"Process spawned with PID: {process.pid}",
+            action="spawn_process",
+            task_name=task_name,
         )
 
         return process
@@ -1052,7 +1105,6 @@ class IndividualServiceManager:
                     executed_at = executed_at.replace(tzinfo=IST)
 
                 execution_age = ist_now() - executed_at
-                # Use 5 minutes timeout for all tasks (for debugging - can increase later)
                 timeout_minutes = 5
                 if execution_age > timedelta(minutes=timeout_minutes):
                     # Mark stale execution as failed (regardless of thread status)
@@ -1100,56 +1152,88 @@ class IndividualServiceManager:
                     if thread_key in self._run_once_threads:
                         del self._run_once_threads[thread_key]
 
-            # Process ID is only relevant for "start service" (long-running), not "run once"
-            # Only check process if service is marked as running (from "start service")
             process_id = None
-            if service and service.is_running and service.process_id:
-                # Only check process existence for services started via "start service"
-                process_exists = False
-                try:
-                    if os.name == "nt":  # Windows
-                        proc_result = subprocess.run(
-                            ["tasklist", "/FI", f"PID eq {service.process_id}"],
-                            capture_output=True,
-                            text=True,
-                            timeout=2,
-                            check=False,
+            if service and service.process_id:
+                process_key = (user_id, task_name)
+                internal_process = self._processes.get(process_key)
+                if internal_process:
+                    if internal_process.poll() is None:
+                        process_id = service.process_id
+                        if not service.is_running:
+                            logger = get_user_logger(
+                                user_id=user_id, db=self.db, module="IndividualService"
+                            )
+                            logger.info(
+                                f"Internal process for {task_name} is alive but DB says stopped. Syncing DB to running.",
+                                action="get_status",
+                                task_name=task_name,
+                            )
+                            self._status_repo.mark_running(
+                                user_id, task_name, process_id=process_id
+                            )
+                            self.db.commit()
+                            service = self._status_repo.get_by_user_and_task(user_id, task_name)
+                    else:
+                        logger = get_user_logger(
+                            user_id=user_id, db=self.db, module="IndividualService"
                         )
-                        process_exists = (
-                            proc_result.returncode == 0
-                            and proc_result.stdout
-                            and str(service.process_id) in proc_result.stdout
+                        logger.warning(
+                            f"Internal process for {task_name} is dead. Marking service as stopped.",
+                            action="get_status",
+                            task_name=task_name,
                         )
-                    else:  # Unix/Linux
-                        proc_path = Path(f"/proc/{service.process_id}")
-                        if proc_path.exists():
-                            process_exists = True
-                        else:
+                        self._status_repo.mark_stopped(user_id, task_name)
+                        service = self._status_repo.get_by_user_and_task(user_id, task_name)
+                else:
+                    process_exists = False
+                    try:
+                        if os.name == "nt":  # Windows
                             proc_result = subprocess.run(
-                                ["kill", "-0", str(service.process_id)],
+                                ["tasklist", "/FI", f"PID eq {service.process_id}"],
                                 capture_output=True,
+                                text=True,
                                 timeout=2,
                                 check=False,
                             )
-                            process_exists = proc_result.returncode == 0
-                except (subprocess.TimeoutExpired, FileNotFoundError, OSError, PermissionError):
-                    # Can't check, assume exists
-                    process_exists = True
+                            process_exists = (
+                                proc_result.returncode == 0
+                                and proc_result.stdout
+                                and str(service.process_id) in proc_result.stdout
+                            )
+                        else:  # Unix/Linux
+                            proc_path = Path(f"/proc/{service.process_id}")
+                            if proc_path.exists():
+                                process_exists = True
+                            else:
+                                proc_result = subprocess.run(
+                                    ["kill", "-0", str(service.process_id)],
+                                    capture_output=True,
+                                    timeout=2,
+                                    check=False,
+                                )
+                                process_exists = proc_result.returncode == 0
+                    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, PermissionError):
+                        # Can't check, assume doesn't exist to be safe
+                        process_exists = False
 
-                if process_exists:
-                    process_id = service.process_id
-                else:
-                    # Process doesn't exist, mark service as stopped
-                    logger = get_user_logger(
-                        user_id=user_id, db=self.db, module="IndividualService"
-                    )
-                    logger.warning(
-                        f"Process {service.process_id} for {task_name} no longer exists. Marking service as stopped.",
-                        action="get_status",
-                        task_name=task_name,
-                    )
-                    self._status_repo.mark_stopped(user_id, task_name)
-                    service = self._status_repo.get_by_user_and_task(user_id, task_name)
+                    if process_exists:
+                        process_id = service.process_id
+                        if not service.is_running:
+                            logger = get_user_logger(
+                                user_id=user_id, db=self.db, module="IndividualService"
+                            )
+                            logger.info(
+                                f"Process {service.process_id} for {task_name} exists in OS but DB says stopped. Syncing DB to running.",
+                                action="get_status",
+                                task_name=task_name,
+                            )
+                            self._status_repo.mark_running(
+                                user_id, task_name, process_id=process_id
+                            )
+                            self.db.commit()
+                            service = self._status_repo.get_by_user_and_task(user_id, task_name)
+                    else:
+                        process_id = service.process_id if service.is_running else None
 
             # Determine actual execution status - use raw status (most reliable)
             actual_execution_status = None
@@ -1158,8 +1242,6 @@ class IndividualServiceManager:
             elif latest_execution:
                 actual_execution_status = latest_execution.status
 
-            # Final safety check: if status is still "running" after 5 minutes, force it to "failed" in response
-            # (even if database update didn't work)
             if actual_execution_status == "running" and latest_execution_raw:
                 from datetime import timedelta  # noqa: PLC0415
 
@@ -1170,10 +1252,8 @@ class IndividualServiceManager:
                     executed_at = executed_at.replace(tzinfo=IST)
                 execution_age = ist_now() - executed_at
 
-                # Use 5 minutes timeout for all tasks (for debugging - can increase later)
                 timeout_minutes = 5
                 if execution_age > timedelta(minutes=timeout_minutes):
-                    # Force status to failed in response (safety override)
                     actual_execution_status = "failed"
                     logger = get_user_logger(
                         user_id=user_id, db=self.db, module="IndividualService"
@@ -1184,8 +1264,11 @@ class IndividualServiceManager:
                         task_name=task_name,
                     )
 
+            # Get is_running from service status (synced above if needed)
+            is_running = service.is_running if service else False
+
             result_data = {
-                "is_running": service.is_running if service else False,
+                "is_running": is_running,
                 "started_at": (
                     service.started_at.isoformat() if service and service.started_at else None
                 ),

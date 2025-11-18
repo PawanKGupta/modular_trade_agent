@@ -63,6 +63,7 @@ export function ServiceSchedulePage() {
 			is_hourly: schedule.is_hourly,
 			is_continuous: schedule.is_continuous,
 			end_time: schedule.end_time,
+			schedule_type: schedule.schedule_type,
 			description: schedule.description,
 		});
 	};
@@ -76,6 +77,7 @@ export function ServiceSchedulePage() {
 				is_hourly: editForm.is_hourly,
 				is_continuous: editForm.is_continuous,
 				end_time: editForm.end_time || null,
+				schedule_type: editForm.schedule_type || 'daily',
 				description: editForm.description || null,
 			},
 		});
@@ -120,6 +122,7 @@ export function ServiceSchedulePage() {
 			<div className="flex items-center justify-between">
 				<h1 className="text-xl font-semibold text-[var(--text)]">Service Schedules</h1>
 			</div>
+
 
 			{/* Restart Banner */}
 			{showRestartBanner && (
@@ -199,61 +202,112 @@ export function ServiceSchedulePage() {
 											)}
 										</td>
 										<td className="px-4 py-3">
-											<div className="flex flex-col gap-1">
+											<div className="flex flex-col gap-2">
 												{isEditing ? (
 													<>
 														<label className="flex items-center gap-2 text-sm text-[var(--text)]">
-															<input
-																type="checkbox"
-																checked={editForm.is_hourly || false}
-																onChange={(e) =>
-																	setEditForm({ ...editForm, is_hourly: e.target.checked })
-																}
-																className="accent-blue-600"
-															/>
-															<span>Hourly</span>
+															<span className="w-24">Schedule:</span>
+															<select
+																value={editForm.schedule_type || 'daily'}
+																onChange={(e) => {
+																	const newScheduleType = e.target.value as 'daily' | 'once';
+																	// If changing to "once", set execution to "one-time" and clear hourly/continuous
+																	if (newScheduleType === 'once') {
+																		setEditForm({
+																			...editForm,
+																			schedule_type: newScheduleType,
+																			is_hourly: false,
+																			is_continuous: false,
+																			end_time: null,
+																		});
+																	} else {
+																		setEditForm({
+																			...editForm,
+																			schedule_type: newScheduleType,
+																		});
+																	}
+																}}
+																className="px-2 py-1 bg-[#1e293b] border border-[#334155] rounded text-sm text-[var(--text)]"
+															>
+																<option value="daily">Daily</option>
+																<option value="once">Once</option>
+															</select>
 														</label>
 														<label className="flex items-center gap-2 text-sm text-[var(--text)]">
-															<input
-																type="checkbox"
-																checked={editForm.is_continuous || false}
-																onChange={(e) =>
+															<span className="w-24">Execution:</span>
+															<select
+																value={
+																	editForm.is_hourly
+																		? 'hourly'
+																		: editForm.is_continuous
+																			? 'continuous'
+																			: 'one-time'
+																}
+																onChange={(e) => {
+																	const value = e.target.value;
 																	setEditForm({
 																		...editForm,
-																		is_continuous: e.target.checked,
-																	})
-																}
-																className="accent-blue-600"
-															/>
-															<span>Continuous</span>
+																		is_hourly: value === 'hourly',
+																		is_continuous: value === 'continuous',
+																		end_time: value === 'continuous' ? editForm.end_time : null,
+																	});
+																}}
+																disabled={editForm.schedule_type === 'once'}
+																className="px-2 py-1 bg-[#1e293b] border border-[#334155] rounded text-sm text-[var(--text)] disabled:opacity-50 disabled:cursor-not-allowed"
+															>
+																<option value="one-time">One-time</option>
+																<option value="hourly">Hourly</option>
+																<option value="continuous">Continuous</option>
+															</select>
+															{editForm.schedule_type === 'once' && (
+																<span className="text-xs text-[var(--muted)] ml-1">
+																	(locked to one-time)
+																</span>
+															)}
 														</label>
 														{editForm.is_continuous && (
-															<input
-																type="time"
-																value={editForm.end_time || ''}
-																onChange={(e) =>
-																	setEditForm({ ...editForm, end_time: e.target.value })
-																}
-																placeholder="End time"
-																className="px-2 py-1 bg-[#1e293b] border border-[#334155] rounded text-sm text-[var(--text)] mt-1"
-															/>
+															<label className="flex items-center gap-2 text-sm text-[var(--text)]">
+																<span className="w-24">End Time:</span>
+																<input
+																	type="time"
+																	value={editForm.end_time || ''}
+																	onChange={(e) =>
+																		setEditForm({ ...editForm, end_time: e.target.value })
+																	}
+																	placeholder="End time"
+																	className="px-2 py-1 bg-[#1e293b] border border-[#334155] rounded text-sm text-[var(--text)]"
+																/>
+															</label>
 														)}
 													</>
 												) : (
 													<div className="text-sm text-[var(--text)]">
-														{schedule.is_hourly && (
-															<span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs mr-1">
-																Hourly
+														<div className="mb-1">
+															<span className={`px-2 py-0.5 rounded text-xs ${
+																schedule.schedule_type === 'daily'
+																	? 'bg-green-500/20 text-green-400'
+																	: 'bg-orange-500/20 text-orange-400'
+															}`}>
+																{schedule.schedule_type === 'daily' ? 'Daily' : 'Once'}
 															</span>
-														)}
-														{schedule.is_continuous && (
-															<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs mr-1">
-																Continuous
-															</span>
-														)}
-														{!schedule.is_hourly && !schedule.is_continuous && (
-															<span className="text-[var(--muted)]">One-time</span>
-														)}
+														</div>
+														<div className="mt-1">
+															{schedule.is_hourly && (
+																<span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs mr-1">
+																	Hourly
+																</span>
+															)}
+															{schedule.is_continuous && (
+																<span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs mr-1">
+																	Continuous
+																</span>
+															)}
+															{!schedule.is_hourly && !schedule.is_continuous && (
+																<span className="px-2 py-0.5 bg-gray-500/20 text-gray-400 rounded text-xs">
+																	One-time
+																</span>
+															)}
+														</div>
 														{schedule.end_time && (
 															<div className="text-xs text-[var(--muted)] mt-1">
 																Ends: {schedule.end_time}
