@@ -65,7 +65,7 @@ class TradingService:
         self,
         user_id: int,
         db_session,
-        broker_creds: dict,
+        broker_creds: dict | None = None,  # None for paper trading mode
         strategy_config=None,  # StrategyConfig instance
         env_file: str | None = None,  # Deprecated: kept for backward compatibility
         skip_execution_tracking: bool = False,  # Set to True when called from individual services
@@ -76,7 +76,7 @@ class TradingService:
         Args:
             user_id: User ID for this service instance
             db_session: SQLAlchemy database session
-            broker_creds: Decrypted broker credentials dict
+            broker_creds: Decrypted broker credentials dict (None for paper trading mode)
             strategy_config: User-specific StrategyConfig (optional, will be loaded if not provided)
             env_file: Deprecated - kept for backward compatibility only
         """
@@ -676,6 +676,12 @@ class TradingService:
             logger.info("=" * 80)
             logger.info("TASK: PLACE BUY ORDERS (4:05 PM)")
             logger.info("=" * 80)
+
+            # Check if engine is initialized
+            if not self.engine:
+                error_msg = "Trading engine not initialized. Call initialize() first."
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
             recs = self.engine.load_latest_recommendations()
             if recs:

@@ -201,9 +201,20 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         # For buy orders, validate funds first
         if order.is_buy_order():
             # Estimate order value
-            estimated_price = self.price_provider.get_price(order.symbol)
+            # Try to get original ticker from order metadata (for .NS suffix)
+            price_symbol = order.symbol
+            if hasattr(order, "metadata") and order.metadata and "original_ticker" in order.metadata:
+                price_symbol = order.metadata["original_ticker"]
+            elif hasattr(order, "_metadata") and order._metadata and "original_ticker" in order._metadata:
+                price_symbol = order._metadata["original_ticker"]
+            else:
+                # Try with .NS suffix if not present
+                if not price_symbol.endswith(".NS") and not price_symbol.endswith(".BO"):
+                    price_symbol = f"{price_symbol}.NS"
+
+            estimated_price = self.price_provider.get_price(price_symbol)
             if estimated_price is None:
-                order.reject(f"Price not available for {order.symbol}")
+                order.reject(f"Price not available for {order.symbol} (tried {price_symbol})")
                 self._save_order(order)
                 return
 
@@ -461,22 +472,22 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
     def _save_order(self, order: Order) -> None:
         """Save order to storage"""
         order_dict = order.to_dict()
-        
+
         # Convert price to float for JSON serialization
         if order_dict.get("price"):
             price_str = str(order_dict["price"])
             price_clean = price_str.replace("₹", "").replace(",", "").strip()
             order_dict["price"] = float(price_clean) if price_clean else None
-        
+
         # Convert executed_price to float
         if order_dict.get("executed_price"):
             exec_price_str = str(order_dict["executed_price"])
             exec_price_clean = exec_price_str.replace("₹", "").replace(",", "").strip()
             order_dict["executed_price"] = float(exec_price_clean) if exec_price_clean else None
-        
+
         # Check if order exists
         existing = self.store.get_order_by_id(order.order_id)
-        
+
         if existing:
             # Update existing order
             self.store.update_order(order.order_id, order_dict)
@@ -542,7 +553,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 price_clean = price_str.replace("₹", "").replace(",", "").strip()
                 if price_clean:
                     price = Money(float(price_clean))
-        
+
         order = Order(
             symbol=order_dict["symbol"],
             quantity=order_dict["quantity"],

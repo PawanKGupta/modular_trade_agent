@@ -27,6 +27,7 @@ from .routers import (
     logs,
     ml,
     orders,
+    paper_trading,
     pnl,
     service,
     signals,
@@ -129,6 +130,7 @@ app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
 app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])
 app.include_router(activity.router, prefix="/api/v1/user/activity", tags=["activity"])
 app.include_router(targets.router, prefix="/api/v1/user/targets", tags=["targets"])
+app.include_router(paper_trading.router, prefix="/api/v1/user/paper-trading", tags=["paper-trading"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(ml.router, prefix="/api/v1", tags=["admin-ml"])
 app.include_router(logs.router, prefix="/api/v1", tags=["logs"])

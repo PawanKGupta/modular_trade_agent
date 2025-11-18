@@ -5,6 +5,7 @@ import { AppShell } from './routes/AppShell';
 import { DashboardHome } from './routes/dashboard/DashboardHome';
 import { BuyingZonePage } from './routes/dashboard/BuyingZonePage';
 import { OrdersPage } from './routes/dashboard/OrdersPage';
+import { PaperTradingPage } from './routes/dashboard/PaperTradingPage';
 import { PnlPage } from './routes/dashboard/PnlPage';
 import { TargetsPage } from './routes/dashboard/TargetsPage';
 import { ActivityPage } from './routes/dashboard/ActivityPage';
@@ -33,6 +34,7 @@ export function createAppRouter() {
 				{ index: true, element: <DashboardHome /> },
 				{ path: 'buying-zone', element: <BuyingZonePage /> },
 				{ path: 'orders', element: <OrdersPage /> },
+				{ path: 'paper-trading', element: <PaperTradingPage /> },
 				{ path: 'pnl', element: <PnlPage /> },
 				{ path: 'targets', element: <TargetsPage /> },
 				{ path: 'activity', element: <ActivityPage /> },

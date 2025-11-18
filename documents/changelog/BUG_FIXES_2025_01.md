@@ -242,6 +242,85 @@ Added validation to prevent invalid combinations of schedule type and execution 
 
 ---
 
+---
+
+## Paper Trading Support for Individual Services
+
+### Date: 2025-01-20
+
+### Summary
+Implemented full paper trading support for individual services, allowing users to run all trading tasks (buy_orders, sell_monitor, position_monitor, etc.) in paper trading mode without requiring broker credentials.
+
+### Implementation
+1. **Created `PaperTradingServiceAdapter`** (`src/application/services/paper_trading_service_adapter.py`):
+   - Provides TradingService-compatible interface for paper trading
+   - Uses `PaperTradingBrokerAdapter` instead of real broker authentication
+   - Implements all task methods: `run_buy_orders()`, `run_premarket_retry()`, `run_sell_monitor()`, `run_position_monitor()`, `run_eod_cleanup()`
+   - User-specific storage paths: `paper_trading/user_{user_id}/`
+   - Sets `max_position_size` from `strategy_config.user_capital` during initialization
+
+2. **Created `PaperTradingEngineAdapter`**:
+   - Provides AutoTradeEngine-compatible interface using paper trading broker
+   - **Loads recommendations from database (Signals table)** instead of CSV files
+   - Filters for buy/strong_buy verdicts (prioritizes `final_verdict` > `verdict` > `ml_verdict`)
+   - Extracts `execution_capital` from `liquidity_recommendation` or `trading_params`
+   - Places orders using paper trading broker
+   - Handles portfolio limits, duplicate detection, and balance checks
+   - Respects `max_position_size` limit from trading configuration
+
+3. **Updated `IndividualServiceManager`**:
+   - Detects paper trading mode (`trade_mode.value == "paper"`)
+   - Uses `PaperTradingServiceAdapter` instead of `TradingService` for paper mode
+   - No broker credentials required for paper trading mode
+
+4. **Updated `TradingService`**:
+   - Made `broker_creds` parameter optional (`dict | None = None`)
+   - Supports paper trading mode initialization
+
+### Features
+- ✅ All trading tasks work in paper trading mode
+- ✅ No broker credentials required
+- ✅ User-specific paper trading storage
+- ✅ Portfolio limits and duplicate detection
+- ✅ Balance validation and order placement
+- ✅ EOD reports and cleanup
+- ✅ **Loads recommendations from database (Signals table)**
+- ✅ **Uses `strategy_config.user_capital` for max position size**
+- ✅ **Respects trading configuration for position sizing**
+
+### Improvements (2025-01-21)
+1. **Database-based Recommendations**:
+   - Changed from loading CSV files to querying `Signals` table
+   - Filters for today's signals (or recent if none today)
+   - Only includes buy/strong_buy verdicts
+   - Extracts execution_capital from signal metadata
+
+2. **Trading Configuration Integration**:
+   - `max_position_size` in `PaperTradingConfig` is set from `strategy_config.user_capital`
+   - Orders respect user's configured capital per trade
+   - Quantity calculation uses `user_capital` instead of hardcoded defaults
+
+3. **Better Error Handling**:
+   - Improved logging for recommendation loading
+   - Better error messages for order rejections
+   - Summary returned from `run_buy_orders()` for execution details
+
+### Files Modified
+- `src/application/services/paper_trading_service_adapter.py`
+- `src/application/services/individual_service_manager.py`
+- `modules/kotak_neo_auto_trader/run_trading_service.py`
+- `tests/unit/application/test_paper_trading_service_adapter.py`
+
+### Testing
+- Added comprehensive tests for paper trading adapter
+- Tests cover initialization, buy orders, duplicate detection, portfolio limits
+- Tests verify recommendation loading from database
+- Tests verify max_position_size from strategy_config
+- Tests verify quantity adjustment when exceeding limits
+
+---
+
 ## Related Documentation
 - [Individual Service Management User Guide](../features/INDIVIDUAL_SERVICE_MANAGEMENT_USER_GUIDE.md)
 - [Individual Service Management Implementation Plan](../features/INDIVIDUAL_SERVICE_MANAGEMENT_IMPLEMENTATION_PLAN.md)
+- [Paper Trading Documentation](../../paper_trading/README.md)

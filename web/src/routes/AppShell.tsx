@@ -20,6 +20,7 @@ export function AppShell() {
 					<Link to="/dashboard" className="text-[var(--text)] hover:text-[var(--accent)]">Overview</Link>
 					<Link to="/dashboard/buying-zone" className="text-[var(--text)] hover:text-[var(--accent)]">Buying Zone</Link>
 					<Link to="/dashboard/orders" className="text-[var(--text)] hover:text-[var(--accent)]">Orders</Link>
+					<Link to="/dashboard/paper-trading" className="text-[var(--text)] hover:text-[var(--accent)]">Paper Trading</Link>
 					<Link to="/dashboard/pnl" className="text-[var(--text)] hover:text-[var(--accent)]">PnL</Link>
 					<Link to="/dashboard/targets" className="text-[var(--text)] hover:text-[var(--accent)]">Targets</Link>
 					<Link to="/dashboard/activity" className="text-[var(--text)] hover:text-[var(--accent)]">Activity</Link>

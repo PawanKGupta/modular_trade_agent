@@ -278,10 +278,17 @@ class IndividualServiceManager:
             )
             if requires_broker_creds:
                 if not settings.broker_creds_encrypted:
-                    raise ValueError(f"No broker credentials stored for user_id={user_id}")
+                    raise ValueError(
+                        f"Task '{task_name}' requires broker credentials, but none are stored for user_id={user_id}. "
+                        f"Please configure broker credentials in your settings, or switch to paper trading mode "
+                        f"(current mode: {settings.trade_mode.value})."
+                    )
                 broker_creds = decrypt_broker_credentials(settings.broker_creds_encrypted)
                 if not broker_creds:
-                    raise ValueError(f"Failed to decrypt broker credentials for user_id={user_id}")
+                    raise ValueError(
+                        f"Failed to decrypt broker credentials for user_id={user_id}. "
+                        f"Please reconfigure your broker credentials, or switch to paper trading mode."
+                    )
 
             # Execute task based on task_name
             result = self._execute_task_logic(
@@ -382,20 +389,58 @@ class IndividualServiceManager:
         if task_name == "analysis":
             return self._run_analysis_task(user_id=user_id)
 
-        # Create TradingService instance (same as unified service) for broker-dependent tasks
-        # Skip execution tracking since individual services track separately
-        service = trading_service_module.TradingService(
-            user_id=user_id,
-            db_session=self.db,
-            broker_creds=broker_creds,
-            strategy_config=strategy_config,
-            env_file=None,
-            skip_execution_tracking=True,
-        )
+        # Check if paper trading mode
+        is_paper_mode = settings.trade_mode.value == "paper"
 
-        # Initialize service
-        if not service.initialize():
-            raise RuntimeError("Failed to initialize trading service")
+        if is_paper_mode:
+            # Paper trading mode: use PaperTradingServiceAdapter
+            from src.application.services.paper_trading_service_adapter import (
+                PaperTradingServiceAdapter,
+            )
+
+            # Get initial capital from settings or use default
+            initial_capital = getattr(settings, "paper_trading_capital", None) or 100000.0
+
+            service = PaperTradingServiceAdapter(
+                user_id=user_id,
+                db_session=self.db,
+                strategy_config=strategy_config,
+                initial_capital=initial_capital,
+                storage_path=None,  # Will use user-specific path
+                skip_execution_tracking=True,
+            )
+
+            # Initialize paper trading service
+            if not service.initialize():
+                raise RuntimeError(
+                    "Failed to initialize paper trading service. "
+                    "Check storage permissions and configuration."
+                )
+        else:
+            # Broker mode: requires credentials
+            if not broker_creds:
+                raise ValueError(
+                    f"Task '{task_name}' requires broker credentials for broker mode. "
+                    f"Please configure broker credentials in your settings."
+                )
+
+            # Create TradingService instance (same as unified service) for broker-dependent tasks
+            # Skip execution tracking since individual services track separately
+            service = trading_service_module.TradingService(
+                user_id=user_id,
+                db_session=self.db,
+                broker_creds=broker_creds,
+                strategy_config=strategy_config,
+                env_file=None,
+                skip_execution_tracking=True,
+            )
+
+            # Initialize service
+            if not service.initialize():
+                raise RuntimeError(
+                    "Failed to initialize trading service. "
+                    "Check broker credentials, authentication, and network connectivity."
+                )
 
         # Execute specific task
         if task_name == "premarket_retry":
@@ -408,8 +453,11 @@ class IndividualServiceManager:
             service.run_position_monitor()
             return {"task": "position_monitor", "status": "completed"}
         elif task_name == "buy_orders":
-            service.run_buy_orders()
-            return {"task": "buy_orders", "status": "completed"}
+            summary = service.run_buy_orders()
+            result = {"task": "buy_orders", "status": "completed"}
+            if summary:
+                result["summary"] = summary
+            return result
         elif task_name == "eod_cleanup":
             service.run_eod_cleanup()
             return {"task": "eod_cleanup", "status": "completed"}
