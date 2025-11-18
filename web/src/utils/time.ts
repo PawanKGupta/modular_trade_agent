@@ -6,13 +6,31 @@
  * - 3678 seconds -> "1hr ago"
  */
 export function formatTimeAgo(seconds: number): string {
-	if (seconds < 60) {
-		return `${seconds} sec ago`;
+	const isFuture = seconds < 0;
+	const absSeconds = Math.abs(seconds);
+
+	let value: number;
+	let unit: string;
+
+	if (absSeconds < 60) {
+		value = Math.floor(absSeconds);
+		unit = 'sec';
+	} else if (absSeconds < 3600) {
+		value = Math.floor(absSeconds / 60);
+		unit = 'min';
+	} else if (absSeconds < 86400) {
+		value = Math.floor(absSeconds / 3600);
+		unit = 'hr';
+	} else {
+		value = Math.floor(absSeconds / 86400);
+		unit = 'day';
 	}
-	if (seconds < 3600) {
-		const minutes = Math.floor(seconds / 60);
-		return `${minutes} min ago`;
+
+	const needsPlural = value !== 1 && (unit === 'hr' || unit === 'day');
+	const pluralizedUnit = needsPlural ? `${unit}s` : unit;
+
+	if (isFuture) {
+		return `in ${value} ${pluralizedUnit}`;
 	}
-	const hours = Math.floor(seconds / 3600);
-	return `${hours}hr ago`;
+	return `${value} ${pluralizedUnit} ago`;
 }

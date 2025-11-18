@@ -35,6 +35,17 @@ export function IndividualServiceControls({
 	service,
 	unifiedServiceRunning,
 }: IndividualServiceControlsProps) {
+	const renderTimestamp = (timestamp: string) => {
+		const date = new Date(timestamp);
+		const secondsDiff = Math.floor((Date.now() - date.getTime()) / 1000);
+		const relative = formatTimeAgo(secondsDiff);
+		return (
+			<>
+				{date.toLocaleString()}
+				<span className="text-[var(--muted)] ml-2 text-xs">({relative})</span>
+			</>
+		);
+	};
 	const qc = useQueryClient();
 	const [showConflictWarning, setShowConflictWarning] = useState(false);
 	const [conflictMessage, setConflictMessage] = useState<string | null>(null);
@@ -118,25 +129,13 @@ export function IndividualServiceControls({
 				{service.last_execution_at && (
 					<div>
 						<div className="text-[var(--muted)] mb-1">Last Execution</div>
-						<div className="text-[var(--text)]">
-							{formatTimeAgo(
-								Math.floor(
-									(Date.now() - new Date(service.last_execution_at).getTime()) / 1000
-								)
-							)}
-						</div>
+						<div className="text-[var(--text)]">{renderTimestamp(service.last_execution_at)}</div>
 					</div>
 				)}
 				{service.next_execution_at && (
 					<div>
 						<div className="text-[var(--muted)] mb-1">Next Execution</div>
-						<div className="text-[var(--text)]">
-							{formatTimeAgo(
-								Math.floor(
-									(Date.now() - new Date(service.next_execution_at).getTime()) / 1000
-								)
-							)}
-						</div>
+						<div className="text-[var(--text)]">{renderTimestamp(service.next_execution_at)}</div>
 					</div>
 				)}
 			</div>
