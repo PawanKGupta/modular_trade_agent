@@ -5,6 +5,33 @@ import sys
 
 import pytest
 
+# CRITICAL: Force in-memory database BEFORE any imports that might use DB_URL
+# This must happen at the very top of conftest.py, before any module imports
+# This prevents the shared session.py engine from connecting to the real database
+if "DB_URL" not in os.environ or not os.environ.get("DB_URL", "").startswith("sqlite:///:memory"):
+    # Check if DB_URL points to a real database file
+    db_url = os.environ.get("DB_URL", "")
+    if db_url.startswith("sqlite:///"):
+        db_path = db_url.replace("sqlite:///", "", 1)
+        cwd = os.getcwd()
+        real_db_paths = [
+            os.path.abspath(os.path.join(cwd, "data", "app.db")),
+            os.path.abspath(os.path.join(cwd, "app.db")),
+            os.path.abspath(os.path.join(cwd, "app.dev.db")),
+        ]
+        abs_db_path = os.path.abspath(db_path)
+        if abs_db_path in real_db_paths:
+            # Force override to in-memory to prevent data loss
+            os.environ["DB_URL"] = "sqlite:///:memory:"
+            print(
+                f"WARNING: DB_URL was set to production database ({db_url}). "
+                "Forced to in-memory for tests to prevent data loss.",
+                file=sys.stderr,
+            )
+    else:
+        # Set to in-memory if not already set or not in-memory
+        os.environ["DB_URL"] = "sqlite:///:memory:"
+
 # Ensure Unicode logs render on Windows/CI environments
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 os.environ.setdefault("PYTHONUTF8", "1")
@@ -32,9 +59,19 @@ def clean_db_after_test():
     db_url = os.environ.get("DB_URL", "")
     if db_url.startswith("sqlite:///"):
         db_path = db_url.replace("sqlite:///", "", 1)
-        real_db = os.path.abspath(os.path.join(os.getcwd(), "data", "app.db"))
-        if os.path.abspath(db_path) == real_db:
-            raise RuntimeError(f"Tests must not run against real DB: {db_path}")
+        cwd = os.getcwd()
+        # Check for all common production database paths
+        real_db_paths = [
+            os.path.abspath(os.path.join(cwd, "data", "app.db")),
+            os.path.abspath(os.path.join(cwd, "app.db")),
+            os.path.abspath(os.path.join(cwd, "app.dev.db")),
+        ]
+        abs_db_path = os.path.abspath(db_path)
+        if abs_db_path in real_db_paths:
+            raise RuntimeError(
+                f"Tests must not run against real DB: {db_path}. "
+                "Set DB_URL='sqlite:///:memory:' before running tests."
+            )
 
     # Make sure project root is importable
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))

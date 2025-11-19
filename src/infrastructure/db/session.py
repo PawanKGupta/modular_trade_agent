@@ -14,20 +14,25 @@ DB_URL = os.getenv("DB_URL", "sqlite:///./data/app.db")
 is_sqlite = DB_URL.startswith("sqlite")
 is_memory = is_sqlite and (":memory:" in DB_URL or DB_URL.rstrip("/") in {"sqlite://", "sqlite:/"})
 
-# Safety check: Warn if tests might be using production database
+# Safety check: Prevent tests from using production database
 # Tests should NEVER use this shared engine - they should create their own test engines
 if not is_memory and "pytest" in sys.modules:
-    import warnings
+    # Check for common production database paths
+    cwd = os.getcwd()
+    real_db_paths = [
+        os.path.abspath(os.path.join(cwd, "data", "app.db")),
+        os.path.abspath(os.path.join(cwd, "app.db")),
+        os.path.abspath(os.path.join(cwd, "app.dev.db")),
+    ]
 
-    real_db_path = os.path.abspath(os.path.join(os.getcwd(), "data", "app.db"))
     if DB_URL.startswith("sqlite:///"):
         db_path = DB_URL.replace("sqlite:///", "", 1)
-        if os.path.abspath(db_path) == real_db_path:
-            warnings.warn(
-                f"WARNING: Tests are running with production database URL: {DB_URL}. "
-                "Tests should set DB_URL='sqlite:///:memory:' before importing this module.",
-                RuntimeWarning,
-                stacklevel=2,
+        abs_db_path = os.path.abspath(db_path)
+        if abs_db_path in real_db_paths:
+            raise RuntimeError(
+                f"CRITICAL: Tests are attempting to use production database: {DB_URL}. "
+                "This will destroy your data! Set DB_URL='sqlite:///:memory:' before running tests. "
+                "The conftest.py fixture should handle this automatically."
             )
 
 if is_memory:
