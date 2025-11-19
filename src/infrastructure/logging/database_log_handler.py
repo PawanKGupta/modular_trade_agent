@@ -6,8 +6,8 @@ Writes structured logs to ServiceLog table in database.
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -17,7 +17,7 @@ from src.infrastructure.persistence.service_log_repository import ServiceLogRepo
 class DatabaseLogHandler(logging.Handler):
     """
     Logging handler that writes logs to ServiceLog table.
-    
+
     Provides structured logging with user context, level, module, message,
     and additional context data stored as JSON.
     """
@@ -25,7 +25,7 @@ class DatabaseLogHandler(logging.Handler):
     def __init__(self, user_id: int, db: Session, level: int = logging.NOTSET):
         """
         Initialize database log handler.
-        
+
         Args:
             user_id: User ID for log entries
             db: Database session
@@ -39,7 +39,7 @@ class DatabaseLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         """
         Emit a log record to the database.
-        
+
         Args:
             record: LogRecord to emit
         """
@@ -82,14 +82,13 @@ class DatabaseLogHandler(logging.Handler):
                 "exc_text",
                 "stack_info",
                 "user_id",  # We'll add this separately
+                "taskName",  # Standard logging attribute (camelCase)
             }
 
             for key, value in record.__dict__.items():
                 if key not in standard_fields:
                     # Only include JSON-serializable values
                     try:
-                        import json
-
                         json.dumps(value)  # Test if serializable
                         context[key] = value
                     except (TypeError, ValueError):
@@ -109,4 +108,3 @@ class DatabaseLogHandler(logging.Handler):
             # Don't let logging errors break the application
             # Use handleError to log the issue
             self.handleError(record)
-

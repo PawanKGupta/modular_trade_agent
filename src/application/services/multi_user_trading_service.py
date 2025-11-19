@@ -54,6 +54,7 @@ class MultiUserTradingService:
         self._logger = get_user_logger(
             user_id=0, db=db, module="MultiUserTradingService"
         )  # System-level logger
+        self._task_name = "unified_service"
 
     def start_service(self, user_id: int) -> bool:
         """
@@ -80,12 +81,20 @@ class MultiUserTradingService:
             try:
                 # Get user-specific logger
                 user_logger = get_user_logger(user_id=user_id, db=self.db, module="TradingService")
-                user_logger.info("Starting trading service", action="start_service")
+                user_logger.info(
+                    "Starting trading service",
+                    action="start_service",
+                    task_name=self._task_name,
+                )
 
                 # Load user settings
                 settings = self._settings_repo.get_by_user_id(user_id)
                 if not settings:
-                    user_logger.error("User settings not found", action="start_service")
+                    user_logger.error(
+                        "User settings not found",
+                        action="start_service",
+                        task_name=self._task_name,
+                    )
                     raise ValueError(f"User settings not found for user_id={user_id}")
 
                 # Phase 2.4: Handle broker vs paper mode
@@ -95,13 +104,19 @@ class MultiUserTradingService:
                 if settings.trade_mode.value == "broker":
                     # Broker mode: requires encrypted credentials
                     if not settings.broker_creds_encrypted:
-                        user_logger.error("No broker credentials stored", action="start_service")
+                        user_logger.error(
+                            "No broker credentials stored",
+                            action="start_service",
+                            task_name=self._task_name,
+                        )
                         raise ValueError(f"No broker credentials stored for user_id={user_id}")
 
                     broker_creds_dict = decrypt_broker_credentials(settings.broker_creds_encrypted)
                     if not broker_creds_dict:
                         user_logger.error(
-                            "Failed to decrypt broker credentials", action="start_service"
+                            "Failed to decrypt broker credentials",
+                            action="start_service",
+                            task_name=self._task_name,
                         )
                         raise ValueError(
                             f"Failed to decrypt broker credentials for user_id={user_id}"
@@ -113,19 +128,23 @@ class MultiUserTradingService:
                     broker_creds = broker_creds_dict  # Pass dict for future use
 
                     user_logger.info(
-                        "Broker mode: credentials loaded and decrypted", action="start_service"
+                        "Broker mode: credentials loaded and decrypted",
+                        action="start_service",
+                        task_name=self._task_name,
                     )
                 elif settings.trade_mode.value == "paper":
                     # Paper mode: uses simulated trading, no broker credentials needed
                     user_logger.info(
                         "Paper mode: using simulated trading (no broker credentials required)",
                         action="start_service",
+                        task_name=self._task_name,
                     )
                     # Paper mode will use MockBrokerAdapter or similar
                 else:
                     user_logger.error(
                         f"Unknown trade mode: {settings.trade_mode.value}",
                         action="start_service",
+                        task_name=self._task_name,
                     )
                     raise ValueError(
                         f"Unknown trade mode: {settings.trade_mode.value} for user_id={user_id}"
@@ -150,7 +169,11 @@ class MultiUserTradingService:
                 self._service_status_repo.update_running(user_id, running=True)
                 self._service_status_repo.update_heartbeat(user_id)
 
-                user_logger.info("Trading service started successfully", action="start_service")
+                user_logger.info(
+                    "Trading service started successfully",
+                    action="start_service",
+                    task_name=self._task_name,
+                )
 
                 # TODO: Start service in background thread
                 # service_thread = threading.Thread(
@@ -169,6 +192,7 @@ class MultiUserTradingService:
                     "Failed to start trading service",
                     exc_info=e,
                     action="start_service",
+                    task_name=self._task_name,
                 )
 
                 self._service_status_repo.update_running(user_id, running=False)
@@ -195,7 +219,11 @@ class MultiUserTradingService:
             try:
                 # Get user-specific logger
                 user_logger = get_user_logger(user_id=user_id, db=self.db, module="TradingService")
-                user_logger.info("Stopping trading service", action="stop_service")
+                user_logger.info(
+                    "Stopping trading service",
+                    action="stop_service",
+                    task_name=self._task_name,
+                )
 
                 # Request shutdown
                 if service and hasattr(service, "shutdown_requested"):
@@ -214,6 +242,7 @@ class MultiUserTradingService:
                         user_logger.warning(
                             f"Failed to cleanup temp env file: {cleanup_error}",
                             action="stop_service",
+                            task_name=self._task_name,
                         )
                     del self._temp_env_files[user_id]
 
@@ -221,7 +250,11 @@ class MultiUserTradingService:
                 self._service_status_repo.update_running(user_id, running=False)
                 self._service_status_repo.update_heartbeat(user_id)
 
-                user_logger.info("Trading service stopped successfully", action="stop_service")
+                user_logger.info(
+                    "Trading service stopped successfully",
+                    action="stop_service",
+                    task_name=self._task_name,
+                )
                 return True
 
             except Exception as e:
@@ -231,6 +264,7 @@ class MultiUserTradingService:
                     "Failed to stop trading service",
                     exc_info=e,
                     action="stop_service",
+                    task_name=self._task_name,
                 )
 
                 self._service_status_repo.increment_error(user_id, error_message=str(e))
