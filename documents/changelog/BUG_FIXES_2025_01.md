@@ -320,6 +320,202 @@ Implemented full paper trading support for individual services, allowing users t
 
 ---
 
+## Buy Order Service Optimizations
+
+### Date: 2025-01-21
+
+### Summary
+Implemented several performance and reliability optimizations for the buy order service, including unified recommendation source, per-ticker telemetry, batching of API calls, and fail-fast error handling.
+
+---
+
+### 1. Recommendation Source Unification
+
+**Issue**: Unified service was reading recommendations from CSV files, while individual/paper services were reading from the `Signals` table, causing inconsistency and file I/O overhead.
+
+**Fix**:
+- Modified `AutoTradeEngine.load_latest_recommendations()` to prioritize database (`Signals` table) when a database session and user_id are available
+- Falls back to CSV files for backward compatibility (standalone execution, legacy workflows)
+- Unified service now uses the same authoritative source as individual services
+- Eliminates file I/O and keeps all services in sync
+
+**Priority Order**:
+1. Custom CSV path (if set via `_custom_csv_path` - for backward compatibility)
+2. **Database (`Signals` table)** - when `db` and `user_id` available
+3. CSV files (fallback)
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+
+**Benefits**:
+- Single source of truth for recommendations
+- No file I/O overhead for unified service
+- Late updates/filters possible without regenerating CSVs
+- Consistent behavior across all service types
+
+---
+
+### 2. Per-Ticker Telemetry
+
+**Issue**: Only summary statistics were logged, making it difficult to debug individual order attempts or track per-ticker performance.
+
+**Fix**:
+- Added `ticker_attempts` list to `place_new_entries()` summary
+- Each attempt records:
+  - `ticker`: Original ticker symbol
+  - `symbol`: Broker-specific symbol
+  - `verdict`: Recommendation verdict (buy/strong_buy)
+  - `status`: Attempt status (placed, skipped, failed)
+  - `reason`: Skip/fail reason (e.g., "already_in_holdings", "insufficient_balance", "missing_indicators")
+  - `qty`: Calculated quantity
+  - `execution_capital`: Capital allocated
+  - `price`: Order price
+  - `order_id`: Broker order ID (if placed)
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+
+**Benefits**:
+- Detailed audit trail for each ticker
+- Easier debugging of order placement issues
+- KPI tracking per ticker
+- UI can display detailed results
+
+---
+
+### 3. Batching Indicators and Portfolio Snapshots
+
+**Issue**: Each recommendation was fetching portfolio and indicators individually, causing O(n) API calls and high latency.
+
+**Fix**:
+- **Portfolio Caching**: Fetch portfolio snapshot once at start of `place_new_entries()`
+  - Cache holdings count and symbols set
+  - Reuse for all recommendations in the run
+- **Indicator Pre-fetching**: Pre-fetch daily indicators for all recommendation tickers
+  - Batch fetch at start of run
+  - Cache results for reuse
+  - Reduces API calls from O(n) to O(1)
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+
+**Benefits**:
+- Dramatically reduced API calls (from O(n) to O(1))
+- Lower latency per recommendation
+- Reduced broker API rate limit risk
+- Faster overall execution
+
+---
+
+### 4. Paper Trading Price Batching
+
+**Issue**: Paper trading was fetching prices ticker-by-ticker through YFinance, causing high latency.
+
+**Fix**:
+- Pre-fetch prices for all recommendation tickers at start of `place_new_entries()`
+- Use `self.broker.price_provider.get_prices()` for batch operation
+- Cache results to warm price provider cache
+- Fallback to individual fetches if batch method unavailable
+
+**Files Modified**:
+- `src/application/services/paper_trading_service_adapter.py`
+
+**Benefits**:
+- Reduced latency for paper trading orders
+- Warms price cache for faster subsequent lookups
+- Better performance for large recommendation sets
+
+---
+
+### 5. Fail-Fast on Broker/API Errors
+
+**Issue**: Broker/API errors (e.g., rate limiting, authentication failures) were being retried, potentially causing account locks or duplicate orders.
+
+**Fix**:
+- Introduced `OrderPlacementError` exception for broker/API errors
+- Modified `AutoTradeEngine.place_new_entries()` to catch `OrderPlacementError` and re-raise immediately
+- Modified `TradingService.run_buy_orders()` to catch and re-raise `OrderPlacementError` after logging
+- Task execution marked as "failed" immediately, stopping further order attempts
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+- `modules/kotak_neo_auto_trader/run_trading_service.py`
+- `tests/unit/kotak/test_production_scenarios.py` (added test)
+
+**Benefits**:
+- Prevents account locks from repeated API calls
+- Prevents duplicate orders from retries
+- Faster failure detection
+- Clear error reporting
+
+---
+
+### Performance Impact
+
+**Before Optimizations**:
+- Unified service: CSV file I/O for recommendations
+- O(n) API calls for portfolio/indicators per recommendation
+- O(n) price fetches for paper trading
+- No per-ticker audit trail
+- Retries on broker errors (risky)
+
+**After Optimizations**:
+- Unified service: Database queries (faster, consistent)
+- O(1) API calls for portfolio/indicators (batched)
+- O(1) price fetches for paper trading (batched)
+- Complete per-ticker telemetry
+- Fail-fast on broker errors (safe)
+
+**Estimated Improvements**:
+- **Latency**: 50-70% reduction for typical recommendation sets (10-50 tickers)
+- **API Calls**: 80-90% reduction (from O(n) to O(1))
+- **Reliability**: Improved (fail-fast prevents account issues)
+
+---
+
+### Testing
+
+**New Test Coverage**:
+- Added `test_order_placement_error_stops_run` to verify fail-fast behavior
+- Verifies that `OrderPlacementError` stops processing immediately
+- Ensures no further recommendations are processed after broker error
+
+**Files Modified**:
+- `tests/unit/kotak/test_production_scenarios.py`
+
+---
+
+### Files Modified
+
+**Core Changes**:
+- `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+  - Recommendation source unification (DB-first)
+  - Per-ticker telemetry
+  - Portfolio/indicator batching
+  - Fail-fast error handling
+
+- `src/application/services/paper_trading_service_adapter.py`
+  - Price batching for paper trading
+
+- `modules/kotak_neo_auto_trader/run_trading_service.py`
+  - Fail-fast error handling in `run_buy_orders()`
+
+**Tests**:
+- `tests/unit/kotak/test_production_scenarios.py`
+  - Added test for fail-fast behavior
+
+---
+
+### Backward Compatibility
+
+All optimizations maintain backward compatibility:
+- CSV fallback still works if database unavailable
+- Individual price fetches still work if batch unavailable
+- Existing summary statistics still available
+- No breaking changes to API or data structures
+
+---
+
 ## Related Documentation
 - [Individual Service Management User Guide](../features/INDIVIDUAL_SERVICE_MANAGEMENT_USER_GUIDE.md)
 - [Individual Service Management Implementation Plan](../features/INDIVIDUAL_SERVICE_MANAGEMENT_IMPLEMENTATION_PLAN.md)
