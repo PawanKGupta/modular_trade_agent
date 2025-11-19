@@ -516,6 +516,57 @@ All optimizations maintain backward compatibility:
 
 ---
 
+## Individual Services Not Available in UI Fix
+
+### Date: 2025-01-21
+
+### Summary
+Fixed issue where individual services were not appearing in the UI when the database was empty or schedules were missing.
+
+### Issue
+When the database was dropped or schedules were missing, the `get_status()` method in `IndividualServiceManager` returned an empty dictionary because it only returned services for existing schedules. This caused the UI to display "No individual services available".
+
+### Fix
+1. **Auto-creation of Default Schedules**:
+   - Added `_ensure_default_schedules()` method to `IndividualServiceManager`
+   - Automatically creates default schedules when none exist in the database
+   - Called automatically from `get_status()` before returning service status
+   - Creates all 6 default schedules: `premarket_retry`, `sell_monitor`, `position_monitor`, `analysis`, `buy_orders`, `eod_cleanup`
+
+2. **Optimization**:
+   - Added `_schedules_checked` flag to cache the check result
+   - Avoids repeated database queries on subsequent `get_status()` calls
+   - Only checks once per `IndividualServiceManager` instance
+
+3. **Default Schedule Configuration**:
+   - `premarket_retry`: 09:00, daily, enabled
+   - `sell_monitor`: 09:15, daily, continuous (ends 15:30), enabled
+   - `position_monitor`: 09:30, daily, hourly, enabled
+   - `analysis`: 16:00, daily, enabled (admin-only)
+   - `buy_orders`: 16:05, daily, enabled
+   - `eod_cleanup`: 18:00, daily, enabled
+
+### Files Modified
+- `src/application/services/individual_service_manager.py`
+  - Added `_ensure_default_schedules()` method
+  - Added `_schedules_checked` flag for optimization
+  - Updated `get_status()` to call `_ensure_default_schedules()`
+
+### Testing
+- Added comprehensive tests in `tests/unit/application/test_individual_service_manager_schedules.py`:
+  - Test auto-creation of default schedules when missing
+  - Test that schedules are not duplicated if they already exist
+  - Test that `get_status()` returns services when schedules exist
+  - Test handling of empty database
+
+### Benefits
+- Individual services now appear in UI even after database reset
+- No manual intervention required to create schedules
+- Automatic recovery from missing schedules
+- Optimized to avoid unnecessary database queries
+
+---
+
 ## Related Documentation
 - [Individual Service Management User Guide](../features/INDIVIDUAL_SERVICE_MANAGEMENT_USER_GUIDE.md)
 - [Individual Service Management Implementation Plan](../features/INDIVIDUAL_SERVICE_MANAGEMENT_IMPLEMENTATION_PLAN.md)

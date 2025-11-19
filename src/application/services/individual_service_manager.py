@@ -60,6 +60,7 @@ class IndividualServiceManager:
         self._run_once_threads: dict[tuple[int, str], threading.Thread] = (
             {}
         )  # (user_id, task_name) -> thread
+        self._schedules_checked = False  # Cache flag to avoid repeated checks
 
     def start_service(self, user_id: int, task_name: str) -> tuple[bool, str]:
         """
@@ -1059,11 +1060,101 @@ class IndividualServiceManager:
 
         return process
 
+    def _ensure_default_schedules(self) -> None:
+        """Ensure default service schedules exist in the database"""
+        # Skip check if already verified (optimization to avoid repeated DB queries)
+        if self._schedules_checked:
+            return
+
+        from datetime import time
+
+        from src.infrastructure.persistence.service_schedule_repository import (
+            ServiceScheduleRepository,
+        )
+
+        schedule_repo = ServiceScheduleRepository(self.db)
+
+        # Define default schedules
+        default_schedules = [
+            {
+                "task_name": "premarket_retry",
+                "schedule_time": time(9, 0),
+                "enabled": True,
+                "is_hourly": False,
+                "is_continuous": False,
+                "schedule_type": "daily",
+                "description": "Retry failed orders from previous day",
+            },
+            {
+                "task_name": "sell_monitor",
+                "schedule_time": time(9, 15),
+                "enabled": True,
+                "is_hourly": False,
+                "is_continuous": True,
+                "end_time": time(15, 30),
+                "schedule_type": "daily",
+                "description": "Place sell orders and monitor continuously",
+            },
+            {
+                "task_name": "position_monitor",
+                "schedule_time": time(9, 30),
+                "enabled": True,
+                "is_hourly": True,
+                "is_continuous": False,
+                "schedule_type": "daily",
+                "description": "Monitor positions for reentry/exit signals (hourly)",
+            },
+            {
+                "task_name": "analysis",
+                "schedule_time": time(16, 0),
+                "enabled": True,
+                "is_hourly": False,
+                "is_continuous": False,
+                "schedule_type": "daily",
+                "description": "Analyze stocks and generate recommendations (admin-only)",
+            },
+            {
+                "task_name": "buy_orders",
+                "schedule_time": time(16, 5),
+                "enabled": True,
+                "is_hourly": False,
+                "is_continuous": False,
+                "schedule_type": "daily",
+                "description": "Place AMO buy orders for next day",
+            },
+            {
+                "task_name": "eod_cleanup",
+                "schedule_time": time(18, 0),
+                "enabled": True,
+                "is_hourly": False,
+                "is_continuous": False,
+                "schedule_type": "daily",
+                "description": "End-of-day cleanup and reset for next day",
+            },
+        ]
+
+        # Create any missing default schedules (check each individually)
+        created_any = False
+        for schedule_data in default_schedules:
+            existing = schedule_repo.get_by_task_name(schedule_data["task_name"])
+            if not existing:
+                schedule_repo.create_or_update(**schedule_data)
+                created_any = True
+
+        if created_any:
+            self.db.commit()
+
+        # Mark as checked to avoid repeated queries
+        self._schedules_checked = True
+
     def get_status(self, user_id: int) -> dict:
         """Get status of all individual services for a user"""
         # Expire all cached objects to ensure we get fresh data from database
         # This is important because execution status is updated in separate threads
         self.db.expire_all()
+
+        # Ensure default schedules exist (auto-create if missing)
+        self._ensure_default_schedules()
 
         services = self._status_repo.list_by_user(user_id)
         schedules = self._schedule_manager.get_all_schedules()
