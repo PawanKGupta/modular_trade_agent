@@ -28,7 +28,11 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
-from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+from modules.kotak_neo_auto_trader.auto_trade_engine import (
+    AutoTradeEngine,
+    OrderPlacementError,
+    Recommendation,
+)
 from modules.kotak_neo_auto_trader.run_trading_service import TradingService
 
 
@@ -200,6 +204,39 @@ class TestBrokerAPIFailures(unittest.TestCase):
         # Should handle gracefully
         self.assertIsNotNone(result)
         self.assertEqual(result.get("placed", 0), 0)
+
+    def test_order_placement_error_stops_run(self):
+        """Ensure broker/API order errors raise and halt further processing"""
+        self.engine.portfolio.get_holdings.return_value = {"data": []}
+        self.engine.current_symbols_in_portfolio = Mock(return_value=0)
+        self.engine.portfolio_size = Mock(return_value=0)
+        self.engine.has_holding = Mock(return_value=False)
+        self.engine.has_active_buy_order = Mock(return_value=False)
+        self.engine.parse_symbol_for_broker = Mock(return_value="TEST")
+        self.engine.get_daily_indicators = Mock(
+            return_value={
+                "close": 100.0,
+                "rsi10": 25.0,
+                "ema9": 95.0,
+                "ema200": 150.0,
+                "avg_volume": 100000,
+            }
+        )
+        self.engine.check_position_volume_ratio = Mock(return_value=True)
+        self.engine.get_affordable_qty = Mock(return_value=1000)
+        self.engine.get_available_cash = Mock(return_value=100000)
+        self.engine._attempt_place_order = Mock(return_value=(False, None))
+
+        recs = [
+            Recommendation(
+                ticker="TEST.NS", verdict="buy", last_close=100.0, execution_capital=10000.0
+            )
+        ]
+
+        with self.assertRaises(OrderPlacementError):
+            self.engine.place_new_entries(recs)
+
+        self.engine._attempt_place_order.assert_called_once()
 
 
 class TestServiceRestart(unittest.TestCase):

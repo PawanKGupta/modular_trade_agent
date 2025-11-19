@@ -32,7 +32,7 @@ from utils.logger import logger
 try:
     from . import config
     from .auth import KotakNeoAuth
-    from .auto_trade_engine import AutoTradeEngine
+    from .auto_trade_engine import AutoTradeEngine, OrderPlacementError
     from .live_price_cache import LivePriceCache
     from .orders import KotakNeoOrders
     from .portfolio import KotakNeoPortfolio
@@ -43,7 +43,7 @@ try:
 except ImportError:
     from modules.kotak_neo_auto_trader import config
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
-    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine, OrderPlacementError
     from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
     from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
     from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
@@ -685,7 +685,20 @@ class TradingService:
 
             recs = self.engine.load_latest_recommendations()
             if recs:
-                summary = self.engine.place_new_entries(recs)
+                try:
+                    summary = self.engine.place_new_entries(recs)
+                except OrderPlacementError as exc:
+                    error_msg = (
+                        f"Buy orders aborted due to broker/API error: {exc}. "
+                        "No further orders were attempted."
+                    )
+                    logger.error(error_msg)
+                    task_context["recommendations_count"] = len(recs)
+                    task_context["error"] = str(exc)
+                    if getattr(exc, "symbol", None):
+                        task_context["failed_symbol"] = exc.symbol
+                    raise
+
                 logger.info(f"Buy orders summary: {summary}")
                 task_context["recommendations_count"] = len(recs)
                 task_context["summary"] = summary

@@ -98,6 +98,14 @@ class Recommendation:
     execution_capital: float | None = None  # Phase 11: Dynamic capital based on liquidity
 
 
+class OrderPlacementError(RuntimeError):
+    """Raised when a broker/API error occurs while placing buy orders."""
+
+    def __init__(self, message: str, symbol: str | None = None):
+        super().__init__(message)
+        self.symbol = symbol
+
+
 class AutoTradeEngine:
     def __init__(
         self,
@@ -567,9 +575,97 @@ class AutoTradeEngine:
         return []
 
     def load_latest_recommendations(self) -> list[Recommendation]:
-        # If a custom CSV path is set (from runner), use it
+        # Priority 1: If a custom CSV path is set (from runner), use it (for backward compatibility)
         if hasattr(self, "_custom_csv_path") and self._custom_csv_path:
             return self.load_latest_recommendations_from_csv(self._custom_csv_path)
+
+        # Priority 2: If database session is available, load from Signals table (unified source)
+        if self.db and self.user_id:
+            try:
+                from src.infrastructure.db.timezone_utils import ist_now
+                from src.infrastructure.persistence.signals_repository import SignalsRepository
+
+                signals_repo = SignalsRepository(self.db)
+
+                # Get latest signals (today's or most recent)
+                today = ist_now().date()
+                signals = signals_repo.by_date(today, limit=500)
+
+                # If no signals for today, get recent ones
+                if not signals:
+                    signals = signals_repo.recent(limit=500)
+
+                if not signals:
+                    logger.warning("No signals found in database, falling back to CSV")
+                    # Fall through to CSV fallback
+                else:
+                    logger.info(f"Loaded {len(signals)} signals from database (Signals table)")
+
+                    # Convert Signals to Recommendation objects
+                    recommendations = []
+                    for signal in signals:
+                        # Determine verdict (prioritize final_verdict, then verdict, then ml_verdict)
+                        verdict = None
+                        if signal.final_verdict and signal.final_verdict.lower() in [
+                            "buy",
+                            "strong_buy",
+                        ]:
+                            verdict = signal.final_verdict.lower()
+                        elif signal.verdict and signal.verdict.lower() in ["buy", "strong_buy"]:
+                            verdict = signal.verdict.lower()
+                        elif signal.ml_verdict and signal.ml_verdict.lower() in [
+                            "buy",
+                            "strong_buy",
+                        ]:
+                            verdict = signal.ml_verdict.lower()
+
+                        # Only include buy/strong_buy signals
+                        if not verdict:
+                            continue
+
+                        # Convert symbol to ticker format (add .NS if not present)
+                        ticker = signal.symbol.upper()
+                        if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
+                            ticker = f"{ticker}.NS"
+
+                        # Get last_close price
+                        last_close = signal.last_close or 0.0
+                        if last_close <= 0:
+                            logger.warning(f"Skipping {ticker}: invalid last_close ({last_close})")
+                            continue
+
+                        # Extract execution_capital from liquidity_recommendation or trading_params
+                        execution_capital = None
+                        if signal.liquidity_recommendation and isinstance(
+                            signal.liquidity_recommendation, dict
+                        ):
+                            execution_capital = signal.liquidity_recommendation.get(
+                                "execution_capital"
+                            )
+                        elif signal.trading_params and isinstance(signal.trading_params, dict):
+                            execution_capital = signal.trading_params.get("execution_capital")
+
+                        # Create Recommendation object
+                        rec = Recommendation(
+                            ticker=ticker,
+                            verdict=verdict,
+                            last_close=last_close,
+                            execution_capital=execution_capital,
+                        )
+                        recommendations.append(rec)
+
+                    logger.info(
+                        f"Converted {len(recommendations)} buy/strong_buy recommendations from database"
+                    )
+                    return recommendations
+
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load recommendations from database: {e}, falling back to CSV"
+                )
+                # Fall through to CSV fallback
+
+        # Priority 3: Fallback to CSV files (backward compatibility for standalone usage)
         path = config.ANALYSIS_DIR
         # Prefer post-scored CSV; fallback to base if not present
         patterns = [
@@ -587,6 +683,7 @@ class AutoTradeEngine:
             logger.warning(f"No recommendation CSV found in {path}")
             return []
         latest = files[0]
+        logger.info(f"Loading recommendations from CSV: {latest}")
         return self.load_latest_recommendations_from_csv(latest)
 
     @staticmethod
@@ -1490,7 +1587,7 @@ class AutoTradeEngine:
         return (True, order_id)
 
     # ---------------------- New entries ----------------------
-    def place_new_entries(self, recommendations: list[Recommendation]) -> dict[str, int]:
+    def place_new_entries(self, recommendations: list[Recommendation]) -> dict[str, int | list]:
         summary = {
             "attempted": 0,
             "placed": 0,
@@ -1500,6 +1597,7 @@ class AutoTradeEngine:
             "skipped_duplicates": 0,
             "skipped_missing_data": 0,
             "skipped_invalid_qty": 0,
+            "ticker_attempts": [],  # Per-ticker telemetry: list of dicts with ticker, status, reason, qty, capital, etc.
         }
 
         # Check if authenticated - if not, try to re-authenticate
@@ -1547,6 +1645,45 @@ class AutoTradeEngine:
             return summary
 
         logger.info("Holdings API healthy - proceeding with order placement")
+
+        # OPTIMIZATION: Cache portfolio snapshot and pre-fetch indicators for all recommendations
+        # This reduces API calls from O(n) to O(1) for portfolio checks and batches indicator fetches
+        cached_portfolio_count = None
+        cached_holdings_symbols = set()
+        try:
+            cached_portfolio_count = len(self.current_symbols_in_portfolio())
+            cached_holdings = self.portfolio.get_holdings() or {}
+            if isinstance(cached_holdings, dict) and "data" in cached_holdings:
+                for item in cached_holdings["data"]:
+                    sym = (
+                        str(item.get("tradingSymbol", ""))
+                        .upper()
+                        .replace("-EQ", "")
+                        .replace("-BE", "")
+                        .replace("-BL", "")
+                        .replace("-BZ", "")
+                    )
+                    if sym:
+                        cached_holdings_symbols.add(sym)
+            logger.info(
+                f"Cached portfolio snapshot: {cached_portfolio_count} positions, {len(cached_holdings_symbols)} symbols"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to cache portfolio snapshot: {e}, will fetch per-ticker")
+
+        # Pre-fetch indicators for all recommendation tickers (batch operation)
+        cached_indicators: dict[str, dict[str, Any] | None] = {}
+        if recommendations:
+            logger.info(f"Pre-fetching indicators for {len(recommendations)} recommendations...")
+            for rec in recommendations:
+                try:
+                    ind = self.get_daily_indicators(rec.ticker)
+                    cached_indicators[rec.ticker] = ind
+                except Exception as e:
+                    logger.warning(f"Failed to pre-fetch indicators for {rec.ticker}: {e}")
+                    cached_indicators[rec.ticker] = None
+            successful_prefetches = sum(1 for v in cached_indicators.values() if v is not None)
+            logger.info(f"Pre-fetched {successful_prefetches}/{len(recommendations)} indicators")
 
         # Clean up expired failed orders (past market open time)
         # Note: cleanup_expired_failed_orders still uses file-based storage for backward compatibility
@@ -1660,27 +1797,67 @@ class AutoTradeEngine:
                         f"Successfully placed retry order for {symbol} (order_id: {order_id})"
                     )
                 else:
-                    logger.warning(f"Retry order placement failed for {symbol}")
+                    error_msg = (
+                        f"Broker/API error while retrying order for {symbol}. "
+                        "Stopping buy-order run to avoid duplicate attempts."
+                    )
+                    logger.error(error_msg)
+                    raise OrderPlacementError(error_msg, symbol=symbol)
 
         # STEP 2: Process new recommendations
         for rec in recommendations:
-            # Enforce hard portfolio cap before any balance checks
-            try:
-                current_count = len(self.current_symbols_in_portfolio())
-            except Exception:
-                current_count = self.portfolio_size()
+            broker_symbol = self.parse_symbol_for_broker(rec.ticker)
+            ticker_attempt = {
+                "ticker": rec.ticker,
+                "symbol": broker_symbol,
+                "verdict": rec.verdict,
+                "status": "pending",
+                "reason": None,
+                "qty": None,
+                "execution_capital": None,
+                "price": None,
+                "order_id": None,
+            }
+
+            # Enforce hard portfolio cap before any balance checks (use cached value if available)
+            if cached_portfolio_count is not None:
+                current_count = cached_portfolio_count
+            else:
+                try:
+                    current_count = len(self.current_symbols_in_portfolio())
+                except Exception:
+                    current_count = self.portfolio_size()
             if current_count >= self.strategy_config.max_portfolio_size:
                 logger.info(
                     f"Portfolio limit reached ({current_count}/{self.strategy_config.max_portfolio_size}); skipping further entries"
                 )
                 summary["skipped_portfolio_limit"] += 1
+                ticker_attempt["status"] = "skipped"
+                ticker_attempt["reason"] = "portfolio_limit_reached"
+                summary["ticker_attempts"].append(ticker_attempt)
                 break
             summary["attempted"] += 1
-            broker_symbol = self.parse_symbol_for_broker(rec.ticker)
-            # 1) Holding check
-            if self.has_holding(broker_symbol):
+            # 1) Holding check (use cached holdings if available)
+            broker_symbol_base = (
+                broker_symbol.upper()
+                .replace("-EQ", "")
+                .replace("-BE", "")
+                .replace("-BL", "")
+                .replace("-BZ", "")
+            )
+            if cached_holdings_symbols and broker_symbol_base in cached_holdings_symbols:
+                logger.info(f"Skipping {broker_symbol}: already in holdings (cached)")
+                summary["skipped_duplicates"] += 1
+                ticker_attempt["status"] = "skipped"
+                ticker_attempt["reason"] = "already_in_holdings"
+                summary["ticker_attempts"].append(ticker_attempt)
+                continue
+            elif self.has_holding(broker_symbol):  # Fallback to live check if cache miss
                 logger.info(f"Skipping {broker_symbol}: already in holdings")
                 summary["skipped_duplicates"] += 1
+                ticker_attempt["status"] = "skipped"
+                ticker_attempt["reason"] = "already_in_holdings"
+                summary["ticker_attempts"].append(ticker_attempt)
                 continue
             # 2) Active pending buy order check -> cancel and replace
             if self.has_active_buy_order(broker_symbol):
@@ -1691,16 +1868,27 @@ class AutoTradeEngine:
                 except Exception as e:
                     logger.warning(f"Could not cancel pending order(s) for {broker_symbol}: {e}")
 
-            ind = self.get_daily_indicators(rec.ticker)
+            # Use cached indicators if available, otherwise fetch
+            ind = cached_indicators.get(rec.ticker)
+            if ind is None:
+                ind = self.get_daily_indicators(rec.ticker)
             if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
                 logger.warning(f"Skipping {rec.ticker}: missing indicators")
                 summary["skipped_missing_data"] += 1
+                ticker_attempt["status"] = "skipped"
+                ticker_attempt["reason"] = "missing_indicators"
+                summary["ticker_attempts"].append(ticker_attempt)
                 continue
             close = ind["close"]
             if close <= 0:
                 logger.warning(f"Skipping {rec.ticker}: invalid close price {close}")
                 summary["skipped_invalid_qty"] += 1
+                ticker_attempt["status"] = "skipped"
+                ticker_attempt["reason"] = "invalid_price"
+                ticker_attempt["price"] = close
+                summary["ticker_attempts"].append(ticker_attempt)
                 continue
+            ticker_attempt["price"] = close
 
             # Phase 11: Use execution_capital from recommendation, or calculate if not available
             execution_capital = rec.execution_capital
@@ -1731,6 +1919,11 @@ class AutoTradeEngine:
             if not self.check_position_volume_ratio(qty, avg_vol, broker_symbol, close):
                 logger.info(f"Skipping {broker_symbol}: position size too large relative to volume")
                 summary["skipped_invalid_qty"] += 1
+                ticker_attempt["status"] = "skipped"
+                ticker_attempt["reason"] = "position_too_large_for_volume"
+                ticker_attempt["qty"] = qty
+                ticker_attempt["execution_capital"] = execution_capital
+                summary["ticker_attempts"].append(ticker_attempt)
                 continue
 
             # Balance check (CNC needs cash) -> notify on insufficiency and save for retry
@@ -1775,6 +1968,14 @@ class AutoTradeEngine:
                 self._add_failed_order(failed_order_info)
                 summary["failed_balance"] += 1
                 summary["skipped_invalid_qty"] += 1
+                ticker_attempt["status"] = "failed"
+                ticker_attempt["reason"] = "insufficient_balance"
+                ticker_attempt["qty"] = qty
+                ticker_attempt["execution_capital"] = execution_capital
+                ticker_attempt["required_cash"] = required_cash
+                ticker_attempt["available_cash"] = avail_cash
+                ticker_attempt["shortfall"] = shortfall
+                summary["ticker_attempts"].append(ticker_attempt)
                 continue
 
             # Try placing order (get recommendation source if available)
@@ -1785,8 +1986,23 @@ class AutoTradeEngine:
             if success:
                 summary["placed"] += 1
                 logger.info(f"Order placed: {broker_symbol} (order_id: {order_id})")
+                ticker_attempt["status"] = "placed"
+                ticker_attempt["qty"] = qty
+                ticker_attempt["execution_capital"] = execution_capital
+                ticker_attempt["order_id"] = order_id
+                summary["ticker_attempts"].append(ticker_attempt)
             else:
-                logger.error(f"Order placement failed for {broker_symbol}")
+                error_msg = (
+                    f"Broker/API error while placing order for {broker_symbol}. "
+                    "Stopping buy-order run to avoid duplicate attempts."
+                )
+                logger.error(error_msg)
+                ticker_attempt["status"] = "failed"
+                ticker_attempt["reason"] = "broker_api_error"
+                ticker_attempt["qty"] = qty
+                ticker_attempt["execution_capital"] = execution_capital
+                summary["ticker_attempts"].append(ticker_attempt)
+                raise OrderPlacementError(error_msg, symbol=broker_symbol)
         return summary
 
     # ---------------------- Re-entry and exit ----------------------

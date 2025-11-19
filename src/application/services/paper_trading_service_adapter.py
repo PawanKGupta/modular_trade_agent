@@ -155,7 +155,9 @@ class PaperTradingServiceAdapter:
             return True
 
         except Exception as e:
-            self.logger.error(f"Service initialization failed: {e}", exc_info=e, action="initialize")
+            self.logger.error(
+                f"Service initialization failed: {e}", exc_info=e, action="initialize"
+            )
             return False
 
     def _show_portfolio_status(self):
@@ -167,9 +169,7 @@ class PaperTradingServiceAdapter:
             balance = self.broker.get_available_balance()
             holdings = self.broker.get_holdings()
 
-            self.logger.info(
-                f"💰 Available Balance: ₹{balance.amount:,.2f}", action="initialize"
-            )
+            self.logger.info(f"💰 Available Balance: ₹{balance.amount:,.2f}", action="initialize")
             self.logger.info(f"📊 Holdings: {len(holdings)}", action="initialize")
 
             if holdings:
@@ -198,7 +198,9 @@ class PaperTradingServiceAdapter:
         ) as task_context:
             self.logger.info("", action="run_buy_orders")
             self.logger.info("=" * 80, action="run_buy_orders")
-            self.logger.info("TASK: PLACE BUY ORDERS (4:05 PM) - PAPER TRADING", action="run_buy_orders")
+            self.logger.info(
+                "TASK: PLACE BUY ORDERS (4:05 PM) - PAPER TRADING", action="run_buy_orders"
+            )
             self.logger.info("=" * 80, action="run_buy_orders")
 
             if not self.engine:
@@ -230,9 +232,7 @@ class PaperTradingServiceAdapter:
                 if buy_recs:
                     # Place orders using paper trading broker
                     summary = self.engine.place_new_entries(buy_recs)
-                    self.logger.info(
-                        f"Buy orders summary: {summary}", action="run_buy_orders"
-                    )
+                    self.logger.info(f"Buy orders summary: {summary}", action="run_buy_orders")
                     task_context["recommendations_count"] = len(buy_recs)
                     task_context["summary"] = summary
                     summary_result = summary
@@ -283,7 +283,9 @@ class PaperTradingServiceAdapter:
             recs = self.engine.load_latest_recommendations()
             if recs:
                 summary = self.engine.place_new_entries(recs)
-                self.logger.info(f"Pre-market retry summary: {summary}", action="run_premarket_retry")
+                self.logger.info(
+                    f"Pre-market retry summary: {summary}", action="run_premarket_retry"
+                )
                 task_context["recommendations_count"] = len(recs)
                 task_context["summary"] = summary
             else:
@@ -333,8 +335,9 @@ class PaperTradingServiceAdapter:
 
     def run_position_monitor(self):
         """9:30 AM (hourly) - Monitor positions for reentry/exit signals (paper trading)"""
-        from src.application.services.task_execution_wrapper import execute_task
         from datetime import datetime
+
+        from src.application.services.task_execution_wrapper import execute_task
 
         current_hour = datetime.now().hour
 
@@ -393,7 +396,9 @@ class PaperTradingServiceAdapter:
         ) as task_context:
             self.logger.info("", action="run_eod_cleanup")
             self.logger.info("=" * 80, action="run_eod_cleanup")
-            self.logger.info("TASK: EOD CLEANUP (6:00 PM) - PAPER TRADING", action="run_eod_cleanup")
+            self.logger.info(
+                "TASK: EOD CLEANUP (6:00 PM) - PAPER TRADING", action="run_eod_cleanup"
+            )
             self.logger.info("=" * 80, action="run_eod_cleanup")
 
             # Generate daily report
@@ -412,10 +417,14 @@ class PaperTradingServiceAdapter:
                     self.logger.info(f"📄 Report saved to: {report_path}", action="run_eod_cleanup")
                     task_context["report_path"] = report_path
                 except Exception as e:
-                    self.logger.error(f"Failed to generate report: {e}", exc_info=e, action="run_eod_cleanup")
+                    self.logger.error(
+                        f"Failed to generate report: {e}", exc_info=e, action="run_eod_cleanup"
+                    )
 
             # Reset flags for next day
-            self.logger.info("Resetting task flags for next trading day...", action="run_eod_cleanup")
+            self.logger.info(
+                "Resetting task flags for next trading day...", action="run_eod_cleanup"
+            )
             self.tasks_completed = {
                 "buy_orders": False,
                 "eod_cleanup": False,
@@ -468,7 +477,6 @@ class PaperTradingEngineAdapter:
             signals_repo = SignalsRepository(self.db)
 
             # Get latest signals (today's or most recent)
-            from datetime import date
             from src.infrastructure.db.timezone_utils import ist_now
 
             today = ist_now().date()
@@ -479,9 +487,7 @@ class PaperTradingEngineAdapter:
                 signals = signals_repo.recent(limit=500)
 
             if not signals:
-                self.logger.warning(
-                    "No signals found in database", action="load_recommendations"
-                )
+                self.logger.warning("No signals found in database", action="load_recommendations")
                 return []
 
             self.logger.info(
@@ -521,7 +527,9 @@ class PaperTradingEngineAdapter:
                 # Calculate execution_capital if available from liquidity_recommendation or trading_params
                 # or use default (will be calculated in place_new_entries if None)
                 execution_capital = None
-                if signal.liquidity_recommendation and isinstance(signal.liquidity_recommendation, dict):
+                if signal.liquidity_recommendation and isinstance(
+                    signal.liquidity_recommendation, dict
+                ):
                     execution_capital = signal.liquidity_recommendation.get("execution_capital")
                 elif signal.trading_params and isinstance(signal.trading_params, dict):
                     execution_capital = signal.trading_params.get("execution_capital")
@@ -603,6 +611,56 @@ class PaperTradingEngineAdapter:
             )
             summary["skipped_portfolio_limit"] = len(recommendations)
             return summary
+
+        # OPTIMIZATION: Pre-fetch prices for all recommendation tickers (batch operation)
+        # This warms the price provider cache and reduces latency during order execution
+        cached_prices: dict[str, float | None] = {}
+        if recommendations and hasattr(self.broker, "price_provider"):
+            tickers_to_fetch = [rec.ticker for rec in recommendations]
+            self.logger.info(
+                f"Pre-fetching prices for {len(tickers_to_fetch)} tickers...",
+                action="place_new_entries",
+            )
+            try:
+                # Use batch price fetching if available
+                if hasattr(self.broker.price_provider, "get_prices"):
+                    batch_prices = self.broker.price_provider.get_prices(tickers_to_fetch)
+                    if isinstance(batch_prices, dict):
+                        cached_prices.update(batch_prices)
+                        successful_fetches = sum(1 for v in cached_prices.values() if v is not None)
+                        self.logger.info(
+                            f"Pre-fetched {successful_fetches}/{len(tickers_to_fetch)} prices (batch)",
+                            action="place_new_entries",
+                        )
+                    else:
+                        # Fallback to individual fetches if batch method returns unexpected format
+                        for ticker in tickers_to_fetch:
+                            try:
+                                price = self.broker.price_provider.get_price(ticker)
+                                cached_prices[ticker] = price
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"Failed to pre-fetch price for {ticker}: {e}",
+                                    action="place_new_entries",
+                                )
+                                cached_prices[ticker] = None
+                else:
+                    # Fallback: individual fetches if batch method not available
+                    for ticker in tickers_to_fetch:
+                        try:
+                            price = self.broker.price_provider.get_price(ticker)
+                            cached_prices[ticker] = price
+                        except Exception as e:
+                            self.logger.warning(
+                                f"Failed to pre-fetch price for {ticker}: {e}",
+                                action="place_new_entries",
+                            )
+                            cached_prices[ticker] = None
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to batch pre-fetch prices: {e}, will fetch individually",
+                    action="place_new_entries",
+                )
 
         for rec in recommendations:
             summary["attempted"] += 1
@@ -753,4 +811,3 @@ class PaperTradingEngineAdapter:
         )
 
         return summary
-
