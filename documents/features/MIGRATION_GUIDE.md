@@ -25,7 +25,22 @@ alembic upgrade c9d8e7f6g5h6
 alembic history
 ```
 
-### Manual SQL (if Alembic fails)
+**Note**: If Alembic fails due to SQLAlchemy compatibility issues, use the direct script instead (see below).
+
+### Using Direct Script (Recommended if Alembic fails)
+
+```bash
+# Verify current indexes (dry-run)
+python scripts/apply_order_indexes.py --verify-only
+
+# Apply indexes
+python scripts/apply_order_indexes.py
+
+# Or preview first
+python scripts/apply_order_indexes.py --dry-run
+```
+
+### Manual SQL (if both methods fail)
 
 ```sql
 -- Check existing indexes
