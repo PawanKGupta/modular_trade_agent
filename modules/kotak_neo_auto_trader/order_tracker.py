@@ -27,17 +27,47 @@ class OrderTracker:
     """
     Tracks pending orders from placement to execution/rejection.
     Maintains order status and provides status verification.
+
+    Phase 7: Supports dual-write (JSON + DB) and dual-read (DB first, JSON fallback).
     """
     
-    def __init__(self, data_dir: str = "data"):
+    def __init__(
+        self,
+        data_dir: str = "data",
+        db_session=None,
+        user_id: int | None = None,
+        use_db: bool = True,
+    ):
         """
         Initialize order tracker.
-        
+
+        Phase 7: Added database support for dual-write/dual-read.
+
         Args:
             data_dir: Directory for storing pending orders data
+            db_session: Optional database session for DB storage
+            user_id: Optional user ID for filtering orders
+            use_db: Whether to use database (default: True if db_session provided)
         """
         self.data_dir = data_dir
         self.pending_file = os.path.join(data_dir, "pending_orders.json")
+        self.db_session = db_session
+        self.user_id = user_id
+        self.use_db = use_db and db_session is not None and user_id is not None
+
+        # Initialize orders repository if DB is available
+        self.orders_repo = None
+        if self.use_db:
+            try:
+                from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+                self.orders_repo = OrdersRepository(db_session)
+                logger.info("OrderTracker initialized with database support (dual-write mode)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize OrdersRepository: {e}")
+                self.use_db = False
+                self.orders_repo = None
+
         self._ensure_data_file()
     
     def _ensure_data_file(self) -> None:
@@ -116,7 +146,9 @@ class OrderTracker:
     ) -> None:
         """
         Add order to pending tracking.
-        
+
+        Phase 7: Supports dual-write (JSON + DB).
+
         Args:
             order_id: Order ID from broker
             symbol: Trading symbol
@@ -126,9 +158,48 @@ class OrderTracker:
             variety: AMO/REGULAR
             price: Limit price (0 for market orders)
         """
+        # Phase 7: Check DB first if available
+        if self.use_db and self.orders_repo:
+            try:
+                # Check if order already exists in DB
+                existing_db_order = self.orders_repo.get_by_broker_order_id(
+                    self.user_id, order_id
+                ) or self.orders_repo.get_by_order_id(self.user_id, order_id)
+
+                if existing_db_order:
+                    logger.debug(
+                        f"Order {order_id} already exists in database. "
+                        f"Skipping duplicate add for {symbol}."
+                    )
+                    # Still write to JSON for backward compatibility
+                else:
+                    # Create order in DB
+                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                    db_order = self.orders_repo.create_amo(
+                        user_id=self.user_id,
+                        symbol=symbol,
+                        side="buy",  # Pending orders are typically buy orders
+                        order_type=order_type.lower(),
+                        quantity=qty,
+                        price=price if price > 0 else None,
+                        order_id=order_id,
+                        broker_order_id=order_id,
+                    )
+                    # Update status to PENDING_EXECUTION if it's an AMO order
+                    if variety == "AMO":
+                        db_order.status = DbOrderStatus.PENDING_EXECUTION
+                        self.orders_repo.update(db_order)
+                    logger.debug(
+                        f"Added order {order_id} to database (dual-write mode)"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to write order to database: {e}")
+
+        # Always write to JSON for backward compatibility and fallback
         data = self._load_pending_data()
         
-        # Check if order already exists (prevent duplicates)
+        # Check if order already exists in JSON (prevent duplicates)
         existing_order = None
         for order in data["orders"]:
             if order["order_id"] == order_id:
@@ -138,7 +209,7 @@ class OrderTracker:
         if existing_order:
             # Order already exists - log warning and skip adding duplicate
             logger.warning(
-                f"Order {order_id} already exists in pending orders. "
+                f"Order {order_id} already exists in pending orders JSON. "
                 f"Existing: symbol={existing_order.get('symbol')}, "
                 f"status={existing_order.get('status')}, "
                 f"price={existing_order.get('price')}. "
@@ -177,7 +248,9 @@ class OrderTracker:
     ) -> List[Dict[str, Any]]:
         """
         Get list of pending orders with optional filters.
-        
+
+        Phase 7: Supports dual-read (DB first, JSON fallback).
+
         Args:
             status_filter: Filter by status (PENDING/OPEN/PARTIALLY_FILLED)
             symbol_filter: Filter by symbol
@@ -185,6 +258,76 @@ class OrderTracker:
         Returns:
             List of pending order dicts
         """
+        orders = []
+
+        # Phase 7: Read from DB first if available
+        if self.use_db and self.orders_repo:
+            try:
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                # Get pending orders from DB
+                db_orders = self.orders_repo.list(self.user_id)
+
+                # Filter by status
+                pending_statuses = {
+                    DbOrderStatus.AMO,
+                    DbOrderStatus.PENDING_EXECUTION,
+                    DbOrderStatus.ONGOING,
+                }
+                db_orders = [o for o in db_orders if o.status in pending_statuses]
+
+                # Convert DB orders to dict format
+                for db_order in db_orders:
+                    # Apply symbol filter
+                    if symbol_filter and db_order.symbol.upper() != symbol_filter.upper():
+                        continue
+
+                    order_dict = {
+                        "order_id": db_order.broker_order_id or db_order.order_id or "",
+                        "symbol": db_order.symbol,
+                        "ticker": getattr(db_order, "ticker", None),
+                        "qty": db_order.quantity,
+                        "order_type": db_order.order_type.upper() if db_order.order_type else "MARKET",
+                        "variety": "AMO" if db_order.status == DbOrderStatus.AMO else "REGULAR",
+                        "price": db_order.price or 0.0,
+                        "placed_at": (
+                            db_order.placed_at.isoformat()
+                            if db_order.placed_at
+                            else datetime.now().isoformat()
+                        ),
+                        "last_status_check": (
+                            db_order.last_status_check.isoformat()
+                            if db_order.last_status_check
+                            else datetime.now().isoformat()
+                        ),
+                        "status": db_order.status.value if db_order.status else "PENDING",
+                        "rejection_reason": db_order.rejection_reason,
+                        "check_count": 0,  # Not tracked in DB
+                        "executed_qty": db_order.execution_qty or 0,
+                    }
+
+                    # Apply status filter
+                    if status_filter:
+                        # Map status filter to DB status values
+                        status_map = {
+                            "PENDING": [DbOrderStatus.AMO, DbOrderStatus.PENDING_EXECUTION],
+                            "OPEN": [DbOrderStatus.ONGOING],
+                        }
+                        if status_filter in status_map:
+                            if db_order.status not in status_map[status_filter]:
+                                continue
+                        elif order_dict["status"] != status_filter:
+                            continue
+
+                    orders.append(order_dict)
+
+                if orders:
+                    logger.debug(f"Retrieved {len(orders)} pending orders from database")
+                    return orders
+            except Exception as e:
+                logger.warning(f"Failed to read orders from database: {e}, falling back to JSON")
+
+        # Fallback to JSON
         data = self._load_pending_data()
         orders = data["orders"]
         
@@ -206,7 +349,9 @@ class OrderTracker:
     ) -> bool:
         """
         Update status of a pending order.
-        
+
+        Phase 7: Supports dual-write (JSON + DB).
+
         Args:
             order_id: Order ID to update
             status: New status (PENDING/OPEN/EXECUTED/REJECTED/CANCELLED/PARTIALLY_FILLED)
@@ -216,6 +361,54 @@ class OrderTracker:
         Returns:
             True if order found and updated, False otherwise
         """
+        updated = False
+
+        # Phase 7: Update in DB first if available
+        if self.use_db and self.orders_repo:
+            try:
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                # Find order in DB
+                db_order = (
+                    self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
+                    or self.orders_repo.get_by_order_id(self.user_id, order_id)
+                )
+
+                if db_order:
+                    # Map status string to DB status enum
+                    status_map = {
+                        "EXECUTED": DbOrderStatus.ONGOING,  # Executed orders become ONGOING
+                        "REJECTED": DbOrderStatus.REJECTED,
+                        "CANCELLED": DbOrderStatus.CLOSED,  # Cancelled orders become CLOSED
+                        "PENDING": DbOrderStatus.PENDING_EXECUTION,
+                        "OPEN": DbOrderStatus.ONGOING,
+                    }
+
+                    new_db_status = status_map.get(status.upper())
+                    
+                    # Handle rejected status specially
+                    if rejection_reason and status.upper() == "REJECTED":
+                        # Use mark_rejected for proper status update
+                        self.orders_repo.mark_rejected(db_order, rejection_reason)
+                        updated = True
+                        logger.debug(f"Marked order {order_id} as rejected in database")
+                    else:
+                        # Handle other statuses
+                        if new_db_status:
+                            db_order.status = new_db_status
+
+                        if executed_qty is not None:
+                            db_order.execution_qty = executed_qty
+                            db_order.execution_time = datetime.now()
+
+                        db_order.last_status_check = datetime.now()
+                        self.orders_repo.update(db_order)
+                        updated = True
+                        logger.debug(f"Updated order {order_id} status in database: {status}")
+            except Exception as e:
+                logger.warning(f"Failed to update order in database: {e}")
+
+        # Always update JSON for backward compatibility
         data = self._load_pending_data()
         
         for order in data["orders"]:
@@ -240,19 +433,47 @@ class OrderTracker:
                 
                 return True
         
-        logger.warning(f"Order {order_id} not found in pending orders")
-        return False
+        if not updated:
+            logger.warning(f"Order {order_id} not found in pending orders")
+        return updated
     
     def remove_pending_order(self, order_id: str) -> bool:
         """
         Remove order from pending tracking.
-        
+
+        Phase 7: Supports dual-write (JSON + DB).
+        Note: In DB, we mark as CLOSED instead of deleting.
+
         Args:
             order_id: Order ID to remove
         
         Returns:
             True if order found and removed, False otherwise
         """
+        removed = False
+
+        # Phase 7: Update in DB if available (mark as closed instead of deleting)
+        if self.use_db and self.orders_repo:
+            try:
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                # Find order in DB
+                db_order = (
+                    self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
+                    or self.orders_repo.get_by_order_id(self.user_id, order_id)
+                )
+
+                if db_order:
+                    # Mark as closed instead of deleting
+                    self.orders_repo.mark_cancelled(
+                        db_order, cancelled_reason="Removed from pending tracking"
+                    )
+                    removed = True
+                    logger.debug(f"Marked order {order_id} as closed in database")
+            except Exception as e:
+                logger.warning(f"Failed to remove order from database: {e}")
+
+        # Always update JSON for backward compatibility
         data = self._load_pending_data()
         
         original_count = len(data["orders"])
@@ -263,19 +484,66 @@ class OrderTracker:
             logger.info(f"Removed order from pending: {order_id}")
             return True
         
-        logger.warning(f"Order {order_id} not found in pending orders")
-        return False
+        if not removed:
+            logger.warning(f"Order {order_id} not found in pending orders")
+        return removed
     
     def get_order_by_id(self, order_id: str) -> Optional[Dict[str, Any]]:
         """
         Get pending order by order ID.
-        
+
+        Phase 7: Supports dual-read (DB first, JSON fallback).
+
         Args:
             order_id: Order ID to find
         
         Returns:
             Order dict or None if not found
         """
+        # Phase 7: Read from DB first if available
+        if self.use_db and self.orders_repo:
+            try:
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                # Find order in DB
+                db_order = (
+                    self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
+                    or self.orders_repo.get_by_order_id(self.user_id, order_id)
+                )
+
+                if db_order:
+                    # Convert to dict format
+                    return {
+                        "order_id": db_order.broker_order_id or db_order.order_id or "",
+                        "symbol": db_order.symbol,
+                        "ticker": getattr(db_order, "ticker", None),
+                        "qty": db_order.quantity,
+                        "order_type": (
+                            db_order.order_type.upper() if db_order.order_type else "MARKET"
+                        ),
+                        "variety": (
+                            "AMO" if db_order.status == DbOrderStatus.AMO else "REGULAR"
+                        ),
+                        "price": db_order.price or 0.0,
+                        "placed_at": (
+                            db_order.placed_at.isoformat()
+                            if db_order.placed_at
+                            else datetime.now().isoformat()
+                        ),
+                        "last_status_check": (
+                            db_order.last_status_check.isoformat()
+                            if db_order.last_status_check
+                            else datetime.now().isoformat()
+                        ),
+                        "status": db_order.status.value if db_order.status else "PENDING",
+                        "rejection_reason": db_order.rejection_reason,
+                        "check_count": 0,
+                        "executed_qty": db_order.execution_qty or 0,
+                    }
+            except Exception as e:
+                logger.warning(f"Failed to read order from database: {e}, falling back to JSON")
+
+        # Fallback to JSON
         data = self._load_pending_data()
         
         for order in data["orders"]:
