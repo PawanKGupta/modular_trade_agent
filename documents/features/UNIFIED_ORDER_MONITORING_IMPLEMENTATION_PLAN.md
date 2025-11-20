@@ -64,9 +64,6 @@
   - Added retry/drop action buttons in UI for failed and retry_pending orders
   - Display retry count, failure reason, and last retry attempt in UI
   - Added comprehensive tests (tests need proper DB session setup)
-- ⏳ **Phase 9: Notifications** - PENDING
-- ⏳ **Phase 10: Manual Activity Detection** - PENDING
-- ⏳ **Phase 11: Cleanup & Optimization** - PENDING
 
 ## Overview
 
