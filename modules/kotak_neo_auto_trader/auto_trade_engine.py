@@ -8,6 +8,7 @@ Auto Trade Engine for Kotak Neo
 
 import glob
 import os
+import time
 
 # Project logger
 import sys
@@ -407,27 +408,80 @@ class AutoTradeEngine:
     def _add_failed_order(self, failed_order: dict[str, Any]) -> None:
         """
         Add a failed order to retry queue (repository or file-based).
+
+        This method is wrapped in try-except to prevent exceptions from
+        crashing the entire buy order task. Failed order tracking is
+        non-critical - if it fails, we log and continue.
         """
-        if self.orders_repo and self.user_id:
-            # Use repository-based storage
-            # Store failed order metadata in a special Orders entry or Activity entry
-            # For now, we'll store it in Orders with a special flag
-            symbol = failed_order.get("symbol", "")
-            if symbol:
-                # Check if there's an existing order for this symbol
+        try:
+            if self.orders_repo and self.user_id:
+                # Use repository-based storage
+                # Store failed order metadata in a special Orders entry or Activity entry
+                # For now, we'll store it in Orders with a special flag
+                symbol = failed_order.get("symbol", "")
+                if not symbol:
+                    return
+
+                # Normalize symbol for comparison (remove segment suffixes like -EQ, -BE, etc.)
+                def normalize_symbol(sym: str) -> str:
+                    """Normalize symbol by removing segment suffixes"""
+                    if not sym:
+                        return ""
+                    # Remove common segment suffixes and normalize
+                    normalized = sym.upper().strip()
+                    # Split by "-" and take first part, or use whole symbol if no "-"
+                    if "-" in normalized:
+                        normalized = normalized.split("-")[0].strip()
+                    return normalized
+
+                normalized_symbol = normalize_symbol(symbol)
+
+                # Check if there's an existing FAILED ORDER for this symbol
+                # Only update existing failed orders, don't create duplicates
                 existing_orders = self.orders_repo.list(self.user_id)
-                symbol_orders = [
-                    o for o in existing_orders if o.symbol.upper().split("-")[0] == symbol.upper()
+                existing_failed_orders = [
+                    o
+                    for o in existing_orders
+                    if (o.order_metadata or {}).get("failed_order") is True
+                    and normalize_symbol(o.symbol) == normalized_symbol
                 ]
 
-                if symbol_orders:
-                    # Update existing order's metadata
-                    order = symbol_orders[0]
+                # Log for debugging
+                if existing_failed_orders:
+                    logger.debug(
+                        f"Found {len(existing_failed_orders)} existing failed order(s) for {symbol} (normalized: {normalized_symbol})"
+                    )
+                else:
+                    logger.debug(
+                        f"No existing failed order found for {symbol} (normalized: {normalized_symbol}), will create new"
+                    )
+
+                if existing_failed_orders:
+                    # Update existing failed order's metadata
+                    order = existing_failed_orders[0]
                     metadata = order.order_metadata or {}
-                    metadata["failed_order"] = True
-                    metadata["failed_order_data"] = failed_order
-                    metadata["last_retry_attempt"] = datetime.now().isoformat()
-                    self.orders_repo.update(order, order_metadata=metadata)
+                    metadata.update(
+                        {
+                            "failed_order": True,
+                            "failed_order_data": failed_order,
+                            "last_retry_attempt": datetime.now().isoformat(),
+                        }
+                    )
+                    try:
+                        self.orders_repo.update(order, order_metadata=metadata)
+                        logger.debug(f"Updated existing failed order for {symbol}")
+                    except Exception as update_error:
+                        # If update fails, log and continue - failed order tracking is non-critical
+                        logger.warning(
+                            f"Failed to update order metadata for failed order {symbol}: {update_error}",
+                            exc_info=update_error,
+                        )
+                        # Rollback to clear any session errors
+                        if hasattr(self.orders_repo, "db"):
+                            try:
+                                self.orders_repo.db.rollback()
+                            except Exception:
+                                pass
                 else:
                     # Create a placeholder order to store failed order data
                     new_order = self.orders_repo.create_amo(
@@ -442,10 +496,28 @@ class AutoTradeEngine:
                     )
                     # Update metadata
                     metadata = {"failed_order": True, "failed_order_data": failed_order}
-                    self.orders_repo.update(new_order, order_metadata=metadata)
-        # Fallback to file-based storage
-        elif self.history_path:
-            add_failed_order(self.history_path, failed_order)
+                    try:
+                        self.orders_repo.update(new_order, order_metadata=metadata)
+                    except Exception as update_error:
+                        logger.warning(
+                            f"Failed to update metadata for new failed order {symbol}: {update_error}",
+                            exc_info=update_error,
+                        )
+                        if hasattr(self.orders_repo, "db"):
+                            try:
+                                self.orders_repo.db.rollback()
+                            except Exception:
+                                pass
+            # Fallback to file-based storage
+            elif self.history_path:
+                add_failed_order(self.history_path, failed_order)
+        except Exception as e:
+            # Log error but don't crash the task - failed order tracking is non-critical
+            logger.warning(
+                f"Failed to save failed order to retry queue: {e}. "
+                "Task will continue, but failed order won't be retried automatically.",
+                exc_info=e,
+            )
 
     def _remove_failed_order(self, symbol: str) -> None:
         """
@@ -686,10 +758,45 @@ class AutoTradeEngine:
         logger.info(f"Loading recommendations from CSV: {latest}")
         return self.load_latest_recommendations_from_csv(latest)
 
+    def _calculate_execution_capital(self, ticker: str, close: float, avg_volume: float) -> float:
+        """
+        Phase 11: Calculate execution capital based on liquidity using instance's strategy_config.
+
+        Args:
+            ticker: Stock ticker (e.g., RELIANCE.NS)
+            close: Current close price
+            avg_volume: Average daily volume
+
+        Returns:
+            Execution capital to use for this trade
+        """
+        try:
+            from services.liquidity_capital_service import LiquidityCapitalService
+
+            liquidity_service = LiquidityCapitalService(config=self.strategy_config)
+
+            capital_data = liquidity_service.calculate_execution_capital(
+                avg_volume=avg_volume, stock_price=close
+            )
+            execution_capital = capital_data.get(
+                "execution_capital", self.strategy_config.user_capital
+            )
+
+            # Fallback to strategy_config if calculation failed
+            if execution_capital <= 0:
+                execution_capital = self.strategy_config.user_capital
+
+            return execution_capital
+        except Exception as e:
+            logger.warning(
+                f"Failed to calculate execution capital for {ticker}: {e}, using user_capital from config"
+            )
+            return self.strategy_config.user_capital
+
     @staticmethod
     def calculate_execution_capital(ticker: str, close: float, avg_volume: float) -> float:
         """
-        Phase 11: Calculate execution capital based on liquidity.
+        Phase 11: Calculate execution capital based on liquidity (static method for backward compatibility).
 
         Args:
             ticker: Stock ticker (e.g., RELIANCE.NS)
@@ -704,7 +811,7 @@ class AutoTradeEngine:
             from services.liquidity_capital_service import LiquidityCapitalService
 
             # Phase 2.3: Static method uses default config for backward compatibility
-            # Instance methods should pass strategy_config as parameter if needed
+            # Instance methods should use _calculate_execution_capital() instead
             strategy_config = StrategyConfig.default()
 
             liquidity_service = LiquidityCapitalService(config=strategy_config)
@@ -1506,17 +1613,17 @@ class AutoTradeEngine:
         order_id = extract_order_id(resp)
 
         if not order_id:
-            # Fallback: Search order book after 60 seconds
+            # Fallback: Search order book after a shorter wait (reduced from 60s to 10s for performance)
             logger.warning(
                 f"No order ID in response for {broker_symbol}. "
-                f"Will search order book after 60 seconds..."
+                f"Will search order book after 10 seconds..."
             )
             order_id = search_order_in_broker_orderbook(
                 self.orders,
                 placed_symbol or broker_symbol,
                 qty,
                 placement_time,
-                max_wait_seconds=60,
+                max_wait_seconds=10,  # Reduced from 60s to 10s for faster execution
             )
 
             if not order_id:
@@ -1616,14 +1723,77 @@ class AutoTradeEngine:
 
         # Pre-flight check: Verify we can fetch holdings before proceeding
         # This prevents duplicate orders if holdings API is down
-        test_holdings = self.portfolio.get_holdings()
+        # NOTE: Broker API may restrict balance checks between 12 AM - 6 AM IST, but we still attempt it
+        # Retry up to 3 times for transient API errors
+        logger.info("Pre-flight check: Fetching holdings to verify API health...")
+        test_holdings = None
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            test_holdings = self.portfolio.get_holdings()
+            if test_holdings is not None:
+                break
+            if attempt < max_retries:
+                logger.warning(
+                    f"Holdings API failed (attempt {attempt}/{max_retries}) - retrying in 2 seconds..."
+                )
+                time.sleep(2)
+            else:
+                logger.error(
+                    f"Holdings API failed after {max_retries} attempts - broker API may be temporarily unavailable. "
+                    "Aborting order placement to prevent duplicate orders."
+                )
 
-        # Handle None response (API error)
+        # Handle None response (API error after retries)
         if test_holdings is None:
-            logger.error(
-                "Cannot fetch holdings (API returned None) - aborting order placement to prevent duplicates"
+            logger.warning(
+                "Holdings API unavailable after retries - using database fallback to check for existing orders"
             )
-            return summary
+            # Fallback: Check database for existing orders to prevent duplicates
+            if self.db and self.user_id and hasattr(self, "orders_repo"):
+                from sqlalchemy import text
+
+                # Check if we have any pending/ongoing buy orders for the recommended symbols
+                symbols_to_check = [
+                    self.parse_symbol_for_broker(rec.ticker) for rec in recommendations
+                ]
+                existing_orders = []
+                query = text(
+                    """
+                    SELECT COUNT(*) as count
+                    FROM orders
+                    WHERE user_id = :user_id
+                    AND symbol = :symbol
+                    AND side = 'buy'
+                    AND status IN ('amo', 'ongoing')
+                """
+                )
+                for symbol in symbols_to_check:
+                    result = self.db.execute(
+                        query, {"user_id": self.user_id, "symbol": symbol}
+                    ).fetchone()
+                    if result and result[0] > 0:
+                        existing_orders.append(symbol)
+
+                if existing_orders:
+                    logger.error(
+                        f"Cannot fetch holdings and found existing orders for: {existing_orders}. "
+                        "Aborting to prevent duplicate orders. Please check broker API status."
+                    )
+                    return summary
+                else:
+                    logger.warning(
+                        "Holdings API unavailable but no existing orders found in database. "
+                        "Proceeding with order placement (risk: may duplicate if holdings exist but not in DB)."
+                    )
+                    # Proceed without holdings check - we'll rely on broker-side duplicate detection
+                    # Set test_holdings to empty dict to bypass validation
+                    test_holdings = {"data": []}
+            else:
+                logger.error(
+                    "Cannot fetch holdings (API returned None after retries) and no database fallback available. "
+                    "Aborting order placement to prevent duplicates. Please check broker API status or try again later."
+                )
+                return summary
 
         # Check for 2FA gate
         if self._response_requires_2fa(test_holdings):
@@ -1641,7 +1811,9 @@ class AutoTradeEngine:
             logger.error(
                 "Holdings API returned invalid response - aborting order placement to prevent duplicates"
             )
-            logger.error(f"Holdings response: {test_holdings}")
+            logger.error(
+                f"Holdings response type: {type(test_holdings)}, keys: {list(test_holdings.keys()) if isinstance(test_holdings, dict) else 'N/A'}"
+            )
             return summary
 
         logger.info("Holdings API healthy - proceeding with order placement")
@@ -1671,19 +1843,79 @@ class AutoTradeEngine:
         except Exception as e:
             logger.warning(f"Failed to cache portfolio snapshot: {e}, will fetch per-ticker")
 
-        # Pre-fetch indicators for all recommendation tickers (batch operation)
+        # Pre-fetch indicators for all recommendation tickers (batch operation with parallelization)
         cached_indicators: dict[str, dict[str, Any] | None] = {}
         if recommendations:
-            logger.info(f"Pre-fetching indicators for {len(recommendations)} recommendations...")
-            for rec in recommendations:
-                try:
-                    ind = self.get_daily_indicators(rec.ticker)
-                    cached_indicators[rec.ticker] = ind
-                except Exception as e:
-                    logger.warning(f"Failed to pre-fetch indicators for {rec.ticker}: {e}")
-                    cached_indicators[rec.ticker] = None
-            successful_prefetches = sum(1 for v in cached_indicators.values() if v is not None)
-            logger.info(f"Pre-fetched {successful_prefetches}/{len(recommendations)} indicators")
+            # Try parallel execution first, fallback to sequential if it fails
+            try:
+                logger.info(
+                    f"Pre-fetching indicators for {len(recommendations)} recommendations in parallel..."
+                )
+                from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
+
+                def fetch_indicator(rec_ticker: str) -> tuple[str, dict[str, Any] | None]:
+                    """Fetch indicator for a single ticker"""
+                    try:
+                        # get_daily_indicators is a static method, call it correctly
+                        ind = AutoTradeEngine.get_daily_indicators(rec_ticker)
+                        return (rec_ticker, ind)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to pre-fetch indicators for {rec_ticker}: {e}",
+                            exc_info=e,
+                        )
+                        return (rec_ticker, None)
+
+                # Use ThreadPoolExecutor to fetch indicators in parallel
+                # Limit to 5 concurrent requests to avoid overwhelming the API
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    future_to_ticker = {
+                        executor.submit(fetch_indicator, rec.ticker): rec.ticker
+                        for rec in recommendations
+                    }
+                    for future in as_completed(future_to_ticker):
+                        try:
+                            ticker, ind = future.result()
+                            cached_indicators[ticker] = ind
+                        except Exception as e:
+                            ticker = future_to_ticker.get(future, "unknown")
+                            logger.error(
+                                f"Error getting indicator result for {ticker}: {e}",
+                                exc_info=e,
+                            )
+                            cached_indicators[ticker] = None
+
+                successful_prefetches = sum(1 for v in cached_indicators.values() if v is not None)
+                logger.info(
+                    f"Pre-fetched {successful_prefetches}/{len(recommendations)} indicators (parallel)"
+                )
+            except Exception as parallel_error:
+                # Fallback to sequential execution if parallel fails
+                logger.warning(
+                    f"Parallel indicator fetching failed: {parallel_error}. Falling back to sequential...",
+                    exc_info=parallel_error,
+                )
+                logger.info(
+                    f"Pre-fetching indicators for {len(recommendations)} recommendations sequentially..."
+                )
+                for rec in recommendations:
+                    try:
+                        ind = AutoTradeEngine.get_daily_indicators(rec.ticker)
+                        cached_indicators[rec.ticker] = ind
+                    except Exception as e:
+                        logger.warning(f"Failed to pre-fetch indicators for {rec.ticker}: {e}")
+                        cached_indicators[rec.ticker] = None
+                successful_prefetches = sum(1 for v in cached_indicators.values() if v is not None)
+                logger.info(
+                    f"Pre-fetched {successful_prefetches}/{len(recommendations)} indicators (sequential)"
+                )
+
+        # Log summary of what we have before proceeding
+        logger.info(
+            f"Starting order placement: {len(recommendations)} recommendations, "
+            f"{len(cached_indicators)} cached indicators, "
+            f"{cached_portfolio_count} current positions"
+        )
 
         # Clean up expired failed orders (past market open time)
         # Note: cleanup_expired_failed_orders still uses file-based storage for backward compatibility
@@ -1710,6 +1942,14 @@ class AutoTradeEngine:
         if failed_orders:
             logger.info(f"Found {len(failed_orders)} previously failed orders to retry")
             for failed_order in failed_orders[:]:
+                # Skip non-retryable orders (e.g., broker API errors)
+                if failed_order.get("non_retryable", False):
+                    logger.info(
+                        f"Skipping non-retryable failed order for {failed_order.get('symbol')} "
+                        f"(reason: {failed_order.get('reason', 'unknown')})"
+                    )
+                    continue
+
                 # Check portfolio limit
                 try:
                     current_count = len(self.current_symbols_in_portfolio())
@@ -1749,15 +1989,26 @@ class AutoTradeEngine:
                     logger.warning(f"Skipping retry {symbol}: invalid close price {close}")
                     continue
 
-                # Phase 11: Use execution_capital if available in failed_order, otherwise calculate
-                execution_capital = failed_order.get("execution_capital")
-                if not execution_capital or execution_capital <= 0:
-                    avg_vol = ind.get("avg_volume", 0)
-                    execution_capital = AutoTradeEngine.calculate_execution_capital(
-                        ticker, close, avg_vol
+                # Phase 11: Always recalculate execution_capital during retry to respect current user config
+                # This ensures that if user changes capital config, retries use the new value
+                avg_vol = ind.get("avg_volume", 0)
+                old_execution_capital = failed_order.get("execution_capital")
+                execution_capital = self._calculate_execution_capital(ticker, close, avg_vol)
+
+                # Log if capital changed from stored value
+                if (
+                    old_execution_capital
+                    and old_execution_capital > 0
+                    and old_execution_capital != execution_capital
+                ):
+                    logger.info(
+                        f"Retry {symbol}: Execution capital updated from ₹{old_execution_capital:,.0f} "
+                        f"to ₹{execution_capital:,.0f} (current user_capital: ₹{self.strategy_config.user_capital:,.0f})"
                     )
+                else:
                     logger.debug(
-                        f"Calculated execution_capital for retry {symbol}: ₹{execution_capital:,.0f}"
+                        f"Calculated execution_capital for retry {symbol}: ₹{execution_capital:,.0f} "
+                        f"(using user_capital: ₹{self.strategy_config.user_capital:,.0f})"
                     )
 
                 qty = max(config.MIN_QTY, floor(execution_capital / close))
@@ -1797,12 +2048,15 @@ class AutoTradeEngine:
                         f"Successfully placed retry order for {symbol} (order_id: {order_id})"
                     )
                 else:
+                    # Broker/API error during retry - log and continue with other orders
+                    # Don't stop the entire run for one failed retry
                     error_msg = (
                         f"Broker/API error while retrying order for {symbol}. "
-                        "Stopping buy-order run to avoid duplicate attempts."
+                        "Skipping this retry and continuing with other orders."
                     )
                     logger.error(error_msg)
-                    raise OrderPlacementError(error_msg, symbol=symbol)
+                    # Continue with next failed order instead of raising exception
+                    continue
 
         # STEP 2: Process new recommendations
         for rec in recommendations:
@@ -1890,19 +2144,27 @@ class AutoTradeEngine:
                 continue
             ticker_attempt["price"] = close
 
-            # Phase 11: Use execution_capital from recommendation, or calculate if not available
-            execution_capital = rec.execution_capital
-            if not execution_capital or execution_capital <= 0:
-                avg_vol = ind.get("avg_volume", 0)
-                execution_capital = AutoTradeEngine.calculate_execution_capital(
-                    rec.ticker, close, avg_vol
-                )
-                logger.debug(
-                    f"Calculated execution_capital for {rec.ticker}: ₹{execution_capital:,.0f}"
+            # Phase 11: Always recalculate execution_capital to respect current user config
+            # This ensures that if user changes capital config, new orders use the new value
+            # even if the recommendation has a stored execution_capital from previous analysis
+            avg_vol = ind.get("avg_volume", 0)
+            stored_execution_capital = rec.execution_capital
+            execution_capital = self._calculate_execution_capital(rec.ticker, close, avg_vol)
+
+            # Log if capital changed from stored value
+            if (
+                stored_execution_capital
+                and stored_execution_capital > 0
+                and stored_execution_capital != execution_capital
+            ):
+                logger.info(
+                    f"{rec.ticker}: Execution capital updated from stored ₹{stored_execution_capital:,.0f} "
+                    f"to ₹{execution_capital:,.0f} (current user_capital: ₹{self.strategy_config.user_capital:,.0f})"
                 )
             else:
-                logger.info(
-                    f"Using execution_capital from CSV for {rec.ticker}: ₹{execution_capital:,.0f}"
+                logger.debug(
+                    f"Calculated execution_capital for {rec.ticker}: ₹{execution_capital:,.0f} "
+                    f"(using user_capital: ₹{self.strategy_config.user_capital:,.0f})"
                 )
 
             # Phase 11: Log if capital was adjusted from user_capital
@@ -1992,9 +2254,11 @@ class AutoTradeEngine:
                 ticker_attempt["order_id"] = order_id
                 summary["ticker_attempts"].append(ticker_attempt)
             else:
+                # Broker/API error - log and continue with other recommendations
+                # Don't stop the entire run for one failed order
                 error_msg = (
                     f"Broker/API error while placing order for {broker_symbol}. "
-                    "Stopping buy-order run to avoid duplicate attempts."
+                    "Skipping this order and continuing with other recommendations."
                 )
                 logger.error(error_msg)
                 ticker_attempt["status"] = "failed"
@@ -2002,7 +2266,30 @@ class AutoTradeEngine:
                 ticker_attempt["qty"] = qty
                 ticker_attempt["execution_capital"] = execution_capital
                 summary["ticker_attempts"].append(ticker_attempt)
-                raise OrderPlacementError(error_msg, symbol=broker_symbol)
+
+                # Save failed order to database for tracking (but mark as non-retryable)
+                failed_order_info = {
+                    "symbol": broker_symbol,
+                    "ticker": rec.ticker,
+                    "close": close,
+                    "qty": qty,
+                    "required_cash": qty * close,
+                    "shortfall": 0.0,  # Not a balance issue
+                    "reason": "broker_api_error",
+                    "verdict": rec.verdict,
+                    "rsi10": ind.get("rsi10"),
+                    "ema9": ind.get("ema9"),
+                    "ema200": ind.get("ema200"),
+                    "execution_capital": execution_capital,
+                    "non_retryable": True,  # Mark as non-retryable since it's a broker API issue
+                }
+                try:
+                    self._add_failed_order(failed_order_info)
+                except Exception as e:
+                    logger.warning(f"Failed to save broker API error to database: {e}")
+
+                # Continue with next recommendation instead of raising exception
+                continue
         return summary
 
     # ---------------------- Re-entry and exit ----------------------

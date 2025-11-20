@@ -198,18 +198,37 @@ class TradingService:
                 return False
 
             # Initialize live prices (WebSocket for real-time LTP)
-            self._initialize_live_prices()
+            # For buy_orders task, WebSocket is not needed (AMO orders don't need real-time prices)
+            # Skip WebSocket initialization to avoid blocking - buy orders use yfinance for prices
+            logger.info(
+                "Skipping WebSocket initialization for buy_orders (not needed for AMO orders)"
+            )
+            self.price_cache = None
+            self.scrip_master = None
 
             # Update portfolio with price manager for WebSocket LTP access
             if self.engine.portfolio and self.price_cache:
                 self.engine.portfolio.price_manager = self.price_cache
 
             # Initialize sell order manager (will be started at market open)
-            logger.info("Initializing sell order manager...")
-            self.sell_manager = SellOrderManager(self.auth, price_manager=self.price_cache)
+            # For buy_orders task, this is not needed, but initialize it anyway for consistency
+            try:
+                logger.info("Initializing sell order manager...")
+                self.sell_manager = SellOrderManager(self.auth, price_manager=self.price_cache)
+            except Exception as e:
+                logger.warning(
+                    f"Sell order manager initialization failed (non-critical for buy orders): {e}"
+                )
+                self.sell_manager = None
 
             # Subscribe to open positions immediately to avoid reconnect loops
-            self._subscribe_to_open_positions()
+            # For buy_orders task, this is not needed (AMO orders don't need real-time prices)
+            # Skip it to avoid blocking
+            logger.info("Skipping position subscription for buy_orders (not needed for AMO orders)")
+            # try:
+            #     self._subscribe_to_open_positions()
+            # except Exception as e:
+            #     logger.warning(f"Position subscription failed (non-critical for buy orders): {e}")
 
             logger.info("Service initialized successfully")
             logger.info("=" * 80)
@@ -263,11 +282,18 @@ class TradingService:
             logger.info("✓ Live price cache started (WebSocket started)")
 
             # Wait for WebSocket connection to be established
-            logger.info("Waiting for WebSocket connection...")
-            if self.price_cache.wait_for_connection(timeout=10):
-                logger.info("WebSocket connection established")
-            else:
-                logger.warning("WebSocket connection timeout, subscriptions may fail")
+            # Use shorter timeout to avoid blocking buy_orders task
+            # Buy orders don't need WebSocket (AMO orders placed before market open)
+            logger.info("Waiting for WebSocket connection (non-blocking, 3s timeout)...")
+            try:
+                if self.price_cache.wait_for_connection(timeout=3):  # Reduced timeout to 3s
+                    logger.info("WebSocket connection established")
+                else:
+                    logger.warning(
+                        "WebSocket connection timeout (non-critical for buy orders), will use fallback"
+                    )
+            except Exception as e:
+                logger.warning(f"WebSocket wait failed (non-critical): {e}")
 
         except Exception as e:
             logger.warning(f"Failed to initialize live price cache: {e}")
@@ -665,6 +691,22 @@ class TradingService:
         """4:05 PM - Place AMO buy orders for next day"""
         from src.application.services.task_execution_wrapper import execute_task
 
+        # Log entry point to verify method is being called
+        self.logger.info("run_buy_orders() method called", action="run_buy_orders")
+
+        summary = {
+            "attempted": 0,
+            "placed": 0,
+            "retried": 0,
+            "failed_balance": 0,
+            "skipped_portfolio_limit": 0,
+            "skipped_duplicates": 0,
+            "skipped_missing_data": 0,
+            "skipped_invalid_qty": 0,
+            "ticker_attempts": [],
+        }
+
+        self.logger.info("About to enter execute_task context", action="run_buy_orders")
         with execute_task(
             self.user_id,
             self.db,
@@ -672,42 +714,73 @@ class TradingService:
             self.logger,
             track_execution=not self.skip_execution_tracking,
         ) as task_context:
-            logger.info("")
-            logger.info("=" * 80)
-            logger.info("TASK: PLACE BUY ORDERS (4:05 PM)")
-            logger.info("=" * 80)
+            # Use self.logger for user-scoped logging
+            self.logger.info("Inside execute_task context", action="run_buy_orders")
+            self.logger.info("", action="run_buy_orders")
+            self.logger.info("=" * 80, action="run_buy_orders")
+            self.logger.info("TASK: PLACE BUY ORDERS (4:05 PM)", action="run_buy_orders")
+            self.logger.info("=" * 80, action="run_buy_orders")
 
             # Check if engine is initialized
             if not self.engine:
                 error_msg = "Trading engine not initialized. Call initialize() first."
-                logger.error(error_msg)
+                self.logger.error(error_msg, action="run_buy_orders")
                 raise RuntimeError(error_msg)
 
+            self.logger.info("Loading latest recommendations...", action="run_buy_orders")
             recs = self.engine.load_latest_recommendations()
+            self.logger.info(
+                f"Loaded {len(recs)} recommendations for buy orders", action="run_buy_orders"
+            )
             if recs:
+                self.logger.info(
+                    f"Processing {len(recs)} recommendations...", action="run_buy_orders"
+                )
                 try:
                     summary = self.engine.place_new_entries(recs)
-                except OrderPlacementError as exc:
-                    error_msg = (
-                        f"Buy orders aborted due to broker/API error: {exc}. "
-                        "No further orders were attempted."
+                    self.logger.info(f"Buy orders summary: {summary}", action="run_buy_orders")
+                    # Log detailed summary
+                    self.logger.info(
+                        f"  - Attempted: {summary.get('attempted', 0)}, "
+                        f"Placed: {summary.get('placed', 0)}, "
+                        f"Retried: {summary.get('retried', 0)}, "
+                        f"Failed (balance): {summary.get('failed_balance', 0)}, "
+                        f"Skipped: {summary.get('skipped_duplicates', 0) + summary.get('skipped_portfolio_limit', 0) + summary.get('skipped_missing_data', 0) + summary.get('skipped_invalid_qty', 0)}",
+                        action="run_buy_orders",
                     )
-                    logger.error(error_msg)
+                except OrderPlacementError as exc:
+                    # OrderPlacementError should no longer be raised (changed to continue)
+                    # But keep this handler for backward compatibility
+                    error_msg = (
+                        f"Unexpected OrderPlacementError: {exc}. "
+                        "This should not occur with current implementation."
+                    )
+                    self.logger.error(error_msg, action="run_buy_orders")
                     task_context["recommendations_count"] = len(recs)
                     task_context["error"] = str(exc)
                     if getattr(exc, "symbol", None):
                         task_context["failed_symbol"] = exc.symbol
-                    raise
+                    # Don't raise - let the summary be returned
+                    summary = {"attempted": 0, "placed": 0, "ticker_attempts": []}
 
-                logger.info(f"Buy orders summary: {summary}")
                 task_context["recommendations_count"] = len(recs)
                 task_context["summary"] = summary
             else:
-                logger.info("No buy recommendations to place")
+                self.logger.warning(
+                    "No buy recommendations to place - check if analysis has run and signals exist in database/CSV",
+                    action="run_buy_orders",
+                )
+                self.logger.warning(
+                    "This could mean: (1) No analysis results available, (2) No buy/strong_buy signals, (3) Signals table is empty",
+                    action="run_buy_orders",
+                )
                 task_context["recommendations_count"] = 0
+                task_context["summary"] = summary  # Return empty summary
 
             self.tasks_completed["buy_orders"] = True
-            logger.info("Buy orders placement completed")
+            self.logger.info("Buy orders placement completed", action="run_buy_orders")
+
+        return summary
 
     def run_eod_cleanup(self):
         """6:00 PM - End-of-day cleanup"""

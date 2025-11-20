@@ -1110,6 +1110,33 @@ class TestOrdersRepositoryUpdates:
         assert retrieved is not None
         assert retrieved.id == created.id
 
+    def test_update_detached_order(self, db_session, sample_user):
+        """Test that update handles detached orders by merging them into session"""
+        repo1 = OrdersRepository(db_session)
+        order = repo1.create_amo(
+            user_id=sample_user.id,
+            symbol="RELIANCE.NS",
+            side="buy",
+            order_type="market",
+            quantity=10.0,
+            price=None,
+        )
+        order_id = order.id
+        db_session.commit()
+        db_session.expunge(order)  # Detach order from session
+
+        # Create new repository with same session and update detached order
+        repo2 = OrdersRepository(db_session)
+        updated = repo2.update(order, quantity=20.0)
+
+        assert updated.quantity == 20.0
+        assert updated.id == order_id
+
+        # Verify it's in database
+        retrieved = repo2.get(order_id)
+        assert retrieved is not None
+        assert retrieved.quantity == 20.0
+
     def test_bulk_create(self, db_session, sample_user):
         repo = OrdersRepository(db_session)
         orders_data = [

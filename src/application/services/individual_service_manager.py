@@ -255,6 +255,106 @@ class IndividualServiceManager:
             logger.error(f"Failed to start run_once: {task_name}", exc_info=e)
             return False, f"Failed to start execution: {str(e)}", {}
 
+    def _update_execution_status(
+        self,
+        user_id: int,
+        execution_id: int,
+        status: str,
+        duration: float,
+        details: dict | str | None,
+        task_name: str,
+    ) -> None:
+        """
+        Update execution status with rollback handling and raw SQL fallback.
+
+        This method ensures execution status is always updated, even if the session
+        is in a bad state due to previous errors (e.g., datetime conversion issues).
+        """
+        logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+
+        # Ensure details is JSON-serializable
+        if details is None:
+            details_dict = {}
+        elif isinstance(details, dict):
+            details_dict = details
+        else:
+            details_dict = {"result": str(details)}
+
+        try:
+            # Rollback session if it's in a bad state (e.g., from previous errors)
+            try:
+                self.db.rollback()
+            except Exception:
+                pass  # Ignore rollback errors
+
+            execution = self._execution_repo.get(execution_id)
+            if execution:
+                execution.status = status
+                execution.duration_seconds = duration
+                execution.details = details_dict
+                self._execution_repo.db.commit()
+                self._execution_repo.db.flush()
+                logger.info(
+                    f"Updated execution {execution_id} status to '{status}' in database",
+                    action="run_once",
+                    task_name=task_name,
+                )
+            else:
+                logger.warning(
+                    f"Execution {execution_id} not found, cannot update status",
+                    action="run_once",
+                    task_name=task_name,
+                )
+        except Exception as update_error:
+            # If status update fails, try raw SQL as fallback
+            logger.error(
+                f"Failed to update execution {execution_id} status to '{status}' via ORM: {update_error}, trying raw SQL",
+                exc_info=update_error,
+                action="run_once",
+                task_name=task_name,
+            )
+            try:
+                from sqlalchemy import text  # noqa: PLC0415
+
+                # Rollback and use fresh connection for raw SQL
+                try:
+                    self.db.rollback()
+                except Exception:
+                    pass
+
+                update_sql = text(
+                    """
+                    UPDATE individual_service_task_execution
+                    SET status = :status,
+                        duration_seconds = :duration,
+                        details = :details
+                    WHERE id = :execution_id
+                """
+                )
+                details_json = json.dumps(details_dict)
+                self.db.execute(
+                    update_sql,
+                    {
+                        "execution_id": execution_id,
+                        "status": status,
+                        "duration": duration,
+                        "details": details_json,
+                    },
+                )
+                self.db.commit()
+                logger.info(
+                    f"Updated execution {execution_id} status to '{status}' via raw SQL",
+                    action="run_once",
+                    task_name=task_name,
+                )
+            except Exception as raw_error:
+                logger.error(
+                    f"Failed to update execution {execution_id} status to '{status}' via raw SQL: {raw_error}",
+                    exc_info=raw_error,
+                    action="run_once",
+                    task_name=task_name,
+                )
+
     def _execute_task_once(self, user_id: int, task_name: str, execution_id: int) -> None:
         """Execute a task once in a separate thread"""
         start_time = time.time()
@@ -302,19 +402,14 @@ class IndividualServiceManager:
 
             # Update execution record
             duration = time.time() - start_time
-            execution = self._execution_repo.get(execution_id)
-            if execution:
-                execution.status = "success"
-                execution.duration_seconds = duration
-                execution.details = result
-                self._execution_repo.db.commit()
-                # Ensure the commit is fully written to disk (SQLite)
-                self._execution_repo.db.flush()
-                logger.info(
-                    f"Updated execution {execution_id} status to 'success' in database",
-                    action="run_once",
-                    task_name=task_name,
-                )
+            self._update_execution_status(
+                user_id=user_id,
+                execution_id=execution_id,
+                status="success",
+                duration=duration,
+                details=result,
+                task_name=task_name,
+            )
 
             # Update last execution time
             self._status_repo.update_last_execution(user_id, task_name)
@@ -339,34 +434,15 @@ class IndividualServiceManager:
                 task_name=task_name,
             )
 
-            # Update execution record - ensure we get fresh copy and update
-            try:
-                execution = self._execution_repo.get(execution_id)
-                if execution:
-                    execution.status = "failed"
-                    execution.duration_seconds = duration
-                    execution.details = error_details
-                    self._execution_repo.db.commit()
-                    # Flush to ensure changes are immediately visible to other sessions
-                    self._execution_repo.db.flush()
-                    logger.info(
-                        f"Updated execution {execution_id} status to 'failed' in database",
-                        action="run_once",
-                        task_name=task_name,
-                    )
-                else:
-                    logger.error(
-                        f"Execution {execution_id} not found when trying to update status to 'failed'",
-                        action="run_once",
-                        task_name=task_name,
-                    )
-            except Exception as db_error:
-                logger.error(
-                    f"Failed to update execution {execution_id} status to 'failed': {db_error}",
-                    exc_info=db_error,
-                    action="run_once",
-                    task_name=task_name,
-                )
+            # Update execution record
+            self._update_execution_status(
+                user_id=user_id,
+                execution_id=execution_id,
+                status="failed",
+                duration=duration,
+                details=error_details,
+                task_name=task_name,
+            )
 
         finally:
             # Small delay to ensure database commit is fully written and visible
@@ -386,6 +462,7 @@ class IndividualServiceManager:
         self, user_id: int, task_name: str, broker_creds: dict | None, strategy_config, settings
     ) -> dict:
         """Execute the actual task logic"""
+        logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
 
         if task_name == "analysis":
             return self._run_analysis_task(user_id=user_id)
@@ -437,13 +514,25 @@ class IndividualServiceManager:
             )
 
             # Initialize service
+            logger.info(
+                f"Initializing trading service for task: {task_name}", action="execute_task"
+            )
+            init_start = time.time()
             if not service.initialize():
                 raise RuntimeError(
                     "Failed to initialize trading service. "
                     "Check broker credentials, authentication, and network connectivity."
                 )
+            init_duration = time.time() - init_start
+            logger.info(
+                f"Trading service initialized in {init_duration:.2f}s",
+                action="execute_task",
+                task_name=task_name,
+            )
 
         # Execute specific task
+        logger.info(f"Executing task: {task_name}", action="execute_task")
+        task_start = time.time()
         if task_name == "premarket_retry":
             service.run_premarket_retry()
             return {"task": "premarket_retry", "status": "completed"}
@@ -454,7 +543,16 @@ class IndividualServiceManager:
             service.run_position_monitor()
             return {"task": "position_monitor", "status": "completed"}
         elif task_name == "buy_orders":
+            logger.info(
+                "About to call service.run_buy_orders()", action="execute_task", task_name=task_name
+            )
             summary = service.run_buy_orders()
+            task_duration = time.time() - task_start
+            logger.info(
+                f"service.run_buy_orders() completed in {task_duration:.2f}s",
+                action="execute_task",
+                task_name=task_name,
+            )
             result = {"task": "buy_orders", "status": "completed"}
             if summary:
                 result["summary"] = summary

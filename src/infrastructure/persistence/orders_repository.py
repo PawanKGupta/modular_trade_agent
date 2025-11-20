@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -63,6 +64,27 @@ class OrdersRepository:
         query += " ORDER BY placed_at DESC"
 
         results = self.db.execute(text(query), params).fetchall()
+
+        # Helper function to convert string datetime to datetime object
+        def parse_datetime(dt_value):
+            """Convert string datetime to datetime object if needed"""
+            if dt_value is None or isinstance(dt_value, datetime):
+                return dt_value
+            if not isinstance(dt_value, str):
+                return dt_value
+            # Try ISO format first (handles timezone-aware strings)
+            try:
+                return datetime.fromisoformat(dt_value.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                pass
+            # Try common SQLite formats (naive datetimes)
+            for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    return datetime.strptime(dt_value, fmt)
+                except (ValueError, AttributeError):
+                    continue
+            return None
+
         # Reconstruct Orders objects with all columns including new ones
         orders = []
         for row in results:
@@ -70,18 +92,13 @@ class OrdersRepository:
             row_dict = dict(row._mapping) if hasattr(row, "_mapping") else {}
             # If _mapping doesn't work, access by index
             if not row_dict:
-                row_dict = {}
-                for i, col_name in enumerate(all_columns):
-                    if i < len(row):
-                        row_dict[col_name] = row[i]
+                row_dict = {all_columns[i]: row[i] for i in range(min(len(row), len(all_columns)))}
 
             # Convert status string to OrderStatus enum
             status_str = row_dict.get("status", "amo")
             try:
-                # Try to get enum by value (lowercase)
                 status_enum = OrderStatus(status_str.lower())
             except (ValueError, AttributeError):
-                # Fallback: try to match by name (uppercase)
                 status_upper = status_str.upper()
                 status_enum = getattr(OrderStatus, status_upper, OrderStatus.AMO)
 
@@ -96,9 +113,9 @@ class OrdersRepository:
                 "price": row_dict.get("price"),
                 "status": status_enum,
                 "avg_price": row_dict.get("avg_price"),
-                "placed_at": row_dict["placed_at"],
-                "filled_at": row_dict.get("filled_at"),
-                "closed_at": row_dict.get("closed_at"),
+                "placed_at": parse_datetime(row_dict["placed_at"]),
+                "filled_at": parse_datetime(row_dict.get("filled_at")),
+                "closed_at": parse_datetime(row_dict.get("closed_at")),
                 "orig_source": row_dict.get("orig_source"),
             }
             # Only add optional fields if they exist in the database
@@ -176,9 +193,32 @@ class OrdersRepository:
         return created_orders
 
     def update(self, order: Orders, **fields) -> Orders:
+        """
+        Update an order with the given fields.
+
+        Handles detached orders by merging them into the current session.
+        This is necessary when orders are loaded in different sessions or threads.
+
+        Only updates the fields explicitly passed, avoiding accidental updates
+        to datetime fields that might be strings from raw SQL queries.
+        """
+        # Merge order into current session if it's detached
+        # This handles cases where the order was loaded in a different session
+        # or passed from a different thread/context
+        try:
+            # Check if order is in current session by trying to access its state
+            if order not in self.db:
+                order = self.db.merge(order)
+        except Exception:
+            # If check fails, merge anyway to be safe
+            order = self.db.merge(order)
+
+        # Update only the fields explicitly passed
+        # This prevents accidentally updating datetime fields that might be strings
         for k, v in fields.items():
             if hasattr(order, k) and v is not None:
                 setattr(order, k, v)
+
         self.db.commit()
         self.db.refresh(order)
         return order
