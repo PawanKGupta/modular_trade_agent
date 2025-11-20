@@ -1,5 +1,25 @@
 # Bug Fixes - January 2025
 
+## Order Payload Schema Alignment
+
+### Date: 2025-11-20
+
+### Summary
+Buy and sell orders now always use the official Kotak Neo `place_order` schema so that AMO orders behave identically to the working sell-order path and broker-side validation no longer reports “body invalid”.
+
+### Fix
+- `modules/kotak_neo_auto_trader/orders.py`
+  - Payload now includes the documented fields (`exchange_segment`, `product`, `price`, `order_type`, `quantity`, `validity`, `trading_symbol`, `transaction_type`, `amo`, `disclosed_quantity`) with all values encoded as strings.
+  - Market orders explicitly send `price="0"` (broker requirement) while limit orders send their numeric price as a string.
+  - `amo` is derived from the existing `variety` flag so AMO vs REGULAR paths stay in sync with sell-order behaviour.
+- `modules/kotak_neo_auto_trader/infrastructure/broker_adapters/kotak_neo_adapter.py`
+  - Adapter builds the same schema and adapts it to legacy SDK signatures, ensuring retries and mock brokers see identical payloads.
+
+### Testing
+- Added `tests/unit/kotak/test_order_payloads.py` to assert both AMO market buys and REGULAR limit sells emit the required payload, including `price="0"` for market orders and `amo="YES"/"NO"` toggling.
+
+---
+
 ## Analysis Service and Signal Persistence Improvements
 
 ### Date: 2025-01-19
@@ -564,6 +584,43 @@ When the database was dropped or schedules were missing, the `get_status()` meth
 - No manual intervention required to create schedules
 - Automatic recovery from missing schedules
 - Optimized to avoid unnecessary database queries
+
+---
+
+## SQLAlchemy Session Error Fix
+
+### Date: 2025-01-21
+
+### Summary
+Fixed `InvalidRequestError: Instance is not persistent within this Session` error when updating orders that were loaded in different sessions or threads.
+
+### Issue
+When `_add_failed_order` tried to update an existing order, it failed with:
+```
+sqlalchemy.exc.InvalidRequestError: Instance '<Orders at 0x...>' is not persistent within this Session
+```
+
+This occurred because the order object was loaded in a different session context (e.g., from `orders_repo.list()`) and was not attached to the current session when `orders_repo.update()` tried to refresh it.
+
+### Fix
+Updated `OrdersRepository.update()` method to handle detached orders:
+- Added session merge logic to attach detached orders to the current session
+- Uses `db.merge(order)` to safely merge detached objects into the session
+- Wrapped in try-except to handle edge cases gracefully
+
+**Files Modified**:
+- `src/infrastructure/persistence/orders_repository.py`
+  - Updated `update()` method to merge detached orders into session
+
+### Testing
+- Added test `test_update_detached_order` in `tests/unit/infrastructure/test_phase1_repositories.py`
+- Verifies that detached orders are properly merged and updated
+- Test passes successfully
+
+### Benefits
+- Prevents session errors when updating orders from different contexts
+- Handles multi-threaded scenarios where orders might be detached
+- More robust error handling for session management
 
 ---
 
