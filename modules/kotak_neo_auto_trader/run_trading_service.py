@@ -107,6 +107,7 @@ class TradingService:
         self.auth: KotakNeoAuth | None = None
         self.engine: AutoTradeEngine | None = None
         self.sell_manager: SellOrderManager | None = None
+        self.unified_order_monitor = None  # Phase 2: Unified order monitor
         self.price_cache: LivePriceCache | None = None
         self.scrip_master: KotakNeoScripMaster | None = None
         self.running = False
@@ -215,11 +216,25 @@ class TradingService:
             try:
                 logger.info("Initializing sell order manager...")
                 self.sell_manager = SellOrderManager(self.auth, price_manager=self.price_cache)
+
+                # Phase 2: Initialize unified order monitor for buy and sell order monitoring
+                try:
+                    from .unified_order_monitor import UnifiedOrderMonitor
+                    self.unified_order_monitor = UnifiedOrderMonitor(
+                        sell_order_manager=self.sell_manager,
+                        db_session=self.db,
+                        user_id=self.user_id,
+                    )
+                    logger.info("Unified order monitor initialized")
+                except Exception as e:
+                    logger.warning(f"Unified order monitor initialization failed: {e}")
+                    self.unified_order_monitor = None
             except Exception as e:
                 logger.warning(
                     f"Sell order manager initialization failed (non-critical for buy orders): {e}"
                 )
                 self.sell_manager = None
+                self.unified_order_monitor = None
 
             # Subscribe to open positions immediately to avoid reconnect loops
             # For buy_orders task, this is not needed (AMO orders don't need real-time prices)
@@ -498,12 +513,21 @@ class TradingService:
         # Monitor and update every minute during market hours (no DB logging for continuous monitoring)
         if self.is_market_hours():
             try:
-                stats = self.sell_manager.monitor_and_update()
-                logger.debug(
-                    f"Sell monitor: {stats['checked']} checked, {stats['updated']} updated, {stats['executed']} executed"
-                )
+                # Phase 2: Use unified order monitor if available, otherwise fallback to sell_manager
+                if self.unified_order_monitor:
+                    stats = self.unified_order_monitor.monitor_all_orders()
+                    logger.debug(
+                        f"Unified monitor: {stats.get('checked', 0)} checked, "
+                        f"{stats.get('updated', 0)} updated, {stats.get('executed', 0)} executed, "
+                        f"{stats.get('rejected', 0)} rejected, {stats.get('cancelled', 0)} cancelled"
+                    )
+                elif self.sell_manager:
+                    stats = self.sell_manager.monitor_and_update()
+                    logger.debug(
+                        f"Sell monitor: {stats['checked']} checked, {stats['updated']} updated, {stats['executed']} executed"
+                    )
             except Exception as e:
-                logger.error(f"Sell monitor update failed: {e}")
+                logger.error(f"Order monitor update failed: {e}")
 
     def run_position_monitor(self):
         """9:30 AM (hourly) - Monitor positions for reentry/exit signals"""
