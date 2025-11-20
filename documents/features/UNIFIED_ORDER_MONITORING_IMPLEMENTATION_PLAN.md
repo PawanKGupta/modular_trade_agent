@@ -359,7 +359,15 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS execution_time TIMESTAMP;
   - Added dual-write to update_order_status() (updates both DB and JSON)
   - Added dual-read to get_order_by_id() (reads from DB first, JSON fallback)
   - Added dual-write to remove_pending_order() (marks as closed in DB, removes from JSON)
-  - Status mapping: EXECUTED → ONGOING, CANCELLED → CLOSED
+  - Status mapping:
+    - **Broker statuses** (from broker API):
+      - `EXECUTED` → `ONGOING` (order executed, now holding position)
+      - `REJECTED` → `REJECTED` (order rejected by broker)
+      - `CANCELLED` → `CLOSED` (order cancelled)
+      - `PENDING` (broker processing: "trigger pending", "AMO req received") → `PENDING_EXECUTION`
+      - `OPEN` (broker accepted, waiting execution) → `PENDING_EXECUTION`
+    - **Internal statuses** (our system):
+      - `PENDING` (recommended but not placed, retry pending, manual fill, portfolio full) → `AMO` or `RETRY_PENDING`
 
 **Deliverables**:
 - ✅ Dual-write implementation (all methods write to both DB and JSON)

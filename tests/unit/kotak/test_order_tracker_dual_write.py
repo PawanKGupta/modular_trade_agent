@@ -11,7 +11,7 @@ import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -100,7 +100,7 @@ class TestOrderTrackerDualWrite:
         # Should also write to JSON
         json_file = os.path.join(order_tracker_with_db.data_dir, "pending_orders.json")
         assert os.path.exists(json_file)
-        with open(json_file, "r") as f:
+        with open(json_file) as f:
             data = json.load(f)
             assert len(data["orders"]) == 1
             assert data["orders"][0]["order_id"] == "ORDER123"
@@ -117,14 +117,13 @@ class TestOrderTrackerDualWrite:
         # Should write to JSON
         json_file = os.path.join(order_tracker_json_only.data_dir, "pending_orders.json")
         assert os.path.exists(json_file)
-        with open(json_file, "r") as f:
+        with open(json_file) as f:
             data = json.load(f)
             assert len(data["orders"]) == 1
             assert data["orders"][0]["order_id"] == "ORDER123"
 
     def test_add_pending_order_duplicate_prevention(self, order_tracker_with_db, mock_orders_repo):
         """Test that duplicate orders are prevented in both DB and JSON"""
-        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
         # Mock existing order in DB
         mock_existing = Mock()
@@ -140,7 +139,7 @@ class TestOrderTrackerDualWrite:
 
         # Should not add to JSON either (checked in JSON path)
         json_file = os.path.join(order_tracker_with_db.data_dir, "pending_orders.json")
-        with open(json_file, "r") as f:
+        with open(json_file) as f:
             data = json.load(f)
             # Order should not be added since it exists in DB
 
@@ -245,7 +244,7 @@ class TestOrderTrackerDualWrite:
 
         # Should also update JSON
         json_file = os.path.join(order_tracker_with_db.data_dir, "pending_orders.json")
-        with open(json_file, "r") as f:
+        with open(json_file) as f:
             data = json.load(f)
             assert data["orders"][0]["status"] == "EXECUTED"
             assert data["orders"][0]["executed_qty"] == 10
@@ -278,7 +277,6 @@ class TestOrderTrackerDualWrite:
 
     def test_remove_pending_order_dual_write(self, order_tracker_with_db, mock_orders_repo):
         """Test removing order writes to both DB and JSON"""
-        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
         # Add order first
         mock_order = Mock()
@@ -300,7 +298,7 @@ class TestOrderTrackerDualWrite:
 
         # Should also remove from JSON
         json_file = os.path.join(order_tracker_with_db.data_dir, "pending_orders.json")
-        with open(json_file, "r") as f:
+        with open(json_file) as f:
             data = json.load(f)
             assert len(data["orders"]) == 0
 
@@ -423,7 +421,7 @@ class TestOrderTrackerDualWrite:
 
         json_file = os.path.join(order_tracker_with_db.data_dir, "pending_orders.json")
         assert os.path.exists(json_file)
-        with open(json_file, "r") as f:
+        with open(json_file) as f:
             data = json.load(f)
             assert len(data["orders"]) == 1
 
@@ -484,7 +482,7 @@ class TestOrderTrackerDualWrite:
 
         # Check JSON was updated
         json_file = os.path.join(order_tracker_json_only.data_dir, "pending_orders.json")
-        with open(json_file, "r") as f:
+        with open(json_file) as f:
             data = json.load(f)
             assert data["orders"][0]["status"] == "EXECUTED"
             assert data["orders"][0]["executed_qty"] == 10
@@ -495,9 +493,7 @@ class TestOrderTrackerDualWrite:
         mock_orders_repo.get_by_broker_order_id.return_value = None
         mock_orders_repo.get_by_order_id.return_value = None
 
-        result = order_tracker_with_db.update_order_status(
-            order_id="ORDER123", status="EXECUTED"
-        )
+        result = order_tracker_with_db.update_order_status(order_id="ORDER123", status="EXECUTED")
 
         # Should return False (not found)
         assert result is False
@@ -513,7 +509,9 @@ class TestOrderTrackerDualWrite:
         assert result is False
         mock_orders_repo.mark_cancelled.assert_not_called()
 
-    def test_get_pending_orders_status_filter_pending(self, order_tracker_with_db, mock_orders_repo):
+    def test_get_pending_orders_status_filter_pending(
+        self, order_tracker_with_db, mock_orders_repo
+    ):
         """Test status filter with PENDING status"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
@@ -542,7 +540,7 @@ class TestOrderTrackerDualWrite:
         """Test status filter with OPEN status"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock order with ONGOING status
+        # Mock order with PENDING_EXECUTION status (OPEN = placed but not executed yet)
         mock_order = Mock()
         mock_order.broker_order_id = "ORDER1"
         mock_order.order_id = "ORDER1"
@@ -550,7 +548,7 @@ class TestOrderTrackerDualWrite:
         mock_order.quantity = 10
         mock_order.price = 2450.0
         mock_order.order_type = "market"
-        mock_order.status = DbOrderStatus.ONGOING
+        mock_order.status = DbOrderStatus.PENDING_EXECUTION
         mock_order.placed_at = datetime.now()
         mock_order.last_status_check = datetime.now()
         mock_order.rejection_reason = None
@@ -561,7 +559,7 @@ class TestOrderTrackerDualWrite:
         orders = order_tracker_with_db.get_pending_orders(status_filter="OPEN")
 
         assert len(orders) == 1
-        assert orders[0]["status"] == "ongoing"
+        assert orders[0]["status"] == "pending_execution"
 
     def test_update_order_status_cancelled(self, order_tracker_with_db, mock_orders_repo):
         """Test updating order status to CANCELLED"""
@@ -577,9 +575,7 @@ class TestOrderTrackerDualWrite:
         mock_order.last_status_check = None
         mock_orders_repo.get_by_broker_order_id.return_value = mock_order
 
-        result = order_tracker_with_db.update_order_status(
-            order_id="ORDER123", status="CANCELLED"
-        )
+        result = order_tracker_with_db.update_order_status(order_id="ORDER123", status="CANCELLED")
 
         # Should update in DB
         assert result is True
@@ -625,7 +621,9 @@ class TestOrderTrackerDualWrite:
         # But JSON add should be skipped
         mock_orders_repo.create_amo.assert_called_once()
 
-    def test_get_pending_orders_db_exception_fallback(self, order_tracker_with_db, mock_orders_repo):
+    def test_get_pending_orders_db_exception_fallback(
+        self, order_tracker_with_db, mock_orders_repo
+    ):
         """Test that JSON fallback works when DB raises exception"""
         # Mock DB to raise exception
         mock_orders_repo.list.side_effect = Exception("DB connection error")
@@ -653,4 +651,3 @@ class TestOrderTrackerDualWrite:
         # Should fallback to JSON
         assert len(orders) == 1
         assert orders[0]["order_id"] == "ORDER123"
-
