@@ -53,6 +53,7 @@
   - Migration script can be done separately as one-time operation
 - ✅ **Phase 8: Retry Queue API & UI** - COMPLETE
 - ✅ **Phase 9: Notifications** - COMPLETE
+- ✅ **Phase 10: Manual Activity Detection** - COMPLETE
   - Added POST /api/v1/user/orders/{id}/retry endpoint for manual retry
   - Added DELETE /api/v1/user/orders/{id} endpoint for dropping from retry queue
   - Added query parameters for filtering (failure_reason, from_date, to_date) to GET endpoint
@@ -555,29 +556,70 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS execution_time TIMESTAMP;
 
 ---
 
-### Phase 10: Manual Activity Detection (Week 6)
+### Phase 10: Manual Activity Detection (Week 6) ✅ COMPLETE
 
 **Tasks**:
-1. Extend `OrderStateManager.sync_with_broker()` for buy orders
-2. Detect manual cancellations by comparing broker status
-3. Detect manual modifications (price/qty changes)
-4. Update DB and tracking when manual changes detected
-5. Send notification on manual activity
+1. ✅ Extend `OrderStateManager.sync_with_broker()` for buy orders
+2. ✅ Detect manual cancellations by comparing broker status
+3. ✅ Detect manual modifications (price/qty changes)
+4. ✅ Update DB and tracking when manual changes detected
+5. ✅ Send notification on manual activity
 
 **Key Changes**:
-- `modules/kotak_neo_auto_trader/order_state_manager.py`
-- Add buy order comparison logic
-- Add modification detection
+- ✅ `modules/kotak_neo_auto_trader/order_state_manager.py`:
+  - Added `telegram_notifier`, `orders_repo`, and `user_id` parameters to `__init__`
+  - Added `original_price` and `original_quantity` tracking in `register_buy_order()`
+  - Added `is_manual_cancelled` flag to track manual cancellations
+  - Extended `sync_with_broker()` to detect manual modifications and cancellations
+  - Added `_detect_manual_modifications()` method to compare stored vs broker values
+  - Added `_handle_manual_cancellation()` method for manual cancellation handling
+  - Added `_update_db_for_manual_modification()` method for DB updates
+  - Added `_update_db_for_manual_cancellation()` method for DB updates
+  - Added `_notify_manual_modification()` method for notifications
+  - Added `_notify_manual_cancellation()` method for notifications
+  - Added stats tracking: `buy_manual_cancelled`, `buy_manual_modified`
+- ✅ `modules/kotak_neo_auto_trader/unified_order_monitor.py`:
+  - Updated `register_buy_orders_with_state_manager()` to inject telegram_notifier, orders_repo, and user_id into OrderStateManager
 
 **Deliverables**:
-- Manual activity detection
-- Status updates
-- Notifications
+- ✅ Manual activity detection (price/qty modifications, cancellations)
+- ✅ Status updates (DB and in-memory tracking)
+- ✅ Notifications (Telegram alerts for manual activity)
 
 **Testing**:
-- Manual cancellation tests
-- Manual modification tests
-- State sync tests
+- ✅ Comprehensive test suite: `tests/unit/kotak/test_order_state_manager_manual_activity_phase10.py`
+  - 13 test cases covering:
+    - Manual price modification detection
+    - Manual quantity modification detection
+    - Combined price and quantity modifications
+    - No modification when values match
+    - Manual cancellation handling
+    - Integration with sync_with_broker
+    - Database updates for modifications and cancellations
+    - Error handling (disabled notifications, missing repo, graceful failures)
+- Total: 13+ test cases with >80% coverage
+
+**Implementation Details**:
+
+**Manual Modification Detection**:
+- Compares stored `original_price` and `original_quantity` with broker's current values
+- Detects changes with tolerance (0.01 for price, 0 for quantity)
+- Updates in-memory cache with new values
+- Updates database with `is_manual=True` flag
+- Sends Telegram notification with modification details
+
+**Manual Cancellation Detection**:
+- Detects when order is cancelled but `is_manual_cancelled` flag is False
+- Marks order as manually cancelled
+- Updates database with cancellation reason and `is_manual=True` flag
+- Sends Telegram notification via `notify_order_cancelled()`
+- Removes from active tracking
+
+**Database Integration**:
+- Finds order in database by `broker_order_id` or `order_id` and `symbol`
+- Updates order with new price/quantity and `is_manual=True` for modifications
+- Marks order as cancelled with reason for cancellations
+- Gracefully handles missing repository or user_id
 
 ---
 

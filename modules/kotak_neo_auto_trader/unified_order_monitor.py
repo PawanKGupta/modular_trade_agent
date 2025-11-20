@@ -131,6 +131,7 @@ class UnifiedOrderMonitor:
         Register loaded buy orders with OrderStateManager.
 
         Phase 4: Integration with OrderStateManager for unified state tracking.
+        Phase 10: Update OrderStateManager with telegram_notifier, orders_repo, and user_id.
 
         Returns:
             Number of buy orders registered
@@ -143,6 +144,14 @@ class UnifiedOrderMonitor:
         if not state_manager:
             logger.debug("OrderStateManager is None, skipping registration")
             return 0
+
+        # Phase 10: Update OrderStateManager with notification and DB support
+        if self.telegram_notifier:
+            state_manager.telegram_notifier = self.telegram_notifier
+        if self.orders_repo:
+            state_manager.orders_repo = self.orders_repo
+        if self.user_id:
+            state_manager.user_id = self.user_id
 
         registered_count = 0
         for order_id, order_info in self.active_buy_orders.items():

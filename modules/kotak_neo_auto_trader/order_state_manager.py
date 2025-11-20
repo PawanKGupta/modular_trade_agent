@@ -55,23 +55,39 @@ class OrderStateManager:
     Provides atomic updates across all state sources.
     """
 
-    def __init__(self, history_path: str, data_dir: str = "data"):
+    def __init__(
+        self,
+        history_path: str,
+        data_dir: str = "data",
+        telegram_notifier=None,
+        orders_repo=None,
+        user_id: int | None = None,
+    ):
         """
         Initialize order state manager.
+
+        Phase 10: Added telegram_notifier, orders_repo, and user_id for manual activity detection.
 
         Args:
             history_path: Path to trades_history.json
             data_dir: Directory for OrderTracker data
+            telegram_notifier: Optional TelegramNotifier for sending notifications
+            orders_repo: Optional OrdersRepository for database updates
+            user_id: Optional user ID for database operations
         """
         self.history_path = history_path
         self.data_dir = data_dir
+        self.telegram_notifier = telegram_notifier
+        self.orders_repo = orders_repo
+        self.user_id = user_id
 
         # In-memory cache for active sell orders
         # Format: {symbol: {'order_id': str, 'target_price': float, 'qty': int, ...}}
         self.active_sell_orders: dict[str, dict[str, Any]] = {}
 
         # Phase 3: In-memory cache for active buy orders
-        # Format: {order_id: {'symbol': str, 'quantity': float, 'order_id': str, ...}}
+        # Format: {order_id: {'symbol': str, 'quantity': float, 'order_id': str, 'original_price': float, 'original_quantity': float, ...}}
+        # Phase 10: Added original_price and original_quantity to track manual modifications
         self.active_buy_orders: dict[str, dict[str, Any]] = {}
 
         # Order tracker for pending orders
@@ -208,6 +224,7 @@ class OrderStateManager:
                     return True
 
                 # 1. Update in-memory cache
+                # Phase 10: Store original values to detect manual modifications
                 self.active_buy_orders[order_id] = {
                     "symbol": base_symbol,
                     "quantity": quantity,
@@ -215,6 +232,9 @@ class OrderStateManager:
                     "price": price,
                     "ticker": ticker,
                     "registered_at": datetime.now().isoformat(),
+                    "original_price": price,  # Phase 10: Track original price
+                    "original_quantity": quantity,  # Phase 10: Track original quantity
+                    "is_manual_cancelled": False,  # Phase 10: Track if manually cancelled
                     **kwargs,
                 }
 
@@ -629,6 +649,9 @@ class OrderStateManager:
                     status = OrderStatusParser.parse_status(broker_order)
                     symbol = order_info.get("symbol", "UNKNOWN")
 
+                    # Phase 10: Detect manual modifications before checking status
+                    self._detect_manual_modifications(order_id, order_info, broker_order, stats)
+
                     if status in {OrderStatus.COMPLETE, OrderStatus.EXECUTED}:
                         # Buy order executed
                         execution_price = OrderFieldExtractor.get_price(
@@ -654,15 +677,266 @@ class OrderStateManager:
                         stats["buy_rejected"] += 1
 
                     elif status == OrderStatus.CANCELLED:
-                        # Buy order cancelled
-                        self.remove_buy_order_from_tracking(order_id, reason="Cancelled")
-                        stats["buy_cancelled"] += 1
+                        # Phase 10: Detect manual cancellation
+                        is_manual = not order_info.get("is_manual_cancelled", False)
+                        if is_manual:
+                            # Order was cancelled manually (not by us)
+                            self._handle_manual_cancellation(order_id, order_info, broker_order)
+                            stats["buy_manual_cancelled"] = stats.get("buy_manual_cancelled", 0) + 1
+                        else:
+                            # Order cancelled by system
+                            self.remove_buy_order_from_tracking(order_id, reason="Cancelled")
+                            stats["buy_cancelled"] += 1
 
             return stats
 
         except Exception as e:
             logger.error(f"Error syncing with broker: {e}")
             return stats
+
+    def _detect_manual_modifications(
+        self,
+        order_id: str,
+        order_info: dict[str, Any],
+        broker_order: dict[str, Any],
+        stats: dict[str, int],
+    ) -> None:
+        """
+        Detect manual modifications to buy orders (price/qty changes).
+
+        Phase 10: Manual activity detection.
+
+        Args:
+            order_id: Order ID
+            order_info: Stored order info
+            broker_order: Current broker order data
+            stats: Stats dict to update
+        """
+        try:
+            # Get original values
+            original_price = order_info.get("original_price")
+            original_quantity = order_info.get("original_quantity", order_info.get("quantity", 0))
+
+            # Get current broker values
+            broker_price = OrderFieldExtractor.get_price(broker_order)
+            broker_quantity = OrderFieldExtractor.get_quantity(broker_order)
+
+            modifications = []
+
+            # Check for price modification (only for limit orders)
+            if original_price is not None and broker_price is not None:
+                if abs(original_price - broker_price) > 0.01:  # Allow small floating point differences
+                    modifications.append(f"price: Rs {original_price:.2f} → Rs {broker_price:.2f}")
+
+            # Check for quantity modification
+            if broker_quantity is not None and abs(original_quantity - broker_quantity) > 0:
+                modifications.append(
+                    f"quantity: {original_quantity} → {broker_quantity}"
+                )
+
+            if modifications:
+                # Manual modification detected
+                symbol = order_info.get("symbol", "UNKNOWN")
+                modification_text = ", ".join(modifications)
+
+                logger.warning(
+                    f"Manual modification detected for buy order {order_id} ({symbol}): {modification_text}"
+                )
+
+                # Update stored values
+                if broker_price is not None:
+                    order_info["price"] = broker_price
+                if broker_quantity is not None:
+                    order_info["quantity"] = broker_quantity
+
+                # Update database if available
+                self._update_db_for_manual_modification(
+                    order_id, symbol, broker_price, broker_quantity
+                )
+
+                # Send notification
+                self._notify_manual_modification(symbol, order_id, modification_text)
+
+                stats["buy_manual_modified"] = stats.get("buy_manual_modified", 0) + 1
+
+        except Exception as e:
+            logger.error(f"Error detecting manual modifications for order {order_id}: {e}")
+
+    def _handle_manual_cancellation(
+        self,
+        order_id: str,
+        order_info: dict[str, Any],
+        broker_order: dict[str, Any],
+    ) -> None:
+        """
+        Handle manual cancellation of buy order.
+
+        Phase 10: Manual activity detection.
+
+        Args:
+            order_id: Order ID
+            order_info: Stored order info
+            broker_order: Broker order data
+        """
+        try:
+            symbol = order_info.get("symbol", "UNKNOWN")
+            cancellation_reason = (
+                OrderFieldExtractor.get_rejection_reason(broker_order) or "User cancelled"
+            )
+
+            logger.warning(
+                f"Manual cancellation detected for buy order {order_id} ({symbol}): {cancellation_reason}"
+            )
+
+            # Mark as manually cancelled
+            order_info["is_manual_cancelled"] = True
+
+            # Update database if available
+            self._update_db_for_manual_cancellation(order_id, symbol, cancellation_reason)
+
+            # Send notification
+            self._notify_manual_cancellation(symbol, order_id, cancellation_reason)
+
+            # Remove from tracking
+            self.remove_buy_order_from_tracking(order_id, reason=f"Manual cancellation: {cancellation_reason}")
+
+        except Exception as e:
+            logger.error(f"Error handling manual cancellation for order {order_id}: {e}")
+
+    def _update_db_for_manual_modification(
+        self,
+        order_id: str,
+        symbol: str,
+        new_price: float | None,
+        new_quantity: float | None,
+    ) -> None:
+        """
+        Update database for manual modification.
+
+        Phase 10: Database updates for manual activity.
+
+        Args:
+            order_id: Order ID
+            symbol: Trading symbol
+            new_price: New price (if modified)
+            new_quantity: New quantity (if modified)
+        """
+        if not self.orders_repo or not self.user_id:
+            return
+
+        try:
+            # Find order in database
+            all_orders = self.orders_repo.list(self.user_id)
+            db_order = None
+            for order in all_orders:
+                if (order.broker_order_id == order_id or order.order_id == order_id) and order.symbol.upper() == symbol.upper():
+                    db_order = order
+                    break
+
+            if db_order:
+                # Update order with new values
+                update_data = {}
+                if new_price is not None:
+                    update_data["price"] = new_price
+                if new_quantity is not None:
+                    update_data["quantity"] = new_quantity
+                # Mark as manual
+                update_data["is_manual"] = True
+
+                self.orders_repo.update(db_order, **update_data)
+                logger.debug(f"Updated DB order {db_order.id} for manual modification")
+
+        except Exception as e:
+            logger.warning(f"Failed to update DB for manual modification: {e}")
+
+    def _update_db_for_manual_cancellation(
+        self, order_id: str, symbol: str, cancellation_reason: str
+    ) -> None:
+        """
+        Update database for manual cancellation.
+
+        Phase 10: Database updates for manual activity.
+
+        Args:
+            order_id: Order ID
+            symbol: Trading symbol
+            cancellation_reason: Reason for cancellation
+        """
+        if not self.orders_repo or not self.user_id:
+            return
+
+        try:
+            # Find order in database
+            all_orders = self.orders_repo.list(self.user_id)
+            db_order = None
+            for order in all_orders:
+                if (order.broker_order_id == order_id or order.order_id == order_id) and order.symbol.upper() == symbol.upper():
+                    db_order = order
+                    break
+
+            if db_order:
+                # Mark as cancelled and manual
+                self.orders_repo.mark_cancelled(
+                    order=db_order, cancelled_reason=f"Manual: {cancellation_reason}"
+                )
+                self.orders_repo.update(db_order, is_manual=True)
+                logger.debug(f"Updated DB order {db_order.id} for manual cancellation")
+
+        except Exception as e:
+            logger.warning(f"Failed to update DB for manual cancellation: {e}")
+
+    def _notify_manual_modification(
+        self, symbol: str, order_id: str, modification_text: str
+    ) -> None:
+        """
+        Send notification for manual modification.
+
+        Phase 10: Notifications for manual activity.
+
+        Args:
+            symbol: Trading symbol
+            order_id: Order ID
+            modification_text: Description of modifications
+        """
+        if not self.telegram_notifier or not self.telegram_notifier.enabled:
+            return
+
+        try:
+            message = (
+                f"⚠️ MANUAL MODIFICATION DETECTED\n\n"
+                f"Symbol: `{symbol}`\n"
+                f"Order ID: `{order_id}`\n"
+                f"Changes: {modification_text}\n\n"
+                f"Order was modified manually in broker app."
+            )
+            self.telegram_notifier.send_message(message)
+        except Exception as e:
+            logger.warning(f"Failed to send manual modification notification: {e}")
+
+    def _notify_manual_cancellation(
+        self, symbol: str, order_id: str, cancellation_reason: str
+    ) -> None:
+        """
+        Send notification for manual cancellation.
+
+        Phase 10: Notifications for manual activity.
+
+        Args:
+            symbol: Trading symbol
+            order_id: Order ID
+            cancellation_reason: Reason for cancellation
+        """
+        if not self.telegram_notifier or not self.telegram_notifier.enabled:
+            return
+
+        try:
+            self.telegram_notifier.notify_order_cancelled(
+                symbol=symbol,
+                order_id=order_id,
+                cancellation_reason=f"Manual: {cancellation_reason}",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send manual cancellation notification: {e}")
 
     def get_pending_orders(self, status_filter: str | None = None) -> list[dict[str, Any]]:
         """
