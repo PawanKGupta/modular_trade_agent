@@ -25,19 +25,27 @@ client = TestClient(app)
 
 
 @pytest.fixture
-def mock_user(db_session):
-    """Create a test user"""
+def mock_user(client, db_session):
+    """Create a test user via signup"""
     from src.infrastructure.db.models import Users
-    from server.app.core.security import hash_password
+    from jose import jwt
+    from server.app.core.config import settings
 
-    user = Users(
-        email="test@example.com",
-        password_hash=hash_password("password123"),
-        username="testuser",
+    # Create user via signup
+    response = client.post(
+        "/api/v1/auth/signup",
+        json={"email": "test@example.com", "password": "password123"},
     )
-    db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
+    assert response.status_code == 200
+    token = response.json()["access_token"]
+    
+    # Get user_id from token and create a mock user object
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    user_id = payload["uid"]
+    
+    # Query user from db_session (should exist after signup)
+    user = db_session.query(Users).filter(Users.id == user_id).first()
+    assert user is not None, f"User with id {user_id} not found after signup"
     return user
 
 
