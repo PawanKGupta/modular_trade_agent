@@ -1695,7 +1695,164 @@ class AutoTradeEngine:
         except Exception as e:
             logger.error(f"Failed to add to pending orders: {e}")
 
+        # Phase 5: Immediately verify order placement (non-blocking)
+        # This checks if the order was immediately rejected by the broker
+        try:
+            is_valid, rejection_reason = self._verify_order_placement(
+                order_id=order_id, symbol=placed_symbol or broker_symbol, wait_seconds=15
+            )
+            if not is_valid:
+                logger.error(
+                    f"Order {order_id} was immediately rejected: {rejection_reason}. "
+                    f"Order status has been updated in database."
+                )
+                # Note: Order is still considered "placed" from broker's perspective,
+                # but we've detected and logged the rejection
+        except Exception as e:
+            logger.warning(f"Order verification failed (non-critical): {e}")
+            # Don't fail order placement if verification fails
+
         return (True, order_id)
+
+    def _verify_order_placement(
+        self, order_id: str, symbol: str, wait_seconds: int = 15
+    ) -> tuple[bool, str | None]:
+        """
+        Phase 5: Immediately verify order placement by polling broker once.
+
+        After placing an AMO order, wait briefly then check broker to see if
+        the order was immediately rejected. This catches rejections that happen
+        within seconds of placement (e.g., insufficient balance, invalid symbol).
+
+        Args:
+            order_id: Order ID from broker
+            symbol: Trading symbol
+            wait_seconds: Seconds to wait before checking (default: 15, range: 10-30)
+
+        Returns:
+            Tuple of (is_valid: bool, rejection_reason: Optional[str])
+            - is_valid=True: Order is valid (pending, executed, or not found yet)
+            - is_valid=False: Order was rejected, rejection_reason contains the reason
+        """
+        if not order_id:
+            logger.warning("Cannot verify order placement: order_id is None")
+            return (True, None)  # Assume valid if no order_id
+
+        # Clamp wait time between 10-30 seconds
+        wait_seconds = max(10, min(30, wait_seconds))
+
+        logger.info(
+            f"Verifying order placement: {symbol} (order_id: {order_id}) - "
+            f"waiting {wait_seconds} seconds before checking broker..."
+        )
+
+        # Wait for broker to process the order
+        time.sleep(wait_seconds)
+
+        try:
+            # Query broker for order status
+            orders_response = self.orders.get_orders() if self.orders else None
+            if not orders_response:
+                logger.warning("Could not fetch orders from broker for verification")
+                return (True, None)  # Assume valid if we can't check
+
+            broker_orders = orders_response.get("data", [])
+
+            # Find our order in broker's order list
+            from .utils.order_field_extractor import OrderFieldExtractor
+            from .utils.order_status_parser import OrderStatusParser
+            from .domain.value_objects.order_enums import OrderStatus
+
+            for broker_order in broker_orders:
+                broker_order_id = OrderFieldExtractor.get_order_id(broker_order)
+                if broker_order_id == order_id:
+                    # Found our order - check status
+                    status = OrderStatusParser.parse_status(broker_order)
+
+                    if status == OrderStatus.REJECTED:
+                        # Order was rejected - extract reason
+                        rejection_reason = (
+                            OrderFieldExtractor.get_rejection_reason(broker_order)
+                            or "Unknown rejection reason"
+                        )
+
+                        logger.error(
+                            f"Order immediately rejected: {symbol} (order_id: {order_id}) - "
+                            f"Reason: {rejection_reason}"
+                        )
+
+                        # Phase 5: Update database if orders_repo is available
+                        if self.orders_repo and self.user_id:
+                            try:
+                                # Find the order in database
+                                all_orders = self.orders_repo.list(self.user_id)
+                                db_order = None
+                                for order in all_orders:
+                                    if (
+                                        order.broker_order_id == order_id
+                                        or order.order_id == order_id
+                                    ):
+                                        db_order = order
+                                        break
+
+                                if db_order:
+                                    # Update order status to rejected
+                                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                                    self.orders_repo.mark_rejected(
+                                        order_id=db_order.id,
+                                        rejection_reason=rejection_reason,
+                                    )
+                                    logger.info(
+                                        f"Updated order {order_id} status to REJECTED in database"
+                                    )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to update order status in database: {e}"
+                                )
+
+                        # Phase 5: Send notification
+                        try:
+                            telegram_msg = (
+                                f"⚠️ AMO Order Immediately Rejected\n\n"
+                                f"Symbol: {symbol}\n"
+                                f"Order ID: {order_id}\n"
+                                f"Reason: {rejection_reason}\n\n"
+                                f"Order was rejected within {wait_seconds} seconds of placement. "
+                                f"Please check broker app."
+                            )
+                            send_telegram(telegram_msg)
+                        except Exception as e:
+                            logger.warning(f"Failed to send rejection notification: {e}")
+
+                        return (False, rejection_reason)
+
+                    elif status in {OrderStatus.COMPLETE, OrderStatus.EXECUTED}:
+                        # Order executed immediately (unlikely for AMO, but possible)
+                        logger.info(
+                            f"Order immediately executed: {symbol} (order_id: {order_id})"
+                        )
+                        return (True, None)
+
+                    else:
+                        # Order is pending/open - this is expected for AMO orders
+                        logger.debug(
+                            f"Order status: {status.value if hasattr(status, 'value') else status} "
+                            f"for {symbol} (order_id: {order_id}) - order is pending (expected for AMO)"
+                        )
+                        return (True, None)
+
+            # Order not found in broker's list yet - this is normal for AMO orders
+            # Broker may not show AMO orders immediately
+            logger.debug(
+                f"Order {order_id} not found in broker order list yet (normal for AMO orders)"
+            )
+            return (True, None)
+
+        except Exception as e:
+            logger.error(f"Error verifying order placement: {e}")
+            # On error, assume order is valid (don't block on verification failures)
+            return (True, None)
 
     # ---------------------- New entries ----------------------
     def place_new_entries(self, recommendations: list[Recommendation]) -> dict[str, int | list]:

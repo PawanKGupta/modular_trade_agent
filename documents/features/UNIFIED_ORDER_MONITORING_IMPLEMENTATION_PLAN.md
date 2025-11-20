@@ -30,7 +30,13 @@
   - Integrated buy order monitoring into continuous loop
   - Added market close handling (orders tracked next day)
   - Added 7 new tests with 85% coverage
-- ⏳ **Phase 5: Immediate Polling After Placement** - PENDING
+
+- ✅ **Phase 5: Immediate Polling After Placement** - COMPLETE
+  - Added _verify_order_placement() method for immediate verification
+  - Polls broker once after order placement (10-30 seconds)
+  - Updates database status immediately if rejected
+  - Sends Telegram notification on immediate rejection
+  - Added 11 new tests covering all scenarios
 - ⏳ **Phase 6: Failure Status Promotion** - PENDING
 - ⏳ **Phase 7: Pending Orders DB Migration** - PENDING
 - ⏳ **Phase 8: Retry Queue API & UI** - PENDING
@@ -254,30 +260,33 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS execution_time TIMESTAMP;
 
 ---
 
-### Phase 5: Immediate Polling After Placement (Week 3)
+### Phase 5: Immediate Polling After Placement (Week 3) ✅ COMPLETE
 
 **Tasks**:
-1. Add immediate status check after AMO placement
-2. Poll broker once after order placement (within 10-30 seconds)
-3. Update order status immediately if rejected
-4. Send notification if immediate rejection detected
-5. Add to `_attempt_place_order()` method
+1. ✅ Add immediate status check after AMO placement
+2. ✅ Poll broker once after order placement (within 10-30 seconds)
+3. ✅ Update order status immediately if rejected
+4. ✅ Send notification if immediate rejection detected
+5. ✅ Add to `_attempt_place_order()` method
 
 **Key Changes**:
-- `modules/kotak_neo_auto_trader/auto_trade_engine.py`
-- Add `_verify_order_placement()` method
-- Call after successful order placement
-- Handle immediate rejections
+- ✅ `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+  - Added `_verify_order_placement()` method
+  - Called after successful order placement in `_attempt_place_order()`
+  - Handles immediate rejections with database updates and notifications
+  - Wait time clamped between 10-30 seconds (default: 15 seconds)
 
 **Deliverables**:
-- Immediate verification
-- Rejection detection
-- Notification on immediate failure
+- ✅ Immediate verification after order placement
+- ✅ Rejection detection within seconds of placement
+- ✅ Database status update on immediate rejection
+- ✅ Telegram notification on immediate failure
 
 **Testing**:
-- Unit tests for immediate polling
-- Rejection scenario tests
-- Notification tests
+- ✅ Created `tests/unit/kotak/test_auto_trade_engine_immediate_polling.py` (11 test cases)
+- ✅ Tests cover: pending, rejected, executed, not found scenarios
+- ✅ Tests cover: error handling, wait time clamping, database updates, notifications
+- ✅ All 11 tests passing
 
 ---
 
