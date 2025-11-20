@@ -8,7 +8,30 @@ This guide covers the steps to complete the migration and enable all new feature
 2. Backup your database
 3. Review the implementation summary
 
-## Step 1: Apply Database Indexes Migration
+## Step 1: Apply Phase 1 Migration (Order Monitoring Fields)
+
+**Status**: ✅ **COMPLETED**
+
+The Phase 1 migration adds all order monitoring fields to the database.
+
+### Using Direct Script (Recommended)
+
+```bash
+# Verify current columns (dry-run)
+python scripts/apply_order_monitoring_fields.py --verify-only
+
+# Apply columns
+python scripts/apply_order_monitoring_fields.py
+
+# Or preview first
+python scripts/apply_order_monitoring_fields.py --dry-run
+```
+
+**Note**: This migration has already been applied. All 13 columns are present in the database.
+
+## Step 2: Apply Database Indexes Migration
+
+**Status**: ✅ **COMPLETED**
 
 The indexes migration improves query performance for order lookups.
 
