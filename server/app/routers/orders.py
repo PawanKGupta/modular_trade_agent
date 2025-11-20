@@ -19,7 +19,20 @@ logger = logging.getLogger(__name__)
 
 @router.get("/", response_model=list[OrderResponse])
 def list_orders(
-    status: Annotated[Literal["amo", "ongoing", "sell", "closed"] | None, Query()] = None,
+    status: Annotated[
+        Literal[
+            "amo",
+            "ongoing",
+            "sell",
+            "closed",
+            "failed",
+            "retry_pending",
+            "rejected",
+            "pending_execution",
+        ]
+        | None,
+        Query(),
+    ] = None,
     db: Session = Depends(get_db),  # noqa: B008 - FastAPI dependency injection
     current: Users = Depends(get_current_user),  # noqa: B008 - FastAPI dependency injection
 ) -> list[OrderResponse]:
@@ -31,33 +44,28 @@ def list_orders(
             "ongoing": DbOrderStatus.ONGOING,
             "sell": DbOrderStatus.SELL,
             "closed": DbOrderStatus.CLOSED,
+            "failed": DbOrderStatus.FAILED,
+            "retry_pending": DbOrderStatus.RETRY_PENDING,
+            "rejected": DbOrderStatus.REJECTED,
+            "pending_execution": DbOrderStatus.PENDING_EXECUTION,
         }
         db_status = status_map.get(status) if status else None
         items = repo.list(current.id, db_status)
+
+        # Helper function to format datetime fields
+        def format_datetime(dt_value):
+            if dt_value is None:
+                return None
+            if isinstance(dt_value, str):
+                return dt_value
+            if isinstance(dt_value, datetime):
+                return dt_value.isoformat()
+            return str(dt_value)
 
         # map DB columns to API model field names
         result = []
         for o in items:
             try:
-                # Handle datetime fields - they might be strings from raw SQL or datetime objects
-                created_at_str = None
-                if o.placed_at:
-                    if isinstance(o.placed_at, str):
-                        created_at_str = o.placed_at
-                    elif isinstance(o.placed_at, datetime):
-                        created_at_str = o.placed_at.isoformat()
-                    else:
-                        created_at_str = str(o.placed_at)
-
-                updated_at_str = None
-                if o.closed_at:
-                    if isinstance(o.closed_at, str):
-                        updated_at_str = o.closed_at
-                    elif isinstance(o.closed_at, datetime):
-                        updated_at_str = o.closed_at.isoformat()
-                    else:
-                        updated_at_str = str(o.closed_at)
-
                 order_response = OrderResponse(
                     id=o.id,
                     symbol=o.symbol,
@@ -65,8 +73,19 @@ def list_orders(
                     quantity=o.quantity,
                     price=o.price,
                     status=o.status.value if o.status else "amo",
-                    created_at=created_at_str,
-                    updated_at=updated_at_str,
+                    created_at=format_datetime(o.placed_at),
+                    updated_at=format_datetime(o.closed_at),
+                    # Order monitoring fields
+                    failure_reason=getattr(o, "failure_reason", None),
+                    first_failed_at=format_datetime(getattr(o, "first_failed_at", None)),
+                    last_retry_attempt=format_datetime(getattr(o, "last_retry_attempt", None)),
+                    retry_count=getattr(o, "retry_count", 0) or 0,
+                    rejection_reason=getattr(o, "rejection_reason", None),
+                    cancelled_reason=getattr(o, "cancelled_reason", None),
+                    last_status_check=format_datetime(getattr(o, "last_status_check", None)),
+                    execution_price=getattr(o, "execution_price", None),
+                    execution_qty=getattr(o, "execution_qty", None),
+                    execution_time=format_datetime(getattr(o, "execution_time", None)),
                 )
                 result.append(order_response)
             except Exception as e:

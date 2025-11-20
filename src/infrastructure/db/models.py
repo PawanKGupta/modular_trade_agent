@@ -86,6 +86,10 @@ class OrderStatus(str, Enum):
     ONGOING = "ongoing"
     SELL = "sell"
     CLOSED = "closed"
+    FAILED = "failed"
+    RETRY_PENDING = "retry_pending"
+    REJECTED = "rejected"
+    PENDING_EXECUTION = "pending_execution"
 
 
 class Orders(Base):
@@ -120,9 +124,22 @@ class Orders(Base):
     order_metadata: Mapped[dict | None] = mapped_column(
         "metadata", JSON, nullable=True
     )  # Store placed_symbol, signal_type, exit_note, etc.
+    # Failure and retry tracking fields
+    failure_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    first_failed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_retry_attempt: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rejection_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    cancelled_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    last_status_check: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Execution tracking fields
+    execution_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    execution_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    execution_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (
         Index("ix_orders_user_status_symbol_time", "user_id", "status", "symbol", "placed_at"),
+        Index("ix_orders_status_last_check", "status", "last_status_check"),
     )
 
 

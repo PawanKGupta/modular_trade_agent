@@ -49,6 +49,27 @@ class OrdersRepository:
             optional_columns.append("broker_order_id")
         if "metadata" in orders_columns:
             optional_columns.append("metadata")
+        # Order monitoring fields
+        if "failure_reason" in orders_columns:
+            optional_columns.append("failure_reason")
+        if "first_failed_at" in orders_columns:
+            optional_columns.append("first_failed_at")
+        if "last_retry_attempt" in orders_columns:
+            optional_columns.append("last_retry_attempt")
+        if "retry_count" in orders_columns:
+            optional_columns.append("retry_count")
+        if "rejection_reason" in orders_columns:
+            optional_columns.append("rejection_reason")
+        if "cancelled_reason" in orders_columns:
+            optional_columns.append("cancelled_reason")
+        if "last_status_check" in orders_columns:
+            optional_columns.append("last_status_check")
+        if "execution_price" in orders_columns:
+            optional_columns.append("execution_price")
+        if "execution_qty" in orders_columns:
+            optional_columns.append("execution_qty")
+        if "execution_time" in orders_columns:
+            optional_columns.append("execution_time")
 
         all_columns = base_columns + optional_columns
         query = f"""
@@ -131,9 +152,34 @@ class OrdersRepository:
 
                     try:
                         metadata_val = json.loads(metadata_val)
-                    except:
+                    except Exception:
                         metadata_val = None
                 order_kwargs["order_metadata"] = metadata_val
+            # Order monitoring fields
+            if "failure_reason" in orders_columns:
+                order_kwargs["failure_reason"] = row_dict.get("failure_reason")
+            if "first_failed_at" in orders_columns:
+                order_kwargs["first_failed_at"] = parse_datetime(row_dict.get("first_failed_at"))
+            if "last_retry_attempt" in orders_columns:
+                order_kwargs["last_retry_attempt"] = parse_datetime(
+                    row_dict.get("last_retry_attempt")
+                )
+            if "retry_count" in orders_columns:
+                order_kwargs["retry_count"] = row_dict.get("retry_count") or 0
+            if "rejection_reason" in orders_columns:
+                order_kwargs["rejection_reason"] = row_dict.get("rejection_reason")
+            if "cancelled_reason" in orders_columns:
+                order_kwargs["cancelled_reason"] = row_dict.get("cancelled_reason")
+            if "last_status_check" in orders_columns:
+                order_kwargs["last_status_check"] = parse_datetime(
+                    row_dict.get("last_status_check")
+                )
+            if "execution_price" in orders_columns:
+                order_kwargs["execution_price"] = row_dict.get("execution_price")
+            if "execution_qty" in orders_columns:
+                order_kwargs["execution_qty"] = row_dict.get("execution_qty")
+            if "execution_time" in orders_columns:
+                order_kwargs["execution_time"] = parse_datetime(row_dict.get("execution_time"))
 
             order = Orders(**order_kwargs)
             orders.append(order)
@@ -228,3 +274,74 @@ class OrdersRepository:
         order.status = OrderStatus.CLOSED
         order.closed_at = ist_now()
         self.db.commit()
+
+    def mark_failed(
+        self,
+        order: Orders,
+        failure_reason: str,
+        retry_pending: bool = False,
+    ) -> Orders:
+        """Mark an order as failed with reason"""
+        order.status = OrderStatus.RETRY_PENDING if retry_pending else OrderStatus.FAILED
+        order.failure_reason = failure_reason
+        if not order.first_failed_at:
+            order.first_failed_at = ist_now()
+        order.last_retry_attempt = ist_now()
+        if retry_pending:
+            order.retry_count = (order.retry_count or 0) + 1
+        return self.update(order)
+
+    def mark_rejected(self, order: Orders, rejection_reason: str) -> Orders:
+        """Mark an order as rejected by broker"""
+        order.status = OrderStatus.REJECTED
+        order.rejection_reason = rejection_reason
+        order.last_status_check = ist_now()
+        return self.update(order)
+
+    def mark_cancelled(self, order: Orders, cancelled_reason: str | None = None) -> Orders:
+        """Mark an order as cancelled"""
+        order.status = OrderStatus.CLOSED
+        order.cancelled_reason = cancelled_reason or "Cancelled"
+        order.closed_at = ist_now()
+        order.last_status_check = ist_now()
+        return self.update(order)
+
+    def mark_executed(
+        self,
+        order: Orders,
+        execution_price: float,
+        execution_qty: float | None = None,
+    ) -> Orders:
+        """Mark an order as executed with execution details"""
+        order.status = OrderStatus.ONGOING
+        order.execution_price = execution_price
+        order.execution_qty = execution_qty or order.quantity
+        order.execution_time = ist_now()
+        order.filled_at = ist_now()
+        order.last_status_check = ist_now()
+        return self.update(order)
+
+    def update_status_check(self, order: Orders) -> Orders:
+        """Update the last status check timestamp"""
+        order.last_status_check = ist_now()
+        return self.update(order)
+
+    def get_pending_amo_orders(self, user_id: int) -> list[Orders]:
+        """Get all pending AMO buy orders that need status checking"""
+        return self.list(
+            user_id,
+            status=OrderStatus.AMO,
+        ) + self.list(
+            user_id,
+            status=OrderStatus.PENDING_EXECUTION,
+        )
+
+    def get_failed_orders(self, user_id: int) -> list[Orders]:
+        """Get all failed orders that are retryable"""
+        return self.list(
+            user_id,
+            status=OrderStatus.RETRY_PENDING,
+        ) + self.list(
+            user_id,
+            status=OrderStatus.FAILED,
+        )
