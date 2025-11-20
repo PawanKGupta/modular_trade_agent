@@ -284,3 +284,22 @@ def drop_order(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to drop order: {str(e)}",
         ) from e
+
+
+@router.get("/statistics", response_model=dict)
+def get_order_statistics(
+    current_user: Users = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get order statistics for monitoring.
+
+    Phase 11: Monitoring metrics endpoint.
+
+    Returns:
+        Dict with order statistics including status distribution
+    """
+    repo = OrdersRepository(db)
+    stats = repo.get_order_statistics(current_user.id)
+
+    return stats

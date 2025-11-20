@@ -345,3 +345,90 @@ class OrdersRepository:
             user_id,
             status=OrderStatus.FAILED,
         )
+
+    def get_order_status_distribution(self, user_id: int) -> dict[str, int]:
+        """
+        Get distribution of orders by status for monitoring metrics.
+
+        Phase 11: Monitoring metrics for order status distribution.
+
+        Args:
+            user_id: User ID to filter orders
+
+        Returns:
+            Dict mapping status to count: {'amo': 5, 'ongoing': 10, 'closed': 20, ...}
+        """
+        from sqlalchemy import text
+
+        # Query to count orders by status
+        query = text("""
+            SELECT status, COUNT(*) as count
+            FROM orders
+            WHERE user_id = :user_id
+            GROUP BY status
+            ORDER BY count DESC
+        """)
+
+        results = self.db.execute(query, {"user_id": user_id}).fetchall()
+
+        # Convert to dict
+        distribution = {}
+        for row in results:
+            status = row[0]  # status value
+            count = row[1]  # count
+            distribution[status] = count
+
+        return distribution
+
+    def get_order_statistics(self, user_id: int) -> dict[str, Any]:
+        """
+        Get comprehensive order statistics for monitoring.
+
+        Phase 11: Monitoring metrics for order management.
+
+        Args:
+            user_id: User ID to filter orders
+
+        Returns:
+            Dict with statistics:
+            {
+                'total_orders': int,
+                'status_distribution': dict,
+                'pending_execution': int,
+                'failed_orders': int,
+                'retry_pending': int,
+                'rejected_orders': int,
+                'cancelled_orders': int,
+                'executed_orders': int,
+                'closed_orders': int,
+            }
+        """
+        from sqlalchemy import text, func
+
+        # Get total count
+        total_query = text("""
+            SELECT COUNT(*) as total
+            FROM orders
+            WHERE user_id = :user_id
+        """)
+        total_result = self.db.execute(total_query, {"user_id": user_id}).fetchone()
+        total_orders = total_result[0] if total_result else 0
+
+        # Get status distribution
+        status_distribution = self.get_order_status_distribution(user_id)
+
+        # Get specific counts
+        stats = {
+            "total_orders": total_orders,
+            "status_distribution": status_distribution,
+            "pending_execution": status_distribution.get("pending_execution", 0),
+            "failed_orders": status_distribution.get("failed", 0),
+            "retry_pending": status_distribution.get("retry_pending", 0),
+            "rejected_orders": status_distribution.get("rejected", 0),
+            "cancelled_orders": status_distribution.get("cancelled", 0),
+            "executed_orders": status_distribution.get("ongoing", 0),  # Executed orders are ONGOING
+            "closed_orders": status_distribution.get("closed", 0),
+            "amo_orders": status_distribution.get("amo", 0),
+        }
+
+        return stats

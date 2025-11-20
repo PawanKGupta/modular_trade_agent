@@ -38,23 +38,27 @@ class OrderTracker:
         db_session=None,
         user_id: int | None = None,
         use_db: bool = True,
+        db_only_mode: bool = False,  # Phase 11: DB-only mode (no JSON fallback)
     ):
         """
         Initialize order tracker.
 
         Phase 7: Added database support for dual-write/dual-read.
+        Phase 11: Added db_only_mode to remove JSON dependency.
 
         Args:
             data_dir: Directory for storing pending orders data
             db_session: Optional database session for DB storage
             user_id: Optional user ID for filtering orders
             use_db: Whether to use database (default: True if db_session provided)
+            db_only_mode: If True, use DB only (no JSON read/write). Default: False for backward compatibility.
         """
         self.data_dir = data_dir
         self.pending_file = os.path.join(data_dir, "pending_orders.json")
         self.db_session = db_session
         self.user_id = user_id
         self.use_db = use_db and db_session is not None and user_id is not None
+        self.db_only_mode = db_only_mode and self.use_db  # Only enable if DB is available
 
         # Initialize orders repository if DB is available
         self.orders_repo = None
@@ -63,13 +67,17 @@ class OrderTracker:
                 from src.infrastructure.persistence.orders_repository import OrdersRepository
 
                 self.orders_repo = OrdersRepository(db_session)
-                logger.info("OrderTracker initialized with database support (dual-write mode)")
+                mode_str = "DB-only mode" if self.db_only_mode else "dual-write mode"
+                logger.info(f"OrderTracker initialized with database support ({mode_str})")
             except Exception as e:
                 logger.warning(f"Failed to initialize OrdersRepository: {e}")
                 self.use_db = False
                 self.orders_repo = None
+                self.db_only_mode = False
 
-        self._ensure_data_file()
+        # Phase 11: Only ensure data file if not in DB-only mode
+        if not self.db_only_mode:
+            self._ensure_data_file()
 
     def _ensure_data_file(self) -> None:
         """Create pending orders file if it doesn't exist."""
@@ -172,7 +180,9 @@ class OrderTracker:
                         f"Order {order_id} already exists in database. "
                         f"Skipping duplicate add for {symbol}."
                     )
-                    # Still write to JSON for backward compatibility
+                    # Phase 11: In DB-only mode, skip JSON write
+                    if self.db_only_mode:
+                        return
                 else:
                     # Create order in DB
                     from src.infrastructure.db.models import OrderStatus as DbOrderStatus
@@ -191,9 +201,20 @@ class OrderTracker:
                     if variety == "AMO":
                         db_order.status = DbOrderStatus.PENDING_EXECUTION
                         self.orders_repo.update(db_order)
-                    logger.debug(f"Added order {order_id} to database (dual-write mode)")
+                    logger.debug(f"Added order {order_id} to database")
+                    # Phase 11: In DB-only mode, skip JSON write
+                    if self.db_only_mode:
+                        logger.info(f"Added to pending orders: {symbol} (order_id: {order_id}, qty: {qty})")
+                        return
             except Exception as e:
                 logger.warning(f"Failed to write order to database: {e}")
+                # Phase 11: In DB-only mode, fail if DB write fails
+                if self.db_only_mode:
+                    raise
+
+        # Phase 11: Skip JSON write in DB-only mode
+        if self.db_only_mode:
+            return
 
         # Always write to JSON for backward compatibility and fallback
         data = self._load_pending_data()
@@ -325,7 +346,16 @@ class OrderTracker:
                     logger.debug(f"Retrieved {len(orders)} pending orders from database")
                     return orders
             except Exception as e:
-                logger.warning(f"Failed to read orders from database: {e}, falling back to JSON")
+                logger.warning(f"Failed to read orders from database: {e}")
+                # Phase 11: In DB-only mode, don't fallback to JSON
+                if self.db_only_mode:
+                    logger.error("DB-only mode enabled but DB read failed. Returning empty list.")
+                    return []
+                logger.warning("Falling back to JSON")
+
+        # Phase 11: Fallback to JSON only if not in DB-only mode
+        if self.db_only_mode:
+            return []
 
         # Fallback to JSON
         data = self._load_pending_data()
@@ -409,6 +439,13 @@ class OrderTracker:
                         logger.debug(f"Updated order {order_id} status in database: {status}")
             except Exception as e:
                 logger.warning(f"Failed to update order in database: {e}")
+                # Phase 11: In DB-only mode, fail if DB update fails
+                if self.db_only_mode:
+                    raise
+
+        # Phase 11: Skip JSON update in DB-only mode
+        if self.db_only_mode:
+            return updated
 
         # Always update JSON for backward compatibility
         data = self._load_pending_data()
@@ -468,6 +505,13 @@ class OrderTracker:
                     logger.debug(f"Marked order {order_id} as closed in database")
             except Exception as e:
                 logger.warning(f"Failed to remove order from database: {e}")
+                # Phase 11: In DB-only mode, fail if DB removal fails
+                if self.db_only_mode:
+                    raise
+
+        # Phase 11: Skip JSON update in DB-only mode
+        if self.db_only_mode:
+            return removed
 
         # Always update JSON for backward compatibility
         data = self._load_pending_data()
@@ -534,7 +578,16 @@ class OrderTracker:
                         "executed_qty": db_order.execution_qty or 0,
                     }
             except Exception as e:
-                logger.warning(f"Failed to read order from database: {e}, falling back to JSON")
+                logger.warning(f"Failed to read order from database: {e}")
+                # Phase 11: In DB-only mode, don't fallback to JSON
+                if self.db_only_mode:
+                    logger.error("DB-only mode enabled but DB read failed. Returning None.")
+                    return None
+                logger.warning("Falling back to JSON")
+
+        # Phase 11: Fallback to JSON only if not in DB-only mode
+        if self.db_only_mode:
+            return None
 
         # Fallback to JSON
         data = self._load_pending_data()
