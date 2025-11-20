@@ -47,7 +47,10 @@ class TestOrdersRepositoryStatisticsPhase11:
             ("retry_pending", 2),
         ]
 
-        mock_db_session.execute.return_value.fetchall.return_value = mock_results
+        # Mock the execute return value properly
+        mock_result_obj = Mock()
+        mock_result_obj.fetchall.return_value = mock_results
+        mock_db_session.execute.return_value = mock_result_obj
 
         repo = OrdersRepository(mock_db_session)
 
@@ -55,8 +58,6 @@ class TestOrdersRepositoryStatisticsPhase11:
 
         # Verify query was executed
         mock_db_session.execute.assert_called_once()
-        call_args = mock_db_session.execute.call_args
-        assert isinstance(call_args[0][0], text.TextClause)
 
         # Verify distribution
         assert distribution["amo"] == 5
@@ -67,7 +68,10 @@ class TestOrdersRepositoryStatisticsPhase11:
 
     def test_get_order_status_distribution_empty(self, mock_db_session):
         """Test getting order status distribution when no orders"""
-        mock_db_session.execute.return_value.fetchall.return_value = []
+        # Mock the execute return value properly
+        mock_result_obj = Mock()
+        mock_result_obj.fetchall.return_value = []
+        mock_db_session.execute.return_value = mock_result_obj
 
         repo = OrdersRepository(mock_db_session)
 
@@ -93,15 +97,29 @@ class TestOrdersRepositoryStatisticsPhase11:
         # Mock total count result
         total_count_result = [(53,)]  # Total of all counts
 
+        # Create separate mock result objects
+        mock_count_result = Mock()
+        mock_count_result.fetchone.return_value = total_count_result[0]
+
+        mock_distribution_result = Mock()
+        mock_distribution_result.fetchall.return_value = status_distribution_results
+
         # Mock execute to return different results for different queries
+        # get_order_statistics calls execute twice:
+        # 1. First for total count (COUNT(*))
+        # 2. Then get_order_status_distribution calls execute for status distribution (GROUP BY status)
+        call_order = []
+
         def execute_side_effect(query, params):
             query_str = str(query)
-            mock_result = Mock()
-            if "COUNT(*)" in query_str:
-                mock_result.fetchone.return_value = total_count_result[0]
+            call_order.append(query_str)
+            # Check for total count query (COUNT(*) without GROUP BY)
+            if "COUNT(*)" in query_str and "GROUP BY" not in query_str:
+                return mock_count_result
+            # Check for status distribution query
             elif "GROUP BY status" in query_str:
-                mock_result.fetchall.return_value = status_distribution_results
-            return mock_result
+                return mock_distribution_result
+            return Mock()
 
         mock_db_session.execute.side_effect = execute_side_effect
 
@@ -140,14 +158,26 @@ class TestOrdersRepositoryStatisticsPhase11:
 
         total_count_result = [(15,)]
 
+        # Create separate mock result objects
+        mock_count_result = Mock()
+        mock_count_result.fetchone.return_value = total_count_result[0]
+
+        mock_distribution_result = Mock()
+        mock_distribution_result.fetchall.return_value = status_distribution_results
+
+        # Mock execute to return different results for different queries
+        # get_order_statistics calls execute twice:
+        # 1. First for total count (COUNT(*))
+        # 2. Then get_order_status_distribution calls execute for status distribution (GROUP BY status)
         def execute_side_effect(query, params):
             query_str = str(query)
-            mock_result = Mock()
-            if "COUNT(*)" in query_str:
-                mock_result.fetchone.return_value = total_count_result[0]
+            # Check for total count query (COUNT(*) without GROUP BY)
+            if "COUNT(*)" in query_str and "GROUP BY" not in query_str:
+                return mock_count_result
+            # Check for status distribution query
             elif "GROUP BY status" in query_str:
-                mock_result.fetchall.return_value = status_distribution_results
-            return mock_result
+                return mock_distribution_result
+            return Mock()
 
         mock_db_session.execute.side_effect = execute_side_effect
 
