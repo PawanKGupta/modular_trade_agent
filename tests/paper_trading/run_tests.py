@@ -19,17 +19,19 @@ def run_with_coverage():
     """Run tests with coverage report"""
     print("Running tests with coverage...\n")
     cmd = [
-        sys.executable, "-m", "pytest",
+        sys.executable,
+        "-m",
+        "pytest",
         "tests/paper_trading/",
         "--cov=modules/kotak_neo_auto_trader/infrastructure",
         "--cov=modules/kotak_neo_auto_trader/config",
         "--cov-report=term-missing",
         "--cov-report=html",
-        "-v"
+        "-v",
     ]
     result = subprocess.run(cmd)
     if result.returncode == 0:
-        print("\n✅ Coverage report generated in htmlcov/index.html")
+        print("\n? Coverage report generated in htmlcov/index.html")
 
 
 def run_specific_component(component):
@@ -41,11 +43,11 @@ def run_specific_component(component):
         "persistence": "test_persistence.py",
         "prices": "test_price_provider.py",
         "integration": "test_integration.py",
-        "basic": "test_paper_trading_basic.py"
+        "basic": "test_paper_trading_basic.py",
     }
 
     if component not in test_files:
-        print(f"❌ Unknown component: {component}")
+        print(f"? Unknown component: {component}")
         print(f"Available components: {', '.join(test_files.keys())}")
         return
 
@@ -59,18 +61,21 @@ def run_quick():
     """Run quick smoke tests"""
     print("Running quick smoke tests...\n")
     cmd = [
-        sys.executable, "-m", "pytest",
+        sys.executable,
+        "-m",
+        "pytest",
         "tests/paper_trading/test_paper_trading_basic.py",
-        "-v", "--tb=line"
+        "-v",
+        "--tb=line",
     ]
     subprocess.run(cmd)
 
 
 def show_summary():
     """Show test summary"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("PAPER TRADING TEST SUITE")
-    print("="*60)
+    print("=" * 60)
     print("\nTest Files:")
     print("  - test_configuration.py (11 tests)")
     print("  - test_portfolio_manager.py (24 tests)")
@@ -80,7 +85,7 @@ def show_summary():
     print("  - test_integration.py (14 tests)")
     print("  - test_paper_trading_basic.py (15 tests)")
     print("\nTotal: 95+ tests | Coverage: >80%")
-    print("="*60)
+    print("=" * 60)
     print("\nCommands:")
     print("  python run_tests.py              # Run all tests")
     print("  python run_tests.py coverage     # Run with coverage")
@@ -88,7 +93,7 @@ def show_summary():
     print("  python run_tests.py <component>  # Run specific component")
     print("\nComponents:")
     print("  config, portfolio, orders, persistence, prices, integration, basic")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
 
 if __name__ == "__main__":
@@ -102,4 +107,3 @@ if __name__ == "__main__":
         show_summary()
     else:
         run_specific_component(sys.argv[1])
-

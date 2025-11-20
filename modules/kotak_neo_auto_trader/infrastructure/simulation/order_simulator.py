@@ -10,6 +10,7 @@ from datetime import datetime, time as dt_time
 
 import sys
 from pathlib import Path
+
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger
@@ -32,11 +33,7 @@ class OrderSimulator:
     - Execution delay simulation
     """
 
-    def __init__(
-        self,
-        config: PaperTradingConfig,
-        price_provider: PriceProvider
-    ):
+    def __init__(self, config: PaperTradingConfig, price_provider: PriceProvider):
         """
         Initialize order simulator
 
@@ -80,11 +77,7 @@ class OrderSimulator:
         else:
             return False, f"Unsupported order type: {order.order_type}", None
 
-    def _execute_market_order(
-        self,
-        order: Order,
-        current_price: Money
-    ) -> Tuple[bool, str, Money]:
+    def _execute_market_order(self, order: Order, current_price: Money) -> Tuple[bool, str, Money]:
         """
         Execute market order with slippage
 
@@ -99,17 +92,15 @@ class OrderSimulator:
         execution_price = self._apply_slippage(current_price, order.is_buy_order())
 
         logger.info(
-            f"✅ Market order executed: {order.symbol} "
-            f"@ ₹{execution_price.amount:.2f} "
-            f"(Current: ₹{current_price.amount:.2f})"
+            f"? Market order executed: {order.symbol} "
+            f"@ Rs {execution_price.amount:.2f} "
+            f"(Current: Rs {current_price.amount:.2f})"
         )
 
         return True, "Order executed", execution_price
 
     def _execute_limit_order(
-        self,
-        order: Order,
-        current_price: Money
+        self, order: Order, current_price: Money
     ) -> Tuple[bool, str, Optional[Money]]:
         """
         Execute limit order if price condition is met
@@ -130,9 +121,9 @@ class OrderSimulator:
             if current_price.amount <= order.price.amount:
                 execution_price = order.price  # Execute at limit price
                 logger.info(
-                    f"✅ Limit BUY executed: {order.symbol} "
-                    f"@ ₹{execution_price.amount:.2f} "
-                    f"(Limit: ₹{order.price.amount:.2f})"
+                    f"? Limit BUY executed: {order.symbol} "
+                    f"@ Rs {execution_price.amount:.2f} "
+                    f"(Limit: Rs {order.price.amount:.2f})"
                 )
                 return True, "Limit order executed", execution_price
             else:
@@ -142,9 +133,9 @@ class OrderSimulator:
             if current_price.amount >= order.price.amount:
                 execution_price = order.price  # Execute at limit price
                 logger.info(
-                    f"✅ Limit SELL executed: {order.symbol} "
-                    f"@ ₹{execution_price.amount:.2f} "
-                    f"(Limit: ₹{order.price.amount:.2f})"
+                    f"? Limit SELL executed: {order.symbol} "
+                    f"@ Rs {execution_price.amount:.2f} "
+                    f"(Limit: Rs {order.price.amount:.2f})"
                 )
                 return True, "Limit order executed", execution_price
             else:
@@ -216,7 +207,7 @@ class OrderSimulator:
 
         if not is_open:
             logger.warning(
-                f"⚠️ Market closed (Hours: {self.config.market_open_time} - "
+                f"[WARN]? Market closed (Hours: {self.config.market_open_time} - "
                 f"{self.config.market_close_time})"
             )
 
@@ -268,24 +259,20 @@ class OrderSimulator:
 
             if total_required > available_cash:
                 return False, (
-                    f"Insufficient funds: Need ₹{total_required:.2f}, "
-                    f"Available ₹{available_cash:.2f}"
+                    f"Insufficient funds: Need Rs {total_required:.2f}, "
+                    f"Available Rs {available_cash:.2f}"
                 )
 
         # Check max position size
         if order_value > self.config.max_position_size:
             return False, (
-                f"Order value ₹{order_value:.2f} exceeds "
-                f"max position size ₹{self.config.max_position_size:.2f}"
+                f"Order value Rs {order_value:.2f} exceeds "
+                f"max position size Rs {self.config.max_position_size:.2f}"
             )
 
         return True, ""
 
-    def get_execution_summary(
-        self,
-        order: Order,
-        execution_price: Money
-    ) -> dict:
+    def get_execution_summary(self, order: Order, execution_price: Money) -> dict:
         """
         Get detailed execution summary
 
@@ -311,4 +298,3 @@ class OrderSimulator:
             "transaction_type": order.transaction_type.value,
             "executed_at": datetime.now().isoformat(),
         }
-

@@ -48,7 +48,7 @@ def test_inactivity_expiry_with_none_data():
         result = auth._complete_2fa()
         print(f"Result: {result}")
         assert result == True, "Should return True when data=None (session may be active)"
-        print("✅ PASSED\n")
+        print("? PASSED\n")
 
     finally:
         import shutil
@@ -95,7 +95,7 @@ def test_inactivity_expiry_with_dict_like_object():
         result = auth._complete_2fa()
         print(f"Result: {result}")
         assert result == True, "Should handle dict-like object with None data"
-        print("✅ PASSED\n")
+        print("? PASSED\n")
 
     finally:
         import shutil
@@ -148,7 +148,7 @@ def test_inactivity_expiry_force_relogin_full_flow():
         result = auth.force_relogin()
         print(f"Result: {result}")
         assert result == True, "Should complete re-authentication even with None data"
-        print("✅ PASSED\n")
+        print("? PASSED\n")
 
     finally:
         import shutil
@@ -190,7 +190,7 @@ def test_inactivity_expiry_with_error_response():
         result = auth._complete_2fa()
         print(f"Result: {result}")
         assert result == False, "Should return False when error is present"
-        print("✅ PASSED\n")
+        print("? PASSED\n")
 
     finally:
         import shutil
@@ -211,12 +211,12 @@ if __name__ == "__main__":
         test_inactivity_expiry_with_error_response()
 
         print("=" * 80)
-        print("✅ All inactivity expiry tests passed!")
+        print("? All inactivity expiry tests passed!")
         print("=" * 80)
 
     except Exception as e:
         print("=" * 80)
-        print(f"❌ Test failed: {e}")
+        print(f"? Test failed: {e}")
         import traceback
 
         traceback.print_exc()

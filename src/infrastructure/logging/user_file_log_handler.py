@@ -16,16 +16,16 @@ from typing import Any
 class UserFileLogHandler(logging.FileHandler):
     """
     Logging handler that writes logs to per-user log files.
-    
+
     File structure:
     logs/
-    ├── users/
-    │   ├── user_1/
-    │   │   ├── service_20250115.log
-    │   │   ├── service_20250116.log
-    │   │   └── errors_20250115.log
-    │   ├── user_2/
-    │   │   └── ...
+    ??? users/
+    ?   ??? user_1/
+    ?   ?   ??? service_20250115.log
+    ?   ?   ??? service_20250116.log
+    ?   ?   ??? errors_20250115.log
+    ?   ??? user_2/
+    ?   ?   ??? ...
     """
 
     def __init__(
@@ -36,7 +36,7 @@ class UserFileLogHandler(logging.FileHandler):
     ):
         """
         Initialize user file log handler.
-        
+
         Args:
             user_id: User ID for log file organization
             log_type: Type of log file ('service' or 'errors')
@@ -63,7 +63,7 @@ class UserFileLogHandler(logging.FileHandler):
 
         # Set formatter
         formatter = logging.Formatter(
-            "%(asctime)s — %(levelname)s — [%(module)s] — %(message)s",
+            "%(asctime)s - %(levelname)s - [%(module)s] - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
         self.setFormatter(formatter)
@@ -72,7 +72,7 @@ class UserFileLogHandler(logging.FileHandler):
     def emit(self, record: logging.LogRecord) -> None:
         """
         Emit a log record to the file.
-        
+
         Args:
             record: LogRecord to emit
         """
@@ -106,17 +106,16 @@ class UserFileLogHandler(logging.FileHandler):
 class UserErrorFileLogHandler(UserFileLogHandler):
     """
     Specialized handler for error logs only.
-    
+
     Writes to errors_YYYYMMDD.log files.
     """
 
     def __init__(self, user_id: int, level: int = logging.ERROR):
         """
         Initialize error file log handler.
-        
+
         Args:
             user_id: User ID for log file organization
             level: Minimum logging level (default: ERROR)
         """
         super().__init__(user_id=user_id, log_type="errors", level=level)
-

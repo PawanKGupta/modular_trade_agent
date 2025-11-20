@@ -8,7 +8,7 @@ from config.strategy_config import StrategyConfig
 
 # Portfolio constraints
 MAX_PORTFOLIO_SIZE = 6
-CAPITAL_PER_TRADE = 100000  # fixed capital per entry (₹1 lakh per stock)
+CAPITAL_PER_TRADE = 100000  # fixed capital per entry (Rs 1 lakh per stock)
 
 # Scheduling
 RUN_TIME = time(hour=16, minute=0)  # 16:00 local time
@@ -39,7 +39,9 @@ ALLOW_DUPLICATE_RECOMMENDATIONS_SAME_DAY = False
 EXIT_ON_EMA9_OR_RSI50 = True
 
 # CSV filtering from trade_agent --backtest
-MIN_COMBINED_SCORE = 25  # only take rows with final_verdict in {buy,strong_buy} and combined_score >= this
+MIN_COMBINED_SCORE = (
+    25  # only take rows with final_verdict in {buy,strong_buy} and combined_score >= this
+)
 
 # Safety
 MIN_QTY = 1

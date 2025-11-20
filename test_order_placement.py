@@ -64,7 +64,7 @@ def login():
             print("Exception when calling OrderApi->place_order: %s\n" % e)
 
     except Exception as e:
-        logger.error(f"❌ Authentication failed: {e}")
+        logger.error(f"? Authentication failed: {e}")
         raise
 
 

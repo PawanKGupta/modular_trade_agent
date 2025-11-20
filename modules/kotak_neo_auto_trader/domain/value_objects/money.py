@@ -19,11 +19,11 @@ class Money:
         """Validate money constraints"""
         # Convert to Decimal if needed
         if not isinstance(self.amount, Decimal):
-            object.__setattr__(self, 'amount', Decimal(str(self.amount)))
+            object.__setattr__(self, "amount", Decimal(str(self.amount)))
 
         # Round to 2 decimal places for currency
-        rounded = self.amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        object.__setattr__(self, 'amount', rounded)
+        rounded = self.amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        object.__setattr__(self, "amount", rounded)
 
         # Note: Negative amounts are allowed for P&L calculations
         # if self.amount < 0:
@@ -32,29 +32,33 @@ class Money:
         if not self.currency:
             raise ValueError("Currency must be specified")
 
-    def __add__(self, other: 'Money') -> 'Money':
+    def __add__(self, other: "Money") -> "Money":
         """Add two money amounts"""
         if not isinstance(other, Money):
             raise TypeError(f"Cannot add Money with {type(other)}")
         if self.currency != other.currency:
-            raise ValueError(f"Cannot add money with different currencies: {self.currency} and {other.currency}")
+            raise ValueError(
+                f"Cannot add money with different currencies: {self.currency} and {other.currency}"
+            )
         return Money(self.amount + other.amount, self.currency)
 
-    def __sub__(self, other: 'Money') -> 'Money':
+    def __sub__(self, other: "Money") -> "Money":
         """Subtract two money amounts"""
         if not isinstance(other, Money):
             raise TypeError(f"Cannot subtract {type(other)} from Money")
         if self.currency != other.currency:
-            raise ValueError(f"Cannot subtract money with different currencies: {self.currency} and {other.currency}")
+            raise ValueError(
+                f"Cannot subtract money with different currencies: {self.currency} and {other.currency}"
+            )
         return Money(self.amount - other.amount, self.currency)
 
-    def __mul__(self, scalar: Union[int, float, Decimal]) -> 'Money':
+    def __mul__(self, scalar: Union[int, float, Decimal]) -> "Money":
         """Multiply money by a scalar"""
         if not isinstance(scalar, (int, float, Decimal)):
             raise TypeError(f"Cannot multiply Money by {type(scalar)}")
         return Money(self.amount * Decimal(str(scalar)), self.currency)
 
-    def __truediv__(self, scalar: Union[int, float, Decimal]) -> 'Money':
+    def __truediv__(self, scalar: Union[int, float, Decimal]) -> "Money":
         """Divide money by a scalar"""
         if not isinstance(scalar, (int, float, Decimal)):
             raise TypeError(f"Cannot divide Money by {type(scalar)}")
@@ -62,7 +66,7 @@ class Money:
             raise ValueError("Cannot divide by zero")
         return Money(self.amount / Decimal(str(scalar)), self.currency)
 
-    def __lt__(self, other: 'Money') -> bool:
+    def __lt__(self, other: "Money") -> bool:
         """Less than comparison"""
         if not isinstance(other, Money):
             raise TypeError(f"Cannot compare Money with {type(other)}")
@@ -70,7 +74,7 @@ class Money:
             raise ValueError(f"Cannot compare money with different currencies")
         return self.amount < other.amount
 
-    def __le__(self, other: 'Money') -> bool:
+    def __le__(self, other: "Money") -> bool:
         """Less than or equal comparison"""
         if not isinstance(other, Money):
             raise TypeError(f"Cannot compare Money with {type(other)}")
@@ -78,7 +82,7 @@ class Money:
             raise ValueError(f"Cannot compare money with different currencies")
         return self.amount <= other.amount
 
-    def __gt__(self, other: 'Money') -> bool:
+    def __gt__(self, other: "Money") -> bool:
         """Greater than comparison"""
         if not isinstance(other, Money):
             raise TypeError(f"Cannot compare Money with {type(other)}")
@@ -86,7 +90,7 @@ class Money:
             raise ValueError(f"Cannot compare money with different currencies")
         return self.amount > other.amount
 
-    def __ge__(self, other: 'Money') -> bool:
+    def __ge__(self, other: "Money") -> bool:
         """Greater than or equal comparison"""
         if not isinstance(other, Money):
             raise TypeError(f"Cannot compare Money with {type(other)}")
@@ -107,7 +111,7 @@ class Money:
     def __str__(self) -> str:
         """String representation"""
         if self.currency == "INR":
-            return f"₹{self.amount:,.2f}"
+            return f"Rs {self.amount:,.2f}"
         return f"{self.amount:,.2f} {self.currency}"
 
     def __repr__(self) -> str:
@@ -119,16 +123,16 @@ class Money:
         return float(self.amount)
 
     @classmethod
-    def zero(cls, currency: str = "INR") -> 'Money':
+    def zero(cls, currency: str = "INR") -> "Money":
         """Create zero money"""
-        return cls(Decimal('0.00'), currency)
+        return cls(Decimal("0.00"), currency)
 
     @classmethod
-    def from_float(cls, amount: float, currency: str = "INR") -> 'Money':
+    def from_float(cls, amount: float, currency: str = "INR") -> "Money":
         """Create Money from float"""
         return cls(Decimal(str(amount)), currency)
 
     @classmethod
-    def from_int(cls, amount: int, currency: str = "INR") -> 'Money':
+    def from_int(cls, amount: int, currency: str = "INR") -> "Money":
         """Create Money from int"""
         return cls(Decimal(amount), currency)

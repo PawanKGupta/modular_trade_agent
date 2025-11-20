@@ -20,7 +20,7 @@ try:
     HAS_DATA_FETCHER = True
 except ImportError:
     HAS_DATA_FETCHER = False
-    logger.warning("⚠️ DataFetcher not available, will attempt YFinance provider")
+    logger.warning("[WARN]? DataFetcher not available, will attempt YFinance provider")
 
 try:
     from src.infrastructure.data_providers.yfinance_provider import YFinanceProvider
@@ -28,7 +28,7 @@ try:
     HAS_YFINANCE_PROVIDER = True
 except ImportError:
     HAS_YFINANCE_PROVIDER = False
-    logger.warning("⚠️ YFinance provider not available; live prices may be limited")
+    logger.warning("[WARN]? YFinance provider not available; live prices may be limited")
 
 
 class PriceProvider:
@@ -63,19 +63,19 @@ class PriceProvider:
             if HAS_DATA_FETCHER:
                 try:
                     self.data_fetcher = DataFetcher()
-                    logger.info("✅ Price provider initialized with broker data fetcher")
+                    logger.info("? Price provider initialized with broker data fetcher")
                 except Exception as e:
-                    logger.warning(f"⚠️ Failed to initialize DataFetcher: {e}")
+                    logger.warning(f"[WARN]? Failed to initialize DataFetcher: {e}")
                     self.data_fetcher = None
             if self.data_fetcher is None and HAS_YFINANCE_PROVIDER:
                 try:
                     self.yfinance_provider = YFinanceProvider()
-                    logger.info("✅ Falling back to YFinance provider for live prices")
+                    logger.info("? Falling back to YFinance provider for live prices")
                 except Exception as e:
-                    logger.warning(f"⚠️ Failed to initialize YFinance provider: {e}")
+                    logger.warning(f"[WARN]? Failed to initialize YFinance provider: {e}")
                     self.yfinance_provider = None
             if self.data_fetcher is None and self.yfinance_provider is None:
-                logger.warning("⚠️ No live data providers available; using mock prices")
+                logger.warning("[WARN]? No live data providers available; using mock prices")
                 self.mode = "mock"
 
     def get_price(self, symbol: str) -> float | None:
@@ -137,7 +137,7 @@ class PriceProvider:
         elif self.mode == "mock":
             return self._fetch_mock_price(symbol)
         else:
-            logger.error(f"❌ Unknown price mode: {self.mode}")
+            logger.error(f"? Unknown price mode: {self.mode}")
             return None
 
     def _fetch_live_price(self, symbol: str) -> float | None:
@@ -159,17 +159,17 @@ class PriceProvider:
 
                 if data is not None and not data.empty:
                     latest_price = float(data["close"].iloc[-1])
-                    logger.debug(f"📊 Fetched live price for {symbol}: ₹{latest_price:.2f}")
+                    logger.debug(f"? Fetched live price for {symbol}: Rs {latest_price:.2f}")
                     return latest_price
-                logger.warning(f"⚠️ No broker data available for {symbol}")
+                logger.warning(f"[WARN]? No broker data available for {symbol}")
             except Exception as e:
-                logger.error(f"❌ Error fetching broker price for {symbol}: {e}")
+                logger.error(f"? Error fetching broker price for {symbol}: {e}")
 
         price = self._fetch_yfinance_price(symbol)
         if price is not None:
             return price
 
-        logger.warning(f"⚠️ Live providers unavailable for {symbol}; falling back to mock")
+        logger.warning(f"[WARN]? Live providers unavailable for {symbol}; falling back to mock")
         return None
 
     def _fetch_yfinance_price(self, symbol: str) -> float | None:
@@ -180,10 +180,10 @@ class PriceProvider:
         try:
             price = self.yfinance_provider.fetch_current_price(symbol)
             if price is not None:
-                logger.debug(f"📊 YFinance price for {symbol}: ₹{price:.2f}")
+                logger.debug(f"? YFinance price for {symbol}: Rs {price:.2f}")
             return price
         except Exception as exc:
-            logger.error(f"❌ Error fetching YFinance price for {symbol}: {exc}")
+            logger.error(f"? Error fetching YFinance price for {symbol}: {exc}")
             return None
 
     def _fetch_mock_price(self, symbol: str) -> float:
@@ -200,11 +200,11 @@ class PriceProvider:
         # This ensures same symbol gets similar prices across calls
         base_price = sum(ord(c) for c in symbol) * 10
 
-        # Add some randomness (±5%)
+        # Add some randomness (+/-5%)
         variation = random.uniform(-0.05, 0.05)  # noqa: S311 - pseudo random acceptable for mock
         price = base_price * (1 + variation)
 
-        logger.debug(f"📊 Generated mock price for {symbol}: ₹{price:.2f}")
+        logger.debug(f"? Generated mock price for {symbol}: Rs {price:.2f}")
         return round(price, 2)
 
     def set_mock_price(self, symbol: str, price: float) -> None:
@@ -217,13 +217,13 @@ class PriceProvider:
         """
         with self._lock:
             self._price_cache[symbol] = (price, datetime.now())
-            logger.debug(f"📊 Set mock price for {symbol}: ₹{price:.2f}")
+            logger.debug(f"? Set mock price for {symbol}: Rs {price:.2f}")
 
     def clear_cache(self) -> None:
         """Clear price cache"""
         with self._lock:
             self._price_cache.clear()
-            logger.debug("🗑️ Price cache cleared")
+            logger.debug("?? Price cache cleared")
 
     def get_cache_info(self) -> dict:
         """Get cache statistics"""

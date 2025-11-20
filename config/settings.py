@@ -19,10 +19,10 @@ MIN_ABSOLUTE_AVG_VOLUME = int(os.getenv("MIN_ABSOLUTE_AVG_VOLUME", "10000"))
 # Only filters out truly illiquid stocks to avoid missing good opportunities
 # Format: (price_threshold, max_ratio)
 POSITION_VOLUME_RATIO_TIERS = [
-    (5000, 0.02),   # Large caps (>₹5000): 2% max
-    (1000, 0.05),   # Mid-large caps (₹1000-5000): 5% max
-    (500, 0.10),    # Mid caps (₹500-1000): 10% max
-    (0, 0.20)       # Small caps (<₹500): 20% max - only filter worst cases
+    (5000, 0.02),  # Large caps (>Rs 5000): 2% max
+    (1000, 0.05),  # Mid-large caps (Rs 1000-5000): 5% max
+    (500, 0.10),  # Mid caps (Rs 500-1000): 10% max
+    (0, 0.20),  # Small caps (<Rs 500): 20% max - only filter worst cases
 ]
 
 # DEPRECATED: Use StrategyConfig.rsi_oversold instead
@@ -34,6 +34,7 @@ _strategy_config = StrategyConfig.default()
 RSI_OVERSOLD = _strategy_config.rsi_oversold  # Default: 30.0
 RSI_NEAR_OVERSOLD = _strategy_config.rsi_near_oversold  # Default: 40.0
 
+
 def _warn_deprecated_rsi_constant(name: str):
     """Issue deprecation warning for RSI constants"""
     warnings.warn(
@@ -41,8 +42,9 @@ def _warn_deprecated_rsi_constant(name: str):
         f"Use StrategyConfig.{name.lower()} instead. "
         f"This will be removed in a future version.",
         DeprecationWarning,
-        stacklevel=3
+        stacklevel=3,
     )
+
 
 # Note: Direct constant access won't trigger warnings automatically
 # Importers should migrate to StrategyConfig for new code
@@ -52,14 +54,19 @@ VOLUME_MULTIPLIER_FOR_STRONG = 1.2
 
 # Volume analysis configuration
 VOLUME_INTRADAY_MULTIPLIER = 0.6  # Lower threshold for intraday analysis
-VOLUME_MARKET_CLOSE_HOUR = 15.5   # 3:30 PM IST (Indian market close)
-VOLUME_FLEXIBLE_THRESHOLD = 0.4   # Minimum acceptable volume ratio
-VOLUME_QUALITY_EXCELLENT = 1.5    # Excellent volume threshold
-VOLUME_QUALITY_GOOD = 1.0         # Good volume threshold
-VOLUME_QUALITY_FAIR = 0.6         # Fair volume threshold
+VOLUME_MARKET_CLOSE_HOUR = 15.5  # 3:30 PM IST (Indian market close)
+VOLUME_FLEXIBLE_THRESHOLD = 0.4  # Minimum acceptable volume ratio
+VOLUME_QUALITY_EXCELLENT = 1.5  # Excellent volume threshold
+VOLUME_QUALITY_GOOD = 1.0  # Good volume threshold
+VOLUME_QUALITY_FAIR = 0.6  # Fair volume threshold
 
 # News/Sentiment configuration
-NEWS_SENTIMENT_ENABLED = os.getenv("NEWS_SENTIMENT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+NEWS_SENTIMENT_ENABLED = os.getenv("NEWS_SENTIMENT_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 NEWS_SENTIMENT_LOOKBACK_DAYS = int(os.getenv("NEWS_SENTIMENT_LOOKBACK_DAYS", "30"))
 NEWS_SENTIMENT_MIN_ARTICLES = int(os.getenv("NEWS_SENTIMENT_MIN_ARTICLES", "2"))
 NEWS_SENTIMENT_POS_THRESHOLD = float(os.getenv("NEWS_SENTIMENT_POS_THRESHOLD", "0.25"))

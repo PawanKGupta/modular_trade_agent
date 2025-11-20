@@ -19,7 +19,7 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 			<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 				<div>
 					<label htmlFor="user_capital" className="block text-sm mb-1">
-						Capital per Trade (₹)
+						Capital per Trade (Rs )
 						{!isDefault('user_capital') && <span className="text-yellow-400 ml-1">*</span>}
 					</label>
 					<input
@@ -32,11 +32,11 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
 					/>
 					<div className="text-xs text-[var(--muted)] mt-1">
-						Default: ₹{defaultConfig.user_capital.toLocaleString()}
+						Default: Rs {defaultConfig.user_capital.toLocaleString()}
 					</div>
 					{capitalChange !== 0 && (
 						<div className={`text-xs mt-1 ${capitalChange > 0 ? 'text-green-400' : 'text-red-400'}`}>
-							{capitalChange > 0 ? '+' : ''}₹{Math.abs(capitalChange).toLocaleString()} from default
+							{capitalChange > 0 ? '+' : ''}Rs {Math.abs(capitalChange).toLocaleString()} from default
 						</div>
 					)}
 				</div>
@@ -74,7 +74,7 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 					<div className="text-sm font-medium text-blue-400 mb-1">Configuration Impact</div>
 					<div className="text-xs text-blue-300">
 						With max portfolio size of {config.max_portfolio_size}, you can hold up to {config.max_portfolio_size} positions
-						concurrently. Total capital allocation: ₹{(config.user_capital * config.max_portfolio_size).toLocaleString()}
+						concurrently. Total capital allocation: Rs {(config.user_capital * config.max_portfolio_size).toLocaleString()}
 					</div>
 				</div>
 			)}

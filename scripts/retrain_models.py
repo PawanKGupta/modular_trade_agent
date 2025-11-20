@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 ML Model Retraining Script
 
@@ -24,11 +24,23 @@ from utils.model_versioning import get_next_version, register_model
 def main():
     parser = argparse.ArgumentParser(description="Retrain ML models with custom configuration")
     parser.add_argument("--rsi-period", type=int, default=10, help="RSI period")
-    parser.add_argument("--vol-lookback", type=int, default=20, help="Volume exhaustion lookback (daily)")
-    parser.add_argument("--support-lookback", type=int, default=20, help="Support/resistance lookback (daily)")
-    parser.add_argument("--training-data", type=str, required=True, help="Path to training data CSV")
+    parser.add_argument(
+        "--vol-lookback", type=int, default=20, help="Volume exhaustion lookback (daily)"
+    )
+    parser.add_argument(
+        "--support-lookback", type=int, default=20, help="Support/resistance lookback (daily)"
+    )
+    parser.add_argument(
+        "--training-data", type=str, required=True, help="Path to training data CSV"
+    )
     parser.add_argument("--validation-data", type=str, help="Path to validation data CSV")
-    parser.add_argument("--model-type", type=str, choices=["verdict", "price", "both"], default="both", help="Model type to train")
+    parser.add_argument(
+        "--model-type",
+        type=str,
+        choices=["verdict", "price", "both"],
+        default="both",
+        help="Model type to train",
+    )
 
     args = parser.parse_args()
 
@@ -36,7 +48,7 @@ def main():
     config = StrategyConfig(
         rsi_period=args.rsi_period,
         volume_exhaustion_lookback_daily=args.vol_lookback,
-        support_resistance_lookback_daily=args.support_lookback
+        support_resistance_lookback_daily=args.support_lookback,
     )
 
     print(f"\n{'='*80}")
@@ -89,9 +101,7 @@ def main():
 
             # Train model (returns path to saved model)
             verdict_path = trainer.train_verdict_classifier(
-                training_data_path=temp_training_file,
-                test_size=0.2,
-                model_type="random_forest"
+                training_data_path=temp_training_file, test_size=0.2, model_type="random_forest"
             )
 
             # Get next version
@@ -99,6 +109,7 @@ def main():
 
             # Rename to versioned filename
             import shutil
+
             versioned_path = f"models/verdict_model_rsi{config.rsi_period}_vol{config.volume_exhaustion_lookback_daily}_support{config.support_resistance_lookback_daily}_v{version}.pkl"
             shutil.copy(verdict_path, versioned_path)
 
@@ -119,6 +130,7 @@ def main():
         except Exception as e:
             print(f"ERROR: Failed to train verdict model: {e}")
             import traceback
+
             traceback.print_exc()
             return 1
 
@@ -138,7 +150,7 @@ def main():
                 training_data_path=temp_training_file,
                 target_column="actual_pnl_pct",
                 test_size=0.2,
-                model_type="random_forest"
+                model_type="random_forest",
             )
 
             # Get next version
@@ -146,6 +158,7 @@ def main():
 
             # Rename to versioned filename
             import shutil
+
             versioned_path = f"models/price_model_rsi{config.rsi_period}_vol{config.volume_exhaustion_lookback_daily}_support{config.support_resistance_lookback_daily}_v{version}.pkl"
             shutil.copy(price_path, versioned_path)
 
@@ -166,6 +179,7 @@ def main():
         except Exception as e:
             print(f"ERROR: Failed to train price model: {e}")
             import traceback
+
             traceback.print_exc()
             return 1
 
@@ -178,4 +192,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

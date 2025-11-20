@@ -41,7 +41,7 @@ def _process_single_stock(
     config,
     backtest_service: BacktestService,
     index: int,
-    total: int
+    total: int,
 ) -> Dict:
     """
     Process a single stock backtest (used for parallel processing)
@@ -67,91 +67,89 @@ def _process_single_stock(
         if disable_chart_quality:
             # Use core function directly with custom config
             from core.backtest_scoring import run_stock_backtest as core_run_stock_backtest
+
             backtest_result = core_run_stock_backtest(
-                stock_symbol=ticker,
-                years_back=years_back,
-                dip_mode=dip_mode,
-                config=config
+                stock_symbol=ticker, years_back=years_back, dip_mode=dip_mode, config=config
             )
         else:
             # Use service (normal path)
             backtest_result = backtest_service.run_stock_backtest(
-                stock_symbol=ticker,
-                years_back=years_back,
-                dip_mode=dip_mode
+                stock_symbol=ticker, years_back=years_back, dip_mode=dip_mode
             )
 
         # Always save result, even if 0 trades (for analysis)
         if backtest_result:
             # Extract useful data for training
             result = {
-                'ticker': ticker,
-                'backtest_score': backtest_result.get('backtest_score', 0),
-                'total_return_pct': backtest_result.get('total_return_pct', 0),
-                'win_rate': backtest_result.get('win_rate', 0),
-                'total_trades': backtest_result.get('total_trades', 0),
-                'total_positions': backtest_result.get('total_positions', 0),
-                'strategy_vs_buy_hold': backtest_result.get('strategy_vs_buy_hold', 0),
-                'execution_rate': backtest_result.get('execution_rate', 0),
-                'years_back': years_back,
-                'dip_mode': dip_mode,
-                'backtest_date': datetime.now().strftime('%Y-%m-%d'),
+                "ticker": ticker,
+                "backtest_score": backtest_result.get("backtest_score", 0),
+                "total_return_pct": backtest_result.get("total_return_pct", 0),
+                "win_rate": backtest_result.get("win_rate", 0),
+                "total_trades": backtest_result.get("total_trades", 0),
+                "total_positions": backtest_result.get("total_positions", 0),
+                "strategy_vs_buy_hold": backtest_result.get("strategy_vs_buy_hold", 0),
+                "execution_rate": backtest_result.get("execution_rate", 0),
+                "years_back": years_back,
+                "dip_mode": dip_mode,
+                "backtest_date": datetime.now().strftime("%Y-%m-%d"),
             }
 
             # Add chart quality info if available
-            if 'chart_quality' in backtest_result:
-                chart_quality = backtest_result['chart_quality']
-                result['chart_quality_passed'] = chart_quality.get('passed', True)
-                result['chart_quality_score'] = chart_quality.get('score', 0)
-                result['chart_quality_reason'] = chart_quality.get('reason', '')
+            if "chart_quality" in backtest_result:
+                chart_quality = backtest_result["chart_quality"]
+                result["chart_quality_passed"] = chart_quality.get("passed", True)
+                result["chart_quality_score"] = chart_quality.get("score", 0)
+                result["chart_quality_reason"] = chart_quality.get("reason", "")
 
             # Add full results for detailed analysis
-            if 'full_results' in backtest_result:
-                full_results = backtest_result['full_results']
-                result['full_results'] = full_results
+            if "full_results" in backtest_result:
+                full_results = backtest_result["full_results"]
+                result["full_results"] = full_results
 
-            if result['total_trades'] > 0:
-                logger.info(f"  ✅ {ticker}: {result['total_trades']} trades, {result['total_return_pct']:.1f}% return, {result['win_rate']:.1f}% win rate")
+            if result["total_trades"] > 0:
+                logger.info(
+                    f"  ? {ticker}: {result['total_trades']} trades, {result['total_return_pct']:.1f}% return, {result['win_rate']:.1f}% win rate"
+                )
             else:
                 # Log why no trades
-                reason = result.get('chart_quality_reason', 'No signals found')
-                logger.warning(f"  ⚠️ {ticker}: 0 trades - {reason}")
+                reason = result.get("chart_quality_reason", "No signals found")
+                logger.warning(f"  [WARN]? {ticker}: 0 trades - {reason}")
 
             return result
         else:
             # Backtest failed completely
             result = {
-                'ticker': ticker,
-                'backtest_score': 0,
-                'total_return_pct': 0,
-                'win_rate': 0,
-                'total_trades': 0,
-                'total_positions': 0,
-                'strategy_vs_buy_hold': 0,
-                'execution_rate': 0,
-                'years_back': years_back,
-                'dip_mode': dip_mode,
-                'backtest_date': datetime.now().strftime('%Y-%m-%d'),
-                'error': 'Backtest failed'
+                "ticker": ticker,
+                "backtest_score": 0,
+                "total_return_pct": 0,
+                "win_rate": 0,
+                "total_trades": 0,
+                "total_positions": 0,
+                "strategy_vs_buy_hold": 0,
+                "execution_rate": 0,
+                "years_back": years_back,
+                "dip_mode": dip_mode,
+                "backtest_date": datetime.now().strftime("%Y-%m-%d"),
+                "error": "Backtest failed",
             }
-            logger.error(f"  ❌ {ticker}: Backtest failed completely")
+            logger.error(f"  ? {ticker}: Backtest failed completely")
             return result
 
     except Exception as e:
-        logger.error(f"  ❌ {ticker}: Backtest failed - {e}")
+        logger.error(f"  ? {ticker}: Backtest failed - {e}")
         return {
-            'ticker': ticker,
-            'backtest_score': 0,
-            'total_return_pct': 0,
-            'win_rate': 0,
-            'total_trades': 0,
-            'total_positions': 0,
-            'strategy_vs_buy_hold': 0,
-            'execution_rate': 0,
-            'years_back': years_back,
-            'dip_mode': dip_mode,
-            'backtest_date': datetime.now().strftime('%Y-%m-%d'),
-            'error': str(e)
+            "ticker": ticker,
+            "backtest_score": 0,
+            "total_return_pct": 0,
+            "win_rate": 0,
+            "total_trades": 0,
+            "total_positions": 0,
+            "strategy_vs_buy_hold": 0,
+            "execution_rate": 0,
+            "years_back": years_back,
+            "dip_mode": dip_mode,
+            "backtest_date": datetime.now().strftime("%Y-%m-%d"),
+            "error": str(e),
         }
 
 
@@ -163,7 +161,7 @@ def run_bulk_backtest(
     output_file: str = "data/backtest_training_data.csv",
     disable_chart_quality: bool = False,
     skip_trade_agent_validation: bool = False,
-    max_workers: int = None
+    max_workers: int = None,
 ) -> pd.DataFrame:
     """
     Run backtest on multiple stocks and collect results (parallel processing)
@@ -194,21 +192,19 @@ def run_bulk_backtest(
 
     # Create config with chart quality disabled if requested (FOR TESTING/DATA COLLECTION ONLY)
     from config.strategy_config import StrategyConfig
+
     config = StrategyConfig.default()
     if disable_chart_quality:
         config.chart_quality_enabled_in_backtest = False
         logger.warning("=" * 70)
-        logger.warning("⚠️  WARNING: Chart quality filtering DISABLED")
-        logger.warning("⚠️  This is ONLY for testing/data collection purposes")
-        logger.warning("⚠️  Chart quality filtering is REQUIRED in live system")
-        logger.warning("⚠️  DO NOT disable chart quality in production!")
+        logger.warning("[WARN]?  WARNING: Chart quality filtering DISABLED")
+        logger.warning("[WARN]?  This is ONLY for testing/data collection purposes")
+        logger.warning("[WARN]?  Chart quality filtering is REQUIRED in live system")
+        logger.warning("[WARN]?  DO NOT disable chart quality in production!")
         logger.warning("=" * 70)
 
     # Create backtest service (shared across workers)
-    backtest_service = BacktestService(
-        default_years_back=years_back,
-        dip_mode=dip_mode
-    )
+    backtest_service = BacktestService(default_years_back=years_back, dip_mode=dip_mode)
 
     results = []
     total = len(stocks)
@@ -232,7 +228,7 @@ def run_bulk_backtest(
                 config,
                 backtest_service,
                 i + 1,
-                total
+                total,
             ): ticker
             for i, ticker in enumerate(stocks)
         }
@@ -247,9 +243,11 @@ def run_bulk_backtest(
                     results.append(result)
                 completed += 1
                 if completed % 10 == 0:
-                    logger.info(f"Progress: {completed}/{total} stocks processed ({completed*100//total}%)")
+                    logger.info(
+                        f"Progress: {completed}/{total} stocks processed ({completed*100//total}%)"
+                    )
             except Exception as e:
-                logger.error(f"  ❌ {ticker}: Unexpected error - {e}")
+                logger.error(f"  ? {ticker}: Unexpected error - {e}")
                 completed += 1
 
     # Create DataFrame
@@ -259,7 +257,7 @@ def run_bulk_backtest(
         # Save to CSV
         os.makedirs(Path(output_file).parent, exist_ok=True)
         df.to_csv(output_file, index=False)
-        logger.info(f"\n✅ Bulk backtest complete!")
+        logger.info(f"\n? Bulk backtest complete!")
         logger.info(f"   Processed: {len(results)}/{total} stocks")
         logger.info(f"   Stocks with trades > 0: {len(df[df['total_trades'] > 0])}")
         logger.info(f"   Stocks with 0 trades: {len(df[df['total_trades'] == 0])}")
@@ -267,11 +265,11 @@ def run_bulk_backtest(
 
         # Print summary
         if len(results) > 0:
-            avg_return = df['total_return_pct'].mean()
-            avg_win_rate = df['win_rate'].mean()
-            avg_trades = df['total_trades'].mean()
+            avg_return = df["total_return_pct"].mean()
+            avg_win_rate = df["win_rate"].mean()
+            avg_trades = df["total_trades"].mean()
 
-            logger.info(f"\n📊 Summary Statistics:")
+            logger.info(f"\n? Summary Statistics:")
             logger.info(f"   Average Return: {avg_return:.2f}%")
             logger.info(f"   Average Win Rate: {avg_win_rate:.2f}%")
             logger.info(f"   Average Trades: {avg_trades:.1f}")
@@ -286,24 +284,48 @@ def run_bulk_backtest(
 
 def main():
     """Main function"""
-    parser = argparse.ArgumentParser(description='Bulk backtest all NSE stocks for ML training')
-    parser.add_argument('--stocks-file', '-f', default='data/all_nse_stocks.txt',
-                       help='File with list of NSE stocks (one per line)')
-    parser.add_argument('--output', '-o', default='data/backtest_training_data.csv',
-                       help='Output CSV file for training data')
-    parser.add_argument('--years-back', '-y', type=int, default=2,
-                       help='Years of historical data (default: 2)')
-    parser.add_argument('--dip-mode', action='store_true',
-                       help='Enable dip-buying mode')
-    parser.add_argument('--max-stocks', '-m', type=int, default=None,
-                       help='Maximum number of stocks to process (for testing)')
-    parser.add_argument('--fetch-stocks', action='store_true',
-                       help='Fetch all NSE stocks first (if file doesn\'t exist)')
-    parser.add_argument('--disable-chart-quality', action='store_true',
-                       help='⚠️ FOR TESTING ONLY: Disable chart quality filtering for data collection. '
-                            'Chart quality is REQUIRED in live system - DO NOT use in production!')
-    parser.add_argument('--max-workers', '-w', type=int, default=None,
-                       help=f'Maximum number of concurrent workers (default: {MAX_CONCURRENT_ANALYSES} from settings)')
+    parser = argparse.ArgumentParser(description="Bulk backtest all NSE stocks for ML training")
+    parser.add_argument(
+        "--stocks-file",
+        "-f",
+        default="data/all_nse_stocks.txt",
+        help="File with list of NSE stocks (one per line)",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        default="data/backtest_training_data.csv",
+        help="Output CSV file for training data",
+    )
+    parser.add_argument(
+        "--years-back", "-y", type=int, default=2, help="Years of historical data (default: 2)"
+    )
+    parser.add_argument("--dip-mode", action="store_true", help="Enable dip-buying mode")
+    parser.add_argument(
+        "--max-stocks",
+        "-m",
+        type=int,
+        default=None,
+        help="Maximum number of stocks to process (for testing)",
+    )
+    parser.add_argument(
+        "--fetch-stocks",
+        action="store_true",
+        help="Fetch all NSE stocks first (if file doesn't exist)",
+    )
+    parser.add_argument(
+        "--disable-chart-quality",
+        action="store_true",
+        help="[WARN]? FOR TESTING ONLY: Disable chart quality filtering for data collection. "
+        "Chart quality is REQUIRED in live system - DO NOT use in production!",
+    )
+    parser.add_argument(
+        "--max-workers",
+        "-w",
+        type=int,
+        default=None,
+        help=f"Maximum number of concurrent workers (default: {MAX_CONCURRENT_ANALYSES} from settings)",
+    )
 
     args = parser.parse_args()
 
@@ -330,7 +352,7 @@ def main():
         max_stocks=args.max_stocks,
         output_file=args.output,
         disable_chart_quality=args.disable_chart_quality,
-        max_workers=args.max_workers
+        max_workers=args.max_workers,
     )
 
     return 0 if len(df) > 0 else 1

@@ -15,9 +15,15 @@ from utils.logger import logger
 
 try:
     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-    from sklearn.model_selection import train_test_split, GroupKFold, cross_val_score, TimeSeriesSplit
+    from sklearn.model_selection import (
+        train_test_split,
+        GroupKFold,
+        cross_val_score,
+        TimeSeriesSplit,
+    )
     from sklearn.metrics import classification_report, accuracy_score, mean_squared_error, r2_score
     from sklearn.preprocessing import StandardScaler
+
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
@@ -25,6 +31,7 @@ except ImportError:
 
 try:
     import xgboost as xgb
+
     XGBOOST_AVAILABLE = True
 except ImportError:
     XGBOOST_AVAILABLE = False
@@ -47,14 +54,16 @@ class MLTrainingService:
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
         if not SKLEARN_AVAILABLE:
-            raise ImportError("scikit-learn is required for ML training. Install with: pip install scikit-learn")
+            raise ImportError(
+                "scikit-learn is required for ML training. Install with: pip install scikit-learn"
+            )
 
     def train_verdict_classifier(
         self,
         training_data_path: str,
         test_size: float = 0.2,
         model_type: str = "random_forest",
-        random_state: int = 42
+        random_state: int = 42,
     ) -> str:
         """
         Train verdict classification model
@@ -81,24 +90,34 @@ class MLTrainingService:
         # Feature columns (exclude labels and metadata)
         # PHASE 5: Added position_id, sample_weight, fill_quantity for re-entry support
         exclude_cols = [
-            'ticker', 'entry_date', 'exit_date', 'label',
-            'actual_pnl_pct', 'holding_days', 'backtest_date',
-            'position_id', 'sample_weight', 'fill_quantity',
-            'initial_entry_date', 'initial_entry_price', 'fill_price',
-            'exit_reason', 'max_drawdown_pct'
+            "ticker",
+            "entry_date",
+            "exit_date",
+            "label",
+            "actual_pnl_pct",
+            "holding_days",
+            "backtest_date",
+            "position_id",
+            "sample_weight",
+            "fill_quantity",
+            "initial_entry_date",
+            "initial_entry_price",
+            "fill_price",
+            "exit_reason",
+            "max_drawdown_pct",
         ]
 
         feature_cols = [col for col in df.columns if col not in exclude_cols]
 
         # Extract features and labels
         X = df[feature_cols].copy()
-        y = df['label'].values
+        y = df["label"].values
 
         # Check for re-entry support (Phase 5)
-        has_position_id = 'position_id' in df.columns
-        has_sample_weight = 'sample_weight' in df.columns
-        groups = df['position_id'].values if has_position_id else None
-        sample_weights = df['sample_weight'].values if has_sample_weight else None
+        has_position_id = "position_id" in df.columns
+        has_sample_weight = "sample_weight" in df.columns
+        groups = df["position_id"].values if has_position_id else None
+        sample_weights = df["sample_weight"].values if has_sample_weight else None
 
         if has_position_id:
             logger.info(f"   Re-entry support detected:")
@@ -117,13 +136,15 @@ class MLTrainingService:
             logger.info(f"   - TimeSeriesSplit ensures train on past, test on future")
 
             # Sort data by entry_date for temporal ordering
-            if 'entry_date' in df.columns:
-                df_sorted = df.sort_values('entry_date').reset_index(drop=True)
+            if "entry_date" in df.columns:
+                df_sorted = df.sort_values("entry_date").reset_index(drop=True)
                 X = df_sorted[feature_cols].copy().fillna(0)
-                y = df_sorted['label'].values
-                groups = df_sorted['position_id'].values
-                sample_weights = df_sorted['sample_weight'].values if has_sample_weight else None
-                logger.info(f"   Sorted by entry_date: {df_sorted['entry_date'].min()} to {df_sorted['entry_date'].max()}")
+                y = df_sorted["label"].values
+                groups = df_sorted["position_id"].values
+                sample_weights = df_sorted["sample_weight"].values if has_sample_weight else None
+                logger.info(
+                    f"   Sorted by entry_date: {df_sorted['entry_date'].min()} to {df_sorted['entry_date'].max()}"
+                )
             else:
                 logger.warning(f"   'entry_date' not found - using unsorted data")
 
@@ -139,13 +160,17 @@ class MLTrainingService:
             sample_weights_train = sample_weights[train_idx] if sample_weights is not None else None
             sample_weights_test = sample_weights[test_idx] if sample_weights is not None else None
 
-            logger.info(f"   Train set: {len(X_train)} examples from {len(np.unique(groups[train_idx]))} positions")
-            logger.info(f"   Test set: {len(X_test)} examples from {len(np.unique(groups[test_idx]))} positions")
+            logger.info(
+                f"   Train set: {len(X_train)} examples from {len(np.unique(groups[train_idx]))} positions"
+            )
+            logger.info(
+                f"   Test set: {len(X_test)} examples from {len(np.unique(groups[test_idx]))} positions"
+            )
 
             # Log temporal split
-            if 'entry_date' in df.columns:
-                train_dates = df_sorted.iloc[train_idx]['entry_date']
-                test_dates = df_sorted.iloc[test_idx]['entry_date']
+            if "entry_date" in df.columns:
+                train_dates = df_sorted.iloc[train_idx]["entry_date"]
+                test_dates = df_sorted.iloc[test_idx]["entry_date"]
                 logger.info(f"   Train dates: {train_dates.min()} to {train_dates.max()}")
                 logger.info(f"   Test dates: {test_dates.min()} to {test_dates.max()}")
 
@@ -168,8 +193,11 @@ class MLTrainingService:
 
             # Split train/test
             X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=test_size, random_state=random_state,
-                stratify=y if use_stratify else None
+                X,
+                y,
+                test_size=test_size,
+                random_state=random_state,
+                stratify=y if use_stratify else None,
             )
 
             sample_weights_train = sample_weights
@@ -185,18 +213,19 @@ class MLTrainingService:
                 max_depth=10,
                 min_samples_split=5,
                 min_samples_leaf=2,
-                class_weight='balanced',  # Handle class imbalance
+                class_weight="balanced",  # Handle class imbalance
                 random_state=random_state,
-                n_jobs=-1
+                n_jobs=-1,
             )
         elif model_type == "xgboost" and XGBOOST_AVAILABLE:
             from xgboost import XGBClassifier
+
             model = XGBClassifier(
                 n_estimators=100,
                 max_depth=6,
                 learning_rate=0.1,
                 random_state=random_state,
-                eval_metric='mlogloss'
+                eval_metric="mlogloss",
             )
         else:
             raise ValueError(f"Unknown model type: {model_type}")
@@ -214,30 +243,29 @@ class MLTrainingService:
         y_pred = model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
 
-        logger.info(f"\n📊 Model Evaluation:")
+        logger.info(f"\n? Model Evaluation:")
         logger.info(f"   Accuracy: {accuracy:.2%}")
         logger.info(f"\n{classification_report(y_test, y_pred)}")
 
         # Feature importance
-        if hasattr(model, 'feature_importances_'):
-            feature_importance = pd.DataFrame({
-                'feature': feature_cols,
-                'importance': model.feature_importances_
-            }).sort_values('importance', ascending=False)
+        if hasattr(model, "feature_importances_"):
+            feature_importance = pd.DataFrame(
+                {"feature": feature_cols, "importance": model.feature_importances_}
+            ).sort_values("importance", ascending=False)
 
-            logger.info(f"\n🔝 Top 10 Features:")
+            logger.info(f"\n? Top 10 Features:")
             for _, row in feature_importance.head(10).iterrows():
                 logger.info(f"   {row['feature']}: {row['importance']:.4f}")
 
         # Save model
         model_path = self.models_dir / f"verdict_model_{model_type}.pkl"
         joblib.dump(model, model_path)
-        logger.info(f"\n✅ Model saved to: {model_path}")
+        logger.info(f"\n? Model saved to: {model_path}")
 
         # Save feature columns for later use
         feature_cols_path = self.models_dir / f"verdict_model_features_{model_type}.txt"
-        with open(feature_cols_path, 'w') as f:
-            f.write('\n'.join(feature_cols))
+        with open(feature_cols_path, "w") as f:
+            f.write("\n".join(feature_cols))
         logger.info(f"   Feature columns saved to: {feature_cols_path}")
 
         return str(model_path)
@@ -248,7 +276,7 @@ class MLTrainingService:
         target_column: str = "actual_pnl_pct",
         test_size: float = 0.2,
         model_type: str = "random_forest",
-        random_state: int = 42
+        random_state: int = 42,
     ) -> str:
         """
         Train price target prediction model (regression)
@@ -274,12 +302,22 @@ class MLTrainingService:
         # Feature columns (exclude labels and metadata)
         # PHASE 5: Added re-entry support columns
         exclude_cols = [
-            'ticker', 'entry_date', 'exit_date', 'label',
-            'actual_pnl_pct', 'holding_days', 'backtest_date',
-            'position_id', 'sample_weight', 'fill_quantity',
-            'initial_entry_date', 'initial_entry_price', 'fill_price',
-            'exit_reason', 'max_drawdown_pct',
-            target_column
+            "ticker",
+            "entry_date",
+            "exit_date",
+            "label",
+            "actual_pnl_pct",
+            "holding_days",
+            "backtest_date",
+            "position_id",
+            "sample_weight",
+            "fill_quantity",
+            "initial_entry_date",
+            "initial_entry_price",
+            "fill_price",
+            "exit_reason",
+            "max_drawdown_pct",
+            target_column,
         ]
 
         feature_cols = [col for col in df.columns if col not in exclude_cols]
@@ -289,13 +327,15 @@ class MLTrainingService:
         y = df[target_column].values
 
         # Check for re-entry support (Phase 5)
-        has_position_id = 'position_id' in df.columns
-        has_sample_weight = 'sample_weight' in df.columns
-        groups = df['position_id'].values if has_position_id else None
-        sample_weights = df['sample_weight'].values if has_sample_weight else None
+        has_position_id = "position_id" in df.columns
+        has_sample_weight = "sample_weight" in df.columns
+        groups = df["position_id"].values if has_position_id else None
+        sample_weights = df["sample_weight"].values if has_sample_weight else None
 
         if has_position_id:
-            logger.info(f"   Re-entry support detected: {df['position_id'].nunique()} unique positions")
+            logger.info(
+                f"   Re-entry support detected: {df['position_id'].nunique()} unique positions"
+            )
 
         # Handle missing values
         X = X.fillna(0)
@@ -313,8 +353,12 @@ class MLTrainingService:
 
             sample_weights_train = sample_weights[train_idx] if sample_weights is not None else None
 
-            logger.info(f"   Train: {len(X_train)} examples from {len(np.unique(groups[train_idx]))} positions")
-            logger.info(f"   Test: {len(X_test)} examples from {len(np.unique(groups[test_idx]))} positions")
+            logger.info(
+                f"   Train: {len(X_train)} examples from {len(np.unique(groups[train_idx]))} positions"
+            )
+            logger.info(
+                f"   Test: {len(X_test)} examples from {len(np.unique(groups[test_idx]))} positions"
+            )
         else:
             # Fallback to traditional train/test split
             X_train, X_test, y_train, y_test = train_test_split(
@@ -330,15 +374,13 @@ class MLTrainingService:
                 min_samples_split=5,
                 min_samples_leaf=2,
                 random_state=random_state,
-                n_jobs=-1
+                n_jobs=-1,
             )
         elif model_type == "xgboost" and XGBOOST_AVAILABLE:
             from xgboost import XGBRegressor
+
             model = XGBRegressor(
-                n_estimators=100,
-                max_depth=6,
-                learning_rate=0.1,
-                random_state=random_state
+                n_estimators=100, max_depth=6, learning_rate=0.1, random_state=random_state
             )
         else:
             raise ValueError(f"Unknown model type: {model_type}")
@@ -357,14 +399,14 @@ class MLTrainingService:
         mse = mean_squared_error(y_test, y_pred)
         r2 = r2_score(y_test, y_pred)
 
-        logger.info(f"\n📊 Model Evaluation:")
+        logger.info(f"\n? Model Evaluation:")
         logger.info(f"   MSE: {mse:.4f}")
-        logger.info(f"   R²: {r2:.4f}")
+        logger.info(f"   R2: {r2:.4f}")
         logger.info(f"   RMSE: {np.sqrt(mse):.4f}")
 
         # Save model
         model_path = self.models_dir / f"price_model_{model_type}_{target_column}.pkl"
         joblib.dump(model, model_path)
-        logger.info(f"\n✅ Model saved to: {model_path}")
+        logger.info(f"\n? Model saved to: {model_path}")
 
         return str(model_path)

@@ -49,7 +49,7 @@ def test_2fa_with_none_response():
         print(f"Result: {result}")
         print("Expected: True (None response means session already active)")
         assert result == True, "Should return True when session_2fa returns None"
-        print("✅ PASSED\n")
+        print("? PASSED\n")
 
     finally:
         import shutil
@@ -92,7 +92,7 @@ def test_2fa_with_object_without_get():
         # This should not raise AttributeError
         result = auth._complete_2fa()
         print(f"Result: {result}")
-        print("✅ PASSED\n")
+        print("? PASSED\n")
 
     finally:
         import shutil
@@ -138,7 +138,7 @@ def test_2fa_with_get_that_returns_none():
         # This should not raise AttributeError
         result = auth._complete_2fa()
         print(f"Result: {result}")
-        print("✅ PASSED\n")
+        print("? PASSED\n")
 
     finally:
         import shutil
@@ -186,7 +186,7 @@ def test_2fa_with_get_on_none():
         # This should not raise AttributeError
         result = auth._complete_2fa()
         print(f"Result: {result}")
-        print("✅ PASSED\n")
+        print("? PASSED\n")
 
     finally:
         import shutil
@@ -246,16 +246,16 @@ def test_2fa_production_scenario():
         try:
             result = auth._complete_2fa()
             print(f"Result: {result}")
-            print("✅ No AttributeError raised")
+            print("? No AttributeError raised")
         except AttributeError as e:
             if "'NoneType' object has no attribute 'get'" in str(e):
-                print(f"❌ FAILED: Caught the exact production error: {e}")
+                print(f"? FAILED: Caught the exact production error: {e}")
                 raise
             else:
                 print(f"Different AttributeError: {e}")
                 raise
 
-        print("✅ PASSED\n")
+        print("? PASSED\n")
 
     finally:
         import shutil
@@ -277,12 +277,12 @@ if __name__ == "__main__":
         test_2fa_production_scenario()
 
         print("=" * 80)
-        print("✅ All tests passed!")
+        print("? All tests passed!")
         print("=" * 80)
 
     except Exception as e:
         print("=" * 80)
-        print(f"❌ Test failed: {e}")
+        print(f"? Test failed: {e}")
         import traceback
 
         traceback.print_exc()

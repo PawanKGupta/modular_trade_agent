@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 import sys
+
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger
@@ -54,12 +55,10 @@ class PaperTradeReporter:
 
         # Calculate totals
         total_cost_basis = sum(
-            h.get("quantity", 0) * float(h.get("average_price", 0))
-            for h in holdings.values()
+            h.get("quantity", 0) * float(h.get("average_price", 0)) for h in holdings.values()
         )
         total_market_value = sum(
-            h.get("quantity", 0) * float(h.get("current_price", 0))
-            for h in holdings.values()
+            h.get("quantity", 0) * float(h.get("current_price", 0)) for h in holdings.values()
         )
 
         total_pnl = float(account.get("total_pnl", 0.0))
@@ -102,17 +101,19 @@ class PaperTradeReporter:
             pnl = market_value - cost_basis
             pnl_percentage = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
 
-            report.append({
-                "symbol": symbol,
-                "quantity": quantity,
-                "average_price": avg_price,
-                "current_price": current_price,
-                "cost_basis": cost_basis,
-                "market_value": market_value,
-                "pnl": pnl,
-                "pnl_percentage": pnl_percentage,
-                "last_updated": holding.get("last_updated"),
-            })
+            report.append(
+                {
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "average_price": avg_price,
+                    "current_price": current_price,
+                    "cost_basis": cost_basis,
+                    "market_value": market_value,
+                    "pnl": pnl,
+                    "pnl_percentage": pnl_percentage,
+                    "last_updated": holding.get("last_updated"),
+                }
+            )
 
         # Sort by P&L descending
         report.sort(key=lambda x: x["pnl"], reverse=True)
@@ -122,9 +123,7 @@ class PaperTradeReporter:
     # ===== ORDER REPORTS =====
 
     def order_history(
-        self,
-        limit: Optional[int] = None,
-        symbol: Optional[str] = None
+        self, limit: Optional[int] = None, symbol: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Generate order history report
@@ -142,10 +141,7 @@ class PaperTradeReporter:
             orders = self.store.get_all_orders()
 
         # Sort by created_at descending (newest first)
-        orders.sort(
-            key=lambda x: x.get("created_at", ""),
-            reverse=True
-        )
+        orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
 
         if limit:
             orders = orders[:limit]
@@ -167,8 +163,7 @@ class PaperTradeReporter:
 
         completed_orders = [o for o in orders if o.get("status") == "COMPLETE"]
         pending_orders = [
-            o for o in orders
-            if o.get("status") in ["PENDING", "OPEN", "PARTIALLY_FILLED"]
+            o for o in orders if o.get("status") in ["PENDING", "OPEN", "PARTIALLY_FILLED"]
         ]
         cancelled_orders = [o for o in orders if o.get("status") == "CANCELLED"]
         rejected_orders = [o for o in orders if o.get("status") == "REJECTED"]
@@ -182,17 +177,14 @@ class PaperTradeReporter:
             "cancelled_orders": len(cancelled_orders),
             "rejected_orders": len(rejected_orders),
             "success_rate": (
-                (len(completed_orders) / total_orders * 100)
-                if total_orders > 0 else 0.0
+                (len(completed_orders) / total_orders * 100) if total_orders > 0 else 0.0
             ),
         }
 
     # ===== TRANSACTION REPORTS =====
 
     def transaction_history(
-        self,
-        limit: Optional[int] = None,
-        symbol: Optional[str] = None
+        self, limit: Optional[int] = None, symbol: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Generate transaction history
@@ -210,10 +202,7 @@ class PaperTradeReporter:
             transactions = self.store.get_all_transactions()
 
         # Sort by timestamp descending
-        transactions.sort(
-            key=lambda x: x.get("timestamp", ""),
-            reverse=True
-        )
+        transactions.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
 
         if limit:
             transactions = transactions[:limit]
@@ -236,10 +225,7 @@ class PaperTradeReporter:
             return {"error": "Account not initialized"}
 
         # Calculate win rate
-        completed_sells = [
-            t for t in transactions
-            if t.get("transaction_type") == "SELL"
-        ]
+        completed_sells = [t for t in transactions if t.get("transaction_type") == "SELL"]
 
         # Note: Proper P&L calculation would require matching buys with sells
         # For simplicity, we use overall P&L from account
@@ -283,10 +269,10 @@ class PaperTradeReporter:
         filepath = Path(filepath)
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(filepath, 'w') as f:
+        with open(filepath, "w") as f:
             json.dump(report, f, indent=2)
 
-        logger.info(f"📄 Report exported to: {filepath}")
+        logger.info(f"? Report exported to: {filepath}")
 
     def export_to_csv(self, output_dir: str) -> None:
         """
@@ -304,7 +290,7 @@ class PaperTradeReporter:
             # Export holdings
             holdings = self.holdings_report()
             if holdings:
-                with open(output_path / "holdings.csv", 'w', newline='') as f:
+                with open(output_path / "holdings.csv", "w", newline="") as f:
                     writer = csv.DictWriter(f, fieldnames=holdings[0].keys())
                     writer.writeheader()
                     writer.writerows(holdings)
@@ -312,7 +298,7 @@ class PaperTradeReporter:
             # Export orders
             orders = self.order_history()
             if orders:
-                with open(output_path / "orders.csv", 'w', newline='') as f:
+                with open(output_path / "orders.csv", "w", newline="") as f:
                     writer = csv.DictWriter(f, fieldnames=orders[0].keys())
                     writer.writeheader()
                     writer.writerows(orders)
@@ -320,15 +306,15 @@ class PaperTradeReporter:
             # Export transactions
             transactions = self.transaction_history()
             if transactions:
-                with open(output_path / "transactions.csv", 'w', newline='') as f:
+                with open(output_path / "transactions.csv", "w", newline="") as f:
                     writer = csv.DictWriter(f, fieldnames=transactions[0].keys())
                     writer.writeheader()
                     writer.writerows(transactions)
 
-            logger.info(f"📄 CSV reports exported to: {output_path}")
+            logger.info(f"? CSV reports exported to: {output_path}")
 
         except ImportError:
-            logger.error("❌ csv module not available")
+            logger.error("? csv module not available")
 
     # ===== DISPLAY FUNCTIONS =====
 
@@ -336,65 +322,71 @@ class PaperTradeReporter:
         """Print portfolio summary to console"""
         summary = self.portfolio_summary()
 
-        print("\n" + "="*60)
-        print("📊 PAPER TRADING SUMMARY")
-        print("="*60)
-        print(f"Initial Capital:    ₹{summary['initial_capital']:>15,.2f}")
-        print(f"Current Value:      ₹{summary['account_value']:>15,.2f}")
-        print(f"Cash Balance:       ₹{summary['cash_balance']:>15,.2f}")
-        print(f"Portfolio Value:    ₹{summary['portfolio_value']:>15,.2f}")
-        print("-"*60)
-        print(f"Total P&L:          ₹{summary['total_pnl']:>15,.2f} ({summary['return_percentage']:+.2f}%)")
-        print(f"  Realized:         ₹{summary['realized_pnl']:>15,.2f}")
-        print(f"  Unrealized:       ₹{summary['unrealized_pnl']:>15,.2f}")
-        print("-"*60)
+        print("\n" + "=" * 60)
+        print("? PAPER TRADING SUMMARY")
+        print("=" * 60)
+        print(f"Initial Capital:    Rs {summary['initial_capital']:>15,.2f}")
+        print(f"Current Value:      Rs {summary['account_value']:>15,.2f}")
+        print(f"Cash Balance:       Rs {summary['cash_balance']:>15,.2f}")
+        print(f"Portfolio Value:    Rs {summary['portfolio_value']:>15,.2f}")
+        print("-" * 60)
+        print(
+            f"Total P&L:          Rs {summary['total_pnl']:>15,.2f} ({summary['return_percentage']:+.2f}%)"
+        )
+        print(f"  Realized:         Rs {summary['realized_pnl']:>15,.2f}")
+        print(f"  Unrealized:       Rs {summary['unrealized_pnl']:>15,.2f}")
+        print("-" * 60)
         print(f"Holdings Count:     {summary['holdings_count']:>16}")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
 
     def print_holdings(self) -> None:
         """Print holdings report to console"""
         holdings = self.holdings_report()
 
         if not holdings:
-            print("\n📊 No holdings\n")
+            print("\n? No holdings\n")
             return
 
-        print("\n" + "="*100)
-        print("📊 HOLDINGS")
-        print("="*100)
-        print(f"{'Symbol':<10} {'Qty':>8} {'Avg Price':>12} {'Current':>12} {'Cost Basis':>14} {'Mkt Value':>14} {'P&L':>12} {'P&L %':>8}")
-        print("-"*100)
+        print("\n" + "=" * 100)
+        print("? HOLDINGS")
+        print("=" * 100)
+        print(
+            f"{'Symbol':<10} {'Qty':>8} {'Avg Price':>12} {'Current':>12} {'Cost Basis':>14} {'Mkt Value':>14} {'P&L':>12} {'P&L %':>8}"
+        )
+        print("-" * 100)
 
         for holding in holdings:
             print(
                 f"{holding['symbol']:<10} "
                 f"{holding['quantity']:>8} "
-                f"₹{holding['average_price']:>11,.2f} "
-                f"₹{holding['current_price']:>11,.2f} "
-                f"₹{holding['cost_basis']:>13,.2f} "
-                f"₹{holding['market_value']:>13,.2f} "
-                f"₹{holding['pnl']:>11,.2f} "
+                f"Rs {holding['average_price']:>11,.2f} "
+                f"Rs {holding['current_price']:>11,.2f} "
+                f"Rs {holding['cost_basis']:>13,.2f} "
+                f"Rs {holding['market_value']:>13,.2f} "
+                f"Rs {holding['pnl']:>11,.2f} "
                 f"{holding['pnl_percentage']:>7.2f}%"
             )
 
-        print("="*100 + "\n")
+        print("=" * 100 + "\n")
 
     def print_recent_orders(self, limit: int = 10) -> None:
         """Print recent orders"""
         orders = self.order_history(limit=limit)
 
         if not orders:
-            print("\n📋 No orders\n")
+            print("\n? No orders\n")
             return
 
-        print(f"\n📋 RECENT ORDERS (Last {limit})")
-        print("="*120)
-        print(f"{'Order ID':<18} {'Symbol':<10} {'Type':<6} {'Side':<5} {'Qty':>6} {'Price':>10} {'Status':<15} {'Placed At':<20}")
-        print("-"*120)
+        print(f"\n? RECENT ORDERS (Last {limit})")
+        print("=" * 120)
+        print(
+            f"{'Order ID':<18} {'Symbol':<10} {'Type':<6} {'Side':<5} {'Qty':>6} {'Price':>10} {'Status':<15} {'Placed At':<20}"
+        )
+        print("-" * 120)
 
         for order in orders:
-            price_str = f"₹{order.get('price', 0):.2f}" if order.get('price') else "MKT"
-            placed_at = order.get('placed_at', '')[:19] if order.get('placed_at') else '-'
+            price_str = f"Rs {order.get('price', 0):.2f}" if order.get("price") else "MKT"
+            placed_at = order.get("placed_at", "")[:19] if order.get("placed_at") else "-"
 
             print(
                 f"{order.get('order_id', ''):<18} "
@@ -407,5 +399,4 @@ class PaperTradeReporter:
                 f"{placed_at:<20}"
             )
 
-        print("="*120 + "\n")
-
+        print("=" * 120 + "\n")

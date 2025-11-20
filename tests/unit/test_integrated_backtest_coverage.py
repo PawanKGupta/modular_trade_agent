@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from integrated_backtest import Position
 
@@ -187,9 +187,9 @@ class TestDateHandling:
         pos.add_reentry("2024-01-10", 90.0, 50000, 105.0, 10)
 
         assert len(pos.fills) == 3
-        assert pos.fills[0]['date'].day == 1
-        assert pos.fills[1]['date'].day == 5
-        assert pos.fills[2]['date'].day == 10
+        assert pos.fills[0]["date"].day == 1
+        assert pos.fills[1]["date"].day == 5
+        assert pos.fills[2]["date"].day == 10
 
 
 class TestResetMechanism:
@@ -254,7 +254,7 @@ class TestQuantityCalculations:
         # Price that would give fractional shares
         pos = Position("TEST.NS", "2024-01-01", 133.33, 145.0, 50000)
 
-        # 50000 / 133.33 = 375.01... → should be 375
+        # 50000 / 133.33 = 375.01... -> should be 375
         assert pos.quantity == 375
         assert isinstance(pos.quantity, int)
 
@@ -296,13 +296,13 @@ class TestFillsTracking:
 
         assert len(pos.fills) == 1
         fill = pos.fills[0]
-        assert 'date' in fill
-        assert 'price' in fill
-        assert 'capital' in fill
-        assert 'quantity' in fill
-        assert fill['price'] == 100.0
-        assert fill['capital'] == 50000
-        assert fill['quantity'] == 500
+        assert "date" in fill
+        assert "price" in fill
+        assert "capital" in fill
+        assert "quantity" in fill
+        assert fill["price"] == 100.0
+        assert fill["capital"] == 50000
+        assert fill["quantity"] == 500
 
     def test_reentry_fills_metadata(self):
         """Test re-entry fills have RSI level metadata"""
@@ -313,10 +313,10 @@ class TestFillsTracking:
         assert len(pos.fills) == 3
 
         # Check re-entry fills have rsi_level
-        assert 'rsi_level' in pos.fills[1]
-        assert pos.fills[1]['rsi_level'] == 20
-        assert 'rsi_level' in pos.fills[2]
-        assert pos.fills[2]['rsi_level'] == 10
+        assert "rsi_level" in pos.fills[1]
+        assert pos.fills[1]["rsi_level"] == 20
+        assert "rsi_level" in pos.fills[2]
+        assert pos.fills[2]["rsi_level"] == 10
 
     def test_fills_chronological_order(self):
         """Test fills are in chronological order"""
@@ -324,7 +324,7 @@ class TestFillsTracking:
         pos.add_reentry("2024-01-05", 95.0, 50000, 108.0, 20)
         pos.add_reentry("2024-01-15", 90.0, 50000, 105.0, 10)
 
-        dates = [fill['date'] for fill in pos.fills]
+        dates = [fill["date"] for fill in pos.fills]
         assert dates[0] < dates[1] < dates[2]
 
 

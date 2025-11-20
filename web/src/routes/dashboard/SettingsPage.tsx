@@ -93,7 +93,7 @@ export function SettingsPage() {
 						</div>
 						{credsInfo?.has_creds && (
 							<div className="text-sm text-green-400 mb-2">
-								✓ Credentials stored {showFullCreds ? '(showing full values)' : '(click Show to view/edit)'}
+								[OK] Credentials stored {showFullCreds ? '(showing full values)' : '(click Show to view/edit)'}
 							</div>
 						)}
 						<div>

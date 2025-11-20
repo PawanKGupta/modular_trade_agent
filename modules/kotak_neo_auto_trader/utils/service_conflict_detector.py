@@ -23,7 +23,7 @@ from utils.logger import logger
 def check_unified_service_running() -> bool:
     """
     Check if the unified trading service (run_trading_service.py) is running.
-    
+
     Returns:
         True if unified service is running, False otherwise
     """
@@ -31,218 +31,206 @@ def check_unified_service_running() -> bool:
         if platform.system() == "Windows":
             # Check for Python processes running run_trading_service.py
             result = subprocess.run(
-                ['tasklist', '/FI', 'IMAGENAME eq python.exe', '/FO', 'CSV'],
+                ["tasklist", "/FI", "IMAGENAME eq python.exe", "/FO", "CSV"],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
             )
-            
+
             if result.returncode == 0:
                 output = result.stdout.lower()
                 # Check if any Python process has run_trading_service in command line
                 # We can't easily check command line args on Windows without WMI
                 # So we check for the service name or process count
                 # For now, check if there are multiple python processes (heuristic)
-                python_count = output.count('python.exe')
+                python_count = output.count("python.exe")
                 if python_count > 1:
                     # Could be unified service, but not definitive
                     # Better to check systemd/service status on Linux
                     pass
-            
+
             # Check Windows service status
             result = subprocess.run(
-                ['sc', 'query', 'TradeAgentUnified'],
-                capture_output=True,
-                text=True,
-                timeout=5
+                ["sc", "query", "TradeAgentUnified"], capture_output=True, text=True, timeout=5
             )
-            
-            if result.returncode == 0 and 'RUNNING' in result.stdout:
+
+            if result.returncode == 0 and "RUNNING" in result.stdout:
                 return True
-                
+
         else:
             # Linux/Unix: Check systemd service
             result = subprocess.run(
-                ['systemctl', 'is-active', 'tradeagent-unified.service'],
+                ["systemctl", "is-active", "tradeagent-unified.service"],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
             )
-            
-            if result.returncode == 0 and result.stdout.strip() == 'active':
+
+            if result.returncode == 0 and result.stdout.strip() == "active":
                 return True
-            
+
             # Also check if process is running
             result = subprocess.run(
-                ['pgrep', '-f', 'run_trading_service.py'],
-                capture_output=True,
-                text=True,
-                timeout=5
+                ["pgrep", "-f", "run_trading_service.py"], capture_output=True, text=True, timeout=5
             )
-            
+
             if result.returncode == 0:
                 return True
-                
+
     except Exception as e:
         logger.debug(f"Error checking unified service: {e}")
-    
+
     return False
 
 
 def check_old_services_running() -> List[str]:
     """
     Check if any old individual services are running.
-    
+
     Returns:
         List of running old service names
     """
     running_services = []
-    
+
     try:
         if platform.system() == "Windows":
             # Check Windows services
             old_services = [
-                'ModularTradeAgent_Sell',
-                'ModularTradeAgent_Main',
-                'ModularTradeAgent_Monitor',
-                'ModularTradeAgent_EOD'
+                "ModularTradeAgent_Sell",
+                "ModularTradeAgent_Main",
+                "ModularTradeAgent_Monitor",
+                "ModularTradeAgent_EOD",
             ]
-            
+
             for service_name in old_services:
                 result = subprocess.run(
-                    ['sc', 'query', service_name],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
+                    ["sc", "query", service_name], capture_output=True, text=True, timeout=5
                 )
-                
-                if result.returncode == 0 and 'RUNNING' in result.stdout:
+
+                if result.returncode == 0 and "RUNNING" in result.stdout:
                     running_services.append(service_name)
-                    
+
         else:
             # Check Linux systemd services
             old_services = [
-                'tradeagent-sell.service',
-                'tradeagent-autotrade.service',
-                'tradeagent-monitor.service',
-                'tradeagent-eod.service'
+                "tradeagent-sell.service",
+                "tradeagent-autotrade.service",
+                "tradeagent-monitor.service",
+                "tradeagent-eod.service",
             ]
-            
+
             for service_name in old_services:
                 result = subprocess.run(
-                    ['systemctl', 'is-active', service_name],
+                    ["systemctl", "is-active", service_name],
                     capture_output=True,
                     text=True,
-                    timeout=5
+                    timeout=5,
                 )
-                
-                if result.returncode == 0 and result.stdout.strip() == 'active':
+
+                if result.returncode == 0 and result.stdout.strip() == "active":
                     running_services.append(service_name)
-            
+
             # Also check for running processes
-            for script in ['run_sell_orders.py', 'run_auto_trade.py', 
-                          'run_position_monitor.py', 'run_eod_cleanup.py']:
+            for script in [
+                "run_sell_orders.py",
+                "run_auto_trade.py",
+                "run_position_monitor.py",
+                "run_eod_cleanup.py",
+            ]:
                 result = subprocess.run(
-                    ['pgrep', '-f', script],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
+                    ["pgrep", "-f", script], capture_output=True, text=True, timeout=5
                 )
-                
+
                 if result.returncode == 0:
                     running_services.append(f"Process: {script}")
-                    
+
     except Exception as e:
         logger.debug(f"Error checking old services: {e}")
-    
+
     return running_services
 
 
 def stop_old_services_automatically() -> List[str]:
     """
     Automatically stop old services when unified service starts.
-    
+
     Returns:
         List of services that were stopped
     """
     stopped = []
-    
+
     try:
         if platform.system() == "Windows":
             old_services = [
-                'ModularTradeAgent_Sell',
-                'ModularTradeAgent_Main',
-                'ModularTradeAgent_Monitor',
-                'ModularTradeAgent_EOD'
+                "ModularTradeAgent_Sell",
+                "ModularTradeAgent_Main",
+                "ModularTradeAgent_Monitor",
+                "ModularTradeAgent_EOD",
             ]
-            
+
             for service in old_services:
                 try:
                     result = subprocess.run(
-                        ['sc', 'stop', service],
-                        capture_output=True,
-                        text=True,
-                        timeout=10
+                        ["sc", "stop", service], capture_output=True, text=True, timeout=10
                     )
-                    
+
                     if result.returncode == 0:
-                        logger.info(f"✓ Automatically stopped {service}")
+                        logger.info(f"[OK] Automatically stopped {service}")
                         stopped.append(service)
-                    elif 'does not exist' in result.stdout or 'STOPPED' in result.stdout:
+                    elif "does not exist" in result.stdout or "STOPPED" in result.stdout:
                         # Service doesn't exist or already stopped - that's fine
                         pass
                 except Exception as e:
                     logger.debug(f"Could not stop {service}: {e}")
-                    
+
         else:
             # Linux: Stop systemd services
             old_services = [
-                'tradeagent-sell.service',
-                'tradeagent-autotrade.service',
-                'tradeagent-monitor.service',
-                'tradeagent-eod.service'
+                "tradeagent-sell.service",
+                "tradeagent-autotrade.service",
+                "tradeagent-monitor.service",
+                "tradeagent-eod.service",
             ]
-            
+
             for service in old_services:
                 try:
                     result = subprocess.run(
-                        ['systemctl', 'stop', service],
-                        capture_output=True,
-                        text=True,
-                        timeout=10
+                        ["systemctl", "stop", service], capture_output=True, text=True, timeout=10
                     )
-                    
+
                     if result.returncode == 0:
-                        logger.info(f"✓ Automatically stopped {service}")
+                        logger.info(f"[OK] Automatically stopped {service}")
                         stopped.append(service)
-                    elif 'not found' in result.stderr.lower():
+                    elif "not found" in result.stderr.lower():
                         # Service doesn't exist - that's fine
                         pass
                 except Exception as e:
                     logger.debug(f"Could not stop {service}: {e}")
-                    
+
     except Exception as e:
         logger.warning(f"Error stopping old services: {e}")
-    
+
     return stopped
 
 
-def prevent_service_conflict(script_name: str, is_unified: bool = False, auto_stop: bool = True) -> bool:
+def prevent_service_conflict(
+    script_name: str, is_unified: bool = False, auto_stop: bool = True
+) -> bool:
     """
     Check for service conflicts and prevent execution if conflicts detected.
-    
+
     Args:
         script_name: Name of the script being run (for logging)
         is_unified: True if this is the unified service, False if old service
         auto_stop: If True and unified service, automatically stop old services
-        
+
     Returns:
         True if safe to proceed, False if conflict detected
     """
     if is_unified:
         # Unified service: Check if old services are running
         old_services = check_old_services_running()
-        
+
         if old_services:
             if auto_stop:
                 # Automatically stop old services
@@ -255,14 +243,14 @@ def prevent_service_conflict(script_name: str, is_unified: bool = False, auto_st
                 logger.warning("")
                 logger.warning("Automatically stopping old services to prevent conflicts...")
                 logger.warning("")
-                
+
                 stopped = stop_old_services_automatically()
-                
+
                 if stopped:
                     logger.info("")
-                    logger.info(f"✓ Successfully stopped {len(stopped)} old service(s)")
+                    logger.info(f"[OK] Successfully stopped {len(stopped)} old service(s)")
                     logger.info("")
-                    logger.info("💡 RECOMMENDATION:")
+                    logger.info("? RECOMMENDATION:")
                     logger.info("   Disable old services to prevent them from auto-starting:")
                     if platform.system() == "Windows":
                         logger.info("     sc config ModularTradeAgent_Sell start= disabled")
@@ -278,7 +266,7 @@ def prevent_service_conflict(script_name: str, is_unified: bool = False, auto_st
                         logger.info("   Or run: sudo python scripts/migrate_to_unified_service.py")
                     logger.info("=" * 80)
                 else:
-                    logger.warning("⚠ Could not automatically stop old services")
+                    logger.warning("[WARN] Could not automatically stop old services")
                     logger.warning("Please stop them manually before starting unified service")
                     logger.error("=" * 80)
                     return False
@@ -318,7 +306,7 @@ def prevent_service_conflict(script_name: str, is_unified: bool = False, auto_st
                 logger.error("  3. Then restart the unified service")
                 logger.error("=" * 80)
                 return False
-            
+
     else:
         # Old service: Check if unified service is running
         if check_unified_service_running():
@@ -343,5 +331,5 @@ def prevent_service_conflict(script_name: str, is_unified: bool = False, auto_st
                 logger.error("     sudo systemctl stop tradeagent-unified.service")
             logger.error("=" * 80)
             return False
-    
+
     return True

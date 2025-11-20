@@ -913,16 +913,16 @@ class AutoTradeEngine:
                 if price >= price_threshold:
                     max_ratio = ratio_limit
                     if price_threshold > 0:
-                        tier_used = f"₹{price_threshold}+ ({ratio_limit:.1%})"
+                        tier_used = f"Rs {price_threshold}+ ({ratio_limit:.1%})"
                     else:
-                        tier_used = f"<₹500 ({ratio_limit:.1%})"
+                        tier_used = f"<Rs 500 ({ratio_limit:.1%})"
                     break
 
         ratio = qty / avg_volume
         if ratio > max_ratio:
             logger.warning(
                 f"{symbol}: Position too large relative to volume "
-                f"(price=₹{price:.2f}, qty={qty}, avg_vol={int(avg_volume)}, "
+                f"(price=Rs {price:.2f}, qty={qty}, avg_vol={int(avg_volume)}, "
                 f"ratio={ratio:.1%} > {max_ratio:.1%} for tier {tier_used})"
             )
             return False
@@ -1175,7 +1175,7 @@ class AutoTradeEngine:
                 )
                 logger.info("EOD cleanup initialized")
 
-            logger.info("✓ Phase 2 modules initialized successfully")
+            logger.info("[OK] Phase 2 modules initialized successfully")
 
         except Exception as e:
             logger.error(f"Failed to initialize Phase 2 modules: {e}", exc_info=True)
@@ -1326,7 +1326,9 @@ class AutoTradeEngine:
                         used_key = used_key or "max_numeric_field"
                 except Exception:
                     pass
-        logger.debug(f"Available balance: ₹{avail:.2f} (from limits API; key={used_key or 'n/a'})")
+        logger.debug(
+            f"Available balance: Rs {avail:.2f} (from limits API; key={used_key or 'n/a'})"
+        )
         try:
             from math import floor
 
@@ -1385,13 +1387,13 @@ class AutoTradeEngine:
                         avail = max(nums)
                         used_key = used_key or "max_numeric_field"
                 logger.debug(
-                    f"Available cash from limits API: ₹{avail:.2f} (key={used_key or 'n/a'})"
+                    f"Available cash from limits API: Rs {avail:.2f} (key={used_key or 'n/a'})"
                 )
                 return float(avail)
             except Exception as e:
                 logger.warning(f"Error parsing available cash: {e}")
                 return 0.0
-        logger.debug("Limits API returned no usable 'data' object; assuming ₹0.00 available")
+        logger.debug("Limits API returned no usable 'data' object; assuming Rs 0.00 available")
         return 0.0
 
     # ---------------------- De-dup helpers ----------------------
@@ -1499,7 +1501,9 @@ class AutoTradeEngine:
         limit_price = close * 1.01 if use_limit_order else 0.0
 
         if use_limit_order:
-            logger.info(f"Using LIMIT order for {broker_symbol} (T2T segment) @ ₹{limit_price:.2f}")
+            logger.info(
+                f"Using LIMIT order for {broker_symbol} (T2T segment) @ Rs {limit_price:.2f}"
+            )
 
         # Try to resolve symbol using scrip master first
         resolved_symbol = None
@@ -1558,7 +1562,7 @@ class AutoTradeEngine:
 
                 if is_t2t_suf:
                     limit_price = close * 1.01
-                    logger.debug(f"Trying {place_symbol} with LIMIT @ ₹{limit_price:.2f}")
+                    logger.debug(f"Trying {place_symbol} with LIMIT @ Rs {limit_price:.2f}")
                     trial = self.orders.place_limit_buy(
                         symbol=place_symbol,
                         quantity=qty,
@@ -2002,13 +2006,13 @@ class AutoTradeEngine:
                     and old_execution_capital != execution_capital
                 ):
                     logger.info(
-                        f"Retry {symbol}: Execution capital updated from ₹{old_execution_capital:,.0f} "
-                        f"to ₹{execution_capital:,.0f} (current user_capital: ₹{self.strategy_config.user_capital:,.0f})"
+                        f"Retry {symbol}: Execution capital updated from Rs {old_execution_capital:,.0f} "
+                        f"to Rs {execution_capital:,.0f} (current user_capital: Rs {self.strategy_config.user_capital:,.0f})"
                     )
                 else:
                     logger.debug(
-                        f"Calculated execution_capital for retry {symbol}: ₹{execution_capital:,.0f} "
-                        f"(using user_capital: ₹{self.strategy_config.user_capital:,.0f})"
+                        f"Calculated execution_capital for retry {symbol}: Rs {execution_capital:,.0f} "
+                        f"(using user_capital: Rs {self.strategy_config.user_capital:,.0f})"
                     )
 
                 qty = max(config.MIN_QTY, floor(execution_capital / close))
@@ -2031,7 +2035,7 @@ class AutoTradeEngine:
                     required_cash = qty * close
                     shortfall = max(0.0, required_cash - (avail_cash or 0.0))
                     logger.warning(
-                        f"Retry failed for {symbol}: still insufficient balance (need ₹{required_cash:,.0f}, have ₹{(avail_cash or 0.0):,.0f})"
+                        f"Retry failed for {symbol}: still insufficient balance (need Rs {required_cash:,.0f}, have Rs {(avail_cash or 0.0):,.0f})"
                     )
                     # Update the failed order with new attempt timestamp
                     failed_order["retry_count"] = failed_order.get("retry_count", 0) + 1
@@ -2158,20 +2162,20 @@ class AutoTradeEngine:
                 and stored_execution_capital != execution_capital
             ):
                 logger.info(
-                    f"{rec.ticker}: Execution capital updated from stored ₹{stored_execution_capital:,.0f} "
-                    f"to ₹{execution_capital:,.0f} (current user_capital: ₹{self.strategy_config.user_capital:,.0f})"
+                    f"{rec.ticker}: Execution capital updated from stored Rs {stored_execution_capital:,.0f} "
+                    f"to Rs {execution_capital:,.0f} (current user_capital: Rs {self.strategy_config.user_capital:,.0f})"
                 )
             else:
                 logger.debug(
-                    f"Calculated execution_capital for {rec.ticker}: ₹{execution_capital:,.0f} "
-                    f"(using user_capital: ₹{self.strategy_config.user_capital:,.0f})"
+                    f"Calculated execution_capital for {rec.ticker}: Rs {execution_capital:,.0f} "
+                    f"(using user_capital: Rs {self.strategy_config.user_capital:,.0f})"
                 )
 
             # Phase 11: Log if capital was adjusted from user_capital
             if execution_capital < self.strategy_config.user_capital:
                 logger.info(
                     f"{broker_symbol}: Capital adjusted due to liquidity: "
-                    f"₹{execution_capital:,.0f} (requested: ₹{self.strategy_config.user_capital:,.0f})"
+                    f"Rs {execution_capital:,.0f} (requested: Rs {self.strategy_config.user_capital:,.0f})"
                 )
 
             qty = max(config.MIN_QTY, floor(execution_capital / close))
@@ -2197,8 +2201,8 @@ class AutoTradeEngine:
                 # Telegram message with emojis
                 telegram_msg = (
                     f"Insufficient balance for {broker_symbol} AMO BUY.\n"
-                    f"Needed: ₹{required_cash:,.0f} for {qty} @ ₹{close:.2f}.\n"
-                    f"Available: ₹{(avail_cash or 0.0):,.0f}. Shortfall: ₹{shortfall:,.0f}.\n\n"
+                    f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}.\n"
+                    f"Available: Rs {(avail_cash or 0.0):,.0f}. Shortfall: Rs {shortfall:,.0f}.\n\n"
                     f"Order saved for retry until 9:15 AM tomorrow (before market opens).\n"
                     f"Add balance & run script, or wait for 8 AM scheduled retry."
                 )
@@ -2443,9 +2447,9 @@ class AutoTradeEngine:
                                             f"Symbol: *{symbol}*\n"
                                             f"Expected Qty: {total_qty}\n"
                                             f"Available Qty: {actual_qty}\n"
-                                            f"Price: ₹{price:.2f}\n"
+                                            f"Price: Rs {price:.2f}\n"
                                             f"RSI10: {rsi:.1f}\n"
-                                            f"EMA9: ₹{ema9:.2f}\n\n"
+                                            f"EMA9: Rs {ema9:.2f}\n\n"
                                             f"Both initial and retry sell orders failed.\n"
                                             f"Manual intervention may be required.\n\n"
                                             f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -2467,7 +2471,7 @@ class AutoTradeEngine:
                                         f"Symbol: *{symbol}*\n"
                                         f"Expected Qty: {total_qty}\n"
                                         f"Available Qty: 0 (not found in holdings)\n"
-                                        f"Price: ₹{price:.2f}\n\n"
+                                        f"Price: Rs {price:.2f}\n\n"
                                         f"Cannot retry - symbol not found in holdings.\n"
                                         f"Manual check required.\n\n"
                                         f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -2482,7 +2486,7 @@ class AutoTradeEngine:
                                     f"SELL ORDER RETRY FAILED\n\n"
                                     f"Symbol: *{symbol}*\n"
                                     f"Expected Qty: {total_qty}\n"
-                                    f"Price: ₹{price:.2f}\n\n"
+                                    f"Price: Rs {price:.2f}\n\n"
                                     f"Failed to fetch holdings from broker.\n"
                                     f"Cannot determine actual available quantity.\n"
                                     f"Manual intervention required.\n\n"
@@ -2498,7 +2502,7 @@ class AutoTradeEngine:
                                 f"SELL ORDER RETRY EXCEPTION\n\n"
                                 f"Symbol: *{symbol}*\n"
                                 f"Expected Qty: {total_qty}\n"
-                                f"Price: ₹{price:.2f}\n\n"
+                                f"Price: Rs {price:.2f}\n\n"
                                 f"Error: {str(e)[:100]}\n"
                                 f"Manual intervention required.\n\n"
                                 f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -2557,7 +2561,7 @@ class AutoTradeEngine:
                     ticker, price, avg_vol
                 )
                 logger.debug(
-                    f"Calculated execution_capital for re-entry {symbol}: ₹{execution_capital:,.0f}"
+                    f"Calculated execution_capital for re-entry {symbol}: Rs {execution_capital:,.0f}"
                 )
 
                 qty = max(config.MIN_QTY, floor(execution_capital / price))
@@ -2652,7 +2656,7 @@ class AutoTradeEngine:
                                             # Calculate new total quantity
                                             new_total_qty = old_qty + qty
                                             logger.info(
-                                                f"Found existing sell order for {symbol}: {old_qty} shares @ ₹{old_price:.2f}"
+                                                f"Found existing sell order for {symbol}: {old_qty} shares @ Rs {old_price:.2f}"
                                             )
                                             logger.info(
                                                 f"Updating to new total: {old_qty} + {qty} (reentry) = {new_total_qty} shares"
@@ -2667,7 +2671,7 @@ class AutoTradeEngine:
 
                                             if modify_resp:
                                                 logger.info(
-                                                    f"Sell order updated: {symbol} x{new_total_qty} @ ₹{old_price:.2f}"
+                                                    f"Sell order updated: {symbol} x{new_total_qty} @ Rs {old_price:.2f}"
                                                 )
                                             else:
                                                 logger.warning(
@@ -2692,7 +2696,7 @@ class AutoTradeEngine:
                                 new_total_qty = old_qty + qty
                                 e["qty"] = new_total_qty
                                 logger.info(
-                                    f"Trade history updated: {symbol} qty {old_qty} → {new_total_qty}"
+                                    f"Trade history updated: {symbol} qty {old_qty} -> {new_total_qty}"
                                 )
                                 # Also add reentry metadata for tracking
                                 if "reentries" not in e:

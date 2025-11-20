@@ -53,20 +53,20 @@ def simulate_old_buggy_force_relogin(auth):
     if not auth.client:
         auth.client = auth._initialize_client()
     else:
-        print(f"  ⚠ BUG: Reusing existing client (ID: {id(auth.client)})")
+        print(f"  [WARN] BUG: Reusing existing client (ID: {id(auth.client)})")
         print("     This client may be stale/expired!")
 
     if not auth.client:
-        print("  ✗ Failed to initialize client")
+        print("  [FAIL] Failed to initialize client")
         return False
 
     # Perform login (may succeed even with stale client)
     print("  Attempting login with existing client...")
     if not auth._perform_login():
-        print("  ✗ Login failed")
+        print("  [FAIL] Login failed")
         return False
 
-    print("  ✓ Login succeeded")
+    print("  [OK] Login succeeded")
 
     # 2FA will fail with stale client (SDK internal error)
     print("  Attempting 2FA with existing client...")
@@ -75,13 +75,13 @@ def simulate_old_buggy_force_relogin(auth):
     try:
         result = auth._complete_2fa()
         if result:
-            print("  ⚠ 2FA succeeded (unexpected with stale client)")
+            print("  [WARN] 2FA succeeded (unexpected with stale client)")
             return True
         else:
-            print("  ✗ 2FA failed (as expected with stale client)")
+            print("  [FAIL] 2FA failed (as expected with stale client)")
             return False
     except Exception as e:
-        print(f"  ✗ 2FA raised exception: {e}")
+        print(f"  [FAIL] 2FA raised exception: {e}")
         print("     This is the bug - stale client causes SDK error!")
         return False
 
@@ -91,8 +91,8 @@ def reproduce_bug_scenario():
     Reproduce the exact production bug scenario.
 
     Production logs show:
-    2025-11-06 09:15:06 — INFO — auth — Login completed successfully!
-    2025-11-06 09:15:19 — ERROR — auth — 2FA call failed: 'NoneType' object has no attribute 'get'
+    2025-11-06 09:15:06 - INFO - auth - Login completed successfully!
+    2025-11-06 09:15:19 - ERROR - auth - 2FA call failed: 'NoneType' object has no attribute 'get'
     """
     print("=" * 80)
     print("REPRODUCING STALE CLIENT RE-AUTHENTICATION BUG")
@@ -109,10 +109,10 @@ def reproduce_bug_scenario():
         auth = KotakNeoAuth(config_file=env_file)
 
         if not auth.login():
-            print("✗ Initial login failed - check credentials")
+            print("[FAIL] Initial login failed - check credentials")
             return False
 
-        print("✓ Login completed successfully!")
+        print("[OK] Login completed successfully!")
         print(f"  Client ID: {id(auth.client)}")
 
         # Step 2: Store the client (this becomes "stale" when JWT expires)
@@ -133,10 +133,10 @@ def reproduce_bug_scenario():
         orders_response = orders_api.get_orders()
 
         if isinstance(orders_response, dict) and orders_response.get("code") == "900901":
-            print("  ✓ Detected JWT expiry error")
+            print("  [OK] Detected JWT expiry error")
             print(f"    Error: {orders_response.get('message')}")
         else:
-            print("  ⚠ JWT may not be expired yet (this is normal)")
+            print("  [WARN] JWT may not be expired yet (this is normal)")
             print("  Continuing to demonstrate the bug scenario...")
 
         # Step 5: OLD BUGGY BEHAVIOR - Reuse stale client
@@ -159,10 +159,10 @@ def reproduce_bug_scenario():
         result = simulate_old_buggy_force_relogin(auth)
 
         if not result:
-            print("\n  ✓ BUG REPRODUCED: Re-authentication failed!")
-            print("  ✓ This demonstrates the stale client reuse bug")
+            print("\n  [OK] BUG REPRODUCED: Re-authentication failed!")
+            print("  [OK] This demonstrates the stale client reuse bug")
         else:
-            print("\n  ⚠ Re-authentication succeeded (unexpected)")
+            print("\n  [WARN] Re-authentication succeeded (unexpected)")
 
         # Step 6: Show what happens with fresh client (NEW FIXED BEHAVIOR)
         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Step 6: NEW FIXED BEHAVIOR")
@@ -180,19 +180,19 @@ def reproduce_bug_scenario():
         print(f"  Old stale client ID: {stale_client_id}")
 
         if fresh_client_id != stale_client_id:
-            print("  ✓ New client created (different ID)")
+            print("  [OK] New client created (different ID)")
         else:
-            print("  ⚠ Same client reused (unexpected)")
+            print("  [WARN] Same client reused (unexpected)")
 
         # Try re-authentication with fresh client
         print("\n  Attempting re-authentication with fresh client...")
         reauth_result = auth.force_relogin()
 
         if reauth_result:
-            print("  ✓ Re-authentication successful with fresh client!")
-            print("  ✓ This shows the fix works")
+            print("  [OK] Re-authentication successful with fresh client!")
+            print("  [OK] This shows the fix works")
         else:
-            print("  ✗ Re-authentication failed (unexpected)")
+            print("  [FAIL] Re-authentication failed (unexpected)")
 
         # Summary
         print("\n" + "=" * 80)
@@ -211,7 +211,7 @@ def reproduce_bug_scenario():
         return True
 
     except Exception as e:
-        print(f"\n✗ Test failed with exception: {e}")
+        print(f"\n[FAIL] Test failed with exception: {e}")
         import traceback
 
         traceback.print_exc()
@@ -232,10 +232,10 @@ def demonstrate_stale_client_error():
         # Login
         auth = KotakNeoAuth(config_file=env_file)
         if not auth.login():
-            print("✗ Login failed")
+            print("[FAIL] Login failed")
             return False
 
-        print("✓ Login successful")
+        print("[OK] Login successful")
         original_client = auth.client
         print(f"  Original client ID: {id(original_client)}")
 
@@ -254,34 +254,34 @@ def demonstrate_stale_client_error():
         try:
             # Try login first (may succeed)
             login_ok = auth._perform_login()
-            print(f"  Login result: {'✓ Success' if login_ok else '✗ Failed'}")
+            print(f"  Login result: {'[OK] Success' if login_ok else '[FAIL] Failed'}")
 
             # Try 2FA (this is where stale client causes issues)
             print("  Attempting 2FA...")
             result = auth._complete_2fa()
 
             if result:
-                print("  ✓ 2FA succeeded")
+                print("  [OK] 2FA succeeded")
                 print("  (Client may not be stale yet, or SDK handled it)")
             else:
-                print("  ✗ 2FA failed")
+                print("  [FAIL] 2FA failed")
                 print("  (This may indicate stale client issue)")
 
         except AttributeError as e:
             if "'NoneType' object has no attribute 'get'" in str(e):
-                print(f"  ✗ BUG REPRODUCED: {e}")
-                print("  ✓ This is the exact error from production!")
+                print(f"  [FAIL] BUG REPRODUCED: {e}")
+                print("  [OK] This is the exact error from production!")
                 return True
             else:
                 raise
         except Exception as e:
-            print(f"  ✗ Exception: {e}")
+            print(f"  [FAIL] Exception: {e}")
             print("  (May indicate stale client issue)")
 
         return True
 
     except Exception as e:
-        print(f"\n✗ Test failed: {e}")
+        print(f"\n[FAIL] Test failed: {e}")
         import traceback
 
         traceback.print_exc()
@@ -302,10 +302,10 @@ def test_client_reuse_scenario():
         # Initial login
         auth = KotakNeoAuth(config_file=env_file)
         if not auth.login():
-            print("✗ Login failed")
+            print("[FAIL] Login failed")
             return False
 
-        print("✓ Initial login successful")
+        print("[OK] Initial login successful")
         initial_client = auth.client
         initial_client_id = id(initial_client)
         print(f"  Initial client ID: {initial_client_id}")
@@ -319,7 +319,7 @@ def test_client_reuse_scenario():
 
             # OLD BEHAVIOR: Reuse client if exists
             if auth.client:
-                print("    ⚠ BUG: Reusing existing client (not creating new)")
+                print("    [WARN] BUG: Reusing existing client (not creating new)")
                 # Don't create new client (old buggy behavior)
             else:
                 auth.client = auth._initialize_client()
@@ -331,28 +331,28 @@ def test_client_reuse_scenario():
                 if auth._perform_login():
                     result = auth._complete_2fa()
                     if result:
-                        print("    ✓ Re-auth succeeded")
+                        print("    [OK] Re-auth succeeded")
                     else:
-                        print("    ✗ Re-auth failed (2FA issue)")
+                        print("    [FAIL] Re-auth failed (2FA issue)")
                 else:
-                    print("    ✗ Re-auth failed (login issue)")
+                    print("    [FAIL] Re-auth failed (login issue)")
             except Exception as e:
-                print(f"    ✗ Re-auth exception: {e}")
+                print(f"    [FAIL] Re-auth exception: {e}")
                 if "'NoneType' object has no attribute 'get'" in str(e):
-                    print("      ✓ BUG REPRODUCED: Stale client SDK error!")
+                    print("      [OK] BUG REPRODUCED: Stale client SDK error!")
 
         print(f"\n  Final client ID: {id(auth.client)}")
         print(f"  Initial client ID: {initial_client_id}")
 
         if id(auth.client) == initial_client_id:
-            print("  ⚠ BUG: Same client reused throughout (old behavior)")
+            print("  [WARN] BUG: Same client reused throughout (old behavior)")
         else:
-            print("  ✓ Different client used")
+            print("  [OK] Different client used")
 
         return True
 
     except Exception as e:
-        print(f"\n✗ Test failed: {e}")
+        print(f"\n[FAIL] Test failed: {e}")
         import traceback
 
         traceback.print_exc()
@@ -390,7 +390,7 @@ if __name__ == "__main__":
     print("ALL TESTS SUMMARY")
     print("=" * 80)
     for test_name, result in results:
-        status = "✓ COMPLETED" if result else "✗ FAILED"
+        status = "[OK] COMPLETED" if result else "[FAIL] FAILED"
         print(f"{test_name}: {status}")
     print("\nNote: These tests demonstrate the bug, not verify the fix")
     print("To verify the fix works, run: reproduce_production_bug.py")

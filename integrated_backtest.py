@@ -21,7 +21,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import warnings
-warnings.filterwarnings('ignore')
+
+warnings.filterwarnings("ignore")
 import pandas_ta as ta
 
 # Add project root to path
@@ -34,20 +35,29 @@ from core.data_fetcher import fetch_ohlcv_yf
 class Position:
     """Represents a trading position"""
 
-    def __init__(self, stock_name: str, entry_date: str, entry_price: float,
-                 target_price: float, capital: float = 100000, entry_rsi: float = None):
+    def __init__(
+        self,
+        stock_name: str,
+        entry_date: str,
+        entry_price: float,
+        target_price: float,
+        capital: float = 100000,
+        entry_rsi: float = None,
+    ):
         self.stock_name = stock_name
         self.entry_date = pd.to_datetime(entry_date)
         self.entry_price = entry_price
         self.target_price = target_price
         self.capital = capital
         self.quantity = int(capital / entry_price)
-        self.fills = [{
-            'date': pd.to_datetime(entry_date),
-            'price': entry_price,
-            'capital': capital,
-            'quantity': self.quantity
-        }]
+        self.fills = [
+            {
+                "date": pd.to_datetime(entry_date),
+                "price": entry_price,
+                "capital": capital,
+                "quantity": self.quantity,
+            }
+        ]
         self.exit_date = None
         self.exit_price = None
         self.exit_reason = None
@@ -74,7 +84,9 @@ class Position:
 
         self.reset_ready = False
 
-    def add_reentry(self, add_date: str, add_price: float, add_capital: float, new_target: float, rsi_level: int):
+    def add_reentry(
+        self, add_date: str, add_price: float, add_capital: float, new_target: float, rsi_level: int
+    ):
         """Add a re-entry fill"""
         add_qty = int(add_capital / add_price) if add_price > 0 else 0
         if add_qty <= 0:
@@ -97,13 +109,15 @@ class Position:
         self.levels_taken[str(rsi_level)] = True
 
         # Track fill
-        self.fills.append({
-            'date': pd.to_datetime(add_date),
-            'price': add_price,
-            'capital': add_capital,
-            'quantity': add_qty,
-            'rsi_level': rsi_level
-        })
+        self.fills.append(
+            {
+                "date": pd.to_datetime(add_date),
+                "price": add_price,
+                "capital": add_capital,
+                "quantity": add_qty,
+                "rsi_level": rsi_level,
+            }
+        )
 
     def update_drawdown(self, current_date: str, low_price: float):
         """
@@ -150,9 +164,9 @@ class Position:
         return (self.exit_date - self.entry_date).days
 
 
-def validate_initial_entry_with_trade_agent(stock_name: str, signal_date: str,
-                                            rsi: float, ema200: float,
-                                            full_market_data: pd.DataFrame) -> Optional[Dict]:
+def validate_initial_entry_with_trade_agent(
+    stock_name: str, signal_date: str, rsi: float, ema200: float, full_market_data: pd.DataFrame
+) -> Optional[Dict]:
     """
     Validate initial entry with trade agent.
     Returns dict with buy_price, target if approved, None if rejected.
@@ -166,11 +180,16 @@ def validate_initial_entry_with_trade_agent(stock_name: str, signal_date: str,
 
         # Convert column names to lowercase for AnalysisService
         market_data_for_agent = full_market_data.copy()
-        if 'Close' in market_data_for_agent.columns:
-            market_data_for_agent = market_data_for_agent.rename(columns={
-                'Open': 'open', 'High': 'high', 'Low': 'low',
-                'Close': 'close', 'Volume': 'volume'
-            })
+        if "Close" in market_data_for_agent.columns:
+            market_data_for_agent = market_data_for_agent.rename(
+                columns={
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
 
         service = AnalysisService(config=StrategyConfig.default())
         result = service.analyze_ticker(
@@ -180,37 +199,38 @@ def validate_initial_entry_with_trade_agent(stock_name: str, signal_date: str,
             as_of_date=signal_date,
             pre_fetched_daily=market_data_for_agent,
             pre_fetched_weekly=None,
-            pre_calculated_indicators={'rsi': rsi, 'ema200': ema200}
+            pre_calculated_indicators={"rsi": rsi, "ema200": ema200},
         )
 
-        if result.get('status') != 'success':
-            print(f"      ⏸️ Analysis failed: {result.get('status', 'unknown')}")
+        if result.get("status") != "success":
+            print(f"      ?? Analysis failed: {result.get('status', 'unknown')}")
             return None
 
-        verdict = result.get('verdict', 'avoid')
+        verdict = result.get("verdict", "avoid")
 
-        if verdict in ['buy', 'strong_buy']:
-            confidence = 'high' if verdict == 'strong_buy' else 'medium'
-            target = result.get('target', 0)
-            print(f"      ✅ Trade Agent: BUY signal (confidence: {confidence})")
-            return {
-                'approved': True,
-                'target': target
-            }
+        if verdict in ["buy", "strong_buy"]:
+            confidence = "high" if verdict == "strong_buy" else "medium"
+            target = result.get("target", 0)
+            print(f"      ? Trade Agent: BUY signal (confidence: {confidence})")
+            return {"approved": True, "target": target}
         else:
-            print(f"      ⏸️ Trade Agent: WATCH signal (verdict: {verdict})")
+            print(f"      ?? Trade Agent: WATCH signal (verdict: {verdict})")
             return None
 
     except Exception as e:
-        print(f"      ⚠️ Trade agent error: {e}")
+        print(f"      [WARN]? Trade agent error: {e}")
         import traceback
+
         traceback.print_exc()
         return None
 
 
-def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
-                            capital_per_position: float = 50000,
-                            skip_trade_agent_validation: bool = False) -> Dict:
+def run_integrated_backtest(
+    stock_name: str,
+    date_range: Tuple[str, str],
+    capital_per_position: float = 50000,
+    skip_trade_agent_validation: bool = False,
+) -> Dict:
     """
     Single-pass integrated backtest - checks RSI daily and executes trades inline.
 
@@ -229,7 +249,7 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
     """
     start_date, end_date = date_range
 
-    print(f"🚀 Starting Integrated Backtest for {stock_name}")
+    print(f"? Starting Integrated Backtest for {stock_name}")
     print(f"Period: {start_date} to {end_date}")
     print(f"Capital per position: ${capital_per_position:,.0f}")
     print(f"Target: EMA9 at entry/re-entry date")
@@ -239,37 +259,29 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
     # Fetch market data with buffer for indicators
     start_dt = pd.to_datetime(start_date)
     end_dt = pd.to_datetime(end_date)
-    # EMA200 needs: 200 periods + ~100 warm-up = 300 trading days ≈ 420 calendar days
+    # EMA200 needs: 200 periods + ~100 warm-up = 300 trading days ? 420 calendar days
     ema_buffer_days = int((200 + 100) * 1.4)  # EMA200 + warm-up, converted to calendar days
     days_needed = (end_dt - start_dt).days + ema_buffer_days
 
     market_data = fetch_ohlcv_yf(
-        ticker=stock_name,
-        days=days_needed,
-        interval='1d',
-        end_date=end_date,
-        add_current_day=False
+        ticker=stock_name, days=days_needed, interval="1d", end_date=end_date, add_current_day=False
     )
 
     if market_data is None or market_data.empty:
-        return {'error': 'Failed to fetch market data'}
+        return {"error": "Failed to fetch market data"}
 
     # Prepare data
-    if 'date' in market_data.columns:
-        market_data = market_data.set_index('date')
+    if "date" in market_data.columns:
+        market_data = market_data.set_index("date")
 
-    market_data = market_data.rename(columns={
-        'open': 'Open',
-        'high': 'High',
-        'low': 'Low',
-        'close': 'Close',
-        'volume': 'Volume'
-    })
+    market_data = market_data.rename(
+        columns={"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"}
+    )
 
     # Calculate indicators
-    market_data['RSI10'] = ta.rsi(market_data['Close'], length=10)
-    market_data['EMA9'] = ta.ema(market_data['Close'], length=9)
-    market_data['EMA200'] = ta.ema(market_data['Close'], length=200)
+    market_data["RSI10"] = ta.rsi(market_data["Close"], length=10)
+    market_data["EMA9"] = ta.ema(market_data["Close"], length=9)
+    market_data["EMA200"] = ta.ema(market_data["Close"], length=200)
 
     # EMA WARM-UP FIX: Check for sufficient warm-up period before backtest start
     # EMA needs time to stabilize after initialization - first ~50-100 values may have lag
@@ -278,27 +290,33 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
 
     if len(data_before_start) < ema_warmup_periods:
         available_warmup = len(data_before_start)
-        print(f"   ⚠️ EMA Warm-up Warning: Only {available_warmup} periods before backtest start (recommended: {ema_warmup_periods})")
-        print(f"   ⚠️ EMA values at backtest start may have lag")
+        print(
+            f"   [WARN]? EMA Warm-up Warning: Only {available_warmup} periods before backtest start (recommended: {ema_warmup_periods})"
+        )
+        print(f"   [WARN]? EMA values at backtest start may have lag")
 
         # If critical, adjust start date to allow warm-up
         if available_warmup < 20:
             earliest_valid = market_data.index.min()
             adjusted_start = earliest_valid + pd.Timedelta(days=int(ema_warmup_periods * 1.4))
             if adjusted_start < start_dt:
-                print(f"   ⚠️ Adjusting backtest start to {adjusted_start.date()} for EMA warm-up")
+                print(
+                    f"   [WARN]? Adjusting backtest start to {adjusted_start.date()} for EMA warm-up"
+                )
                 start_dt = adjusted_start
     else:
-        print(f"   ✓ EMA Warm-up: {len(data_before_start)} periods before backtest start (sufficient)")
+        print(
+            f"   [OK] EMA Warm-up: {len(data_before_start)} periods before backtest start (sufficient)"
+        )
 
     # Filter to backtest period
     backtest_data = market_data.loc[(market_data.index >= start_dt) & (market_data.index <= end_dt)]
 
     if backtest_data.empty:
-        return {'error': 'No data in backtest period'}
+        return {"error": "No data in backtest period"}
 
-    print(f"   ✓ Data loaded: {len(backtest_data)} trading days in backtest period")
-    print(f"   ✓ Total historical data: {len(market_data)} days")
+    print(f"   [OK] Data loaded: {len(backtest_data)} trading days in backtest period")
+    print(f"   [OK] Total historical data: {len(market_data)} days")
     print()
 
     # Track state
@@ -311,20 +329,20 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
 
     # Iterate through each trading day
     for current_date, row in backtest_data.iterrows():
-        date_str = current_date.strftime('%Y-%m-%d')
+        date_str = current_date.strftime("%Y-%m-%d")
 
         # Validate trading day: Check if date is a weekday (Monday=0, Sunday=6)
         weekday = current_date.weekday()
         if weekday >= 5:  # Saturday (5) or Sunday (6)
-            print(f"   ⚠️ WARNING: Skipping non-trading day {date_str} (weekend)")
+            print(f"   [WARN]? WARNING: Skipping non-trading day {date_str} (weekend)")
             continue
 
-        rsi = row['RSI10']
-        ema200 = row['EMA200']
-        ema9 = row['EMA9']
-        close = row['Close']
-        high = row['High']
-        low = row['Low']
+        rsi = row["RSI10"]
+        ema200 = row["EMA200"]
+        ema9 = row["EMA9"]
+        close = row["Close"]
+        high = row["High"]
+        low = row["Low"]
 
         # Skip if RSI is NaN
         if pd.isna(rsi):
@@ -340,8 +358,10 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
             # Note: Can exit same day as re-entry if High hits target during the day
             if high >= position.target_price:
                 position.close_position(date_str, position.target_price, "Target reached")
-                print(f"   🎯 TARGET HIT on {date_str}: Exit at {position.target_price:.2f}")
-                print(f"      Entry: {position.entry_date.strftime('%Y-%m-%d')} | Exit: {position.exit_date.strftime('%Y-%m-%d')} | Days: {(position.exit_date - position.entry_date).days}")
+                print(f"   ? TARGET HIT on {date_str}: Exit at {position.target_price:.2f}")
+                print(
+                    f"      Entry: {position.entry_date.strftime('%Y-%m-%d')} | Exit: {position.exit_date.strftime('%Y-%m-%d')} | Days: {(position.exit_date - position.entry_date).days}"
+                )
                 print(f"      P&L: ${position.get_pnl():,.0f} ({position.get_return_pct():+.1f}%)")
                 all_positions.append(position)  # Save closed position
                 position = None  # Clear position
@@ -350,8 +370,10 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
             # Exit condition 2: RSI > 50
             elif rsi > 50:
                 position.close_position(date_str, close, "RSI > 50")
-                print(f"   📊 RSI EXIT on {date_str}: RSI {rsi:.1f} > 50, Exit at {close:.2f}")
-                print(f"      Entry: {position.entry_date.strftime('%Y-%m-%d')} | Exit: {position.exit_date.strftime('%Y-%m-%d')} | Days: {(position.exit_date - position.entry_date).days}")
+                print(f"   ? RSI EXIT on {date_str}: RSI {rsi:.1f} > 50, Exit at {close:.2f}")
+                print(
+                    f"      Entry: {position.entry_date.strftime('%Y-%m-%d')} | Exit: {position.exit_date.strftime('%Y-%m-%d')} | Days: {(position.exit_date - position.entry_date).days}"
+                )
                 print(f"      P&L: ${position.get_pnl():,.0f} ({position.get_return_pct():+.1f}%)")
                 all_positions.append(position)  # Save closed position
                 position = None  # Clear position
@@ -375,16 +397,18 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
                 levels = position.levels_taken
                 next_level = 30
             # Normal progression through levels
-            elif levels.get('30') and not levels.get('20') and rsi < 20:
+            elif levels.get("30") and not levels.get("20") and rsi < 20:
                 next_level = 20
-            elif levels.get('20') and not levels.get('10') and rsi < 10:
+            elif levels.get("20") and not levels.get("10") and rsi < 10:
                 next_level = 10
 
             if next_level:
                 # Check daily cap
                 reentries_today = reentries_by_date.get(date_str, 0)
                 if reentries_today >= 1:
-                    print(f"   ⏸️ RE-ENTRY SKIPPED on {date_str}: Daily cap reached (RSI {rsi:.1f} < {next_level})")
+                    print(
+                        f"   ?? RE-ENTRY SKIPPED on {date_str}: Daily cap reached (RSI {rsi:.1f} < {next_level})"
+                    )
                     continue
 
                 # Find execution date (next trading day)
@@ -393,19 +417,25 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
                     continue
 
                 exec_date = next_days.index[0]
-                exec_date_str = exec_date.strftime('%Y-%m-%d')
-                exec_price = next_days.iloc[0]['Open']
-                exec_ema9 = next_days.iloc[0]['EMA9']
+                exec_date_str = exec_date.strftime("%Y-%m-%d")
+                exec_price = next_days.iloc[0]["Open"]
+                exec_ema9 = next_days.iloc[0]["EMA9"]
 
                 # Target is EMA9 (exit condition: High >= EMA9 OR RSI > 50)
                 new_target = exec_ema9
 
                 # Execute re-entry (no trade agent validation)
-                position.add_reentry(exec_date_str, exec_price, capital_per_position, new_target, next_level)
+                position.add_reentry(
+                    exec_date_str, exec_price, capital_per_position, new_target, next_level
+                )
                 reentries_by_date[exec_date_str] = reentries_today + 1
 
-                print(f"   ➕ RE-ENTRY on {exec_date_str}: RSI {rsi:.1f} < {next_level} | Add at {exec_price:.2f}")
-                print(f"      New Avg: {position.entry_price:.2f} | New Target: {position.target_price:.2f}")
+                print(
+                    f"   ? RE-ENTRY on {exec_date_str}: RSI {rsi:.1f} < {next_level} | Add at {exec_price:.2f}"
+                )
+                print(
+                    f"      New Avg: {position.entry_price:.2f} | New Target: {position.target_price:.2f}"
+                )
                 executed_trades += 1
 
         elif not position:
@@ -420,28 +450,28 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
                     continue
 
                 exec_date = next_days.index[0]
-                exec_date_str = exec_date.strftime('%Y-%m-%d')
-                exec_price = next_days.iloc[0]['Open']
-                exec_ema9 = next_days.iloc[0]['EMA9']
+                exec_date_str = exec_date.strftime("%Y-%m-%d")
+                exec_price = next_days.iloc[0]["Open"]
+                exec_ema9 = next_days.iloc[0]["EMA9"]
 
                 # Validate with trade agent (unless skipped for training data collection)
                 # Additional validation: Verify this is actually a trading day (weekday check already done above)
-                weekday_name = current_date.strftime('%A')
-                print(f"\n🔄 Signal #{signal_count} detected on {date_str} ({weekday_name})")
+                weekday_name = current_date.strftime("%A")
+                print(f"\n? Signal #{signal_count} detected on {date_str} ({weekday_name})")
                 print(f"   RSI: {rsi:.1f} < 30 | Close: {close:.2f} > EMA200: {ema200:.2f}")
 
                 if skip_trade_agent_validation:
                     # For training data: Skip trade agent validation, execute all RSI<30 & price>EMA200
-                    print(f"   ⚠️  Training mode: Skipping trade agent validation")
-                    validation = {'approved': True, 'target': exec_ema9}
+                    print(f"   [WARN]?  Training mode: Skipping trade agent validation")
+                    validation = {"approved": True, "target": exec_ema9}
                 else:
                     # Normal mode: Validate with trade agent
-                    print(f"   🤖 Trade Agent analyzing...")
+                    print(f"   ? Trade Agent analyzing...")
                     validation = validate_initial_entry_with_trade_agent(
                         stock_name, date_str, rsi, ema200, market_data
                     )
 
-                if validation and validation.get('approved'):
+                if validation and validation.get("approved"):
                     # Execute initial entry
                     # Target is EMA9 (exit condition: High >= EMA9 OR RSI > 50)
                     target = exec_ema9
@@ -452,28 +482,28 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
                         entry_price=exec_price,
                         target_price=target,
                         capital=capital_per_position,
-                        entry_rsi=rsi  # Pass entry RSI to mark correct levels
+                        entry_rsi=rsi,  # Pass entry RSI to mark correct levels
                     )
 
-                    print(f"   ✅ INITIAL ENTRY on {exec_date_str}: Buy at {exec_price:.2f}")
+                    print(f"   ? INITIAL ENTRY on {exec_date_str}: Buy at {exec_price:.2f}")
                     print(f"      Target: {position.target_price:.2f}")
                     executed_trades += 1
                 else:
-                    print(f"   ⏸️ SKIPPED: Trade agent rejected")
+                    print(f"   ?? SKIPPED: Trade agent rejected")
                     skipped_signals += 1
 
     # Close any remaining open position at period end
     if position and not position.is_closed:
         final_date = backtest_data.index[-1]
-        final_price = backtest_data.iloc[-1]['Close']
-        position.close_position(final_date.strftime('%Y-%m-%d'), final_price, "End of period")
-        print(f"\n   ⏰ POSITION CLOSED at period end: {final_date.strftime('%Y-%m-%d')}")
+        final_price = backtest_data.iloc[-1]["Close"]
+        position.close_position(final_date.strftime("%Y-%m-%d"), final_price, "End of period")
+        print(f"\n   ? POSITION CLOSED at period end: {final_date.strftime('%Y-%m-%d')}")
         print(f"      P&L: ${position.get_pnl():,.0f} ({position.get_return_pct():+.1f}%)")
         all_positions.append(position)
 
     # Generate results
     print(f"\n" + "=" * 60)
-    print(f"🏁 Integrated Backtest Complete!")
+    print(f"? Integrated Backtest Complete!")
     print(f"Total Signals: {signal_count}")
     print(f"Executed Trades: {executed_trades}")
     print(f"Skipped Signals: {skipped_signals}")
@@ -495,49 +525,51 @@ def run_integrated_backtest(stock_name: str, date_range: Tuple[str, str],
         # Convert Position objects to dicts for backward compatibility
         positions_list = []
         for p in all_positions:
-            positions_list.append({
-                'entry_date': p.entry_date.strftime('%Y-%m-%d'),
-                'entry_price': p.entry_price,
-                'exit_date': p.exit_date.strftime('%Y-%m-%d') if p.exit_date else None,
-                'exit_price': p.exit_price,
-                'exit_reason': p.exit_reason,
-                'target_price': p.target_price,
-                'capital': p.capital,
-                'quantity': p.quantity,
-                'pnl': p.get_pnl(),
-                'return_pct': p.get_return_pct(),
-                # ML ENHANCED OUTCOME FEATURES (Phase 3)
-                'days_to_exit': p.get_days_to_exit(),
-                'max_drawdown_pct': round(p.max_drawdown_pct, 2),
-                'fills': p.fills,
-                'is_pyramided': len(p.fills) > 1  # Backward compatibility
-            })
+            positions_list.append(
+                {
+                    "entry_date": p.entry_date.strftime("%Y-%m-%d"),
+                    "entry_price": p.entry_price,
+                    "exit_date": p.exit_date.strftime("%Y-%m-%d") if p.exit_date else None,
+                    "exit_price": p.exit_price,
+                    "exit_reason": p.exit_reason,
+                    "target_price": p.target_price,
+                    "capital": p.capital,
+                    "quantity": p.quantity,
+                    "pnl": p.get_pnl(),
+                    "return_pct": p.get_return_pct(),
+                    # ML ENHANCED OUTCOME FEATURES (Phase 3)
+                    "days_to_exit": p.get_days_to_exit(),
+                    "max_drawdown_pct": round(p.max_drawdown_pct, 2),
+                    "fills": p.fills,
+                    "is_pyramided": len(p.fills) > 1,  # Backward compatibility
+                }
+            )
 
         results = {
-            'stock_name': stock_name,
-            'period': f"{start_date} to {end_date}",
-            'total_signals': signal_count,  # Backward compatibility
-            'executed_trades': executed_trades,
-            'skipped_signals': skipped_signals,
-            'total_pnl': total_pnl,
-            'total_return_pct': total_return,
-            'total_positions': len(all_positions),
-            'closed_positions': len(all_positions),
-            'win_rate': len(winning)/len(all_positions)*100,
-            'total_invested': total_invested,
-            'winning_trades': len(winning),
-            'losing_trades': len(losing),
-            'positions': positions_list  # Backward compatibility
+            "stock_name": stock_name,
+            "period": f"{start_date} to {end_date}",
+            "total_signals": signal_count,  # Backward compatibility
+            "executed_trades": executed_trades,
+            "skipped_signals": skipped_signals,
+            "total_pnl": total_pnl,
+            "total_return_pct": total_return,
+            "total_positions": len(all_positions),
+            "closed_positions": len(all_positions),
+            "win_rate": len(winning) / len(all_positions) * 100,
+            "total_invested": total_invested,
+            "winning_trades": len(winning),
+            "losing_trades": len(losing),
+            "positions": positions_list,  # Backward compatibility
         }
     else:
         results = {
-            'stock_name': stock_name,
-            'period': f"{start_date} to {end_date}",
-            'total_signals': signal_count,  # Backward compatibility
-            'executed_trades': executed_trades,
-            'skipped_signals': skipped_signals,
-            'total_positions': 0,
-            'positions': []  # Backward compatibility
+            "stock_name": stock_name,
+            "period": f"{start_date} to {end_date}",
+            "total_signals": signal_count,  # Backward compatibility
+            "executed_trades": executed_trades,
+            "skipped_signals": skipped_signals,
+            "total_positions": 0,
+            "positions": [],  # Backward compatibility
         }
 
     return results
@@ -553,14 +585,14 @@ def print_integrated_results(results: Dict):
         return
 
     print(f"\n{'=' * 60}")
-    print(f"📊 BACKTEST RESULTS:")
+    print(f"? BACKTEST RESULTS:")
     print(f"{'=' * 60}")
     print(f"  Stock: {results.get('stock_name', 'N/A')}")
     print(f"  Period: {results.get('period', 'N/A')}")
     print(f"  Executed Trades: {results.get('executed_trades', 0)}")
     print(f"  Skipped Signals: {results.get('skipped_signals', 0)}")
 
-    if 'total_pnl' in results:
+    if "total_pnl" in results:
         print(f"  Total P&L: ${results.get('total_pnl', 0):,.0f}")
         print(f"  Total Return: {results.get('total_return_pct', 0):+.2f}%")
         print(f"  Win Rate: {results.get('win_rate', 0):.1f}%")
@@ -576,8 +608,8 @@ if __name__ == "__main__":
     stock = sys.argv[1] if len(sys.argv) > 1 else "RELIANCE.NS"
     years = int(sys.argv[2]) if len(sys.argv) > 2 else 5
 
-    end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=years * 365)).strftime('%Y-%m-%d')
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.now() - timedelta(days=years * 365)).strftime("%Y-%m-%d")
     date_range = (start_date, end_date)
 
     results = run_integrated_backtest(stock, date_range)
@@ -585,6 +617,6 @@ if __name__ == "__main__":
     print("RESULTS:")
     print(f"  Executed Trades: {results.get('executed_trades', 0)}")
     print(f"  Skipped Signals: {results.get('skipped_signals', 0)}")
-    if results.get('total_pnl'):
+    if results.get("total_pnl"):
         print(f"  Total P&L: ${results.get('total_pnl', 0):,.0f}")
         print(f"  Total Return: {results.get('total_return_pct', 0):+.2f}%")

@@ -77,11 +77,11 @@ class AnalysisService:
                     )
                     if self.verdict_service.model_loaded:
                         logger.info(
-                            f"✅ Using MLVerdictService with model: {ml_model_path} (two-stage: chart quality + ML)"
+                            f"? Using MLVerdictService with model: {ml_model_path} (two-stage: chart quality + ML)"
                         )
                     else:
                         logger.warning(
-                            f"⚠️ ML model file exists but failed to load: {ml_model_path}, using VerdictService"
+                            f"[WARN]? ML model file exists but failed to load: {ml_model_path}, using VerdictService"
                         )
                         self.verdict_service = VerdictService(self.config)
                 else:
@@ -479,12 +479,12 @@ class AnalysisService:
                             confidence_str = str(ml_confidence)
                         ml_verdict = ml_prediction.get("ml_verdict", "unknown")
                         logger.info(
-                            f"{ticker}: ✅ ML prediction retrieved - {ml_verdict} ({confidence_str})"
+                            f"{ticker}: ? ML prediction retrieved - {ml_verdict} ({confidence_str})"
                         )
                     except (TypeError, ValueError, AttributeError):
                         # Fallback if formatting fails (e.g., MagicMock in tests)
                         logger.info(
-                            f"{ticker}: ✅ ML prediction retrieved - {ml_prediction.get('ml_verdict', 'unknown')}"
+                            f"{ticker}: ? ML prediction retrieved - {ml_prediction.get('ml_verdict', 'unknown')}"
                         )
 
                     # Check if ML verdict was used (confidence >= threshold)
@@ -502,7 +502,7 @@ class AnalysisService:
                     else:
                         verdict_source = "rule_based"
                 else:
-                    logger.warning(f"{ticker}: ⚠️ ML prediction NOT available (returned None)")
+                    logger.warning(f"{ticker}: [WARN]? ML prediction NOT available (returned None)")
 
             # Step 12: Apply candle quality check (may downgrade verdict)
             verdict, candle_analysis, downgrade_reason = (

@@ -56,11 +56,11 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
             if self.auth_handler.login():
                 self._client = self.auth_handler.get_client()
                 self._connected = True
-                logger.info("✅ Connected to Kotak Neo broker")
+                logger.info("? Connected to Kotak Neo broker")
                 return True
             return False
         except Exception as e:
-            logger.error(f"❌ Connection failed: {e}")
+            logger.error(f"? Connection failed: {e}")
             return False
 
     def disconnect(self) -> bool:
@@ -69,11 +69,11 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
             if self.auth_handler.logout():
                 self._client = None
                 self._connected = False
-                logger.info("✅ Disconnected from Kotak Neo broker")
+                logger.info("? Disconnected from Kotak Neo broker")
                 return True
             return False
         except Exception as e:
-            logger.error(f"❌ Disconnect failed: {e}")
+            logger.error(f"? Disconnect failed: {e}")
             return False
 
     def is_connected(self) -> bool:
@@ -100,23 +100,23 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 params = self._adapt_payload_to_method(method, payload)
 
                 logger.info(
-                    f"📤 Placing {order.transaction_type.value} order: {order.symbol} x{order.quantity}"
+                    f"? Placing {order.transaction_type.value} order: {order.symbol} x{order.quantity}"
                 )
                 response = method(**params)
 
                 # Check for errors
                 if self._is_error_response(response):
-                    logger.error(f"❌ Order rejected: {response}")
+                    logger.error(f"? Order rejected: {response}")
                     continue
 
                 # Extract order ID
                 order_id = self._extract_order_id(response)
                 if order_id:
-                    logger.info(f"✅ Order placed: {order_id}")
+                    logger.info(f"? Order placed: {order_id}")
                     return order_id
 
             except Exception as e:
-                logger.warning(f"⚠️ Method {method_name} failed: {e}")
+                logger.warning(f"[WARN]? Method {method_name} failed: {e}")
                 continue
 
         raise RuntimeError("Failed to place order with all available methods")
@@ -147,13 +147,13 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                     else:
                         response = method(**payload)
 
-                    logger.info(f"✅ Cancelled order: {order_id}")
+                    logger.info(f"? Cancelled order: {order_id}")
                     return True
                 except Exception:
                     continue
 
             except Exception as e:
-                logger.warning(f"⚠️ Cancel via {method_name} failed: {e}")
+                logger.warning(f"[WARN]? Cancel via {method_name} failed: {e}")
                 continue
 
         return False
@@ -180,7 +180,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         return self._parse_orders_response(response["data"])
             return []
         except Exception as e:
-            logger.error(f"❌ Failed to get orders: {e}")
+            logger.error(f"? Failed to get orders: {e}")
             return []
 
     def get_pending_orders(self) -> List[Order]:
@@ -204,7 +204,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         return self._parse_holdings_response(response["data"])
             return []
         except Exception as e:
-            logger.error(f"❌ Failed to get holdings: {e}")
+            logger.error(f"? Failed to get holdings: {e}")
             return []
 
     def get_holding(self, symbol: str) -> Optional[Holding]:
@@ -234,7 +234,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 }
             return {}
         except Exception as e:
-            logger.error(f"❌ Failed to get account limits: {e}")
+            logger.error(f"? Failed to get account limits: {e}")
             return {}
 
     def get_available_balance(self) -> Money:
@@ -370,7 +370,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 )
                 orders.append(order)
             except Exception as e:
-                logger.warning(f"⚠️ Failed to parse order: {e}")
+                logger.warning(f"[WARN]? Failed to parse order: {e}")
                 continue
         return orders
 
@@ -407,7 +407,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 )
                 holdings.append(holding)
             except Exception as e:
-                logger.warning(f"⚠️ Failed to parse holding: {e}")
+                logger.warning(f"[WARN]? Failed to parse holding: {e}")
                 continue
         return holdings
 

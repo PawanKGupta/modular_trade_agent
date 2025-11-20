@@ -22,14 +22,14 @@ try:
     if ml_model_path.exists():
         _ml_verdict_service = MLVerdictService(model_path=str(ml_model_path))
         logger.info(
-            "✅ ML verdict service loaded for testing (will include ML predictions in Telegram)"
+            "? ML verdict service loaded for testing (will include ML predictions in Telegram)"
         )
     else:
-        logger.info("ℹ️ ML model not found. Run ML training first. Using rule-based only.")
+        logger.info("i? ML model not found. Run ML training first. Using rule-based only.")
 except ImportError:
     logger.debug("ML verdict service not available (scikit-learn may not be installed)")
 except Exception as e:
-    logger.warning(f"⚠️ Failed to load ML verdict service: {e}")
+    logger.warning(f"[WARN]? Failed to load ML verdict service: {e}")
 
 
 def get_stocks():
@@ -107,9 +107,9 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
         capital_info = ""
         if execution_capital and execution_capital > 0:
             if capital_adjusted:
-                capital_info = f" 💰 Capital: ₹{execution_capital:,.0f} (adjusted for liquidity)"
+                capital_info = f" ? Capital: Rs {execution_capital:,.0f} (adjusted for liquidity)"
             else:
-                capital_info = f" 💰 Capital: ₹{execution_capital:,.0f}"
+                capital_info = f" ? Capital: Rs {execution_capital:,.0f}"
 
         # Format chart quality info
         chart_info = ""
@@ -118,11 +118,11 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
             chart_status = chart_quality.get("status", "unknown")
             if chart_score > 0:
                 if chart_status == "clean":
-                    chart_info = f" 📊 Chart: {chart_score:.0f}/100 (clean)"
+                    chart_info = f" ? Chart: {chart_score:.0f}/100 (clean)"
                 elif chart_status == "acceptable":
-                    chart_info = f" 📊 Chart: {chart_score:.0f}/100 (acceptable)"
+                    chart_info = f" ? Chart: {chart_score:.0f}/100 (acceptable)"
                 else:
-                    chart_info = f" 📊 Chart: {chart_score:.0f}/100"
+                    chart_info = f" ? Chart: {chart_score:.0f}/100"
 
         # Multi-timeframe analysis details
         mtf_info = ""
@@ -229,12 +229,12 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
         # Phase 13: Add capital and chart quality info
         if capital_info:
             # Extract just the capital amount and adjustment status
-            capital_text = capital_info.replace("💰 Capital: ", "").strip()
+            capital_text = capital_info.replace("? Capital: ", "").strip()
             lines.append(f"\tCapital: {capital_text}")
 
         if chart_info:
             # Extract just the chart score and status
-            chart_text = chart_info.replace("📊 Chart: ", "").strip()
+            chart_text = chart_info.replace("? Chart: ", "").strip()
             lines.append(f"\tChart: {chart_text}")
         # Fundamentals (PE)
         if pe is not None and pe > 0:
@@ -263,7 +263,7 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
         # Confidence level (if available)
         confidence = stock_data.get("backtest_confidence")
         if confidence:
-            confidence_emoji = {"High": "🟢", "Medium": "🟡", "Low": "🟠"}.get(confidence, "⚪")
+            confidence_emoji = {"High": "?", "Medium": "?", "Low": "?"}.get(confidence, "?")
             lines.append(f"\tConfidence: {confidence_emoji} {confidence}")
 
         # ML Verdict (monitoring mode - add if available) - 2025-11-12 Enhanced
@@ -282,18 +282,18 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
             # Add agreement/disagreement indicator
             agreement_indicator = ""
             if rule_verdict in ["buy", "strong_buy"] and ml_verdict in ["buy", "strong_buy"]:
-                agreement_indicator = " ✅"  # Both agree on buy
+                agreement_indicator = " ?"  # Both agree on buy
             elif rule_verdict in ["watch", "avoid"] and ml_verdict in ["buy", "strong_buy"]:
-                agreement_indicator = " ⚠️ ONLY ML"  # ML sees opportunity, rules don't
+                agreement_indicator = " [WARN]? ONLY ML"  # ML sees opportunity, rules don't
             elif rule_verdict in ["buy", "strong_buy"] and ml_verdict in ["watch", "avoid"]:
-                agreement_indicator = " ⚠️ ONLY RULE"  # Rules see opportunity, ML doesn't
+                agreement_indicator = " [WARN]? ONLY RULE"  # Rules see opportunity, ML doesn't
 
             # Add ML prediction for comparison/monitoring
-            ml_emoji = {"strong_buy": "🔥", "buy": "📈", "watch": "👀", "avoid": "❌"}.get(
-                ml_verdict, "🤖"
+            ml_emoji = {"strong_buy": "?", "buy": "?", "watch": "?", "avoid": "?"}.get(
+                ml_verdict, "?"
             )
             lines.append(
-                f"\t🤖 ML: {ml_verdict.upper()} {ml_emoji} ({conf_pct:.0f}% conf){agreement_indicator}"
+                f"\t? ML: {ml_verdict.upper()} {ml_emoji} ({conf_pct:.0f}% conf){agreement_indicator}"
             )
 
         msg = "\n".join(lines) + "\n\n"
@@ -679,7 +679,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
         if enable_backtest_scoring:
             msg_prefix += " *with Backtest Scoring*"
         msg_prefix += (
-            "\n💡 *Includes: Rule-Based + ML Predictions*"  # 2025-11-12: Clarify inclusion of ML
+            "\n? *Includes: Rule-Based + ML Predictions*"  # 2025-11-12: Clarify inclusion of ML
         )
         msg = msg_prefix + "\n"
 
@@ -687,7 +687,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
         if strong_buys:
             strong_buys = [r for r in strong_buys if r is not None]  # Filter out None values
             strong_buys.sort(key=lambda x: -compute_trading_priority_score(x))  # Sort by priority
-            msg += "\n🔥 *STRONG BUY* (Multi-timeframe confirmed):\n"
+            msg += "\n? *STRONG BUY* (Multi-timeframe confirmed):\n"
             for i, b in enumerate(strong_buys, 1):
                 enhanced_info = get_enhanced_stock_info(b, i)
                 if enhanced_info:  # Skip stocks with invalid parameters
@@ -715,7 +715,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
         if regular_buys:
             regular_buys = [r for r in regular_buys if r is not None]  # Filter out None values
             regular_buys.sort(key=lambda x: -compute_trading_priority_score(x))  # Sort by priority
-            msg += "\n📈 *BUY* candidates:\n"
+            msg += "\n? *BUY* candidates:\n"
             for i, b in enumerate(regular_buys, 1):
                 enhanced_info = get_enhanced_stock_info(b, i, is_strong_buy=False)
                 if enhanced_info:  # Skip stocks with invalid parameters

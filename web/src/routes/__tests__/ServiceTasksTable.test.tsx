@@ -69,7 +69,7 @@ describe('ServiceTasksTable', () => {
 	it('shows dash for tasks without details', () => {
 		render(<ServiceTasksTable tasks={mockTasks} isLoading={false} />);
 
-		const dashes = screen.getAllByText(/—/i);
+		const dashes = screen.getAllByText(/-/i);
 		expect(dashes.length).toBeGreaterThan(0);
 	});
 

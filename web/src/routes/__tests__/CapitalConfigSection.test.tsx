@@ -59,6 +59,6 @@ describe('CapitalConfigSection', () => {
 		const modifiedConfig = { ...mockConfig, user_capital: 250000 };
 		render(<CapitalConfigSection config={modifiedConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
-		expect(screen.getByText(/\+₹50,000 from default/i)).toBeInTheDocument();
+		expect(screen.getByText(/\+Rs 50,000 from default/i)).toBeInTheDocument();
 	});
 });

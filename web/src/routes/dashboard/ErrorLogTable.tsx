@@ -12,7 +12,7 @@ export function ErrorLogTable({ errors, isLoading, isAdmin, onResolve }: Props) 
 	const [expandedId, setExpandedId] = useState<number | null>(null);
 
 	if (isLoading) {
-		return <div className="text-sm text-[var(--muted)]">Loading error logs…</div>;
+		return <div className="text-sm text-[var(--muted)]">Loading error logs...</div>;
 	}
 
 	if (!errors.length) {
@@ -69,7 +69,7 @@ export function ErrorLogTable({ errors, isLoading, isAdmin, onResolve }: Props) 
 													Resolve
 												</button>
 											) : (
-												<span className="text-xs text-[var(--muted)]">—</span>
+												<span className="text-xs text-[var(--muted)]">-</span>
 											)}
 										</td>
 									)}

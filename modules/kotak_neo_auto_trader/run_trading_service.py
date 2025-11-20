@@ -265,7 +265,7 @@ class TradingService:
                 exchanges=["NSE"],
             )
             self.scrip_master.load_scrip_master(force_download=False)
-            logger.info("✓ Scrip master loaded")
+            logger.info("[OK] Scrip master loaded")
 
             # Initialize LivePriceCache with WebSocket connection
             # Pass auth object so LivePriceCache can get fresh client after re-auth
@@ -279,7 +279,7 @@ class TradingService:
 
             # Start real-time price streaming
             self.price_cache.start()
-            logger.info("✓ Live price cache started (WebSocket started)")
+            logger.info("[OK] Live price cache started (WebSocket started)")
 
             # Wait for WebSocket connection to be established
             # Use shorter timeout to avoid blocking buy_orders task
@@ -891,7 +891,7 @@ class TradingService:
 
                     # Only run tasks on trading days (Mon-Fri)
                     if self.is_trading_day():
-                        logger.debug("  → Trading day detected - checking tasks...")
+                        logger.debug("  -> Trading day detected - checking tasks...")
                         # 9:00 AM - Pre-market retry
                         if self.should_run_task("premarket_retry", dt_time(9, 0)):
                             self.run_premarket_retry()

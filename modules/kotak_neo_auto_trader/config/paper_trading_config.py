@@ -22,7 +22,7 @@ class PaperTradingConfig:
 
     # ===== EXECUTION SETTINGS =====
     enable_slippage: bool = True  # Simulate realistic slippage
-    slippage_percentage: float = 0.2  # Default slippage ±0.2%
+    slippage_percentage: float = 0.2  # Default slippage +/-0.2%
     slippage_range: tuple = (0.1, 0.3)  # Random range for slippage
 
     execution_delay_ms: int = 100  # Simulate network latency (ms)
@@ -144,35 +144,35 @@ class PaperTradingConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PaperTradingConfig':
+    def from_dict(cls, data: Dict[str, Any]) -> "PaperTradingConfig":
         """Create configuration from dictionary"""
         return cls(**data)
 
     def save_to_file(self, filepath: Path) -> None:
         """Save configuration to JSON file"""
         filepath.parent.mkdir(parents=True, exist_ok=True)
-        with open(filepath, 'w') as f:
+        with open(filepath, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
 
     @classmethod
-    def load_from_file(cls, filepath: Path) -> 'PaperTradingConfig':
+    def load_from_file(cls, filepath: Path) -> "PaperTradingConfig":
         """Load configuration from JSON file"""
-        with open(filepath, 'r') as f:
+        with open(filepath, "r") as f:
             data = json.load(f)
         return cls.from_dict(data)
 
     @classmethod
-    def default(cls) -> 'PaperTradingConfig':
+    def default(cls) -> "PaperTradingConfig":
         """Get default configuration"""
         return cls()
 
     @classmethod
-    def minimal_fees(cls) -> 'PaperTradingConfig':
+    def minimal_fees(cls) -> "PaperTradingConfig":
         """Configuration with minimal fees for testing"""
         return cls(enable_fees=False, enable_slippage=False)
 
     @classmethod
-    def realistic(cls) -> 'PaperTradingConfig':
+    def realistic(cls) -> "PaperTradingConfig":
         """Configuration with realistic market conditions"""
         return cls(
             enable_fees=True,
@@ -180,4 +180,3 @@ class PaperTradingConfig:
             enforce_market_hours=True,
             check_sufficient_funds=True,
         )
-

@@ -59,7 +59,7 @@ export function ServiceTasksTable({ tasks, isLoading }: ServiceTasksTableProps) 
 										</pre>
 									</details>
 								) : (
-									<span className="text-[var(--muted)]">—</span>
+									<span className="text-[var(--muted)]">-</span>
 								)}
 							</td>
 						</tr>

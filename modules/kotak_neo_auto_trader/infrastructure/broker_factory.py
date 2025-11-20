@@ -8,6 +8,7 @@ from enum import Enum
 
 import sys
 from pathlib import Path
+
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger
@@ -19,6 +20,7 @@ from .broker_adapters import KotakNeoBrokerAdapter, PaperTradingBrokerAdapter
 
 class BrokerType(Enum):
     """Supported broker types"""
+
     KOTAK_NEO = "kotak_neo"
     PAPER_TRADING = "paper_trading"
 
@@ -33,9 +35,7 @@ class BrokerFactory:
 
     @staticmethod
     def create_broker(
-        broker_type: str,
-        auth_handler=None,
-        paper_config: Optional[PaperTradingConfig] = None
+        broker_type: str, auth_handler=None, paper_config: Optional[PaperTradingConfig] = None
     ) -> IBrokerGateway:
         """
         Create a broker adapter
@@ -74,22 +74,20 @@ class BrokerFactory:
 
         else:
             raise ValueError(
-                f"Unknown broker type: {broker_type}. "
-                f"Supported: 'paper_trading', 'kotak_neo'"
+                f"Unknown broker type: {broker_type}. " f"Supported: 'paper_trading', 'kotak_neo'"
             )
 
     @staticmethod
     def _create_paper_trading_broker(
-        config: Optional[PaperTradingConfig] = None
+        config: Optional[PaperTradingConfig] = None,
     ) -> PaperTradingBrokerAdapter:
         """Create paper trading broker"""
         if config is None:
             config = PaperTradingConfig.default()
-            logger.info("📋 Using default paper trading configuration")
+            logger.info("? Using default paper trading configuration")
 
         logger.info(
-            f"🎯 Creating paper trading broker "
-            f"(Capital: ₹{config.initial_capital:,.2f})"
+            f"? Creating paper trading broker " f"(Capital: Rs {config.initial_capital:,.2f})"
         )
 
         return PaperTradingBrokerAdapter(config)
@@ -100,7 +98,7 @@ class BrokerFactory:
         if auth_handler is None:
             raise ValueError("auth_handler is required for Kotak Neo broker")
 
-        logger.info("🎯 Creating Kotak Neo broker")
+        logger.info("? Creating Kotak Neo broker")
         return KotakNeoBrokerAdapter(auth_handler)
 
     @staticmethod
@@ -125,18 +123,10 @@ class BrokerFactory:
 
         if broker_type == "paper_trading":
             # Load config from environment
-            initial_capital = float(
-                os.getenv("PAPER_TRADING_CAPITAL", "100000.0")
-            )
-            storage_path = os.getenv(
-                "PAPER_TRADING_PATH",
-                "paper_trading/data"
-            )
+            initial_capital = float(os.getenv("PAPER_TRADING_CAPITAL", "100000.0"))
+            storage_path = os.getenv("PAPER_TRADING_PATH", "paper_trading/data")
 
-            config = PaperTradingConfig(
-                initial_capital=initial_capital,
-                storage_path=storage_path
-            )
+            config = PaperTradingConfig(initial_capital=initial_capital, storage_path=storage_path)
 
             return BrokerFactory.create_broker("paper_trading", paper_config=config)
 
@@ -148,10 +138,7 @@ class BrokerFactory:
             )
 
 
-def create_paper_broker(
-    initial_capital: float = 100000.0,
-    **kwargs
-) -> PaperTradingBrokerAdapter:
+def create_paper_broker(initial_capital: float = 100000.0, **kwargs) -> PaperTradingBrokerAdapter:
     """
     Convenience function to create paper trading broker
 
@@ -190,4 +177,3 @@ def create_live_broker(auth_handler) -> KotakNeoBrokerAdapter:
         broker = create_live_broker(auth)
     """
     return KotakNeoBrokerAdapter(auth_handler)
-

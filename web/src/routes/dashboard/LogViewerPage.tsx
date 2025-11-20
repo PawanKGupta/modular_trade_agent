@@ -241,7 +241,7 @@ export function LogViewerPage() {
 					<div className="flex items-center justify-between flex-wrap gap-2">
 						<h2 className="text-lg font-semibold">Error Logs</h2>
 						<div className="text-xs text-[var(--muted)]">
-							Click “Show Details” to inspect tracebacks and resolution notes.
+							Click "Show Details" to inspect tracebacks and resolution notes.
 						</div>
 					</div>
 
@@ -268,7 +268,7 @@ export function LogViewerPage() {
 									setErrorFilters((prev) => ({ ...prev, search: event.target.value }))
 								}
 								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
-								placeholder="message contains…"
+								placeholder="message contains..."
 							/>
 						</label>
 						<label className="flex flex-col gap-1">

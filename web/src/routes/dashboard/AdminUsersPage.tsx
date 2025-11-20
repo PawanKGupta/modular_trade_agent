@@ -38,7 +38,7 @@ export function AdminUsersPage() {
 	});
 
 	useEffect(() => {
-		document.title = 'Admin • Users';
+		document.title = 'Admin - Users';
 	}, []);
 
 	if (!isAdmin) {

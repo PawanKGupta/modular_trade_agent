@@ -35,7 +35,7 @@ export function MLModelsTable({ models, isLoading, onActivate, activatingModelId
 							<td className="py-2 pr-4">{model.model_type}</td>
 							<td className="py-2 pr-4 font-mono text-xs">{model.version}</td>
 							<td className="py-2 pr-4">
-								{model.accuracy !== null ? `${(model.accuracy * 100).toFixed(2)}%` : '—'}
+								{model.accuracy !== null ? `${(model.accuracy * 100).toFixed(2)}%` : '-'}
 							</td>
 							<td className="py-2 pr-4">
 								{model.is_active ? (

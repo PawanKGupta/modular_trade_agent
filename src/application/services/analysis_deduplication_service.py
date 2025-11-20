@@ -32,9 +32,9 @@ class AnalysisDeduplicationService:
         Get the current trading day window (9AM to next day 9AM, excluding weekends).
 
         Trading day logic:
-        - If current time >= 9AM today → trading day = today
-        - If current time < 9AM today → trading day = previous trading day (skip weekends)
-        - If today is weekend → trading day = last Friday
+        - If current time >= 9AM today -> trading day = today
+        - If current time < 9AM today -> trading day = previous trading day (skip weekends)
+        - If today is weekend -> trading day = last Friday
 
         Returns:
             (window_start: datetime, window_end: datetime)
@@ -90,7 +90,7 @@ class AnalysisDeduplicationService:
         - Weekday: Block between 9AM-4PM (during trading hours), allow before 9AM or after 4PM
 
         Examples:
-        - Run at 4PM today → 9AM tomorrow: Stocks are part of today (allowed)
+        - Run at 4PM today -> 9AM tomorrow: Stocks are part of today (allowed)
         - Run between 9AM-4PM today: Skip update (during trading hours)
         - Run before 9AM: Allow (can update for previous day)
 

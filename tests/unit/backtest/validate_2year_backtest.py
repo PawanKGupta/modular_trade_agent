@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 # Add project root to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from backtest.backtest_engine import BacktestEngine
 from backtest.backtest_config import BacktestConfig
@@ -38,19 +38,19 @@ def validate_ema_warmup(engine: BacktestEngine, config: BacktestConfig) -> dict:
 
     # Check first backtest row
     first_row = engine.data.iloc[0]
-    first_ema200 = first_row['EMA200']
-    first_close = first_row['Close']
-    first_rsi = first_row.get('RSI10', None)
+    first_ema200 = first_row["EMA200"]
+    first_close = first_row["Close"]
+    first_rsi = first_row.get("RSI10", None)
 
     validation = {
-        'warmup_periods': warmup_periods,
-        'warmup_required': ema_warmup_required,
-        'sufficient_warmup': warmup_periods >= ema_warmup_required,
-        'ema200_at_start': first_ema200,
-        'close_at_start': first_close,
-        'rsi_at_start': first_rsi,
-        'ema_is_nan': pd.isna(first_ema200),
-        'ema_close_ratio': first_ema200 / first_close if first_close > 0 else None,
+        "warmup_periods": warmup_periods,
+        "warmup_required": ema_warmup_required,
+        "sufficient_warmup": warmup_periods >= ema_warmup_required,
+        "ema200_at_start": first_ema200,
+        "close_at_start": first_close,
+        "rsi_at_start": first_rsi,
+        "ema_is_nan": pd.isna(first_ema200),
+        "ema_close_ratio": first_ema200 / first_close if first_close > 0 else None,
     }
 
     return validation
@@ -66,8 +66,8 @@ def test_backtest_engine_2years(symbol: str, years: int = 2):
     end_date = datetime.now()
     start_date = end_date - timedelta(days=years * 365)
 
-    start_str = start_date.strftime('%Y-%m-%d')
-    end_str = end_date.strftime('%Y-%m-%d')
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
 
     print(f"\nBacktest Period: {start_str} to {end_str}")
     print(f"Symbol: {symbol}")
@@ -81,33 +81,32 @@ def test_backtest_engine_2years(symbol: str, years: int = 2):
         print()
 
         engine = BacktestEngine(
-            symbol=symbol,
-            start_date=start_str,
-            end_date=end_str,
-            config=config
+            symbol=symbol, start_date=start_str, end_date=end_str, config=config
         )
 
         # Validate EMA warm-up
         print("Validating EMA Warm-up...")
         validation = validate_ema_warmup(engine, config)
 
-        print(f"  Warm-up periods: {validation['warmup_periods']} (required: {validation['warmup_required']})")
-        if validation['sufficient_warmup']:
-            print("  ✓ Sufficient warm-up periods")
+        print(
+            f"  Warm-up periods: {validation['warmup_periods']} (required: {validation['warmup_required']})"
+        )
+        if validation["sufficient_warmup"]:
+            print("  [OK] Sufficient warm-up periods")
         else:
-            print(f"  ⚠️ Insufficient warm-up periods!")
+            print(f"  [WARN]? Insufficient warm-up periods!")
 
         print(f"  EMA200 at start: {validation['ema200_at_start']:.2f}")
         print(f"  Close at start: {validation['close_at_start']:.2f}")
-        if validation['ema_close_ratio']:
+        if validation["ema_close_ratio"]:
             print(f"  EMA/Close ratio: {validation['ema_close_ratio']:.3f}")
 
-        if validation['ema_is_nan']:
-            print("  ❌ ERROR: EMA200 is NaN at backtest start!")
+        if validation["ema_is_nan"]:
+            print("  ? ERROR: EMA200 is NaN at backtest start!")
             return False
 
-        if not validation['sufficient_warmup']:
-            print("  ⚠️ WARNING: Insufficient warm-up - EMA may have lag")
+        if not validation["sufficient_warmup"]:
+            print("  [WARN]? WARNING: Insufficient warm-up - EMA may have lag")
 
         print()
 
@@ -122,14 +121,14 @@ def test_backtest_engine_2years(symbol: str, years: int = 2):
         print(f"Symbol: {results.get('symbol', symbol)}")
         print(f"Period: {results.get('period', f'{start_str} to {end_str}')}")
         print(f"Total Trades: {results.get('total_trades', 0)}")
-        print(f"Total Invested: ₹{results.get('total_invested', 0):,.0f}")
-        print(f"Total P&L: ₹{results.get('total_pnl', 0):,.2f}")
+        print(f"Total Invested: Rs {results.get('total_invested', 0):,.0f}")
+        print(f"Total P&L: Rs {results.get('total_pnl', 0):,.2f}")
         print(f"Total Return: {results.get('total_return_pct', 0):+.2f}%")
         print(f"Win Rate: {results.get('win_rate', 0):.1f}%")
         print(f"Winning Trades: {results.get('winning_trades', 0)}")
         print(f"Losing Trades: {results.get('losing_trades', 0)}")
 
-        if results.get('buy_hold_return') is not None:
+        if results.get("buy_hold_return") is not None:
             print(f"Buy & Hold Return: {results['buy_hold_return']:+.2f}%")
             print(f"Strategy vs B&H: {results.get('strategy_vs_buy_hold', 0):+.2f}%")
 
@@ -140,26 +139,28 @@ def test_backtest_engine_2years(symbol: str, years: int = 2):
         print("-" * 80)
         all_passed = True
 
-        if validation['sufficient_warmup']:
-            print("✓ EMA Warm-up: PASSED")
+        if validation["sufficient_warmup"]:
+            print("[OK] EMA Warm-up: PASSED")
         else:
-            print("⚠ EMA Warm-up: WARNING (insufficient but may still work)")
+            print("[WARN] EMA Warm-up: WARNING (insufficient but may still work)")
 
-        if not validation['ema_is_nan']:
-            print("✓ EMA200 Calculation: PASSED")
+        if not validation["ema_is_nan"]:
+            print("[OK] EMA200 Calculation: PASSED")
         else:
-            print("❌ EMA200 Calculation: FAILED (NaN at start)")
+            print("? EMA200 Calculation: FAILED (NaN at start)")
             all_passed = False
 
-        if 0.5 < validation['ema_close_ratio'] < 2.0:
-            print("✓ EMA200 Reasonableness: PASSED")
+        if 0.5 < validation["ema_close_ratio"] < 2.0:
+            print("[OK] EMA200 Reasonableness: PASSED")
         else:
-            print(f"⚠ EMA200 Reasonableness: WARNING (ratio: {validation['ema_close_ratio']:.3f})")
+            print(
+                f"[WARN] EMA200 Reasonableness: WARNING (ratio: {validation['ema_close_ratio']:.3f})"
+            )
 
-        if results.get('total_trades', 0) >= 0:
-            print("✓ Backtest Execution: PASSED")
+        if results.get("total_trades", 0) >= 0:
+            print("[OK] Backtest Execution: PASSED")
         else:
-            print("❌ Backtest Execution: FAILED")
+            print("? Backtest Execution: FAILED")
             all_passed = False
 
         print("-" * 80)
@@ -167,8 +168,9 @@ def test_backtest_engine_2years(symbol: str, years: int = 2):
         return all_passed
 
     except Exception as e:
-        print(f"\n❌ ERROR: {e}")
+        print(f"\n? ERROR: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -183,8 +185,8 @@ def test_integrated_backtest_2years(symbol: str, years: int = 2):
     end_date = datetime.now()
     start_date = end_date - timedelta(days=years * 365)
 
-    start_str = start_date.strftime('%Y-%m-%d')
-    end_str = end_date.strftime('%Y-%m-%d')
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
 
     print(f"\nBacktest Period: {start_str} to {end_str}")
     print(f"Symbol: {symbol}")
@@ -197,11 +199,11 @@ def test_integrated_backtest_2years(symbol: str, years: int = 2):
             stock_name=symbol,
             date_range=(start_str, end_str),
             capital_per_position=100000,
-            skip_trade_agent_validation=False
+            skip_trade_agent_validation=False,
         )
 
-        if 'error' in results:
-            print(f"❌ ERROR: {results['error']}")
+        if "error" in results:
+            print(f"? ERROR: {results['error']}")
             return False
 
         # Display results
@@ -209,47 +211,44 @@ def test_integrated_backtest_2years(symbol: str, years: int = 2):
         print("BACKTEST RESULTS")
         print("=" * 80)
 
-        if 'executed_trades' in results:
+        if "executed_trades" in results:
             print(f"Executed Trades: {results['executed_trades']}")
-        if 'total_return_pct' in results:
+        if "total_return_pct" in results:
             print(f"Total Return: {results['total_return_pct']:+.2f}%")
-        if 'win_rate' in results:
+        if "win_rate" in results:
             print(f"Win Rate: {results['win_rate']:.1f}%")
-        if 'positions' in results:
+        if "positions" in results:
             print(f"Total Positions: {len(results['positions'])}")
 
         print("=" * 80)
-        print("✓ Integrated Backtest: PASSED")
+        print("[OK] Integrated Backtest: PASSED")
 
         return True
 
     except Exception as e:
-        print(f"\n❌ ERROR: {e}")
+        print(f"\n? ERROR: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Validate 2-year backtest with EMA warm-up validation'
+        description="Validate 2-year backtest with EMA warm-up validation"
     )
     parser.add_argument(
-        '--symbol', '-s',
-        default='RELIANCE.NS',
-        help='Stock symbol (default: RELIANCE.NS)'
+        "--symbol", "-s", default="RELIANCE.NS", help="Stock symbol (default: RELIANCE.NS)"
     )
     parser.add_argument(
-        '--years', '-y',
-        type=int,
-        default=2,
-        help='Number of years for backtest (default: 2)'
+        "--years", "-y", type=int, default=2, help="Number of years for backtest (default: 2)"
     )
     parser.add_argument(
-        '--engine', '-e',
-        choices=['backtest_engine', 'integrated', 'both'],
-        default='backtest_engine',
-        help='Which backtest engine to test (default: backtest_engine)'
+        "--engine",
+        "-e",
+        choices=["backtest_engine", "integrated", "both"],
+        default="backtest_engine",
+        help="Which backtest engine to test (default: backtest_engine)",
     )
 
     args = parser.parse_args()
@@ -264,20 +263,20 @@ def main():
 
     results = []
 
-    if args.engine in ['backtest_engine', 'both']:
+    if args.engine in ["backtest_engine", "both"]:
         result = test_backtest_engine_2years(args.symbol, args.years)
-        results.append(('BacktestEngine', result))
+        results.append(("BacktestEngine", result))
 
-    if args.engine in ['integrated', 'both']:
+    if args.engine in ["integrated", "both"]:
         result = test_integrated_backtest_2years(args.symbol, args.years)
-        results.append(('Integrated Backtest', result))
+        results.append(("Integrated Backtest", result))
 
     # Final summary
     print("\n" + "=" * 80)
     print("FINAL SUMMARY")
     print("=" * 80)
     for name, passed in results:
-        status = "✓ PASSED" if passed else "❌ FAILED"
+        status = "[OK] PASSED" if passed else "? FAILED"
         print(f"{name}: {status}")
     print("=" * 80)
 
@@ -286,6 +285,5 @@ def main():
     sys.exit(0 if all_passed else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-

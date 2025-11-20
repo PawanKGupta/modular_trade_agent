@@ -9,6 +9,7 @@ from threading import Lock
 
 import sys
 from pathlib import Path
+
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger
@@ -37,11 +38,7 @@ class PortfolioManager:
     # ===== HOLDING MANAGEMENT =====
 
     def add_holding(
-        self,
-        symbol: str,
-        quantity: int,
-        price: Money,
-        exchange: Exchange = Exchange.NSE
+        self, symbol: str, quantity: int, price: Money, exchange: Exchange = Exchange.NSE
     ) -> Holding:
         """
         Add or update a holding (for buy orders)
@@ -61,8 +58,8 @@ class PortfolioManager:
                 holding = self._holdings[symbol]
                 holding.add_quantity(quantity, price)
                 logger.info(
-                    f"📊 Updated holding {symbol}: "
-                    f"{holding.quantity} @ avg ₹{holding.average_price.amount:.2f}"
+                    f"? Updated holding {symbol}: "
+                    f"{holding.quantity} @ avg Rs {holding.average_price.amount:.2f}"
                 )
             else:
                 # Create new holding
@@ -72,21 +69,15 @@ class PortfolioManager:
                     quantity=quantity,
                     average_price=price,
                     current_price=price,
-                    last_updated=datetime.now()
+                    last_updated=datetime.now(),
                 )
                 self._holdings[symbol] = holding
-                logger.info(
-                    f"📊 New holding {symbol}: "
-                    f"{quantity} @ ₹{price.amount:.2f}"
-                )
+                logger.info(f"? New holding {symbol}: " f"{quantity} @ Rs {price.amount:.2f}")
 
             return holding
 
     def reduce_holding(
-        self,
-        symbol: str,
-        quantity: int,
-        sale_price: Money
+        self, symbol: str, quantity: int, sale_price: Money
     ) -> tuple[Optional[Holding], Money]:
         """
         Reduce holding quantity (for sell orders)
@@ -123,15 +114,15 @@ class PortfolioManager:
             holding.reduce_quantity(quantity)
 
             logger.info(
-                f"📊 Reduced holding {symbol}: "
+                f"? Reduced holding {symbol}: "
                 f"{holding.quantity} remaining, "
-                f"Realized P&L: ₹{realized_pnl.amount:.2f}"
+                f"Realized P&L: Rs {realized_pnl.amount:.2f}"
             )
 
             # Remove if quantity is zero
             if holding.quantity == 0:
                 del self._holdings[symbol]
-                logger.info(f"📊 Removed holding {symbol} (quantity = 0)")
+                logger.info(f"? Removed holding {symbol} (quantity = 0)")
                 return None, realized_pnl
 
             return holding, realized_pnl
@@ -234,8 +225,7 @@ class PortfolioManager:
 
             if holding.quantity < quantity:
                 return False, (
-                    f"Insufficient quantity: "
-                    f"Have {holding.quantity}, trying to sell {quantity}"
+                    f"Insufficient quantity: " f"Have {holding.quantity}, trying to sell {quantity}"
                 )
 
             return True, ""
@@ -247,16 +237,18 @@ class PortfolioManager:
         with self._lock:
             holdings_list = []
             for holding in self._holdings.values():
-                holdings_list.append({
-                    "symbol": holding.symbol,
-                    "quantity": holding.quantity,
-                    "average_price": holding.average_price.amount,
-                    "current_price": holding.current_price.amount,
-                    "cost_basis": holding.calculate_cost_basis().amount,
-                    "market_value": holding.calculate_market_value().amount,
-                    "pnl": holding.calculate_pnl().amount,
-                    "pnl_percentage": holding.calculate_pnl_percentage(),
-                })
+                holdings_list.append(
+                    {
+                        "symbol": holding.symbol,
+                        "quantity": holding.quantity,
+                        "average_price": holding.average_price.amount,
+                        "current_price": holding.current_price.amount,
+                        "cost_basis": holding.calculate_cost_basis().amount,
+                        "market_value": holding.calculate_market_value().amount,
+                        "pnl": holding.calculate_pnl().amount,
+                        "pnl_percentage": holding.calculate_pnl_percentage(),
+                    }
+                )
 
             return {
                 "total_holdings": len(self._holdings),
@@ -278,5 +270,4 @@ class PortfolioManager:
         with self._lock:
             self._holdings.clear()
             self._realized_pnl = Money.zero()
-            logger.info("📊 Portfolio reset")
-
+            logger.info("? Portfolio reset")

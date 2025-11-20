@@ -30,9 +30,9 @@ export function AppShell() {
 					<Link to="/dashboard/settings" className="text-[var(--text)] hover:text-[var(--accent)]">Settings</Link>
 					{isAdmin && (
 						<>
-							<Link to="/dashboard/admin/users" className="text-[var(--text)] hover:text-[var(--accent)]">Admin • Users</Link>
-							<Link to="/dashboard/admin/ml" className="text-[var(--text)] hover:text-[var(--accent)]">Admin • ML Training</Link>
-							<Link to="/dashboard/admin/schedules" className="text-[var(--text)] hover:text-[var(--accent)]">Admin • Schedules</Link>
+							<Link to="/dashboard/admin/users" className="text-[var(--text)] hover:text-[var(--accent)]">Admin - Users</Link>
+							<Link to="/dashboard/admin/ml" className="text-[var(--text)] hover:text-[var(--accent)]">Admin - ML Training</Link>
+							<Link to="/dashboard/admin/schedules" className="text-[var(--text)] hover:text-[var(--accent)]">Admin - Schedules</Link>
 						</>
 					)}
 				</nav>

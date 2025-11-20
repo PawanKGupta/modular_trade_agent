@@ -47,7 +47,7 @@ export function MLTrainingJobsTable({ jobs, isLoading }: Props) {
 								</span>
 							</td>
 							<td className="py-2 pr-4">
-								{job.accuracy !== null ? `${(job.accuracy * 100).toFixed(2)}%` : '—'}
+								{job.accuracy !== null ? `${(job.accuracy * 100).toFixed(2)}%` : '-'}
 							</td>
 							<td className="py-2 text-[var(--muted)]">
 								{new Date(job.started_at).toLocaleString()}

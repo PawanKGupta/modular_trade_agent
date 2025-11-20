@@ -221,11 +221,11 @@ export function IndividualServiceControls({
 									? 'Running'
 									: 'Skipped'}
 						{typeof service.last_execution_duration === 'number' &&
-							` • ${formatDuration(service.last_execution_duration)}`}
+							` - ${formatDuration(service.last_execution_duration)}`}
 					</div>
 					{lastSummary && (
 						<div className="text-xs text-[var(--muted)] mt-1">
-							Processed {lastSummary.processed ?? 0} • Inserted {lastSummary.inserted ?? 0} • Updated{' '}
+							Processed {lastSummary.processed ?? 0} - Inserted {lastSummary.inserted ?? 0} - Updated{' '}
 							{lastSummary.updated ?? 0}
 							{lastSummary.error && <span className="text-red-400 ml-1">({lastSummary.error})</span>}
 						</div>
@@ -236,7 +236,7 @@ export function IndividualServiceControls({
 			{/* Conflict Warning */}
 			{showConflictWarning && conflictMessage && (
 				<div className="mb-3 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-sm text-yellow-400">
-					⚠️ {conflictMessage}
+					[WARN]? {conflictMessage}
 				</div>
 			)}
 

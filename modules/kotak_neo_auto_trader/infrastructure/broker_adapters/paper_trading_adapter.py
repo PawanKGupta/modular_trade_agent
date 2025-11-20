@@ -9,13 +9,20 @@ import uuid
 
 import sys
 from pathlib import Path
+
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger
 
 from ...domain import (
-    Order, Holding, Money, IBrokerGateway,
-    OrderType, TransactionType, OrderStatus, Exchange
+    Order,
+    Holding,
+    Money,
+    IBrokerGateway,
+    OrderType,
+    TransactionType,
+    OrderStatus,
+    Exchange,
 )
 from ...config.paper_trading_config import PaperTradingConfig
 from ..persistence import PaperTradeStore
@@ -36,9 +43,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
     """
 
     def __init__(
-        self,
-        config: Optional[PaperTradingConfig] = None,
-        storage_path: Optional[str] = None
+        self, config: Optional[PaperTradingConfig] = None, storage_path: Optional[str] = None
     ):
         """
         Initialize paper trading adapter
@@ -57,7 +62,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         # Components
         self.price_provider = PriceProvider(
             mode=self.config.price_source,
-            cache_duration_seconds=self.config.price_cache_duration_seconds
+            cache_duration_seconds=self.config.price_cache_duration_seconds,
         )
         self.order_simulator = OrderSimulator(self.config, self.price_provider)
         self.portfolio = PortfolioManager()
@@ -76,18 +81,15 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         if account is None:
             # First time - initialize account
             logger.info(
-                f"🆕 Initializing new paper trading account with "
-                f"₹{self.config.initial_capital:,.2f}"
+                f"? Initializing new paper trading account with "
+                f"Rs {self.config.initial_capital:,.2f}"
             )
-            self.store.initialize_account(
-                self.config.initial_capital,
-                config=self.config.to_dict()
-            )
+            self.store.initialize_account(self.config.initial_capital, config=self.config.to_dict())
         else:
             # Restore existing state
             logger.info(
-                f"♻️ Restoring paper trading account "
-                f"(Balance: ₹{account['available_cash']:,.2f})"
+                f"?? Restoring paper trading account "
+                f"(Balance: Rs {account['available_cash']:,.2f})"
             )
             self._restore_state()
 
@@ -102,24 +104,24 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 quantity=holding_data["quantity"],
                 average_price=Money(holding_data["average_price"]),
                 current_price=Money(holding_data["current_price"]),
-                last_updated=datetime.fromisoformat(holding_data["last_updated"])
+                last_updated=datetime.fromisoformat(holding_data["last_updated"]),
             )
             self.portfolio._holdings[symbol] = holding
 
-        logger.info(f"♻️ Restored {len(holdings)} holdings")
+        logger.info(f"?? Restored {len(holdings)} holdings")
 
     # ===== CONNECTION MANAGEMENT =====
 
     def connect(self) -> bool:
         """Establish connection (simulated)"""
         if self._connected:
-            logger.info("✅ Already connected to paper trading")
+            logger.info("? Already connected to paper trading")
             return True
 
         self._connected = True
-        logger.info("✅ Connected to paper trading system")
-        logger.info(f"💰 Available balance: ₹{self.get_available_balance().amount:,.2f}")
-        logger.info(f"📊 Holdings: {len(self.portfolio.get_all_holdings())}")
+        logger.info("? Connected to paper trading system")
+        logger.info(f"? Available balance: Rs {self.get_available_balance().amount:,.2f}")
+        logger.info(f"? Holdings: {len(self.portfolio.get_all_holdings())}")
 
         return True
 
@@ -131,7 +133,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         # Save state before disconnect
         self.store.save_all()
         self._connected = False
-        logger.info("👋 Disconnected from paper trading system")
+        logger.info("? Disconnected from paper trading system")
 
         return True
 
@@ -163,7 +165,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         order_id = self._generate_order_id()
 
         logger.info(
-            f"📝 Placing order: {order.transaction_type.value} "
+            f"? Placing order: {order.transaction_type.value} "
             f"{order.quantity} {order.symbol} @ "
             f"{order.order_type.value}"
         )
@@ -183,7 +185,8 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         except Exception as e:
             import traceback
-            logger.error(f"❌ Order placement failed: {e}")
+
+            logger.error(f"? Order placement failed: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise RuntimeError(f"Order placement failed: {e}")
 
@@ -203,9 +206,17 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             # Estimate order value
             # Try to get original ticker from order metadata (for .NS suffix)
             price_symbol = order.symbol
-            if hasattr(order, "metadata") and order.metadata and "original_ticker" in order.metadata:
+            if (
+                hasattr(order, "metadata")
+                and order.metadata
+                and "original_ticker" in order.metadata
+            ):
                 price_symbol = order.metadata["original_ticker"]
-            elif hasattr(order, "_metadata") and order._metadata and "original_ticker" in order._metadata:
+            elif (
+                hasattr(order, "_metadata")
+                and order._metadata
+                and "original_ticker" in order._metadata
+            ):
                 price_symbol = order._metadata["original_ticker"]
             else:
                 # Try with .NS suffix if not present
@@ -222,12 +233,11 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
             # Validate order value
             is_valid, error = self.order_simulator.validate_order_value(
-                estimated_value,
-                available_cash
+                estimated_value, available_cash
             )
 
             if not is_valid:
-                logger.warning(f"⚠️ Order validation failed: {error}")
+                logger.warning(f"[WARN]? Order validation failed: {error}")
                 order.reject(error)
                 self._save_order(order)
                 return
@@ -236,7 +246,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         if order.is_sell_order():
             can_sell, error = self.portfolio.can_sell(order.symbol, order.quantity)
             if not can_sell:
-                logger.warning(f"⚠️ Cannot sell: {error}")
+                logger.warning(f"[WARN]? Cannot sell: {error}")
                 order.reject(error)
                 self._save_order(order)
                 return
@@ -255,11 +265,11 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             self._record_transaction(order, execution_price)
 
             logger.info(
-                f"✅ Order executed: {order.symbol} "
-                f"{order.quantity} @ ₹{execution_price.amount:.2f}"
+                f"? Order executed: {order.symbol} "
+                f"{order.quantity} @ Rs {execution_price.amount:.2f}"
             )
         else:
-            logger.info(f"⏸️ Order pending: {message}")
+            logger.info(f"?? Order pending: {message}")
 
         # Save updated order
         self._save_order(order)
@@ -271,10 +281,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         if order.is_buy_order():
             # Add holding
             self.portfolio.add_holding(
-                order.symbol,
-                order.quantity,
-                execution_price,
-                order.exchange
+                order.symbol, order.quantity, execution_price, order.exchange
             )
 
             # Deduct cash
@@ -286,16 +293,14 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             self.store.update_balance(new_balance)
 
             logger.info(
-                f"💸 Deducted ₹{total_cost:.2f} (Value: ₹{order_value:.2f}, "
-                f"Charges: ₹{charges:.2f})"
+                f"? Deducted Rs {total_cost:.2f} (Value: Rs {order_value:.2f}, "
+                f"Charges: Rs {charges:.2f})"
             )
 
         else:  # SELL
             # Reduce holding
             remaining_holding, realized_pnl = self.portfolio.reduce_holding(
-                order.symbol,
-                order.quantity,
-                execution_price
+                order.symbol, order.quantity, execution_price
             )
 
             # Add cash
@@ -307,8 +312,8 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             self.store.update_balance(new_balance)
 
             logger.info(
-                f"💰 Added ₹{net_proceeds:.2f} (Value: ₹{order_value:.2f}, "
-                f"Charges: ₹{charges:.2f}, P&L: ₹{realized_pnl.amount:.2f})"
+                f"? Added Rs {net_proceeds:.2f} (Value: Rs {order_value:.2f}, "
+                f"Charges: Rs {charges:.2f}, P&L: Rs {realized_pnl.amount:.2f})"
             )
 
         # Update P&L
@@ -332,22 +337,21 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         order_dict = self.store.get_order_by_id(order_id)
         if not order_dict:
-            logger.warning(f"⚠️ Order not found: {order_id}")
+            logger.warning(f"[WARN]? Order not found: {order_id}")
             return False
 
         # Check if order can be cancelled
         status = order_dict.get("status")
         if status not in ["PENDING", "OPEN"]:
-            logger.warning(f"⚠️ Cannot cancel order in {status} status")
+            logger.warning(f"[WARN]? Cannot cancel order in {status} status")
             return False
 
         # Update order status
-        self.store.update_order(order_id, {
-            "status": "CANCELLED",
-            "cancelled_at": datetime.now().isoformat()
-        })
+        self.store.update_order(
+            order_id, {"status": "CANCELLED", "cancelled_at": datetime.now().isoformat()}
+        )
 
-        logger.info(f"🚫 Cancelled order: {order_id}")
+        logger.info(f"? Cancelled order: {order_id}")
         return True
 
     def get_order(self, order_id: str) -> Optional[Order]:
@@ -476,13 +480,13 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         # Convert price to float for JSON serialization
         if order_dict.get("price"):
             price_str = str(order_dict["price"])
-            price_clean = price_str.replace("₹", "").replace(",", "").strip()
+            price_clean = price_str.replace("Rs ", "").replace(",", "").strip()
             order_dict["price"] = float(price_clean) if price_clean else None
 
         # Convert executed_price to float
         if order_dict.get("executed_price"):
             exec_price_str = str(order_dict["executed_price"])
-            exec_price_clean = exec_price_str.replace("₹", "").replace(",", "").strip()
+            exec_price_clean = exec_price_str.replace("Rs ", "").replace(",", "").strip()
             order_dict["executed_price"] = float(exec_price_clean) if exec_price_clean else None
 
         # Check if order exists
@@ -505,8 +509,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             "price": float(execution_price.amount),
             "order_value": float(execution_price.amount) * order.quantity,
             "charges": self.order_simulator.calculate_charges(
-                float(execution_price.amount) * order.quantity,
-                order.is_buy_order()
+                float(execution_price.amount) * order.quantity, order.is_buy_order()
             ),
             "timestamp": datetime.now().isoformat(),
         }
@@ -520,9 +523,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         total_pnl = realized_pnl + unrealized_pnl
 
         self.store.update_pnl(
-            float(total_pnl.amount),
-            float(realized_pnl.amount),
-            float(unrealized_pnl.amount)
+            float(total_pnl.amount), float(realized_pnl.amount), float(unrealized_pnl.amount)
         )
 
     def _persist_holdings(self) -> None:
@@ -532,11 +533,21 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         for holding in holdings:
             # Convert Money strings to float values for JSON serialization
             holding_data = holding.copy()
-            holding_data["average_price"] = float(holding["average_price"].replace("₹","").replace(",",""))
-            holding_data["current_price"] = float(holding["current_price"].replace("₹","").replace(",",""))
-            holding_data["cost_basis"] = float(holding["cost_basis"].replace("₹","").replace(",",""))
-            holding_data["market_value"] = float(holding["market_value"].replace("₹","").replace(",",""))
-            holding_data["pnl"] = float(holding["pnl"].replace("₹","").replace(",","").replace("+",""))
+            holding_data["average_price"] = float(
+                holding["average_price"].replace("Rs ", "").replace(",", "")
+            )
+            holding_data["current_price"] = float(
+                holding["current_price"].replace("Rs ", "").replace(",", "")
+            )
+            holding_data["cost_basis"] = float(
+                holding["cost_basis"].replace("Rs ", "").replace(",", "")
+            )
+            holding_data["market_value"] = float(
+                holding["market_value"].replace("Rs ", "").replace(",", "")
+            )
+            holding_data["pnl"] = float(
+                holding["pnl"].replace("Rs ", "").replace(",", "").replace("+", "")
+            )
             self.store.add_or_update_holding(holding["symbol"], holding_data)
 
     def _dict_to_order(self, order_dict: Dict) -> Order:
@@ -550,7 +561,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             else:
                 # Handle formatted string (backward compatibility)
                 price_str = str(price_val)
-                price_clean = price_str.replace("₹", "").replace(",", "").strip()
+                price_clean = price_str.replace("Rs ", "").replace(",", "").strip()
                 if price_clean:
                     price = Money(float(price_clean))
 
@@ -562,7 +573,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             price=price,
             order_id=order_dict.get("order_id"),
             status=OrderStatus[order_dict["status"]],
-            remarks=order_dict.get("remarks", "")
+            remarks=order_dict.get("remarks", ""),
         )
 
         # Restore timestamps
@@ -579,12 +590,12 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
     def reset(self) -> None:
         """Reset paper trading account (WARNING: Destructive!)"""
-        logger.warning("⚠️ Resetting paper trading account...")
+        logger.warning("[WARN]? Resetting paper trading account...")
         self.store.reset()
         self.portfolio.reset()
         self._order_counter = 0
         self._initialize()
-        logger.info("✅ Account reset complete")
+        logger.info("? Account reset complete")
 
     def get_summary(self) -> Dict:
         """Get comprehensive account summary"""
@@ -600,4 +611,3 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             "statistics": self.store.get_statistics(),
             "price_cache": self.price_provider.get_cache_info(),
         }
-

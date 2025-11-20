@@ -498,11 +498,11 @@ class KotakNeoOrders:
 
                     if rejection_reason and "reject" in status.lower():
                         logger.info(
-                            f"Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status} - Reason: {rejection_reason}"
+                            f"Order {order_id}: {symbol} {transaction_type} {quantity}@Rs {price} - Status: {status} - Reason: {rejection_reason}"
                         )
                     else:
                         logger.info(
-                            f"Order {order_id}: {symbol} {transaction_type} {quantity}@₹{price} - Status: {status}"
+                            f"Order {order_id}: {symbol} {transaction_type} {quantity}@Rs {price} - Status: {status}"
                         )
 
                     # Count by status
@@ -646,7 +646,7 @@ class KotakNeoOrders:
                 )
 
                 logger.warning(
-                    f" [{order_id}] {symbol} {order_type} {quantity}@₹{price} - {status}"
+                    f" [{order_id}] {symbol} {order_type} {quantity}@Rs {price} - {status}"
                 )
         else:
             logger.warning(" No pending orders found")

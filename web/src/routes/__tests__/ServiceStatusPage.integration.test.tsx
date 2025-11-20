@@ -78,7 +78,7 @@ describe('ServiceStatusPage Integration Tests', () => {
 
 		// Step 1: Verify initial stopped state
 		await waitFor(() => {
-			expect(screen.getByText(/● Stopped/i)).toBeInTheDocument();
+			expect(screen.getByText(/? Stopped/i)).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: /Start Service/i })).not.toBeDisabled();
 			expect(screen.getByRole('button', { name: /Stop Service/i })).toBeDisabled();
 		});
@@ -128,7 +128,7 @@ describe('ServiceStatusPage Integration Tests', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText(/● Stopped/i)).toBeInTheDocument();
+			expect(screen.getByText(/? Stopped/i)).toBeInTheDocument();
 		});
 
 		const startButton = screen.getByRole('button', { name: /Start Service/i });
@@ -165,7 +165,7 @@ describe('ServiceStatusPage Integration Tests', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText(/● Running/i)).toBeInTheDocument();
+			expect(screen.getByText(/? Running/i)).toBeInTheDocument();
 		});
 
 		const stopButton = screen.getByRole('button', { name: /Stop Service/i });
@@ -199,7 +199,7 @@ describe('ServiceStatusPage Integration Tests', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText(/● Running/i)).toBeInTheDocument();
+			expect(screen.getByText(/? Running/i)).toBeInTheDocument();
 		});
 
 		// Verify initial status fetch

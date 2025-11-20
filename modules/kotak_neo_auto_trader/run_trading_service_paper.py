@@ -37,9 +37,7 @@ class PaperTradingService:
     """
 
     def __init__(
-        self,
-        initial_capital: float = 100000.0,
-        storage_path: str = "paper_trading/unified_service"
+        self, initial_capital: float = 100000.0, storage_path: str = "paper_trading/unified_service"
     ):
         """
         Initialize paper trading service
@@ -62,10 +60,10 @@ class PaperTradingService:
 
         # Task execution flags (reset daily)
         self.tasks_completed = {
-            'analysis': False,
-            'buy_orders': False,
-            'eod_cleanup': False,
-            'premarket_retry': False,
+            "analysis": False,
+            "buy_orders": False,
+            "eod_cleanup": False,
+            "premarket_retry": False,
         }
 
     def setup_signal_handlers(self):
@@ -84,11 +82,13 @@ class PaperTradingService:
             logger.info("=" * 80)
             logger.info("PAPER TRADING SERVICE INITIALIZATION")
             logger.info("=" * 80)
-            logger.info("⚠️  PAPER TRADING MODE - NO REAL MONEY")
+            logger.info("[WARN]?  PAPER TRADING MODE - NO REAL MONEY")
             logger.info("=" * 80)
 
             # Create paper trading configuration
-            logger.info(f"Creating paper trading config (Capital: ₹{self.initial_capital:,.2f})...")
+            logger.info(
+                f"Creating paper trading config (Capital: Rs {self.initial_capital:,.2f})..."
+            )
             self.config = PaperTradingConfig(
                 initial_capital=self.initial_capital,
                 enable_slippage=True,
@@ -96,7 +96,7 @@ class PaperTradingService:
                 enforce_market_hours=True,
                 price_source="live",  # Use live prices
                 storage_path=self.storage_path,
-                auto_save=True
+                auto_save=True,
             )
 
             # Initialize paper trading broker
@@ -107,7 +107,7 @@ class PaperTradingService:
                 logger.error("Failed to connect to paper trading system")
                 return False
 
-            logger.info("✅ Paper trading broker connected")
+            logger.info("? Paper trading broker connected")
 
             # Initialize reporter
             self.reporter = PaperTradeReporter(self.broker.store)
@@ -123,6 +123,7 @@ class PaperTradingService:
         except Exception as e:
             logger.error(f"Service initialization failed: {e}")
             import traceback
+
             traceback.print_exc()
             return False
 
@@ -132,15 +133,15 @@ class PaperTradingService:
             balance = self.broker.get_available_balance()
             holdings = self.broker.get_holdings()
 
-            logger.info(f"💰 Available Balance: ₹{balance.amount:,.2f}")
-            logger.info(f"📊 Holdings: {len(holdings)}")
+            logger.info(f"? Available Balance: Rs {balance.amount:,.2f}")
+            logger.info(f"? Holdings: {len(holdings)}")
 
             if holdings:
                 for holding in holdings:
                     pnl = holding.calculate_pnl()
                     logger.info(
-                        f"  • {holding.symbol}: {holding.quantity} shares @ "
-                        f"₹{holding.average_price.amount:.2f} (P&L: ₹{pnl.amount:.2f})"
+                        f"  - {holding.symbol}: {holding.quantity} shares @ "
+                        f"Rs {holding.average_price.amount:.2f} (P&L: Rs {pnl.amount:.2f})"
                     )
         except Exception as e:
             logger.warning(f"Could not display portfolio status: {e}")
@@ -156,11 +157,11 @@ class PaperTradingService:
 
     def run_analysis(self):
         """Run market analysis (4:00 PM)"""
-        if self.tasks_completed['analysis']:
+        if self.tasks_completed["analysis"]:
             return
 
-        logger.info("📊 Running market analysis...")
-        logger.info("⚠️  Paper Trading: Analysis runs normally, orders will be simulated")
+        logger.info("? Running market analysis...")
+        logger.info("[WARN]?  Paper Trading: Analysis runs normally, orders will be simulated")
 
         # Your analysis would run here
         # Results would be used for placing paper trades
@@ -171,18 +172,18 @@ class PaperTradingService:
             logger.info("Running trade_agent.py analysis...")
             # import trade_agent
             # results = trade_agent.main(export_csv=True)
-            logger.info("✅ Analysis complete")
+            logger.info("? Analysis complete")
         except Exception as e:
             logger.error(f"Analysis failed: {e}")
 
-        self.tasks_completed['analysis'] = True
+        self.tasks_completed["analysis"] = True
 
     def place_buy_orders(self):
         """Place buy orders (4:05 PM) - paper trading version"""
-        if self.tasks_completed['buy_orders']:
+        if self.tasks_completed["buy_orders"]:
             return
 
-        logger.info("📝 Placing paper buy orders...")
+        logger.info("? Placing paper buy orders...")
 
         # This would place orders using self.broker.place_order()
         # All orders go to paper trading system
@@ -190,30 +191,30 @@ class PaperTradingService:
         try:
             # Example: Place paper trades based on analysis
             # (In reality, you'd integrate with your analysis results)
-            logger.info("⚠️  Orders would be placed to paper trading system")
-            logger.info("✅ Paper buy orders complete")
+            logger.info("[WARN]?  Orders would be placed to paper trading system")
+            logger.info("? Paper buy orders complete")
         except Exception as e:
             logger.error(f"Failed to place buy orders: {e}")
 
-        self.tasks_completed['buy_orders'] = True
+        self.tasks_completed["buy_orders"] = True
 
     def eod_cleanup(self):
         """End of day cleanup (6:00 PM)"""
-        if self.tasks_completed['eod_cleanup']:
+        if self.tasks_completed["eod_cleanup"]:
             return
 
-        logger.info("🧹 Running EOD cleanup...")
+        logger.info("? Running EOD cleanup...")
 
         # Generate daily report
         try:
-            logger.info("📊 Generating daily report...")
+            logger.info("? Generating daily report...")
             self.reporter.print_summary()
 
             # Export report
             timestamp = datetime.now().strftime("%Y%m%d")
             report_path = f"{self.storage_path}/reports/report_{timestamp}.json"
             self.reporter.export_to_json(report_path)
-            logger.info(f"📄 Report saved to: {report_path}")
+            logger.info(f"? Report saved to: {report_path}")
 
         except Exception as e:
             logger.error(f"Failed to generate report: {e}")
@@ -222,8 +223,8 @@ class PaperTradingService:
         logger.info("Resetting task flags for next trading day...")
         self.tasks_completed = {k: False for k in self.tasks_completed}
 
-        logger.info("✅ EOD cleanup complete")
-        self.tasks_completed['eod_cleanup'] = True
+        logger.info("? EOD cleanup complete")
+        self.tasks_completed["eod_cleanup"] = True
 
     def run_scheduler(self):
         """Main scheduler loop"""
@@ -276,7 +277,7 @@ class PaperTradingService:
         try:
             # Generate final report
             if self.reporter:
-                logger.info("📊 Generating final report...")
+                logger.info("? Generating final report...")
                 self.reporter.print_summary()
 
             # Disconnect broker
@@ -284,7 +285,7 @@ class PaperTradingService:
                 logger.info("Disconnecting paper trading broker...")
                 self.broker.disconnect()
 
-            logger.info("✅ Shutdown complete")
+            logger.info("? Shutdown complete")
 
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
@@ -308,6 +309,7 @@ class PaperTradingService:
         except Exception as e:
             logger.error(f"Fatal error in scheduler: {e}")
             import traceback
+
             traceback.print_exc()
         finally:
             # Always cleanup on exit
@@ -320,27 +322,20 @@ def main():
         description="Paper Trading Service - Test your strategy without real money"
     )
     parser.add_argument(
-        "--capital",
-        type=float,
-        default=100000.0,
-        help="Initial virtual capital (default: 100000)"
+        "--capital", type=float, default=100000.0, help="Initial virtual capital (default: 100000)"
     )
     parser.add_argument(
         "--storage",
         default="paper_trading/unified_service",
-        help="Storage path for paper trading data"
+        help="Storage path for paper trading data",
     )
 
     args = parser.parse_args()
 
     # Create and run service
-    service = PaperTradingService(
-        initial_capital=args.capital,
-        storage_path=args.storage
-    )
+    service = PaperTradingService(initial_capital=args.capital, storage_path=args.storage)
     service.run()
 
 
 if __name__ == "__main__":
     main()
-

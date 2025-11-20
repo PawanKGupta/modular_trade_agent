@@ -140,7 +140,7 @@ class TradingServiceTest:
                 exchanges=["NSE"],
             )
             self.scrip_master.load_scrip_master(force_download=False)
-            logger.info("✓ Scrip master loaded")
+            logger.info("[OK] Scrip master loaded")
 
             self.price_cache = LivePriceCache(
                 auth_client=self.auth.client if hasattr(self.auth, "client") else None,
@@ -151,7 +151,7 @@ class TradingServiceTest:
             )
 
             self.price_cache.start()
-            logger.info("✓ Live price cache started")
+            logger.info("[OK] Live price cache started")
 
             if self.price_cache.wait_for_connection(timeout=10):
                 logger.info("WebSocket connection established")
@@ -234,9 +234,9 @@ class TradingServiceTest:
             try:
                 self.run_premarket_retry()
                 tasks_run.append("premarket_retry")
-                logger.info("✓ Pre-market retry completed")
+                logger.info("[OK] Pre-market retry completed")
             except Exception as e:
-                logger.error(f"✗ Pre-market retry failed: {e}")
+                logger.error(f"[FAIL] Pre-market retry failed: {e}")
 
             # Wait a bit between tasks
             time.sleep(2)
@@ -249,9 +249,9 @@ class TradingServiceTest:
             try:
                 self.run_sell_monitor()
                 tasks_run.append("sell_monitor")
-                logger.info("✓ Sell monitor completed")
+                logger.info("[OK] Sell monitor completed")
             except Exception as e:
-                logger.error(f"✗ Sell monitor failed: {e}")
+                logger.error(f"[FAIL] Sell monitor failed: {e}")
 
             time.sleep(2)
 
@@ -263,9 +263,9 @@ class TradingServiceTest:
             try:
                 self.run_position_monitor()
                 tasks_run.append("position_monitor")
-                logger.info("✓ Position monitor completed")
+                logger.info("[OK] Position monitor completed")
             except Exception as e:
-                logger.error(f"✗ Position monitor failed: {e}")
+                logger.error(f"[FAIL] Position monitor failed: {e}")
 
             time.sleep(2)
 
@@ -287,9 +287,9 @@ class TradingServiceTest:
             try:
                 self.run_buy_orders()
                 tasks_run.append("buy_orders")
-                logger.info("✓ Buy orders completed")
+                logger.info("[OK] Buy orders completed")
             except Exception as e:
-                logger.error(f"✗ Buy orders failed: {e}")
+                logger.error(f"[FAIL] Buy orders failed: {e}")
 
             time.sleep(2)
 
@@ -301,9 +301,9 @@ class TradingServiceTest:
             try:
                 self.run_eod_cleanup()
                 tasks_run.append("eod_cleanup")
-                logger.info("✓ EOD cleanup completed")
+                logger.info("[OK] EOD cleanup completed")
             except Exception as e:
-                logger.error(f"✗ EOD cleanup failed: {e}")
+                logger.error(f"[FAIL] EOD cleanup failed: {e}")
 
         except Exception as e:
             logger.error(f"Error running tasks: {e}")
@@ -318,13 +318,13 @@ class TradingServiceTest:
         logger.info("=" * 80)
         logger.info(f"Tasks run: {len(tasks_run)}")
         for task in tasks_run:
-            logger.info(f"  ✓ {task}")
+            logger.info(f"  [OK] {task}")
         logger.info("")
         logger.info("This test verified:")
-        logger.info("  ✓ Service conflict detection")
-        logger.info("  ✓ Thread-safe client access")
-        logger.info("  ✓ JWT re-authentication handling")
-        logger.info("  ✓ Concurrent API calls (via SellOrderManager ThreadPoolExecutor)")
+        logger.info("  [OK] Service conflict detection")
+        logger.info("  [OK] Thread-safe client access")
+        logger.info("  [OK] JWT re-authentication handling")
+        logger.info("  [OK] Concurrent API calls (via SellOrderManager ThreadPoolExecutor)")
         logger.info("=" * 80)
 
     def run_premarket_retry(self):

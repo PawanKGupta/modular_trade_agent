@@ -7,7 +7,7 @@ type Props = {
 
 export function LogTable({ logs, isLoading }: Props) {
 	if (isLoading) {
-		return <div className="text-sm text-[var(--muted)]">Loading logs…</div>;
+		return <div className="text-sm text-[var(--muted)]">Loading logs...</div>;
 	}
 
 	if (!logs.length) {

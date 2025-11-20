@@ -129,13 +129,13 @@ export function ServiceSchedulePage() {
 				<div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
 					<div className="flex items-center justify-between">
 						<div className="text-yellow-400">
-							⚠️ Schedule changes require unified service restart to take effect.
+							[WARN]? Schedule changes require unified service restart to take effect.
 						</div>
 						<button
 							onClick={() => setShowRestartBanner(false)}
 							className="text-yellow-400 hover:text-yellow-300"
 						>
-							×
+							x
 						</button>
 					</div>
 				</div>

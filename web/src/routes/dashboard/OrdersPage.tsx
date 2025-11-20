@@ -11,7 +11,7 @@ const TABS: { key: OrderStatus; label: string }[] = [
 
 const formatPrice = (value: number | null | undefined): string => {
 	if (typeof value !== 'number' || Number.isNaN(value)) {
-		return '—';
+		return '-';
 	}
 	const truncated = Math.trunc(value * 100) / 100;
 	return truncated.toFixed(2);

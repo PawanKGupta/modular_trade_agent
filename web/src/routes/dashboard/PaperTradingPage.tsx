@@ -4,7 +4,7 @@ import { getPaperTradingPortfolio } from '@/api/paper-trading';
 import type { PaperTradingPortfolio } from '@/api/paper-trading';
 
 function formatMoney(amount: number): string {
-	return `₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+	return `Rs ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function formatPercent(value: number): string {
@@ -320,4 +320,3 @@ export function PaperTradingPage() {
 		</div>
 	);
 }
-

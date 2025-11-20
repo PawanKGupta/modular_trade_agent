@@ -44,7 +44,7 @@ class PaperTradingServiceAdapter:
             user_id: User ID for this service instance
             db_session: SQLAlchemy database session
             strategy_config: User-specific StrategyConfig (optional)
-            initial_capital: Starting virtual capital (default ₹1 lakh)
+            initial_capital: Starting virtual capital (default Rs 1 lakh)
             storage_path: Where to store paper trading data (user-specific if None)
             skip_execution_tracking: If True, skip execution tracking in wrapper
         """
@@ -92,7 +92,7 @@ class PaperTradingServiceAdapter:
             self.logger.info("PAPER TRADING SERVICE INITIALIZATION", action="initialize")
             self.logger.info("=" * 80, action="initialize")
             self.logger.info(
-                f"⚠️  PAPER TRADING MODE - NO REAL MONEY (Capital: ₹{self.initial_capital:,.2f})",
+                f"[WARN]?  PAPER TRADING MODE - NO REAL MONEY (Capital: Rs {self.initial_capital:,.2f})",
                 action="initialize",
             )
             self.logger.info("=" * 80, action="initialize")
@@ -103,13 +103,13 @@ class PaperTradingServiceAdapter:
             if self.strategy_config and hasattr(self.strategy_config, "user_capital"):
                 max_position_size = self.strategy_config.user_capital
                 self.logger.info(
-                    f"Using max_position_size from trading config: ₹{max_position_size:,.2f}",
+                    f"Using max_position_size from trading config: Rs {max_position_size:,.2f}",
                     action="initialize",
                 )
 
             self.logger.info(
-                f"Creating paper trading config (Capital: ₹{self.initial_capital:,.2f}, "
-                f"Max Position Size: ₹{max_position_size:,.2f})...",
+                f"Creating paper trading config (Capital: Rs {self.initial_capital:,.2f}, "
+                f"Max Position Size: Rs {max_position_size:,.2f})...",
                 action="initialize",
             )
             self.config = PaperTradingConfig(
@@ -131,7 +131,7 @@ class PaperTradingServiceAdapter:
                 self.logger.error("Failed to connect to paper trading system", action="initialize")
                 return False
 
-            self.logger.info("✅ Paper trading broker connected", action="initialize")
+            self.logger.info("? Paper trading broker connected", action="initialize")
 
             # Initialize reporter
             self.reporter = PaperTradeReporter(self.broker.store)
@@ -169,15 +169,15 @@ class PaperTradingServiceAdapter:
             balance = self.broker.get_available_balance()
             holdings = self.broker.get_holdings()
 
-            self.logger.info(f"💰 Available Balance: ₹{balance.amount:,.2f}", action="initialize")
-            self.logger.info(f"📊 Holdings: {len(holdings)}", action="initialize")
+            self.logger.info(f"? Available Balance: Rs {balance.amount:,.2f}", action="initialize")
+            self.logger.info(f"? Holdings: {len(holdings)}", action="initialize")
 
             if holdings:
                 for holding in holdings:
                     pnl = holding.calculate_pnl()
                     self.logger.info(
-                        f"  • {holding.symbol}: {holding.quantity} shares @ "
-                        f"₹{holding.average_price.amount:.2f} (P&L: ₹{pnl.amount:.2f})",
+                        f"  - {holding.symbol}: {holding.quantity} shares @ "
+                        f"Rs {holding.average_price.amount:.2f} (P&L: Rs {pnl.amount:.2f})",
                         action="initialize",
                     )
         except Exception as e:
@@ -404,7 +404,7 @@ class PaperTradingServiceAdapter:
             # Generate daily report
             if self.reporter:
                 try:
-                    self.logger.info("📊 Generating daily report...", action="run_eod_cleanup")
+                    self.logger.info("? Generating daily report...", action="run_eod_cleanup")
                     self.reporter.print_summary()
 
                     # Export report
@@ -414,7 +414,7 @@ class PaperTradingServiceAdapter:
                     report_path = f"{self.storage_path}/reports/report_{timestamp}.json"
                     Path(report_path).parent.mkdir(parents=True, exist_ok=True)
                     self.reporter.export_to_json(report_path)
-                    self.logger.info(f"📄 Report saved to: {report_path}", action="run_eod_cleanup")
+                    self.logger.info(f"? Report saved to: {report_path}", action="run_eod_cleanup")
                     task_context["report_path"] = report_path
                 except Exception as e:
                     self.logger.error(
@@ -703,8 +703,8 @@ class PaperTradingEngineAdapter:
                 # Limit execution_capital to max_position_size
                 if execution_capital > max_position_size:
                     self.logger.info(
-                        f"Limiting execution_capital for {rec.ticker} from ₹{execution_capital:,.0f} "
-                        f"to ₹{max_position_size:,.0f} (max position size from config)",
+                        f"Limiting execution_capital for {rec.ticker} from Rs {execution_capital:,.0f} "
+                        f"to Rs {max_position_size:,.0f} (max position size from config)",
                         action="place_new_entries",
                     )
                     execution_capital = max_position_size
@@ -721,7 +721,7 @@ class PaperTradingEngineAdapter:
                     order_value = price * qty
                     self.logger.info(
                         f"Adjusted quantity for {rec.ticker} to {qty} shares "
-                        f"(order value: ₹{order_value:,.2f})",
+                        f"(order value: Rs {order_value:,.2f})",
                         action="place_new_entries",
                     )
 
@@ -753,14 +753,14 @@ class PaperTradingEngineAdapter:
                 try:
                     order_id = self.broker.place_order(order)
                     self.logger.info(
-                        f"✅ Placed paper buy order: {rec.ticker} x {qty} @ ₹{price:.2f} "
-                        f"(Order ID: {order_id}, Capital: ₹{execution_capital:,.0f})",
+                        f"? Placed paper buy order: {rec.ticker} x {qty} @ Rs {price:.2f} "
+                        f"(Order ID: {order_id}, Capital: Rs {execution_capital:,.0f})",
                         action="place_new_entries",
                     )
                     summary["placed"] += 1
                 except Exception as order_error:
                     self.logger.error(
-                        f"❌ Failed to place order for {rec.ticker}: {order_error}",
+                        f"? Failed to place order for {rec.ticker}: {order_error}",
                         exc_info=order_error,
                         action="place_new_entries",
                     )

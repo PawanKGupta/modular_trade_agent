@@ -92,7 +92,7 @@ describe('ServiceStatusPage', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText(/● Running/i)).toBeInTheDocument();
+			expect(screen.getByText(/? Running/i)).toBeInTheDocument();
 		});
 	});
 
@@ -115,7 +115,7 @@ describe('ServiceStatusPage', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText(/● Stopped/i)).toBeInTheDocument();
+			expect(screen.getByText(/? Stopped/i)).toBeInTheDocument();
 		});
 	});
 

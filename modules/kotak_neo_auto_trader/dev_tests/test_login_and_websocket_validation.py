@@ -30,14 +30,14 @@ def main():
     print("Step 1: Authentication")
     print("-" * 80)
     auth = KotakNeoAuth(config_file)
-    print(f"✅ Auth initialized (Environment: {auth.environment})")
+    print(f"? Auth initialized (Environment: {auth.environment})")
 
     login_success = auth.login()
-    print(f"Login result: {'✅ SUCCESS' if login_success else '❌ FAILED'}")
+    print(f"Login result: {'? SUCCESS' if login_success else '? FAILED'}")
     print()
 
     if not login_success:
-        print("❌ Login failed - cannot proceed with tests")
+        print("? Login failed - cannot proceed with tests")
         return 1
 
     # Step 2: Validate Login
@@ -45,31 +45,31 @@ def main():
     print("-" * 80)
     is_valid, validation_details = auth.validate_login(test_api_call=True)
 
-    print(f"Overall Status: {'✅ VALID' if is_valid else '❌ INVALID'}")
-    print(f"  • Is Logged In: {'✅' if validation_details['is_logged_in'] else '❌'}")
-    print(f"  • Client Exists: {'✅' if validation_details['client_exists'] else '❌'}")
+    print(f"Overall Status: {'? VALID' if is_valid else '? INVALID'}")
+    print(f"  - Is Logged In: {'?' if validation_details['is_logged_in'] else '?'}")
+    print(f"  - Client Exists: {'?' if validation_details['client_exists'] else '?'}")
     print(
-        f"  • Session Token: {'✅' if validation_details['session_token_exists'] else '⚠️  Not set'}"
+        f"  - Session Token: {'?' if validation_details['session_token_exists'] else '[WARN]?  Not set'}"
     )
 
     if validation_details["api_test_passed"] is not None:
-        api_status = "✅" if validation_details["api_test_passed"] else "❌"
-        print(f"  • API Test: {api_status} - {validation_details['api_test_message']}")
+        api_status = "?" if validation_details["api_test_passed"] else "?"
+        print(f"  - API Test: {api_status} - {validation_details['api_test_message']}")
 
     if validation_details["errors"]:
-        print("\n❌ Errors:")
+        print("\n? Errors:")
         for error in validation_details["errors"]:
-            print(f"  • {error}")
+            print(f"  - {error}")
 
     if validation_details["warnings"]:
-        print("\n⚠️  Warnings:")
+        print("\n[WARN]?  Warnings:")
         for warning in validation_details["warnings"]:
-            print(f"  • {warning}")
+            print(f"  - {warning}")
 
     print()
 
     if not is_valid:
-        print("❌ Login validation failed - cannot proceed with WebSocket tests")
+        print("? Login validation failed - cannot proceed with WebSocket tests")
         return 1
 
     # Step 3: Test WebSocket Initialization
@@ -81,7 +81,7 @@ def main():
         print("Loading scrip master...")
         scrip_master = KotakNeoScripMaster(auth_client=auth.client, exchanges=["NSE"])
         scrip_master.load_scrip_master(force_download=False)
-        print("✅ Scrip master loaded")
+        print("? Scrip master loaded")
 
         # Initialize LivePriceCache
         print("Initializing LivePriceCache...")
@@ -95,14 +95,14 @@ def main():
         # Start WebSocket service
         print("Starting WebSocket service...")
         price_cache.start()
-        print("✅ WebSocket service started")
+        print("? WebSocket service started")
 
         # Wait for connection
         print("Waiting for WebSocket connection (timeout: 10s)...")
         if price_cache.wait_for_connection(timeout=10):
-            print("✅ WebSocket connection established")
+            print("? WebSocket connection established")
         else:
-            print("⚠️  WebSocket connection timeout")
+            print("[WARN]?  WebSocket connection timeout")
             print("   (This may be normal if market is closed or connection takes longer)")
 
         # Step 4: Test Symbol Subscription
@@ -128,7 +128,7 @@ def main():
             print(f"Found {len(symbols)} symbols with pending sell orders: {', '.join(symbols)}")
             print("Subscribing to WebSocket...")
             price_cache.subscribe(symbols)
-            print(f"✅ Subscribed to: {', '.join(symbols)}")
+            print(f"? Subscribed to: {', '.join(symbols)}")
 
             # Wait a moment for prices to arrive
             print("Waiting 3 seconds for initial price data...")
@@ -143,9 +143,11 @@ def main():
                 print(f"\nTesting {symbol}:")
                 ltp = price_cache.get_ltp(symbol)
                 if ltp:
-                    print(f"  ✅ WebSocket LTP: ₹{ltp:.2f}")
+                    print(f"  ? WebSocket LTP: Rs {ltp:.2f}")
                 else:
-                    print("  ⚠️  No LTP data available yet (may need more time or symbol not found)")
+                    print(
+                        "  [WARN]?  No LTP data available yet (may need more time or symbol not found)"
+                    )
 
                     # Check if symbol is in cache
                     if hasattr(price_cache, "price_cache"):
@@ -166,9 +168,9 @@ def main():
 
             ltp = price_cache.get_ltp(test_symbol)
             if ltp:
-                print(f"✅ {test_symbol} LTP from WebSocket: ₹{ltp:.2f}")
+                print(f"? {test_symbol} LTP from WebSocket: Rs {ltp:.2f}")
             else:
-                print(f"⚠️  {test_symbol} LTP not available from WebSocket")
+                print(f"[WARN]?  {test_symbol} LTP not available from WebSocket")
 
         # Step 6: Test SellOrderManager Integration
         print()
@@ -176,7 +178,7 @@ def main():
         print("-" * 80)
 
         sell_manager = SellOrderManager(auth=auth, price_manager=price_cache)
-        print("✅ SellOrderManager initialized with price_manager")
+        print("? SellOrderManager initialized with price_manager")
 
         # Test LTP retrieval through SellOrderManager
         if symbols:
@@ -190,25 +192,25 @@ def main():
 
             ltp = sell_manager.get_current_ltp(test_ticker, broker_symbol=broker_symbol)
             if ltp:
-                print(f"  ✅ LTP retrieved: ₹{ltp:.2f}")
+                print(f"  ? LTP retrieved: Rs {ltp:.2f}")
             else:
-                print("  ⚠️  LTP not available (will fallback to yfinance)")
+                print("  [WARN]?  LTP not available (will fallback to yfinance)")
 
         # Cleanup
         print()
         print("Cleaning up...")
         price_cache.stop()
-        print("✅ WebSocket stopped")
+        print("? WebSocket stopped")
 
         print()
         print("=" * 80)
-        print("✅ All tests completed")
+        print("? All tests completed")
         print("=" * 80)
 
         return 0
 
     except Exception as e:
-        print(f"\n❌ Error during WebSocket tests: {e}")
+        print(f"\n? Error during WebSocket tests: {e}")
         import traceback
 
         traceback.print_exc()
