@@ -533,3 +533,138 @@ class TestUnifiedOrderMonitor:
         assert "ORDER1" not in unified_monitor.active_buy_orders
         assert "ORDER2" not in unified_monitor.active_buy_orders
 
+    # Phase 4: OrderStateManager integration tests
+    def test_register_buy_orders_with_state_manager(self, unified_monitor):
+        """Test registering buy orders with OrderStateManager"""
+        # Setup mock state manager
+        mock_state_manager = Mock()
+        mock_state_manager.register_buy_order = Mock(return_value=True)
+        unified_monitor.sell_manager.state_manager = mock_state_manager
+
+        # Add some buy orders
+        unified_monitor.active_buy_orders["ORDER1"] = {
+            "symbol": "RELIANCE",
+            "quantity": 10.0,
+            "order_id": "ORDER1",
+            "price": 2450.0,
+            "ticker": "RELIANCE.NS",
+        }
+        unified_monitor.active_buy_orders["ORDER2"] = {
+            "symbol": "TCS",
+            "quantity": 5.0,
+            "order_id": "ORDER2",
+            "price": None,  # Market order
+            "ticker": "TCS.NS",
+        }
+
+        count = unified_monitor.register_buy_orders_with_state_manager()
+
+        assert count == 2
+        assert mock_state_manager.register_buy_order.call_count == 2
+        mock_state_manager.register_buy_order.assert_any_call(
+            symbol="RELIANCE",
+            order_id="ORDER1",
+            quantity=10.0,
+            price=2450.0,
+            ticker="RELIANCE.NS",
+        )
+        mock_state_manager.register_buy_order.assert_any_call(
+            symbol="TCS",
+            order_id="ORDER2",
+            quantity=5.0,
+            price=None,
+            ticker="TCS.NS",
+        )
+
+    def test_register_buy_orders_without_state_manager(self, unified_monitor):
+        """Test registering when OrderStateManager is not available"""
+        unified_monitor.sell_manager.state_manager = None
+
+        unified_monitor.active_buy_orders["ORDER1"] = {
+            "symbol": "RELIANCE",
+            "quantity": 10.0,
+            "order_id": "ORDER1",
+        }
+
+        count = unified_monitor.register_buy_orders_with_state_manager()
+
+        assert count == 0
+
+    def test_register_buy_orders_partial_failure(self, unified_monitor):
+        """Test registering when some orders fail"""
+        mock_state_manager = Mock()
+        mock_state_manager.register_buy_order = Mock(side_effect=[True, False, True])
+        unified_monitor.sell_manager.state_manager = mock_state_manager
+
+        unified_monitor.active_buy_orders["ORDER1"] = {"symbol": "RELIANCE", "quantity": 10.0, "order_id": "ORDER1"}
+        unified_monitor.active_buy_orders["ORDER2"] = {"symbol": "TCS", "quantity": 5.0, "order_id": "ORDER2"}
+        unified_monitor.active_buy_orders["ORDER3"] = {"symbol": "INFY", "quantity": 3.0, "order_id": "ORDER3"}
+
+        count = unified_monitor.register_buy_orders_with_state_manager()
+
+        assert count == 2  # 2 successful, 1 failed
+        assert mock_state_manager.register_buy_order.call_count == 3
+
+    def test_handle_buy_order_execution_with_state_manager(self, unified_monitor):
+        """Test buy order execution handler with OrderStateManager"""
+        mock_state_manager = Mock()
+        mock_state_manager.mark_buy_order_executed = Mock(return_value=True)
+        unified_monitor.sell_manager.state_manager = mock_state_manager
+
+        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
+
+        unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
+
+        mock_state_manager.mark_buy_order_executed.assert_called_once_with(
+            symbol="RELIANCE",
+            order_id="ORDER1",
+            execution_price=2455.50,
+            execution_qty=10,
+        )
+
+    def test_handle_buy_order_rejection_with_state_manager(self, unified_monitor):
+        """Test buy order rejection handler with OrderStateManager"""
+        mock_state_manager = Mock()
+        mock_state_manager.remove_buy_order_from_tracking = Mock(return_value=True)
+        unified_monitor.sell_manager.state_manager = mock_state_manager
+
+        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1", "rejRsn": "Insufficient balance"}
+
+        unified_monitor._handle_buy_order_rejection("ORDER1", order_info, broker_order)
+
+        mock_state_manager.remove_buy_order_from_tracking.assert_called_once_with(
+            order_id="ORDER1",
+            reason="Rejected: Insufficient balance",
+        )
+
+    def test_handle_buy_order_cancellation_with_state_manager(self, unified_monitor):
+        """Test buy order cancellation handler with OrderStateManager"""
+        mock_state_manager = Mock()
+        mock_state_manager.remove_buy_order_from_tracking = Mock(return_value=True)
+        unified_monitor.sell_manager.state_manager = mock_state_manager
+
+        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        # Note: OrderFieldExtractor.get_rejection_reason() is used for cancellation
+        # and may return None/Unknown if cancellation reason is not in expected format
+        broker_order = {"neoOrdNo": "ORDER1", "rejRsn": "User cancelled"}
+
+        unified_monitor._handle_buy_order_cancellation("ORDER1", order_info, broker_order)
+
+        # The reason will be "Cancelled: User cancelled" if extracted, or "Cancelled: Unknown" if not
+        mock_state_manager.remove_buy_order_from_tracking.assert_called_once()
+        call_args = mock_state_manager.remove_buy_order_from_tracking.call_args
+        assert call_args[1]["order_id"] == "ORDER1"
+        assert call_args[1]["reason"].startswith("Cancelled:")
+
+    def test_handle_buy_order_execution_without_state_manager(self, unified_monitor):
+        """Test buy order execution handler when OrderStateManager is not available"""
+        unified_monitor.sell_manager.state_manager = None
+
+        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
+
+        # Should not raise exception
+        unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
+

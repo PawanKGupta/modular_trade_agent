@@ -508,6 +508,23 @@ class TradingService:
                 logger.info(f"Placed {orders_placed} sell orders")
                 task_context["orders_placed"] = orders_placed
 
+                # Phase 4: Load and register buy orders at market open
+                if self.unified_order_monitor:
+                    try:
+                        logger.info("Loading pending AMO buy orders from database...")
+                        loaded_count = self.unified_order_monitor.load_pending_buy_orders()
+                        logger.info(f"Loaded {loaded_count} pending AMO buy orders")
+
+                        # Register loaded buy orders with OrderStateManager
+                        if loaded_count > 0:
+                            registered_count = (
+                                self.unified_order_monitor.register_buy_orders_with_state_manager()
+                            )
+                            task_context["buy_orders_loaded"] = loaded_count
+                            task_context["buy_orders_registered"] = registered_count
+                    except Exception as e:
+                        logger.error(f"Error loading/registering buy orders at market open: {e}")
+
                 self.tasks_completed["sell_monitor_started"] = True
 
         # Monitor and update every minute during market hours (no DB logging for continuous monitoring)
@@ -528,6 +545,16 @@ class TradingService:
                     )
             except Exception as e:
                 logger.error(f"Order monitor update failed: {e}")
+        else:
+            # Phase 4: Market closed - stop tracking buy orders (they'll be picked up next day)
+            # Only log once per minute to avoid spam
+            now = datetime.now()
+            if now.minute == 0 and now.second < 30:
+                if self.unified_order_monitor and self.unified_order_monitor.active_buy_orders:
+                    logger.info(
+                        f"Market closed - {len(self.unified_order_monitor.active_buy_orders)} "
+                        "buy orders still pending (will be tracked next market open)"
+                    )
 
     def run_position_monitor(self):
         """9:30 AM (hourly) - Monitor positions for reentry/exit signals"""

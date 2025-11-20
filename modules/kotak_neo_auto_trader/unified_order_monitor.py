@@ -124,6 +124,49 @@ class UnifiedOrderMonitor:
             logger.error(f"Error loading pending buy orders: {e}")
             return 0
 
+    def register_buy_orders_with_state_manager(self) -> int:
+        """
+        Register loaded buy orders with OrderStateManager.
+
+        Phase 4: Integration with OrderStateManager for unified state tracking.
+
+        Returns:
+            Number of buy orders registered
+        """
+        if not self.sell_manager or not hasattr(self.sell_manager, "state_manager"):
+            logger.debug("OrderStateManager not available, skipping registration")
+            return 0
+
+        state_manager = self.sell_manager.state_manager
+        if not state_manager:
+            logger.debug("OrderStateManager is None, skipping registration")
+            return 0
+
+        registered_count = 0
+        for order_id, order_info in self.active_buy_orders.items():
+            try:
+                result = state_manager.register_buy_order(
+                    symbol=order_info.get("symbol", ""),
+                    order_id=order_id,
+                    quantity=order_info.get("quantity", 0),
+                    price=order_info.get("price"),  # May be None for market orders
+                    ticker=order_info.get("ticker"),
+                )
+                if result:
+                    registered_count += 1
+            except Exception as e:
+                logger.warning(
+                    f"Failed to register buy order {order_id} with state manager: {e}"
+                )
+
+        if registered_count > 0:
+            logger.info(
+                f"Registered {registered_count}/{len(self.active_buy_orders)} "
+                "buy orders with OrderStateManager"
+            )
+
+        return registered_count
+
     def check_buy_order_status(self, broker_orders: Optional[List[Dict[str, Any]]] = None) -> Dict[str, int]:
         """
         Check status of active buy orders from broker.
@@ -256,6 +299,8 @@ class UnifiedOrderMonitor:
         """
         Handle executed buy order.
 
+        Phase 4: Integrates with OrderStateManager for unified state tracking.
+
         Args:
             order_id: Order ID
             order_info: Order tracking info
@@ -270,14 +315,31 @@ class UnifiedOrderMonitor:
             f"Price: Rs {execution_price:.2f}, Qty: {execution_qty}"
         )
 
+        # Phase 4: Update OrderStateManager if available
+        if (
+            self.sell_manager
+            and hasattr(self.sell_manager, "state_manager")
+            and self.sell_manager.state_manager
+        ):
+            try:
+                self.sell_manager.state_manager.mark_buy_order_executed(
+                    symbol=symbol,
+                    order_id=order_id,
+                    execution_price=execution_price,
+                    execution_qty=execution_qty,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update OrderStateManager for executed buy order: {e}")
+
         # Update in database (already done in _update_buy_order_status)
-        # Additional trade history updates can be added here if needed
 
     def _handle_buy_order_rejection(
         self, order_id: str, order_info: Dict[str, Any], broker_order: Dict[str, Any]
     ) -> None:
         """
         Handle rejected buy order.
+
+        Phase 4: Integrates with OrderStateManager for unified state tracking.
 
         Args:
             order_id: Order ID
@@ -292,6 +354,19 @@ class UnifiedOrderMonitor:
             f"Reason: {rejection_reason or 'Unknown'}"
         )
 
+        # Phase 4: Update OrderStateManager if available
+        if (
+            self.sell_manager
+            and hasattr(self.sell_manager, "state_manager")
+            and self.sell_manager.state_manager
+        ):
+            try:
+                self.sell_manager.state_manager.remove_buy_order_from_tracking(
+                    order_id=order_id, reason=f"Rejected: {rejection_reason or 'Unknown'}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update OrderStateManager for rejected buy order: {e}")
+
         # Status already updated in database via _update_buy_order_status
 
     def _handle_buy_order_cancellation(
@@ -299,6 +374,8 @@ class UnifiedOrderMonitor:
     ) -> None:
         """
         Handle cancelled buy order.
+
+        Phase 4: Integrates with OrderStateManager for unified state tracking.
 
         Args:
             order_id: Order ID
@@ -312,6 +389,19 @@ class UnifiedOrderMonitor:
             f"Buy order cancelled: {symbol} - Order ID {order_id}, "
             f"Reason: {cancelled_reason or 'Unknown'}"
         )
+
+        # Phase 4: Update OrderStateManager if available
+        if (
+            self.sell_manager
+            and hasattr(self.sell_manager, "state_manager")
+            and self.sell_manager.state_manager
+        ):
+            try:
+                self.sell_manager.state_manager.remove_buy_order_from_tracking(
+                    order_id=order_id, reason=f"Cancelled: {cancelled_reason or 'Unknown'}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update OrderStateManager for cancelled buy order: {e}")
 
         # Status already updated in database via _update_buy_order_status
 
