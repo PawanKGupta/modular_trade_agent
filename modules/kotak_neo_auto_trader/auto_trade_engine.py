@@ -386,19 +386,58 @@ class AutoTradeEngine:
     ) -> list[dict[str, Any]]:
         """
         Get failed orders from repository or file-based storage.
+
+        Phase 6: Updated to use first-class failure statuses (FAILED, RETRY_PENDING)
+        instead of metadata flags.
         """
         if self.orders_repo and self.user_id:
-            # Use repository-based storage
-            # Failed orders are stored in Orders with special metadata
-            all_orders = self.orders_repo.list(self.user_id)
-            failed_orders = []
-            for order in all_orders:
-                metadata = order.order_metadata or {}
-                if metadata.get("failed_order"):
-                    failed_data = metadata.get("failed_order_data", {})
-                    if failed_data:
+            # Phase 6: Use repository's get_failed_orders() method or check status
+            try:
+                failed_orders_db = self.orders_repo.get_failed_orders(self.user_id)
+                # Convert DB orders to dict format for backward compatibility
+                failed_orders = []
+                for order in failed_orders_db:
+                    failed_data = {
+                        "symbol": order.symbol,
+                        "ticker": getattr(order, "ticker", None),
+                        "close": order.price,
+                        "qty": order.quantity,
+                        "reason": order.failure_reason or "unknown",
+                        "first_failed_at": (
+                            order.first_failed_at.isoformat()
+                            if order.first_failed_at
+                            else None
+                        ),
+                        "retry_count": order.retry_count or 0,
+                        "status": order.status.value if order.status else "failed",
+                    }
+                    failed_orders.append(failed_data)
+                return failed_orders
+            except Exception as e:
+                logger.warning(f"Error getting failed orders from repository: {e}")
+                # Fallback: Check status manually
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                all_orders = self.orders_repo.list(self.user_id)
+                failed_orders = []
+                for order in all_orders:
+                    if order.status in {DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING}:
+                        failed_data = {
+                            "symbol": order.symbol,
+                            "ticker": getattr(order, "ticker", None),
+                            "close": order.price,
+                            "qty": order.quantity,
+                            "reason": order.failure_reason or "unknown",
+                            "first_failed_at": (
+                                order.first_failed_at.isoformat()
+                                if order.first_failed_at
+                                else None
+                            ),
+                            "retry_count": order.retry_count or 0,
+                            "status": order.status.value if order.status else "failed",
+                        }
                         failed_orders.append(failed_data)
-            return failed_orders
+                return failed_orders
         # Fallback to file-based storage
         elif self.history_path:
             return get_failed_orders(self.history_path, include_previous_day_before_market)
@@ -409,15 +448,16 @@ class AutoTradeEngine:
         """
         Add a failed order to retry queue (repository or file-based).
 
+        Phase 6: Updated to use first-class failure statuses (FAILED, RETRY_PENDING)
+        and store failure metadata in dedicated columns instead of JSON metadata.
+
         This method is wrapped in try-except to prevent exceptions from
         crashing the entire buy order task. Failed order tracking is
         non-critical - if it fails, we log and continue.
         """
         try:
             if self.orders_repo and self.user_id:
-                # Use repository-based storage
-                # Store failed order metadata in a special Orders entry or Activity entry
-                # For now, we'll store it in Orders with a special flag
+                # Phase 6: Use repository-based storage with first-class failure statuses
                 symbol = failed_order.get("symbol", "")
                 if not symbol:
                     return
@@ -436,71 +476,81 @@ class AutoTradeEngine:
 
                 normalized_symbol = normalize_symbol(symbol)
 
-                # Check if there's an existing FAILED ORDER for this symbol
-                # Only update existing failed orders, don't create duplicates
+                # Phase 6: Check for existing failed orders using status instead of metadata
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
                 existing_orders = self.orders_repo.list(self.user_id)
                 existing_failed_orders = [
                     o
                     for o in existing_orders
-                    if (o.order_metadata or {}).get("failed_order") is True
+                    if o.status in {DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING}
                     and normalize_symbol(o.symbol) == normalized_symbol
                 ]
 
-                # Log for debugging
-                if existing_failed_orders:
-                    logger.debug(
-                        f"Found {len(existing_failed_orders)} existing failed order(s) for {symbol} (normalized: {normalized_symbol})"
-                    )
-                else:
-                    logger.debug(
-                        f"No existing failed order found for {symbol} (normalized: {normalized_symbol}), will create new"
-                    )
+                # Determine failure reason and retry status
+                failure_reason = failed_order.get("reason", "unknown")
+                is_retryable = (
+                    failure_reason == "insufficient_balance"
+                    and not failed_order.get("non_retryable", False)
+                )
+                retry_pending = is_retryable
+
+                # Build failure reason string
+                reason_parts = [failure_reason]
+                if failed_order.get("shortfall"):
+                    reason_parts.append(f"shortfall: Rs {failed_order['shortfall']:,.0f}")
+                failure_reason_str = " - ".join(reason_parts)
 
                 if existing_failed_orders:
-                    # Update existing failed order's metadata
+                    # Phase 6: Update existing failed order using mark_failed()
                     order = existing_failed_orders[0]
-                    metadata = order.order_metadata or {}
-                    metadata.update(
-                        {
-                            "failed_order": True,
-                            "failed_order_data": failed_order,
-                            "last_retry_attempt": datetime.now().isoformat(),
-                        }
-                    )
                     try:
-                        self.orders_repo.update(order, order_metadata=metadata)
-                        logger.debug(f"Updated existing failed order for {symbol}")
+                        self.orders_repo.mark_failed(
+                            order=order,
+                            failure_reason=failure_reason_str,
+                            retry_pending=retry_pending,
+                        )
+                        logger.debug(
+                            f"Updated existing failed order for {symbol} "
+                            f"(status: {'RETRY_PENDING' if retry_pending else 'FAILED'})"
+                        )
                     except Exception as update_error:
-                        # If update fails, log and continue - failed order tracking is non-critical
                         logger.warning(
-                            f"Failed to update order metadata for failed order {symbol}: {update_error}",
+                            f"Failed to update failed order {symbol}: {update_error}",
                             exc_info=update_error,
                         )
-                        # Rollback to clear any session errors
                         if hasattr(self.orders_repo, "db"):
                             try:
                                 self.orders_repo.db.rollback()
                             except Exception:
                                 pass
                 else:
-                    # Create a placeholder order to store failed order data
+                    # Phase 6: Create new failed order with proper status
+                    # Create order first, then mark as failed
                     new_order = self.orders_repo.create_amo(
                         user_id=self.user_id,
                         symbol=symbol,
                         side="buy",
                         order_type="market",
-                        quantity=0,
-                        price=None,
+                        quantity=failed_order.get("qty", 0),
+                        price=failed_order.get("close"),
                         order_id=None,
                         broker_order_id=None,
                     )
-                    # Update metadata
-                    metadata = {"failed_order": True, "failed_order_data": failed_order}
+                    # Phase 6: Mark as failed with proper status and metadata in columns
                     try:
-                        self.orders_repo.update(new_order, order_metadata=metadata)
+                        self.orders_repo.mark_failed(
+                            order=new_order,
+                            failure_reason=failure_reason_str,
+                            retry_pending=retry_pending,
+                        )
+                        logger.debug(
+                            f"Created new failed order for {symbol} "
+                            f"(status: {'RETRY_PENDING' if retry_pending else 'FAILED'})"
+                        )
                     except Exception as update_error:
                         logger.warning(
-                            f"Failed to update metadata for new failed order {symbol}: {update_error}",
+                            f"Failed to mark new order as failed {symbol}: {update_error}",
                             exc_info=update_error,
                         )
                         if hasattr(self.orders_repo, "db"):
@@ -522,23 +572,35 @@ class AutoTradeEngine:
     def _remove_failed_order(self, symbol: str) -> None:
         """
         Remove a failed order from retry queue (repository or file-based).
+
+        Phase 6: Updated to work with first-class failure statuses (FAILED, RETRY_PENDING)
+        instead of metadata flags.
         """
         if self.orders_repo and self.user_id:
-            # Use repository-based storage
+            # Phase 6: Use repository-based storage with status-based lookup
+            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
             all_orders = self.orders_repo.list(self.user_id)
             for order in all_orders:
-                metadata = order.order_metadata or {}
-                if metadata.get("failed_order"):
-                    failed_data = metadata.get("failed_order_data", {})
-                    if failed_data.get("symbol", "").upper() == symbol.upper():
-                        # Remove failed order flag
-                        new_metadata = metadata.copy()
-                        new_metadata.pop("failed_order", None)
-                        new_metadata.pop("failed_order_data", None)
-                        # Get fresh order from database to ensure it's attached to session
-                        fresh_order = self.orders_repo.get(order.id)
-                        if fresh_order:
-                            self.orders_repo.update(fresh_order, order_metadata=new_metadata)
+                # Phase 6: Check status instead of metadata
+                if order.status in {DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING}:
+                    # Normalize symbol for comparison
+                    order_symbol = order.symbol.upper().strip()
+                    if "-" in order_symbol:
+                        order_symbol = order_symbol.split("-")[0].strip()
+                    symbol_normalized = symbol.upper().strip()
+                    if "-" in symbol_normalized:
+                        symbol_normalized = symbol_normalized.split("-")[0].strip()
+
+                    if order_symbol == symbol_normalized:
+                        # Phase 6: Mark as closed instead of removing (keep record)
+                        try:
+                            self.orders_repo.mark_cancelled(
+                                order=order, cancelled_reason="Removed from retry queue"
+                            )
+                            logger.debug(f"Removed failed order for {symbol} from retry queue")
+                        except Exception as e:
+                            logger.warning(f"Failed to remove failed order {symbol}: {e}")
                         break
         # Fallback to file-based storage
         elif self.history_path:

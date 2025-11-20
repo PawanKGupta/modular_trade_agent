@@ -37,7 +37,13 @@
   - Updates database status immediately if rejected
   - Sends Telegram notification on immediate rejection
   - Added 11 new tests covering all scenarios
-- ⏳ **Phase 6: Failure Status Promotion** - PENDING
+
+- ✅ **Phase 6: Failure Status Promotion** - COMPLETE
+  - Updated _add_failed_order() to use mark_failed() with proper status
+  - Stores failure metadata in dedicated columns (failure_reason, first_failed_at, retry_count)
+  - Determines retry_pending vs failed based on failure reason
+  - Updated _remove_failed_order() and _get_failed_orders() to use status-based lookup
+  - Added 10 new tests covering all scenarios
 - ⏳ **Phase 7: Pending Orders DB Migration** - PENDING
 - ⏳ **Phase 8: Retry Queue API & UI** - PENDING
 - ⏳ **Phase 9: Notifications** - PENDING
@@ -290,29 +296,36 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS execution_time TIMESTAMP;
 
 ---
 
-### Phase 6: Failure Status Promotion (Week 4)
+### Phase 6: Failure Status Promotion (Week 4) ✅ COMPLETE
 
 **Tasks**:
-1. Update `_add_failed_order()` to set status='failed' or 'retry_pending'
-2. Store failure metadata in new columns (not just metadata JSON)
-3. Update failed order creation to use new status values
-4. Migrate existing failed orders from metadata to explicit status
-5. Update API to return new status values
+1. ✅ Update `_add_failed_order()` to set status='failed' or 'retry_pending'
+2. ✅ Store failure metadata in new columns (not just metadata JSON)
+3. ✅ Update failed order creation to use new status values
+4. ⏭️ Migrate existing failed orders from metadata to explicit status (one-time operation, can be done separately)
+5. ✅ Update API to return new status values (already done in Phase 1)
 
 **Key Changes**:
-- `modules/kotak_neo_auto_trader/auto_trade_engine.py`
-- `src/infrastructure/persistence/orders_repository.py`
-- `server/app/routers/orders.py`
+- ✅ `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+  - Updated `_add_failed_order()` to use `mark_failed()` with proper status
+  - Stores failure metadata in columns (failure_reason, first_failed_at, retry_count)
+  - Determines retry_pending vs failed based on failure reason
+  - Updated `_remove_failed_order()` to use status-based lookup
+  - Updated `_get_failed_orders()` to use status-based lookup
+- ✅ `src/infrastructure/persistence/orders_repository.py` (already has mark_failed method from Phase 1)
+- ✅ `server/app/routers/orders.py` (already supports new statuses from Phase 1)
 
 **Deliverables**:
-- First-class failure statuses
-- Migration script for existing data
-- Updated API responses
+- ✅ First-class failure statuses (FAILED, RETRY_PENDING)
+- ✅ Failure metadata stored in dedicated columns
+- ✅ Updated API responses (already done in Phase 1)
+- ⏭️ Migration script (one-time operation, can be done separately)
 
 **Testing**:
-- Status transition tests
-- Migration tests
-- API response tests
+- ✅ Created `tests/unit/kotak/test_auto_trade_engine_failure_status.py` (10 test cases)
+- ✅ Tests cover: retry_pending, failed status, updating existing, removal, retrieval
+- ✅ Tests cover: symbol normalization, error handling, fallback scenarios
+- ✅ All 10 tests passing
 
 ---
 
