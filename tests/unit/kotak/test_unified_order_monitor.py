@@ -4,11 +4,12 @@ Tests for UnifiedOrderMonitor
 Tests buy and sell order monitoring functionality.
 """
 
-import pytest
 import sys
-from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
 from datetime import datetime
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+import pytest
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -23,7 +24,9 @@ class TestUnifiedOrderMonitor:
         """Create mock SellOrderManager"""
         sell_manager = Mock()
         sell_manager.orders = Mock()
-        sell_manager.monitor_and_update = Mock(return_value={"checked": 5, "updated": 2, "executed": 1})
+        sell_manager.monitor_and_update = Mock(
+            return_value={"checked": 5, "updated": 2, "executed": 1}
+        )
         return sell_manager
 
     @pytest.fixture
@@ -46,9 +49,15 @@ class TestUnifiedOrderMonitor:
     @pytest.fixture
     def unified_monitor(self, mock_sell_manager, mock_db_session, mock_orders_repo):
         """Create UnifiedOrderMonitor instance with mocks"""
-        with patch('modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE', True), \
-             patch('modules.kotak_neo_auto_trader.unified_order_monitor.OrdersRepository', return_value=mock_orders_repo):
+        with (
+            patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", True),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.OrdersRepository",
+                return_value=mock_orders_repo,
+            ),
+        ):
             from modules.kotak_neo_auto_trader.unified_order_monitor import UnifiedOrderMonitor
+
             monitor = UnifiedOrderMonitor(
                 sell_order_manager=mock_sell_manager,
                 db_session=mock_db_session,
@@ -60,13 +69,13 @@ class TestUnifiedOrderMonitor:
     def test_initialization(self, mock_sell_manager, mock_db_session):
         """Test UnifiedOrderMonitor initialization"""
         from modules.kotak_neo_auto_trader.unified_order_monitor import UnifiedOrderMonitor
-        
+
         monitor = UnifiedOrderMonitor(
             sell_order_manager=mock_sell_manager,
             db_session=mock_db_session,
             user_id=1,
         )
-        
+
         assert monitor.sell_manager == mock_sell_manager
         assert monitor.orders == mock_sell_manager.orders
         assert monitor.db_session == mock_db_session
@@ -75,23 +84,23 @@ class TestUnifiedOrderMonitor:
 
     def test_initialization_without_db(self, mock_sell_manager):
         """Test initialization when DB is not available"""
-        with patch('modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE', False):
+        with patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", False):
             from modules.kotak_neo_auto_trader.unified_order_monitor import UnifiedOrderMonitor
-            
+
             monitor = UnifiedOrderMonitor(
                 sell_order_manager=mock_sell_manager,
                 db_session=None,
                 user_id=None,
             )
-            
+
             assert monitor.orders_repo is None
 
     def test_load_pending_buy_orders_empty(self, unified_monitor, mock_orders_repo):
         """Test loading pending buy orders when none exist"""
         mock_orders_repo.get_pending_amo_orders.return_value = []
-        
+
         count = unified_monitor.load_pending_buy_orders()
-        
+
         assert count == 0
         assert len(unified_monitor.active_buy_orders) == 0
         mock_orders_repo.get_pending_amo_orders.assert_called_once_with(1)
@@ -118,9 +127,9 @@ class TestUnifiedOrderMonitor:
         mock_order2.placed_at = datetime.now()
 
         mock_orders_repo.get_pending_amo_orders.return_value = [mock_order1, mock_order2]
-        
+
         count = unified_monitor.load_pending_buy_orders()
-        
+
         assert count == 2
         assert len(unified_monitor.active_buy_orders) == 2
         assert "BROKER123" in unified_monitor.active_buy_orders
@@ -140,30 +149,30 @@ class TestUnifiedOrderMonitor:
         mock_order.placed_at = datetime.now()
 
         mock_orders_repo.get_pending_amo_orders.return_value = [mock_order]
-        
+
         count = unified_monitor.load_pending_buy_orders()
-        
+
         assert count == 1
         assert "ORDER123" in unified_monitor.active_buy_orders
 
     def test_load_pending_buy_orders_no_db(self, mock_sell_manager):
         """Test loading when DB is not available"""
-        with patch('modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE', False):
+        with patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", False):
             from modules.kotak_neo_auto_trader.unified_order_monitor import UnifiedOrderMonitor
-            
+
             monitor = UnifiedOrderMonitor(
                 sell_order_manager=mock_sell_manager,
                 db_session=None,
                 user_id=None,
             )
-            
+
             count = monitor.load_pending_buy_orders()
             assert count == 0
 
     def test_check_buy_order_status_no_orders(self, unified_monitor):
         """Test checking status when no active buy orders"""
         stats = unified_monitor.check_buy_order_status()
-        
+
         assert stats["checked"] == 0
         assert stats["executed"] == 0
         assert stats["rejected"] == 0
@@ -195,7 +204,7 @@ class TestUnifiedOrderMonitor:
         mock_orders_repo.get.return_value = mock_db_order
 
         stats = unified_monitor.check_buy_order_status(broker_orders=[broker_order])
-        
+
         assert stats["checked"] == 1
         assert stats["executed"] == 1
         assert stats["rejected"] == 0
@@ -224,7 +233,7 @@ class TestUnifiedOrderMonitor:
         mock_orders_repo.get.return_value = mock_db_order
 
         stats = unified_monitor.check_buy_order_status(broker_orders=[broker_order])
-        
+
         assert stats["checked"] == 1
         assert stats["executed"] == 0
         assert stats["rejected"] == 1
@@ -252,7 +261,7 @@ class TestUnifiedOrderMonitor:
         mock_orders_repo.get.return_value = mock_db_order
 
         stats = unified_monitor.check_buy_order_status(broker_orders=[broker_order])
-        
+
         assert stats["checked"] == 1
         assert stats["executed"] == 0
         assert stats["rejected"] == 0
@@ -277,7 +286,7 @@ class TestUnifiedOrderMonitor:
         unified_monitor.orders = mock_orders_api
 
         stats = unified_monitor.check_buy_order_status()
-        
+
         assert stats["checked"] == 1
         mock_orders_api.get_orders.assert_called_once()
 
@@ -293,7 +302,7 @@ class TestUnifiedOrderMonitor:
         }
 
         stats = unified_monitor.check_buy_order_status(broker_orders=[])
-        
+
         assert stats["checked"] == 1
         assert stats["executed"] == 0
         # Order should remain in tracking if not found
@@ -309,7 +318,7 @@ class TestUnifiedOrderMonitor:
         }
 
         unified_monitor._update_buy_order_status(mock_db_order, broker_order, "executed")
-        
+
         mock_orders_repo.update_status_check.assert_called_once_with(mock_db_order)
         mock_orders_repo.mark_executed.assert_called_once()
 
@@ -322,7 +331,7 @@ class TestUnifiedOrderMonitor:
         }
 
         unified_monitor._update_buy_order_status(mock_db_order, broker_order, "rejected")
-        
+
         mock_orders_repo.update_status_check.assert_called_once_with(mock_db_order)
         mock_orders_repo.mark_rejected.assert_called_once()
 
@@ -334,7 +343,7 @@ class TestUnifiedOrderMonitor:
         }
 
         unified_monitor._update_buy_order_status(mock_db_order, broker_order, "cancelled")
-        
+
         mock_orders_repo.update_status_check.assert_called_once_with(mock_db_order)
         mock_orders_repo.mark_cancelled.assert_called_once()
 
@@ -383,16 +392,22 @@ class TestUnifiedOrderMonitor:
 
     def test_monitor_all_orders_no_buy_orders(self, unified_monitor, mock_sell_manager):
         """Test monitoring when no buy orders exist"""
-        mock_sell_manager.monitor_and_update.return_value = {"checked": 5, "updated": 2, "executed": 1}
-        
+        mock_sell_manager.monitor_and_update.return_value = {
+            "checked": 5,
+            "updated": 2,
+            "executed": 1,
+        }
+
         stats = unified_monitor.monitor_all_orders()
-        
+
         assert stats["checked"] == 5
         assert stats["updated"] == 2
         assert stats["executed"] == 1
         mock_sell_manager.monitor_and_update.assert_called_once()
 
-    def test_monitor_all_orders_with_buy_orders(self, unified_monitor, mock_sell_manager, mock_orders_repo):
+    def test_monitor_all_orders_with_buy_orders(
+        self, unified_monitor, mock_sell_manager, mock_orders_repo
+    ):
         """Test monitoring with both buy and sell orders"""
         # Setup buy orders
         unified_monitor.active_buy_orders["ORDER123"] = {
@@ -404,15 +419,19 @@ class TestUnifiedOrderMonitor:
             "placed_at": datetime.now(),
         }
 
-        mock_sell_manager.monitor_and_update.return_value = {"checked": 5, "updated": 2, "executed": 1}
-        
+        mock_sell_manager.monitor_and_update.return_value = {
+            "checked": 5,
+            "updated": 2,
+            "executed": 1,
+        }
+
         # Mock broker orders
         mock_orders_api = Mock()
         mock_orders_api.get_orders.return_value = {"data": []}
         unified_monitor.orders = mock_orders_api
 
         stats = unified_monitor.monitor_all_orders()
-        
+
         assert stats["checked"] >= 5  # Sell orders + buy orders
         assert stats["updated"] == 2
         assert stats["executed"] >= 1
@@ -430,17 +449,21 @@ class TestUnifiedOrderMonitor:
         mock_order.placed_at = datetime.now()
 
         mock_orders_repo.get_pending_amo_orders.return_value = [mock_order]
-        
+
         # Mock sell manager
-        unified_monitor.sell_manager.monitor_and_update.return_value = {"checked": 0, "updated": 0, "executed": 0}
-        
+        unified_monitor.sell_manager.monitor_and_update.return_value = {
+            "checked": 0,
+            "updated": 0,
+            "executed": 0,
+        }
+
         # Mock broker orders
         mock_orders_api = Mock()
         mock_orders_api.get_orders.return_value = {"data": []}
         unified_monitor.orders = mock_orders_api
 
         stats = unified_monitor.monitor_all_orders()
-        
+
         # Should have loaded the pending order
         assert len(unified_monitor.active_buy_orders) == 1
         mock_orders_repo.get_pending_amo_orders.assert_called_once()
@@ -468,7 +491,7 @@ class TestUnifiedOrderMonitor:
         """Test error handling in _update_buy_order_status"""
         mock_db_order = Mock()
         broker_order = {"orderStatus": "EXECUTED"}
-        
+
         # Make mark_executed raise exception
         mock_orders_repo.mark_executed.side_effect = Exception("DB Error")
 
@@ -522,7 +545,7 @@ class TestUnifiedOrderMonitor:
         mock_orders_repo.get.side_effect = mock_db_orders
 
         stats = unified_monitor.check_buy_order_status(broker_orders=broker_orders)
-        
+
         assert stats["checked"] == 3
         assert stats["executed"] == 1
         assert stats["rejected"] == 1
@@ -596,9 +619,21 @@ class TestUnifiedOrderMonitor:
         mock_state_manager.register_buy_order = Mock(side_effect=[True, False, True])
         unified_monitor.sell_manager.state_manager = mock_state_manager
 
-        unified_monitor.active_buy_orders["ORDER1"] = {"symbol": "RELIANCE", "quantity": 10.0, "order_id": "ORDER1"}
-        unified_monitor.active_buy_orders["ORDER2"] = {"symbol": "TCS", "quantity": 5.0, "order_id": "ORDER2"}
-        unified_monitor.active_buy_orders["ORDER3"] = {"symbol": "INFY", "quantity": 3.0, "order_id": "ORDER3"}
+        unified_monitor.active_buy_orders["ORDER1"] = {
+            "symbol": "RELIANCE",
+            "quantity": 10.0,
+            "order_id": "ORDER1",
+        }
+        unified_monitor.active_buy_orders["ORDER2"] = {
+            "symbol": "TCS",
+            "quantity": 5.0,
+            "order_id": "ORDER2",
+        }
+        unified_monitor.active_buy_orders["ORDER3"] = {
+            "symbol": "INFY",
+            "quantity": 3.0,
+            "order_id": "ORDER3",
+        }
 
         count = unified_monitor.register_buy_orders_with_state_manager()
 
@@ -668,3 +703,119 @@ class TestUnifiedOrderMonitor:
         # Should not raise exception
         unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
 
+    # Phase 9: Notification trigger tests
+    def test_handle_buy_order_execution_sends_notification(self, unified_monitor):
+        """Test that execution handler sends notification (Phase 9)"""
+        mock_telegram = Mock()
+        mock_telegram.enabled = True
+        mock_telegram.notify_order_execution = Mock(return_value=True)
+        unified_monitor.telegram_notifier = mock_telegram
+
+        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
+
+        unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
+
+        mock_telegram.notify_order_execution.assert_called_once_with(
+            symbol="RELIANCE",
+            order_id="ORDER1",
+            quantity=10,
+            executed_price=2455.50,
+        )
+
+    def test_handle_buy_order_execution_no_notification_when_disabled(self, unified_monitor):
+        """Test that execution handler doesn't send notification when disabled (Phase 9)"""
+        mock_telegram = Mock()
+        mock_telegram.enabled = False
+        mock_telegram.notify_order_execution = Mock()
+        unified_monitor.telegram_notifier = mock_telegram
+
+        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
+
+        unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
+
+        mock_telegram.notify_order_execution.assert_not_called()
+
+    def test_handle_buy_order_rejection_sends_notification(self, unified_monitor):
+        """Test that rejection handler sends notification with broker reason (Phase 9)"""
+        mock_telegram = Mock()
+        mock_telegram.enabled = True
+        mock_telegram.notify_order_rejection = Mock(return_value=True)
+        unified_monitor.telegram_notifier = mock_telegram
+
+        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1", "rejRsn": "Insufficient balance"}
+
+        unified_monitor._handle_buy_order_rejection("ORDER1", order_info, broker_order)
+
+        mock_telegram.notify_order_rejection.assert_called_once_with(
+            symbol="RELIANCE",
+            order_id="ORDER1",
+            quantity=10,
+            rejection_reason="Insufficient balance",
+        )
+
+    def test_handle_buy_order_rejection_sends_notification_unknown_reason(self, unified_monitor):
+        """Test that rejection handler sends notification with Unknown when reason not available (Phase 9)"""
+        mock_telegram = Mock()
+        mock_telegram.enabled = True
+        mock_telegram.notify_order_rejection = Mock(return_value=True)
+        unified_monitor.telegram_notifier = mock_telegram
+
+        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1"}  # No rejection reason
+
+        unified_monitor._handle_buy_order_rejection("ORDER1", order_info, broker_order)
+
+        mock_telegram.notify_order_rejection.assert_called_once_with(
+            symbol="RELIANCE",
+            order_id="ORDER1",
+            quantity=10,
+            rejection_reason="Unknown",
+        )
+
+    def test_handle_buy_order_cancellation_sends_notification(self, unified_monitor):
+        """Test that cancellation handler sends notification (Phase 9)"""
+        mock_telegram = Mock()
+        mock_telegram.enabled = True
+        mock_telegram.notify_order_cancelled = Mock(return_value=True)
+        unified_monitor.telegram_notifier = mock_telegram
+
+        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1", "rejRsn": "User cancelled"}
+
+        unified_monitor._handle_buy_order_cancellation("ORDER1", order_info, broker_order)
+
+        mock_telegram.notify_order_cancelled.assert_called_once_with(
+            symbol="RELIANCE",
+            order_id="ORDER1",
+            cancellation_reason="User cancelled",
+        )
+
+    def test_handle_buy_order_cancellation_no_notification_when_disabled(self, unified_monitor):
+        """Test that cancellation handler doesn't send notification when disabled (Phase 9)"""
+        mock_telegram = Mock()
+        mock_telegram.enabled = False
+        mock_telegram.notify_order_cancelled = Mock()
+        unified_monitor.telegram_notifier = mock_telegram
+
+        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1", "rejRsn": "User cancelled"}
+
+        unified_monitor._handle_buy_order_cancellation("ORDER1", order_info, broker_order)
+
+        mock_telegram.notify_order_cancelled.assert_not_called()
+
+    def test_handle_buy_order_execution_handles_notification_error(self, unified_monitor):
+        """Test that execution handler handles notification errors gracefully (Phase 9)"""
+        mock_telegram = Mock()
+        mock_telegram.enabled = True
+        mock_telegram.notify_order_execution = Mock(side_effect=Exception("Notification error"))
+        unified_monitor.telegram_notifier = mock_telegram
+
+        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
+
+        # Should not raise exception
+        unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)

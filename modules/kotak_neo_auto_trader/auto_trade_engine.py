@@ -8,10 +8,10 @@ Auto Trade Engine for Kotak Neo
 
 import glob
 import os
-import time
 
 # Project logger
 import sys
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from math import floor
@@ -404,9 +404,7 @@ class AutoTradeEngine:
                         "qty": order.quantity,
                         "reason": order.failure_reason or "unknown",
                         "first_failed_at": (
-                            order.first_failed_at.isoformat()
-                            if order.first_failed_at
-                            else None
+                            order.first_failed_at.isoformat() if order.first_failed_at else None
                         ),
                         "retry_count": order.retry_count or 0,
                         "status": order.status.value if order.status else "failed",
@@ -429,9 +427,7 @@ class AutoTradeEngine:
                             "qty": order.quantity,
                             "reason": order.failure_reason or "unknown",
                             "first_failed_at": (
-                                order.first_failed_at.isoformat()
-                                if order.first_failed_at
-                                else None
+                                order.first_failed_at.isoformat() if order.first_failed_at else None
                             ),
                             "retry_count": order.retry_count or 0,
                             "status": order.status.value if order.status else "failed",
@@ -489,9 +485,8 @@ class AutoTradeEngine:
 
                 # Determine failure reason and retry status
                 failure_reason = failed_order.get("reason", "unknown")
-                is_retryable = (
-                    failure_reason == "insufficient_balance"
-                    and not failed_order.get("non_retryable", False)
+                is_retryable = failure_reason == "insufficient_balance" and not failed_order.get(
+                    "non_retryable", False
                 )
                 retry_pending = is_retryable
 
@@ -505,6 +500,7 @@ class AutoTradeEngine:
                     # Phase 6: Update existing failed order using mark_failed()
                     order = existing_failed_orders[0]
                     try:
+                        retry_count = order.retry_count or 0
                         self.orders_repo.mark_failed(
                             order=order,
                             failure_reason=failure_reason_str,
@@ -514,6 +510,23 @@ class AutoTradeEngine:
                             f"Updated existing failed order for {symbol} "
                             f"(status: {'RETRY_PENDING' if retry_pending else 'FAILED'})"
                         )
+                        # Phase 9: Send notification for retry queue update (if retryable)
+                        if (
+                            self.telegram_notifier
+                            and self.telegram_notifier.enabled
+                            and retry_pending
+                        ):
+                            try:
+                                self.telegram_notifier.notify_retry_queue_updated(
+                                    symbol=symbol,
+                                    action="updated",
+                                    retry_count=retry_count + 1,
+                                    additional_info={"reason": failure_reason_str},
+                                )
+                            except Exception as notify_error:
+                                logger.warning(
+                                    f"Failed to send retry queue update notification: {notify_error}"
+                                )
                     except Exception as update_error:
                         logger.warning(
                             f"Failed to update failed order {symbol}: {update_error}",
@@ -548,6 +561,23 @@ class AutoTradeEngine:
                             f"Created new failed order for {symbol} "
                             f"(status: {'RETRY_PENDING' if retry_pending else 'FAILED'})"
                         )
+                        # Phase 9: Send notification for retry queue update
+                        if (
+                            self.telegram_notifier
+                            and self.telegram_notifier.enabled
+                            and retry_pending
+                        ):
+                            try:
+                                self.telegram_notifier.notify_retry_queue_updated(
+                                    symbol=symbol,
+                                    action="added",
+                                    retry_count=0,
+                                    additional_info={"reason": failure_reason_str},
+                                )
+                            except Exception as notify_error:
+                                logger.warning(
+                                    f"Failed to send retry queue notification: {notify_error}"
+                                )
                     except Exception as update_error:
                         logger.warning(
                             f"Failed to mark new order as failed {symbol}: {update_error}",
@@ -595,10 +625,23 @@ class AutoTradeEngine:
                     if order_symbol == symbol_normalized:
                         # Phase 6: Mark as closed instead of removing (keep record)
                         try:
+                            retry_count = order.retry_count or 0
                             self.orders_repo.mark_cancelled(
                                 order=order, cancelled_reason="Removed from retry queue"
                             )
                             logger.debug(f"Removed failed order for {symbol} from retry queue")
+                            # Phase 9: Send notification for retry queue removal
+                            if self.telegram_notifier and self.telegram_notifier.enabled:
+                                try:
+                                    self.telegram_notifier.notify_retry_queue_updated(
+                                        symbol=symbol,
+                                        action="removed",
+                                        retry_count=retry_count,
+                                    )
+                                except Exception as notify_error:
+                                    logger.warning(
+                                        f"Failed to send retry queue removal notification: {notify_error}"
+                                    )
                         except Exception as e:
                             logger.warning(f"Failed to remove failed order {symbol}: {e}")
                         break
@@ -1716,6 +1759,21 @@ class AutoTradeEngine:
             f"(order_id: {order_id}, qty: {qty})"
         )
 
+        # Phase 9: Send notification for order placed successfully
+        if self.telegram_notifier and self.telegram_notifier.enabled:
+            try:
+                order_type = "LIMIT" if use_limit_order else "MARKET"
+                limit_price = limit_price if use_limit_order else None
+                self.telegram_notifier.notify_order_placed(
+                    symbol=placed_symbol or broker_symbol,
+                    order_id=order_id,
+                    quantity=qty,
+                    order_type=order_type,
+                    price=limit_price,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send order placed notification: {e}")
+
         # Get pre-existing quantity (if any)
         pre_existing_qty = 0
         try:
@@ -1821,9 +1879,9 @@ class AutoTradeEngine:
             broker_orders = orders_response.get("data", [])
 
             # Find our order in broker's order list
+            from .domain.value_objects.order_enums import OrderStatus
             from .utils.order_field_extractor import OrderFieldExtractor
             from .utils.order_status_parser import OrderStatusParser
-            from .domain.value_objects.order_enums import OrderStatus
 
             for broker_order in broker_orders:
                 broker_order_id = OrderFieldExtractor.get_order_id(broker_order)
@@ -1859,7 +1917,6 @@ class AutoTradeEngine:
 
                                 if db_order:
                                     # Update order status to rejected
-                                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                                     self.orders_repo.mark_rejected(
                                         order_id=db_order.id,
@@ -1869,9 +1926,7 @@ class AutoTradeEngine:
                                         f"Updated order {order_id} status to REJECTED in database"
                                     )
                             except Exception as e:
-                                logger.warning(
-                                    f"Failed to update order status in database: {e}"
-                                )
+                                logger.warning(f"Failed to update order status in database: {e}")
 
                         # Phase 5: Send notification
                         try:
@@ -1891,9 +1946,7 @@ class AutoTradeEngine:
 
                     elif status in {OrderStatus.COMPLETE, OrderStatus.EXECUTED}:
                         # Order executed immediately (unlikely for AMO, but possible)
-                        logger.info(
-                            f"Order immediately executed: {symbol} (order_id: {order_id})"
-                        )
+                        logger.info(f"Order immediately executed: {symbol} (order_id: {order_id})")
                         return (True, None)
 
                     else:
@@ -2270,6 +2323,20 @@ class AutoTradeEngine:
                     logger.info(
                         f"Successfully placed retry order for {symbol} (order_id: {order_id})"
                     )
+                    # Phase 9: Send notification for successful retry
+                    if self.telegram_notifier and self.telegram_notifier.enabled:
+                        try:
+                            retry_count = failed_order.get("retry_count", 0)
+                            self.telegram_notifier.notify_retry_queue_updated(
+                                symbol=symbol,
+                                action="retried_successfully",
+                                retry_count=retry_count,
+                                additional_info={"order_id": order_id},
+                            )
+                        except Exception as notify_error:
+                            logger.warning(
+                                f"Failed to send retry success notification: {notify_error}"
+                            )
                 else:
                     # Broker/API error during retry - log and continue with other orders
                     # Don't stop the entire run for one failed retry

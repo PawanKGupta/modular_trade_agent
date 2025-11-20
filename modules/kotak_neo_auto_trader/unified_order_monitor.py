@@ -7,30 +7,27 @@ Phase 2: Unified order monitoring implementation.
 Extends SellOrderManager to handle buy order monitoring alongside sell orders.
 """
 
-from typing import Dict, Any, List, Optional
-from datetime import datetime
-import logging
+from typing import Any
 
 from utils.logger import logger
 
 try:
-    from .sell_engine import SellOrderManager
-    from .orders import KotakNeoOrders
     from .order_state_manager import OrderStateManager
+    from .orders import KotakNeoOrders
+    from .sell_engine import SellOrderManager
     from .utils.order_field_extractor import OrderFieldExtractor
     from .utils.symbol_utils import extract_base_symbol
 except ImportError:
     from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
-    from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
-    from modules.kotak_neo_auto_trader.order_state_manager import OrderStateManager
     from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
-    from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 
 # Try to import database dependencies
 try:
     from sqlalchemy.orm import Session
-    from src.infrastructure.persistence.orders_repository import OrdersRepository
+
     from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+    from src.infrastructure.persistence.orders_repository import OrdersRepository
+
     DB_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
@@ -49,24 +46,29 @@ class UnifiedOrderMonitor:
     def __init__(
         self,
         sell_order_manager: SellOrderManager,
-        db_session: Optional[Session] = None,
-        user_id: Optional[int] = None,
+        db_session: Session | None = None,
+        user_id: int | None = None,
+        telegram_notifier=None,
     ):
         """
         Initialize unified order monitor.
+
+        Phase 9: Added telegram_notifier for notifications.
 
         Args:
             sell_order_manager: Existing SellOrderManager instance
             db_session: Optional database session for buy order tracking
             user_id: Optional user ID for filtering orders
+            telegram_notifier: Optional TelegramNotifier for sending notifications
         """
         self.sell_manager = sell_order_manager
         self.orders = sell_order_manager.orders
         self.db_session = db_session
         self.user_id = user_id
+        self.telegram_notifier = telegram_notifier
 
         # Track active buy orders {order_id: {'symbol': str, 'quantity': float, 'order_id': str, ...}}
-        self.active_buy_orders: Dict[str, Dict[str, Any]] = {}
+        self.active_buy_orders: dict[str, dict[str, Any]] = {}
 
         # Initialize orders repository if DB is available
         self.orders_repo = None
@@ -155,9 +157,7 @@ class UnifiedOrderMonitor:
                 if result:
                     registered_count += 1
             except Exception as e:
-                logger.warning(
-                    f"Failed to register buy order {order_id} with state manager: {e}"
-                )
+                logger.warning(f"Failed to register buy order {order_id} with state manager: {e}")
 
         if registered_count > 0:
             logger.info(
@@ -167,7 +167,9 @@ class UnifiedOrderMonitor:
 
         return registered_count
 
-    def check_buy_order_status(self, broker_orders: Optional[List[Dict[str, Any]]] = None) -> Dict[str, int]:
+    def check_buy_order_status(
+        self, broker_orders: list[dict[str, Any]] | None = None
+    ) -> dict[str, int]:
         """
         Check status of active buy orders from broker.
 
@@ -257,7 +259,7 @@ class UnifiedOrderMonitor:
         return stats
 
     def _update_buy_order_status(
-        self, db_order: Any, broker_order: Dict[str, Any], status: str
+        self, db_order: Any, broker_order: dict[str, Any], status: str
     ) -> None:
         """
         Update buy order status in database based on broker response.
@@ -294,12 +296,13 @@ class UnifiedOrderMonitor:
             logger.error(f"Error updating buy order status in DB: {e}")
 
     def _handle_buy_order_execution(
-        self, order_id: str, order_info: Dict[str, Any], broker_order: Dict[str, Any]
+        self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
     ) -> None:
         """
         Handle executed buy order.
 
         Phase 4: Integrates with OrderStateManager for unified state tracking.
+        Phase 9: Sends notification for order execution.
 
         Args:
             order_id: Order ID
@@ -308,12 +311,26 @@ class UnifiedOrderMonitor:
         """
         symbol = order_info.get("symbol", "")
         execution_price = OrderFieldExtractor.get_price(broker_order)
-        execution_qty = OrderFieldExtractor.get_quantity(broker_order) or order_info.get("quantity", 0)
+        execution_qty = OrderFieldExtractor.get_quantity(broker_order) or order_info.get(
+            "quantity", 0
+        )
 
         logger.info(
             f"Buy order executed: {symbol} - Order ID {order_id}, "
             f"Price: Rs {execution_price:.2f}, Qty: {execution_qty}"
         )
+
+        # Phase 9: Send notification
+        if self.telegram_notifier and self.telegram_notifier.enabled:
+            try:
+                self.telegram_notifier.notify_order_execution(
+                    symbol=symbol,
+                    order_id=order_id,
+                    quantity=int(execution_qty),
+                    executed_price=execution_price,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send execution notification: {e}")
 
         # Phase 4: Update OrderStateManager if available
         if (
@@ -334,12 +351,13 @@ class UnifiedOrderMonitor:
         # Update in database (already done in _update_buy_order_status)
 
     def _handle_buy_order_rejection(
-        self, order_id: str, order_info: Dict[str, Any], broker_order: Dict[str, Any]
+        self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
     ) -> None:
         """
         Handle rejected buy order.
 
         Phase 4: Integrates with OrderStateManager for unified state tracking.
+        Phase 9: Sends notification with broker rejection reason.
 
         Args:
             order_id: Order ID
@@ -347,12 +365,24 @@ class UnifiedOrderMonitor:
             broker_order: Broker order dict
         """
         symbol = order_info.get("symbol", "")
-        rejection_reason = OrderFieldExtractor.get_rejection_reason(broker_order)
+        rejection_reason = OrderFieldExtractor.get_rejection_reason(broker_order) or "Unknown"
+        quantity = order_info.get("quantity", 0)
 
         logger.warning(
-            f"Buy order rejected: {symbol} - Order ID {order_id}, "
-            f"Reason: {rejection_reason or 'Unknown'}"
+            f"Buy order rejected: {symbol} - Order ID {order_id}, Reason: {rejection_reason}"
         )
+
+        # Phase 9: Send notification with broker rejection reason
+        if self.telegram_notifier and self.telegram_notifier.enabled:
+            try:
+                self.telegram_notifier.notify_order_rejection(
+                    symbol=symbol,
+                    order_id=order_id,
+                    quantity=int(quantity),
+                    rejection_reason=rejection_reason,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send rejection notification: {e}")
 
         # Phase 4: Update OrderStateManager if available
         if (
@@ -362,7 +392,7 @@ class UnifiedOrderMonitor:
         ):
             try:
                 self.sell_manager.state_manager.remove_buy_order_from_tracking(
-                    order_id=order_id, reason=f"Rejected: {rejection_reason or 'Unknown'}"
+                    order_id=order_id, reason=f"Rejected: {rejection_reason}"
                 )
             except Exception as e:
                 logger.warning(f"Failed to update OrderStateManager for rejected buy order: {e}")
@@ -370,12 +400,13 @@ class UnifiedOrderMonitor:
         # Status already updated in database via _update_buy_order_status
 
     def _handle_buy_order_cancellation(
-        self, order_id: str, order_info: Dict[str, Any], broker_order: Dict[str, Any]
+        self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
     ) -> None:
         """
         Handle cancelled buy order.
 
         Phase 4: Integrates with OrderStateManager for unified state tracking.
+        Phase 9: Sends notification for order cancellation.
 
         Args:
             order_id: Order ID
@@ -383,12 +414,22 @@ class UnifiedOrderMonitor:
             broker_order: Broker order dict
         """
         symbol = order_info.get("symbol", "")
-        cancelled_reason = OrderFieldExtractor.get_rejection_reason(broker_order)
+        cancelled_reason = OrderFieldExtractor.get_rejection_reason(broker_order) or "Unknown"
 
         logger.info(
-            f"Buy order cancelled: {symbol} - Order ID {order_id}, "
-            f"Reason: {cancelled_reason or 'Unknown'}"
+            f"Buy order cancelled: {symbol} - Order ID {order_id}, Reason: {cancelled_reason}"
         )
+
+        # Phase 9: Send notification
+        if self.telegram_notifier and self.telegram_notifier.enabled:
+            try:
+                self.telegram_notifier.notify_order_cancelled(
+                    symbol=symbol,
+                    order_id=order_id,
+                    cancellation_reason=cancelled_reason,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send cancellation notification: {e}")
 
         # Phase 4: Update OrderStateManager if available
         if (
@@ -398,14 +439,14 @@ class UnifiedOrderMonitor:
         ):
             try:
                 self.sell_manager.state_manager.remove_buy_order_from_tracking(
-                    order_id=order_id, reason=f"Cancelled: {cancelled_reason or 'Unknown'}"
+                    order_id=order_id, reason=f"Cancelled: {cancelled_reason}"
                 )
             except Exception as e:
                 logger.warning(f"Failed to update OrderStateManager for cancelled buy order: {e}")
 
         # Status already updated in database via _update_buy_order_status
 
-    def monitor_all_orders(self) -> Dict[str, int]:
+    def monitor_all_orders(self) -> dict[str, int]:
         """
         Monitor both buy and sell orders in a unified loop.
 
@@ -440,4 +481,3 @@ class UnifiedOrderMonitor:
         }
 
         return combined_stats
-

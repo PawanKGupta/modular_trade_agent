@@ -56,7 +56,7 @@ def test_orders_list_with_new_statuses(client: TestClient, db_session):
 
     # Create orders with different statuses
     repo = OrdersRepository(db_session)
-    amo_order = repo.create_amo(
+    repo.create_amo(
         user_id=user.id,
         symbol="RELIANCE",
         side="buy",
@@ -193,8 +193,8 @@ def test_orders_with_all_statuses(client: TestClient, db_session):
 
 def test_retry_order_success(client: TestClient, db_session):
     """Test retrying a failed order"""
-    from src.infrastructure.db.models import UserRole, Users
     from server.app.core.security import hash_password
+    from src.infrastructure.db.models import UserRole, Users
 
     # Create user in test's db_session
     user = Users(
@@ -261,8 +261,9 @@ def test_retry_order_not_found(client: TestClient):
 
 def test_retry_order_wrong_status(client: TestClient, db_session):
     """Test retrying an order that's not in failed/retry_pending status"""
-    from src.infrastructure.db.models import UserRole, Users, OrderStatus as DbOrderStatus
-    from server.app.core.security import get_password_hash
+    from server.app.core.security import hash_password  # noqa: PLC0415
+    from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: PLC0415
+    from src.infrastructure.db.models import UserRole, Users  # noqa: PLC0415
 
     # Create user in test's db_session
     user = Users(
@@ -305,8 +306,8 @@ def test_retry_order_wrong_status(client: TestClient, db_session):
 
 def test_drop_order_success(client: TestClient, db_session):
     """Test dropping an order from retry queue"""
-    from src.infrastructure.db.models import UserRole, Users
     from server.app.core.security import hash_password
+    from src.infrastructure.db.models import UserRole, Users
 
     # Create user in test's db_session
     user = Users(
@@ -369,8 +370,9 @@ def test_drop_order_not_found(client: TestClient):
 
 def test_drop_order_wrong_status(client: TestClient, db_session):
     """Test dropping an order that's not in failed/retry_pending status"""
-    from src.infrastructure.db.models import UserRole, Users, OrderStatus as DbOrderStatus
-    from server.app.core.security import get_password_hash
+    from server.app.core.security import hash_password  # noqa: PLC0415
+    from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: PLC0415
+    from src.infrastructure.db.models import UserRole, Users  # noqa: PLC0415
 
     # Create user in test's db_session
     user = Users(
@@ -413,8 +415,8 @@ def test_drop_order_wrong_status(client: TestClient, db_session):
 
 def test_list_orders_with_filters(client: TestClient, db_session):
     """Test filtering orders by failure_reason and date range"""
-    from src.infrastructure.db.models import UserRole, Users
     from server.app.core.security import hash_password
+    from src.infrastructure.db.models import UserRole, Users
 
     # Create user in test's db_session
     user = Users(

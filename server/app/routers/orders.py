@@ -18,7 +18,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/", response_model=list[OrderResponse])
+@router.get("/", response_model=list[OrderResponse])  # noqa: PLR0913
 def list_orders(
     status: Annotated[
         Literal[
@@ -68,7 +68,8 @@ def list_orders(
         # Apply additional filters
         if failure_reason:
             items = [
-                o for o in items
+                o
+                for o in items
                 if getattr(o, "failure_reason", None)
                 and failure_reason.lower() in getattr(o, "failure_reason", "").lower()
             ]
@@ -177,7 +178,10 @@ def retry_order(
         if order.status not in (DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING):
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot retry order with status {order.status.value}. Only failed or retry_pending orders can be retried.",
+                detail=(
+                    f"Cannot retry order with status {order.status.value}. "
+                    "Only failed or retry_pending orders can be retried."
+                ),
             )
 
         # Update order for retry
@@ -260,7 +264,10 @@ def drop_order(
         if order.status not in (DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING):
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot drop order with status {order.status.value}. Only failed or retry_pending orders can be dropped.",
+                detail=(
+                    f"Cannot drop order with status {order.status.value}. "
+                    "Only failed or retry_pending orders can be dropped."
+                ),
             )
 
         # Mark as closed

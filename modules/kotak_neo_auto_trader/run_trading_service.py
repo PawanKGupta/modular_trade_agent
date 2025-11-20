@@ -218,12 +218,20 @@ class TradingService:
                 self.sell_manager = SellOrderManager(self.auth, price_manager=self.price_cache)
 
                 # Phase 2: Initialize unified order monitor for buy and sell order monitoring
+                # Phase 9: Pass telegram_notifier for notifications
                 try:
                     from .unified_order_monitor import UnifiedOrderMonitor
+
+                    telegram_notifier = (
+                        self.engine.telegram_notifier
+                        if self.engine and hasattr(self.engine, "telegram_notifier")
+                        else None
+                    )
                     self.unified_order_monitor = UnifiedOrderMonitor(
                         sell_order_manager=self.sell_manager,
                         db_session=self.db,
                         user_id=self.user_id,
+                        telegram_notifier=telegram_notifier,
                     )
                     logger.info("Unified order monitor initialized")
                 except Exception as e:
