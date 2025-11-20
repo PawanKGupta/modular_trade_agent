@@ -16,7 +16,13 @@
   - Implemented buy order status checking
   - Integrated into TradingService
   - Added 25 unit tests with 88% coverage
-- ⏳ **Phase 3: Order State Manager Extensions** - PENDING
+- ✅ **Phase 3: Order State Manager Extensions** - COMPLETE
+  - Added active_buy_orders tracking structure
+  - Added register_buy_order() method
+  - Extended sync_with_broker() for buy orders
+  - Added mark_buy_order_executed() with trade history integration
+  - Added buy order rejection/cancellation handling
+  - Added 13 new tests with 83% coverage
 - ⏳ **Phase 4: Trading Service Integration** - PENDING
 - ⏳ **Phase 5: Immediate Polling After Placement** - PENDING
 - ⏳ **Phase 6: Failure Status Promotion** - PENDING
@@ -181,30 +187,33 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS execution_time TIMESTAMP;
 
 ---
 
-### Phase 3: Order State Manager Extensions (Week 2-3)
+### Phase 3: Order State Manager Extensions (Week 2-3) ✅ COMPLETE
 
 **Tasks**:
-1. Extend `OrderStateManager.sync_with_broker()` for buy orders
-2. Add `active_buy_orders` tracking structure
-3. Implement buy order execution detection
-4. Add buy order rejection/cancellation handling
-5. Update trade history on buy order execution
+1. ✅ Extend `OrderStateManager.sync_with_broker()` for buy orders
+2. ✅ Add `active_buy_orders` tracking structure
+3. ✅ Implement buy order execution detection
+4. ✅ Add buy order rejection/cancellation handling
+5. ✅ Update trade history on buy order execution
 
 **Key Changes**:
-- `modules/kotak_neo_auto_trader/order_state_manager.py`
-- Add `register_buy_order()` method
-- Extend `sync_with_broker()` to check buy orders
-- Add `mark_buy_order_executed()` method
+- ✅ `modules/kotak_neo_auto_trader/order_state_manager.py`
+- ✅ Added `active_buy_orders` tracking structure
+- ✅ Added `register_buy_order()` method
+- ✅ Extended `sync_with_broker()` to check buy orders
+- ✅ Added `mark_buy_order_executed()` method
+- ✅ Added `remove_buy_order_from_tracking()` method
+- ✅ Added `get_active_buy_orders()` and `get_active_buy_order()` helper methods
 
 **Deliverables**:
-- Extended state manager
-- Buy order tracking
-- Trade history integration
+- ✅ Extended state manager with buy order support
+- ✅ Buy order tracking in-memory cache
+- ✅ Trade history integration (adds new positions on buy execution)
 
 **Testing**:
-- Unit tests for buy order tracking
-- State manager sync tests
-- Trade history update tests
+- ✅ Unit tests for buy order tracking: Extended `tests/integration/kotak/test_order_state_manager.py` (13 new test cases)
+- ✅ Test coverage: 83% for order_state_manager.py (exceeds 80% requirement)
+- ✅ Tests cover: registration, execution, rejection, cancellation, sync with broker, trade history updates
 
 ---
 

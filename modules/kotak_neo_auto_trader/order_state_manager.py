@@ -10,38 +10,36 @@ Provides single source of truth for:
 - Failed orders (storage.trades_history.json)
 """
 
-from typing import Dict, Any, Optional, List
-from datetime import datetime
 import threading
+from datetime import datetime
+from typing import Any
 
 from utils.logger import logger
 
 try:
+    from .domain.value_objects.order_enums import OrderStatus
     from .order_tracker import OrderTracker
     from .storage import (
-        load_history,
-        save_history,
-        mark_position_closed,
-        add_failed_order,
+        append_trade,
         cleanup_expired_failed_orders,
+        load_history,
+        mark_position_closed,
     )
     from .utils.order_field_extractor import OrderFieldExtractor
     from .utils.order_status_parser import OrderStatusParser
     from .utils.symbol_utils import extract_base_symbol
-    from .domain.value_objects.order_enums import OrderStatus
 except ImportError:
+    from modules.kotak_neo_auto_trader.domain.value_objects.order_enums import OrderStatus
     from modules.kotak_neo_auto_trader.order_tracker import OrderTracker
     from modules.kotak_neo_auto_trader.storage import (
-        load_history,
-        save_history,
-        mark_position_closed,
-        add_failed_order,
+        append_trade,
         cleanup_expired_failed_orders,
+        load_history,
+        mark_position_closed,
     )
     from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
     from modules.kotak_neo_auto_trader.utils.order_status_parser import OrderStatusParser
     from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
-    from modules.kotak_neo_auto_trader.domain.value_objects.order_enums import OrderStatus
 
 
 class OrderStateManager:
@@ -70,7 +68,11 @@ class OrderStateManager:
 
         # In-memory cache for active sell orders
         # Format: {symbol: {'order_id': str, 'target_price': float, 'qty': int, ...}}
-        self.active_sell_orders: Dict[str, Dict[str, Any]] = {}
+        self.active_sell_orders: dict[str, dict[str, Any]] = {}
+
+        # Phase 3: In-memory cache for active buy orders
+        # Format: {order_id: {'symbol': str, 'quantity': float, 'order_id': str, ...}}
+        self.active_buy_orders: dict[str, dict[str, Any]] = {}
 
         # Order tracker for pending orders
         self._order_tracker = OrderTracker(data_dir=data_dir)
@@ -88,7 +90,7 @@ class OrderStateManager:
         order_id: str,
         target_price: float,
         qty: int,
-        ticker: Optional[str] = None,
+        ticker: str | None = None,
         **kwargs,
     ) -> bool:
         """
@@ -126,10 +128,12 @@ class OrderStateManager:
                         ] = datetime.now().isoformat()
                         return True  # Return True after updating price
                     else:
-                        # Order already registered with same or better price - skip duplicate registration
+                        # Order already registered with same or better price
+                        # Skip duplicate registration
                         logger.debug(
                             f"Order {order_id} already registered for {base_symbol}. "
-                            f"Existing price: Rs {existing_price:.2f}, New price: Rs {target_price:.2f}. "
+                            f"Existing price: Rs {existing_price:.2f}, "
+                            f"New price: Rs {target_price:.2f}. "
                             f"Skipping duplicate registration."
                         )
                         return True  # Return True since order is already tracked
@@ -145,7 +149,8 @@ class OrderStateManager:
                     **kwargs,
                 }
 
-                # 2. Add to pending orders tracker (will skip if duplicate due to fix in add_pending_order)
+                # 2. Add to pending orders tracker
+                # (will skip if duplicate due to fix in add_pending_order)
                 if ticker:
                     self._order_tracker.add_pending_order(
                         order_id=order_id,
@@ -168,12 +173,80 @@ class OrderStateManager:
                 logger.error(f"Error registering sell order {order_id}: {e}")
                 return False
 
+    def register_buy_order(
+        self,
+        symbol: str,
+        order_id: str,
+        quantity: float,
+        price: float | None = None,
+        ticker: str | None = None,
+        **kwargs,
+    ) -> bool:
+        """
+        Register new buy order with atomic updates to all state sources.
+
+        Phase 3: Buy order tracking support.
+
+        Args:
+            symbol: Trading symbol (e.g., 'RELIANCE')
+            order_id: Order ID from broker
+            quantity: Order quantity
+            price: Order price (optional, for limit orders)
+            ticker: Full ticker symbol (e.g., 'RELIANCE.NS')
+            **kwargs: Additional order metadata
+
+        Returns:
+            True if successfully registered, False otherwise
+        """
+        with self._lock:
+            try:
+                base_symbol = extract_base_symbol(symbol).upper()
+
+                # Check if order already exists
+                if order_id in self.active_buy_orders:
+                    logger.debug(f"Buy order {order_id} already registered for {base_symbol}")
+                    return True
+
+                # 1. Update in-memory cache
+                self.active_buy_orders[order_id] = {
+                    "symbol": base_symbol,
+                    "quantity": quantity,
+                    "order_id": order_id,
+                    "price": price,
+                    "ticker": ticker,
+                    "registered_at": datetime.now().isoformat(),
+                    **kwargs,
+                }
+
+                # 2. Add to pending orders tracker
+                if ticker:
+                    self._order_tracker.add_pending_order(
+                        order_id=order_id,
+                        symbol=symbol,
+                        ticker=ticker,
+                        qty=int(quantity),
+                        order_type="LIMIT" if price else "MARKET",
+                        variety="REGULAR",
+                        price=price or 0,
+                    )
+
+                logger.info(
+                    f"Registered buy order: {base_symbol} "
+                    f"(order_id: {order_id}, qty: {quantity}, price: {price or 'MARKET'})"
+                )
+
+                return True
+
+            except Exception as e:
+                logger.error(f"Error registering buy order {order_id}: {e}")
+                return False
+
     def mark_order_executed(
         self,
         symbol: str,
         order_id: str,
         execution_price: float,
-        execution_qty: Optional[int] = None,
+        execution_qty: int | None = None,
     ) -> bool:
         """
         Mark order as executed with atomic updates to all state sources.
@@ -223,6 +296,78 @@ class OrderStateManager:
                 logger.error(f"Error marking order {order_id} as executed: {e}")
                 return False
 
+    def mark_buy_order_executed(
+        self,
+        symbol: str,
+        order_id: str,
+        execution_price: float,
+        execution_qty: float | None = None,
+    ) -> bool:
+        """
+        Mark buy order as executed and add new position to trade history.
+
+        Phase 3: Buy order execution tracking.
+
+        Args:
+            symbol: Trading symbol
+            order_id: Order ID
+            execution_price: Price at which order executed
+            execution_qty: Quantity executed (defaults to full qty)
+
+        Returns:
+            True if successfully updated, False otherwise
+        """
+        with self._lock:
+            try:
+                base_symbol = extract_base_symbol(symbol).upper()
+
+                # Get order info before removing
+                order_info = self.active_buy_orders.get(order_id, {})
+                execution_qty = execution_qty or order_info.get("quantity", 0)
+
+                # 1. Remove from active tracking
+                if order_id in self.active_buy_orders:
+                    del self.active_buy_orders[order_id]
+
+                # 2. Update order tracker status
+                self._order_tracker.update_order_status(
+                    order_id=order_id, status="EXECUTED", executed_qty=int(execution_qty)
+                )
+
+                # 3. Add new position to trade history
+                try:
+                    new_trade = {
+                        "symbol": base_symbol,
+                        "ticker": order_info.get("ticker", base_symbol),
+                        "entry_price": execution_price,
+                        "qty": execution_qty,
+                        "entry_time": datetime.now().isoformat(),
+                        "status": "open",
+                        "buy_order_id": order_id,
+                        "source": "AMO",
+                    }
+                    append_trade(self.history_path, new_trade)
+
+                    logger.info(
+                        f"Added new position to trade history: {base_symbol} "
+                        f"(order_id: {order_id}, "
+                        f"entry_price: Rs {execution_price:.2f}, qty: {execution_qty})"
+                    )
+                except Exception as e:
+                    logger.error(f"Error adding position to trade history: {e}")
+                    # Continue even if trade history update fails
+
+                logger.info(
+                    f"Marked buy order as executed: {base_symbol} "
+                    f"(order_id: {order_id}, price: Rs {execution_price:.2f}, qty: {execution_qty})"
+                )
+
+                return True
+
+            except Exception as e:
+                logger.error(f"Error marking buy order {order_id} as executed: {e}")
+                return False
+
     def update_sell_order_price(self, symbol: str, new_price: float) -> bool:
         """
         Update target price for an active sell order.
@@ -245,7 +390,7 @@ class OrderStateManager:
 
             return False
 
-    def remove_from_tracking(self, symbol: str, reason: Optional[str] = None) -> bool:
+    def remove_from_tracking(self, symbol: str, reason: str | None = None) -> bool:
         """
         Remove order from active tracking (e.g., rejected, cancelled).
 
@@ -271,15 +416,47 @@ class OrderStateManager:
                     self._order_tracker.update_order_status(order_id=order_id, status="CANCELLED")
 
                 logger.info(
-                    f"Removed order from tracking: {base_symbol} "
-                    f"(reason: {reason or 'unknown'})"
+                    f"Removed order from tracking: {base_symbol} (reason: {reason or 'unknown'})"
                 )
 
                 return True
 
             return False
 
-    def get_active_sell_orders(self) -> Dict[str, Dict[str, Any]]:
+    def remove_buy_order_from_tracking(self, order_id: str, reason: str | None = None) -> bool:
+        """
+        Remove buy order from active tracking (e.g., rejected, cancelled).
+
+        Phase 3: Buy order tracking support.
+
+        Args:
+            order_id: Order ID
+            reason: Reason for removal (optional)
+
+        Returns:
+            True if removed, False if not found
+        """
+        with self._lock:
+            if order_id in self.active_buy_orders:
+                order_info = self.active_buy_orders[order_id]
+                symbol = order_info.get("symbol", "UNKNOWN")
+
+                # Remove from active tracking
+                del self.active_buy_orders[order_id]
+
+                # Update order tracker
+                self._order_tracker.update_order_status(order_id=order_id, status="CANCELLED")
+
+                logger.info(
+                    f"Removed buy order from tracking: {symbol} (order_id: {order_id}, "
+                    f"reason: {reason or 'unknown'})"
+                )
+
+                return True
+
+            return False
+
+    def get_active_sell_orders(self) -> dict[str, dict[str, Any]]:
         """
         Get all active sell orders.
 
@@ -289,7 +466,7 @@ class OrderStateManager:
         with self._lock:
             return self.active_sell_orders.copy()
 
-    def get_active_order(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def get_active_order(self, symbol: str) -> dict[str, Any] | None:
         """
         Get active sell order for a symbol.
 
@@ -302,11 +479,39 @@ class OrderStateManager:
         base_symbol = extract_base_symbol(symbol).upper()
         return self.active_sell_orders.get(base_symbol)
 
-    def sync_with_broker(
-        self, orders_api, broker_orders: Optional[List[Dict[str, Any]]] = None
-    ) -> Dict[str, int]:
+    def get_active_buy_orders(self) -> dict[str, dict[str, Any]]:
+        """
+        Get all active buy orders.
+
+        Phase 3: Buy order tracking support.
+
+        Returns:
+            Dict of active buy orders {order_id: order_info}
+        """
+        with self._lock:
+            return self.active_buy_orders.copy()
+
+    def get_active_buy_order(self, order_id: str) -> dict[str, Any] | None:
+        """
+        Get active buy order by order ID.
+
+        Phase 3: Buy order tracking support.
+
+        Args:
+            order_id: Order ID
+
+        Returns:
+            Order info dict or None if not found
+        """
+        return self.active_buy_orders.get(order_id)
+
+    def sync_with_broker(  # noqa: PLR0912, PLR0915
+        self, orders_api, broker_orders: list[dict[str, Any]] | None = None
+    ) -> dict[str, int]:
         """
         Sync state with broker to detect manual orders and status changes.
+
+        Phase 3: Extended to check both buy and sell orders.
 
         Args:
             orders_api: Orders API client (with get_orders method)
@@ -315,7 +520,17 @@ class OrderStateManager:
         Returns:
             Stats dict with sync results
         """
-        stats = {"checked": 0, "executed": 0, "rejected": 0, "cancelled": 0, "manual_sells": 0}
+        stats = {
+            "checked": 0,
+            "executed": 0,
+            "rejected": 0,
+            "cancelled": 0,
+            "manual_sells": 0,
+            "buy_checked": 0,
+            "buy_executed": 0,
+            "buy_rejected": 0,
+            "buy_cancelled": 0,
+        }
 
         try:
             # Fetch broker orders if not provided
@@ -391,13 +606,65 @@ class OrderStateManager:
                         # This is a placeholder - actual handling depends on requirements
                         self.remove_from_tracking(symbol, reason="Manual sell detected")
 
+            # Phase 3: Check each active buy order
+            active_buy_order_ids = list(self.active_buy_orders.keys())
+
+            for order_id in active_buy_order_ids:
+                order_info = self.active_buy_orders.get(order_id)
+                if not order_info:
+                    continue
+
+                stats["buy_checked"] += 1
+
+                # Find order in broker orders
+                broker_order = None
+                for bo in broker_orders:
+                    broker_order_id = OrderFieldExtractor.get_order_id(bo)
+                    if broker_order_id == order_id:
+                        broker_order = bo
+                        break
+
+                if broker_order:
+                    # Check status
+                    status = OrderStatusParser.parse_status(broker_order)
+                    symbol = order_info.get("symbol", "UNKNOWN")
+
+                    if status in {OrderStatus.COMPLETE, OrderStatus.EXECUTED}:
+                        # Buy order executed
+                        execution_price = OrderFieldExtractor.get_price(
+                            broker_order
+                        ) or order_info.get("price", 0)
+                        execution_qty = OrderFieldExtractor.get_quantity(
+                            broker_order
+                        ) or order_info.get("quantity", 0)
+
+                        self.mark_buy_order_executed(
+                            symbol, order_id, execution_price, execution_qty
+                        )
+                        stats["buy_executed"] += 1
+
+                    elif status == OrderStatus.REJECTED:
+                        # Buy order rejected
+                        rejection_reason = (
+                            OrderFieldExtractor.get_rejection_reason(broker_order) or "Unknown"
+                        )
+                        self.remove_buy_order_from_tracking(
+                            order_id, reason=f"Rejected: {rejection_reason}"
+                        )
+                        stats["buy_rejected"] += 1
+
+                    elif status == OrderStatus.CANCELLED:
+                        # Buy order cancelled
+                        self.remove_buy_order_from_tracking(order_id, reason="Cancelled")
+                        stats["buy_cancelled"] += 1
+
             return stats
 
         except Exception as e:
             logger.error(f"Error syncing with broker: {e}")
             return stats
 
-    def get_pending_orders(self, status_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_pending_orders(self, status_filter: str | None = None) -> list[dict[str, Any]]:
         """
         Get pending orders from OrderTracker.
 
@@ -418,7 +685,7 @@ class OrderStateManager:
         """
         return cleanup_expired_failed_orders(self.history_path)
 
-    def get_trade_history(self) -> Dict[str, Any]:
+    def get_trade_history(self) -> dict[str, Any]:
         """
         Get full trade history.
 
