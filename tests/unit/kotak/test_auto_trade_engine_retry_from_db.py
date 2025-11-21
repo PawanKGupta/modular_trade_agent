@@ -1,0 +1,424 @@
+#!/usr/bin/env python3
+"""
+Tests for AutoTradeEngine retry_pending_orders_from_db method
+
+Tests that orders with RETRY_PENDING status are retried from database
+at scheduled time (8:00 AM) instead of during buy order placement.
+"""
+
+from datetime import datetime
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
+
+from config.strategy_config import StrategyConfig
+
+
+@pytest.fixture
+def mock_auth():
+    """Mock KotakNeoAuth"""
+    auth = MagicMock()
+    auth.is_authenticated.return_value = True
+    auth.login.return_value = True
+    return auth
+
+
+@pytest.fixture
+def strategy_config():
+    """Default strategy config"""
+    return StrategyConfig(
+        rsi_period=14,
+        rsi_oversold=25.0,
+        user_capital=300000.0,
+        max_portfolio_size=6,
+    )
+
+
+@pytest.fixture
+def auto_trade_engine(mock_auth, strategy_config):
+    """Create AutoTradeEngine instance"""
+    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+
+    with patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth") as mock_auth_class:
+        mock_auth_class.return_value = mock_auth
+
+        engine = AutoTradeEngine(
+            env_file="test.env",
+            auth=mock_auth,
+            user_id=1,
+            db_session=MagicMock(),
+            strategy_config=strategy_config,
+        )
+
+        # Mock portfolio and orders
+        engine.portfolio = MagicMock()
+        engine.orders = MagicMock()
+        engine.orders_repo = MagicMock()
+        engine.telegram_notifier = MagicMock()
+        engine.telegram_notifier.enabled = True
+
+        return engine
+
+
+class TestRetryPendingOrdersFromDB:
+    """Test retry_pending_orders_from_db method"""
+
+    def test_retry_pending_orders_success(self, auto_trade_engine):
+        """Test successful retry of pending orders from DB"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING order
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.symbol = "RELIANCE"
+        mock_order.ticker = "RELIANCE.NS"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.retry_count = 1
+        mock_order.price = 2450.0
+        mock_order.quantity = 10
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+
+        # Mock portfolio checks
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
+        auto_trade_engine.portfolio_size = Mock(return_value=2)
+        auto_trade_engine.has_holding = Mock(return_value=False)
+        auto_trade_engine.has_active_buy_order = Mock(return_value=False)
+
+        # Mock indicators
+        auto_trade_engine.get_daily_indicators = Mock(
+            return_value={
+                "close": 2450.0,
+                "rsi10": 25.0,
+                "ema9": 2400.0,
+                "ema200": 2300.0,
+                "avg_volume": 1000000,
+            }
+        )
+
+        # Mock balance check
+        auto_trade_engine.get_affordable_qty = Mock(return_value=20)
+        auto_trade_engine.get_available_cash = Mock(return_value=50000.0)
+
+        # Mock position volume ratio check
+        auto_trade_engine.check_position_volume_ratio = Mock(return_value=True)
+
+        # Mock order placement
+        auto_trade_engine._attempt_place_order = Mock(return_value=(True, "ORDER123"))
+
+        # Mock execution capital calculation
+        auto_trade_engine._calculate_execution_capital = Mock(return_value=30000.0)
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        assert summary["retried"] == 1
+        assert summary["placed"] == 1
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 0
+
+        # Verify order was updated
+        assert mock_order.broker_order_id == "ORDER123"
+        assert mock_order.status == DbOrderStatus.PENDING_EXECUTION
+        auto_trade_engine.orders_repo.update.assert_called_once()
+
+        # Verify notification was sent
+        auto_trade_engine.telegram_notifier.notify_retry_queue_updated.assert_called_once()
+
+    def test_retry_pending_orders_insufficient_balance(self, auto_trade_engine):
+        """Test retry fails due to insufficient balance"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING order
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.symbol = "RELIANCE"
+        mock_order.ticker = "RELIANCE.NS"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.retry_count = 0
+        mock_order.price = 2450.0
+        mock_order.quantity = 10
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+
+        # Mock portfolio checks
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
+        auto_trade_engine.portfolio_size = Mock(return_value=2)
+        auto_trade_engine.has_holding = Mock(return_value=False)
+        auto_trade_engine.has_active_buy_order = Mock(return_value=False)
+
+        # Mock indicators
+        auto_trade_engine.get_daily_indicators = Mock(
+            return_value={
+                "close": 2450.0,
+                "rsi10": 25.0,
+                "ema9": 2400.0,
+                "ema200": 2300.0,
+                "avg_volume": 1000000,
+            }
+        )
+
+        # Mock insufficient balance
+        auto_trade_engine.get_affordable_qty = Mock(return_value=5)  # Less than required
+        auto_trade_engine.get_available_cash = Mock(return_value=10000.0)
+        auto_trade_engine.check_position_volume_ratio = Mock(return_value=True)
+        auto_trade_engine._calculate_execution_capital = Mock(return_value=30000.0)
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        assert summary["retried"] == 1
+        assert summary["placed"] == 0
+        assert summary["failed"] == 1
+        assert summary["skipped"] == 0
+
+        # Verify retry count was incremented
+        assert mock_order.retry_count == 1
+        auto_trade_engine.orders_repo.update.assert_called_once()
+
+    def test_retry_pending_orders_already_in_holdings(self, auto_trade_engine):
+        """Test retry skipped when already in holdings"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING order
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.symbol = "RELIANCE"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+
+        # Mock already in holdings
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
+        auto_trade_engine.portfolio_size = Mock(return_value=2)
+        auto_trade_engine.has_holding = Mock(return_value=True)  # Already in holdings
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        assert summary["retried"] == 1
+        assert summary["placed"] == 0
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 1
+
+        # Verify order was marked as cancelled
+        auto_trade_engine.orders_repo.mark_cancelled.assert_called_once()
+
+    def test_retry_pending_orders_portfolio_limit(self, auto_trade_engine):
+        """Test retry skipped when portfolio limit reached"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING orders
+        mock_order1 = Mock()
+        mock_order1.symbol = "RELIANCE"
+        mock_order1.status = DbOrderStatus.RETRY_PENDING
+
+        mock_order2 = Mock()
+        mock_order2.symbol = "TCS"
+        mock_order2.status = DbOrderStatus.RETRY_PENDING
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [
+            mock_order1,
+            mock_order2,
+        ]
+
+        # Mock portfolio at limit
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=["A", "B", "C", "D", "E", "F"])
+        auto_trade_engine.portfolio_size = Mock(return_value=6)  # At max_portfolio_size
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        # First order increments retried before checking limit, then breaks
+        # Skipped calculation: len(orders) - retried + 1 = 2 - 1 + 1 = 2
+        # So retried will be 1, and skipped will be 2 (both orders skipped)
+        assert summary["retried"] == 1  # First order retried before limit check
+        assert summary["skipped"] == 2  # Both orders skipped due to limit
+
+    def test_retry_pending_orders_broker_api_error(self, auto_trade_engine):
+        """Test retry fails due to broker API error"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING order
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.symbol = "RELIANCE"
+        mock_order.ticker = "RELIANCE.NS"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.retry_count = 0
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+
+        # Mock portfolio checks
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
+        auto_trade_engine.portfolio_size = Mock(return_value=2)
+        auto_trade_engine.has_holding = Mock(return_value=False)
+        auto_trade_engine.has_active_buy_order = Mock(return_value=False)
+
+        # Mock indicators
+        auto_trade_engine.get_daily_indicators = Mock(
+            return_value={
+                "close": 2450.0,
+                "rsi10": 25.0,
+                "ema9": 2400.0,
+                "ema200": 2300.0,
+                "avg_volume": 1000000,
+            }
+        )
+
+        # Mock balance check
+        auto_trade_engine.get_affordable_qty = Mock(return_value=20)
+        auto_trade_engine.get_available_cash = Mock(return_value=50000.0)
+        auto_trade_engine.check_position_volume_ratio = Mock(return_value=True)
+        auto_trade_engine._calculate_execution_capital = Mock(return_value=30000.0)
+
+        # Mock order placement failure
+        auto_trade_engine._attempt_place_order = Mock(return_value=(False, None))
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        assert summary["retried"] == 1
+        assert summary["placed"] == 0
+        assert summary["failed"] == 1
+        assert summary["skipped"] == 0
+
+        # Verify order was marked as FAILED (not retryable)
+        auto_trade_engine.orders_repo.mark_failed.assert_called_once()
+        call_args = auto_trade_engine.orders_repo.mark_failed.call_args
+        assert call_args.kwargs["retry_pending"] is False
+
+    def test_retry_pending_orders_no_orders(self, auto_trade_engine):
+        """Test retry when no pending orders exist"""
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = []
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        assert summary["retried"] == 0
+        assert summary["placed"] == 0
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 0
+
+    def test_retry_pending_orders_no_db(self, auto_trade_engine):
+        """Test retry when DB not available"""
+        auto_trade_engine.orders_repo = None
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        assert summary["retried"] == 0
+        assert summary["placed"] == 0
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 0
+
+    def test_retry_pending_orders_missing_indicators(self, auto_trade_engine):
+        """Test retry skipped when indicators missing"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING order
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.symbol = "RELIANCE"
+        mock_order.ticker = "RELIANCE.NS"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+
+        # Mock portfolio checks
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
+        auto_trade_engine.portfolio_size = Mock(return_value=2)
+        auto_trade_engine.has_holding = Mock(return_value=False)
+        auto_trade_engine.has_active_buy_order = Mock(return_value=False)
+
+        # Mock missing indicators
+        auto_trade_engine.get_daily_indicators = Mock(return_value=None)
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        assert summary["retried"] == 1
+        assert summary["placed"] == 0
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 1
+
+    def test_retry_pending_orders_invalid_price(self, auto_trade_engine):
+        """Test retry skipped when price is invalid"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING order
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.symbol = "RELIANCE"
+        mock_order.ticker = "RELIANCE.NS"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+
+        # Mock portfolio checks
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
+        auto_trade_engine.portfolio_size = Mock(return_value=2)
+        auto_trade_engine.has_holding = Mock(return_value=False)
+        auto_trade_engine.has_active_buy_order = Mock(return_value=False)
+
+        # Mock invalid price
+        auto_trade_engine.get_daily_indicators = Mock(
+            return_value={
+                "close": 0.0,  # Invalid price
+                "rsi10": 25.0,
+                "ema9": 2400.0,
+                "ema200": 2300.0,
+                "avg_volume": 1000000,
+            }
+        )
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        assert summary["retried"] == 1
+        assert summary["placed"] == 0
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 1
+
+    def test_retry_pending_orders_position_too_large(self, auto_trade_engine):
+        """Test retry skipped when position too large for volume"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING order
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.symbol = "RELIANCE"
+        mock_order.ticker = "RELIANCE.NS"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+
+        # Mock portfolio checks
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
+        auto_trade_engine.portfolio_size = Mock(return_value=2)
+        auto_trade_engine.has_holding = Mock(return_value=False)
+        auto_trade_engine.has_active_buy_order = Mock(return_value=False)
+
+        # Mock indicators
+        auto_trade_engine.get_daily_indicators = Mock(
+            return_value={
+                "close": 2450.0,
+                "rsi10": 25.0,
+                "ema9": 2400.0,
+                "ema200": 2300.0,
+                "avg_volume": 1000000,
+            }
+        )
+
+        # Mock balance check
+        auto_trade_engine.get_affordable_qty = Mock(return_value=20)
+        auto_trade_engine.get_available_cash = Mock(return_value=50000.0)
+        auto_trade_engine._calculate_execution_capital = Mock(return_value=30000.0)
+
+        # Mock position too large for volume
+        auto_trade_engine.check_position_volume_ratio = Mock(return_value=False)
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        assert summary["retried"] == 1
+        assert summary["placed"] == 0
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 1
+
+        # Verify order was marked as FAILED (not retryable)
+        auto_trade_engine.orders_repo.mark_failed.assert_called_once()
+        call_args = auto_trade_engine.orders_repo.mark_failed.call_args
+        assert call_args.kwargs["retry_pending"] is False
+        assert "not retryable" in call_args.kwargs["failure_reason"]
+

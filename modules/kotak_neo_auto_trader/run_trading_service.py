@@ -421,7 +421,7 @@ class TradingService:
         return 0 <= time_diff < 2  # Run if within 2 minutes of scheduled time
 
     def run_premarket_retry(self):
-        """9:00 AM - Retry failed orders from previous day"""
+        """8:00 AM - Retry orders with RETRY_PENDING status from database"""
         from src.application.services.task_execution_wrapper import execute_task
 
         with execute_task(
@@ -433,19 +433,17 @@ class TradingService:
         ) as task_context:
             logger.info("")
             logger.info("=" * 80)
-            logger.info("TASK: PRE-MARKET RETRY (9:00 AM)")
+            logger.info("TASK: PRE-MARKET RETRY (8:00 AM)")
             logger.info("=" * 80)
 
-            # Run AMO placement (it handles retries automatically)
-            recs = self.engine.load_latest_recommendations()
-            if recs:
-                summary = self.engine.place_new_entries(recs)
-                logger.info(f"Pre-market retry summary: {summary}")
-                task_context["recommendations_count"] = len(recs)
-                task_context["summary"] = summary
-            else:
-                logger.info("No recommendations to retry")
-                task_context["recommendations_count"] = 0
+            # Retry orders with RETRY_PENDING status from database
+            summary = self.engine.retry_pending_orders_from_db()
+            logger.info(f"Pre-market retry summary: {summary}")
+            task_context["summary"] = summary
+            task_context["retried"] = summary.get("retried", 0)
+            task_context["placed"] = summary.get("placed", 0)
+            task_context["failed"] = summary.get("failed", 0)
+            task_context["skipped"] = summary.get("skipped", 0)
 
             self.tasks_completed["premarket_retry"] = True
             logger.info("Pre-market retry completed")

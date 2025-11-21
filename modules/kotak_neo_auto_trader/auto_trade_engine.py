@@ -2072,12 +2072,170 @@ class AutoTradeEngine:
             # On error, assume order is valid (don't block on verification failures)
             return (True, None)
 
+    # ---------------------- Retry pending orders from DB ----------------------
+    def retry_pending_orders_from_db(self) -> dict[str, int]:
+        """
+        Retry orders with RETRY_PENDING status from database.
+        Called by premarket retry task at scheduled time.
+
+        Returns:
+            Summary dict with retry statistics
+        """
+        summary = {
+            "retried": 0,
+            "placed": 0,
+            "failed": 0,
+            "skipped": 0,
+        }
+
+        if not self.orders_repo or not self.user_id:
+            logger.debug("Cannot retry orders: DB not available or user_id not set")
+            return summary
+
+        try:
+            # Get orders with RETRY_PENDING status
+            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+            retry_pending_orders = self.orders_repo.get_failed_orders(self.user_id)
+            retry_pending_orders = [o for o in retry_pending_orders if o.status == DbOrderStatus.RETRY_PENDING]
+
+            if not retry_pending_orders:
+                logger.info("No orders with RETRY_PENDING status to retry")
+                return summary
+
+            logger.info(f"Found {len(retry_pending_orders)} orders with RETRY_PENDING status to retry")
+
+            # Check portfolio limit
+            try:
+                current_count = len(self.current_symbols_in_portfolio())
+            except Exception:
+                current_count = self.portfolio_size()
+
+            for db_order in retry_pending_orders:
+                summary["retried"] += 1
+                symbol = db_order.symbol
+
+                # Check portfolio limit
+                if current_count >= self.strategy_config.max_portfolio_size:
+                    logger.info(
+                        f"Portfolio limit reached ({current_count}/{self.strategy_config.max_portfolio_size}); "
+                        "skipping remaining retries"
+                    )
+                    summary["skipped"] += len(retry_pending_orders) - summary["retried"] + 1
+                    break
+
+                # Skip if already in holdings
+                if self.has_holding(symbol):
+                    logger.info(f"Removing {symbol} from retry: already in holdings")
+                    # Update status to CLOSED since we already own it
+                    self.orders_repo.mark_cancelled(db_order, "Already in holdings")
+                    summary["skipped"] += 1
+                    continue
+
+                # Skip if already has active buy order
+                if self.has_active_buy_order(symbol):
+                    logger.info(f"Skipping retry for {symbol}: already has pending buy order")
+                    summary["skipped"] += 1
+                    continue
+
+                # Get ticker from order or try to construct it
+                ticker = getattr(db_order, "ticker", None) or f"{symbol}.NS"
+
+                # Get fresh indicators
+                ind = self.get_daily_indicators(ticker)
+                if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
+                    logger.warning(f"Skipping retry {symbol}: missing indicators")
+                    summary["skipped"] += 1
+                    continue
+
+                close = ind["close"]
+                if close <= 0:
+                    logger.warning(f"Skipping retry {symbol}: invalid close price {close}")
+                    summary["skipped"] += 1
+                    continue
+
+                # Recalculate execution capital
+                avg_vol = ind.get("avg_volume", 0)
+                execution_capital = self._calculate_execution_capital(ticker, close, avg_vol)
+                qty = max(config.MIN_QTY, floor(execution_capital / close))
+
+                # Check position-to-volume ratio
+                if not self.check_position_volume_ratio(qty, avg_vol, symbol, close):
+                    logger.info(f"Skipping retry {symbol}: position size too large relative to volume")
+                    # Mark as FAILED (not retryable) since it's a permanent issue
+                    self.orders_repo.mark_failed(
+                        order=db_order,
+                        failure_reason="Position too large for volume - not retryable",
+                        retry_pending=False,
+                    )
+                    summary["skipped"] += 1
+                    continue
+
+                # Check balance
+                affordable = self.get_affordable_qty(close)
+                if affordable < config.MIN_QTY or qty > affordable:
+                    avail_cash = self.get_available_cash()
+                    required_cash = qty * close
+                    shortfall = max(0.0, required_cash - (avail_cash or 0.0))
+                    logger.warning(
+                        f"Retry failed for {symbol}: still insufficient balance "
+                        f"(need Rs {required_cash:,.0f}, have Rs {(avail_cash or 0.0):,.0f})"
+                    )
+                    # Update retry count but keep as RETRY_PENDING for next scheduled retry
+                    from src.infrastructure.db.timezone_utils import ist_now
+                    db_order.retry_count = (db_order.retry_count or 0) + 1
+                    db_order.last_retry_attempt = ist_now()
+                    self.orders_repo.update(db_order)
+                    summary["failed"] += 1
+                    continue
+
+                # Try placing the order
+                success, order_id = self._attempt_place_order(symbol, ticker, qty, close, ind)
+                if success:
+                    summary["placed"] += 1
+                    # Update order status to PENDING_EXECUTION and set broker_order_id
+                    db_order.broker_order_id = order_id
+                    db_order.status = DbOrderStatus.PENDING_EXECUTION
+                    self.orders_repo.update(db_order)
+                    logger.info(f"Successfully placed retry order for {symbol} (order_id: {order_id})")
+
+                    # Send notification
+                    if self.telegram_notifier and self.telegram_notifier.enabled:
+                        try:
+                            retry_count = db_order.retry_count or 0
+                            self.telegram_notifier.notify_retry_queue_updated(
+                                symbol=symbol,
+                                action="retried_successfully",
+                                retry_count=retry_count,
+                                additional_info={"order_id": order_id},
+                            )
+                        except Exception as notify_error:
+                            logger.warning(f"Failed to send retry success notification: {notify_error}")
+                else:
+                    # Broker/API error - mark as FAILED (not retryable)
+                    self.orders_repo.mark_failed(
+                        order=db_order,
+                        failure_reason="Broker API error during retry - not retryable",
+                        retry_pending=False,
+                    )
+                    summary["failed"] += 1
+                    logger.error(f"Broker/API error while retrying order for {symbol}")
+
+            logger.info(
+                f"Retry summary: {summary['placed']} placed, {summary['failed']} failed, "
+                f"{summary['skipped']} skipped"
+            )
+            return summary
+
+        except Exception as e:
+            logger.error(f"Error retrying pending orders from DB: {e}", exc_info=e)
+            return summary
+
     # ---------------------- New entries ----------------------
     def place_new_entries(self, recommendations: list[Recommendation]) -> dict[str, int | list]:
         summary = {
             "attempted": 0,
             "placed": 0,
-            "retried": 0,
             "failed_balance": 0,
             "skipped_portfolio_limit": 0,
             "skipped_duplicates": 0,
@@ -2315,143 +2473,7 @@ class AutoTradeEngine:
         except Exception as e:
             logger.warning(f"Manual buy check failed: {e}")
 
-        # STEP 1: Retry previously failed orders due to insufficient balance
-        # (includes yesterday's orders if before 9:15 AM market open)
-        failed_orders = self._get_failed_orders(include_previous_day_before_market=True)
-        if failed_orders:
-            logger.info(f"Found {len(failed_orders)} previously failed orders to retry")
-            for failed_order in failed_orders[:]:
-                # Skip non-retryable orders (e.g., broker API errors)
-                if failed_order.get("non_retryable", False):
-                    logger.info(
-                        f"Skipping non-retryable failed order for {failed_order.get('symbol')} "
-                        f"(reason: {failed_order.get('reason', 'unknown')})"
-                    )
-                    continue
-
-                # Check portfolio limit
-                try:
-                    current_count = len(self.current_symbols_in_portfolio())
-                except Exception:
-                    current_count = self.portfolio_size()
-                if current_count >= self.strategy_config.max_portfolio_size:
-                    logger.info(
-                        f"Portfolio limit reached ({current_count}/{self.strategy_config.max_portfolio_size}); skipping failed order retries"
-                    )
-                    break
-
-                symbol = failed_order.get("symbol")
-                ticker = failed_order.get("ticker")
-
-                # Skip if already in holdings
-                if self.has_holding(symbol):
-                    logger.info(f"Removing {symbol} from retry queue: already in holdings")
-                    self._remove_failed_order(symbol)
-                    continue
-
-                # Skip if already has active buy order
-                if self.has_active_buy_order(symbol):
-                    logger.info(f"Skipping retry for {symbol}: already has pending buy order")
-                    continue
-
-                summary["retried"] += 1
-                logger.info(f"Retrying failed order for {symbol}...")
-
-                # Get fresh indicators
-                ind = self.get_daily_indicators(ticker)
-                if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
-                    logger.warning(f"Skipping retry {symbol}: missing indicators")
-                    continue
-
-                close = ind["close"]
-                if close <= 0:
-                    logger.warning(f"Skipping retry {symbol}: invalid close price {close}")
-                    continue
-
-                # Phase 11: Always recalculate execution_capital during retry to respect current user config
-                # This ensures that if user changes capital config, retries use the new value
-                avg_vol = ind.get("avg_volume", 0)
-                old_execution_capital = failed_order.get("execution_capital")
-                execution_capital = self._calculate_execution_capital(ticker, close, avg_vol)
-
-                # Log if capital changed from stored value
-                if (
-                    old_execution_capital
-                    and old_execution_capital > 0
-                    and old_execution_capital != execution_capital
-                ):
-                    logger.info(
-                        f"Retry {symbol}: Execution capital updated from Rs {old_execution_capital:,.0f} "
-                        f"to Rs {execution_capital:,.0f} (current user_capital: Rs {self.strategy_config.user_capital:,.0f})"
-                    )
-                else:
-                    logger.debug(
-                        f"Calculated execution_capital for retry {symbol}: Rs {execution_capital:,.0f} "
-                        f"(using user_capital: Rs {self.strategy_config.user_capital:,.0f})"
-                    )
-
-                qty = max(config.MIN_QTY, floor(execution_capital / close))
-
-                # Check position-to-volume ratio (liquidity filter)
-                avg_vol = ind.get("avg_volume", 0)
-                if not self.check_position_volume_ratio(qty, avg_vol, symbol, close):
-                    logger.info(
-                        f"Skipping retry {symbol}: position size too large relative to volume"
-                    )
-                    summary["skipped_invalid_qty"] += 1
-                    # Remove from failed orders queue since it's not a temporary issue
-                    self._remove_failed_order(symbol)
-                    continue
-
-                # Check balance again
-                affordable = self.get_affordable_qty(close)
-                if affordable < config.MIN_QTY or qty > affordable:
-                    avail_cash = self.get_available_cash()
-                    required_cash = qty * close
-                    shortfall = max(0.0, required_cash - (avail_cash or 0.0))
-                    logger.warning(
-                        f"Retry failed for {symbol}: still insufficient balance (need Rs {required_cash:,.0f}, have Rs {(avail_cash or 0.0):,.0f})"
-                    )
-                    # Update the failed order with new attempt timestamp
-                    failed_order["retry_count"] = failed_order.get("retry_count", 0) + 1
-                    failed_order["last_retry_attempt"] = datetime.now().isoformat()
-                    self._add_failed_order(failed_order)
-                    continue
-
-                # Try placing the order
-                success, order_id = self._attempt_place_order(symbol, ticker, qty, close, ind)
-                if success:
-                    summary["placed"] += 1
-                    self._remove_failed_order(symbol)
-                    logger.info(
-                        f"Successfully placed retry order for {symbol} (order_id: {order_id})"
-                    )
-                    # Phase 9: Send notification for successful retry
-                    if self.telegram_notifier and self.telegram_notifier.enabled:
-                        try:
-                            retry_count = failed_order.get("retry_count", 0)
-                            self.telegram_notifier.notify_retry_queue_updated(
-                                symbol=symbol,
-                                action="retried_successfully",
-                                retry_count=retry_count,
-                                additional_info={"order_id": order_id},
-                            )
-                        except Exception as notify_error:
-                            logger.warning(
-                                f"Failed to send retry success notification: {notify_error}"
-                            )
-                else:
-                    # Broker/API error during retry - log and continue with other orders
-                    # Don't stop the entire run for one failed retry
-                    error_msg = (
-                        f"Broker/API error while retrying order for {symbol}. "
-                        "Skipping this retry and continuing with other orders."
-                    )
-                    logger.error(error_msg)
-                    # Continue with next failed order instead of raising exception
-                    continue
-
-        # STEP 2: Process new recommendations
+        # Process new recommendations (retries handled separately at scheduled time)
         for rec in recommendations:
             broker_symbol = self.parse_symbol_for_broker(rec.ticker)
             ticker_attempt = {
@@ -2592,8 +2614,7 @@ class AutoTradeEngine:
                     f"Insufficient balance for {broker_symbol} AMO BUY.\n"
                     f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}.\n"
                     f"Available: Rs {(avail_cash or 0.0):,.0f}. Shortfall: Rs {shortfall:,.0f}.\n\n"
-                    f"Order saved for retry until 9:15 AM tomorrow (before market opens).\n"
-                    f"Add balance & run script, or wait for 8 AM scheduled retry."
+                    f"Order status updated in database. Will be retried at scheduled time (8:00 AM) or manually."
                 )
                 send_telegram(telegram_msg)
 
@@ -2602,10 +2623,10 @@ class AutoTradeEngine:
                     f"Insufficient balance for {broker_symbol} AMO BUY. "
                     f"Needed: Rs.{required_cash:,.0f} for {qty} @ Rs.{close:.2f}. "
                     f"Available: Rs.{(avail_cash or 0.0):,.0f}. Shortfall: Rs.{shortfall:,.0f}. "
-                    f"Order saved for retry until 9:15 AM tomorrow."
+                    f"Order status updated in database. Will be retried at scheduled time or manually."
                 )
 
-                # Save failed order for retry
+                # Create order in DB with RETRY_PENDING status for scheduled retry
                 failed_order_info = {
                     "symbol": broker_symbol,
                     "ticker": rec.ticker,
