@@ -35,7 +35,13 @@ try:
 
     # Phase 2 modules
     from .order_status_verifier import get_order_status_verifier
-    from .order_tracker import add_pending_order, extract_order_id, search_order_in_broker_orderbook
+    from .order_tracker import (
+        add_pending_order,
+        configure_order_tracker,
+        extract_order_id,
+        search_order_in_broker_orderbook,
+    )
+    from .utils.order_field_extractor import OrderFieldExtractor
     from .orders import KotakNeoOrders
     from .portfolio import KotakNeoPortfolio
     from .scrip_master import KotakNeoScripMaster
@@ -67,8 +73,12 @@ except ImportError:
     from modules.kotak_neo_auto_trader.order_status_verifier import get_order_status_verifier
     from modules.kotak_neo_auto_trader.order_tracker import (
         add_pending_order,
+        configure_order_tracker,
         extract_order_id,
         search_order_in_broker_orderbook,
+    )
+    from modules.kotak_neo_auto_trader.utils.order_field_extractor import (
+        OrderFieldExtractor,
     )
     from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
     from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
@@ -162,6 +172,18 @@ class AutoTradeEngine:
 
             self.orders_repo = OrdersRepository(self.db)
             self.positions_repo = PositionsRepository(self.db)
+
+            # Ensure global OrderTracker writes pending orders to the database
+            try:
+                configure_order_tracker(
+                    data_dir="data",
+                    db_session=self.db,
+                    user_id=self.user_id,
+                    use_db=True,
+                )
+                logger.info("OrderTracker configured with DB session for dual-write support")
+            except Exception as tracker_error:
+                logger.warning(f"Failed to configure OrderTracker with DB session: {tracker_error}")
         else:
             # Backward compatibility: file-based storage
             self.history_path = config.TRADES_HISTORY_PATH
@@ -1759,10 +1781,11 @@ class AutoTradeEngine:
             f"(order_id: {order_id}, qty: {qty})"
         )
 
+        order_type = "LIMIT" if use_limit_order else "MARKET"
+
         # Phase 9: Send notification for order placed successfully
         if self.telegram_notifier and self.telegram_notifier.enabled:
             try:
-                order_type = "LIMIT" if use_limit_order else "MARKET"
                 limit_price = limit_price if use_limit_order else None
                 self.telegram_notifier.notify_order_placed(
                     symbol=placed_symbol or broker_symbol,
@@ -1808,12 +1831,20 @@ class AutoTradeEngine:
                 symbol=placed_symbol or broker_symbol,
                 ticker=ticker,
                 qty=qty,
-                order_type="MARKET",
+                order_type=order_type,
                 variety=config.DEFAULT_VARIETY,
+                price=limit_price if use_limit_order else 0.0,
             )
             logger.debug(f"Added to pending orders: {order_id}")
         except Exception as e:
             logger.error(f"Failed to add to pending orders: {e}")
+
+        # Immediately fetch order status from broker and sync DB state
+        self._sync_order_status_snapshot(
+            order_id=str(order_id),
+            symbol=placed_symbol or broker_symbol,
+            quantity=qty,
+        )
 
         # Phase 5: Immediately verify order placement (non-blocking)
         # This checks if the order was immediately rejected by the broker
@@ -1833,6 +1864,81 @@ class AutoTradeEngine:
             # Don't fail order placement if verification fails
 
         return (True, order_id)
+
+    def _sync_order_status_snapshot(
+        self, order_id: str, symbol: str | None = None, quantity: int | None = None
+    ) -> None:
+        """
+        Immediately fetch the current broker status for a newly placed order and
+        mirror it in the orders table.
+        """
+        if not (self.orders and self.orders_repo and self.user_id):
+            return
+
+        try:
+            orders_response = self.orders.get_orders() or {}
+            broker_orders = orders_response.get("data", []) if isinstance(orders_response, dict) else []
+            target = None
+            for broker_order in broker_orders:
+                if OrderFieldExtractor.get_order_id(broker_order) == str(order_id):
+                    target = broker_order
+                    break
+
+            if not target:
+                return
+
+            db_order = (
+                self.orders_repo.get_by_broker_order_id(self.user_id, str(order_id))
+                or self.orders_repo.get_by_order_id(self.user_id, str(order_id))
+            )
+            if not db_order:
+                return
+
+            status = OrderFieldExtractor.get_status(target)
+            status_lower = status.lower()
+            if not status_lower:
+                return
+
+            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+            self.orders_repo.update_status_check(db_order)
+
+            if status_lower in {"rejected", "reject"}:
+                rejection_reason = (
+                    OrderFieldExtractor.get_rejection_reason(target) or "Rejected by broker"
+                )
+                self.orders_repo.mark_rejected(db_order, rejection_reason)
+            elif status_lower in {"cancelled", "cancel"}:
+                cancelled_reason = (
+                    OrderFieldExtractor.get_rejection_reason(target) or "Cancelled"
+                )
+                self.orders_repo.mark_cancelled(db_order, cancelled_reason)
+            elif status_lower in {"executed", "filled", "complete"}:
+                execution_price = OrderFieldExtractor.get_price(target)
+                execution_qty = (
+                    OrderFieldExtractor.get_quantity(target) or quantity or db_order.quantity
+                )
+                self.orders_repo.mark_executed(
+                    db_order,
+                    execution_price=execution_price,
+                    execution_qty=execution_qty,
+                )
+            elif status_lower in {
+                "pending",
+                "open",
+                "trigger_pending",
+                "partially_filled",
+                "partially filled",
+            }:
+                if db_order.status != DbOrderStatus.PENDING_EXECUTION:
+                    self.orders_repo.update(
+                        db_order, status=DbOrderStatus.PENDING_EXECUTION
+                    )
+        except Exception as e:
+            logger.debug(
+                f"Immediate order status sync failed for {symbol or order_id}: {e}",
+                exc_info=False,
+            )
 
     def _verify_order_placement(
         self, order_id: str, symbol: str, wait_seconds: int = 15

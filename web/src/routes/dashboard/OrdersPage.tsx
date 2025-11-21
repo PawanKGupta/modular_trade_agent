@@ -5,6 +5,7 @@ import { listOrders, retryOrder, dropOrder, type Order, type OrderStatus } from 
 const TABS: { key: OrderStatus; label: string }[] = [
 	{ key: 'amo', label: 'AMO' },
 	{ key: 'ongoing', label: 'Ongoing' },
+	{ key: 'pending_execution', label: 'Pending Execution' },
 	{ key: 'sell', label: 'Sell' },
 	{ key: 'failed', label: 'Failed' },
 	{ key: 'retry_pending', label: 'Retry Pending' },

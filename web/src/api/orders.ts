@@ -40,7 +40,7 @@ export interface ListOrdersParams {
 }
 
 export async function listOrders(params?: ListOrdersParams): Promise<Order[]> {
-	const { data } = await api.get<Order[]>('/user/orders', { params });
+	const { data } = await api.get<Order[]>('/user/orders/', { params });
 	return data;
 }
 

@@ -17,6 +17,11 @@ describe('OrdersPage', () => {
 		await screen.findByText(/Ongoing Orders/i);
 		await screen.findByText('RELIANCE');
 
+		// Pending Execution
+		fireEvent.click(screen.getByRole('button', { name: 'Pending Execution' }));
+		await screen.findByText(/Pending Execution Orders/i);
+		await screen.findByText('SUNPHARMA');
+
 		// Sell
 		fireEvent.click(screen.getByRole('button', { name: 'Sell' }));
 		await screen.findByText(/Sell Orders/i);

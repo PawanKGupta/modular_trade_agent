@@ -679,6 +679,40 @@ class OrderTracker:
 _order_tracker_instance: OrderTracker | None = None
 
 
+def configure_order_tracker(
+    *,
+    data_dir: str = "data",
+    db_session=None,
+    user_id: int | None = None,
+    use_db: bool | None = None,
+    db_only_mode: bool | None = None,
+) -> OrderTracker:
+    """
+    Configure the global order tracker singleton with explicit settings.
+
+    Calling this replaces any previously created tracker instance. This is needed
+    when the trading engine boots with a live DB session so that pending orders
+    get dual-written to the database immediately.
+    """
+
+    global _order_tracker_instance
+
+    effective_use_db = use_db if use_db is not None else bool(db_session and user_id)
+    if db_only_mode is None:
+        env_value = os.getenv("ORDER_TRACKER_DB_ONLY_MODE", "")
+        db_only_mode = env_value.strip().lower() in {"1", "true", "yes"}
+
+    _order_tracker_instance = OrderTracker(
+        data_dir=data_dir,
+        db_session=db_session,
+        user_id=user_id,
+        use_db=effective_use_db,
+        db_only_mode=db_only_mode,
+    )
+
+    return _order_tracker_instance
+
+
 def get_order_tracker(data_dir: str = "data") -> OrderTracker:
     """
     Get or create order tracker singleton instance.

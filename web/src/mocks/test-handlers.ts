@@ -262,6 +262,9 @@ http.post(API('/auth/refresh'), async () => {
 			ongoing: [
 				{ id: 201, symbol: 'RELIANCE', side: 'buy', qty: 5, price: 2400, status: 'ongoing', created_at: now, updated_at: now },
 			],
+			pending_execution: [
+				{ id: 250, symbol: 'SUNPHARMA', side: 'buy', qty: 12, price: 1280, status: 'pending_execution', created_at: now, updated_at: now },
+			],
 			sell: [
 				{ id: 301, symbol: 'TCS', side: 'sell', qty: 3, price: 3600, status: 'sell', created_at: now, updated_at: now },
 			],
