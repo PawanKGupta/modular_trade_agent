@@ -12,8 +12,8 @@ import pytest
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine, Recommendation
-from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine, Recommendation  # noqa: E402
+from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: E402
 
 
 class TestCancelledStatusOnOrderUpdate:
@@ -111,7 +111,7 @@ class TestCancelledStatusOnOrderUpdate:
         )
 
         # Call place_new_entries
-        result = auto_trade_engine.place_new_entries([rec])
+        auto_trade_engine.place_new_entries([rec])
 
         # Verify order was marked as CANCELLED
         auto_trade_engine.orders_repo.update.assert_called_once()
@@ -131,7 +131,8 @@ class TestCancelledStatusOnOrderUpdate:
             # If it was called, great - order placement was attempted
             pass
         else:
-            # If it wasn't called, it might have failed balance check, but old order was still cancelled correctly
+            # If it wasn't called, it might have failed balance check,
+            # but old order was still cancelled correctly
             # This is acceptable - the main goal (cancelling old order) was achieved
             pass
 
@@ -179,7 +180,7 @@ class TestCancelledStatusOnOrderUpdate:
         )
 
         # Call place_new_entries
-        result = auto_trade_engine.place_new_entries([rec])
+        auto_trade_engine.place_new_entries([rec])
 
         # Verify order was marked as CANCELLED
         auto_trade_engine.orders_repo.update.assert_called_once()
@@ -230,7 +231,7 @@ class TestCancelledStatusOnOrderUpdate:
         )
 
         # Call place_new_entries
-        result = auto_trade_engine.place_new_entries([rec])
+        auto_trade_engine.place_new_entries([rec])
 
         # Verify order was marked as CANCELLED
         auto_trade_engine.orders_repo.update.assert_called_once()
@@ -275,7 +276,7 @@ class TestCancelledStatusOnOrderUpdate:
         )
 
         # Call place_new_entries
-        result = auto_trade_engine.place_new_entries([rec])
+        auto_trade_engine.place_new_entries([rec])
 
         # Verify order was marked as CANCELLED
         auto_trade_engine.orders_repo.update.assert_called_once()
@@ -320,7 +321,7 @@ class TestCancelledStatusOnOrderUpdate:
         )
 
         # Call place_new_entries
-        result = auto_trade_engine.place_new_entries([rec])
+        auto_trade_engine.place_new_entries([rec])
 
         # Verify order was marked as CANCELLED
         auto_trade_engine.orders_repo.update.assert_called_once()
@@ -360,7 +361,7 @@ class TestCancelledStatusOnOrderUpdate:
         if auto_trade_engine.orders_repo.update.called:
             for call in auto_trade_engine.orders_repo.update.call_args_list:
                 if call[1].get("status") == DbOrderStatus.CANCELLED:
-                    assert False, "Order was incorrectly marked as CANCELLED"
+                    raise AssertionError("Order was incorrectly marked as CANCELLED")
 
         # Verify new order was NOT placed
         auto_trade_engine._attempt_place_order.assert_not_called()
@@ -413,7 +414,7 @@ class TestCancelledStatusOnOrderUpdate:
         if auto_trade_engine.orders_repo.update.called:
             for call in auto_trade_engine.orders_repo.update.call_args_list:
                 if call[1].get("status") == DbOrderStatus.CANCELLED:
-                    assert False, "Order was incorrectly marked as CANCELLED"
+                    raise AssertionError("Order was incorrectly marked as CANCELLED")
 
         # Verify order was skipped
         assert result["skipped_duplicates"] == 1
@@ -465,7 +466,7 @@ class TestCancelledStatusOnOrderUpdate:
                     call[0][0] == existing_order
                     and call[1].get("status") == DbOrderStatus.CANCELLED
                 ):
-                    assert False, "Already CANCELLED order was incorrectly updated"
+                    raise AssertionError("Already CANCELLED order was incorrectly updated")
 
         # Verify order was skipped
         assert result["skipped_duplicates"] == 1
@@ -524,7 +525,7 @@ class TestCancelledStatusOnOrderUpdate:
                     call[0][0] == existing_order
                     and call[1].get("status") == DbOrderStatus.CANCELLED
                 ):
-                    assert False, "Order was incorrectly marked as CANCELLED when params unchanged"
+                    raise AssertionError("Order was incorrectly marked as CANCELLED when params unchanged")
 
         # Verify new order was NOT placed
         auto_trade_engine._attempt_place_order.assert_not_called()
@@ -570,7 +571,7 @@ class TestCancelledStatusOnOrderUpdate:
         )
 
         # Call place_new_entries
-        result = auto_trade_engine.place_new_entries([rec])
+        auto_trade_engine.place_new_entries([rec])
 
         # Verify cancelled_reason contains expected text
         update_call = auto_trade_engine.orders_repo.update.call_args
