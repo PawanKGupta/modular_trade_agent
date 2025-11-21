@@ -12,7 +12,10 @@ import pytest
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine, Recommendation  # noqa: E402
+from modules.kotak_neo_auto_trader.auto_trade_engine import (  # noqa: E402
+    AutoTradeEngine,
+    Recommendation,
+)
 from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: E402
 
 
@@ -371,14 +374,12 @@ class TestCancelledStatusOnOrderUpdate:
         assert result["ticker_attempts"][0]["status"] == "skipped"
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.get_daily_indicators")
-    def test_closed_order_not_cancelled_skipped_instead(
-        self, mock_get_indicators, auto_trade_engine
-    ):
-        """Test that CLOSED order is NOT cancelled, just skipped"""
+    def test_closed_order_allows_new_buy_opportunity(self, mock_get_indicators, auto_trade_engine):
+        """Test that CLOSED order (completed trade) allows new buy opportunity"""
         broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
-        # Mock existing order with CLOSED status
+        # Mock existing order with CLOSED status (from a previous completed trade)
         existing_order = Mock()
         existing_order.id = 404
         existing_order.symbol = broker_symbol
@@ -388,6 +389,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.price = 2500.0
 
         auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders.get_pending_orders.return_value = []
 
         # Mock indicators to prevent real data fetch
         mock_get_indicators.return_value = {
@@ -398,7 +400,11 @@ class TestCancelledStatusOnOrderUpdate:
             "avg_volume": 1000000,
         }
 
-        # Mock recommendation
+        # Mock sufficient cash and affordable qty
+        auto_trade_engine.get_available_cash.return_value = 200000.0
+        auto_trade_engine.get_affordable_qty.return_value = 100
+
+        # Mock recommendation for new buy opportunity
         rec = Recommendation(
             ticker=ticker,
             verdict="buy",
@@ -409,25 +415,31 @@ class TestCancelledStatusOnOrderUpdate:
         # Call place_new_entries
         result = auto_trade_engine.place_new_entries([rec])
 
-        # Verify order was NOT marked as CANCELLED (already finalized)
-        # Check that no CANCELLED status update was made
+        # Verify CLOSED order was NOT updated (it's a historical record)
+        # CLOSED orders should not block new opportunities
         if auto_trade_engine.orders_repo.update.called:
             for call in auto_trade_engine.orders_repo.update.call_args_list:
-                if call[1].get("status") == DbOrderStatus.CANCELLED:
-                    raise AssertionError("Order was incorrectly marked as CANCELLED")
+                if call[0][0] == existing_order:
+                    raise AssertionError(
+                        "CLOSED order should not be updated - it's a historical record"
+                    )
 
-        # Verify order was skipped
-        assert result["skipped_duplicates"] == 1
+        # Verify new order was attempted (CLOSED orders don't block new opportunities)
+        # The order should proceed to placement attempt
+        assert result["skipped_duplicates"] == 0, (
+            "CLOSED orders should not block new buy opportunities - "
+            "they represent completed trades and should allow re-entry"
+        )
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.get_daily_indicators")
-    def test_cancelled_order_not_updated_skipped_instead(
+    def test_cancelled_order_allows_new_buy_opportunity(
         self, mock_get_indicators, auto_trade_engine
     ):
-        """Test that already CANCELLED order is NOT updated, just skipped"""
+        """Test that CANCELLED order allows new buy opportunity"""
         broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
-        # Mock existing order with CANCELLED status
+        # Mock existing order with CANCELLED status (from a previous cancelled order)
         existing_order = Mock()
         existing_order.id = 505
         existing_order.symbol = broker_symbol
@@ -437,6 +449,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.price = 2500.0
 
         auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders.get_pending_orders.return_value = []
 
         # Mock indicators to prevent real data fetch
         mock_get_indicators.return_value = {
@@ -447,7 +460,11 @@ class TestCancelledStatusOnOrderUpdate:
             "avg_volume": 1000000,
         }
 
-        # Mock recommendation
+        # Mock sufficient cash and affordable qty
+        auto_trade_engine.get_available_cash.return_value = 200000.0
+        auto_trade_engine.get_affordable_qty.return_value = 100
+
+        # Mock recommendation for new buy opportunity
         rec = Recommendation(
             ticker=ticker,
             verdict="buy",
@@ -458,18 +475,21 @@ class TestCancelledStatusOnOrderUpdate:
         # Call place_new_entries
         result = auto_trade_engine.place_new_entries([rec])
 
-        # Verify order was NOT updated (already cancelled)
-        # Check that no CANCELLED status update was made (should already be CANCELLED)
+        # Verify CANCELLED order was NOT updated (it's a historical record)
+        # CANCELLED orders should not block new opportunities
         if auto_trade_engine.orders_repo.update.called:
             for call in auto_trade_engine.orders_repo.update.call_args_list:
-                if (
-                    call[0][0] == existing_order
-                    and call[1].get("status") == DbOrderStatus.CANCELLED
-                ):
-                    raise AssertionError("Already CANCELLED order was incorrectly updated")
+                if call[0][0] == existing_order:
+                    raise AssertionError(
+                        "CANCELLED order should not be updated - it's a historical record"
+                    )
 
-        # Verify order was skipped
-        assert result["skipped_duplicates"] == 1
+        # Verify new order was attempted (CANCELLED orders don't block new opportunities)
+        # The order should proceed to placement attempt
+        assert result["skipped_duplicates"] == 0, (
+            "CANCELLED orders should not block new buy opportunities - "
+            "they represent cancelled orders and should allow new attempts"
+        )
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.get_daily_indicators")
     def test_order_not_cancelled_when_qty_price_unchanged(
@@ -525,7 +545,9 @@ class TestCancelledStatusOnOrderUpdate:
                     call[0][0] == existing_order
                     and call[1].get("status") == DbOrderStatus.CANCELLED
                 ):
-                    raise AssertionError("Order was incorrectly marked as CANCELLED when params unchanged")
+                    raise AssertionError(
+                        "Order was incorrectly marked as CANCELLED when params unchanged"
+                    )
 
         # Verify new order was NOT placed
         auto_trade_engine._attempt_place_order.assert_not_called()

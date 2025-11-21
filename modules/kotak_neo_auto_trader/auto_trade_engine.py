@@ -2975,8 +2975,14 @@ class AutoTradeEngine:
                 .replace("-BZ", "")
             )
 
-            # Check database for existing AMO/PENDING_EXECUTION/ONGOING orders
+            # Check database for existing buy orders
             # This prevents duplicates when service runs multiple times before broker syncs
+            # Status handling:
+            # - AMO, PENDING_EXECUTION, FAILED, RETRY_PENDING, REJECTED: Can be updated/cancelled if params change
+            # - ONGOING: Already executed, skip (position exists)
+            # - CLOSED: Completed trade, allow new buy opportunity (don't block)
+            # - CANCELLED: Cancelled order, allow new buy opportunity (don't block)
+            # - SELL: Only for sell orders (side="sell"), excluded by side filter
             has_db_order = False
             existing_db_order = None
             if self.orders_repo and self.user_id:
@@ -2993,7 +2999,7 @@ class AutoTradeEngine:
                             .replace("-BZ", "")
                         )
                         if (
-                            existing_order.side == "buy"
+                            existing_order.side == "buy"  # Only check buy orders
                             and existing_order.status
                             in {
                                 DbOrderStatus.AMO,
@@ -3002,8 +3008,11 @@ class AutoTradeEngine:
                                 DbOrderStatus.FAILED,
                                 DbOrderStatus.RETRY_PENDING,
                                 DbOrderStatus.REJECTED,
-                                DbOrderStatus.CLOSED,
-                                DbOrderStatus.CANCELLED,
+                                # Note: CLOSED and CANCELLED orders are NOT included here
+                                # because they represent completed/cancelled trades and should
+                                # NOT block new buy opportunities for the same stock
+                                # Note: SELL status is only for sell orders (side="sell"),
+                                # so it's excluded by the side == "buy" filter above
                             }
                             and order_symbol_base == broker_symbol_base
                         ):
@@ -3206,7 +3215,7 @@ class AutoTradeEngine:
                         ticker_attempt["existing_order_id"] = existing_db_order.id
                         summary["ticker_attempts"].append(ticker_attempt)
                         continue
-                else:
+                elif existing_db_order.status == DbOrderStatus.ONGOING:
                     # Order is ONGOING (already executed), skip
                     logger.info(
                         f"Skipping {broker_symbol}: already has active buy order in database "
@@ -3219,6 +3228,8 @@ class AutoTradeEngine:
                     ticker_attempt["existing_order_id"] = existing_db_order.id
                     summary["ticker_attempts"].append(ticker_attempt)
                     continue
+                # else: CLOSED/CANCELLED orders - allow new order placement (don't block)
+                # These represent completed/cancelled trades and should not prevent new opportunities
 
             # Check position-to-volume ratio (liquidity filter)
             avg_vol = ind.get("avg_volume", 0)

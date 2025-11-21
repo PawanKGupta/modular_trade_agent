@@ -1445,4 +1445,77 @@ Additionally, the system only handled `AMO` and `PENDING_EXECUTION` orders for p
 
 ---
 
+## Bug #69: CLOSED and CANCELLED Orders Blocking New Buy Opportunities (HIGH)
+
+**Date Fixed**: November 22, 2025
+**Status**: ✅ Fixed
+
+### Description
+When a stock was successfully bought and sold (order status = `CLOSED`), and later got a new buy opportunity, the system would incorrectly skip placing the new order because it found the old `CLOSED` order in the database. Similarly, `CANCELLED` orders were also blocking new buy opportunities.
+
+### Root Cause
+1. **CLOSED/CANCELLED orders included in active order check**: The initial database check for existing orders included `CLOSED` and `CANCELLED` statuses, treating them as "active" orders that could block new opportunities.
+2. **Incorrect else block logic**: The `else` block assumed all non-updatable orders were `ONGOING`, but it was also catching `CLOSED` and `CANCELLED` orders and incorrectly skipping them.
+
+### Expected Behavior
+1. `CLOSED` orders (completed trades) should NOT block new buy opportunities - they represent historical completed trades.
+2. `CANCELLED` orders should NOT block new buy opportunities - they represent cancelled orders that should allow new attempts.
+3. Only active orders (`AMO`, `PENDING_EXECUTION`, `ONGOING`, `FAILED`, `RETRY_PENDING`, `REJECTED`) should be considered when checking for duplicates.
+4. A stock that was previously bought and sold should be able to be bought again when a new opportunity arises.
+
+### Fix Applied
+**Files**:
+- `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+- `tests/unit/kotak/test_cancelled_status_on_order_update.py`
+
+1. **Removed CLOSED and CANCELLED from active order check**:
+   - Removed `DbOrderStatus.CLOSED` and `DbOrderStatus.CANCELLED` from the initial database check
+   - Added comments explaining that CLOSED/CANCELLED orders represent completed/cancelled trades and should NOT block new opportunities
+
+2. **Fixed else block logic**:
+   - Changed `else:` to `elif existing_db_order.status == DbOrderStatus.ONGOING:` to explicitly check for ONGOING status
+   - Added comment explaining that CLOSED/CANCELLED orders should allow new order placement
+
+3. **Updated tests**:
+   - Renamed and updated `test_closed_order_allows_new_buy_opportunity` to verify CLOSED orders allow new buy opportunities
+   - Renamed and updated `test_cancelled_order_allows_new_buy_opportunity` to verify CANCELLED orders allow new buy opportunities
+
+### Test Coverage
+- `tests/unit/kotak/test_cancelled_status_on_order_update.py` - Updated 2 tests
+- Tests verify:
+  - CLOSED orders (completed trades) allow new buy opportunities
+  - CANCELLED orders allow new buy opportunities
+  - Historical orders don't block new opportunities
+
+### Impact
+- Stocks can be re-entered after previous trades are completed
+- Better support for re-entry strategies (mean reversion)
+- More accurate duplicate prevention (only active orders are checked)
+- Improved user experience - no false blocking of legitimate new opportunities
+
+### Order Status Behavior Summary
+
+**All OrderStatus enum values and their behavior in `place_new_entries()`:**
+
+| Status | Side | Behavior | Reason |
+|--------|------|----------|--------|
+| `AMO` | buy | Checked for duplicates, can be updated/cancelled if params change | Active pending order |
+| `PENDING_EXECUTION` | buy | Checked for duplicates, can be updated/cancelled if params change | Active pending order |
+| `ONGOING` | buy | Checked, skipped (position exists, cannot update) | Already executed |
+| `FAILED` | buy | Checked for duplicates, can be updated/cancelled if params change | Can be retried with new params |
+| `RETRY_PENDING` | buy | Checked for duplicates, can be updated/cancelled if params change | Can be retried with new params |
+| `REJECTED` | buy | Checked for duplicates, can be updated/cancelled if params change | Can be retried with new params |
+| `CLOSED` | buy | **NOT checked** - allows new buy opportunity | Completed trade, historical record |
+| `CANCELLED` | buy | **NOT checked** - allows new buy opportunity | Cancelled order, historical record |
+| `SELL` | sell | **NOT checked** - excluded by `side == "buy"` filter | Only for sell orders, irrelevant for buy placement |
+
+**Key Points:**
+1. Only `side == "buy"` orders are checked (sell orders are irrelevant)
+2. Active orders (`AMO`, `PENDING_EXECUTION`, `FAILED`, `RETRY_PENDING`, `REJECTED`) can be updated if quantity/price changes
+3. `ONGOING` orders are skipped (already executed, position exists)
+4. `CLOSED` and `CANCELLED` orders don't block new opportunities (historical records)
+5. `SELL` status is only for sell orders and is excluded by the side filter
+
+---
+
 *Last Updated: November 22, 2025*
