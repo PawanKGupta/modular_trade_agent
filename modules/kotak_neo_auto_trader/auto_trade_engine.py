@@ -2128,19 +2128,87 @@ class AutoTradeEngine:
                     summary["skipped"] += len(retry_pending_orders) - summary["retried"] + 1
                     break
 
-                # Skip if already in holdings
-                if self.has_holding(symbol):
+                # Duplicate prevention: Check if already in holdings
+                # Try broker API first, fallback to database if API fails
+                already_in_holdings = False
+                try:
+                    already_in_holdings = self.has_holding(symbol)
+                except Exception as holdings_error:
+                    logger.warning(
+                        f"Holdings API check failed for {symbol} during retry: {holdings_error}. "
+                        "Falling back to database check."
+                    )
+                    # Database fallback: Check for executed/ongoing orders
+                    if self.orders_repo and self.user_id:
+                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                        existing_orders = self.orders_repo.list(self.user_id)
+                        for existing_order in existing_orders:
+                            if (
+                                existing_order.symbol == symbol
+                                and existing_order.status == DbOrderStatus.ONGOING
+                            ):
+                                already_in_holdings = True
+                                logger.info(
+                                    f"Database check: {symbol} already has ongoing order (position exists)"
+                                )
+                                break
+
+                if already_in_holdings:
                     logger.info(f"Removing {symbol} from retry: already in holdings")
                     # Update status to CLOSED since we already own it
                     self.orders_repo.mark_cancelled(db_order, "Already in holdings")
                     summary["skipped"] += 1
                     continue
 
-                # Skip if already has active buy order
-                if self.has_active_buy_order(symbol):
-                    logger.info(f"Skipping retry for {symbol}: already has pending buy order")
-                    summary["skipped"] += 1
-                    continue
+                # Duplicate prevention: Check for active buy orders
+                # Cancel and replace (consistent with place_new_entries behavior)
+                has_active_order = False
+                try:
+                    has_active_order = self.has_active_buy_order(symbol)
+                except Exception as active_order_error:
+                    logger.warning(
+                        f"Active order check failed for {symbol} during retry: {active_order_error}. "
+                        "Falling back to database check."
+                    )
+                    # Database fallback: Check for pending/ongoing buy orders
+                    if self.orders_repo and self.user_id:
+                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                        existing_orders = self.orders_repo.list(self.user_id)
+                        for existing_order in existing_orders:
+                            if (
+                                existing_order.symbol == symbol
+                                and existing_order.side == "buy"
+                                and existing_order.status
+                                in {
+                                    DbOrderStatus.AMO,
+                                    DbOrderStatus.PENDING_EXECUTION,
+                                    DbOrderStatus.ONGOING,
+                                }
+                                and existing_order.id != db_order.id  # Exclude current retry order
+                            ):
+                                has_active_order = True
+                                logger.info(
+                                    f"Database check: {symbol} already has pending/ongoing buy order"
+                                )
+                                break
+
+                if has_active_order:
+                    # Cancel existing pending buy order and replace (consistent with place_new_entries)
+                    variants = self._symbol_variants(symbol)
+                    try:
+                        cancelled = self.orders.cancel_pending_buys_for_symbol(variants)
+                        logger.info(
+                            f"Cancelled {cancelled} pending BUY order(s) for {symbol} before retry"
+                        )
+                    except Exception as cancel_error:
+                        logger.warning(
+                            f"Could not cancel pending order(s) for {symbol} before retry: {cancel_error}"
+                        )
+                        # If cancel fails, skip to prevent duplicates
+                        summary["skipped"] += 1
+                        continue
 
                 # Get ticker from order or try to construct it
                 ticker = getattr(db_order, "ticker", None) or f"{symbol}.NS"

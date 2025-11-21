@@ -422,3 +422,196 @@ class TestRetryPendingOrdersFromDB:
         call_args = auto_trade_engine.orders_repo.mark_failed.call_args
         assert call_args.kwargs["retry_pending"] is False
         assert "not retryable" in call_args.kwargs["failure_reason"]
+
+    def test_retry_pending_orders_holdings_api_fallback_to_db(self, auto_trade_engine):
+        """Test retry uses database fallback when holdings API fails"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING order
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.symbol = "RELIANCE"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+
+        # Mock portfolio checks
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
+        auto_trade_engine.portfolio_size = Mock(return_value=2)
+
+        # Mock holdings API failure, but database has ongoing order
+        auto_trade_engine.has_holding = Mock(side_effect=Exception("API error"))
+
+        # Mock database has ongoing order for this symbol
+        mock_existing_order = Mock()
+        mock_existing_order.symbol = "RELIANCE"
+        mock_existing_order.status = DbOrderStatus.ONGOING
+        auto_trade_engine.orders_repo.list.return_value = [mock_existing_order]
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        assert summary["retried"] == 1
+        assert summary["placed"] == 0
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 1
+
+        # Verify order was marked as cancelled (database fallback detected duplicate)
+        auto_trade_engine.orders_repo.mark_cancelled.assert_called_once()
+
+    def test_retry_pending_orders_cancels_active_buy_order(self, auto_trade_engine):
+        """Test retry cancels and replaces active buy order (consistent with place_new_entries)"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING order
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.symbol = "RELIANCE"
+        mock_order.ticker = "RELIANCE.NS"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.retry_count = 0
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+
+        # Mock portfolio checks
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
+        auto_trade_engine.portfolio_size = Mock(return_value=2)
+        auto_trade_engine.has_holding = Mock(return_value=False)
+
+        # Mock active buy order exists
+        auto_trade_engine.has_active_buy_order = Mock(return_value=True)
+        auto_trade_engine.orders = MagicMock()
+        auto_trade_engine.orders.cancel_pending_buys_for_symbol = Mock(return_value=1)
+        auto_trade_engine._symbol_variants = Mock(return_value=["RELIANCE", "RELIANCE-EQ"])
+
+        # Mock indicators
+        auto_trade_engine.get_daily_indicators = Mock(
+            return_value={
+                "close": 2450.0,
+                "rsi10": 25.0,
+                "ema9": 2400.0,
+                "ema200": 2300.0,
+                "avg_volume": 1000000,
+            }
+        )
+
+        # Mock balance check
+        auto_trade_engine.get_affordable_qty = Mock(return_value=20)
+        auto_trade_engine.get_available_cash = Mock(return_value=50000.0)
+        auto_trade_engine.check_position_volume_ratio = Mock(return_value=True)
+        auto_trade_engine._calculate_execution_capital = Mock(return_value=30000.0)
+
+        # Mock order placement
+        auto_trade_engine._attempt_place_order = Mock(return_value=(True, "ORDER123"))
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        # Verify cancel was called
+        auto_trade_engine.orders.cancel_pending_buys_for_symbol.assert_called_once()
+
+        # Verify order was placed after cancel
+        assert summary["retried"] == 1
+        assert summary["placed"] == 1
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 0
+
+    def test_retry_pending_orders_active_order_db_fallback(self, auto_trade_engine):
+        """Test retry uses database fallback when active order API check fails"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING order
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.symbol = "RELIANCE"
+        mock_order.ticker = "RELIANCE.NS"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.retry_count = 0
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+
+        # Mock portfolio checks
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
+        auto_trade_engine.portfolio_size = Mock(return_value=2)
+        auto_trade_engine.has_holding = Mock(return_value=False)
+
+        # Mock active order API check fails
+        auto_trade_engine.has_active_buy_order = Mock(side_effect=Exception("API error"))
+
+        # Mock database has pending buy order for this symbol
+        mock_existing_order = Mock()
+        mock_existing_order.id = 2  # Different ID
+        mock_existing_order.symbol = "RELIANCE"
+        mock_existing_order.side = "buy"
+        mock_existing_order.status = DbOrderStatus.PENDING_EXECUTION
+        auto_trade_engine.orders_repo.list.return_value = [mock_existing_order]
+
+        # Mock cancel
+        auto_trade_engine.orders = MagicMock()
+        auto_trade_engine.orders.cancel_pending_buys_for_symbol = Mock(return_value=1)
+        auto_trade_engine._symbol_variants = Mock(return_value=["RELIANCE", "RELIANCE-EQ"])
+
+        # Mock indicators
+        auto_trade_engine.get_daily_indicators = Mock(
+            return_value={
+                "close": 2450.0,
+                "rsi10": 25.0,
+                "ema9": 2400.0,
+                "ema200": 2300.0,
+                "avg_volume": 1000000,
+            }
+        )
+
+        # Mock balance check
+        auto_trade_engine.get_affordable_qty = Mock(return_value=20)
+        auto_trade_engine.get_available_cash = Mock(return_value=50000.0)
+        auto_trade_engine.check_position_volume_ratio = Mock(return_value=True)
+        auto_trade_engine._calculate_execution_capital = Mock(return_value=30000.0)
+
+        # Mock order placement
+        auto_trade_engine._attempt_place_order = Mock(return_value=(True, "ORDER123"))
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        # Verify cancel was called (database fallback detected active order)
+        auto_trade_engine.orders.cancel_pending_buys_for_symbol.assert_called_once()
+
+        # Verify order was placed after cancel
+        assert summary["retried"] == 1
+        assert summary["placed"] == 1
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 0
+
+    def test_retry_pending_orders_active_order_cancel_fails(self, auto_trade_engine):
+        """Test retry skips if cancel fails (to prevent duplicates)"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock RETRY_PENDING order
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.symbol = "RELIANCE"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+
+        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+
+        # Mock portfolio checks
+        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
+        auto_trade_engine.portfolio_size = Mock(return_value=2)
+        auto_trade_engine.has_holding = Mock(return_value=False)
+
+        # Mock active buy order exists
+        auto_trade_engine.has_active_buy_order = Mock(return_value=True)
+        auto_trade_engine.orders = MagicMock()
+        auto_trade_engine.orders.cancel_pending_buys_for_symbol = Mock(
+            side_effect=Exception("Cancel failed")
+        )
+        auto_trade_engine._symbol_variants = Mock(return_value=["RELIANCE", "RELIANCE-EQ"])
+
+        summary = auto_trade_engine.retry_pending_orders_from_db()
+
+        # Verify cancel was attempted
+        auto_trade_engine.orders.cancel_pending_buys_for_symbol.assert_called_once()
+
+        # Verify order was skipped (not placed) to prevent duplicates
+        assert summary["retried"] == 1
+        assert summary["placed"] == 0
+        assert summary["failed"] == 0
+        assert summary["skipped"] == 1
