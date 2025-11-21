@@ -374,7 +374,9 @@ class AutoTradeEngine:
                 opened_at=entry_time,
                 reentry_count=reentry_count,
                 reentries=reentries if reentries else None,
-                initial_entry_price=initial_entry_price if not existing_pos else None,  # Only set for new positions
+                initial_entry_price=(
+                    initial_entry_price if not existing_pos else None
+                ),  # Only set for new positions
                 last_reentry_price=last_reentry_price,
             )
         elif status == "closed":
@@ -1646,9 +1648,7 @@ class AutoTradeEngine:
                         )
                         return True
             except Exception as e:
-                logger.warning(
-                    f"Database check for active buy order failed for {base_symbol}: {e}"
-                )
+                logger.warning(f"Database check for active buy order failed for {base_symbol}: {e}")
 
         return False
 
@@ -2178,10 +2178,10 @@ class AutoTradeEngine:
             }
         """
         result = {
-            'has_manual_order': False,
-            'has_system_order': False,
-            'manual_orders': [],
-            'system_orders': [],
+            "has_manual_order": False,
+            "has_system_order": False,
+            "manual_orders": [],
+            "system_orders": [],
         }
 
         if not self.orders or not self.orders_repo or not self.user_id:
@@ -2214,11 +2214,11 @@ class AutoTradeEngine:
                 price = OrderFieldExtractor.get_price(order)
 
                 order_info = {
-                    'order_id': order_id,
-                    'symbol': order_symbol,
-                    'quantity': quantity,
-                    'price': price,
-                    'broker_order': order,
+                    "order_id": order_id,
+                    "symbol": order_symbol,
+                    "quantity": quantity,
+                    "price": price,
+                    "broker_order": order,
                 }
 
                 # Check if order exists in our database
@@ -2226,12 +2226,12 @@ class AutoTradeEngine:
 
                 if db_order:
                     # This is a system order
-                    result['has_system_order'] = True
-                    result['system_orders'].append(order_info)
+                    result["has_system_order"] = True
+                    result["system_orders"].append(order_info)
                 else:
                     # This is a manual order (not in our DB)
-                    result['has_manual_order'] = True
-                    result['manual_orders'].append(order_info)
+                    result["has_manual_order"] = True
+                    result["manual_orders"].append(order_info)
 
         except Exception as e:
             logger.warning(f"Error checking for manual orders for {symbol}: {e}")
@@ -2252,16 +2252,16 @@ class AutoTradeEngine:
         Returns:
             (should_skip: bool, reason: str)
         """
-        if not manual_order_info.get('has_manual_order'):
+        if not manual_order_info.get("has_manual_order"):
             return (False, "No manual orders found")
 
-        manual_orders = manual_order_info.get('manual_orders', [])
+        manual_orders = manual_order_info.get("manual_orders", [])
         if not manual_orders:
             return (False, "No manual orders in list")
 
         # Use the first manual order (most common case: single manual order)
         manual_order = manual_orders[0]
-        manual_qty = manual_order.get('quantity', 0)
+        manual_qty = manual_order.get("quantity", 0)
 
         # If manual order quantity is >= retry quantity, skip retry
         if manual_qty >= retry_qty:
@@ -2407,13 +2407,13 @@ class AutoTradeEngine:
                 manual_order_info = self._check_for_manual_orders(symbol)
 
                 # If manual order exists, link it to DB record and update status
-                if manual_order_info.get('has_manual_order'):
-                    manual_orders = manual_order_info.get('manual_orders', [])
+                if manual_order_info.get("has_manual_order"):
+                    manual_orders = manual_order_info.get("manual_orders", [])
                     if manual_orders:
                         manual_order = manual_orders[0]  # Use first manual order found
-                        manual_order_id = manual_order.get('order_id')
-                        manual_qty = manual_order.get('quantity', 0)
-                        manual_price = manual_order.get('price', 0.0)
+                        manual_order_id = manual_order.get("order_id")
+                        manual_qty = manual_order.get("quantity", 0)
+                        manual_price = manual_order.get("price", 0.0)
 
                         logger.info(
                             f"Manual AMO order detected for {symbol}: order_id={manual_order_id}, "
@@ -2901,13 +2901,13 @@ class AutoTradeEngine:
                 continue
             # 2) Check for manual AMO orders -> link to DB and skip placing
             manual_order_info = self._check_for_manual_orders(broker_symbol)
-            if manual_order_info.get('has_manual_order'):
-                manual_orders = manual_order_info.get('manual_orders', [])
+            if manual_order_info.get("has_manual_order"):
+                manual_orders = manual_order_info.get("manual_orders", [])
                 if manual_orders:
                     manual_order = manual_orders[0]  # Use first manual order found
-                    manual_order_id = manual_order.get('order_id')
-                    manual_qty = manual_order.get('quantity', 0)
-                    manual_price = manual_order.get('price', 0.0)
+                    manual_order_id = manual_order.get("order_id")
+                    manual_qty = manual_order.get("quantity", 0)
+                    manual_price = manual_order.get("price", 0.0)
 
                     logger.info(
                         f"Manual AMO order detected for {broker_symbol}: order_id={manual_order_id}, "
@@ -3002,6 +3002,8 @@ class AutoTradeEngine:
                                 DbOrderStatus.FAILED,
                                 DbOrderStatus.RETRY_PENDING,
                                 DbOrderStatus.REJECTED,
+                                DbOrderStatus.CLOSED,
+                                DbOrderStatus.CANCELLED,
                             }
                             and order_symbol_base == broker_symbol_base
                         ):
@@ -3018,6 +3020,7 @@ class AutoTradeEngine:
             # For now, skip if database has ONGOING order (already executed, cannot update)
             if has_db_order and existing_db_order:
                 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
                 if existing_db_order.status == DbOrderStatus.ONGOING:
                     logger.info(
                         f"Skipping {broker_symbol}: already has active buy order in database "
@@ -3047,9 +3050,13 @@ class AutoTradeEngine:
                     if has_broker_order:
                         try:
                             cancelled = self.orders.cancel_pending_buys_for_symbol(list(variants))
-                            logger.info(f"Cancelled {cancelled} pending BUY order(s) for {broker_symbol}")
+                            logger.info(
+                                f"Cancelled {cancelled} pending BUY order(s) for {broker_symbol}"
+                            )
                         except Exception as e:
-                            logger.warning(f"Could not cancel pending order(s) for {broker_symbol}: {e}")
+                            logger.warning(
+                                f"Could not cancel pending order(s) for {broker_symbol}: {e}"
+                            )
                             # If cancel fails, skip to prevent duplicates
                             summary["skipped_duplicates"] += 1
                             ticker_attempt["status"] = "skipped"
@@ -3137,7 +3144,9 @@ class AutoTradeEngine:
 
                     # Check if quantity or price has changed (any change triggers update)
                     qty_changed = existing_qty > 0 and qty != existing_qty
-                    price_changed = existing_price > 0 and abs(close - existing_price) > 0.01  # 1 paisa tolerance for float comparison
+                    price_changed = (
+                        existing_price > 0 and abs(close - existing_price) > 0.01
+                    )  # 1 paisa tolerance for float comparison
 
                     if qty_changed or price_changed:
                         # Any change in quantity or price triggers order update
@@ -3156,10 +3165,16 @@ class AutoTradeEngine:
                         variants = set(self._symbol_variants(broker_symbol))
                         try:
                             if self.orders:
-                                cancelled = self.orders.cancel_pending_buys_for_symbol(list(variants))
-                                logger.info(f"Cancelled {cancelled} existing order(s) for {broker_symbol}")
+                                cancelled = self.orders.cancel_pending_buys_for_symbol(
+                                    list(variants)
+                                )
+                                logger.info(
+                                    f"Cancelled {cancelled} existing order(s) for {broker_symbol}"
+                                )
                         except Exception as e:
-                            logger.warning(f"Could not cancel existing order for {broker_symbol}: {e}")
+                            logger.warning(
+                                f"Could not cancel existing order for {broker_symbol}: {e}"
+                            )
                             # Continue anyway - will place new order
 
                         # Update existing DB order status to CANCELLED (replaced due to parameter change)
@@ -3167,7 +3182,7 @@ class AutoTradeEngine:
                             self.orders_repo.update(
                                 existing_db_order,
                                 status=DbOrderStatus.CANCELLED,
-                                cancelled_reason=f"Order cancelled due to parameter update (qty/price changed)",
+                                cancelled_reason="Order cancelled due to parameter update (qty/price changed)",
                             )
                             logger.info(
                                 f"Marked existing DB order {existing_db_order.id} as CANCELLED "
@@ -3649,12 +3664,14 @@ class AutoTradeEngine:
                     if resp_valid:
                         # Extract order ID from response
                         from .order_tracker import extract_order_id
+
                         reentry_order_id = extract_order_id(resp)
 
                         # Add reentry order to tracking with entry_type="reentry"
                         if reentry_order_id:
                             try:
                                 from .order_tracker import add_pending_order
+
                                 add_pending_order(
                                     order_id=reentry_order_id,
                                     symbol=place_symbol,
@@ -3668,7 +3685,11 @@ class AutoTradeEngine:
                                         "rsi_level": next_level,
                                         "rsi": rsi,
                                         "price": price,
-                                        "reentry_index": len(e.get("reentries", [])) + 1 if e.get("reentries") else 1,
+                                        "reentry_index": (
+                                            len(e.get("reentries", [])) + 1
+                                            if e.get("reentries")
+                                            else 1
+                                        ),
                                     },
                                 )
                                 logger.debug(f"Added reentry order {reentry_order_id} to tracking")
@@ -3769,7 +3790,9 @@ class AutoTradeEngine:
                                 # Recalculate weighted average entry price
                                 # Formula: (prev_avg * prev_qty + new_price * new_qty) / total_qty
                                 if old_qty > 0 and old_entry_price > 0:
-                                    new_avg_price = ((old_entry_price * old_qty) + (price * qty)) / new_total_qty
+                                    new_avg_price = (
+                                        (old_entry_price * old_qty) + (price * qty)
+                                    ) / new_total_qty
                                     e["entry_price"] = new_avg_price
                                     logger.info(
                                         f"Trade history avg price updated: {symbol} "

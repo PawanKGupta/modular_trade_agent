@@ -1377,4 +1377,72 @@ When the buy order service was run multiple times (manually or via scheduled tas
 
 ---
 
+## Bug #68: Order Status Set to CLOSED Instead of CANCELLED When Parameters Change (MEDIUM)
+
+**Date Fixed**: November 22, 2025
+**Status**: ✅ Fixed
+
+### Description
+When an existing order's quantity or price changed (e.g., user updated capital per trade config or market price changed), the system would cancel the existing order and place a new one with updated parameters. However, the existing order's status was set to `CLOSED` instead of `CANCELLED`, which was incorrect since the order was cancelled due to parameter changes, not executed or naturally closed.
+
+Additionally, the system only handled `AMO` and `PENDING_EXECUTION` orders for parameter updates. Orders with `FAILED`, `RETRY_PENDING`, or `REJECTED` status were not being updated when parameters changed, even though these orders could still be modified.
+
+### Root Cause
+1. **Incorrect status for cancelled orders**: When an order was replaced due to parameter changes, its status was set to `CLOSED` instead of `CANCELLED`.
+2. **Missing CANCELLED status**: The `OrderStatus` enum did not have a `CANCELLED` status.
+3. **Limited status handling**: Only `AMO` and `PENDING_EXECUTION` orders were handled for parameter updates, excluding `FAILED`, `RETRY_PENDING`, and `REJECTED` orders.
+
+### Expected Behavior
+1. When an order is replaced due to quantity or price changes, its status should be set to `CANCELLED` (not `CLOSED`).
+2. The `CANCELLED` status should be added to the `OrderStatus` enum.
+3. Orders with `AMO`, `PENDING_EXECUTION`, `FAILED`, `RETRY_PENDING`, or `REJECTED` status should be cancellable and replaceable when parameters change.
+4. Orders with `ONGOING`, `CLOSED`, or `CANCELLED` status should be skipped (cannot be modified).
+
+### Fix Applied
+**Files**:
+- `src/infrastructure/db/models.py`
+- `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+
+1. **Added `CANCELLED` status to `OrderStatus` enum**:
+   ```python
+   class OrderStatus(str, Enum):
+       # ... existing statuses ...
+       CANCELLED = "cancelled"
+   ```
+
+2. **Updated `place_new_entries()` method**:
+   - Changed status from `CLOSED` to `CANCELLED` when order is replaced due to parameter changes
+   - Added `FAILED`, `RETRY_PENDING`, and `REJECTED` to the list of cancellable statuses
+   - Set `cancelled_reason` to "Order cancelled due to parameter update (qty/price changed)"
+   - Added logic to skip `ONGOING`, `CLOSED`, and `CANCELLED` orders (cannot be modified)
+
+3. **Updated order cancellation logic**:
+   - Orders are marked as `CANCELLED` (not `CLOSED`) when replaced due to parameter changes
+   - Cancellation reason is properly stored in `cancelled_reason` field
+
+### Test Coverage
+- `tests/unit/kotak/test_cancelled_status_on_order_update.py` - 10 tests covering all scenarios
+- Tests cover:
+  - AMO order marked as CANCELLED when quantity changes
+  - PENDING_EXECUTION order marked as CANCELLED when price changes
+  - FAILED order marked as CANCELLED when parameters change
+  - RETRY_PENDING order marked as CANCELLED when parameters change
+  - REJECTED order marked as CANCELLED when parameters change
+  - ONGOING order NOT cancelled (already executed, skipped)
+  - CLOSED order NOT cancelled (already finalized, skipped)
+  - Already CANCELLED order NOT updated (skipped)
+  - Order NOT cancelled when quantity and price unchanged
+  - Cancellation reason properly set
+
+### Impact
+- Correct order status tracking (CANCELLED vs CLOSED)
+- Proper handling of all cancellable order statuses
+- Better order history and audit trail
+- More accurate order state management
+
+### Migration Notes
+- **No migration required**: Since we're using SQLite and enums are stored as strings, the new `CANCELLED` status value will work without a database migration. However, for PostgreSQL deployments, a migration would be needed to add the enum value.
+
+---
+
 *Last Updated: November 22, 2025*
