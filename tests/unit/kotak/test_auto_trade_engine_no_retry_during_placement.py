@@ -215,4 +215,3 @@ class TestNoRetryDuringPlacement:
         assert "attempted" in summary
         assert "placed" in summary
         assert "failed_balance" in summary
-

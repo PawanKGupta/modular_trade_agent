@@ -6,7 +6,6 @@ Tests that orders with RETRY_PENDING status are retried from database
 at scheduled time (8:00 AM) instead of during buy order placement.
 """
 
-from datetime import datetime
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -220,7 +219,9 @@ class TestRetryPendingOrdersFromDB:
         ]
 
         # Mock portfolio at limit
-        auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=["A", "B", "C", "D", "E", "F"])
+        auto_trade_engine.current_symbols_in_portfolio = Mock(
+            return_value=["A", "B", "C", "D", "E", "F"]
+        )
         auto_trade_engine.portfolio_size = Mock(return_value=6)  # At max_portfolio_size
 
         summary = auto_trade_engine.retry_pending_orders_from_db()
@@ -421,4 +422,3 @@ class TestRetryPendingOrdersFromDB:
         call_args = auto_trade_engine.orders_repo.mark_failed.call_args
         assert call_args.kwargs["retry_pending"] is False
         assert "not retryable" in call_args.kwargs["failure_reason"]
-

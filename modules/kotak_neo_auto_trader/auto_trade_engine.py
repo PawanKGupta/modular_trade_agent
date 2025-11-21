@@ -2097,13 +2097,17 @@ class AutoTradeEngine:
             from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
             retry_pending_orders = self.orders_repo.get_failed_orders(self.user_id)
-            retry_pending_orders = [o for o in retry_pending_orders if o.status == DbOrderStatus.RETRY_PENDING]
+            retry_pending_orders = [
+                o for o in retry_pending_orders if o.status == DbOrderStatus.RETRY_PENDING
+            ]
 
             if not retry_pending_orders:
                 logger.info("No orders with RETRY_PENDING status to retry")
                 return summary
 
-            logger.info(f"Found {len(retry_pending_orders)} orders with RETRY_PENDING status to retry")
+            logger.info(
+                f"Found {len(retry_pending_orders)} orders with RETRY_PENDING status to retry"
+            )
 
             # Check portfolio limit
             try:
@@ -2161,7 +2165,9 @@ class AutoTradeEngine:
 
                 # Check position-to-volume ratio
                 if not self.check_position_volume_ratio(qty, avg_vol, symbol, close):
-                    logger.info(f"Skipping retry {symbol}: position size too large relative to volume")
+                    logger.info(
+                        f"Skipping retry {symbol}: position size too large relative to volume"
+                    )
                     # Mark as FAILED (not retryable) since it's a permanent issue
                     self.orders_repo.mark_failed(
                         order=db_order,
@@ -2183,6 +2189,7 @@ class AutoTradeEngine:
                     )
                     # Update retry count but keep as RETRY_PENDING for next scheduled retry
                     from src.infrastructure.db.timezone_utils import ist_now
+
                     db_order.retry_count = (db_order.retry_count or 0) + 1
                     db_order.last_retry_attempt = ist_now()
                     self.orders_repo.update(db_order)
@@ -2197,7 +2204,9 @@ class AutoTradeEngine:
                     db_order.broker_order_id = order_id
                     db_order.status = DbOrderStatus.PENDING_EXECUTION
                     self.orders_repo.update(db_order)
-                    logger.info(f"Successfully placed retry order for {symbol} (order_id: {order_id})")
+                    logger.info(
+                        f"Successfully placed retry order for {symbol} (order_id: {order_id})"
+                    )
 
                     # Send notification
                     if self.telegram_notifier and self.telegram_notifier.enabled:
@@ -2210,7 +2219,9 @@ class AutoTradeEngine:
                                 additional_info={"order_id": order_id},
                             )
                         except Exception as notify_error:
-                            logger.warning(f"Failed to send retry success notification: {notify_error}")
+                            logger.warning(
+                                f"Failed to send retry success notification: {notify_error}"
+                            )
                 else:
                     # Broker/API error - mark as FAILED (not retryable)
                     self.orders_repo.mark_failed(

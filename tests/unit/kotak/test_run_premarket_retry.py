@@ -21,12 +21,14 @@ def mock_db_session():
 def mock_engine():
     """Mock AutoTradeEngine"""
     engine = MagicMock()
-    engine.retry_pending_orders_from_db = Mock(return_value={
-        "retried": 2,
-        "placed": 1,
-        "failed": 1,
-        "skipped": 0,
-    })
+    engine.retry_pending_orders_from_db = Mock(
+        return_value={
+            "retried": 2,
+            "placed": 1,
+            "failed": 1,
+            "skipped": 0,
+        }
+    )
     return engine
 
 
@@ -35,7 +37,9 @@ def trading_service(mock_db_session, mock_engine):
     """Create TradingService instance"""
     from modules.kotak_neo_auto_trader.run_trading_service import TradingService
 
-    with patch("modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine") as mock_engine_class:
+    with patch(
+        "modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine"
+    ) as mock_engine_class:
         mock_engine_class.return_value = mock_engine
 
         service = TradingService(
@@ -58,10 +62,11 @@ class TestRunPremarketRetry:
         self, trading_service, mock_engine
     ):
         """Test that run_premarket_retry calls retry_pending_orders_from_db"""
-        from src.application.services.task_execution_wrapper import execute_task
 
         # Mock execute_task context manager
-        with patch("src.application.services.task_execution_wrapper.execute_task") as mock_execute_task:
+        with patch(
+            "src.application.services.task_execution_wrapper.execute_task"
+        ) as mock_execute_task:
             mock_context = {}  # Use real dict instead of MagicMock
             mock_context_manager = MagicMock()
             mock_context_manager.__enter__ = Mock(return_value=mock_context)
@@ -86,7 +91,6 @@ class TestRunPremarketRetry:
 
     def test_run_premarket_retry_no_orders(self, trading_service, mock_engine):
         """Test run_premarket_retry when no orders to retry"""
-        from src.application.services.task_execution_wrapper import execute_task
 
         # Mock empty summary
         mock_engine.retry_pending_orders_from_db.return_value = {
@@ -97,7 +101,9 @@ class TestRunPremarketRetry:
         }
 
         # Mock execute_task context manager
-        with patch("src.application.services.task_execution_wrapper.execute_task") as mock_execute_task:
+        with patch(
+            "src.application.services.task_execution_wrapper.execute_task"
+        ) as mock_execute_task:
             mock_context = {}  # Use real dict instead of MagicMock
             mock_context_manager = MagicMock()
             mock_context_manager.__enter__ = Mock(return_value=mock_context)
@@ -118,10 +124,11 @@ class TestRunPremarketRetry:
         self, trading_service, mock_engine
     ):
         """Test that run_premarket_retry does NOT call place_new_entries"""
-        from src.application.services.task_execution_wrapper import execute_task
 
         # Mock execute_task context manager
-        with patch("src.application.services.task_execution_wrapper.execute_task") as mock_execute_task:
+        with patch(
+            "src.application.services.task_execution_wrapper.execute_task"
+        ) as mock_execute_task:
             mock_context = {}  # Use real dict instead of MagicMock
             mock_context_manager = MagicMock()
             mock_context_manager.__enter__ = Mock(return_value=mock_context)
@@ -142,10 +149,11 @@ class TestRunPremarketRetry:
 
     def test_run_premarket_retry_marks_task_completed(self, trading_service, mock_engine):
         """Test that run_premarket_retry marks task as completed"""
-        from src.application.services.task_execution_wrapper import execute_task
 
         # Mock execute_task context manager
-        with patch("src.application.services.task_execution_wrapper.execute_task") as mock_execute_task:
+        with patch(
+            "src.application.services.task_execution_wrapper.execute_task"
+        ) as mock_execute_task:
             mock_context = {}  # Use real dict instead of MagicMock
             mock_context_manager = MagicMock()
             mock_context_manager.__enter__ = Mock(return_value=mock_context)
@@ -160,4 +168,3 @@ class TestRunPremarketRetry:
 
             # Verify task marked as completed
             assert trading_service.tasks_completed["premarket_retry"] is True
-

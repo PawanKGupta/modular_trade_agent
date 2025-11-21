@@ -71,4 +71,3 @@ Changed retry behavior from immediate retry queue processing during buy order pl
 
 - `documents/features/TRADING_WORKFLOW_ASCII.md`
   - Updated workflow diagram to reflect new retry behavior
-
