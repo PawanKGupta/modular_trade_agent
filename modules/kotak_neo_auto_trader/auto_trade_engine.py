@@ -1584,15 +1584,72 @@ class AutoTradeEngine:
         return False
 
     def has_active_buy_order(self, base_symbol: str) -> bool:
-        if not self.orders:
-            return False
+        """
+        Check if there's an active buy order for the given symbol.
+        First checks broker API, then falls back to database check.
+        This prevents duplicate orders when broker API doesn't return pending orders.
+        """
         variants = set(self._symbol_variants(base_symbol))
-        pend = self.orders.get_pending_orders() or []
-        for o in pend:
-            txn = str(o.get("transactionType") or "").upper()
-            sym = str(o.get("tradingSymbol") or "").upper()
-            if txn.startswith("B") and sym in variants:
-                return True
+
+        # 1) Check broker API first (primary source)
+        if self.orders:
+            try:
+                pend = self.orders.get_pending_orders() or []
+                for o in pend:
+                    txn = str(o.get("transactionType") or "").upper()
+                    sym = str(o.get("tradingSymbol") or "").upper()
+                    if txn.startswith("B") and sym in variants:
+                        return True
+            except Exception as e:
+                logger.warning(
+                    f"Broker API check for active buy order failed for {base_symbol}: {e}. "
+                    "Falling back to database check."
+                )
+
+        # 2) Database fallback: Check for AMO/PENDING_EXECUTION/ONGOING buy orders
+        # This prevents duplicates when broker API doesn't return pending orders or is unavailable
+        if self.orders_repo and self.user_id:
+            try:
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                existing_orders = self.orders_repo.list(self.user_id)
+                for existing_order in existing_orders:
+                    # Check if symbol matches (including variants)
+                    order_symbol_base = (
+                        existing_order.symbol.upper()
+                        .replace("-EQ", "")
+                        .replace("-BE", "")
+                        .replace("-BL", "")
+                        .replace("-BZ", "")
+                    )
+                    base_symbol_clean = (
+                        base_symbol.upper()
+                        .replace("-EQ", "")
+                        .replace("-BE", "")
+                        .replace("-BL", "")
+                        .replace("-BZ", "")
+                    )
+
+                    if (
+                        existing_order.side == "buy"
+                        and existing_order.status
+                        in {
+                            DbOrderStatus.AMO,
+                            DbOrderStatus.PENDING_EXECUTION,
+                            DbOrderStatus.ONGOING,
+                        }
+                        and order_symbol_base == base_symbol_clean
+                    ):
+                        logger.debug(
+                            f"Database check: {base_symbol} already has active buy order "
+                            f"(status: {existing_order.status}, order_id: {existing_order.id})"
+                        )
+                        return True
+            except Exception as e:
+                logger.warning(
+                    f"Database check for active buy order failed for {base_symbol}: {e}"
+                )
+
         return False
 
     def reentries_today(self, base_symbol: str) -> int:
@@ -2906,14 +2963,104 @@ class AutoTradeEngine:
                     summary["ticker_attempts"].append(ticker_attempt)
                     continue
 
-            # 3) Active pending buy order check (system orders) -> cancel and replace
-            if self.has_active_buy_order(broker_symbol):
-                variants = self._symbol_variants(broker_symbol)
+            # 3) Active pending buy order check (system orders)
+            # Check database FIRST to prevent duplicates when service runs multiple times
+            # This is critical because broker API might not return pending orders immediately
+            variants = set(self._symbol_variants(broker_symbol))
+            broker_symbol_base = (
+                broker_symbol.upper()
+                .replace("-EQ", "")
+                .replace("-BE", "")
+                .replace("-BL", "")
+                .replace("-BZ", "")
+            )
+
+            # Check database for existing AMO/PENDING_EXECUTION/ONGOING orders
+            # This prevents duplicates when service runs multiple times before broker syncs
+            has_db_order = False
+            existing_db_order = None
+            if self.orders_repo and self.user_id:
                 try:
-                    cancelled = self.orders.cancel_pending_buys_for_symbol(variants)
-                    logger.info(f"Cancelled {cancelled} pending BUY order(s) for {broker_symbol}")
+                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                    existing_orders = self.orders_repo.list(self.user_id)
+                    for existing_order in existing_orders:
+                        order_symbol_base = (
+                            existing_order.symbol.upper()
+                            .replace("-EQ", "")
+                            .replace("-BE", "")
+                            .replace("-BL", "")
+                            .replace("-BZ", "")
+                        )
+                        if (
+                            existing_order.side == "buy"
+                            and existing_order.status
+                            in {
+                                DbOrderStatus.AMO,
+                                DbOrderStatus.PENDING_EXECUTION,
+                                DbOrderStatus.ONGOING,
+                                DbOrderStatus.FAILED,
+                                DbOrderStatus.RETRY_PENDING,
+                                DbOrderStatus.REJECTED,
+                            }
+                            and order_symbol_base == broker_symbol_base
+                        ):
+                            has_db_order = True
+                            existing_db_order = existing_order
+                            break
                 except Exception as e:
-                    logger.warning(f"Could not cancel pending order(s) for {broker_symbol}: {e}")
+                    logger.warning(
+                        f"Database check for active buy order failed for {broker_symbol}: {e}. "
+                        "Falling back to broker API check."
+                    )
+
+            # If database has an order, we'll check if quantity needs to be updated after calculating new quantity
+            # For now, skip if database has ONGOING order (already executed, cannot update)
+            if has_db_order and existing_db_order:
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+                if existing_db_order.status == DbOrderStatus.ONGOING:
+                    logger.info(
+                        f"Skipping {broker_symbol}: already has active buy order in database "
+                        f"(status: {existing_db_order.status}, order_id: {existing_db_order.id}). "
+                        "Order already executed, cannot update quantity."
+                    )
+                    summary["skipped_duplicates"] += 1
+                    ticker_attempt["status"] = "skipped"
+                    ticker_attempt["reason"] = "active_order_in_db"
+                    ticker_attempt["existing_order_id"] = existing_db_order.id
+                    summary["ticker_attempts"].append(ticker_attempt)
+                    continue
+
+            # Check broker API for pending orders (only if database doesn't have order or order is not ONGOING)
+            # If broker has pending order, cancel and replace
+            if self.orders:
+                try:
+                    pend = self.orders.get_pending_orders() or []
+                    has_broker_order = False
+                    for o in pend:
+                        txn = str(o.get("transactionType") or "").upper()
+                        sym = str(o.get("tradingSymbol") or "").upper()
+                        if txn.startswith("B") and sym in variants:
+                            has_broker_order = True
+                            break
+
+                    if has_broker_order:
+                        try:
+                            cancelled = self.orders.cancel_pending_buys_for_symbol(list(variants))
+                            logger.info(f"Cancelled {cancelled} pending BUY order(s) for {broker_symbol}")
+                        except Exception as e:
+                            logger.warning(f"Could not cancel pending order(s) for {broker_symbol}: {e}")
+                            # If cancel fails, skip to prevent duplicates
+                            summary["skipped_duplicates"] += 1
+                            ticker_attempt["status"] = "skipped"
+                            ticker_attempt["reason"] = "cancel_failed"
+                            summary["ticker_attempts"].append(ticker_attempt)
+                            continue
+                except Exception as e:
+                    logger.warning(
+                        f"Broker API check for active buy order failed for {broker_symbol}: {e}. "
+                        "Proceeding with order placement (database check already passed)."
+                    )
 
             # Use cached indicators if available, otherwise fetch
             ind = cached_indicators.get(rec.ticker)
@@ -2968,6 +3115,95 @@ class AutoTradeEngine:
                 )
 
             qty = max(config.MIN_QTY, floor(execution_capital / close))
+
+            # If database has an existing AMO/PENDING_EXECUTION order, check if quantity or price needs to be updated
+            # due to capital change (e.g., user updated capital per trade config) or price change
+            if has_db_order and existing_db_order:
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                # Update quantity/price for orders that can still be modified
+                # Skip ONGOING orders (already executed, cannot update)
+                # Skip CLOSED/CANCELLED orders (already finalized)
+                # Handle AMO/PENDING_EXECUTION/FAILED/RETRY_PENDING/REJECTED orders
+                if existing_db_order.status in {
+                    DbOrderStatus.AMO,
+                    DbOrderStatus.PENDING_EXECUTION,
+                    DbOrderStatus.FAILED,
+                    DbOrderStatus.RETRY_PENDING,
+                    DbOrderStatus.REJECTED,
+                }:
+                    existing_qty = existing_db_order.quantity or 0
+                    existing_price = existing_db_order.price or 0.0
+
+                    # Check if quantity or price has changed (any change triggers update)
+                    qty_changed = existing_qty > 0 and qty != existing_qty
+                    price_changed = existing_price > 0 and abs(close - existing_price) > 0.01  # 1 paisa tolerance for float comparison
+
+                    if qty_changed or price_changed:
+                        # Any change in quantity or price triggers order update
+                        changes = []
+                        if qty_changed:
+                            changes.append(f"qty: {existing_qty} -> {qty}")
+                        if price_changed:
+                            changes.append(f"price: Rs {existing_price:.2f} -> Rs {close:.2f}")
+
+                        logger.info(
+                            f"Order parameters updated for {broker_symbol}: {', '.join(changes)}. "
+                            f"Cancelling existing order and placing new order with updated parameters."
+                        )
+
+                        # Cancel existing order from broker (if still pending)
+                        variants = set(self._symbol_variants(broker_symbol))
+                        try:
+                            if self.orders:
+                                cancelled = self.orders.cancel_pending_buys_for_symbol(list(variants))
+                                logger.info(f"Cancelled {cancelled} existing order(s) for {broker_symbol}")
+                        except Exception as e:
+                            logger.warning(f"Could not cancel existing order for {broker_symbol}: {e}")
+                            # Continue anyway - will place new order
+
+                        # Update existing DB order status to CANCELLED (replaced due to parameter change)
+                        try:
+                            self.orders_repo.update(
+                                existing_db_order,
+                                status=DbOrderStatus.CANCELLED,
+                                cancelled_reason=f"Order cancelled due to parameter update (qty/price changed)",
+                            )
+                            logger.info(
+                                f"Marked existing DB order {existing_db_order.id} as CANCELLED "
+                                f"(replaced with new order due to parameter update)"
+                            )
+                        except Exception as e:
+                            logger.warning(f"Could not update existing DB order status: {e}")
+
+                        # Continue to place new order with updated quantity/price
+                        # (has_db_order will be ignored, we've already cancelled the old one)
+                    else:
+                        # Quantity and price unchanged, skip placing new order
+                        logger.info(
+                            f"Skipping {broker_symbol}: already has active buy order in database "
+                            f"(status: {existing_db_order.status}, order_id: {existing_db_order.id}). "
+                            f"Quantity and price unchanged (qty={existing_qty}, price=Rs {existing_price:.2f})."
+                        )
+                        summary["skipped_duplicates"] += 1
+                        ticker_attempt["status"] = "skipped"
+                        ticker_attempt["reason"] = "active_order_in_db"
+                        ticker_attempt["existing_order_id"] = existing_db_order.id
+                        summary["ticker_attempts"].append(ticker_attempt)
+                        continue
+                else:
+                    # Order is ONGOING (already executed), skip
+                    logger.info(
+                        f"Skipping {broker_symbol}: already has active buy order in database "
+                        f"(status: {existing_db_order.status}, order_id: {existing_db_order.id}). "
+                        "Order already executed, cannot update quantity/price."
+                    )
+                    summary["skipped_duplicates"] += 1
+                    ticker_attempt["status"] = "skipped"
+                    ticker_attempt["reason"] = "active_order_in_db"
+                    ticker_attempt["existing_order_id"] = existing_db_order.id
+                    summary["ticker_attempts"].append(ticker_attempt)
+                    continue
 
             # Check position-to-volume ratio (liquidity filter)
             avg_vol = ind.get("avg_volume", 0)
@@ -3529,7 +3765,7 @@ class AutoTradeEngine:
                                 old_qty = e.get("qty", 0)
                                 old_entry_price = e.get("entry_price", 0)
                                 new_total_qty = old_qty + qty
-                                
+
                                 # Recalculate weighted average entry price
                                 # Formula: (prev_avg * prev_qty + new_price * new_qty) / total_qty
                                 if old_qty > 0 and old_entry_price > 0:
@@ -3543,7 +3779,7 @@ class AutoTradeEngine:
                                 else:
                                     # First entry or invalid data - use reentry price
                                     e["entry_price"] = price
-                                
+
                                 e["qty"] = new_total_qty
                                 logger.info(
                                     f"Trade history updated: {symbol} qty {old_qty} -> {new_total_qty}"

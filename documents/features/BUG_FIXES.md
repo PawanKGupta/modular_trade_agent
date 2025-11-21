@@ -1325,4 +1325,56 @@ The trade history update only updated quantity and added reentry metadata, but d
 
 ---
 
+## Bug #67: Duplicate Orders Created When Buy Order Service Runs Multiple Times (HIGH)
+
+**Date Fixed**: November 22, 2025
+**Status**: ✅ Fixed
+
+### Description
+When the buy order service was run multiple times (manually or via scheduled tasks), duplicate entries were being created in the orders table for the same stock. This occurred because the system only checked the broker API for pending orders, which might not return orders immediately after placement (sync delay), or might be unavailable.
+
+### Root Cause
+1. **No database check before placing orders**: `place_new_entries()` only checked the broker API via `has_active_buy_order()`, which didn't check the database for existing AMO/PENDING_EXECUTION orders.
+2. **Broker API sync delay**: When an order was placed and saved to the database with AMO status, the broker API might not immediately return it in `get_pending_orders()`, causing subsequent service runs to create duplicate orders.
+3. **Incomplete duplicate prevention**: The `has_active_buy_order()` method only checked the broker API and didn't have a database fallback.
+
+### Expected Behavior
+1. Before placing a new order, check the database for existing AMO/PENDING_EXECUTION/ONGOING orders for the same symbol.
+2. If an order exists in the database, skip placing a new order to prevent duplicates.
+3. Check the database first (most reliable), then fallback to broker API check.
+
+### Fix Applied
+**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+
+1. **Enhanced `has_active_buy_order()` method**:
+   - Added database fallback to check for AMO/PENDING_EXECUTION/ONGOING orders
+   - Checks broker API first, then falls back to database check
+   - Prevents duplicates when broker API doesn't return pending orders
+
+2. **Enhanced `place_new_entries()` method**:
+   - Added explicit database check BEFORE placing orders
+   - Checks database first (most reliable source) for existing AMO/PENDING_EXECUTION/ONGOING orders
+   - If database has an order, skips placing new order (prevents duplicate)
+   - If database doesn't have order but broker API has one, cancels and replaces (normal behavior)
+   - If neither has order, proceeds with placing new order
+
+**Logic Flow**:
+1. Check database for existing AMO/PENDING_EXECUTION/ONGOING orders
+2. If found → Skip placing new order (prevent duplicate)
+3. If not found → Check broker API for pending orders
+4. If broker has pending order → Cancel and replace (normal behavior)
+5. If neither has order → Proceed with placing new order
+
+### Test Coverage
+- `tests/unit/kotak/test_duplicate_prevention_multiple_runs.py` - 5 tests covering all scenarios
+- Tests cover: database check for existing orders, broker API check, skipping when order exists, allowing when no order exists, handling PENDING_EXECUTION orders
+
+### Impact
+- Prevents duplicate orders when service runs multiple times
+- Prevents duplicates when broker API has sync delays
+- More reliable duplicate prevention using database as source of truth
+- Better user experience - no duplicate entries in orders table
+
+---
+
 *Last Updated: November 22, 2025*

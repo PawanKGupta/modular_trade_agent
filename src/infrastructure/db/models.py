@@ -90,6 +90,7 @@ class OrderStatus(str, Enum):
     RETRY_PENDING = "retry_pending"
     REJECTED = "rejected"
     PENDING_EXECUTION = "pending_execution"
+    CANCELLED = "cancelled"
 
 
 class Orders(Base):
