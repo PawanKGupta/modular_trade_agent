@@ -678,7 +678,7 @@ class OrderStateManager:
 
                     elif status == OrderStatus.CANCELLED:
                         # Phase 10: Detect manual cancellation
-                        is_manual = not order_info.get("is_manual_cancelled", False)
+                        is_manual = order_info.get("is_manual_cancelled", False)
                         if is_manual:
                             # Order was cancelled manually (not by us)
                             self._handle_manual_cancellation(order_id, order_info, broker_order)
@@ -725,14 +725,14 @@ class OrderStateManager:
 
             # Check for price modification (only for limit orders)
             if original_price is not None and broker_price is not None:
-                if abs(original_price - broker_price) > 0.01:  # Allow small floating point differences
+                if (
+                    abs(original_price - broker_price) > 0.01
+                ):  # Allow small floating point differences
                     modifications.append(f"price: Rs {original_price:.2f} → Rs {broker_price:.2f}")
 
             # Check for quantity modification
             if broker_quantity is not None and abs(original_quantity - broker_quantity) > 0:
-                modifications.append(
-                    f"quantity: {original_quantity} → {broker_quantity}"
-                )
+                modifications.append(f"quantity: {original_quantity} → {broker_quantity}")
 
             if modifications:
                 # Manual modification detected
@@ -798,7 +798,9 @@ class OrderStateManager:
             self._notify_manual_cancellation(symbol, order_id, cancellation_reason)
 
             # Remove from tracking
-            self.remove_buy_order_from_tracking(order_id, reason=f"Manual cancellation: {cancellation_reason}")
+            self.remove_buy_order_from_tracking(
+                order_id, reason=f"Manual cancellation: {cancellation_reason}"
+            )
 
         except Exception as e:
             logger.error(f"Error handling manual cancellation for order {order_id}: {e}")
@@ -829,7 +831,9 @@ class OrderStateManager:
             all_orders = self.orders_repo.list(self.user_id)
             db_order = None
             for order in all_orders:
-                if (order.broker_order_id == order_id or order.order_id == order_id) and order.symbol.upper() == symbol.upper():
+                if (
+                    order.broker_order_id == order_id or order.order_id == order_id
+                ) and order.symbol.upper() == symbol.upper():
                     db_order = order
                     break
 
@@ -870,7 +874,9 @@ class OrderStateManager:
             all_orders = self.orders_repo.list(self.user_id)
             db_order = None
             for order in all_orders:
-                if (order.broker_order_id == order_id or order.order_id == order_id) and order.symbol.upper() == symbol.upper():
+                if (
+                    order.broker_order_id == order_id or order.order_id == order_id
+                ) and order.symbol.upper() == symbol.upper():
                     db_order = order
                     break
 

@@ -26,6 +26,6 @@ xgboost>=2.0.0; python_version >= "3.9"
 git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client; python_version < "3.12"
 
 # Database & migrations
-SQLAlchemy==2.0.36
+SQLAlchemy>=2.0.44
 alembic==1.14.0
 passlib[bcrypt]==1.7.4

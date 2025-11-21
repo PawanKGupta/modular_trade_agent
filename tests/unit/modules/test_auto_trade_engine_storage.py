@@ -450,14 +450,11 @@ class TestFailedOrders:
             symbol="TATASTEEL",
             side="buy",
             order_type="market",
-            quantity=0,
-            price=None,
+            quantity=sample_failed_order["qty"],
+            price=sample_failed_order["close"],
         )
-        metadata = {
-            "failed_order": True,
-            "failed_order_data": sample_failed_order,
-        }
-        orders_repo.update(order, order_metadata=metadata)
+        # Mark as failed using the new status-based approach
+        orders_repo.mark_failed(order, failure_reason="insufficient_balance", retry_pending=True)
 
         failed_orders = auto_trade_engine_with_db._get_failed_orders()
 
@@ -469,15 +466,16 @@ class TestFailedOrders:
         self, auto_trade_engine_with_db, db_session, sample_failed_order, test_user
     ):
         """Test adding failed order to repository"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
         from src.infrastructure.persistence.orders_repository import OrdersRepository
 
         auto_trade_engine_with_db._add_failed_order(sample_failed_order)
 
-        # Verify failed order was stored
+        # Verify failed order was stored (using status-based approach)
         orders_repo = OrdersRepository(db_session)
         orders = orders_repo.list(test_user.id)
         failed_orders = [
-            o for o in orders if o.order_metadata and o.order_metadata.get("failed_order")
+            o for o in orders if o.status in {DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING}
         ]
         assert len(failed_orders) == 1
         assert failed_orders[0].symbol == "TATASTEEL"
@@ -486,30 +484,27 @@ class TestFailedOrders:
         self, auto_trade_engine_with_db, db_session, sample_failed_order, test_user
     ):
         """Test removing failed order from repository"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
         from src.infrastructure.persistence.orders_repository import OrdersRepository
 
-        # Add failed order
+        # Add failed order using status-based approach
         orders_repo = OrdersRepository(db_session)
         order = orders_repo.create_amo(
             user_id=test_user.id,
             symbol="TATASTEEL",
             side="buy",
             order_type="market",
-            quantity=0,
-            price=None,
+            quantity=sample_failed_order["qty"],
+            price=sample_failed_order["close"],
         )
-        metadata = {
-            "failed_order": True,
-            "failed_order_data": sample_failed_order,
-        }
-        orders_repo.update(order, order_metadata=metadata)
+        orders_repo.mark_failed(order, failure_reason="insufficient_balance", retry_pending=True)
 
         # Remove it
         auto_trade_engine_with_db._remove_failed_order("TATASTEEL")
 
-        # Verify it was removed
+        # Verify it was removed (marked as CLOSED, not in failed status anymore)
         db_session.refresh(order)
-        assert order.order_metadata is None or not order.order_metadata.get("failed_order")
+        assert order.status == DbOrderStatus.CLOSED
 
     def test_get_failed_orders_from_file_fallback(
         self, auto_trade_engine_file_mode, sample_failed_order

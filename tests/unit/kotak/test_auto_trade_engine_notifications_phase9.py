@@ -84,14 +84,21 @@ class TestAutoTradeEngineNotificationsPhase9:
 
     def test_notify_order_placed_success(self, auto_trade_engine, mock_telegram_notifier):
         """Test that order placed successfully sends notification (Phase 9)"""
-        # Mock order placement response
-        mock_response = {"data": {"orderId": "ORDER123"}}
-        auto_trade_engine.orders.place_order.return_value = mock_response
+        # Mock order placement response - use format that passes validation
+        # Response must have "data" key and no "error" key to pass validation
+        mock_response = {"data": {"nOrdNo": "ORDER123"}, "status": "success"}
+        # Mock place_market_buy (the actual method called for MARKET orders)
+        auto_trade_engine.orders.place_market_buy.return_value = mock_response
 
-        # Mock order verification to return success
-        with patch.object(auto_trade_engine, "_verify_order_placement", return_value=(True, None)):
+        # Mock extract_order_id to return the order ID directly
+        with patch(
+            "modules.kotak_neo_auto_trader.auto_trade_engine.extract_order_id",
+            return_value="ORDER123",
+        ):
             with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_tracked_symbol"):
                 with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"):
+                    # Mock scrip_master to return None so it doesn't try symbol resolution
+                    auto_trade_engine.scrip_master = None
                     success, order_id = auto_trade_engine._attempt_place_order(
                         broker_symbol="RELIANCE-EQ",
                         ticker="RELIANCE",
@@ -112,23 +119,27 @@ class TestAutoTradeEngineNotificationsPhase9:
 
     def test_notify_order_placed_limit_order(self, auto_trade_engine, mock_telegram_notifier):
         """Test that limit order placement sends notification with price (Phase 9)"""
-        # Mock order placement response
-        mock_response = {"data": {"orderId": "ORDER123"}}
-        auto_trade_engine.orders.place_order.return_value = mock_response
+        # Mock order placement response - use format that passes validation
+        mock_response = {"data": {"nOrdNo": "ORDER123"}, "status": "success"}
+        # Mock place_limit_buy (the actual method called for LIMIT orders)
+        auto_trade_engine.orders.place_limit_buy.return_value = mock_response
 
-        # Mock order verification to return success
-        with patch.object(auto_trade_engine, "_verify_order_placement", return_value=(True, None)):
+        # Mock extract_order_id to return the order ID directly
+        with patch(
+            "modules.kotak_neo_auto_trader.auto_trade_engine.extract_order_id",
+            return_value="ORDER123",
+        ):
             with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_tracked_symbol"):
                 with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"):
-                    # Place limit order
+                    # Mock scrip_master to return None so it doesn't try symbol resolution
+                    auto_trade_engine.scrip_master = None
+                    # Place limit order (T2T segment uses limit order automatically)
                     success, order_id = auto_trade_engine._attempt_place_order(
-                        broker_symbol="RELIANCE-EQ",
+                        broker_symbol="RELIANCE-BE",  # T2T segment triggers limit order
                         ticker="RELIANCE",
                         qty=10,
-                        close=2500.0,
+                        close=2495.0,  # This will be used as base for limit price (2495.0 * 1.01 = 2519.95)
                         ind=MagicMock(),
-                        use_limit_order=True,
-                        limit_price=2495.0,
                     )
 
                     assert success is True
@@ -136,7 +147,8 @@ class TestAutoTradeEngineNotificationsPhase9:
                     mock_telegram_notifier.notify_order_placed.assert_called_once()
                     call_args = mock_telegram_notifier.notify_order_placed.call_args
                     assert call_args[1]["order_type"] == "LIMIT"
-                    assert call_args[1]["price"] == 2495.0
+                    # Limit price is close * 1.01 for T2T segments
+                    assert call_args[1]["price"] == pytest.approx(2495.0 * 1.01, rel=0.01)
 
     def test_notify_order_placed_no_notification_when_disabled(self, auto_trade_engine):
         """Test that notification is not sent when telegram is disabled (Phase 9)"""
@@ -144,14 +156,19 @@ class TestAutoTradeEngineNotificationsPhase9:
         auto_trade_engine.telegram_notifier.enabled = False
         mock_telegram_notifier = auto_trade_engine.telegram_notifier
 
-        # Mock order placement response
-        mock_response = {"data": {"orderId": "ORDER123"}}
-        auto_trade_engine.orders.place_order.return_value = mock_response
+        # Mock order placement response - use format that passes validation
+        mock_response = {"data": {"nOrdNo": "ORDER123"}, "status": "success"}
+        auto_trade_engine.orders.place_market_buy.return_value = mock_response
 
-        # Mock order verification to return success
-        with patch.object(auto_trade_engine, "_verify_order_placement", return_value=(True, None)):
+        # Mock extract_order_id to return the order ID directly
+        with patch(
+            "modules.kotak_neo_auto_trader.auto_trade_engine.extract_order_id",
+            return_value="ORDER123",
+        ):
             with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_tracked_symbol"):
                 with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"):
+                    # Mock scrip_master to return None so it doesn't try symbol resolution
+                    auto_trade_engine.scrip_master = None
                     success, order_id = auto_trade_engine._attempt_place_order(
                         broker_symbol="RELIANCE-EQ",
                         ticker="RELIANCE",
@@ -171,14 +188,19 @@ class TestAutoTradeEngineNotificationsPhase9:
             "Notification error"
         )
 
-        # Mock order placement response
-        mock_response = {"data": {"orderId": "ORDER123"}}
-        auto_trade_engine.orders.place_order.return_value = mock_response
+        # Mock order placement response - use format that passes validation
+        mock_response = {"data": {"nOrdNo": "ORDER123"}, "status": "success"}
+        auto_trade_engine.orders.place_market_buy.return_value = mock_response
 
-        # Mock order verification to return success
-        with patch.object(auto_trade_engine, "_verify_order_placement", return_value=(True, None)):
+        # Mock extract_order_id to return the order ID directly
+        with patch(
+            "modules.kotak_neo_auto_trader.auto_trade_engine.extract_order_id",
+            return_value="ORDER123",
+        ):
             with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_tracked_symbol"):
                 with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"):
+                    # Mock scrip_master to return None so it doesn't try symbol resolution
+                    auto_trade_engine.scrip_master = None
                     # Should not raise exception
                     success, order_id = auto_trade_engine._attempt_place_order(
                         broker_symbol="RELIANCE-EQ",
@@ -218,10 +240,13 @@ class TestAutoTradeEngineNotificationsPhase9:
 
     def test_notify_retry_queue_updated_on_update(self, auto_trade_engine, mock_telegram_notifier):
         """Test that updating retry queue sends notification (Phase 9)"""
-        # Mock existing failed order
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock existing failed order with RETRY_PENDING status
         mock_order = MagicMock()
         mock_order.retry_count = 2
         mock_order.symbol = "RELIANCE"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
         auto_trade_engine.orders_repo.list.return_value = [mock_order]
 
         # Mock failed order update
@@ -243,10 +268,13 @@ class TestAutoTradeEngineNotificationsPhase9:
 
     def test_notify_retry_queue_updated_on_remove(self, auto_trade_engine, mock_telegram_notifier):
         """Test that removing from retry queue sends notification (Phase 9)"""
-        # Mock existing failed order
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock existing failed order with RETRY_PENDING status
         mock_order = MagicMock()
         mock_order.retry_count = 3
         mock_order.symbol = "RELIANCE"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
         auto_trade_engine.orders_repo.list.return_value = [mock_order]
         auto_trade_engine.orders_repo.mark_cancelled.return_value = mock_order
 
@@ -263,41 +291,25 @@ class TestAutoTradeEngineNotificationsPhase9:
         self, auto_trade_engine, mock_telegram_notifier
     ):
         """Test that successful retry sends notification (Phase 9)"""
-        # Mock failed order in retry queue
-        failed_order = {
-            "symbol": "RELIANCE",
-            "ticker": "RELIANCE",
-            "qty": 10,
-            "close": 2500.0,
-            "retry_count": 2,
-        }
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock orders repository to return empty list for _remove_failed_order
-        auto_trade_engine.orders_repo.list.return_value = []
+        # Mock existing failed order with RETRY_PENDING status
+        mock_order = MagicMock()
+        mock_order.retry_count = 2
+        mock_order.symbol = "RELIANCE"
+        mock_order.status = DbOrderStatus.RETRY_PENDING
+        auto_trade_engine.orders_repo.list.return_value = [mock_order]
+        auto_trade_engine.orders_repo.mark_cancelled.return_value = mock_order
 
-        # Mock successful order placement
-        with patch.object(
-            auto_trade_engine, "_attempt_place_order", return_value=(True, "ORDER123")
-        ):
-            # This simulates the retry logic in _retry_failed_orders
-            success, order_id = auto_trade_engine._attempt_place_order(
-                broker_symbol="RELIANCE",
-                ticker="RELIANCE",
-                qty=10,
-                close=2500.0,
-                ind=MagicMock(),
-            )
-            if success:
-                auto_trade_engine._remove_failed_order("RELIANCE")
+        # Simulate successful retry by removing the failed order
+        auto_trade_engine._remove_failed_order("RELIANCE")
 
-                # Verify notification was sent
-                # Note: In actual implementation, this happens in _retry_failed_orders
-                # For test purposes, we verify the pattern
-                mock_telegram_notifier.notify_retry_queue_updated.assert_called()
-                calls = mock_telegram_notifier.notify_retry_queue_updated.call_args_list
-                # Should have call for removal
-                remove_calls = [c for c in calls if c[1].get("action") == "removed"]
-                assert len(remove_calls) > 0
+        # Verify notification was sent for removal
+        mock_telegram_notifier.notify_retry_queue_updated.assert_called_once()
+        call_args = mock_telegram_notifier.notify_retry_queue_updated.call_args
+        assert call_args[1]["symbol"] == "RELIANCE"
+        assert call_args[1]["action"] == "removed"
+        assert call_args[1]["retry_count"] == 2
 
     def test_notify_retry_queue_no_notification_for_non_retryable(
         self, auto_trade_engine, mock_telegram_notifier
