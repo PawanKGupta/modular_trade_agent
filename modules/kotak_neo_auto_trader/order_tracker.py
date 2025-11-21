@@ -204,7 +204,9 @@ class OrderTracker:
                     logger.debug(f"Added order {order_id} to database")
                     # Phase 11: In DB-only mode, skip JSON write
                     if self.db_only_mode:
-                        logger.info(f"Added to pending orders: {symbol} (order_id: {order_id}, qty: {qty})")
+                        logger.info(
+                            f"Added to pending orders: {symbol} (order_id: {order_id}, qty: {qty})"
+                        )
                         return
             except Exception as e:
                 logger.warning(f"Failed to write order to database: {e}")

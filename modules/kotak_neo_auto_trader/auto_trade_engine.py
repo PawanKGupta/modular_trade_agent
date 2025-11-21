@@ -41,7 +41,6 @@ try:
         extract_order_id,
         search_order_in_broker_orderbook,
     )
-    from .utils.order_field_extractor import OrderFieldExtractor
     from .orders import KotakNeoOrders
     from .portfolio import KotakNeoPortfolio
     from .scrip_master import KotakNeoScripMaster
@@ -63,6 +62,7 @@ try:
         update_tracked_qty,
     )
     from .trader import KotakNeoTrader
+    from .utils.order_field_extractor import OrderFieldExtractor
 except ImportError:
     from modules.kotak_neo_auto_trader import config
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
@@ -76,9 +76,6 @@ except ImportError:
         configure_order_tracker,
         extract_order_id,
         search_order_in_broker_orderbook,
-    )
-    from modules.kotak_neo_auto_trader.utils.order_field_extractor import (
-        OrderFieldExtractor,
     )
     from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
     from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
@@ -98,6 +95,9 @@ except ImportError:
         add_tracked_symbol,
         get_tracked_symbols,
         is_tracked,
+    )
+    from modules.kotak_neo_auto_trader.utils.order_field_extractor import (
+        OrderFieldExtractor,
     )
 
 
@@ -1877,7 +1877,9 @@ class AutoTradeEngine:
 
         try:
             orders_response = self.orders.get_orders() or {}
-            broker_orders = orders_response.get("data", []) if isinstance(orders_response, dict) else []
+            broker_orders = (
+                orders_response.get("data", []) if isinstance(orders_response, dict) else []
+            )
             target = None
             for broker_order in broker_orders:
                 if OrderFieldExtractor.get_order_id(broker_order) == str(order_id):
@@ -1887,10 +1889,9 @@ class AutoTradeEngine:
             if not target:
                 return
 
-            db_order = (
-                self.orders_repo.get_by_broker_order_id(self.user_id, str(order_id))
-                or self.orders_repo.get_by_order_id(self.user_id, str(order_id))
-            )
+            db_order = self.orders_repo.get_by_broker_order_id(
+                self.user_id, str(order_id)
+            ) or self.orders_repo.get_by_order_id(self.user_id, str(order_id))
             if not db_order:
                 return
 
@@ -1909,9 +1910,7 @@ class AutoTradeEngine:
                 )
                 self.orders_repo.mark_rejected(db_order, rejection_reason)
             elif status_lower in {"cancelled", "cancel"}:
-                cancelled_reason = (
-                    OrderFieldExtractor.get_rejection_reason(target) or "Cancelled"
-                )
+                cancelled_reason = OrderFieldExtractor.get_rejection_reason(target) or "Cancelled"
                 self.orders_repo.mark_cancelled(db_order, cancelled_reason)
             elif status_lower in {"executed", "filled", "complete"}:
                 execution_price = OrderFieldExtractor.get_price(target)
@@ -1931,9 +1930,7 @@ class AutoTradeEngine:
                 "partially filled",
             }:
                 if db_order.status != DbOrderStatus.PENDING_EXECUTION:
-                    self.orders_repo.update(
-                        db_order, status=DbOrderStatus.PENDING_EXECUTION
-                    )
+                    self.orders_repo.update(db_order, status=DbOrderStatus.PENDING_EXECUTION)
         except Exception as e:
             logger.debug(
                 f"Immediate order status sync failed for {symbol or order_id}: {e}",
