@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -49,6 +50,8 @@ class OrdersRepository:
             optional_columns.append("broker_order_id")
         if "metadata" in orders_columns:
             optional_columns.append("metadata")
+        if "entry_type" in orders_columns:
+            optional_columns.append("entry_type")
         # Order monitoring fields
         if "failure_reason" in orders_columns:
             optional_columns.append("failure_reason")
@@ -155,6 +158,8 @@ class OrdersRepository:
                     except Exception:
                         metadata_val = None
                 order_kwargs["order_metadata"] = metadata_val
+            if "entry_type" in orders_columns:
+                order_kwargs["entry_type"] = row_dict.get("entry_type")
             # Order monitoring fields
             if "failure_reason" in orders_columns:
                 order_kwargs["failure_reason"] = row_dict.get("failure_reason")
@@ -196,6 +201,8 @@ class OrdersRepository:
         price: float | None,
         order_id: str | None = None,
         broker_order_id: str | None = None,
+        entry_type: str | None = None,
+        order_metadata: dict | None = None,
     ) -> Orders:
         order = Orders(
             user_id=user_id,
@@ -207,6 +214,8 @@ class OrdersRepository:
             status=OrderStatus.AMO,
             placed_at=ist_now(),
             order_id=order_id,
+            entry_type=entry_type,
+            order_metadata=order_metadata,
             broker_order_id=broker_order_id,
         )
         self.db.add(order)

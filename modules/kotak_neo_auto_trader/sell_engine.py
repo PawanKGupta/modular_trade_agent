@@ -70,6 +70,8 @@ class SellOrderManager:
         max_workers: int = 10,
         price_manager=None,
         order_state_manager: Optional[OrderStateManager] = None,
+        positions_repo=None,
+        user_id: int | None = None,
     ):
         """
         Initialize sell order manager
@@ -80,6 +82,8 @@ class SellOrderManager:
             max_workers: Maximum threads for parallel monitoring
             price_manager: Optional LivePriceManager for real-time prices
             order_state_manager: Optional OrderStateManager for unified state management
+            positions_repo: Optional PositionsRepository for direct DB updates
+            user_id: Optional user ID for DB operations
         """
         self.auth = auth
         self.orders = KotakNeoOrders(auth)
@@ -88,6 +92,8 @@ class SellOrderManager:
         self.history_path = history_path or config.TRADES_HISTORY_PATH
         self.max_workers = max_workers
         self.price_manager = price_manager
+        self.positions_repo = positions_repo
+        self.user_id = user_id
 
         # Initialize OrderStateManager if not provided (for backward compatibility)
         self.state_manager = order_state_manager
@@ -769,6 +775,19 @@ class SellOrderManager:
             if updated:
                 save_history(self.history_path, history)
                 logger.info(f"Trade history updated: {symbol} marked as closed")
+
+                # Directly update positions table if available (optimization)
+                if self.positions_repo and self.user_id:
+                    try:
+                        pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
+                        if pos:
+                            from datetime import datetime
+                            pos.closed_at = datetime.now()
+                            self.positions_repo.db.commit()
+                            logger.debug(f"Position {symbol} marked as closed in DB")
+                    except Exception as e:
+                        logger.warning(f"Failed to update position in DB: {e}")
+
                 return True
             else:
                 logger.warning(f"No open position found for {symbol} in trade history")

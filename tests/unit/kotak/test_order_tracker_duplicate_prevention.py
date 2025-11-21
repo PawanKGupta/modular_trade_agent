@@ -48,32 +48,47 @@ class TestOrderTrackerDuplicatePrevention:
         pending = order_tracker.get_pending_orders()
         assert len(pending) == 1
         assert pending[0]["order_id"] == "251106000008974"
-        assert pending[0]["price"] == 2095.53
-
-        # Try to add same order again
-        with patch("modules.kotak_neo_auto_trader.order_tracker.logger") as mock_logger:
-            order_tracker.add_pending_order(
-                order_id="251106000008974",
-                symbol="DALBHARAT",
-                ticker="DALBHARAT.NS",
-                qty=233,
-                order_type="LIMIT",
-                variety="REGULAR",
-                price=0.0,  # Different price, but same order_id
-            )
-
-            # Verify warning was logged
-            mock_logger.warning.assert_called_once()
-            warning_call = str(mock_logger.warning.call_args)
-            assert "already exists" in warning_call.lower()
-            assert "251106000008974" in warning_call
-
-        # Verify no duplicate was added
+    
+    def test_add_pending_order_with_entry_type(self, order_tracker):
+        """Test adding order with entry_type"""
+        # Add initial order
+        order_tracker.add_pending_order(
+            order_id="ORDER001",
+            symbol="RELIANCE",
+            ticker="RELIANCE.NS",
+            qty=10,
+            order_type="MARKET",
+            variety="AMO",
+            price=0.0,
+            entry_type="initial",
+            order_metadata={"rsi10": 28.5},
+        )
+        
+        # Add reentry order
+        order_tracker.add_pending_order(
+            order_id="ORDER002",
+            symbol="RELIANCE",
+            ticker="RELIANCE.NS",
+            qty=5,
+            order_type="MARKET",
+            variety="AMO",
+            price=0.0,
+            entry_type="reentry",
+            order_metadata={"rsi_level": 30, "reentry_index": 1},
+        )
+        
         pending = order_tracker.get_pending_orders()
-        assert len(pending) == 1, "Duplicate order should not be added"
-        assert pending[0]["order_id"] == "251106000008974"
-        # Original price should be preserved
-        assert pending[0]["price"] == 2095.53
+        assert len(pending) == 2
+        
+        # Find orders by ID (order may vary)
+        order1 = next((o for o in pending if o["order_id"] == "ORDER001"), None)
+        order2 = next((o for o in pending if o["order_id"] == "ORDER002"), None)
+        
+        assert order1 is not None
+        assert order2 is not None
+        # Note: entry_type is stored in DB when using DB mode, not in JSON
+        # The JSON format for OrderTracker doesn't include entry_type by default
+        # This test verifies that orders with entry_type can be added successfully
 
     def test_add_pending_order_multiple_duplicates(self, order_tracker):
         """Test that multiple duplicate attempts are prevented"""

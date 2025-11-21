@@ -317,70 +317,95 @@ class AutoTradeEngine:
                 "last_run": None,
             }
 
+    def _update_position_from_trade(self, trade: dict[str, Any]) -> None:
+        """
+        Update positions table directly from a single trade entry.
+        This is called when a trade is added/updated to avoid syncing all trades.
+        Syncs reentry data from trade history.
+        """
+        if not self.positions_repo or not self.user_id:
+            return
+
+        symbol = trade.get("symbol", "").upper()
+        status = trade.get("status", "open")
+        qty = trade.get("qty", 0)
+        entry_price = trade.get("entry_price")
+
+        if not symbol or not entry_price:
+            return
+
+        if status == "open":
+            # Upsert open position
+            try:
+                entry_time = datetime.fromisoformat(
+                    trade.get("entry_time", datetime.now().isoformat())
+                )
+            except:
+                entry_time = datetime.now()
+
+            # Get reentry data from trade history
+            reentries = trade.get("reentries", [])
+            reentry_count = len(reentries) if isinstance(reentries, list) else 0
+
+            # Calculate initial_entry_price (first entry price, before any reentries)
+            initial_entry_price = entry_price
+            last_reentry_price = None
+
+            # If there are reentries, get the initial entry price from the first trade entry
+            # For now, we'll use entry_price as initial_entry_price
+            # This will be updated when we sync from trade history properly
+
+            # Find last reentry price
+            if reentries and isinstance(reentries, list) and len(reentries) > 0:
+                last_reentry = reentries[-1]
+                if isinstance(last_reentry, dict):
+                    last_reentry_price = last_reentry.get("price")
+
+            # Check if position already exists to preserve initial_entry_price
+            existing_pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
+            if existing_pos and existing_pos.initial_entry_price:
+                initial_entry_price = existing_pos.initial_entry_price
+
+            self.positions_repo.upsert(
+                user_id=self.user_id,
+                symbol=symbol,
+                quantity=qty,
+                avg_price=entry_price,
+                opened_at=entry_time,
+                reentry_count=reentry_count,
+                reentries=reentries if reentries else None,
+                initial_entry_price=initial_entry_price if not existing_pos else None,  # Only set for new positions
+                last_reentry_price=last_reentry_price,
+            )
+        elif status == "closed":
+            # Close position
+            pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
+            if pos:
+                try:
+                    exit_time = datetime.fromisoformat(
+                        trade.get("exit_time", datetime.now().isoformat())
+                    )
+                except:
+                    exit_time = datetime.now()
+                pos.closed_at = exit_time
+                self.positions_repo.db.commit()
+
     def _save_trades_history(self, data: dict[str, Any]) -> None:
         """
         Save trades history to repository or file-based storage.
+        Note: For bulk sync operations, this still syncs all trades to positions.
+        For individual trade updates, use _update_position_from_trade() instead.
         """
-        if self.orders_repo and self.positions_repo and self.user_id:
-            # Use repository-based storage
-            trades = data.get("trades", [])
+        if self.orders_repo and self.user_id:
+            # Save to file if history_path is available
+            if self.history_path:
+                save_history(self.history_path, data)
 
-            for trade in trades:
-                symbol = trade.get("symbol", "").upper()
-                status = trade.get("status", "open")
-                qty = trade.get("qty", 0)
-                entry_price = trade.get("entry_price")
-
-                if not symbol or not entry_price:
-                    continue
-
-                # Prepare metadata
-                metadata = {
-                    "placed_symbol": trade.get("placed_symbol"),
-                    "ticker": trade.get("ticker"),
-                    "rsi10": trade.get("rsi10"),
-                    "ema9": trade.get("ema9"),
-                    "ema200": trade.get("ema200"),
-                    "capital": trade.get("capital"),
-                    "rsi_entry_level": trade.get("rsi_entry_level"),
-                    "levels_taken": trade.get("levels_taken"),
-                    "reset_ready": trade.get("reset_ready", False),
-                    "order_response": trade.get("order_response"),
-                    "entry_type": trade.get("entry_type"),
-                    "reentries": trade.get("reentries", []),
-                    "exit_price": trade.get("exit_price"),
-                    "exit_rsi10": trade.get("exit_rsi10"),
-                    "exit_reason": trade.get("exit_reason"),
-                }
-
-                if status == "open":
-                    # Upsert open position
-                    try:
-                        entry_time = datetime.fromisoformat(
-                            trade.get("entry_time", datetime.now().isoformat())
-                        )
-                    except:
-                        entry_time = datetime.now()
-
-                    self.positions_repo.upsert(
-                        user_id=self.user_id,
-                        symbol=symbol,
-                        quantity=qty,
-                        avg_price=entry_price,
-                        opened_at=entry_time,
-                    )
-                elif status == "closed":
-                    # Close position
-                    pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
-                    if pos:
-                        try:
-                            exit_time = datetime.fromisoformat(
-                                trade.get("exit_time", datetime.now().isoformat())
-                            )
-                        except:
-                            exit_time = datetime.now()
-                        pos.closed_at = exit_time
-                        self.positions_repo.db.commit()
+            # Bulk sync all trades to positions (for initial load or reconciliation)
+            if self.positions_repo:
+                trades = data.get("trades", [])
+                for trade in trades:
+                    self._update_position_from_trade(trade)
 
             # Save failed orders metadata in Orders (if any)
             failed_orders = data.get("failed_orders", [])
@@ -392,13 +417,20 @@ class AutoTradeEngine:
     def _append_trade(self, trade: dict[str, Any]) -> None:
         """
         Append a trade to history (repository or file-based).
+        Directly updates positions table when trade is added/updated.
         """
         if self.orders_repo and self.user_id:
             # Use repository-based storage
             data = self._load_trades_history()
             data.setdefault("trades", [])
             data["trades"].append(trade)
-            self._save_trades_history(data)
+            # Save to history
+            if self.history_path:
+                save_history(self.history_path, data)
+
+            # Directly update positions table (optimization: no need to sync all trades)
+            if self.positions_repo:
+                self._update_position_from_trade(trade)
         # Fallback to file-based storage
         elif self.history_path:
             append_trade(self.history_path, trade)
@@ -1600,6 +1632,8 @@ class AutoTradeEngine:
         close: float,
         ind: dict[str, Any],
         recommendation_source: str | None = None,
+        entry_type: str | None = None,
+        order_metadata: dict | None = None,
     ) -> tuple[bool, str | None]:
         """
         Helper method to attempt placing an order with symbol resolution.
@@ -1834,6 +1868,8 @@ class AutoTradeEngine:
                 order_type=order_type,
                 variety=config.DEFAULT_VARIETY,
                 price=limit_price if use_limit_order else 0.0,
+                entry_type=entry_type,
+                order_metadata=order_metadata,
             )
             logger.debug(f"Added to pending orders: {order_id}")
         except Exception as e:
@@ -2072,6 +2108,131 @@ class AutoTradeEngine:
             # On error, assume order is valid (don't block on verification failures)
             return (True, None)
 
+    def _check_for_manual_orders(self, symbol: str) -> dict[str, Any]:
+        """
+        Check for manual orders (orders not in our database) for a given symbol.
+
+        Returns:
+            {
+                'has_manual_order': bool,
+                'has_system_order': bool,
+                'manual_orders': list[dict],  # List of manual orders found
+                'system_orders': list[dict],  # List of system orders found
+            }
+        """
+        result = {
+            'has_manual_order': False,
+            'has_system_order': False,
+            'manual_orders': [],
+            'system_orders': [],
+        }
+
+        if not self.orders or not self.orders_repo or not self.user_id:
+            return result
+
+        try:
+            # Get active orders from broker
+            pending_orders = self.orders.get_pending_orders() or []
+            variants = set(self._symbol_variants(symbol))
+
+            from .utils.order_field_extractor import OrderFieldExtractor
+
+            for order in pending_orders:
+                order_symbol = OrderFieldExtractor.get_symbol(order).upper()
+                transaction_type = OrderFieldExtractor.get_transaction_type(order)
+
+                # Check if this is a BUY order for our symbol
+                if not transaction_type.startswith("B"):
+                    continue
+
+                if order_symbol not in variants:
+                    continue
+
+                # Extract order details
+                order_id = OrderFieldExtractor.get_order_id(order)
+                if not order_id:
+                    continue
+
+                quantity = OrderFieldExtractor.get_quantity(order)
+                price = OrderFieldExtractor.get_price(order)
+
+                order_info = {
+                    'order_id': order_id,
+                    'symbol': order_symbol,
+                    'quantity': quantity,
+                    'price': price,
+                    'broker_order': order,
+                }
+
+                # Check if order exists in our database
+                db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
+
+                if db_order:
+                    # This is a system order
+                    result['has_system_order'] = True
+                    result['system_orders'].append(order_info)
+                else:
+                    # This is a manual order (not in our DB)
+                    result['has_manual_order'] = True
+                    result['manual_orders'].append(order_info)
+
+        except Exception as e:
+            logger.warning(f"Error checking for manual orders for {symbol}: {e}")
+
+        return result
+
+    def _should_skip_retry_due_to_manual_order(
+        self, symbol: str, retry_qty: int, manual_order_info: dict[str, Any]
+    ) -> tuple[bool, str]:
+        """
+        Determine if retry should be skipped due to existing manual order.
+
+        Args:
+            symbol: Trading symbol
+            retry_qty: Quantity that retry wants to place
+            manual_order_info: Result from _check_for_manual_orders()
+
+        Returns:
+            (should_skip: bool, reason: str)
+        """
+        if not manual_order_info.get('has_manual_order'):
+            return (False, "No manual orders found")
+
+        manual_orders = manual_order_info.get('manual_orders', [])
+        if not manual_orders:
+            return (False, "No manual orders in list")
+
+        # Use the first manual order (most common case: single manual order)
+        manual_order = manual_orders[0]
+        manual_qty = manual_order.get('quantity', 0)
+
+        # If manual order quantity is >= retry quantity, skip retry
+        if manual_qty >= retry_qty:
+            return (
+                True,
+                f"Manual order exists with {manual_qty} shares (>= retry qty {retry_qty})",
+            )
+
+        # If manual order quantity is significantly larger, skip retry
+        if manual_qty > retry_qty * 1.5:  # 50% more
+            return (
+                True,
+                f"Manual order exists with {manual_qty} shares (much larger than retry qty {retry_qty})",
+            )
+
+        # If manual order quantity is close to retry quantity, skip retry
+        if abs(manual_qty - retry_qty) <= 2:  # Within 2 shares
+            return (
+                True,
+                f"Manual order exists with {manual_qty} shares (similar to retry qty {retry_qty})",
+            )
+
+        # Otherwise, proceed with retry (will cancel and replace)
+        return (
+            False,
+            f"Manual order has {manual_qty} shares, retry wants {retry_qty} shares - will cancel and replace",
+        )
+
     # ---------------------- Retry pending orders from DB ----------------------
     def retry_pending_orders_from_db(self) -> dict[str, int]:
         """
@@ -2155,13 +2316,95 @@ class AutoTradeEngine:
                                 break
 
                 if already_in_holdings:
-                    logger.info(f"Removing {symbol} from retry: already in holdings")
-                    # Update status to CLOSED since we already own it
-                    self.orders_repo.mark_cancelled(db_order, "Already in holdings")
+                    logger.info(
+                        f"Skipping retry for {symbol}: already in holdings. "
+                        "System does not track existing holdings - keeping portfolios separate."
+                    )
+                    # Just skip - same as new orders. Don't update DB status.
                     summary["skipped"] += 1
                     continue
 
-                # Duplicate prevention: Check for active buy orders
+                # Get ticker from order or try to construct it
+                ticker = getattr(db_order, "ticker", None) or f"{symbol}.NS"
+
+                # Get fresh indicators
+                ind = self.get_daily_indicators(ticker)
+                if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
+                    logger.warning(f"Skipping retry {symbol}: missing indicators")
+                    summary["skipped"] += 1
+                    continue
+
+                close = ind["close"]
+                if close <= 0:
+                    logger.warning(f"Skipping retry {symbol}: invalid close price {close}")
+                    summary["skipped"] += 1
+                    continue
+
+                # Recalculate execution capital and quantity based on current strategy config
+                # This adapts to changes in user_capital config
+                avg_vol = ind.get("avg_volume", 0)
+                execution_capital = self._calculate_execution_capital(ticker, close, avg_vol)
+                qty = max(config.MIN_QTY, floor(execution_capital / close))
+
+                # Check for manual orders before proceeding
+                manual_order_info = self._check_for_manual_orders(symbol)
+
+                # If manual order exists, link it to DB record and update status
+                if manual_order_info.get('has_manual_order'):
+                    manual_orders = manual_order_info.get('manual_orders', [])
+                    if manual_orders:
+                        manual_order = manual_orders[0]  # Use first manual order found
+                        manual_order_id = manual_order.get('order_id')
+                        manual_qty = manual_order.get('quantity', 0)
+                        manual_price = manual_order.get('price', 0.0)
+
+                        logger.info(
+                            f"Manual AMO order detected for {symbol}: order_id={manual_order_id}, "
+                            f"qty={manual_qty}, price={manual_price}. "
+                            "Linking to DB record and updating status to PENDING_EXECUTION."
+                        )
+
+                        # Update DB order with manual order details
+                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                        self.orders_repo.update(
+                            db_order,
+                            broker_order_id=manual_order_id,
+                            quantity=manual_qty,  # Use actual manual order quantity
+                            price=manual_price if manual_price > 0 else None,
+                            status=DbOrderStatus.PENDING_EXECUTION,  # Update from RETRY_PENDING
+                        )
+
+                        logger.info(
+                            f"Updated DB order {db_order.id} for {symbol}: "
+                            f"status=PENDING_EXECUTION, broker_order_id={manual_order_id}, "
+                            f"qty={manual_qty}, price={manual_price}"
+                        )
+
+                        summary["skipped"] += 1
+
+                        # Send notification about manual order linking
+                        if self.telegram_notifier and self.telegram_notifier.enabled:
+                            try:
+                                self.telegram_notifier.notify_retry_queue_updated(
+                                    symbol=symbol,
+                                    action="linked_manual_order",
+                                    retry_count=db_order.retry_count or 0,
+                                    additional_info={
+                                        "manual_order_id": manual_order_id,
+                                        "manual_qty": manual_qty,
+                                        "manual_price": manual_price,
+                                        "retry_qty": qty,
+                                        "message": "Manual order linked to DB record, status updated to PENDING_EXECUTION",
+                                    },
+                                )
+                            except Exception as notify_error:
+                                logger.warning(
+                                    f"Failed to send manual order notification: {notify_error}"
+                                )
+                        continue
+
+                # Duplicate prevention: Check for active buy orders (system orders)
                 # Cancel and replace (consistent with place_new_entries behavior)
                 has_active_order = False
                 try:
@@ -2210,27 +2453,6 @@ class AutoTradeEngine:
                         summary["skipped"] += 1
                         continue
 
-                # Get ticker from order or try to construct it
-                ticker = getattr(db_order, "ticker", None) or f"{symbol}.NS"
-
-                # Get fresh indicators
-                ind = self.get_daily_indicators(ticker)
-                if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
-                    logger.warning(f"Skipping retry {symbol}: missing indicators")
-                    summary["skipped"] += 1
-                    continue
-
-                close = ind["close"]
-                if close <= 0:
-                    logger.warning(f"Skipping retry {symbol}: invalid close price {close}")
-                    summary["skipped"] += 1
-                    continue
-
-                # Recalculate execution capital
-                avg_vol = ind.get("avg_volume", 0)
-                execution_capital = self._calculate_execution_capital(ticker, close, avg_vol)
-                qty = max(config.MIN_QTY, floor(execution_capital / close))
-
                 # Check position-to-volume ratio
                 if not self.check_position_volume_ratio(qty, avg_vol, symbol, close):
                     logger.info(
@@ -2269,11 +2491,18 @@ class AutoTradeEngine:
                 if success:
                     summary["placed"] += 1
                     # Update order status to PENDING_EXECUTION and set broker_order_id
-                    db_order.broker_order_id = order_id
-                    db_order.status = DbOrderStatus.PENDING_EXECUTION
-                    self.orders_repo.update(db_order)
+                    # Also update quantity in case it changed due to config changes
+                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                    self.orders_repo.update(
+                        db_order,
+                        broker_order_id=order_id,
+                        quantity=qty,  # Update with recalculated quantity
+                        status=DbOrderStatus.PENDING_EXECUTION,
+                    )
                     logger.info(
-                        f"Successfully placed retry order for {symbol} (order_id: {order_id})"
+                        f"Successfully placed retry order for {symbol} (order_id: {order_id}, qty: {qty}). "
+                        f"DB updated with new quantity based on current config."
                     )
 
                     # Send notification
@@ -2594,20 +2823,90 @@ class AutoTradeEngine:
                 .replace("-BZ", "")
             )
             if cached_holdings_symbols and broker_symbol_base in cached_holdings_symbols:
-                logger.info(f"Skipping {broker_symbol}: already in holdings (cached)")
+                logger.info(
+                    f"Skipping {broker_symbol}: already in holdings (cached). "
+                    "System does not track existing holdings - keeping portfolios separate."
+                )
                 summary["skipped_duplicates"] += 1
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "already_in_holdings"
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
             elif self.has_holding(broker_symbol):  # Fallback to live check if cache miss
-                logger.info(f"Skipping {broker_symbol}: already in holdings")
+                logger.info(
+                    f"Skipping {broker_symbol}: already in holdings. "
+                    "System does not track existing holdings - keeping portfolios separate."
+                )
                 summary["skipped_duplicates"] += 1
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "already_in_holdings"
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
-            # 2) Active pending buy order check -> cancel and replace
+            # 2) Check for manual AMO orders -> link to DB and skip placing
+            manual_order_info = self._check_for_manual_orders(broker_symbol)
+            if manual_order_info.get('has_manual_order'):
+                manual_orders = manual_order_info.get('manual_orders', [])
+                if manual_orders:
+                    manual_order = manual_orders[0]  # Use first manual order found
+                    manual_order_id = manual_order.get('order_id')
+                    manual_qty = manual_order.get('quantity', 0)
+                    manual_price = manual_order.get('price', 0.0)
+
+                    logger.info(
+                        f"Manual AMO order detected for {broker_symbol}: order_id={manual_order_id}, "
+                        f"qty={manual_qty}, price={manual_price}. "
+                        "Skipping new order placement and updating DB with existing order details."
+                    )
+
+                    # Create/update DB order with manual order details
+                    if self.orders_repo and self.user_id:
+                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                        # Check if order already exists in DB
+                        existing_order = self.orders_repo.get_by_broker_order_id(
+                            self.user_id, manual_order_id
+                        )
+
+                        if existing_order:
+                            # Update existing order
+                            self.orders_repo.update(
+                                existing_order,
+                                quantity=manual_qty,
+                                price=manual_price if manual_price > 0 else None,
+                                status=DbOrderStatus.PENDING_EXECUTION,
+                            )
+                            logger.info(
+                                f"Updated existing DB order {existing_order.id} for {broker_symbol} "
+                                f"with manual order details"
+                            )
+                        else:
+                            # Create new order record for manual order
+                            db_order = self.orders_repo.create_amo(
+                                user_id=self.user_id,
+                                symbol=broker_symbol,
+                                side="buy",
+                                order_type="market",  # AMO orders are typically market
+                                quantity=manual_qty,
+                                price=manual_price if manual_price > 0 else None,
+                                order_id=manual_order_id,
+                                broker_order_id=manual_order_id,
+                            )
+                            db_order.status = DbOrderStatus.PENDING_EXECUTION
+                            self.orders_repo.update(db_order)
+                            logger.info(
+                                f"Created new DB order {db_order.id} for {broker_symbol} "
+                                f"with manual order details"
+                            )
+
+                    summary["skipped_duplicates"] += 1
+                    ticker_attempt["status"] = "skipped"
+                    ticker_attempt["reason"] = "manual_order_exists"
+                    ticker_attempt["qty"] = manual_qty
+                    ticker_attempt["order_id"] = manual_order_id
+                    summary["ticker_attempts"].append(ticker_attempt)
+                    continue
+
+            # 3) Active pending buy order check (system orders) -> cancel and replace
             if self.has_active_buy_order(broker_symbol):
                 variants = self._symbol_variants(broker_symbol)
                 try:
@@ -2736,7 +3035,24 @@ class AutoTradeEngine:
             # Try placing order (get recommendation source if available)
             rec_source = getattr(self, "_custom_csv_path", None) or "system_recommendation"
             success, order_id = self._attempt_place_order(
-                broker_symbol, rec.ticker, qty, close, ind, recommendation_source=rec_source
+                broker_symbol,
+                rec.ticker,
+                qty,
+                close,
+                ind,
+                recommendation_source=rec_source,
+                entry_type="initial",
+                order_metadata={
+                    "placed_symbol": broker_symbol,
+                    "ticker": rec.ticker,
+                    "rsi10": ind.get("rsi10"),
+                    "ema9": ind.get("ema9"),
+                    "ema200": ind.get("ema200"),
+                    "capital": ind.get("capital"),
+                    "rsi_entry_level": ind.get("rsi_entry_level"),
+                    "entry_type": "initial",
+                    "verdict": getattr(rec, "verdict", None),
+                },
             )
             if success:
                 summary["placed"] += 1
@@ -3065,10 +3381,11 @@ class AutoTradeEngine:
                     logger.info(f"Re-entry reducing qty from {qty} to {affordable} based on funds")
                     qty = affordable
                 if qty > 0:
-                    # Re-entry duplicate protection: holdings and active order
-                    if self.has_holding(symbol) or self.has_active_buy_order(symbol):
+                    # Re-entry duplicate protection: only check for active buy orders
+                    # Note: Having holdings is OK for reentry - reentry is meant to add more shares (averaging down)
+                    if self.has_active_buy_order(symbol):
                         logger.info(
-                            f"Re-entry skip {symbol}: already in holdings or pending order exists"
+                            f"Re-entry skip {symbol}: pending buy order exists (prevent duplicate orders)"
                         )
                         continue
                     place_symbol = symbol if symbol.endswith("-EQ") else f"{symbol}-EQ"
@@ -3094,6 +3411,34 @@ class AutoTradeEngine:
                         and "not_ok" not in str(resp).lower()
                     )
                     if resp_valid:
+                        # Extract order ID from response
+                        from .order_tracker import extract_order_id
+                        reentry_order_id = extract_order_id(resp)
+
+                        # Add reentry order to tracking with entry_type="reentry"
+                        if reentry_order_id:
+                            try:
+                                from .order_tracker import add_pending_order
+                                add_pending_order(
+                                    order_id=reentry_order_id,
+                                    symbol=place_symbol,
+                                    ticker=ticker,
+                                    qty=qty,
+                                    order_type="MARKET",
+                                    variety=self.strategy_config.default_variety,
+                                    price=0.0,
+                                    entry_type="reentry",
+                                    order_metadata={
+                                        "rsi_level": next_level,
+                                        "rsi": rsi,
+                                        "price": price,
+                                        "reentry_index": len(e.get("reentries", [])) + 1 if e.get("reentries") else 1,
+                                    },
+                                )
+                                logger.debug(f"Added reentry order {reentry_order_id} to tracking")
+                            except Exception as e:
+                                logger.warning(f"Failed to add reentry order to tracking: {e}")
+
                         # Mark this level as taken
                         for e in entries:
                             e["levels_taken"][str(next_level)] = True
@@ -3182,7 +3527,23 @@ class AutoTradeEngine:
                             )
                             for e in entries:
                                 old_qty = e.get("qty", 0)
+                                old_entry_price = e.get("entry_price", 0)
                                 new_total_qty = old_qty + qty
+                                
+                                # Recalculate weighted average entry price
+                                # Formula: (prev_avg * prev_qty + new_price * new_qty) / total_qty
+                                if old_qty > 0 and old_entry_price > 0:
+                                    new_avg_price = ((old_entry_price * old_qty) + (price * qty)) / new_total_qty
+                                    e["entry_price"] = new_avg_price
+                                    logger.info(
+                                        f"Trade history avg price updated: {symbol} "
+                                        f"{old_entry_price:.2f} -> {new_avg_price:.2f} "
+                                        f"(qty: {old_qty} -> {new_total_qty})"
+                                    )
+                                else:
+                                    # First entry or invalid data - use reentry price
+                                    e["entry_price"] = price
+                                
                                 e["qty"] = new_total_qty
                                 logger.info(
                                     f"Trade history updated: {symbol} qty {old_qty} -> {new_total_qty}"

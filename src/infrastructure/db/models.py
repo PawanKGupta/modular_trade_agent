@@ -136,6 +136,8 @@ class Orders(Base):
     execution_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     execution_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
     execution_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Reentry tracking
+    entry_type: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 'initial', 'reentry', 'manual'
 
     __table_args__ = (
         Index("ix_orders_user_status_symbol_time", "user_id", "status", "symbol", "placed_at"),
@@ -154,6 +156,11 @@ class Positions(Base):
         DateTime, default=ist_now, index=True, nullable=False
     )
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Reentry tracking
+    reentry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reentries: Mapped[dict | None] = mapped_column("reentries", JSON, nullable=True)  # Array of reentry details
+    initial_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_reentry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_positions_user_symbol"),)
 

@@ -37,12 +37,24 @@ class PositionsRepository:
         quantity: float,
         avg_price: float,
         opened_at: datetime | None = None,
+        reentry_count: int | None = None,
+        reentries: dict | None = None,
+        initial_entry_price: float | None = None,
+        last_reentry_price: float | None = None,
     ) -> Positions:
         pos = self.get_by_symbol(user_id, symbol)
         if pos:
             pos.quantity = quantity
             pos.avg_price = avg_price
+            if reentry_count is not None:
+                pos.reentry_count = reentry_count
+            if reentries is not None:
+                pos.reentries = reentries
+            if last_reentry_price is not None:
+                pos.last_reentry_price = last_reentry_price
         else:
+            # New position - set initial_entry_price if provided, otherwise use avg_price
+            initial_price = initial_entry_price if initial_entry_price is not None else avg_price
             pos = Positions(
                 user_id=user_id,
                 symbol=symbol,
@@ -50,6 +62,10 @@ class PositionsRepository:
                 avg_price=avg_price,
                 unrealized_pnl=0.0,
                 opened_at=opened_at or ist_now(),
+                reentry_count=reentry_count or 0,
+                reentries=reentries,
+                initial_entry_price=initial_price,
+                last_reentry_price=last_reentry_price,
             )
             self.db.add(pos)
         self.db.commit()

@@ -1112,4 +1112,217 @@ def test_validate_schedule_invalid_time(db_session, schedule_manager):
 
 ---
 
-*Last Updated: January 2025*
+## Bug #62: Rejected Orders Not Saved to Database (CRITICAL)
+
+**Date Fixed**: November 22, 2025
+**Status**: ✅ Fixed
+
+### Description
+When orders were rejected by the broker, they were not being saved to the database. Orders placed successfully (with order ID from broker) but immediately rejected were lost from tracking. The system would show "order placed" but never update the database with the rejection status, leaving orders in a pending state indefinitely.
+
+### Root Cause
+1. **No immediate status sync**: After placing an order, the system did not immediately fetch the order status from the broker to check if it was rejected.
+2. **Missing order ID tracking**: The `db_order_id` was not consistently propagated to the tracking system, so when rejection was detected, the system couldn't find the DB row to update.
+
+### Expected Behavior
+1. After placing an order, immediately fetch order status from broker
+2. If order is rejected, mark it as `REJECTED` in database with rejection reason
+3. If order is pending, mark it as `PENDING_EXECUTION` in database
+4. All order statuses should be visible in UI
+
+### Fix Applied
+**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+
+1. **Added `_sync_order_status_snapshot()` method**:
+   - Immediately fetches order status from broker after placement
+   - Updates database with current status (REJECTED, CANCELLED, EXECUTED, PENDING_EXECUTION)
+   - Handles edge cases (order not found, DB order not found, empty status)
+
+2. **Integrated into `_attempt_place_order()`**:
+   - After successful order placement, calls `_sync_order_status_snapshot()`
+   - Ensures database reflects broker's initial response immediately
+
+### Test Coverage
+- `tests/unit/kotak/test_sync_order_status_snapshot.py` - 12 tests covering all status scenarios
+- Tests cover: rejected, executed, cancelled, pending, partially filled, empty status, order not found, DB order not found, exception handling, fallback scenarios
+
+### Impact
+- All orders are now properly tracked in database
+- Rejected orders are immediately marked as REJECTED with rejection reason
+- Orders visible in UI with correct status
+- Prevents orders from being lost in pending state
+
+---
+
+## Bug #63: Manual AMO Orders Not Detected (HIGH)
+
+**Date Fixed**: November 22, 2025
+**Status**: ✅ Fixed
+
+### Description
+When users manually placed AMO orders outside the system, the system would still attempt to place new orders or retry orders for the same symbol, leading to duplicate orders. The system had no way to detect manual orders and link them to database records.
+
+### Root Cause
+1. **No manual order detection**: System did not check for existing AMO orders before placing new orders
+2. **No linking mechanism**: When manual orders were detected, they were not linked to database records
+
+### Expected Behavior
+1. Before placing new order, check for manual AMO orders
+2. If manual order exists, skip placing new order and update DB with manual order details
+3. Before retrying order, check for manual AMO orders
+4. If manual order exists, link it to DB record and update status to PENDING_EXECUTION
+
+### Fix Applied
+**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+
+1. **Added `_check_for_manual_orders()` method**:
+   - Checks for pending AMO orders from broker that are not in our database
+   - Returns manual orders with details (order_id, quantity, price)
+   - Distinguishes between manual orders and system orders
+
+2. **Added `_should_skip_retry_due_to_manual_order()` method**:
+   - Determines if retry should be skipped based on manual order quantity
+   - Handles edge cases (similar qty, larger qty, exact match)
+
+3. **Integrated into `place_new_entries()`**:
+   - Before placing new order, checks for manual orders
+   - If found, creates/updates DB record with manual order details
+   - Skips placing new order
+
+4. **Integrated into `retry_pending_orders_from_db()`**:
+   - Before retrying, checks for manual orders
+   - If found, links manual order to DB record and updates status to PENDING_EXECUTION
+   - Skips retry attempt
+
+### Test Coverage
+- `tests/unit/kotak/test_manual_order_detection.py` - 6 tests covering detection and integration
+- `tests/unit/kotak/test_manual_order_detection_edge_cases.py` - 10 tests covering edge cases
+- Tests cover: detection, system vs manual distinction, integration with place_new_entries, integration with retry, exception handling, non-BUY orders, different symbols, missing order ID
+
+### Impact
+- Prevents duplicate orders when manual orders exist
+- Manual orders are properly tracked in database
+- Seamless integration of manual and system orders
+- Better user experience
+
+---
+
+## Bug #64: Capital Not Recalculated on Retry (MEDIUM)
+
+**Date Fixed**: November 22, 2025
+**Status**: ✅ Fixed
+
+### Description
+When capital was modified before retry, the system would retry with the old quantity instead of recalculating based on the new capital. This led to incorrect order sizes when capital was increased or decreased between order placement and retry.
+
+### Root Cause
+1. **Fixed quantity in retry**: System used the original quantity from the failed order
+2. **No capital recalculation**: Did not recalculate execution capital and quantity based on current strategy config
+
+### Expected Behavior
+1. Before retrying, recalculate execution capital based on current strategy config
+2. Recalculate quantity based on new capital and current price
+3. Adapt to changes in user_capital config
+4. Adapt to changes in stock price
+
+### Fix Applied
+**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+
+**Modified `retry_pending_orders_from_db()` method**:
+- Before retrying, calls `_calculate_execution_capital()` with current ticker, price, and volume
+- Recalculates quantity: `qty = max(config.MIN_QTY, floor(execution_capital / close))`
+- Adapts to changes in capital and price before retry
+
+### Test Coverage
+- `tests/unit/kotak/test_capital_recalculation_on_retry.py` - 4 tests covering all scenarios
+- Tests cover: capital increased, capital decreased, price change, combined capital and price changes
+
+### Impact
+- Orders retry with correct quantity based on current capital
+- Adapts to capital modifications before retry
+- Adapts to price changes before retry
+- More accurate order sizes
+
+---
+
+## Bug #65: Reentry Incorrectly Blocked When Holdings Exist (HIGH)
+
+**Date Fixed**: November 22, 2025
+**Status**: ✅ Fixed
+
+### Description
+The reentry logic was incorrectly blocking reentries when the user already had holdings for the symbol. Reentry should be allowed when holdings exist (for averaging down), and should only be blocked if there's an active pending buy order.
+
+### Root Cause
+The reentry logic checked `has_holding()` and skipped reentry if holdings existed. This was incorrect because:
+1. Reentry is meant to add more shares to existing positions (averaging down)
+2. Having holdings is not a reason to block reentry
+3. Only active buy orders should block reentry (to prevent duplicates)
+
+### Expected Behavior
+1. Reentry should be allowed when holdings exist (for averaging down)
+2. Reentry should only be blocked if there's an active pending buy order
+3. Reentry should proceed if no active buy order exists, even if holdings exist
+
+### Fix Applied
+**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+
+**Modified `evaluate_reentries_and_exits()` method**:
+- Changed duplicate protection from `if self.has_holding(symbol)` to `if self.has_active_buy_order(symbol)`
+- Added comment: "Having holdings is OK for reentry - reentry is meant to add more shares (averaging down)"
+- Only checks for active buy orders to prevent duplicate orders
+
+### Test Coverage
+- `tests/unit/kotak/test_reentry_logic_fix.py` - 4 tests covering all scenarios
+- Tests cover: reentry allowed when holding exists, reentry blocked when active buy order exists, reentry allowed even with holdings at RSI 30, logic verification
+
+### Impact
+- Reentry works correctly for averaging down
+- Users can add more shares to existing positions
+- Prevents duplicate orders (active buy order check)
+- Aligns with mean reversion strategy
+
+---
+
+## Bug #66: Average Price Not Recalculated on Reentry (MEDIUM)
+
+**Date Fixed**: November 22, 2025
+**Status**: ✅ Fixed
+
+### Description
+When reentries were added to a position, the average entry price in trade history was not recalculated. The system updated the quantity but kept the old entry price, leading to incorrect average price calculations.
+
+### Root Cause
+The trade history update only updated quantity and added reentry metadata, but did not recalculate the weighted average entry price:
+- Formula: `(prev_avg * prev_qty + new_price * new_qty) / total_qty`
+- System was missing this recalculation step
+
+### Expected Behavior
+1. When reentry is added, recalculate weighted average entry price
+2. Formula: `(old_entry_price * old_qty + reentry_price * reentry_qty) / new_total_qty`
+3. Update both quantity and entry_price in trade history
+4. Preserve initial_entry_price for tracking
+
+### Fix Applied
+**File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+
+**Modified `evaluate_reentries_and_exits()` method**:
+- Added average price recalculation when updating trade history
+- Formula: `new_avg_price = ((old_entry_price * old_qty) + (price * qty)) / new_total_qty`
+- Updates both `entry_price` and `qty` in trade history
+- Handles edge cases (invalid data, first entry)
+
+### Test Coverage
+- `tests/unit/infrastructure/test_avg_price_calculation_with_reentries.py` - 5 tests covering all scenarios
+- `tests/integration/test_avg_price_recalculation_on_reentry.py` - 3 tests covering integration
+- Tests cover: single reentry, multiple reentries, formula verification, reentry at higher price
+
+### Impact
+- Accurate average price calculations in trade history
+- Correct P&L calculations
+- Better position tracking
+- Accurate reporting
+
+---
+
+*Last Updated: November 22, 2025*

@@ -152,6 +152,8 @@ class OrderTracker:
         order_type: str = "MARKET",
         variety: str = "AMO",
         price: float = 0.0,
+        entry_type: str | None = None,
+        order_metadata: dict | None = None,
     ) -> None:
         """
         Add order to pending tracking.
@@ -196,6 +198,8 @@ class OrderTracker:
                         price=price if price > 0 else None,
                         order_id=order_id,
                         broker_order_id=order_id,
+                        entry_type=entry_type,
+                        order_metadata=order_metadata,
                     )
                     # Update status to PENDING_EXECUTION if it's an AMO order
                     if variety == "AMO":

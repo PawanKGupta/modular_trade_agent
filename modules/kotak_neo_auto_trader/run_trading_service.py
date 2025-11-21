@@ -215,7 +215,17 @@ class TradingService:
             # For buy_orders task, this is not needed, but initialize it anyway for consistency
             try:
                 logger.info("Initializing sell order manager...")
-                self.sell_manager = SellOrderManager(self.auth, price_manager=self.price_cache)
+                # Pass positions_repo and user_id if available for direct DB updates
+                positions_repo = (
+                    self.engine.positions_repo if hasattr(self.engine, "positions_repo") else None
+                )
+                user_id = self.user_id
+                self.sell_manager = SellOrderManager(
+                    self.auth,
+                    price_manager=self.price_cache,
+                    positions_repo=positions_repo,
+                    user_id=user_id,
+                )
 
                 # Phase 2: Initialize unified order monitor for buy and sell order monitoring
                 # Phase 9: Pass telegram_notifier for notifications
