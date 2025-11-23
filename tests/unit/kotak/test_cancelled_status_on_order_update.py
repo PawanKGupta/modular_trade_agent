@@ -69,16 +69,16 @@ class TestCancelledStatusOnOrderUpdate:
     def test_amo_order_marked_cancelled_when_qty_changes(
         self, mock_get_indicators, auto_trade_engine
     ):
-        """Test that AMO order is marked as CANCELLED when quantity changes"""
+        """Test that PENDING order is marked as CANCELLED when quantity changes"""
         broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
-        # Mock existing order with AMO status and old quantity
+        # Mock existing order with PENDING status (AMO merged into PENDING) and old quantity
         existing_order = Mock()
         existing_order.id = 123
         existing_order.symbol = broker_symbol
         existing_order.side = "buy"
-        existing_order.status = DbOrderStatus.AMO
+        existing_order.status = DbOrderStatus.PENDING
         existing_order.quantity = 10  # Old quantity
         existing_order.price = 2500.0
 
@@ -143,16 +143,16 @@ class TestCancelledStatusOnOrderUpdate:
     def test_pending_execution_order_marked_cancelled_when_price_changes(
         self, mock_get_indicators, auto_trade_engine
     ):
-        """Test that PENDING_EXECUTION order is marked as CANCELLED when price changes"""
+        """Test that PENDING order is marked as CANCELLED when price changes"""
         broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
-        # Mock existing order with PENDING_EXECUTION status and old price
+        # Mock existing order with PENDING status (AMO/PENDING_EXECUTION merged) and old price
         existing_order = Mock()
         existing_order.id = 456
         existing_order.symbol = broker_symbol
         existing_order.side = "buy"
-        existing_order.status = DbOrderStatus.PENDING_EXECUTION
+        existing_order.status = DbOrderStatus.PENDING
         existing_order.quantity = 20  # Same quantity
         existing_order.price = 2400.0  # Old price
 
@@ -243,16 +243,16 @@ class TestCancelledStatusOnOrderUpdate:
         assert update_call[1]["status"] == DbOrderStatus.CANCELLED
 
     def test_retry_pending_order_marked_cancelled_when_params_change(self, auto_trade_engine):
-        """Test that RETRY_PENDING order is marked as CANCELLED when parameters change"""
+        """Test that FAILED order (formerly RETRY_PENDING) is marked as CANCELLED when parameters change"""
         broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
-        # Mock existing order with RETRY_PENDING status
+        # Mock existing order with FAILED status (RETRY_PENDING merged into FAILED)
         existing_order = Mock()
         existing_order.id = 101
         existing_order.symbol = broker_symbol
         existing_order.side = "buy"
-        existing_order.status = DbOrderStatus.RETRY_PENDING
+        existing_order.status = DbOrderStatus.FAILED
         existing_order.quantity = 12
         existing_order.price = 2450.0
 
@@ -288,16 +288,16 @@ class TestCancelledStatusOnOrderUpdate:
         assert update_call[1]["status"] == DbOrderStatus.CANCELLED
 
     def test_rejected_order_marked_cancelled_when_params_change(self, auto_trade_engine):
-        """Test that REJECTED order is marked as CANCELLED when parameters change"""
+        """Test that FAILED order (formerly REJECTED) is marked as CANCELLED when parameters change"""
         broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
-        # Mock existing order with REJECTED status
+        # Mock existing order with FAILED status (REJECTED merged into FAILED)
         existing_order = Mock()
         existing_order.id = 202
         existing_order.symbol = broker_symbol
         existing_order.side = "buy"
-        existing_order.status = DbOrderStatus.REJECTED
+        existing_order.status = DbOrderStatus.FAILED
         existing_order.quantity = 18
         existing_order.price = 2500.0
 
@@ -504,7 +504,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.id = 606
         existing_order.symbol = broker_symbol
         existing_order.side = "buy"
-        existing_order.status = DbOrderStatus.AMO
+        existing_order.status = DbOrderStatus.PENDING
         existing_order.quantity = 20  # Same quantity
         existing_order.price = 2500.0  # Same price
 
@@ -566,7 +566,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.id = 707
         existing_order.symbol = broker_symbol
         existing_order.side = "buy"
-        existing_order.status = DbOrderStatus.AMO
+        existing_order.status = DbOrderStatus.PENDING
         existing_order.quantity = 10
         existing_order.price = 2500.0
 

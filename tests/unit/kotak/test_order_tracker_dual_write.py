@@ -77,7 +77,7 @@ class TestOrderTrackerDualWrite:
 
         mock_order = Mock()
         mock_order.id = 1
-        mock_order.status = DbOrderStatus.PENDING_EXECUTION
+        mock_order.status = DbOrderStatus.PENDING
         mock_orders_repo.create_amo.return_value = mock_order
 
         order_tracker_with_db.add_pending_order(
@@ -155,7 +155,7 @@ class TestOrderTrackerDualWrite:
         mock_order.quantity = 10
         mock_order.price = 2450.0
         mock_order.order_type = "market"
-        mock_order.status = DbOrderStatus.PENDING_EXECUTION
+        mock_order.status = DbOrderStatus.PENDING
         mock_order.placed_at = datetime.now()
         mock_order.last_status_check = datetime.now()
         mock_order.rejection_reason = None
@@ -219,7 +219,7 @@ class TestOrderTrackerDualWrite:
         mock_order = Mock()
         mock_order.id = 1
         mock_order.broker_order_id = "ORDER123"
-        mock_order.status = DbOrderStatus.PENDING_EXECUTION
+        mock_order.status = DbOrderStatus.PENDING
         mock_order.execution_qty = None
         mock_order.rejection_reason = None
         mock_order.last_status_check = None
@@ -261,7 +261,7 @@ class TestOrderTrackerDualWrite:
         mock_order.quantity = 10
         mock_order.price = 2450.0
         mock_order.order_type = "market"
-        mock_order.status = DbOrderStatus.PENDING_EXECUTION
+        mock_order.status = DbOrderStatus.PENDING
         mock_order.placed_at = datetime.now()
         mock_order.last_status_check = datetime.now()
         mock_order.rejection_reason = None
@@ -314,7 +314,7 @@ class TestOrderTrackerDualWrite:
         mock_order1.quantity = 10
         mock_order1.price = 2450.0
         mock_order1.order_type = "market"
-        mock_order1.status = DbOrderStatus.PENDING_EXECUTION
+        mock_order1.status = DbOrderStatus.PENDING
         mock_order1.placed_at = datetime.now()
         mock_order1.last_status_check = datetime.now()
         mock_order1.rejection_reason = None
@@ -341,7 +341,7 @@ class TestOrderTrackerDualWrite:
         # Should only return PENDING orders
         assert len(orders) == 1
         assert orders[0]["order_id"] == "ORDER1"
-        assert orders[0]["status"] == "pending_execution"
+        assert orders[0]["status"] == "pending"
 
     def test_get_pending_orders_symbol_filter(self, order_tracker_with_db, mock_orders_repo):
         """Test symbol filtering works with DB orders"""
@@ -355,7 +355,7 @@ class TestOrderTrackerDualWrite:
         mock_order1.quantity = 10
         mock_order1.price = 2450.0
         mock_order1.order_type = "market"
-        mock_order1.status = DbOrderStatus.PENDING_EXECUTION
+        mock_order1.status = DbOrderStatus.PENDING
         mock_order1.placed_at = datetime.now()
         mock_order1.last_status_check = datetime.now()
         mock_order1.rejection_reason = None
@@ -368,7 +368,7 @@ class TestOrderTrackerDualWrite:
         mock_order2.quantity = 5
         mock_order2.price = 3200.0
         mock_order2.order_type = "market"
-        mock_order2.status = DbOrderStatus.PENDING_EXECUTION
+        mock_order2.status = DbOrderStatus.PENDING
         mock_order2.placed_at = datetime.now()
         mock_order2.last_status_check = datetime.now()
         mock_order2.rejection_reason = None
@@ -391,7 +391,7 @@ class TestOrderTrackerDualWrite:
         mock_order = Mock()
         mock_order.id = 1
         mock_order.broker_order_id = "ORDER123"
-        mock_order.status = DbOrderStatus.PENDING_EXECUTION
+        mock_order.status = DbOrderStatus.PENDING
         mock_order.execution_qty = None
         mock_order.rejection_reason = None
         mock_order.last_status_check = None
@@ -515,7 +515,7 @@ class TestOrderTrackerDualWrite:
         """Test status filter with PENDING status"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock order with PENDING_EXECUTION status
+        # Mock order with PENDING status (AMO/PENDING_EXECUTION merged)
         mock_order = Mock()
         mock_order.broker_order_id = "ORDER1"
         mock_order.order_id = "ORDER1"
@@ -523,7 +523,7 @@ class TestOrderTrackerDualWrite:
         mock_order.quantity = 10
         mock_order.price = 2450.0
         mock_order.order_type = "market"
-        mock_order.status = DbOrderStatus.PENDING_EXECUTION
+        mock_order.status = DbOrderStatus.PENDING
         mock_order.placed_at = datetime.now()
         mock_order.last_status_check = datetime.now()
         mock_order.rejection_reason = None
@@ -534,13 +534,13 @@ class TestOrderTrackerDualWrite:
         orders = order_tracker_with_db.get_pending_orders(status_filter="PENDING")
 
         assert len(orders) == 1
-        assert orders[0]["status"] == "pending_execution"
+        assert orders[0]["status"] == "pending"
 
     def test_get_pending_orders_status_filter_open(self, order_tracker_with_db, mock_orders_repo):
         """Test status filter with OPEN status"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock order with PENDING_EXECUTION status (OPEN = placed but not executed yet)
+        # Mock order with PENDING status (AMO/PENDING_EXECUTION merged) (OPEN = placed but not executed yet)
         mock_order = Mock()
         mock_order.broker_order_id = "ORDER1"
         mock_order.order_id = "ORDER1"
@@ -548,7 +548,7 @@ class TestOrderTrackerDualWrite:
         mock_order.quantity = 10
         mock_order.price = 2450.0
         mock_order.order_type = "market"
-        mock_order.status = DbOrderStatus.PENDING_EXECUTION
+        mock_order.status = DbOrderStatus.PENDING
         mock_order.placed_at = datetime.now()
         mock_order.last_status_check = datetime.now()
         mock_order.rejection_reason = None
@@ -559,7 +559,7 @@ class TestOrderTrackerDualWrite:
         orders = order_tracker_with_db.get_pending_orders(status_filter="OPEN")
 
         assert len(orders) == 1
-        assert orders[0]["status"] == "pending_execution"
+        assert orders[0]["status"] == "pending"
 
     def test_update_order_status_cancelled(self, order_tracker_with_db, mock_orders_repo):
         """Test updating order status to CANCELLED"""
@@ -569,7 +569,7 @@ class TestOrderTrackerDualWrite:
         mock_order = Mock()
         mock_order.id = 1
         mock_order.broker_order_id = "ORDER123"
-        mock_order.status = DbOrderStatus.PENDING_EXECUTION
+        mock_order.status = DbOrderStatus.PENDING
         mock_order.execution_qty = None
         mock_order.rejection_reason = None
         mock_order.last_status_check = None
@@ -580,7 +580,7 @@ class TestOrderTrackerDualWrite:
         # Should update in DB
         assert result is True
         mock_orders_repo.update.assert_called_once()
-        assert mock_order.status == DbOrderStatus.CLOSED
+        assert mock_order.status == DbOrderStatus.CANCELLED
 
     def test_add_pending_order_existing_in_json(self, order_tracker_with_db, mock_orders_repo):
         """Test that existing order in JSON still syncs to DB (dual-write sync)"""
@@ -609,7 +609,7 @@ class TestOrderTrackerDualWrite:
         mock_orders_repo.get_by_order_id.return_value = None
         mock_new_order = Mock()
         mock_new_order.id = 1
-        mock_new_order.status = DbOrderStatus.PENDING_EXECUTION
+        mock_new_order.status = DbOrderStatus.PENDING
         mock_orders_repo.create_amo.return_value = mock_new_order
 
         # Try to add same order

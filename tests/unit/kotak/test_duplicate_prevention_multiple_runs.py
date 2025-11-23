@@ -55,7 +55,7 @@ class TestDuplicatePreventionMultipleRuns:
         existing_order.id = 123
         existing_order.symbol = broker_symbol
         existing_order.side = "buy"
-        existing_order.status = DbOrderStatus.AMO
+        existing_order.status = DbOrderStatus.PENDING
         existing_order.quantity = 20  # Must be int, not MagicMock
         existing_order.price = 2500.0  # Must be float, not MagicMock
 
@@ -167,16 +167,16 @@ class TestDuplicatePreventionMultipleRuns:
             auto_trade_engine._attempt_place_order.assert_called()
 
     def test_place_new_entries_skips_pending_execution_order(self, auto_trade_engine):
-        """Test that place_new_entries skips when PENDING_EXECUTION order exists"""
+        """Test that place_new_entries skips when PENDING order exists"""
         broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
-        # Mock existing order with PENDING_EXECUTION status
+        # Mock existing order with PENDING status (AMO/PENDING_EXECUTION merged into PENDING)
         existing_order = MagicMock()
         existing_order.id = 456
         existing_order.symbol = broker_symbol
         existing_order.side = "buy"
-        existing_order.status = DbOrderStatus.PENDING_EXECUTION
+        existing_order.status = DbOrderStatus.PENDING
         existing_order.quantity = 20  # Must be int, not MagicMock
         existing_order.price = 2500.0  # Must be float, not MagicMock
 
@@ -239,7 +239,7 @@ class TestDuplicatePreventionMultipleRuns:
         existing_order = MagicMock()
         existing_order.symbol = symbol
         existing_order.side = "buy"
-        existing_order.status = DbOrderStatus.AMO
+        existing_order.status = DbOrderStatus.PENDING
 
         auto_trade_engine.orders_repo.list.return_value = [existing_order]
         auto_trade_engine.orders = None  # Simulate broker API unavailable
