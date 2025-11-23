@@ -443,8 +443,8 @@ class AutoTradeEngine:
         """
         Get failed orders from repository or file-based storage.
 
-        Phase 6: Updated to use first-class failure statuses (FAILED, RETRY_PENDING)
-        instead of metadata flags.
+        Phase 6: Updated to use first-class failure statuses (FAILED)
+        instead of metadata flags. RETRY_PENDING merged into FAILED.
         """
         if self.orders_repo and self.user_id:
             # Phase 6: Use repository's get_failed_orders() method or check status
@@ -475,7 +475,7 @@ class AutoTradeEngine:
                 all_orders = self.orders_repo.list(self.user_id)
                 failed_orders = []
                 for order in all_orders:
-                    if order.status in {DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING}:
+                    if order.status == DbOrderStatus.FAILED:  # Merged: FAILED + RETRY_PENDING
                         failed_data = {
                             "symbol": order.symbol,
                             "ticker": getattr(order, "ticker", None),
@@ -500,8 +500,9 @@ class AutoTradeEngine:
         """
         Add a failed order to retry queue (repository or file-based).
 
-        Phase 6: Updated to use first-class failure statuses (FAILED, RETRY_PENDING)
+        Phase 6: Updated to use first-class failure statuses (FAILED)
         and store failure metadata in dedicated columns instead of JSON metadata.
+        RETRY_PENDING merged into FAILED.
 
         This method is wrapped in try-except to prevent exceptions from
         crashing the entire buy order task. Failed order tracking is
@@ -535,7 +536,7 @@ class AutoTradeEngine:
                 existing_failed_orders = [
                     o
                     for o in existing_orders
-                    if o.status in {DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING}
+                    if o.status == DbOrderStatus.FAILED  # Merged: FAILED + RETRY_PENDING
                     and normalize_symbol(o.symbol) == normalized_symbol
                 ]
 
@@ -564,7 +565,7 @@ class AutoTradeEngine:
                         )
                         logger.debug(
                             f"Updated existing failed order for {symbol} "
-                            f"(status: {'RETRY_PENDING' if retry_pending else 'FAILED'})"
+                            f"(status: FAILED)"  # All failures are FAILED now
                         )
                         # Phase 9: Send notification for retry queue update (if retryable)
                         if (
@@ -615,7 +616,7 @@ class AutoTradeEngine:
                         )
                         logger.debug(
                             f"Created new failed order for {symbol} "
-                            f"(status: {'RETRY_PENDING' if retry_pending else 'FAILED'})"
+                            f"(status: FAILED)"  # All failures are FAILED now
                         )
                         # Phase 9: Send notification for retry queue update
                         if (
@@ -669,7 +670,7 @@ class AutoTradeEngine:
             all_orders = self.orders_repo.list(self.user_id)
             for order in all_orders:
                 # Phase 6: Check status instead of metadata
-                if order.status in {DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING}:
+                if order.status == DbOrderStatus.FAILED:  # Merged: FAILED + RETRY_PENDING
                     # Normalize symbol for comparison
                     order_symbol = order.symbol.upper().strip()
                     if "-" in order_symbol:
@@ -1636,8 +1637,7 @@ class AutoTradeEngine:
                         existing_order.side == "buy"
                         and existing_order.status
                         in {
-                            DbOrderStatus.AMO,
-                            DbOrderStatus.PENDING_EXECUTION,
+                            DbOrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
                             DbOrderStatus.ONGOING,
                         }
                         and order_symbol_base == base_symbol_clean
@@ -2022,8 +2022,8 @@ class AutoTradeEngine:
                 "partially_filled",
                 "partially filled",
             }:
-                if db_order.status != DbOrderStatus.PENDING_EXECUTION:
-                    self.orders_repo.update(db_order, status=DbOrderStatus.PENDING_EXECUTION)
+                if db_order.status != DbOrderStatus.PENDING:
+                    self.orders_repo.update(db_order, status=DbOrderStatus.PENDING)
         except Exception as e:
             logger.debug(
                 f"Immediate order status sync failed for {symbol or order_id}: {e}",
@@ -2293,7 +2293,7 @@ class AutoTradeEngine:
     # ---------------------- Retry pending orders from DB ----------------------
     def retry_pending_orders_from_db(self) -> dict[str, int]:
         """
-        Retry orders with RETRY_PENDING status from database.
+        Retry FAILED orders that haven't expired from database.
         Called by premarket retry task at scheduled time.
 
         Returns:
@@ -2311,21 +2311,14 @@ class AutoTradeEngine:
             return summary
 
         try:
-            # Get orders with RETRY_PENDING status
-            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+            # Get retriable FAILED orders (expiry filter applied)
+            retriable_orders = self.orders_repo.get_retriable_failed_orders(self.user_id)
 
-            retry_pending_orders = self.orders_repo.get_failed_orders(self.user_id)
-            retry_pending_orders = [
-                o for o in retry_pending_orders if o.status == DbOrderStatus.RETRY_PENDING
-            ]
-
-            if not retry_pending_orders:
-                logger.info("No orders with RETRY_PENDING status to retry")
+            if not retriable_orders:
+                logger.info("No retriable FAILED orders to retry")
                 return summary
 
-            logger.info(
-                f"Found {len(retry_pending_orders)} orders with RETRY_PENDING status to retry"
-            )
+            logger.info(f"Found {len(retriable_orders)} retriable FAILED orders to retry")
 
             # Check portfolio limit
             try:
@@ -2343,7 +2336,7 @@ class AutoTradeEngine:
                         f"Portfolio limit reached ({current_count}/{self.strategy_config.max_portfolio_size}); "
                         "skipping remaining retries"
                     )
-                    summary["skipped"] += len(retry_pending_orders) - summary["retried"] + 1
+                    summary["skipped"] += len(retriable_orders) - summary["retried"] + 1
                     break
 
                 # Duplicate prevention: Check if already in holdings
@@ -2432,7 +2425,7 @@ class AutoTradeEngine:
                             broker_order_id=manual_order_id,
                             quantity=manual_qty,  # Use actual manual order quantity
                             price=manual_price if manual_price > 0 else None,
-                            status=DbOrderStatus.PENDING_EXECUTION,  # Update from RETRY_PENDING
+                            status=DbOrderStatus.PENDING,  # Changed from PENDING_EXECUTION
                         )
 
                         logger.info(
@@ -2537,7 +2530,7 @@ class AutoTradeEngine:
                         f"Retry failed for {symbol}: still insufficient balance "
                         f"(need Rs {required_cash:,.0f}, have Rs {(avail_cash or 0.0):,.0f})"
                     )
-                    # Update retry count but keep as RETRY_PENDING for next scheduled retry
+                    # Update retry count but keep as FAILED for next scheduled retry
                     from src.infrastructure.db.timezone_utils import ist_now
 
                     db_order.retry_count = (db_order.retry_count or 0) + 1
@@ -2981,7 +2974,7 @@ class AutoTradeEngine:
             # Check database for existing buy orders
             # This prevents duplicates when service runs multiple times before broker syncs
             # Status handling:
-            # - AMO, PENDING_EXECUTION, FAILED, RETRY_PENDING, REJECTED: Can be updated/cancelled if params change
+            # - PENDING, FAILED: Can be updated/cancelled if params change (merged statuses)
             # - ONGOING: Already executed, skip (position exists)
             # - CLOSED: Completed trade, allow new buy opportunity (don't block)
             # - CANCELLED: Cancelled order, allow new buy opportunity (don't block)
@@ -3005,17 +2998,13 @@ class AutoTradeEngine:
                             existing_order.side == "buy"  # Only check buy orders
                             and existing_order.status
                             in {
-                                DbOrderStatus.AMO,
-                                DbOrderStatus.PENDING_EXECUTION,
+                                DbOrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
                                 DbOrderStatus.ONGOING,
-                                DbOrderStatus.FAILED,
-                                DbOrderStatus.RETRY_PENDING,
-                                DbOrderStatus.REJECTED,
+                                DbOrderStatus.FAILED,  # Merged: FAILED + RETRY_PENDING + REJECTED
                                 # Note: CLOSED and CANCELLED orders are NOT included here
                                 # because they represent completed/cancelled trades and should
                                 # NOT block new buy opportunities for the same stock
-                                # Note: SELL status is only for sell orders (side="sell"),
-                                # so it's excluded by the side == "buy" filter above
+                                # Note: SELL status removed - use side='sell' to identify sell orders
                             }
                             and order_symbol_base == broker_symbol_base
                         ):
@@ -3143,13 +3132,10 @@ class AutoTradeEngine:
                 # Update quantity/price for orders that can still be modified
                 # Skip ONGOING orders (already executed, cannot update)
                 # Skip CLOSED/CANCELLED orders (already finalized)
-                # Handle AMO/PENDING_EXECUTION/FAILED/RETRY_PENDING/REJECTED orders
+                # Handle PENDING/FAILED orders (merged statuses)
                 if existing_db_order.status in {
-                    DbOrderStatus.AMO,
-                    DbOrderStatus.PENDING_EXECUTION,
-                    DbOrderStatus.FAILED,
-                    DbOrderStatus.RETRY_PENDING,
-                    DbOrderStatus.REJECTED,
+                    DbOrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
+                    DbOrderStatus.FAILED,  # Merged: FAILED + RETRY_PENDING + REJECTED
                 }:
                     existing_qty = existing_db_order.quantity or 0
                     existing_price = existing_db_order.price or 0.0
@@ -3269,7 +3255,7 @@ class AutoTradeEngine:
                     f"Order status updated in database. Will be retried at scheduled time or manually."
                 )
 
-                # Create order in DB with RETRY_PENDING status for scheduled retry
+                # Create order in DB with FAILED status for scheduled retry
                 failed_order_info = {
                     "symbol": broker_symbol,
                     "ticker": rec.ticker,
