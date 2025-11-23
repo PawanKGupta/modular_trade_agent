@@ -2,8 +2,9 @@
 """
 Tests for AutoTradeEngine failure status promotion (Phase 6)
 
-Tests that failed orders use first-class statuses (FAILED, RETRY_PENDING)
+Tests that failed orders use first-class statuses (FAILED)
 and store metadata in dedicated columns instead of JSON metadata.
+Note: RETRY_PENDING merged into FAILED - all FAILED orders are retriable until expiry.
 """
 
 from datetime import datetime
@@ -62,7 +63,7 @@ class TestFailureStatusPromotion:
     """Test failure status promotion to first-class statuses"""
 
     def test_add_failed_order_retry_pending(self, auto_trade_engine):
-        """Test adding failed order with retry_pending status (insufficient balance)"""
+        """Test adding failed order (insufficient balance - retriable)"""
         failed_order = {
             "symbol": "RELIANCE",
             "ticker": "RELIANCE.NS",
@@ -81,11 +82,12 @@ class TestFailureStatusPromotion:
 
         auto_trade_engine._add_failed_order(failed_order)
 
-        # Should create order and mark as RETRY_PENDING
+        # Should create order and mark as FAILED (retriable)
+        # Note: retry_pending parameter is ignored - all FAILED orders are retriable
         auto_trade_engine.orders_repo.create_amo.assert_called_once()
         auto_trade_engine.orders_repo.mark_failed.assert_called_once()
         call_args = auto_trade_engine.orders_repo.mark_failed.call_args
-        assert call_args.kwargs["retry_pending"] is True
+        # retry_pending parameter kept for backward compatibility but ignored
         assert "insufficient_balance" in call_args.kwargs["failure_reason"]
         assert "shortfall" in call_args.kwargs["failure_reason"]
 
@@ -109,10 +111,11 @@ class TestFailureStatusPromotion:
 
         auto_trade_engine._add_failed_order(failed_order)
 
-        # Should create order and mark as FAILED (not retryable)
+        # Should create order and mark as FAILED
+        # Note: retry_pending parameter is ignored - all FAILED orders are retriable
         auto_trade_engine.orders_repo.mark_failed.assert_called_once()
         call_args = auto_trade_engine.orders_repo.mark_failed.call_args
-        assert call_args.kwargs["retry_pending"] is False
+        # retry_pending parameter kept for backward compatibility but ignored
         assert "broker_api_error" in call_args.kwargs["failure_reason"]
 
     def test_add_failed_order_update_existing(self, auto_trade_engine):
@@ -132,7 +135,7 @@ class TestFailureStatusPromotion:
         mock_existing_order = Mock()
         mock_existing_order.id = 1
         mock_existing_order.symbol = "RELIANCE"
-        mock_existing_order.status = DbOrderStatus.RETRY_PENDING
+        mock_existing_order.status = DbOrderStatus.FAILED
         auto_trade_engine.orders_repo.list.return_value = [mock_existing_order]
         auto_trade_engine.orders_repo.mark_failed = Mock(return_value=mock_existing_order)
 
@@ -144,7 +147,7 @@ class TestFailureStatusPromotion:
         call_args = auto_trade_engine.orders_repo.mark_failed.call_args
         # mark_failed is called with order as keyword argument
         assert call_args.kwargs["order"] == mock_existing_order
-        assert call_args.kwargs["retry_pending"] is True
+        # retry_pending parameter kept for backward compatibility but ignored
 
     def test_remove_failed_order(self, auto_trade_engine):
         """Test removing failed order using new status"""
@@ -154,7 +157,7 @@ class TestFailureStatusPromotion:
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
         auto_trade_engine.orders_repo.list.return_value = [mock_order]
         auto_trade_engine.orders_repo.mark_cancelled = Mock(return_value=mock_order)
 
@@ -180,7 +183,7 @@ class TestFailureStatusPromotion:
         mock_order1.failure_reason = "insufficient_balance - shortfall: Rs 5,000"
         mock_order1.first_failed_at = datetime.now()
         mock_order1.retry_count = 2
-        mock_order1.status = DbOrderStatus.RETRY_PENDING
+        mock_order1.status = DbOrderStatus.FAILED
 
         mock_order2 = Mock()
         mock_order2.symbol = "TCS"
@@ -199,7 +202,7 @@ class TestFailureStatusPromotion:
         assert len(failed_orders) == 2
         assert failed_orders[0]["symbol"] == "RELIANCE"
         assert failed_orders[0]["reason"] == "insufficient_balance - shortfall: Rs 5,000"
-        assert failed_orders[0]["status"] == "retry_pending"
+        assert failed_orders[0]["status"] == "failed"
         assert failed_orders[0]["retry_count"] == 2
         assert failed_orders[1]["symbol"] == "TCS"
         assert failed_orders[1]["status"] == "failed"
@@ -220,7 +223,7 @@ class TestFailureStatusPromotion:
         mock_order.failure_reason = "insufficient_balance"
         mock_order.first_failed_at = datetime.now()
         mock_order.retry_count = 1
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
 
         auto_trade_engine.orders_repo.list.return_value = [mock_order]
 
@@ -228,7 +231,7 @@ class TestFailureStatusPromotion:
 
         assert len(failed_orders) == 1
         assert failed_orders[0]["symbol"] == "RELIANCE"
-        assert failed_orders[0]["status"] == "retry_pending"
+        assert failed_orders[0]["status"] == "failed"
 
     def test_add_failed_order_symbol_normalization(self, auto_trade_engine):
         """Test that symbol normalization works for finding existing failed orders"""
@@ -246,7 +249,7 @@ class TestFailureStatusPromotion:
         mock_existing_order = Mock()
         mock_existing_order.id = 1
         mock_existing_order.symbol = "RELIANCE-BE"  # Different suffix
-        mock_existing_order.status = DbOrderStatus.RETRY_PENDING
+        mock_existing_order.status = DbOrderStatus.FAILED
         auto_trade_engine.orders_repo.list.return_value = [mock_existing_order]
         auto_trade_engine.orders_repo.mark_failed = Mock(return_value=mock_existing_order)
 
