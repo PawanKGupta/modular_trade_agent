@@ -8,8 +8,8 @@ This document provides a detailed, phase-wise implementation plan for the order 
 **Estimated Duration**: 4-6 weeks (depending on team size and testing requirements)
 **Risk Level**: HIGH (requires careful execution and comprehensive testing)
 
-**Current Status**: Phase 3 Complete, Starting Phase 4
-**Progress**: 4 of 6 phases complete (67%)
+**Current Status**: Phase 4 Complete, Starting Phase 5
+**Progress**: 5 of 6 phases complete (83%)
 **Last Updated**: November 23, 2025
 
 ---
@@ -22,8 +22,8 @@ This document provides a detailed, phase-wise implementation plan for the order 
 | **Phase 1** | Database Schema & Migration | 3-5 days | Medium | Phase 0 | ✅ **COMPLETE** |
 | **Phase 2** | Repository Layer Updates | 3-4 days | Medium | Phase 1 | ✅ **COMPLETE** |
 | **Phase 3** | Business Logic Updates | 5-7 days | High | Phase 2 | ✅ **COMPLETE** |
-| **Phase 4** | API & Frontend Updates | 4-5 days | Medium | Phase 3 | ⏳ **IN PROGRESS** |
-| **Phase 5** | Testing & Validation | 5-7 days | Low | Phase 4 | ⚪ **PENDING** |
+| **Phase 4** | API & Frontend Updates | 4-5 days | Medium | Phase 3 | ✅ **COMPLETE** |
+| **Phase 5** | Testing & Validation | 5-7 days | Low | Phase 4 | ⏳ **IN PROGRESS** |
 | **Phase 6** | Deployment & Monitoring | 2-3 days | Medium | Phase 5 | ⚪ **PENDING** |
 
 **Current Status**: Phase 2 Complete, Starting Phase 3
@@ -464,76 +464,82 @@ This document provides a detailed, phase-wise implementation plan for the order 
 ### Tasks
 
 #### 4.1 Update API Layer
-- [ ] Update `server/app/routers/orders.py`:
+- [x] Update `server/app/routers/orders.py`:
 
   **4.1.1 GET /api/v1/user/orders/**
-  - [ ] Update status filter to accept new statuses
-  - [ ] Remove `amo`, `pending_execution`, `retry_pending`, `rejected`, `sell` from valid statuses
-  - [ ] Add `pending`, `failed` to valid statuses
-  - [ ] Update response schema to include `reason` field
-  - [ ] Ensure `side` field is included in response
-  - [ ] Update tests
+  - [x] Update status filter to accept new statuses
+  - [x] Remove `amo`, `pending_execution`, `retry_pending`, `rejected`, `sell` from valid statuses
+  - [x] Add `pending`, `failed`, `cancelled` to valid statuses
+  - [x] Update response schema to include `reason` field
+  - [x] Ensure `side` field is included in response
+  - [ ] Update tests (Phase 5)
 
   **4.1.2 POST /api/v1/user/orders/{order_id}/retry**
-  - [ ] Update to work with `FAILED` status (instead of `RETRY_PENDING`)
-  - [ ] Update validation logic
-  - [ ] Update tests
+  - [x] Update to work with `FAILED` status (instead of `RETRY_PENDING`)
+  - [x] Update validation logic
+  - [x] Update reason field when retrying
+  - [ ] Update tests (Phase 5)
 
   **4.1.3 Status Mapping**
-  - [ ] Update status mapping dictionary
-  - [ ] Remove old status mappings
-  - [ ] Add new status mappings
-  - [ ] Update tests
+  - [x] Update status mapping dictionary
+  - [x] Remove old status mappings
+  - [x] Add new status mappings
+  - [ ] Update tests (Phase 5)
 
-- [ ] Update `server/app/schemas/trading_config.py` (if needed):
-  - [ ] Update order status enum in schemas
-  - [ ] Add `reason` field to order response schemas
-  - [ ] Ensure `side` field is included
-  - [ ] Update tests
+- [x] Update `server/app/schemas/orders.py`:
+  - [x] Update order status enum in schemas
+  - [x] Add `reason` field to order response schemas
+  - [x] Ensure `side` field is included
+  - [x] Keep legacy reason fields for backward compatibility
+  - [ ] Update tests (Phase 5)
 
-**Deliverable**: API layer updated
+**Deliverable**: ✅ API layer updated
 
 #### 4.2 Update Frontend Types
-- [ ] Update `web/src/api/orders.ts` (or similar):
-  - [ ] Update `OrderStatus` type definition
-  - [ ] Remove old statuses
-  - [ ] Add new statuses
-  - [ ] Add comment about `side` field for sell orders
-  - [ ] Update tests
+- [x] Update `web/src/api/orders.ts`:
+  - [x] Update `OrderStatus` type definition
+  - [x] Remove old statuses (AMO, PENDING_EXECUTION, RETRY_PENDING, REJECTED, SELL)
+  - [x] Add new statuses (PENDING, CANCELLED)
+  - [x] Add comment about `side` field for sell orders
+  - [x] Update Order interface to use unified `reason` field
+  - [ ] Update tests (Phase 5)
 
-**Deliverable**: Frontend types updated
+**Deliverable**: ✅ Frontend types updated
 
 #### 4.3 Update UI Components
-- [ ] Update `web/src/routes/dashboard/OrdersPage.tsx`:
-  - [ ] Update order filtering (use `side` instead of `status` for sell orders)
-  - [ ] Update status display badges/colors
-  - [ ] Remove `SELL` status display
-  - [ ] Add `reason` field display (if needed)
-  - [ ] Update status filters dropdown
-  - [ ] Update tests
+- [x] Update `web/src/routes/dashboard/OrdersPage.tsx`:
+  - [x] Update order filtering (use `side` instead of `status` for sell orders)
+  - [x] Update status display badges/colors (updated TABS array)
+  - [x] Remove `SELL` status display
+  - [x] Add `reason` field display (with fallback to legacy fields)
+  - [x] Update status filters dropdown (updated TABS)
+  - [x] Update default tab from 'amo' to 'pending'
+  - [ ] Update tests (Phase 5)
 
 - [ ] Update `web/src/routes/dashboard/PaperTradingPage.tsx`:
-  - [ ] Similar updates as OrdersPage
-  - [ ] Update tests
+  - [ ] Similar updates as OrdersPage (if needed)
+  - [ ] Update tests (Phase 5)
 
 - [ ] Update `web/src/routes/dashboard/OrderConfigSection.tsx`:
-  - [ ] Update status-related UI if any
-  - [ ] Update tests
+  - [ ] Update status-related UI if any (if needed)
+  - [ ] Update tests (Phase 5)
 
 - [ ] Update `web/src/routes/dashboard/IndividualServiceControls.tsx`:
-  - [ ] Update status-related UI if any
-  - [ ] Update tests
+  - [ ] Update status-related UI if any (if needed)
+  - [ ] Update tests (Phase 5)
 
-**Deliverable**: UI components updated
+**Deliverable**: ✅ UI components updated (OrdersPage complete, others checked)
 
 #### 4.4 Update Mock Data
-- [ ] Update `web/src/mocks/test-handlers.ts`:
-  - [ ] Update mock order data to use new statuses
-  - [ ] Remove `SELL` status from mocks
-  - [ ] Add `reason` field to mock orders
-  - [ ] Ensure `side` field is present in mocks
+- [x] Update `web/src/mocks/test-handlers.ts`:
+  - [x] Update mock order data to use new statuses
+  - [x] Remove `SELL` status from mocks
+  - [x] Add `reason` field to mock orders
+  - [x] Ensure `side` field is present in mocks
+  - [x] Update default status from 'amo' to 'pending'
+  - [x] Fix field names (qty -> quantity) to match Order interface
 
-**Deliverable**: Mock data updated
+**Deliverable**: ✅ Mock data updated
 
 ### Testing
 
@@ -885,8 +891,8 @@ This document provides a detailed, phase-wise implementation plan for the order 
 | Phase 1 | Week 1, Day 4 | Week 2, Day 2 | 5 days | ✅ **COMPLETE** (Nov 23, 2025) |
 | Phase 2 | Week 2, Day 3 | Week 2, Day 6 | 4 days | ✅ **COMPLETE** (Nov 23, 2025) |
 | Phase 3 | Week 2, Day 7 | Week 3, Day 5 | 7 days | ✅ **COMPLETE** (Nov 23, 2025) |
-| Phase 4 | Week 3, Day 6 | Week 4, Day 3 | 5 days | ⏳ **IN PROGRESS** |
-| Phase 5 | Week 4, Day 4 | Week 5, Day 3 | 7 days | ⚪ **PENDING** |
+| Phase 4 | Week 3, Day 6 | Week 4, Day 3 | 5 days | ✅ **COMPLETE** (Nov 23, 2025) |
+| Phase 5 | Week 4, Day 4 | Week 5, Day 3 | 7 days | ⏳ **IN PROGRESS** |
 | Phase 6 | Week 5, Day 4 | Week 5, Day 6 | 3 days | ⚪ **PENDING** |
 
 **Total Duration**: ~5 weeks (25 working days)
