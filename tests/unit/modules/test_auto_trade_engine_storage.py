@@ -475,7 +475,7 @@ class TestFailedOrders:
         orders_repo = OrdersRepository(db_session)
         orders = orders_repo.list(test_user.id)
         failed_orders = [
-            o for o in orders if o.status in {DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING}
+            o for o in orders if o.status == DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         ]
         assert len(failed_orders) == 1
         assert failed_orders[0].symbol == "TATASTEEL"

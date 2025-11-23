@@ -88,7 +88,7 @@ def test_orders_list_with_new_statuses(client: TestClient, db_session):
         quantity=5.0,
         price=None,
     )
-    repo.mark_failed(failed_order, "insufficient_balance", retry_pending=False)
+    repo.mark_failed(failed_order, "insufficient_balance")  # retry_pending parameter removed
 
     retry_order = repo.create_amo(
         user_id=user.id,
@@ -98,7 +98,7 @@ def test_orders_list_with_new_statuses(client: TestClient, db_session):
         quantity=3.0,
         price=None,
     )
-    repo.mark_failed(retry_order, "insufficient_balance", retry_pending=True)
+    repo.mark_failed(retry_order, "insufficient_balance")  # retry_pending parameter removed
 
     rejected_order = repo.create_amo(
         user_id=user.id,
@@ -108,10 +108,10 @@ def test_orders_list_with_new_statuses(client: TestClient, db_session):
         quantity=2.0,
         price=None,
     )
-    repo.mark_rejected(rejected_order, "Symbol not tradable")
+    repo.mark_rejected(rejected_order, "Symbol not tradable")  # Now sets FAILED status
 
-    # Test filtering by new statuses
-    for status in ["failed", "retry_pending", "rejected"]:
+    # Test filtering by simplified statuses (retry_pending and rejected merged into failed)
+    for status in ["failed"]:  # retry_pending and rejected merged into failed
         r = client.get(f"/api/v1/user/orders?status={status}", headers=headers)
         assert r.status_code == 200
         assert isinstance(r.json(), list)
@@ -178,11 +178,11 @@ def test_orders_with_all_statuses(client: TestClient, db_session):
         price=None,
     )
 
-    repo.update(pending_order, status=DbOrderStatus.PENDING_EXECUTION)
+    repo.update(pending_order, status=DbOrderStatus.PENDING)
     db_session.commit()
 
-    # Test filtering by pending_execution
-    r = client.get("/api/v1/user/orders?status=pending_execution", headers=headers)
+    # Test filtering by pending (AMO/PENDING_EXECUTION merged into PENDING)
+    r = client.get("/api/v1/user/orders?status=pending", headers=headers)
     assert r.status_code == 200
     assert isinstance(r.json(), list)
 
@@ -216,23 +216,23 @@ def test_retry_order_success(client: TestClient, db_session):
         quantity=10.0,
         price=None,
     )
-    repo.mark_failed(failed_order, "insufficient_balance", retry_pending=False)
+    repo.mark_failed(failed_order, "insufficient_balance")  # retry_pending parameter removed
     db_session.commit()
 
     # Retry the order
     r = client.post(f"/api/v1/user/orders/{failed_order.id}/retry", headers=headers)
     assert r.status_code == 200
     data = r.json()
-    assert data["status"] == "retry_pending"
-    assert data["retry_count"] == 1
+    assert data["status"] == "failed"  # RETRY_PENDING merged into FAILED
+    assert data["retry_count"] == 2  # mark_failed increments to 1, retry endpoint increments to 2
     assert data["last_retry_attempt"] is not None
 
     # Verify in DB
     db_session.refresh(failed_order)
     from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-    assert failed_order.status == DbOrderStatus.RETRY_PENDING
-    assert failed_order.retry_count == 1
+    assert failed_order.status == DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
+    assert failed_order.retry_count == 2  # mark_failed increments to 1, retry endpoint increments to 2
     assert failed_order.last_retry_attempt is not None
 
 
