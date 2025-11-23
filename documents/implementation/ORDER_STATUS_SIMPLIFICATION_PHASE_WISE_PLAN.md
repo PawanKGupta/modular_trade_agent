@@ -1,0 +1,930 @@
+# Order Status Simplification - Phase-Wise Implementation Plan
+
+## Overview
+
+This document provides a detailed, phase-wise implementation plan for the order status simplification (9 → 5 statuses) and retry filtration logic changes.
+
+**Total Phases**: 6 phases
+**Estimated Duration**: 4-6 weeks (depending on team size and testing requirements)
+**Risk Level**: HIGH (requires careful execution and comprehensive testing)
+
+---
+
+## Phase Summary
+
+| Phase | Name | Duration | Risk | Dependencies |
+|-------|------|----------|------|--------------|
+| **Phase 0** | Preparation & Planning | 2-3 days | Low | None |
+| **Phase 1** | Database Schema & Migration | 3-5 days | Medium | Phase 0 |
+| **Phase 2** | Repository Layer Updates | 3-4 days | Medium | Phase 1 |
+| **Phase 3** | Business Logic Updates | 5-7 days | High | Phase 2 |
+| **Phase 4** | API & Frontend Updates | 4-5 days | Medium | Phase 3 |
+| **Phase 5** | Testing & Validation | 5-7 days | Low | Phase 4 |
+| **Phase 6** | Deployment & Monitoring | 2-3 days | Medium | Phase 5 |
+
+---
+
+## Phase 0: Preparation & Planning
+
+**Duration**: 2-3 days
+**Risk**: Low
+**Goal**: Prepare environment, tools, and team for implementation
+
+### Tasks
+
+#### 0.1 Code Analysis & Inventory
+- [ ] Review all files identified in impact analysis
+- [ ] Create detailed checklist of all code locations to update
+- [ ] Identify all test files that need updates
+- [ ] Document current order status usage patterns
+- [ ] Create backup of current database schema
+
+**Deliverable**: Complete inventory document with file list and change requirements
+
+#### 0.2 Environment Setup
+- [ ] Set up development branch: `feature/order-status-simplification`
+- [ ] Create test database snapshot
+- [ ] Set up staging environment (if not exists)
+- [ ] Prepare rollback scripts
+- [ ] Set up feature flags (if needed)
+
+**Deliverable**: Development environment ready
+
+#### 0.3 Team Alignment
+- [ ] Review implementation plan with team
+- [ ] Assign ownership for each phase
+- [ ] Schedule daily standups during implementation
+- [ ] Define communication channels for blockers
+- [ ] Review risk mitigation strategies
+
+**Deliverable**: Team aligned and ready
+
+#### 0.4 Test Strategy
+- [ ] Define test coverage requirements (>80%)
+- [ ] Plan test data migration
+- [ ] Create test scenarios checklist
+- [ ] Set up automated test runs
+- [ ] Plan manual testing scenarios
+
+**Deliverable**: Test strategy document
+
+### Exit Criteria
+- ✅ All files identified and documented
+- ✅ Development environment ready
+- ✅ Team aligned on plan
+- ✅ Test strategy defined
+- ✅ Rollback plan ready
+
+### Rollback Plan
+- No code changes yet, only preparation
+- Can abandon feature branch if needed
+
+---
+
+## Phase 1: Database Schema & Migration
+
+**Duration**: 3-5 days
+**Risk**: Medium
+**Goal**: Add new fields and migrate existing data safely
+
+### Tasks
+
+#### 1.1 Add Unified Reason Field
+- [ ] Update `src/infrastructure/db/models.py`:
+  - [ ] Add `reason: Mapped[str | None]` field (String(512), nullable=True)
+  - [ ] Keep old fields (`failure_reason`, `rejection_reason`, `cancelled_reason`) for now
+- [ ] Create Alembic migration:
+  - [ ] Add `reason` column
+  - [ ] Migrate `failure_reason` → `reason`
+  - [ ] Migrate `rejection_reason` → `reason`
+  - [ ] Migrate `cancelled_reason` → `reason`
+- [ ] Test migration on test database
+- [ ] Verify data integrity after migration
+
+**Deliverable**: Migration script with reason field migration
+
+#### 1.2 Update OrderStatus Enum (Code Only)
+- [ ] Update `src/infrastructure/db/models.py`:
+  - [ ] Remove `AMO`, `PENDING_EXECUTION`, `RETRY_PENDING`, `REJECTED`, `SELL`
+  - [ ] Add `PENDING` status
+  - [ ] Keep old enum values commented for reference
+- [ ] **DO NOT** run database migration yet (only code changes)
+
+**Deliverable**: Updated enum in code (not yet in database)
+
+#### 1.3 Create Status Migration Script
+- [ ] Create Alembic migration for status values:
+  - [ ] `AMO` → `PENDING`
+  - [ ] `PENDING_EXECUTION` → `PENDING`
+  - [ ] `RETRY_PENDING` → `FAILED`
+  - [ ] `REJECTED` → `FAILED`
+  - [ ] `SELL` → `PENDING` (for orders with `side='sell'`)
+- [ ] Add data validation queries
+- [ ] Test migration on test database with sample data
+- [ ] Verify no data loss
+
+**Deliverable**: Status migration script tested
+
+#### 1.4 Create Rollback Script
+- [ ] Create reverse migration script:
+  - [ ] Reverse status migrations
+  - [ ] Restore old reason fields (if data preserved)
+- [ ] Test rollback on test database
+- [ ] Document rollback procedure
+
+**Deliverable**: Tested rollback script
+
+### Testing
+
+#### Unit Tests
+- [ ] Test reason field migration
+- [ ] Test status enum changes (code only)
+- [ ] Test migration scripts
+
+#### Integration Tests
+- [ ] Test full migration on test database
+- [ ] Test rollback procedure
+- [ ] Verify data integrity
+
+### Exit Criteria
+- ✅ Reason field added and migrated
+- ✅ Status migration script created and tested
+- ✅ Rollback script tested
+- ✅ All tests passing
+- ✅ No data loss verified
+
+### Rollback Plan
+- Run rollback migration script
+- Revert code changes to enum
+- Restore database from backup if needed
+
+### Deployment Notes
+- **DO NOT deploy to production yet**
+- Keep in development/staging only
+- Monitor for any issues
+
+---
+
+## Phase 2: Repository Layer Updates
+
+**Duration**: 3-4 days
+**Risk**: Medium
+**Goal**: Update all repository methods to use new statuses and reason field
+
+### Tasks
+
+#### 2.1 Update Core Repository Methods
+- [ ] Update `src/infrastructure/persistence/orders_repository.py`:
+
+  **2.1.1 create_amo()**
+  - [ ] Change default status from `AMO` to `PENDING`
+  - [ ] Add `reason` parameter
+  - [ ] Set default reason: "Order placed - waiting for market open"
+  - [ ] Update tests
+
+  **2.1.2 mark_failed()**
+  - [ ] Always set status to `FAILED` (remove `RETRY_PENDING` logic)
+  - [ ] Use unified `reason` field instead of `failure_reason`
+  - [ ] Keep `retry_pending` parameter for backward compatibility (ignore it)
+  - [ ] Update tests
+
+  **2.1.3 mark_rejected()**
+  - [ ] Change status from `REJECTED` to `FAILED`
+  - [ ] Use unified `reason` field with format: `f"Broker rejected: {rejection_reason}"`
+  - [ ] Update tests
+
+  **2.1.4 mark_cancelled()**
+  - [ ] Use unified `reason` field instead of `cancelled_reason`
+  - [ ] Update tests
+
+  **2.1.5 mark_executed()**
+  - [ ] Add reason: `f"Order executed at Rs {execution_price:.2f}"`
+  - [ ] Update tests
+
+**Deliverable**: Core repository methods updated
+
+#### 2.2 Update Query Methods
+- [ ] **get_pending_amo_orders()**:
+  - [ ] Change from `AMO` + `PENDING_EXECUTION` to just `PENDING`
+  - [ ] Consider renaming to `get_pending_orders()` (optional)
+  - [ ] Update tests
+
+- [ ] **get_failed_orders()**:
+  - [ ] Change from `RETRY_PENDING` + `FAILED` to just `FAILED`
+  - [ ] Update tests
+
+- [ ] **get_retriable_failed_orders()** (NEW):
+  - [ ] Implement new method with expiry filter
+  - [ ] Use `get_next_trading_day_close()` helper
+  - [ ] Mark expired orders as `CANCELLED`
+  - [ ] Add comprehensive tests
+
+**Deliverable**: Query methods updated and new method implemented
+
+#### 2.3 Update Helper Methods
+- [ ] **list()**:
+  - [ ] Ensure `reason` field is retrieved
+  - [ ] Update to handle new status values
+  - [ ] Update tests
+
+- [ ] **update()**:
+  - [ ] Ensure `reason` field can be updated
+  - [ ] Update tests
+
+**Deliverable**: Helper methods updated
+
+### Testing
+
+#### Unit Tests
+- [ ] Test all repository method updates
+- [ ] Test new `get_retriable_failed_orders()` method
+- [ ] Test expiry calculation logic
+- [ ] Test reason field handling
+- [ ] Test status transitions
+
+#### Integration Tests
+- [ ] Test repository methods with database
+- [ ] Test expiry logic with real dates
+- [ ] Test weekend skipping
+- [ ] Test expired order cancellation
+
+### Exit Criteria
+- ✅ All repository methods updated
+- ✅ New `get_retriable_failed_orders()` method implemented
+- ✅ All unit tests passing
+- ✅ Integration tests passing
+- ✅ Code coverage >80%
+
+### Rollback Plan
+- Revert repository method changes
+- Keep old methods temporarily
+- Database schema remains (Phase 1 changes stay)
+
+### Deployment Notes
+- **DO NOT deploy to production yet**
+- Deploy to staging for testing
+- Monitor repository method calls
+
+---
+
+## Phase 3: Business Logic Updates
+
+**Duration**: 5-7 days
+**Risk**: High
+**Goal**: Update all business logic to use new statuses and reason field
+
+### Tasks
+
+#### 3.1 Update AutoTradeEngine
+- [ ] Update `modules/kotak_neo_auto_trader/auto_trade_engine.py`:
+
+  **3.1.1 place_new_entries()**
+  - [ ] Update status checks: `AMO`/`PENDING_EXECUTION` → `PENDING`
+  - [ ] Update status checks: `RETRY_PENDING`/`REJECTED` → `FAILED`
+  - [ ] Ensure `CLOSED` and `CANCELLED` are NOT in blocking status set
+  - [ ] Filter by `side == "buy"` to exclude sell orders
+  - [ ] Update reason field when creating/updating orders
+  - [ ] Update tests (critical - many tests depend on this)
+
+  **3.1.2 retry_pending_orders_from_db()**
+  - [ ] Use `get_retriable_failed_orders()` instead of `get_failed_orders()`
+  - [ ] Remove status filtering (all returned orders are retriable)
+  - [ ] Update reason when retrying: "Order retried successfully"
+  - [ ] Update tests
+
+  **3.1.3 _sync_order_status_snapshot()**
+  - [ ] Update status mapping: `PENDING_EXECUTION` → `PENDING`
+  - [ ] Update status mapping: `REJECTED` → `FAILED`
+  - [ ] Update reason field when status changes
+  - [ ] Update tests
+
+  **3.1.4 _add_failed_order()**
+  - [ ] Remove `retry_pending` parameter usage
+  - [ ] Always use `FAILED` status
+  - [ ] Use unified `reason` field
+  - [ ] Update tests
+
+  **3.1.5 evaluate_reentries_and_exits()**
+  - [ ] Update sell order creation to use `PENDING` status with `side='sell'`
+  - [ ] Set reason: "Sell order placed at EMA9 target"
+  - [ ] Update tests
+
+  **3.1.6 has_active_buy_order()**
+  - [ ] Update status checks to use new statuses
+  - [ ] Filter by `side == "buy"`
+  - [ ] Update tests
+
+**Deliverable**: AutoTradeEngine fully updated
+
+#### 3.2 Update OrderTracker
+- [ ] Update `modules/kotak_neo_auto_trader/order_tracker.py`:
+
+  **3.2.1 add_pending_order()**
+  - [ ] Remove status update from `AMO` to `PENDING_EXECUTION`
+  - [ ] `create_amo()` already sets `PENDING`
+  - [ ] Add reason: "Order placed - waiting for market open"
+  - [ ] Update tests
+
+  **3.2.2 update_order_status()**
+  - [ ] Update status mapping:
+    - `PENDING` → `PENDING` (not `PENDING_EXECUTION`)
+    - `REJECTED` → `FAILED` (not `REJECTED`)
+    - `CANCELLED` → `CANCELLED` (not `CLOSED`)
+  - [ ] Update reason field when status changes
+  - [ ] Update tests
+
+**Deliverable**: OrderTracker updated
+
+#### 3.3 Update OrderStateManager
+- [ ] Update `modules/kotak_neo_auto_trader/order_state_manager.py`:
+
+  **3.3.1 sync_with_broker()**
+  - [ ] Update status handling: `REJECTED` → `FAILED` (via `mark_rejected()`)
+  - [ ] Update reason field when status changes
+  - [ ] Update tests
+
+**Deliverable**: OrderStateManager updated
+
+#### 3.4 Update Sell Engine
+- [ ] Update `modules/kotak_neo_auto_trader/sell_engine.py`:
+  - [ ] Change sell order creation from `OrderStatus.SELL` to `OrderStatus.PENDING` with `side='sell'`
+  - [ ] Set reason: "Sell order placed at EMA9 target"
+  - [ ] Update tests
+
+- [ ] Update `modules/kotak_neo_auto_trader/run_sell_orders.py`:
+  - [ ] Change sell order monitoring from `status == OrderStatus.SELL` to `side == "sell" and status == OrderStatus.PENDING`
+  - [ ] Update all queries to filter by `side` instead of status
+  - [ ] Update tests
+
+**Deliverable**: Sell engine updated
+
+#### 3.5 Update Unified Order Monitor
+- [ ] Update `modules/kotak_neo_auto_trader/unified_order_monitor.py`:
+
+  **3.5.1 check_buy_order_status()**
+  - [ ] Update status checks to use new statuses
+  - [ ] Filter by `side == "buy"`
+  - [ ] Update tests
+
+  **3.5.2 check_sell_order_status()**
+  - [ ] Change from `status == OrderStatus.SELL` to `side == "sell" and status == OrderStatus.PENDING`
+  - [ ] Update all status checks
+  - [ ] Update tests
+
+**Deliverable**: Unified order monitor updated
+
+#### 3.6 Update Utility Functions
+- [ ] Create `modules/kotak_neo_auto_trader/utils/trading_day_utils.py`:
+  - [ ] Implement `get_next_trading_day_close()`
+  - [ ] Implement `is_trading_day()`
+  - [ ] Add tests
+
+- [ ] Update `modules/kotak_neo_auto_trader/utils/order_status_parser.py`:
+  - [ ] Update broker status mapping to use new statuses
+  - [ ] Ensure `REJECTED` maps to `FAILED`
+  - [ ] Update tests
+
+- [ ] Update `modules/kotak_neo_auto_trader/utils/order_field_extractor.py`:
+  - [ ] Update status extraction logic if needed
+  - [ ] Update tests
+
+**Deliverable**: Utility functions updated
+
+### Testing
+
+#### Unit Tests
+- [ ] Update all existing unit tests (41+ files)
+- [ ] Test status transitions
+- [ ] Test sell order logic with `side='sell'`
+- [ ] Test retry logic with unified `FAILED` status
+- [ ] Test expiry logic
+- [ ] Test reason field handling
+
+#### Integration Tests
+- [ ] Test complete order placement flow
+- [ ] Test sell order flow
+- [ ] Test retry flow
+- [ ] Test expiry flow
+- [ ] Test status synchronization
+
+### Exit Criteria
+- ✅ All business logic files updated
+- ✅ All unit tests updated and passing
+- ✅ Integration tests passing
+- ✅ Code coverage >80%
+- ✅ No regressions in existing functionality
+
+### Rollback Plan
+- Revert business logic changes
+- Keep repository layer changes (Phase 2)
+- Database schema remains (Phase 1 changes stay)
+
+### Deployment Notes
+- **DO NOT deploy to production yet**
+- Deploy to staging for comprehensive testing
+- Monitor all order operations closely
+
+---
+
+## Phase 4: API & Frontend Updates
+
+**Duration**: 4-5 days
+**Risk**: Medium
+**Goal**: Update API contracts and frontend to use new statuses
+
+### Tasks
+
+#### 4.1 Update API Layer
+- [ ] Update `server/app/routers/orders.py`:
+
+  **4.1.1 GET /api/v1/user/orders/**
+  - [ ] Update status filter to accept new statuses
+  - [ ] Remove `amo`, `pending_execution`, `retry_pending`, `rejected`, `sell` from valid statuses
+  - [ ] Add `pending`, `failed` to valid statuses
+  - [ ] Update response schema to include `reason` field
+  - [ ] Ensure `side` field is included in response
+  - [ ] Update tests
+
+  **4.1.2 POST /api/v1/user/orders/{order_id}/retry**
+  - [ ] Update to work with `FAILED` status (instead of `RETRY_PENDING`)
+  - [ ] Update validation logic
+  - [ ] Update tests
+
+  **4.1.3 Status Mapping**
+  - [ ] Update status mapping dictionary
+  - [ ] Remove old status mappings
+  - [ ] Add new status mappings
+  - [ ] Update tests
+
+- [ ] Update `server/app/schemas/trading_config.py` (if needed):
+  - [ ] Update order status enum in schemas
+  - [ ] Add `reason` field to order response schemas
+  - [ ] Ensure `side` field is included
+  - [ ] Update tests
+
+**Deliverable**: API layer updated
+
+#### 4.2 Update Frontend Types
+- [ ] Update `web/src/api/orders.ts` (or similar):
+  - [ ] Update `OrderStatus` type definition
+  - [ ] Remove old statuses
+  - [ ] Add new statuses
+  - [ ] Add comment about `side` field for sell orders
+  - [ ] Update tests
+
+**Deliverable**: Frontend types updated
+
+#### 4.3 Update UI Components
+- [ ] Update `web/src/routes/dashboard/OrdersPage.tsx`:
+  - [ ] Update order filtering (use `side` instead of `status` for sell orders)
+  - [ ] Update status display badges/colors
+  - [ ] Remove `SELL` status display
+  - [ ] Add `reason` field display (if needed)
+  - [ ] Update status filters dropdown
+  - [ ] Update tests
+
+- [ ] Update `web/src/routes/dashboard/PaperTradingPage.tsx`:
+  - [ ] Similar updates as OrdersPage
+  - [ ] Update tests
+
+- [ ] Update `web/src/routes/dashboard/OrderConfigSection.tsx`:
+  - [ ] Update status-related UI if any
+  - [ ] Update tests
+
+- [ ] Update `web/src/routes/dashboard/IndividualServiceControls.tsx`:
+  - [ ] Update status-related UI if any
+  - [ ] Update tests
+
+**Deliverable**: UI components updated
+
+#### 4.4 Update Mock Data
+- [ ] Update `web/src/mocks/test-handlers.ts`:
+  - [ ] Update mock order data to use new statuses
+  - [ ] Remove `SELL` status from mocks
+  - [ ] Add `reason` field to mock orders
+  - [ ] Ensure `side` field is present in mocks
+
+**Deliverable**: Mock data updated
+
+### Testing
+
+#### API Tests
+- [ ] Test all API endpoints with new statuses
+- [ ] Test status filtering
+- [ ] Test `reason` field in responses
+- [ ] Test `side` field filtering
+- [ ] Test backward compatibility (if any)
+
+#### Frontend Tests
+- [ ] Test UI components with new statuses
+- [ ] Test order filtering by `side`
+- [ ] Test status display
+- [ ] Test status filters
+- [ ] Test mock data
+
+#### Integration Tests
+- [ ] Test API + Frontend integration
+- [ ] Test end-to-end user flows
+- [ ] Test order display and filtering
+
+### Exit Criteria
+- ✅ API layer updated and tested
+- ✅ Frontend types updated
+- ✅ UI components updated and tested
+- ✅ All API tests passing
+- ✅ All frontend tests passing
+- ✅ Integration tests passing
+
+### Rollback Plan
+- Revert API changes
+- Revert frontend changes
+- Keep business logic changes (Phase 3)
+- API consumers may need to update (breaking change)
+
+### Deployment Notes
+- **DO NOT deploy to production yet**
+- Deploy to staging for user acceptance testing
+- Coordinate with frontend team for deployment
+- API breaking changes - notify API consumers
+
+---
+
+## Phase 5: Testing & Validation
+
+**Duration**: 5-7 days
+**Risk**: Low
+**Goal**: Comprehensive testing and validation before production deployment
+
+### Tasks
+
+#### 5.1 Test Data Migration
+- [ ] Run full migration on staging database
+- [ ] Verify all status migrations completed
+- [ ] Verify all reason field migrations completed
+- [ ] Verify no data loss
+- [ ] Verify data integrity
+- [ ] Document migration results
+
+**Deliverable**: Migration validated on staging
+
+#### 5.2 Unit Test Suite
+- [ ] Run full unit test suite
+- [ ] Fix any failing tests
+- [ ] Achieve >80% code coverage
+- [ ] Document test coverage report
+
+**Deliverable**: All unit tests passing
+
+#### 5.3 Integration Test Suite
+- [ ] Run full integration test suite
+- [ ] Test all order flows:
+  - [ ] Buy order placement flow
+  - [ ] Sell order placement flow
+  - [ ] Order execution flow
+  - [ ] Order failure flow
+  - [ ] Order retry flow
+  - [ ] Order expiry flow
+- [ ] Fix any failing tests
+- [ ] Document test results
+
+**Deliverable**: All integration tests passing
+
+#### 5.4 Regression Testing
+- [ ] Test duplicate prevention still works
+- [ ] Test portfolio limit still works
+- [ ] Test balance check still works
+- [ ] Test holdings check still works
+- [ ] Test manual order detection still works
+- [ ] Test all existing features
+- [ ] Document regression test results
+
+**Deliverable**: No regressions found
+
+#### 5.5 End-to-End Testing
+- [ ] Test complete user workflows
+- [ ] Test order placement → execution → sell flow
+- [ ] Test retry flow
+- [ ] Test expiry flow
+- [ ] Test sell order monitoring
+- [ ] Test API endpoints
+- [ ] Test frontend UI
+- [ ] Document E2E test results
+
+**Deliverable**: E2E tests passing
+
+#### 5.6 Performance Testing
+- [ ] Test database query performance
+- [ ] Test API response times
+- [ ] Test frontend rendering performance
+- [ ] Compare with baseline (before changes)
+- [ ] Document performance results
+
+**Deliverable**: Performance acceptable
+
+#### 5.7 User Acceptance Testing (UAT)
+- [ ] Prepare UAT test scenarios
+- [ ] Conduct UAT with stakeholders
+- [ ] Collect feedback
+- [ ] Address UAT issues
+- [ ] Get UAT sign-off
+
+**Deliverable**: UAT sign-off received
+
+#### 5.8 Documentation Updates
+- [ ] Update `documents/architecture/ORDER_STATUS_REFERENCE.md`
+- [ ] Update or remove `documents/architecture/AMO_VS_PENDING_EXECUTION.md`
+- [ ] Update `documents/architecture/RETRY_FILTRATION_LOGIC.md`
+- [ ] Update `documents/features/BUG_FIXES.md`
+- [ ] Update API documentation
+- [ ] Update README files if needed
+
+**Deliverable**: Documentation updated
+
+### Exit Criteria
+- ✅ All tests passing
+- ✅ Code coverage >80%
+- ✅ No regressions
+- ✅ Performance acceptable
+- ✅ UAT sign-off received
+- ✅ Documentation updated
+- ✅ Rollback plan tested
+
+### Rollback Plan
+- Full rollback procedure tested
+- Database rollback script ready
+- Code rollback procedure documented
+- Team trained on rollback
+
+### Deployment Notes
+- **Ready for production deployment**
+- All approvals received
+- Rollback plan ready
+- Monitoring plan ready
+
+---
+
+## Phase 6: Deployment & Monitoring
+
+**Duration**: 2-3 days
+**Risk**: Medium
+**Goal**: Deploy to production and monitor for issues
+
+### Tasks
+
+#### 6.1 Pre-Deployment Checklist
+- [ ] Final code review completed
+- [ ] All tests passing
+- [ ] UAT sign-off received
+- [ ] Documentation updated
+- [ ] Rollback plan ready
+- [ ] Team briefed on deployment
+- [ ] Monitoring dashboards ready
+- [ ] Support team notified
+
+**Deliverable**: Pre-deployment checklist complete
+
+#### 6.2 Database Migration (Production)
+- [ ] Backup production database
+- [ ] Run reason field migration
+- [ ] Verify reason field migration
+- [ ] Run status migration
+- [ ] Verify status migration
+- [ ] Verify no data loss
+- [ ] Document migration results
+
+**Deliverable**: Production database migrated
+
+#### 6.3 Code Deployment
+- [ ] Deploy Phase 2 changes (Repository)
+- [ ] Monitor for issues
+- [ ] Deploy Phase 3 changes (Business Logic)
+- [ ] Monitor for issues
+- [ ] Deploy Phase 4 changes (API/Frontend)
+- [ ] Monitor for issues
+
+**Deliverable**: All code deployed to production
+
+#### 6.4 Post-Deployment Validation
+- [ ] Verify order placement works
+- [ ] Verify order execution works
+- [ ] Verify sell orders work
+- [ ] Verify retry logic works
+- [ ] Verify expiry logic works
+- [ ] Verify API endpoints work
+- [ ] Verify frontend displays correctly
+- [ ] Check error logs
+- [ ] Check application metrics
+
+**Deliverable**: Post-deployment validation complete
+
+#### 6.5 Monitoring (First 24 Hours)
+- [ ] Monitor order placement rates
+- [ ] Monitor order execution rates
+- [ ] Monitor error rates
+- [ ] Monitor API response times
+- [ ] Monitor database performance
+- [ ] Monitor user feedback
+- [ ] Check for any anomalies
+- [ ] Document monitoring results
+
+**Deliverable**: 24-hour monitoring complete
+
+#### 6.6 Monitoring (First Week)
+- [ ] Continue monitoring all metrics
+- [ ] Check for edge cases
+- [ ] Collect user feedback
+- [ ] Address any issues
+- [ ] Document lessons learned
+
+**Deliverable**: First week monitoring complete
+
+### Exit Criteria
+- ✅ Production deployment successful
+- ✅ No critical issues
+- ✅ All systems functioning correctly
+- ✅ Monitoring in place
+- ✅ Team confident in stability
+
+### Rollback Plan
+- **If critical issues detected**:
+  1. Immediately rollback code changes
+  2. Run database rollback script if needed
+  3. Restore from backup if necessary
+  4. Investigate root cause
+  5. Fix issues before re-deployment
+
+### Deployment Notes
+- Deploy during low-traffic period
+- Have team on standby
+- Monitor closely for first 24 hours
+- Be ready to rollback if needed
+
+---
+
+## Risk Management
+
+### High-Risk Areas
+
+1. **Data Migration** (Phase 1)
+   - **Risk**: Data loss or corruption
+   - **Mitigation**:
+     - Comprehensive backups
+     - Test migration on staging
+     - Validate data integrity
+     - Rollback script ready
+
+2. **Business Logic Changes** (Phase 3)
+   - **Risk**: Breaking order placement/execution
+   - **Mitigation**:
+     - Extensive unit testing
+     - Integration testing
+     - Staging deployment
+     - Gradual rollout
+
+3. **Sell Order Logic** (Phase 3)
+   - **Risk**: Sell orders not working correctly
+   - **Mitigation**:
+     - Focused testing on sell orders
+     - Manual testing
+     - Monitor sell order execution
+
+4. **API Breaking Changes** (Phase 4)
+   - **Risk**: Frontend/external integrations break
+   - **Mitigation**:
+     - Coordinate with frontend team
+     - Update API documentation
+     - Provide migration guide
+     - Version API if possible
+
+### Medium-Risk Areas
+
+1. **Test Coverage** (Phase 5)
+   - **Risk**: Missing edge cases
+   - **Mitigation**:
+     - Comprehensive test suite
+     - Code coverage >80%
+     - Manual testing
+     - UAT
+
+2. **Performance** (Phase 5)
+   - **Risk**: Performance degradation
+   - **Mitigation**:
+     - Performance testing
+     - Query optimization
+     - Monitor metrics
+
+### Low-Risk Areas
+
+1. **Documentation** (Phase 5)
+   - **Risk**: Outdated documentation
+   - **Mitigation**:
+     - Update as part of implementation
+     - Review before deployment
+
+---
+
+## Success Criteria
+
+### Technical Success
+- ✅ All statuses migrated successfully
+- ✅ All tests passing
+- ✅ Code coverage >80%
+- ✅ No regressions
+- ✅ Performance acceptable
+- ✅ No data loss
+
+### Business Success
+- ✅ Order placement works correctly
+- ✅ Sell orders work correctly
+- ✅ Retry logic works correctly
+- ✅ User experience maintained/improved
+- ✅ System stability maintained
+
+### Process Success
+- ✅ Phased rollout successful
+- ✅ Team collaboration effective
+- ✅ Documentation complete
+- ✅ Knowledge transfer complete
+
+---
+
+## Timeline Summary
+
+| Phase | Start | End | Duration |
+|-------|-------|-----|----------|
+| Phase 0 | Week 1, Day 1 | Week 1, Day 3 | 3 days |
+| Phase 1 | Week 1, Day 4 | Week 2, Day 2 | 5 days |
+| Phase 2 | Week 2, Day 3 | Week 2, Day 6 | 4 days |
+| Phase 3 | Week 2, Day 7 | Week 3, Day 5 | 7 days |
+| Phase 4 | Week 3, Day 6 | Week 4, Day 3 | 5 days |
+| Phase 5 | Week 4, Day 4 | Week 5, Day 3 | 7 days |
+| Phase 6 | Week 5, Day 4 | Week 5, Day 6 | 3 days |
+
+**Total Duration**: ~5 weeks (25 working days)
+
+---
+
+## Dependencies & Prerequisites
+
+### Technical Dependencies
+- Database access for migrations
+- Staging environment
+- Test database
+- CI/CD pipeline
+- Monitoring tools
+
+### Team Dependencies
+- Backend developers (Phases 1-3)
+- Frontend developers (Phase 4)
+- QA engineers (Phase 5)
+- DevOps engineers (Phase 6)
+- Product owner (UAT)
+
+### External Dependencies
+- Database backup/restore tools
+- Deployment tools
+- Monitoring dashboards
+- Communication channels
+
+---
+
+## Communication Plan
+
+### Daily Standups
+- **When**: During active implementation phases
+- **Duration**: 15 minutes
+- **Participants**: Implementation team
+- **Agenda**: Progress, blockers, next steps
+
+### Weekly Status Updates
+- **When**: Every Friday
+- **Duration**: 30 minutes
+- **Participants**: All stakeholders
+- **Agenda**: Phase progress, risks, next week plan
+
+### Phase Completion Reviews
+- **When**: End of each phase
+- **Duration**: 1 hour
+- **Participants**: Implementation team + stakeholders
+- **Agenda**: Phase completion, lessons learned, next phase plan
+
+### Incident Response
+- **When**: If critical issues detected
+- **Duration**: As needed
+- **Participants**: Implementation team + on-call
+- **Agenda**: Issue investigation, resolution, rollback decision
+
+---
+
+## Lessons Learned Template
+
+After completion, document:
+- What went well
+- What could be improved
+- Technical challenges faced
+- Process improvements
+- Recommendations for future similar projects
+
+---
+
+*Last Updated: November 23, 2025*
