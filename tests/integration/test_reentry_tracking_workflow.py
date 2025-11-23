@@ -5,9 +5,9 @@ Tests the complete workflow from order placement to position update with reentry
 """
 
 import sys
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -18,7 +18,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
-from src.infrastructure.db.models import Base, Orders, Positions
+from src.infrastructure.db.models import Base
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 
@@ -76,40 +76,44 @@ class TestReentryTrackingWorkflow:
         mock_orders_cls.return_value = Mock()
         mock_portfolio_cls.return_value = Mock()
         mock_auth_cls.return_value = mock_auth
-        
+
         engine = AutoTradeEngine(
             env_file="test.env",
             auth=mock_auth,
             db_session=db_session,
             user_id=1,
         )
-        
+
         # Mock _attempt_place_order to verify entry_type
         original_method = engine._attempt_place_order
-        
+
         def mock_attempt_place_order(
-            broker_symbol, ticker, qty, close, ind, recommendation_source=None,
-            entry_type=None, order_metadata=None
+            broker_symbol,
+            ticker,
+            qty,
+            close,
+            ind,
+            recommendation_source=None,
+            entry_type=None,
+            order_metadata=None,
         ):
             assert entry_type == "initial"
             assert order_metadata is not None
             assert order_metadata["entry_type"] == "initial"
             return (True, "ORDER123")
-        
+
         engine._attempt_place_order = mock_attempt_place_order
-        
+
         # Create a mock recommendation
         from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
-        
+
         rec = Recommendation(
-            symbol="RELIANCE",
             ticker="RELIANCE.NS",
-            verdict="BUY",
-            rsi=28.5,
-            ema9=2500.0,
-            ema200=2400.0,
+            verdict="buy",
+            last_close=2500.0,
+            execution_capital=50000.0,
         )
-        
+
         # Mock necessary methods
         engine.scrip_master = Mock()
         engine.scrip_master.get_instrument.return_value = None
@@ -121,17 +125,17 @@ class TestReentryTrackingWorkflow:
         engine.orders.place_market_buy.return_value = {"nOrdNo": "ORDER123", "stat": "Ok"}
         engine.portfolio = Mock()
         engine.portfolio.get_holdings.return_value = {"data": []}
-        
+
         # Call place_new_entries
         result = engine.place_new_entries([rec])
-        
+
         # Verify order was placed
         assert result["placed"] >= 0  # May be 0 if other checks fail, but method should be called
 
     def test_reentry_order_stored_with_entry_type_reentry(self, db_session):
         """Test that reentry orders are stored with entry_type='reentry'"""
         orders_repo = OrdersRepository(db_session)
-        
+
         # Create initial order
         initial_order = orders_repo.create_amo(
             user_id=1,
@@ -145,9 +149,9 @@ class TestReentryTrackingWorkflow:
             entry_type="initial",
             order_metadata={"rsi10": 28.5},
         )
-        
+
         assert initial_order.entry_type == "initial"
-        
+
         # Create reentry order
         reentry_order = orders_repo.create_amo(
             user_id=1,
@@ -166,7 +170,7 @@ class TestReentryTrackingWorkflow:
                 "reentry_index": 1,
             },
         )
-        
+
         assert reentry_order.entry_type == "reentry"
         assert reentry_order.order_metadata["rsi_level"] == 30
         assert reentry_order.order_metadata["reentry_index"] == 1
@@ -174,7 +178,7 @@ class TestReentryTrackingWorkflow:
     def test_position_update_with_reentry_data(self, db_session):
         """Test that positions are updated with reentry data"""
         positions_repo = PositionsRepository(db_session)
-        
+
         # Create initial position
         position = positions_repo.upsert(
             user_id=1,
@@ -183,15 +187,15 @@ class TestReentryTrackingWorkflow:
             avg_price=2500.0,
             initial_entry_price=2500.0,
         )
-        
+
         assert position.reentry_count == 0
         assert position.initial_entry_price == 2500.0
-        
+
         # Update position with reentry
         reentries = [
             {"qty": 5, "level": 30, "rsi": 29.5, "price": 2480.0, "time": "2024-01-01T10:00:00"}
         ]
-        
+
         position = positions_repo.upsert(
             user_id=1,
             symbol="RELIANCE",
@@ -201,7 +205,7 @@ class TestReentryTrackingWorkflow:
             reentries=reentries,
             last_reentry_price=2480.0,
         )
-        
+
         assert position.reentry_count == 1
         assert len(position.reentries) == 1
         assert position.last_reentry_price == 2480.0
@@ -214,10 +218,10 @@ class TestReentryTrackingWorkflow:
             db_session=db_session,
             user_id=1,
         )
-        
+
         # Mock positions_repo
         engine.positions_repo = PositionsRepository(db_session)
-        
+
         # Create trade history entry with reentry data
         trade = {
             "symbol": "RELIANCE",
@@ -229,10 +233,10 @@ class TestReentryTrackingWorkflow:
                 {"qty": 5, "level": 30, "rsi": 29.5, "price": 2480.0, "time": "2024-01-01T10:00:00"}
             ],
         }
-        
+
         # Update position from trade
         engine._update_position_from_trade(trade)
-        
+
         # Verify position was updated
         position = engine.positions_repo.get_by_symbol(1, "RELIANCE")
         assert position is not None
@@ -240,4 +244,3 @@ class TestReentryTrackingWorkflow:
         assert position.avg_price == 2480.0
         assert position.reentry_count == 1
         assert len(position.reentries) == 1
-

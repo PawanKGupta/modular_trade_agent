@@ -502,9 +502,9 @@ class TestFailedOrders:
         # Remove it
         auto_trade_engine_with_db._remove_failed_order("TATASTEEL")
 
-        # Verify it was removed (marked as CLOSED, not in failed status anymore)
+        # Verify it was removed (marked as CANCELLED, not in failed status anymore)
         db_session.refresh(order)
-        assert order.status == DbOrderStatus.CLOSED
+        assert order.status == DbOrderStatus.CANCELLED  # Changed from CLOSED to CANCELLED
 
     def test_get_failed_orders_from_file_fallback(
         self, auto_trade_engine_file_mode, sample_failed_order

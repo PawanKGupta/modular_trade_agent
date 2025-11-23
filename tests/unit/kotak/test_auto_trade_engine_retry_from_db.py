@@ -116,9 +116,11 @@ class TestRetryPendingOrdersFromDB:
         assert summary["skipped"] == 0
 
         # Verify order was updated
-        assert mock_order.broker_order_id == "ORDER123"
-        assert mock_order.status == DbOrderStatus.PENDING_EXECUTION
         auto_trade_engine.orders_repo.update.assert_called_once()
+        update_call = auto_trade_engine.orders_repo.update.call_args
+        assert update_call[0][0] == mock_order  # First positional arg is the order
+        assert update_call[1]["broker_order_id"] == "ORDER123"
+        assert update_call[1]["status"] == DbOrderStatus.PENDING_EXECUTION
 
         # Verify notification was sent
         auto_trade_engine.telegram_notifier.notify_retry_queue_updated.assert_called_once()
@@ -588,7 +590,11 @@ class TestRetryPendingOrdersFromDB:
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
+        mock_order.ticker = "RELIANCE.NS"
         mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.retry_count = 0
+        mock_order.price = 2450.0
+        mock_order.quantity = 10
 
         auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
 
@@ -604,6 +610,23 @@ class TestRetryPendingOrdersFromDB:
             side_effect=Exception("Cancel failed")
         )
         auto_trade_engine._symbol_variants = Mock(return_value=["RELIANCE", "RELIANCE-EQ"])
+
+        # Mock indicators (needed before cancel logic)
+        auto_trade_engine.get_daily_indicators = Mock(
+            return_value={
+                "close": 2450.0,
+                "rsi10": 25.0,
+                "ema9": 2400.0,
+                "ema200": 2300.0,
+                "avg_volume": 1000000,
+            }
+        )
+
+        # Mock execution capital calculation
+        auto_trade_engine._calculate_execution_capital = Mock(return_value=30000.0)
+
+        # Mock manual order check
+        auto_trade_engine._check_for_manual_orders = Mock(return_value={"has_manual_order": False})
 
         summary = auto_trade_engine.retry_pending_orders_from_db()
 

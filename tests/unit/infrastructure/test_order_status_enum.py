@@ -26,6 +26,7 @@ class TestOrderStatusEnum:
         assert OrderStatus.RETRY_PENDING == "retry_pending"
         assert OrderStatus.REJECTED == "rejected"
         assert OrderStatus.PENDING_EXECUTION == "pending_execution"
+        assert OrderStatus.CANCELLED == "cancelled"  # Added in Bug #68
 
     def test_status_values_are_lowercase(self):
         """Test that all status values are lowercase strings"""
@@ -80,6 +81,7 @@ class TestOrderStatusEnum:
             "retry_pending",
             "rejected",
             "pending_execution",
+            "cancelled",  # Added in Bug #68
         }
         actual_statuses = {s.value for s in OrderStatus}
         assert actual_statuses == expected_statuses

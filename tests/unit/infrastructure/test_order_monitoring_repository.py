@@ -136,7 +136,7 @@ class TestOrderMonitoringRepository:
 
         updated = repo.mark_cancelled(order, "Manual cancellation")
 
-        assert updated.status == OrderStatus.CLOSED
+        assert updated.status == OrderStatus.CANCELLED  # Changed from CLOSED to CANCELLED
         assert updated.cancelled_reason == "Manual cancellation"
         assert updated.closed_at is not None
         assert updated.last_status_check is not None
@@ -155,7 +155,7 @@ class TestOrderMonitoringRepository:
 
         updated = repo.mark_cancelled(order)
 
-        assert updated.status == OrderStatus.CLOSED
+        assert updated.status == OrderStatus.CANCELLED  # Changed from CLOSED to CANCELLED
         assert updated.cancelled_reason == "Cancelled"  # Default reason
         assert updated.closed_at is not None
 

@@ -2375,9 +2375,12 @@ class AutoTradeEngine:
                 if already_in_holdings:
                     logger.info(
                         f"Skipping retry for {symbol}: already in holdings. "
-                        "System does not track existing holdings - keeping portfolios separate."
+                        "Order no longer needed - marking as cancelled."
                     )
-                    # Just skip - same as new orders. Don't update DB status.
+                    # Mark as cancelled since order is no longer needed (already in holdings)
+                    self.orders_repo.mark_cancelled(
+                        db_order, "Already in holdings - order not needed"
+                    )
                     summary["skipped"] += 1
                     continue
 

@@ -309,7 +309,7 @@ class OrdersRepository:
 
     def mark_cancelled(self, order: Orders, cancelled_reason: str | None = None) -> Orders:
         """Mark an order as cancelled"""
-        order.status = OrderStatus.CLOSED
+        order.status = OrderStatus.CANCELLED
         order.cancelled_reason = cancelled_reason or "Cancelled"
         order.closed_at = ist_now()
         order.last_status_check = ist_now()
@@ -370,13 +370,15 @@ class OrdersRepository:
         from sqlalchemy import text
 
         # Query to count orders by status
-        query = text("""
+        query = text(
+            """
             SELECT status, COUNT(*) as count
             FROM orders
             WHERE user_id = :user_id
             GROUP BY status
             ORDER BY count DESC
-        """)
+        """
+        )
 
         results = self.db.execute(query, {"user_id": user_id}).fetchall()
 
@@ -412,14 +414,16 @@ class OrdersRepository:
                 'closed_orders': int,
             }
         """
-        from sqlalchemy import text, func
+        from sqlalchemy import text
 
         # Get total count
-        total_query = text("""
+        total_query = text(
+            """
             SELECT COUNT(*) as total
             FROM orders
             WHERE user_id = :user_id
-        """)
+        """
+        )
         total_result = self.db.execute(total_query, {"user_id": user_id}).fetchone()
         total_orders = total_result[0] if total_result else 0
 
