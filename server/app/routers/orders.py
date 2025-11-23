@@ -22,14 +22,12 @@ logger = logging.getLogger(__name__)
 def list_orders(
     status: Annotated[
         Literal[
-            "amo",
+            "pending",  # Merged: AMO + PENDING_EXECUTION
             "ongoing",
-            "sell",
             "closed",
-            "failed",
-            "retry_pending",
-            "rejected",
-            "pending_execution",
+            "failed",  # Merged: FAILED + RETRY_PENDING + REJECTED
+            "cancelled",
+            # Note: SELL status removed - use side='sell' to filter sell orders
         ]
         | None,
         Query(description="Filter by order status"),
@@ -53,14 +51,12 @@ def list_orders(
         repo = OrdersRepository(db)
         # Map string status to enum member
         status_map = {
-            "amo": DbOrderStatus.AMO,
+            "pending": DbOrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
             "ongoing": DbOrderStatus.ONGOING,
-            "sell": DbOrderStatus.SELL,
             "closed": DbOrderStatus.CLOSED,
-            "failed": DbOrderStatus.FAILED,
-            "retry_pending": DbOrderStatus.RETRY_PENDING,
-            "rejected": DbOrderStatus.REJECTED,
-            "pending_execution": DbOrderStatus.PENDING_EXECUTION,
+            "failed": DbOrderStatus.FAILED,  # Merged: FAILED + RETRY_PENDING + REJECTED
+            "cancelled": DbOrderStatus.CANCELLED,
+            # Note: SELL status removed - use side='sell' to filter sell orders
         }
         db_status = status_map.get(status) if status else None
         items = repo.list(current.id, db_status)
@@ -70,8 +66,8 @@ def list_orders(
             items = [
                 o
                 for o in items
-                if getattr(o, "failure_reason", None)
-                and failure_reason.lower() in getattr(o, "failure_reason", "").lower()
+                if getattr(o, "reason", None)
+                and failure_reason.lower() in getattr(o, "reason", "").lower()
             ]
 
         if from_date or to_date:
@@ -116,20 +112,23 @@ def list_orders(
                     side=o.side if o.side in ("buy", "sell") else "buy",  # type: ignore[arg-type]
                     quantity=o.quantity,
                     price=o.price,
-                    status=o.status.value if o.status else "amo",
+                    status=o.status.value if o.status else "pending",
                     created_at=format_datetime(o.placed_at),
                     updated_at=format_datetime(o.closed_at),
+                    # Unified reason field
+                    reason=getattr(o, "reason", None),
                     # Order monitoring fields
-                    failure_reason=getattr(o, "failure_reason", None),
                     first_failed_at=format_datetime(getattr(o, "first_failed_at", None)),
                     last_retry_attempt=format_datetime(getattr(o, "last_retry_attempt", None)),
                     retry_count=getattr(o, "retry_count", 0) or 0,
-                    rejection_reason=getattr(o, "rejection_reason", None),
-                    cancelled_reason=getattr(o, "cancelled_reason", None),
                     last_status_check=format_datetime(getattr(o, "last_status_check", None)),
                     execution_price=getattr(o, "execution_price", None),
                     execution_qty=getattr(o, "execution_qty", None),
                     execution_time=format_datetime(getattr(o, "execution_time", None)),
+                    # Legacy fields (for backward compatibility)
+                    failure_reason=getattr(o, "failure_reason", None),
+                    rejection_reason=getattr(o, "rejection_reason", None),
+                    cancelled_reason=getattr(o, "cancelled_reason", None),
                 )
                 result.append(order_response)
             except Exception as e:
@@ -155,8 +154,9 @@ def retry_order(
     """
     Retry a failed order.
 
-    Marks the order as RETRY_PENDING and updates retry metadata.
+    Marks the order as FAILED (retriable) and updates retry metadata.
     The actual retry will be handled by AutoTradeEngine on next run.
+    Note: All FAILED orders are retriable until expiry.
     """
     try:
         repo = OrdersRepository(db)
@@ -174,22 +174,26 @@ def retry_order(
                 detail="Not authorized to access this order",
             )
 
-        # Only allow retry for failed or retry_pending orders
-        if order.status not in (DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING):
+        # Only allow retry for FAILED orders (merged: FAILED + RETRY_PENDING + REJECTED)
+        if order.status != DbOrderStatus.FAILED:
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=(
                     f"Cannot retry order with status {order.status.value}. "
-                    "Only failed or retry_pending orders can be retried."
+                    "Only failed orders can be retried."
                 ),
             )
 
-        # Update order for retry
-        order.status = DbOrderStatus.RETRY_PENDING
+        # Update order for retry (keep as FAILED, update retry metadata)
         order.retry_count = (order.retry_count or 0) + 1
         order.last_retry_attempt = ist_now()
         if not order.first_failed_at:
             order.first_failed_at = ist_now()
+        # Update reason to indicate manual retry
+        if order.reason:
+            order.reason = f"{order.reason} (Manual retry requested)"
+        else:
+            order.reason = "Manual retry requested"
 
         updated_order = repo.update(order)
 
@@ -209,19 +213,21 @@ def retry_order(
             side=updated_order.side if updated_order.side in ("buy", "sell") else "buy",  # type: ignore[arg-type]
             quantity=updated_order.quantity,
             price=updated_order.price,
-            status=updated_order.status.value if updated_order.status else "retry_pending",
+            status=updated_order.status.value if updated_order.status else "failed",
             created_at=format_datetime(updated_order.placed_at),
             updated_at=format_datetime(updated_order.closed_at),
-            failure_reason=getattr(updated_order, "failure_reason", None),
+            reason=getattr(updated_order, "reason", None),
             first_failed_at=format_datetime(getattr(updated_order, "first_failed_at", None)),
             last_retry_attempt=format_datetime(getattr(updated_order, "last_retry_attempt", None)),
             retry_count=getattr(updated_order, "retry_count", 0) or 0,
-            rejection_reason=getattr(updated_order, "rejection_reason", None),
-            cancelled_reason=getattr(updated_order, "cancelled_reason", None),
             last_status_check=format_datetime(getattr(updated_order, "last_status_check", None)),
             execution_price=getattr(updated_order, "execution_price", None),
             execution_qty=getattr(updated_order, "execution_qty", None),
             execution_time=format_datetime(getattr(updated_order, "execution_time", None)),
+            # Legacy fields (for backward compatibility)
+            failure_reason=getattr(updated_order, "failure_reason", None),
+            rejection_reason=getattr(updated_order, "rejection_reason", None),
+            cancelled_reason=getattr(updated_order, "cancelled_reason", None),
         )
     except HTTPException:
         raise
@@ -260,13 +266,13 @@ def drop_order(
                 detail="Not authorized to access this order",
             )
 
-        # Only allow dropping failed or retry_pending orders
-        if order.status not in (DbOrderStatus.FAILED, DbOrderStatus.RETRY_PENDING):
+        # Only allow dropping FAILED orders (merged: FAILED + RETRY_PENDING + REJECTED)
+        if order.status != DbOrderStatus.FAILED:
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=(
                     f"Cannot drop order with status {order.status.value}. "
-                    "Only failed or retry_pending orders can be dropped."
+                    "Only failed orders can be dropped."
                 ),
             )
 
