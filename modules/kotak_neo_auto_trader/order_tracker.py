@@ -201,10 +201,8 @@ class OrderTracker:
                         entry_type=entry_type,
                         order_metadata=order_metadata,
                     )
-                    # Update status to PENDING_EXECUTION if it's an AMO order
-                    if variety == "AMO":
-                        db_order.status = DbOrderStatus.PENDING_EXECUTION
-                        self.orders_repo.update(db_order)
+                    # Note: create_amo() already sets status to PENDING
+                    # No need to update status here - PENDING covers both AMO and regular orders
                     logger.debug(f"Added order {order_id} to database")
                     # Phase 11: In DB-only mode, skip JSON write
                     if self.db_only_mode:
@@ -291,8 +289,7 @@ class OrderTracker:
 
                 # Filter by status
                 pending_statuses = {
-                    DbOrderStatus.AMO,
-                    DbOrderStatus.PENDING_EXECUTION,
+                    DbOrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
                     DbOrderStatus.ONGOING,
                 }
                 db_orders = [o for o in db_orders if o.status in pending_statuses]
@@ -311,7 +308,7 @@ class OrderTracker:
                         "order_type": (
                             db_order.order_type.upper() if db_order.order_type else "MARKET"
                         ),
-                        "variety": "AMO" if db_order.status == DbOrderStatus.AMO else "REGULAR",
+                        "variety": "AMO" if db_order.order_metadata and db_order.order_metadata.get("variety") == "AMO" else "REGULAR",
                         "price": db_order.price or 0.0,
                         "placed_at": (
                             db_order.placed_at.isoformat()
@@ -332,13 +329,11 @@ class OrderTracker:
                     # Apply status filter
                     if status_filter:
                         # Map status filter to DB status values
-                        # Note: "PENDING" filter matches both AMO (not yet placed) and PENDING_EXECUTION (placed, waiting)
-                        # "OPEN" filter matches PENDING_EXECUTION (broker accepted, waiting execution)
+                        # Note: "PENDING" filter matches PENDING status (merged: AMO + PENDING_EXECUTION)
+                        # "OPEN" filter matches PENDING (broker accepted, waiting execution)
                         status_map = {
-                            "PENDING": [DbOrderStatus.AMO, DbOrderStatus.PENDING_EXECUTION],
-                            "OPEN": [
-                                DbOrderStatus.PENDING_EXECUTION
-                            ],  # Broker accepted, waiting execution
+                            "PENDING": [DbOrderStatus.PENDING],  # Merged: AMO + PENDING_EXECUTION
+                            "OPEN": [DbOrderStatus.PENDING],  # Broker accepted, waiting execution
                         }
                         if status_filter in status_map:
                             if db_order.status not in status_map[status_filter]:
@@ -413,13 +408,13 @@ class OrderTracker:
                     # Map broker status string to DB status enum
                     # Note: "PENDING" from broker means "trigger pending" or "after market order req received"
                     # (broker is processing). "OPEN" means broker accepted, waiting execution.
-                    # Both mean "order is with broker, waiting execution" → PENDING_EXECUTION
+                    # Both mean "order is with broker, waiting execution" → PENDING
                     status_map = {
                         "EXECUTED": DbOrderStatus.ONGOING,  # Executed orders become ONGOING
-                        "REJECTED": DbOrderStatus.REJECTED,
-                        "CANCELLED": DbOrderStatus.CLOSED,  # Cancelled orders become CLOSED
-                        "PENDING": DbOrderStatus.PENDING_EXECUTION,  # Broker processing (trigger pending, AMO req received)
-                        "OPEN": DbOrderStatus.PENDING_EXECUTION,  # Broker accepted, waiting execution
+                        "REJECTED": DbOrderStatus.FAILED,  # Merged: REJECTED → FAILED (handled via mark_rejected)
+                        "CANCELLED": DbOrderStatus.CANCELLED,  # Cancelled orders
+                        "PENDING": DbOrderStatus.PENDING,  # Broker processing (trigger pending, AMO req received)
+                        "OPEN": DbOrderStatus.PENDING,  # Broker accepted, waiting execution
                     }
 
                     new_db_status = status_map.get(status.upper())
@@ -566,7 +561,7 @@ class OrderTracker:
                         "order_type": (
                             db_order.order_type.upper() if db_order.order_type else "MARKET"
                         ),
-                        "variety": ("AMO" if db_order.status == DbOrderStatus.AMO else "REGULAR"),
+                        "variety": ("AMO" if db_order.order_metadata and db_order.order_metadata.get("variety") == "AMO" else "REGULAR"),
                         "price": db_order.price or 0.0,
                         "placed_at": (
                             db_order.placed_at.isoformat()
