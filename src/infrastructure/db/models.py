@@ -82,15 +82,12 @@ class UserSettings(Base):
 
 
 class OrderStatus(str, Enum):
-    AMO = "amo"
+    PENDING = "pending"  # Merged: AMO + PENDING_EXECUTION
     ONGOING = "ongoing"
-    SELL = "sell"
     CLOSED = "closed"
-    FAILED = "failed"
-    RETRY_PENDING = "retry_pending"
-    REJECTED = "rejected"
-    PENDING_EXECUTION = "pending_execution"
+    FAILED = "failed"  # Merged: FAILED + RETRY_PENDING + REJECTED
     CANCELLED = "cancelled"
+    # Note: SELL removed - use side='sell' column to identify sell orders
 
 
 class Orders(Base):
@@ -105,7 +102,7 @@ class Orders(Base):
         SAEnum(OrderStatus, values_callable=lambda x: [e.value for e in x]),
         index=True,
         nullable=False,
-        default=OrderStatus.AMO,
+        default=OrderStatus.PENDING,  # Changed from AMO
     )
     avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     placed_at: Mapped[datetime] = mapped_column(
@@ -126,19 +123,30 @@ class Orders(Base):
         "metadata", JSON, nullable=True
     )  # Store placed_symbol, signal_type, exit_note, etc.
     # Failure and retry tracking fields
-    failure_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # Unified reason field (replaces failure_reason, rejection_reason, cancelled_reason)
+    reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Legacy reason fields (kept temporarily for migration, will be deprecated)
+    failure_reason: Mapped[str | None] = mapped_column(
+        String(256), nullable=True
+    )  # Deprecated: use reason
     first_failed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_retry_attempt: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    rejection_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    cancelled_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(
+        String(256), nullable=True
+    )  # Deprecated: use reason
+    cancelled_reason: Mapped[str | None] = mapped_column(
+        String(256), nullable=True
+    )  # Deprecated: use reason
     last_status_check: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Execution tracking fields
     execution_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     execution_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
     execution_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Reentry tracking
-    entry_type: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 'initial', 'reentry', 'manual'
+    entry_type: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # 'initial', 'reentry', 'manual'
 
     __table_args__ = (
         Index("ix_orders_user_status_symbol_time", "user_id", "status", "symbol", "placed_at"),
@@ -159,7 +167,9 @@ class Positions(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Reentry tracking
     reentry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    reentries: Mapped[dict | None] = mapped_column("reentries", JSON, nullable=True)  # Array of reentry details
+    reentries: Mapped[dict | None] = mapped_column(
+        "reentries", JSON, nullable=True
+    )  # Array of reentry details
     initial_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_reentry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
 
