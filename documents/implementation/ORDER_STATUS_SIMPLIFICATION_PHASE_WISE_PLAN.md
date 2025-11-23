@@ -516,16 +516,16 @@ This document provides a detailed, phase-wise implementation plan for the order 
   - [x] Update default tab from 'amo' to 'pending'
   - [ ] Update tests (Phase 5)
 
-- [ ] Update `web/src/routes/dashboard/PaperTradingPage.tsx`:
-  - [ ] Similar updates as OrdersPage (if needed)
+- [x] Update `web/src/routes/dashboard/PaperTradingPage.tsx`:
+  - [x] Similar updates as OrdersPage (if needed) - **No changes needed**: Paper trading uses domain OrderStatus enum (separate from DbOrderStatus), which still has REJECTED. Statistics use `rejected_orders` from paper trading store.
   - [ ] Update tests (Phase 5)
 
-- [ ] Update `web/src/routes/dashboard/OrderConfigSection.tsx`:
-  - [ ] Update status-related UI if any (if needed)
+- [x] Update `web/src/routes/dashboard/OrderConfigSection.tsx`:
+  - [x] Update status-related UI if any (if needed) - **No changes needed**: "AMO" here refers to order variety (AMO vs REGULAR), not order status enum.
   - [ ] Update tests (Phase 5)
 
-- [ ] Update `web/src/routes/dashboard/IndividualServiceControls.tsx`:
-  - [ ] Update status-related UI if any (if needed)
+- [x] Update `web/src/routes/dashboard/IndividualServiceControls.tsx`:
+  - [x] Update status-related UI if any (if needed) - **No changes needed**: "AMO" here is descriptive text about order type, not related to order status enum.
   - [ ] Update tests (Phase 5)
 
 **Deliverable**: ✅ UI components updated (OrdersPage complete, others checked)
