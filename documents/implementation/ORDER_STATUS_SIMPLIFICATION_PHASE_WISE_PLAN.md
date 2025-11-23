@@ -244,6 +244,15 @@ This document provides a detailed, phase-wise implementation plan for the order 
 
 **Deliverable**: ✅ Helper methods updated
 
+#### 2.4 Create Trading Day Utilities
+- [x] Create `modules/kotak_neo_auto_trader/utils/trading_day_utils.py`:
+  - [x] Implement `get_next_trading_day_close()` function
+  - [x] Implement `is_trading_day()` function
+  - [x] Add weekend skipping logic
+  - [ ] Add tests (Phase 5)
+
+**Deliverable**: ✅ Trading day utilities created
+
 ### Testing
 
 #### Unit Tests
@@ -388,12 +397,12 @@ This document provides a detailed, phase-wise implementation plan for the order 
 **Deliverable**: Unified order monitor updated
 
 #### 3.6 Update Utility Functions
-- [ ] Create `modules/kotak_neo_auto_trader/utils/trading_day_utils.py`:
-  - [ ] Implement `get_next_trading_day_close()`
-  - [ ] Implement `is_trading_day()`
-  - [ ] Add tests
+- [x] Create `modules/kotak_neo_auto_trader/utils/trading_day_utils.py`:
+  - [x] Implement `get_next_trading_day_close()` (created in Phase 2.4)
+  - [x] Implement `is_trading_day()` (created in Phase 2.4)
+  - [ ] Add tests (Phase 5)
 
-- [ ] Update `modules/kotak_neo_auto_trader/utils/order_status_parser.py`:
+- [x] Update `modules/kotak_neo_auto_trader/utils/order_status_parser.py`:
   - [ ] Update broker status mapping to use new statuses
   - [ ] Ensure `REJECTED` maps to `FAILED`
   - [ ] Update tests
