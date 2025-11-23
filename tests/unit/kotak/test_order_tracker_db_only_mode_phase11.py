@@ -77,7 +77,7 @@ class TestOrderTrackerDBOnlyModePhase11:
             from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
             db_order = Mock()
-            db_order.status = DbOrderStatus.AMO
+            db_order.status = DbOrderStatus.PENDING  # AMO merged into PENDING
             mock_orders_repo.create_amo.return_value = db_order
 
             tracker = OrderTracker(
@@ -121,7 +121,7 @@ class TestOrderTrackerDBOnlyModePhase11:
             mock_db_order.quantity = 10
             mock_db_order.order_type = "market"
             mock_db_order.price = None
-            mock_db_order.status = DbOrderStatus.PENDING_EXECUTION
+            mock_db_order.status = DbOrderStatus.PENDING
             mock_db_order.placed_at = None
             mock_db_order.last_status_check = None
             mock_db_order.rejection_reason = None
@@ -183,7 +183,7 @@ class TestOrderTrackerDBOnlyModePhase11:
             from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
             mock_db_order = Mock()
-            mock_db_order.status = DbOrderStatus.PENDING_EXECUTION
+            mock_db_order.status = DbOrderStatus.PENDING
             mock_db_order.execution_qty = None
             mock_db_order.rejection_reason = None
 
@@ -299,7 +299,7 @@ class TestOrderTrackerDBOnlyModePhase11:
             mock_db_order.quantity = 10
             mock_db_order.order_type = "market"
             mock_db_order.price = None
-            mock_db_order.status = DbOrderStatus.PENDING_EXECUTION
+            mock_db_order.status = DbOrderStatus.PENDING
             mock_db_order.placed_at = None
             mock_db_order.last_status_check = None
             mock_db_order.rejection_reason = None

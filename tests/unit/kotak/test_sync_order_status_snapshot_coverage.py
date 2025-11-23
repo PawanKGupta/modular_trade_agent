@@ -68,7 +68,7 @@ class TestSyncOrderStatusSnapshotCoverage:
         assert call_args[1] == "User cancelled"
 
     def test_sync_order_status_partially_filled(self, auto_trade_engine):
-        """Test that partially filled order status is synced to PENDING_EXECUTION"""
+        """Test that partially filled order status is synced to PENDING"""
         order_id = "ORDER123"
         symbol = "RELIANCE"
 
@@ -85,20 +85,20 @@ class TestSyncOrderStatusSnapshotCoverage:
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.broker_order_id = order_id
-        mock_db_order.status = DbOrderStatus.AMO
+        mock_db_order.status = DbOrderStatus.ONGOING  # Start with different status to test transition
         auto_trade_engine.orders_repo.get_by_broker_order_id.return_value = mock_db_order
         auto_trade_engine.orders_repo.update = Mock()
 
         # Call sync
         auto_trade_engine._sync_order_status_snapshot(order_id, symbol)
 
-        # Verify update was called with PENDING_EXECUTION status
+        # Verify update was called with PENDING status
         auto_trade_engine.orders_repo.update.assert_called_once()
         call_kwargs = auto_trade_engine.orders_repo.update.call_args[1]
-        assert call_kwargs["status"] == DbOrderStatus.PENDING_EXECUTION
+        assert call_kwargs["status"] == DbOrderStatus.PENDING
 
     def test_sync_order_status_trigger_pending(self, auto_trade_engine):
-        """Test that trigger_pending order status is synced to PENDING_EXECUTION"""
+        """Test that trigger_pending order status is synced to PENDING"""
         order_id = "ORDER123"
         symbol = "RELIANCE"
 
@@ -115,7 +115,7 @@ class TestSyncOrderStatusSnapshotCoverage:
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.broker_order_id = order_id
-        mock_db_order.status = DbOrderStatus.AMO
+        mock_db_order.status = DbOrderStatus.ONGOING  # Start with different status to test transition
         auto_trade_engine.orders_repo.get_by_broker_order_id.return_value = mock_db_order
         auto_trade_engine.orders_repo.update = Mock()
 
@@ -126,7 +126,7 @@ class TestSyncOrderStatusSnapshotCoverage:
         auto_trade_engine.orders_repo.update.assert_called_once()
 
     def test_sync_order_status_already_pending_execution(self, auto_trade_engine):
-        """Test that order already in PENDING_EXECUTION status is not updated again"""
+        """Test that order already in PENDING status is not updated again"""
         order_id = "ORDER123"
         symbol = "RELIANCE"
 
@@ -139,11 +139,11 @@ class TestSyncOrderStatusSnapshotCoverage:
         }
         auto_trade_engine.orders.get_orders.return_value = {"data": [broker_order]}
 
-        # Mock DB order already in PENDING_EXECUTION
+        # Mock DB order already in PENDING
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.broker_order_id = order_id
-        mock_db_order.status = DbOrderStatus.PENDING_EXECUTION  # Already in this status
+        mock_db_order.status = DbOrderStatus.PENDING  # Already in this status
         auto_trade_engine.orders_repo.get_by_broker_order_id.return_value = mock_db_order
         auto_trade_engine.orders_repo.update = Mock()
 
@@ -212,7 +212,7 @@ class TestSyncOrderStatusSnapshotCoverage:
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.broker_order_id = order_id
-        mock_db_order.status = DbOrderStatus.AMO
+        mock_db_order.status = DbOrderStatus.ONGOING  # Start with different status to test transition
         auto_trade_engine.orders_repo.get_by_broker_order_id.return_value = None
         auto_trade_engine.orders_repo.get_by_order_id.return_value = mock_db_order
         auto_trade_engine.orders_repo.update = Mock()
