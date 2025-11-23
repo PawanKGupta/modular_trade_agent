@@ -2,7 +2,7 @@
 
 from datetime import datetime, time, timedelta
 
-from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.db.timezone_utils import IST, ist_now
 
 MARKET_CLOSE_TIME = time(15, 30)  # 3:30 PM IST
 SATURDAY = 5  # weekday() returns 5 for Saturday
@@ -24,8 +24,16 @@ def get_next_trading_day_close(failed_at: datetime) -> datetime:
         - failed_at: Monday 4:05 PM → Returns: Tuesday 3:30 PM
         - failed_at: Friday 4:05 PM → Returns: Monday 3:30 PM (skip weekend)
     """
+    # Extract date (handle both timezone-aware and naive datetimes)
+    if failed_at.tzinfo is None:
+        # Naive datetime - assume IST
+        failed_date = failed_at.date()
+    else:
+        # Timezone-aware - convert to IST if needed
+        failed_date = failed_at.astimezone(IST).date()
+
     # Start from day after failure
-    next_day = failed_at.date() + timedelta(days=1)
+    next_day = failed_date + timedelta(days=1)
 
     # Skip weekends (Saturday=5, Sunday=6)
     while next_day.weekday() >= SATURDAY:
@@ -34,8 +42,8 @@ def get_next_trading_day_close(failed_at: datetime) -> datetime:
     # TODO: Skip holidays (add holiday checking logic)
     # For now, just skip weekends
 
-    # Return market close time on next trading day
-    return datetime.combine(next_day, MARKET_CLOSE_TIME)
+    # Return market close time on next trading day (timezone-aware in IST)
+    return datetime.combine(next_day, MARKET_CLOSE_TIME).replace(tzinfo=IST)
 
 
 def is_trading_day(check_date: datetime | None = None) -> bool:
