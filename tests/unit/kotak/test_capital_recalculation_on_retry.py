@@ -56,16 +56,16 @@ class TestCapitalRecalculationOnRetry:
         original_qty = 10
         original_close = 2500.0
 
-        # Mock DB order with RETRY_PENDING status
+        # Mock DB order with FAILED status (RETRY_PENDING merged into FAILED)
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.symbol = symbol
-        mock_db_order.status = DbOrderStatus.RETRY_PENDING
+        mock_db_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         mock_db_order.quantity = original_qty  # Original qty from when capital was lower
         mock_db_order.ticker = ticker
         mock_db_order.retry_count = 0  # Set actual integer, not Mock
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_db_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_db_order]
 
         # Mock capital increased from 50000 to 100000
         auto_trade_engine.strategy_config.user_capital = 100000.0
@@ -133,16 +133,16 @@ class TestCapitalRecalculationOnRetry:
         original_qty = 20
         original_close = 2500.0
 
-        # Mock DB order with RETRY_PENDING status
+        # Mock DB order with FAILED status (RETRY_PENDING merged into FAILED)
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.symbol = symbol
-        mock_db_order.status = DbOrderStatus.RETRY_PENDING
+        mock_db_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         mock_db_order.quantity = original_qty  # Original qty from when capital was higher
         mock_db_order.ticker = ticker
         mock_db_order.retry_count = 0  # Set actual integer, not Mock
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_db_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_db_order]
 
         # Mock capital decreased from 100000 to 30000
         auto_trade_engine.strategy_config.user_capital = 30000.0
@@ -197,15 +197,15 @@ class TestCapitalRecalculationOnRetry:
         original_qty = 20
         original_close = 2500.0
 
-        # Mock DB order with RETRY_PENDING status
+        # Mock DB order with FAILED status (RETRY_PENDING merged into FAILED)
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.symbol = symbol
-        mock_db_order.status = DbOrderStatus.RETRY_PENDING
+        mock_db_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         mock_db_order.quantity = original_qty
         mock_db_order.ticker = ticker
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_db_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_db_order]
 
         # Price increased from 2500 to 3000
         new_close = 3000.0
@@ -257,15 +257,15 @@ class TestCapitalRecalculationOnRetry:
         original_qty = 20
         original_close = 2500.0
 
-        # Mock DB order with RETRY_PENDING status
+        # Mock DB order with FAILED status (RETRY_PENDING merged into FAILED)
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.symbol = symbol
-        mock_db_order.status = DbOrderStatus.RETRY_PENDING
+        mock_db_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         mock_db_order.quantity = original_qty
         mock_db_order.ticker = ticker
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_db_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_db_order]
 
         # Capital increased from 50000 to 100000, but price also increased from 2500 to 4000
         auto_trade_engine.strategy_config.user_capital = 100000.0

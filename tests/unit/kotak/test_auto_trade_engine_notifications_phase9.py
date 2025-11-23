@@ -242,11 +242,11 @@ class TestAutoTradeEngineNotificationsPhase9:
         """Test that updating retry queue sends notification (Phase 9)"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock existing failed order with RETRY_PENDING status
+        # Mock existing failed order with FAILED status (RETRY_PENDING merged into FAILED)
         mock_order = MagicMock()
         mock_order.retry_count = 2
         mock_order.symbol = "RELIANCE"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         auto_trade_engine.orders_repo.list.return_value = [mock_order]
 
         # Mock failed order update
@@ -270,11 +270,11 @@ class TestAutoTradeEngineNotificationsPhase9:
         """Test that removing from retry queue sends notification (Phase 9)"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock existing failed order with RETRY_PENDING status
+        # Mock existing failed order with FAILED status (RETRY_PENDING merged into FAILED)
         mock_order = MagicMock()
         mock_order.retry_count = 3
         mock_order.symbol = "RELIANCE"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         auto_trade_engine.orders_repo.list.return_value = [mock_order]
         auto_trade_engine.orders_repo.mark_cancelled.return_value = mock_order
 
@@ -293,11 +293,11 @@ class TestAutoTradeEngineNotificationsPhase9:
         """Test that successful retry sends notification (Phase 9)"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock existing failed order with RETRY_PENDING status
+        # Mock existing failed order with FAILED status (RETRY_PENDING merged into FAILED)
         mock_order = MagicMock()
         mock_order.retry_count = 2
         mock_order.symbol = "RELIANCE"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         auto_trade_engine.orders_repo.list.return_value = [mock_order]
         auto_trade_engine.orders_repo.mark_cancelled.return_value = mock_order
 
