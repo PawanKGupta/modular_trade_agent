@@ -65,6 +65,8 @@ class OrdersRepository:
             optional_columns.append("rejection_reason")
         if "cancelled_reason" in orders_columns:
             optional_columns.append("cancelled_reason")
+        if "reason" in orders_columns:
+            optional_columns.append("reason")
         if "last_status_check" in orders_columns:
             optional_columns.append("last_status_check")
         if "execution_price" in orders_columns:
@@ -175,6 +177,8 @@ class OrdersRepository:
                 order_kwargs["rejection_reason"] = row_dict.get("rejection_reason")
             if "cancelled_reason" in orders_columns:
                 order_kwargs["cancelled_reason"] = row_dict.get("cancelled_reason")
+            if "reason" in orders_columns:
+                order_kwargs["reason"] = row_dict.get("reason")
             if "last_status_check" in orders_columns:
                 order_kwargs["last_status_check"] = parse_datetime(
                     row_dict.get("last_status_check")
@@ -203,6 +207,7 @@ class OrdersRepository:
         broker_order_id: str | None = None,
         entry_type: str | None = None,
         order_metadata: dict | None = None,
+        reason: str | None = None,
     ) -> Orders:
         order = Orders(
             user_id=user_id,
@@ -211,12 +216,13 @@ class OrdersRepository:
             order_type=order_type,
             quantity=quantity,
             price=price,
-            status=OrderStatus.AMO,
+            status=OrderStatus.PENDING,  # Changed from AMO
             placed_at=ist_now(),
             order_id=order_id,
             entry_type=entry_type,
             order_metadata=order_metadata,
             broker_order_id=broker_order_id,
+            reason=reason or "Order placed - waiting for market open",
         )
         self.db.add(order)
         self.db.commit()
@@ -288,29 +294,35 @@ class OrdersRepository:
         self,
         order: Orders,
         failure_reason: str,
-        retry_pending: bool = False,
+        retry_pending: bool = False,  # Keep for backward compatibility, but not used
     ) -> Orders:
-        """Mark an order as failed with reason"""
-        order.status = OrderStatus.RETRY_PENDING if retry_pending else OrderStatus.FAILED
-        order.failure_reason = failure_reason
+        """Mark an order as failed with reason
+
+        Note: retry_pending parameter is ignored - all FAILED orders are retriable
+        until expiry. Use get_retriable_failed_orders() to filter by expiry.
+        """
+        order.status = OrderStatus.FAILED  # Always FAILED (no RETRY_PENDING)
+        order.reason = failure_reason  # Use unified reason field
         if not order.first_failed_at:
             order.first_failed_at = ist_now()
         order.last_retry_attempt = ist_now()
-        if retry_pending:
-            order.retry_count = (order.retry_count or 0) + 1
+        # Note: retry_pending parameter is ignored - all FAILED orders are retriable
         return self.update(order)
 
     def mark_rejected(self, order: Orders, rejection_reason: str) -> Orders:
-        """Mark an order as rejected by broker"""
-        order.status = OrderStatus.REJECTED
-        order.rejection_reason = rejection_reason
+        """Mark an order as rejected by broker
+
+        Note: REJECTED status is now mapped to FAILED with reason field.
+        """
+        order.status = OrderStatus.FAILED  # Changed from REJECTED
+        order.reason = f"Broker rejected: {rejection_reason}"  # Use unified reason field
         order.last_status_check = ist_now()
         return self.update(order)
 
     def mark_cancelled(self, order: Orders, cancelled_reason: str | None = None) -> Orders:
         """Mark an order as cancelled"""
         order.status = OrderStatus.CANCELLED
-        order.cancelled_reason = cancelled_reason or "Cancelled"
+        order.reason = cancelled_reason or "Cancelled"  # Use unified reason field
         order.closed_at = ist_now()
         order.last_status_check = ist_now()
         return self.update(order)
@@ -328,6 +340,7 @@ class OrdersRepository:
         order.execution_time = ist_now()
         order.filled_at = ist_now()
         order.last_status_check = ist_now()
+        order.reason = f"Order executed at Rs {execution_price:.2f}"  # Set reason
         return self.update(order)
 
     def update_status_check(self, order: Orders) -> Orders:
@@ -336,24 +349,71 @@ class OrdersRepository:
         return self.update(order)
 
     def get_pending_amo_orders(self, user_id: int) -> list[Orders]:
-        """Get all pending AMO buy orders that need status checking"""
+        """Get all pending orders that need status checking
+
+        Note: Previously returned AMO + PENDING_EXECUTION, now returns PENDING only.
+        """
         return self.list(
             user_id,
-            status=OrderStatus.AMO,
-        ) + self.list(
-            user_id,
-            status=OrderStatus.PENDING_EXECUTION,
+            status=OrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
         )
 
     def get_failed_orders(self, user_id: int) -> list[Orders]:
-        """Get all failed orders that are retryable"""
+        """Get all failed orders
+
+        Note: Previously returned RETRY_PENDING + FAILED, now returns FAILED only.
+        For retriable orders (with expiry filter), use get_retriable_failed_orders().
+        """
         return self.list(
             user_id,
-            status=OrderStatus.RETRY_PENDING,
-        ) + self.list(
-            user_id,
-            status=OrderStatus.FAILED,
+            status=OrderStatus.FAILED,  # Merged: FAILED + RETRY_PENDING + REJECTED
         )
+
+    def get_retriable_failed_orders(self, user_id: int) -> list[Orders]:
+        """
+        Get FAILED orders that are eligible for retry.
+        Applies expiry filter - excludes expired orders.
+
+        Orders expire at next trading day market close (3:30 PM IST).
+        Expired orders are automatically marked as CANCELLED.
+
+        Returns:
+            List of FAILED orders that haven't expired yet
+        """
+        from modules.kotak_neo_auto_trader.utils.trading_day_utils import (
+            get_next_trading_day_close,
+        )
+
+        # Get all FAILED orders
+        all_failed = self.list(user_id, status=OrderStatus.FAILED)
+
+        # Apply expiry filter
+        retriable_orders = []
+        now = ist_now()
+
+        for order in all_failed:
+            if not order.first_failed_at:
+                # No expiry date - include (shouldn't happen, but handle gracefully)
+                retriable_orders.append(order)
+                continue
+
+            # Calculate next trading day market close
+            next_trading_day_close = get_next_trading_day_close(order.first_failed_at)
+
+            # Check if expired
+            if now > next_trading_day_close:
+                # Order expired - mark as CANCELLED
+                self.mark_cancelled(
+                    order,
+                    f"Order expired - past next trading day market close "
+                    f"({next_trading_day_close.strftime('%Y-%m-%d %H:%M')})",
+                )
+                continue
+
+            # Order hasn't expired - eligible for retry
+            retriable_orders.append(order)
+
+        return retriable_orders
 
     def get_order_status_distribution(self, user_id: int) -> dict[str, int]:
         """
