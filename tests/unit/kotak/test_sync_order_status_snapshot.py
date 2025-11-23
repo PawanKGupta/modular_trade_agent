@@ -57,7 +57,7 @@ class TestSyncOrderStatusSnapshot:
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.broker_order_id = order_id
-        mock_db_order.status = DbOrderStatus.AMO
+        mock_db_order.status = DbOrderStatus.PENDING
         auto_trade_engine.orders_repo.get_by_broker_order_id.return_value = mock_db_order
         auto_trade_engine.orders_repo.mark_rejected = Mock()
 
@@ -104,7 +104,7 @@ class TestSyncOrderStatusSnapshot:
         assert call_args["execution_qty"] == quantity
 
     def test_sync_order_status_pending_execution(self, auto_trade_engine):
-        """Test that pending order status is synced to PENDING_EXECUTION in DB"""
+        """Test that pending order status is synced to PENDING in DB"""
         order_id = "ORDER123"
         symbol = "RELIANCE"
 
@@ -117,21 +117,21 @@ class TestSyncOrderStatusSnapshot:
         }
         auto_trade_engine.orders.get_orders.return_value = {"data": [broker_order]}
 
-        # Mock DB order
+        # Mock DB order with different status (e.g., ONGOING) to test transition
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.broker_order_id = order_id
-        mock_db_order.status = DbOrderStatus.AMO
+        mock_db_order.status = DbOrderStatus.ONGOING  # Start with different status
         auto_trade_engine.orders_repo.get_by_broker_order_id.return_value = mock_db_order
         auto_trade_engine.orders_repo.update = Mock()
 
         # Call sync
         auto_trade_engine._sync_order_status_snapshot(order_id, symbol)
 
-        # Verify update was called with PENDING_EXECUTION status
+        # Verify update was called with PENDING status (only if status changed)
         auto_trade_engine.orders_repo.update.assert_called_once()
         call_kwargs = auto_trade_engine.orders_repo.update.call_args[1]
-        assert call_kwargs["status"] == DbOrderStatus.PENDING_EXECUTION
+        assert call_kwargs["status"] == DbOrderStatus.PENDING
 
     def test_sync_order_status_order_not_found(self, auto_trade_engine):
         """Test that sync handles order not found in broker response gracefully"""
