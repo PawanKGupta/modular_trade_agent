@@ -253,24 +253,28 @@ http.post(API('/auth/refresh'), async () => {
 	// orders
 	http.get(API('/user/orders'), async ({ request }) => {
 		const url = new URL(request.url);
-		const status = url.searchParams.get('status') ?? 'amo';
+		const status = url.searchParams.get('status') ?? 'pending';
 		const now = new Date().toISOString();
 		const byStatus: Record<string, any[]> = {
-			amo: [
-				{ id: 101, symbol: 'INFY', side: 'buy', qty: 10, price: 1500, status: 'amo', created_at: now, updated_at: now },
+			pending: [ // Merged: AMO + PENDING_EXECUTION
+				{ id: 101, symbol: 'INFY', side: 'buy', quantity: 10, price: 1500, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
+				{ id: 250, symbol: 'SUNPHARMA', side: 'buy', quantity: 12, price: 1280, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
 			],
 			ongoing: [
-				{ id: 201, symbol: 'RELIANCE', side: 'buy', qty: 5, price: 2400, status: 'ongoing', created_at: now, updated_at: now },
+				{ id: 201, symbol: 'RELIANCE', side: 'buy', quantity: 5, price: 2400, status: 'ongoing', reason: 'Order executed at Rs 2400.00', created_at: now, updated_at: now },
 			],
-			pending_execution: [
-				{ id: 250, symbol: 'SUNPHARMA', side: 'buy', qty: 12, price: 1280, status: 'pending_execution', created_at: now, updated_at: now },
-			],
-			sell: [
-				{ id: 301, symbol: 'TCS', side: 'sell', qty: 3, price: 3600, status: 'sell', created_at: now, updated_at: now },
+			failed: [ // Merged: FAILED + RETRY_PENDING + REJECTED
+				{ id: 301, symbol: 'TCS', side: 'buy', quantity: 3, price: 3600, status: 'failed', reason: 'Insufficient balance', retry_count: 1, first_failed_at: now, last_retry_attempt: now, created_at: now, updated_at: now },
 			],
 			closed: [
-				{ id: 401, symbol: 'HDFCBANK', side: 'buy', qty: 2, price: 1500, status: 'closed', created_at: now, updated_at: now },
+				{ id: 401, symbol: 'HDFCBANK', side: 'buy', quantity: 2, price: 1500, status: 'closed', reason: 'Order completed', created_at: now, updated_at: now },
 			],
+			cancelled: [
+				{ id: 501, symbol: 'WIPRO', side: 'buy', quantity: 8, price: 450, status: 'cancelled', reason: 'Order cancelled', created_at: now, updated_at: now },
+			],
+			// Note: SELL status removed - use side='sell' to identify sell orders
+			// Example sell order:
+			// { id: 601, symbol: 'ICICIBANK', side: 'sell', quantity: 5, price: 900, status: 'pending', reason: 'Sell order placed at EMA9 target', created_at: now, updated_at: now },
 		};
 		return HttpResponse.json(byStatus[status] ?? []);
 	}),
