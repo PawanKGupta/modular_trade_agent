@@ -458,7 +458,7 @@ class AutoTradeEngine:
                         "ticker": getattr(order, "ticker", None),
                         "close": order.price,
                         "qty": order.quantity,
-                        "reason": order.failure_reason or "unknown",
+                        "reason": getattr(order, "reason", None) or getattr(order, "failure_reason", None) or "unknown",  # Use unified reason field
                         "first_failed_at": (
                             order.first_failed_at.isoformat() if order.first_failed_at else None
                         ),

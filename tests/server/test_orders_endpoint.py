@@ -47,7 +47,7 @@ def test_orders_list_with_auth(client: TestClient):
     assert isinstance(r.json(), list)
 
     # Filter by status param (should still work and return list, possibly empty)
-    r2 = client.get("/api/v1/user/orders?status=amo", headers=headers)
+    r2 = client.get("/api/v1/user/orders?status=pending", headers=headers)  # AMO merged into PENDING
     assert r2.status_code == 200
     assert isinstance(r2.json(), list)
 
@@ -414,7 +414,7 @@ def test_list_orders_with_filters(client: TestClient, db_session):
         quantity=10.0,
         price=None,
     )
-    repo.mark_failed(order1, "insufficient_balance", retry_pending=False)
+    repo.mark_failed(order1, "insufficient_balance")  # retry_pending parameter removed
 
     order2 = repo.create_amo(
         user_id=user_id,
@@ -424,11 +424,11 @@ def test_list_orders_with_filters(client: TestClient, db_session):
         quantity=5.0,
         price=None,
     )
-    repo.mark_failed(order2, "broker_error", retry_pending=False)
+    repo.mark_failed(order2, "broker_error")  # retry_pending parameter removed
 
     db_session.commit()
 
-    # Filter by failure_reason
+    # Filter by reason (unified field, failure_reason is legacy)
     r = client.get(
         "/api/v1/user/orders?status=failed&failure_reason=insufficient",
         headers=headers,
@@ -436,7 +436,11 @@ def test_list_orders_with_filters(client: TestClient, db_session):
     assert r.status_code == 200
     data = r.json()
     assert len(data) >= 1
-    assert any("insufficient" in (o.get("failure_reason") or "").lower() for o in data)
+    # Check both reason (unified) and failure_reason (legacy) fields
+    assert any(
+        "insufficient" in (o.get("reason") or o.get("failure_reason") or "").lower()
+        for o in data
+    )
 
     # Filter by date range (using today's date)
     from datetime import datetime

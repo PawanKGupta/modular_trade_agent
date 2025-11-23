@@ -85,7 +85,7 @@ def sample_order(db_session, sample_user):
         order_type="market",
         quantity=10.0,
         price=None,
-        status=OrderStatus.AMO,
+        status=OrderStatus.PENDING,  # AMO merged into PENDING
     )
     db_session.add(order)
     db_session.commit()
@@ -1146,7 +1146,7 @@ class TestOrdersRepositoryUpdates:
                 "side": "buy",
                 "order_type": "market",
                 "quantity": 10.0,
-                "status": OrderStatus.AMO,
+                "status": OrderStatus.PENDING,  # AMO merged into PENDING
             },
             {
                 "user_id": sample_user.id,
@@ -1154,7 +1154,7 @@ class TestOrdersRepositoryUpdates:
                 "side": "buy",
                 "order_type": "market",
                 "quantity": 5.0,
-                "status": OrderStatus.AMO,
+                "status": OrderStatus.PENDING,  # AMO merged into PENDING
             },
         ]
         created = repo.bulk_create(orders_data)

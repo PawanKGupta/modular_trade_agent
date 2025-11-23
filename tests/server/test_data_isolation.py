@@ -37,7 +37,7 @@ def test_orders_pnl_activity_are_isolated_by_user_id():
                 order_type="limit",
                 quantity=10,
                 price=1500.0,
-                status=OrderStatus.AMO,
+                status=OrderStatus.PENDING,  # AMO merged into PENDING
                 placed_at=datetime.utcnow(),
             )
         )
@@ -62,7 +62,7 @@ def test_orders_pnl_activity_are_isolated_by_user_id():
         db.commit()
 
     # user B should not see user A data
-    r_orders_b = client.get("/api/v1/user/orders/?status=amo", headers=headers_b)
+    r_orders_b = client.get("/api/v1/user/orders/?status=pending", headers=headers_b)  # AMO merged into PENDING
     assert r_orders_b.status_code == 200
     assert r_orders_b.json() == []  # no leakage
 
