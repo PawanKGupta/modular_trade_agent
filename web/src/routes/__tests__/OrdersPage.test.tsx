@@ -7,8 +7,8 @@ describe('OrdersPage', () => {
 	it('switches tabs and displays orders for each status', async () => {
 		render(withProviders(<OrdersPage />));
 
-		// Default AMO
-		await screen.findByText(/AMO Orders/i);
+		// Default Pending (merged: AMO + PENDING_EXECUTION)
+		await screen.findByText(/Pending Orders/i);
 		await screen.findByText('INFY');
 		await screen.findByText('1500.00');
 
@@ -17,19 +17,19 @@ describe('OrdersPage', () => {
 		await screen.findByText(/Ongoing Orders/i);
 		await screen.findByText('RELIANCE');
 
-		// Pending Execution
-		fireEvent.click(screen.getByRole('button', { name: 'Pending Execution' }));
-		await screen.findByText(/Pending Execution Orders/i);
-		await screen.findByText('SUNPHARMA');
-
-		// Sell
-		fireEvent.click(screen.getByRole('button', { name: 'Sell' }));
-		await screen.findByText(/Sell Orders/i);
+		// Failed (merged: FAILED + RETRY_PENDING + REJECTED)
+		fireEvent.click(screen.getByRole('button', { name: 'Failed' }));
+		await screen.findByText(/Failed Orders/i);
 		await screen.findByText('TCS');
 
 		// Closed
 		fireEvent.click(screen.getByRole('button', { name: 'Closed' }));
 		await screen.findByText(/Closed Orders/i);
 		await screen.findByText('HDFCBANK');
+
+		// Cancelled
+		fireEvent.click(screen.getByRole('button', { name: 'Cancelled' }));
+		await screen.findByText(/Cancelled Orders/i);
+		await screen.findByText('WIPRO');
 	});
 });

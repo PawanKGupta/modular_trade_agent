@@ -273,8 +273,15 @@ cd web; npx playwright install chromium; npm run test:e2e
 - PUT `/api/v1/user/settings`
 
 ### Orders
-- GET `/api/v1/user/orders/` — Query params: `status=amo|ongoing|sell|closed`
+- GET `/api/v1/user/orders/` — Query params: `status=pending|ongoing|failed|closed|cancelled`, `failure_reason=<partial_match>`, `from_date=YYYY-MM-DD`, `to_date=YYYY-MM-DD`
   - Returns: list of orders for the authenticated user, filtered by status if provided
+  - Note: `status=pending` includes orders previously marked as `amo` or `pending_execution`
+  - Note: `status=failed` includes orders previously marked as `failed`, `retry_pending`, or `rejected`
+  - Note: Use `side=buy` or `side=sell` to filter by order type (SELL status removed)
+- POST `/api/v1/user/orders/{id}/retry` — Retry a failed order
+  - Returns: updated order with incremented retry_count
+- DELETE `/api/v1/user/orders/{id}` — Drop a failed order from retry queue
+  - Returns: success message
 
 ### PnL
 - GET `/api/v1/user/pnl/daily` — Query params (optional): `start=YYYY-MM-DD`, `end=YYYY-MM-DD`

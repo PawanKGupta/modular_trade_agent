@@ -1518,4 +1518,99 @@ When a stock was successfully bought and sold (order status = `CLOSED`), and lat
 
 ---
 
-*Last Updated: November 22, 2025*
+---
+
+## Bug #71: Order Status Simplification and Unified Reason Field (ENHANCEMENT)
+
+**Date Fixed**: November 23, 2025
+**Status**: ✅ Fixed
+
+### Description
+The system had 9 order statuses (`AMO`, `PENDING_EXECUTION`, `ONGOING`, `SELL`, `CLOSED`, `FAILED`, `RETRY_PENDING`, `REJECTED`, `CANCELLED`) which created complexity and confusion. Additionally, reason information was scattered across multiple fields (`failure_reason`, `rejection_reason`, `cancelled_reason`). This enhancement simplifies the status system to 5 statuses and introduces a unified `reason` field.
+
+### Root Cause
+1. **Status proliferation**: Multiple statuses represented similar states (e.g., `AMO` and `PENDING_EXECUTION` both meant pending orders)
+2. **Status confusion**: `RETRY_PENDING` and `REJECTED` were both failure states but treated differently
+3. **SELL status redundancy**: `SELL` status was redundant since `side='sell'` column already distinguishes sell orders
+4. **Scattered reason fields**: Failure, rejection, and cancellation reasons were stored in separate fields, making it difficult to track order history
+
+### Expected Behavior
+1. **Simplified statuses**: 5 statuses instead of 9:
+   - `PENDING` (merged: `AMO` + `PENDING_EXECUTION`)
+   - `ONGOING` (unchanged)
+   - `CLOSED` (unchanged)
+   - `FAILED` (merged: `FAILED` + `RETRY_PENDING` + `REJECTED`)
+   - `CANCELLED` (unchanged)
+2. **Unified reason field**: Single `reason` field replaces `failure_reason`, `rejection_reason`, `cancelled_reason`
+3. **Side column for sell orders**: Use `side='sell'` instead of `SELL` status
+4. **Retry filtration**: All `FAILED` orders are retriable until expiry (next trading day market close)
+
+### Fix Applied
+
+**1. Database Schema Changes**:
+- Added `reason` column (String(512), nullable) to `orders` table
+- Migrated existing reason data to unified field
+- Created migration script: `873e86bc5772_order_status_simplification_and_unified_reason`
+
+**2. Status Migration**:
+- `AMO` → `PENDING`
+- `PENDING_EXECUTION` → `PENDING`
+- `RETRY_PENDING` → `FAILED`
+- `REJECTED` → `FAILED`
+- `SELL` → `PENDING` (for orders with `side='sell'`)
+
+**3. Repository Updates**:
+- Updated `create_amo()` to set `status='pending'` and `reason`
+- Updated `mark_failed()` to always use `FAILED` status and unified `reason` field
+- Updated `mark_rejected()` to use `FAILED` status with `reason="Broker rejected: {reason}"`
+- Updated `mark_cancelled()` to use unified `reason` field
+- Updated `mark_executed()` to set `reason="Order executed at Rs {price}"`
+- Implemented `get_retriable_failed_orders()` with expiry filtering
+
+**4. Business Logic Updates**:
+- Updated `AutoTradeEngine` to use new statuses
+- Updated `OrderTracker` to use new statuses
+- Updated sell order logic to use `side='sell'` instead of `SELL` status
+- Implemented expiry logic using `get_next_trading_day_close()`
+
+**5. API Updates**:
+- Updated `GET /api/v1/user/orders` to accept new statuses
+- Updated `POST /api/v1/user/orders/{id}/retry` to work with `FAILED` status
+- Updated response schema to include unified `reason` field
+
+**6. Frontend Updates**:
+- Updated `OrdersPage` to show 5 tabs (Pending, Ongoing, Failed, Closed, Cancelled)
+- Updated order status types and filters
+- Updated reason field display
+
+**7. Retry Filtration Logic**:
+- No max retry count
+- Expiry: Next trading day market close (excluding weekends/holidays)
+- Expired orders automatically marked as `CANCELLED`
+- All `FAILED` orders are retriable until expiry
+
+### Test Coverage
+- ✅ 1820 unit tests passing
+- ✅ UI tests passing (OrdersPage verified)
+- ✅ New tests for expiry filtering (14 tests)
+- ✅ New tests for trading day utilities (9 tests)
+- ✅ All order status transition tests updated
+
+### Impact
+- ✅ Simplified order status system (9 → 5 statuses)
+- ✅ Unified reason field for better tracking
+- ✅ Improved retry logic with expiry handling
+- ✅ Better user experience with clearer status labels
+- ✅ Reduced complexity in codebase
+- ✅ Backward compatibility maintained (legacy reason fields retained)
+
+### Related Documentation
+- `documents/implementation/ORDER_STATUS_SIMPLIFICATION_IMPLEMENTATION.md`
+- `documents/implementation/ORDER_STATUS_SIMPLIFICATION_PHASE_WISE_PLAN.md`
+- `documents/analysis/ORDER_STATUS_SIMPLIFICATION_IMPACT_ANALYSIS.md`
+- `documents/architecture/RETRY_FILTRATION_LOGIC.md`
+- `documents/deployment/ORDER_STATUS_SIMPLIFICATION_DEPLOYMENT.md`
+
+---
+
+*Last Updated: November 23, 2025*
