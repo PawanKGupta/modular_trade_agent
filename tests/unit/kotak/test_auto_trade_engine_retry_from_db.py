@@ -2,8 +2,9 @@
 """
 Tests for AutoTradeEngine retry_pending_orders_from_db method
 
-Tests that orders with RETRY_PENDING status are retried from database
+Tests that orders with FAILED status are retried from database
 at scheduled time (8:00 AM) instead of during buy order placement.
+Note: RETRY_PENDING merged into FAILED - all FAILED orders are retriable until expiry.
 """
 
 from unittest.mock import MagicMock, Mock, patch
@@ -66,17 +67,17 @@ class TestRetryPendingOrdersFromDB:
         """Test successful retry of pending orders from DB"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING order
+        # Mock FAILED order (retriable)
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
         mock_order.retry_count = 1
         mock_order.price = 2450.0
         mock_order.quantity = 10
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
         # Mock portfolio checks
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
@@ -120,7 +121,7 @@ class TestRetryPendingOrdersFromDB:
         update_call = auto_trade_engine.orders_repo.update.call_args
         assert update_call[0][0] == mock_order  # First positional arg is the order
         assert update_call[1]["broker_order_id"] == "ORDER123"
-        assert update_call[1]["status"] == DbOrderStatus.PENDING_EXECUTION
+        assert update_call[1]["status"] == DbOrderStatus.PENDING
 
         # Verify notification was sent
         auto_trade_engine.telegram_notifier.notify_retry_queue_updated.assert_called_once()
@@ -129,17 +130,17 @@ class TestRetryPendingOrdersFromDB:
         """Test retry fails due to insufficient balance"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING order
+        # Mock FAILED order (retriable)
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
         mock_order.retry_count = 0
         mock_order.price = 2450.0
         mock_order.quantity = 10
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
         # Mock portfolio checks
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
@@ -179,13 +180,13 @@ class TestRetryPendingOrdersFromDB:
         """Test retry skipped when already in holdings"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING order
+        # Mock FAILED order (retriable)
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
         # Mock already in holdings
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
@@ -206,16 +207,16 @@ class TestRetryPendingOrdersFromDB:
         """Test retry skipped when portfolio limit reached"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING orders
+        # Mock FAILED orders (retriable)
         mock_order1 = Mock()
         mock_order1.symbol = "RELIANCE"
-        mock_order1.status = DbOrderStatus.RETRY_PENDING
+        mock_order1.status = DbOrderStatus.FAILED
 
         mock_order2 = Mock()
         mock_order2.symbol = "TCS"
-        mock_order2.status = DbOrderStatus.RETRY_PENDING
+        mock_order2.status = DbOrderStatus.FAILED
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [
             mock_order1,
             mock_order2,
         ]
@@ -238,15 +239,15 @@ class TestRetryPendingOrdersFromDB:
         """Test retry fails due to broker API error"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING order
+        # Mock FAILED order (retriable)
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
         mock_order.retry_count = 0
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
         # Mock portfolio checks
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
@@ -288,7 +289,7 @@ class TestRetryPendingOrdersFromDB:
 
     def test_retry_pending_orders_no_orders(self, auto_trade_engine):
         """Test retry when no pending orders exist"""
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = []
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = []
 
         summary = auto_trade_engine.retry_pending_orders_from_db()
 
@@ -312,14 +313,14 @@ class TestRetryPendingOrdersFromDB:
         """Test retry skipped when indicators missing"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING order
+        # Mock FAILED order (retriable)
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
         # Mock portfolio checks
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
@@ -341,14 +342,14 @@ class TestRetryPendingOrdersFromDB:
         """Test retry skipped when price is invalid"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING order
+        # Mock FAILED order (retriable)
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
         # Mock portfolio checks
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
@@ -378,14 +379,14 @@ class TestRetryPendingOrdersFromDB:
         """Test retry skipped when position too large for volume"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING order
+        # Mock FAILED order (retriable)
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
         # Mock portfolio checks
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
@@ -419,23 +420,24 @@ class TestRetryPendingOrdersFromDB:
         assert summary["failed"] == 0
         assert summary["skipped"] == 1
 
-        # Verify order was marked as FAILED (not retryable)
+        # Verify order was marked as FAILED
+        # Note: retry_pending parameter is ignored - all FAILED orders are retriable
         auto_trade_engine.orders_repo.mark_failed.assert_called_once()
         call_args = auto_trade_engine.orders_repo.mark_failed.call_args
-        assert call_args.kwargs["retry_pending"] is False
+        # retry_pending parameter kept for backward compatibility but ignored
         assert "not retryable" in call_args.kwargs["failure_reason"]
 
     def test_retry_pending_orders_holdings_api_fallback_to_db(self, auto_trade_engine):
         """Test retry uses database fallback when holdings API fails"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING order
+        # Mock FAILED order (retriable)
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
         # Mock portfolio checks
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
@@ -464,15 +466,15 @@ class TestRetryPendingOrdersFromDB:
         """Test retry cancels and replaces active buy order (consistent with place_new_entries)"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING order
+        # Mock FAILED order (retriable)
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
         mock_order.retry_count = 0
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
         # Mock portfolio checks
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
@@ -520,15 +522,15 @@ class TestRetryPendingOrdersFromDB:
         """Test retry uses database fallback when active order API check fails"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING order
+        # Mock FAILED order (retriable)
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
         mock_order.retry_count = 0
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
         # Mock portfolio checks
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
@@ -543,7 +545,7 @@ class TestRetryPendingOrdersFromDB:
         mock_existing_order.id = 2  # Different ID
         mock_existing_order.symbol = "RELIANCE"
         mock_existing_order.side = "buy"
-        mock_existing_order.status = DbOrderStatus.PENDING_EXECUTION
+        mock_existing_order.status = DbOrderStatus.PENDING
         auto_trade_engine.orders_repo.list.return_value = [mock_existing_order]
 
         # Mock cancel
@@ -586,17 +588,17 @@ class TestRetryPendingOrdersFromDB:
         """Test retry skips if cancel fails (to prevent duplicates)"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-        # Mock RETRY_PENDING order
+        # Mock FAILED order (retriable)
         mock_order = Mock()
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
-        mock_order.status = DbOrderStatus.RETRY_PENDING
+        mock_order.status = DbOrderStatus.FAILED
         mock_order.retry_count = 0
         mock_order.price = 2450.0
         mock_order.quantity = 10
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
         # Mock portfolio checks
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])

@@ -1609,7 +1609,7 @@ class AutoTradeEngine:
                     "Falling back to database check."
                 )
 
-        # 2) Database fallback: Check for AMO/PENDING_EXECUTION/ONGOING buy orders
+        # 2) Database fallback: Check for PENDING/ONGOING buy orders (AMO/PENDING_EXECUTION merged into PENDING)
         # This prevents duplicates when broker API doesn't return pending orders or is unavailable
         if self.orders_repo and self.user_id:
             try:
@@ -2326,7 +2326,7 @@ class AutoTradeEngine:
             except Exception:
                 current_count = self.portfolio_size()
 
-            for db_order in retry_pending_orders:
+            for db_order in retriable_orders:
                 summary["retried"] += 1
                 symbol = db_order.symbol
 
@@ -2414,7 +2414,7 @@ class AutoTradeEngine:
                         logger.info(
                             f"Manual AMO order detected for {symbol}: order_id={manual_order_id}, "
                             f"qty={manual_qty}, price={manual_price}. "
-                            "Linking to DB record and updating status to PENDING_EXECUTION."
+                            "Linking to DB record and updating status to PENDING."
                         )
 
                         # Update DB order with manual order details
@@ -2430,7 +2430,7 @@ class AutoTradeEngine:
 
                         logger.info(
                             f"Updated DB order {db_order.id} for {symbol}: "
-                            f"status=PENDING_EXECUTION, broker_order_id={manual_order_id}, "
+                            f"status=PENDING, broker_order_id={manual_order_id}, "
                             f"qty={manual_qty}, price={manual_price}"
                         )
 
@@ -2448,7 +2448,7 @@ class AutoTradeEngine:
                                         "manual_qty": manual_qty,
                                         "manual_price": manual_price,
                                         "retry_qty": qty,
-                                        "message": "Manual order linked to DB record, status updated to PENDING_EXECUTION",
+                                        "message": "Manual order linked to DB record, status updated to PENDING",
                                     },
                                 )
                             except Exception as notify_error:
@@ -2478,8 +2478,7 @@ class AutoTradeEngine:
                                 and existing_order.side == "buy"
                                 and existing_order.status
                                 in {
-                                    DbOrderStatus.AMO,
-                                    DbOrderStatus.PENDING_EXECUTION,
+                                    DbOrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
                                     DbOrderStatus.ONGOING,
                                 }
                                 and existing_order.id != db_order.id  # Exclude current retry order
@@ -2543,7 +2542,7 @@ class AutoTradeEngine:
                 success, order_id = self._attempt_place_order(symbol, ticker, qty, close, ind)
                 if success:
                     summary["placed"] += 1
-                    # Update order status to PENDING_EXECUTION and set broker_order_id
+                    # Update order status to PENDING and set broker_order_id
                     # Also update quantity in case it changed due to config changes
                     from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
@@ -2551,7 +2550,7 @@ class AutoTradeEngine:
                         db_order,
                         broker_order_id=order_id,
                         quantity=qty,  # Update with recalculated quantity
-                        status=DbOrderStatus.PENDING_EXECUTION,
+                        status=DbOrderStatus.PENDING,
                     )
                     logger.info(
                         f"Successfully placed retry order for {symbol} (order_id: {order_id}, qty: {qty}). "
@@ -2926,7 +2925,7 @@ class AutoTradeEngine:
                                 existing_order,
                                 quantity=manual_qty,
                                 price=manual_price if manual_price > 0 else None,
-                                status=DbOrderStatus.PENDING_EXECUTION,
+                                status=DbOrderStatus.PENDING,
                             )
                             logger.info(
                                 f"Updated existing DB order {existing_order.id} for {broker_symbol} "
@@ -2944,7 +2943,7 @@ class AutoTradeEngine:
                                 order_id=manual_order_id,
                                 broker_order_id=manual_order_id,
                             )
-                            db_order.status = DbOrderStatus.PENDING_EXECUTION
+                            db_order.status = DbOrderStatus.PENDING
                             self.orders_repo.update(db_order)
                             logger.info(
                                 f"Created new DB order {db_order.id} for {broker_symbol} "
@@ -3124,7 +3123,7 @@ class AutoTradeEngine:
 
             qty = max(config.MIN_QTY, floor(execution_capital / close))
 
-            # If database has an existing AMO/PENDING_EXECUTION order, check if quantity or price needs to be updated
+            # If database has an existing PENDING order, check if quantity or price needs to be updated
             # due to capital change (e.g., user updated capital per trade config) or price change
             if has_db_order and existing_db_order:
                 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
