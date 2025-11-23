@@ -3,14 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listOrders, retryOrder, dropOrder, type Order, type OrderStatus } from '@/api/orders';
 
 const TABS: { key: OrderStatus; label: string }[] = [
-	{ key: 'amo', label: 'AMO' },
+	{ key: 'pending', label: 'Pending' }, // Merged: AMO + PENDING_EXECUTION
 	{ key: 'ongoing', label: 'Ongoing' },
-	{ key: 'pending_execution', label: 'Pending Execution' },
-	{ key: 'sell', label: 'Sell' },
-	{ key: 'failed', label: 'Failed' },
-	{ key: 'retry_pending', label: 'Retry Pending' },
-	{ key: 'rejected', label: 'Rejected' },
+	{ key: 'failed', label: 'Failed' }, // Merged: FAILED + RETRY_PENDING + REJECTED
 	{ key: 'closed', label: 'Closed' },
+	{ key: 'cancelled', label: 'Cancelled' },
+	// Note: SELL status removed - use side='sell' to filter sell orders
 ];
 
 const formatPrice = (value: number | null | undefined): string => {
@@ -32,7 +30,7 @@ const formatDate = (dateStr: string | null | undefined): string => {
 };
 
 export function OrdersPage() {
-	const [tab, setTab] = useState<OrderStatus>('amo');
+	const [tab, setTab] = useState<OrderStatus>('pending');
 	const queryClient = useQueryClient();
 	const { data, isLoading, isError } = useQuery({
 		queryKey: ['orders', tab],
@@ -79,7 +77,7 @@ export function OrdersPage() {
 		}
 	};
 
-	const isFailedOrRetryPending = tab === 'failed' || tab === 'retry_pending';
+	const isFailed = tab === 'failed';
 
 	return (
 		<div className="p-4 space-y-4">
@@ -114,14 +112,14 @@ export function OrdersPage() {
 							<th className="text-left p-2">Qty</th>
 							<th className="text-left p-2">Price</th>
 							<th className="text-left p-2">Status</th>
-							{isFailedOrRetryPending && (
+							{isFailed && (
 								<>
-									<th className="text-left p-2">Failure Reason</th>
+									<th className="text-left p-2">Reason</th>
 									<th className="text-left p-2">Retry Count</th>
 									<th className="text-left p-2">Last Retry</th>
 								</>
 							)}
-							{isFailedOrRetryPending && <th className="text-left p-2">Actions</th>}
+							{isFailed && <th className="text-left p-2">Actions</th>}
 						</tr>
 					</thead>
 					<tbody>
@@ -132,10 +130,10 @@ export function OrdersPage() {
 								<td className="p-2 text-[var(--text)]">{o.quantity}</td>
 								<td className="p-2 text-[var(--text)]">{formatPrice(o.price)}</td>
 								<td className="p-2 text-[var(--text)]">{o.status}</td>
-								{isFailedOrRetryPending && (
+								{isFailed && (
 									<>
 										<td className="p-2 text-[var(--text)]">
-											{o.failure_reason || o.rejection_reason || '-'}
+											{o.reason || o.failure_reason || o.rejection_reason || o.cancelled_reason || '-'}
 										</td>
 										<td className="p-2 text-[var(--text)]">{o.retry_count ?? 0}</td>
 										<td className="p-2 text-[var(--text)]">
@@ -143,7 +141,7 @@ export function OrdersPage() {
 										</td>
 									</>
 								)}
-								{isFailedOrRetryPending && (
+								{isFailed && (
 									<td className="p-2">
 										<div className="flex gap-2">
 											<button
@@ -169,7 +167,7 @@ export function OrdersPage() {
 							<tr>
 								<td
 									className="p-2 text-[var(--muted)]"
-									colSpan={isFailedOrRetryPending ? 9 : 5}
+									colSpan={isFailed ? 9 : 5}
 								>
 									No orders
 								</td>

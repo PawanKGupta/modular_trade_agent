@@ -1,14 +1,12 @@
 import { api } from './client';
 
 export type OrderStatus =
-	| 'amo'
+	| 'pending' // Merged: AMO + PENDING_EXECUTION
 	| 'ongoing'
-	| 'sell'
 	| 'closed'
-	| 'failed'
-	| 'retry_pending'
-	| 'rejected'
-	| 'pending_execution';
+	| 'failed' // Merged: FAILED + RETRY_PENDING + REJECTED
+	| 'cancelled';
+	// Note: SELL status removed - use side='sell' to identify sell orders
 
 export interface Order {
 	id: number;
@@ -19,17 +17,20 @@ export interface Order {
 	status: OrderStatus;
 	created_at: string | null;
 	updated_at: string | null;
+	// Unified reason field (replaces failure_reason, rejection_reason, cancelled_reason)
+	reason?: string | null;
 	// Order monitoring fields
-	failure_reason?: string | null;
 	first_failed_at?: string | null;
 	last_retry_attempt?: string | null;
 	retry_count?: number;
-	rejection_reason?: string | null;
-	cancelled_reason?: string | null;
 	last_status_check?: string | null;
 	execution_price?: number | null;
 	execution_qty?: number | null;
 	execution_time?: string | null;
+	// Legacy fields (deprecated, kept for backward compatibility)
+	failure_reason?: string | null; // Deprecated: use reason
+	rejection_reason?: string | null; // Deprecated: use reason
+	cancelled_reason?: string | null; // Deprecated: use reason
 }
 
 export interface ListOrdersParams {
