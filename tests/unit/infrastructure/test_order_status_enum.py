@@ -17,16 +17,13 @@ class TestOrderStatusEnum:
     """Test OrderStatus enum values and behavior"""
 
     def test_all_status_values_exist(self):
-        """Test that all expected status values exist"""
-        assert OrderStatus.AMO == "amo"
+        """Test that all expected status values exist (simplified: 9 → 5 statuses)"""
+        assert OrderStatus.PENDING == "pending"  # Merged: AMO + PENDING_EXECUTION
         assert OrderStatus.ONGOING == "ongoing"
-        assert OrderStatus.SELL == "sell"
         assert OrderStatus.CLOSED == "closed"
-        assert OrderStatus.FAILED == "failed"
-        assert OrderStatus.RETRY_PENDING == "retry_pending"
-        assert OrderStatus.REJECTED == "rejected"
-        assert OrderStatus.PENDING_EXECUTION == "pending_execution"
-        assert OrderStatus.CANCELLED == "cancelled"  # Added in Bug #68
+        assert OrderStatus.FAILED == "failed"  # Merged: FAILED + RETRY_PENDING + REJECTED
+        assert OrderStatus.CANCELLED == "cancelled"
+        # Note: SELL status removed - use side='sell' to identify sell orders
 
     def test_status_values_are_lowercase(self):
         """Test that all status values are lowercase strings"""
@@ -36,18 +33,19 @@ class TestOrderStatusEnum:
 
     def test_create_status_from_string(self):
         """Test creating OrderStatus from string value"""
-        assert OrderStatus("amo") == OrderStatus.AMO
+        assert OrderStatus("pending") == OrderStatus.PENDING  # Merged: AMO + PENDING_EXECUTION
         assert OrderStatus("ongoing") == OrderStatus.ONGOING
-        assert OrderStatus("failed") == OrderStatus.FAILED
-        assert OrderStatus("retry_pending") == OrderStatus.RETRY_PENDING
-        assert OrderStatus("rejected") == OrderStatus.REJECTED
-        assert OrderStatus("pending_execution") == OrderStatus.PENDING_EXECUTION
+        assert (
+            OrderStatus("failed") == OrderStatus.FAILED
+        )  # Merged: FAILED + RETRY_PENDING + REJECTED
+        assert OrderStatus("closed") == OrderStatus.CLOSED
+        assert OrderStatus("cancelled") == OrderStatus.CANCELLED
 
     def test_create_status_from_uppercase_string(self):
         """Test that creating from uppercase string works (case-insensitive)"""
         # Note: This depends on implementation - may need to handle case conversion
         # For now, test that lowercase works
-        assert OrderStatus("AMO".lower()) == OrderStatus.AMO
+        assert OrderStatus("PENDING".lower()) == OrderStatus.PENDING
         assert OrderStatus("FAILED".lower()) == OrderStatus.FAILED
 
     def test_invalid_status_raises_value_error(self):
@@ -57,31 +55,28 @@ class TestOrderStatusEnum:
 
     def test_status_comparison(self):
         """Test that status values can be compared"""
-        assert OrderStatus.AMO != OrderStatus.FAILED
+        assert OrderStatus.PENDING != OrderStatus.FAILED
         assert OrderStatus.FAILED == OrderStatus.FAILED
-        assert OrderStatus.RETRY_PENDING != OrderStatus.REJECTED
+        assert OrderStatus.PENDING != OrderStatus.ONGOING
 
     def test_status_string_representation(self):
         """Test string representation of status"""
         # str() returns the enum name, .value returns the string value
-        assert OrderStatus.AMO.value == "amo"
+        assert OrderStatus.PENDING.value == "pending"
         assert OrderStatus.FAILED.value == "failed"
-        assert OrderStatus.RETRY_PENDING.value == "retry_pending"
+        assert OrderStatus.CANCELLED.value == "cancelled"
         # repr() should include the value
-        assert "retry_pending" in repr(OrderStatus.RETRY_PENDING)
+        assert "pending" in repr(OrderStatus.PENDING)
 
     def test_all_statuses_listed(self):
-        """Test that we have all expected statuses"""
+        """Test that we have all expected statuses (simplified: 9 → 5 statuses)"""
         expected_statuses = {
-            "amo",
+            "pending",  # Merged: AMO + PENDING_EXECUTION
             "ongoing",
-            "sell",
             "closed",
-            "failed",
-            "retry_pending",
-            "rejected",
-            "pending_execution",
-            "cancelled",  # Added in Bug #68
+            "failed",  # Merged: FAILED + RETRY_PENDING + REJECTED
+            "cancelled",
+            # Note: SELL status removed - use side='sell' to identify sell orders
         }
         actual_statuses = {s.value for s in OrderStatus}
         assert actual_statuses == expected_statuses

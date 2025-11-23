@@ -306,6 +306,8 @@ class OrdersRepository:
         if not order.first_failed_at:
             order.first_failed_at = ist_now()
         order.last_retry_attempt = ist_now()
+        # Increment retry_count for monitoring (no max retry limit enforced)
+        order.retry_count = (order.retry_count or 0) + 1
         # Note: retry_pending parameter is ignored - all FAILED orders are retriable
         return self.update(order)
 

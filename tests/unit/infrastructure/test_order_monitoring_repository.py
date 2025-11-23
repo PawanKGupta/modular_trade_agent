@@ -37,7 +37,7 @@ class TestOrderMonitoringRepository:
     """Test order monitoring repository methods"""
 
     def test_mark_failed_with_retry_pending(self, db_session, sample_user):
-        """Test marking order as failed with retry_pending status"""
+        """Test marking order as failed (retry_pending ignored - all FAILED orders are retriable)"""
         repo = OrdersRepository(db_session)
         order = repo.create_amo(
             user_id=sample_user.id,
@@ -51,17 +51,17 @@ class TestOrderMonitoringRepository:
         updated = repo.mark_failed(
             order,
             failure_reason="insufficient_balance",
-            retry_pending=True,
+            retry_pending=True,  # Parameter kept for backward compatibility but ignored
         )
 
-        assert updated.status == OrderStatus.RETRY_PENDING
-        assert updated.failure_reason == "insufficient_balance"
+        assert updated.status == OrderStatus.FAILED  # All failures are FAILED (no RETRY_PENDING)
+        assert updated.reason == "insufficient_balance"  # Use unified reason field
         assert updated.first_failed_at is not None
         assert updated.last_retry_attempt is not None
         assert updated.retry_count == 1
 
     def test_mark_failed_without_retry(self, db_session, sample_user):
-        """Test marking order as failed without retry"""
+        """Test marking order as failed (retry_pending ignored - retry_count always incremented)"""
         repo = OrdersRepository(db_session)
         order = repo.create_amo(
             user_id=sample_user.id,
@@ -75,13 +75,13 @@ class TestOrderMonitoringRepository:
         updated = repo.mark_failed(
             order,
             failure_reason="broker_api_error",
-            retry_pending=False,
+            retry_pending=False,  # Parameter kept for backward compatibility but ignored
         )
 
         assert updated.status == OrderStatus.FAILED
-        assert updated.failure_reason == "broker_api_error"
+        assert updated.reason == "broker_api_error"  # Use unified reason field
         assert updated.first_failed_at is not None
-        assert updated.retry_count == 0
+        assert updated.retry_count == 1  # Always incremented for monitoring (no max retry limit)
 
     def test_mark_failed_increments_retry_count(self, db_session, sample_user):
         """Test that mark_failed increments retry_count on subsequent calls"""
@@ -105,7 +105,7 @@ class TestOrderMonitoringRepository:
         assert order.first_failed_at is not None  # Should preserve original failure time
 
     def test_mark_rejected(self, db_session, sample_user):
-        """Test marking order as rejected"""
+        """Test marking order as rejected (now maps to FAILED with reason prefix)"""
         repo = OrdersRepository(db_session)
         order = repo.create_amo(
             user_id=sample_user.id,
@@ -118,8 +118,10 @@ class TestOrderMonitoringRepository:
 
         updated = repo.mark_rejected(order, "Symbol not tradable")
 
-        assert updated.status == OrderStatus.REJECTED
-        assert updated.rejection_reason == "Symbol not tradable"
+        assert updated.status == OrderStatus.FAILED  # REJECTED merged into FAILED
+        assert (
+            updated.reason == "Broker rejected: Symbol not tradable"
+        )  # Use unified reason field with prefix
         assert updated.last_status_check is not None
 
     def test_mark_cancelled(self, db_session, sample_user):
@@ -136,8 +138,8 @@ class TestOrderMonitoringRepository:
 
         updated = repo.mark_cancelled(order, "Manual cancellation")
 
-        assert updated.status == OrderStatus.CANCELLED  # Changed from CLOSED to CANCELLED
-        assert updated.cancelled_reason == "Manual cancellation"
+        assert updated.status == OrderStatus.CANCELLED
+        assert updated.reason == "Manual cancellation"  # Use unified reason field
         assert updated.closed_at is not None
         assert updated.last_status_check is not None
 
@@ -155,8 +157,8 @@ class TestOrderMonitoringRepository:
 
         updated = repo.mark_cancelled(order)
 
-        assert updated.status == OrderStatus.CANCELLED  # Changed from CLOSED to CANCELLED
-        assert updated.cancelled_reason == "Cancelled"  # Default reason
+        assert updated.status == OrderStatus.CANCELLED
+        assert updated.reason == "Cancelled"  # Use unified reason field (default)
         assert updated.closed_at is not None
 
     def test_mark_executed(self, db_session, sample_user):
@@ -245,7 +247,7 @@ class TestOrderMonitoringRepository:
         repo = OrdersRepository(db_session)
 
         # Create orders with different statuses
-        amo_order = repo.create_amo(
+        repo.create_amo(
             user_id=sample_user.id,
             symbol="RELIANCE",
             side="buy",
@@ -253,7 +255,7 @@ class TestOrderMonitoringRepository:
             quantity=10.0,
             price=None,
         )
-        pending_order = repo.create_amo(
+        repo.create_amo(
             user_id=sample_user.id,
             symbol="TCS",
             side="buy",
@@ -261,7 +263,8 @@ class TestOrderMonitoringRepository:
             quantity=5.0,
             price=None,
         )
-        repo.update(pending_order, status=OrderStatus.PENDING_EXECUTION)
+        # Note: create_amo already sets status to PENDING, so no update needed
+        # PENDING_EXECUTION merged into PENDING
 
         # Create a closed order (should not be included)
         closed_order = repo.create_amo(
@@ -297,7 +300,7 @@ class TestOrderMonitoringRepository:
         )
         repo.mark_failed(failed_order, "insufficient_balance", retry_pending=False)
 
-        # Create retry pending order
+        # Create failed order (retry_pending parameter ignored - all FAILED are retriable)
         retry_order = repo.create_amo(
             user_id=sample_user.id,
             symbol="TCS",
@@ -306,7 +309,9 @@ class TestOrderMonitoringRepository:
             quantity=5.0,
             price=None,
         )
-        repo.mark_failed(retry_order, "insufficient_balance", retry_pending=True)
+        repo.mark_failed(
+            retry_order, "insufficient_balance", retry_pending=True
+        )  # Parameter ignored
 
         # Create successful order (should not be included)
         success_order = repo.create_amo(
@@ -341,14 +346,13 @@ class TestOrderMonitoringRepository:
 
         # Update with monitoring fields
         repo.mark_failed(order, "test_reason", retry_pending=True)
-        repo.update(order, rejection_reason="test_rejection")
+        repo.mark_rejected(order, "test_rejection")  # This will update reason field
 
         # Retrieve via list
         orders = repo.list(sample_user.id)
         retrieved = next(o for o in orders if o.id == order.id)
 
-        assert retrieved.failure_reason == "test_reason"
-        assert retrieved.rejection_reason == "test_rejection"
+        assert retrieved.reason == "Broker rejected: test_rejection"  # Use unified reason field
         assert retrieved.retry_count == 1
         assert retrieved.first_failed_at is not None
 
@@ -364,14 +368,14 @@ class TestOrderMonitoringRepository:
             price=None,
         )
 
-        # AMO -> Failed -> Retry Pending -> Executed
-        assert order.status == OrderStatus.AMO
+        # PENDING -> Failed -> Failed (retry) -> Executed
+        assert order.status == OrderStatus.PENDING  # AMO merged into PENDING
 
         order = repo.mark_failed(order, "insufficient_balance", retry_pending=False)
         assert order.status == OrderStatus.FAILED
 
         order = repo.mark_failed(order, "insufficient_balance", retry_pending=True)
-        assert order.status == OrderStatus.RETRY_PENDING
+        assert order.status == OrderStatus.FAILED  # RETRY_PENDING merged into FAILED
 
         order = repo.mark_executed(order, execution_price=2450.50)
         assert order.status == OrderStatus.ONGOING
@@ -390,8 +394,8 @@ class TestOrderMonitoringRepository:
 
         updated = repo.mark_rejected(order, "Circuit limit hit")
 
-        assert updated.status == OrderStatus.REJECTED
-        assert updated.rejection_reason == "Circuit limit hit"
+        assert updated.status == OrderStatus.FAILED  # REJECTED merged into FAILED
+        assert updated.reason == "Broker rejected: Circuit limit hit"  # Use unified reason field
         assert updated.last_status_check is not None
 
     def test_execution_tracking_fields(self, db_session, sample_user):
