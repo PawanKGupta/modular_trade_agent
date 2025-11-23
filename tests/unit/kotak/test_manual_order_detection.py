@@ -147,16 +147,16 @@ class TestManualOrderDetection:
         broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
-        # Mock DB order with RETRY_PENDING status
+        # Mock DB order with FAILED status (RETRY_PENDING merged into FAILED)
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.symbol = symbol
-        mock_db_order.status = DbOrderStatus.RETRY_PENDING
+        mock_db_order.status = DbOrderStatus.FAILED
         mock_db_order.quantity = 10
         mock_db_order.ticker = ticker
         mock_db_order.retry_count = 0
 
-        auto_trade_engine.orders_repo.get_failed_orders.return_value = [mock_db_order]
+        auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_db_order]
         auto_trade_engine.orders_repo.update = Mock()
 
         # Mock manual order detection
@@ -193,7 +193,7 @@ class TestManualOrderDetection:
         assert call_args[0][0] == mock_db_order
         assert call_args[1]["broker_order_id"] == "MANUAL123"
         assert call_args[1]["quantity"] == 10  # Manual order qty
-        assert call_args[1]["status"] == DbOrderStatus.PENDING_EXECUTION
+        assert call_args[1]["status"] == DbOrderStatus.PENDING
 
         # Verify order was not placed via broker API
         assert not auto_trade_engine.orders.place_market_buy.called
