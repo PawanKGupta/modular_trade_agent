@@ -211,10 +211,20 @@ class TestReentryTrackingWorkflow:
         assert position.last_reentry_price == 2480.0
         assert position.initial_entry_price == 2500.0  # Preserved
 
-    def test_trade_history_syncs_to_positions_with_reentry(self, db_session):
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoOrders")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoPortfolio")
+    def test_trade_history_syncs_to_positions_with_reentry(
+        self, mock_portfolio_cls, mock_orders_cls, mock_auth_cls, db_session, mock_auth
+    ):
         """Test that trade history with reentry data syncs to positions table"""
+        mock_orders_cls.return_value = Mock()
+        mock_portfolio_cls.return_value = Mock()
+        mock_auth_cls.return_value = mock_auth
+
         engine = AutoTradeEngine(
             env_file="test.env",
+            auth=mock_auth,
             db_session=db_session,
             user_id=1,
         )

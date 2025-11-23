@@ -3,12 +3,19 @@ Integration Tests for Paper Trading System
 """
 
 import pytest
-from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTradingBrokerAdapter
-from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
-from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType, Money
+
 from modules.kotak_neo_auto_trader.application.dto import OrderRequest
 from modules.kotak_neo_auto_trader.application.use_cases import PlaceOrderUseCase
-from modules.kotak_neo_auto_trader.domain import OrderVariety, ProductType
+from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
+from modules.kotak_neo_auto_trader.domain import (
+    Money,
+    Order,
+    OrderType,
+    OrderVariety,
+    ProductType,
+    TransactionType,
+)
+from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTradingBrokerAdapter
 
 
 class TestPaperTradingIntegration:
@@ -23,7 +30,7 @@ class TestPaperTradingIntegration:
             enable_fees=False,
             price_source="mock",
             storage_path=str(tmp_path / "paper_trading"),
-            enforce_market_hours=False
+            enforce_market_hours=False,
         )
 
     @pytest.fixture
@@ -32,10 +39,13 @@ class TestPaperTradingIntegration:
         broker = PaperTradingBrokerAdapter(config)
         broker.connect()
 
-        # Set mock prices
+        # Set mock prices (both with and without .NS suffix for compatibility)
         broker.price_provider.set_mock_price("INFY", 1450.00)
+        broker.price_provider.set_mock_price("INFY.NS", 1450.00)
         broker.price_provider.set_mock_price("TCS", 3500.00)
+        broker.price_provider.set_mock_price("TCS.NS", 3500.00)
         broker.price_provider.set_mock_price("RELIANCE", 2500.00)
+        broker.price_provider.set_mock_price("RELIANCE.NS", 2500.00)
 
         yield broker
         broker.reset()
@@ -49,7 +59,7 @@ class TestPaperTradingIntegration:
             symbol="INFY",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
         order_id = broker.place_order(order)
 
@@ -74,7 +84,7 @@ class TestPaperTradingIntegration:
             symbol="TCS",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
         broker.place_order(buy_order)
 
@@ -85,7 +95,7 @@ class TestPaperTradingIntegration:
             symbol="TCS",
             quantity=5,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.SELL
+            transaction_type=TransactionType.SELL,
         )
         broker.place_order(sell_order)
 
@@ -107,7 +117,7 @@ class TestPaperTradingIntegration:
                 symbol=symbol,
                 quantity=5,
                 order_type=OrderType.MARKET,
-                transaction_type=TransactionType.BUY
+                transaction_type=TransactionType.BUY,
             )
             broker.place_order(order)
 
@@ -127,7 +137,7 @@ class TestPaperTradingIntegration:
             symbol="INFY",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
         broker.place_order(order1)
 
@@ -137,7 +147,7 @@ class TestPaperTradingIntegration:
             symbol="INFY",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
         broker.place_order(order2)
 
@@ -152,10 +162,7 @@ class TestPaperTradingIntegration:
         use_case = PlaceOrderUseCase(broker_gateway=broker)
 
         request = OrderRequest.market_buy(
-            symbol="INFY",
-            quantity=10,
-            variety=OrderVariety.REGULAR,
-            product_type=ProductType.CNC
+            symbol="INFY", quantity=10, variety=OrderVariety.REGULAR, product_type=ProductType.CNC
         )
 
         response = use_case.execute(request)
@@ -169,12 +176,13 @@ class TestPaperTradingIntegration:
         broker1 = PaperTradingBrokerAdapter(config)
         broker1.connect()
         broker1.price_provider.set_mock_price("INFY", 1450.00)
+        broker1.price_provider.set_mock_price("INFY.NS", 1450.00)
 
         order = Order(
             symbol="INFY",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
         broker1.place_order(order)
         broker1.disconnect()
@@ -205,7 +213,7 @@ class TestPaperTradingIntegration:
                 symbol=symbol,
                 quantity=5,
                 order_type=OrderType.MARKET,
-                transaction_type=TransactionType.BUY
+                transaction_type=TransactionType.BUY,
             )
             broker.place_order(order)
 
@@ -221,7 +229,7 @@ class TestPaperTradingIntegration:
             quantity=10,
             order_type=OrderType.LIMIT,
             transaction_type=TransactionType.BUY,
-            price=Money(1000.00)  # Well below market
+            price=Money(1000.00),  # Well below market
         )
         order_id = broker.place_order(order)
 
@@ -235,7 +243,7 @@ class TestPaperTradingIntegration:
             symbol="INVALID",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.SELL
+            transaction_type=TransactionType.SELL,
         )
 
         order_id = broker.place_order(order)
@@ -252,7 +260,7 @@ class TestPaperTradingIntegration:
             symbol="INFY",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
         broker.place_order(buy_order)
 
@@ -282,7 +290,7 @@ class TestEdgeCases:
             price_source="mock",
             storage_path=str(tmp_path / "paper_trading"),
             enforce_market_hours=False,
-            check_sufficient_funds=True
+            check_sufficient_funds=True,
         )
         broker = PaperTradingBrokerAdapter(config)
         broker.connect()
@@ -296,7 +304,7 @@ class TestEdgeCases:
             symbol="EXPENSIVE",
             quantity=10,  # Would cost 100,000
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
 
         order_id = broker.place_order(order)
@@ -313,7 +321,7 @@ class TestEdgeCases:
             symbol="CHEAP",
             quantity=9,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
         broker.place_order(order)
 
@@ -323,4 +331,3 @@ class TestEdgeCases:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

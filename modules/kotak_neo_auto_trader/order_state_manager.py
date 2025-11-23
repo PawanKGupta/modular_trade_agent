@@ -678,9 +678,22 @@ class OrderStateManager:
 
                     elif status == OrderStatus.CANCELLED:
                         # Phase 10: Detect manual cancellation
-                        is_manual = order_info.get("is_manual_cancelled", False)
-                        if is_manual:
+                        # Check if there's explicit indication of manual cancellation
+                        rejection_reason = (
+                            OrderFieldExtractor.get_rejection_reason(broker_order) or ""
+                        )
+                        is_explicitly_manual = (
+                            "user" in rejection_reason.lower()
+                            or "manual" in rejection_reason.lower()
+                            or order_info.get("is_manual_cancelled", False)
+                        )
+
+                        # If order is still in tracking AND explicitly marked as manual, treat as manual cancellation
+                        # Otherwise, treat as system cancellation
+                        if is_explicitly_manual and order_id in self.active_buy_orders:
                             # Order was cancelled manually (not by us)
+                            if not order_info.get("is_manual_cancelled", False):
+                                order_info["is_manual_cancelled"] = True
                             self._handle_manual_cancellation(order_id, order_info, broker_order)
                             stats["buy_manual_cancelled"] = stats.get("buy_manual_cancelled", 0) + 1
                         else:

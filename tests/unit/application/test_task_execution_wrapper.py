@@ -290,6 +290,12 @@ class TestTaskExecutionIntegration:
 
             mock_engine = MagicMock()
             mock_engine.load_latest_recommendations.return_value = []
+            mock_engine.retry_pending_orders_from_db.return_value = {
+                "retried": 0,
+                "placed": 0,
+                "failed": 0,
+                "skipped": 0,
+            }
             mock_engine_class.return_value = mock_engine
 
             # Create temp env file

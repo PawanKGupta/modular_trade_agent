@@ -5,13 +5,25 @@ from fastapi.testclient import TestClient
 
 os.environ["DB_URL"] = os.getenv("DB_URL", "sqlite:///./data/test_api_orders.db")
 
+from server.app.core.deps import get_db  # noqa: E402
 from server.app.main import app  # noqa: E402
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 
 
-@pytest.fixture(scope="module")
-def client() -> TestClient:
-    return TestClient(app)
+@pytest.fixture(scope="function")
+def client(db_session) -> TestClient:
+    """Create test client with database session override"""
+
+    def _get_db_override():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = _get_db_override
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
 
 
 def test_orders_list_requires_auth(client: TestClient):
@@ -42,17 +54,20 @@ def test_orders_list_with_auth(client: TestClient):
 
 def test_orders_list_with_new_statuses(client: TestClient, db_session):
     """Test that new order statuses are supported in API"""
-    from src.infrastructure.db.models import UserRole, Users  # noqa: PLC0415
+    from src.infrastructure.db.models import Users  # noqa: PLC0415
 
-    # Create test user
-    user = Users(
-        email="status_tester@example.com",
-        password_hash="hashed",
-        role=UserRole.USER,
-        is_active=True,
+    # Create user via signup API (uses same db_session via override)
+    s = client.post(
+        "/api/v1/auth/signup",
+        json={"email": "status_tester@example.com", "password": "secret123"},
     )
-    db_session.add(user)
-    db_session.commit()
+    assert s.status_code == 200
+    token = s.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Get user from database to get user_id
+    user = db_session.query(Users).filter(Users.email == "status_tester@example.com").first()
+    assert user is not None
 
     # Create orders with different statuses
     repo = OrdersRepository(db_session)
@@ -95,20 +110,6 @@ def test_orders_list_with_new_statuses(client: TestClient, db_session):
     )
     repo.mark_rejected(rejected_order, "Symbol not tradable")
 
-    # Get auth token
-    s = client.post(
-        "/api/v1/auth/login",
-        data={"username": "status_tester@example.com", "password": "secret123"},
-    )
-    if s.status_code != 200:
-        # Create user if doesn't exist
-        s = client.post(
-            "/api/v1/auth/signup",
-            json={"email": "status_tester@example.com", "password": "secret123"},
-        )
-    token = s.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
     # Test filtering by new statuses
     for status in ["failed", "retry_pending", "rejected"]:
         r = client.get(f"/api/v1/user/orders?status={status}", headers=headers)
@@ -148,17 +149,21 @@ def test_orders_status_validation(client: TestClient):
 
 def test_orders_with_all_statuses(client: TestClient, db_session):
     """Test that all status values work correctly"""
-    from src.infrastructure.db.models import UserRole, Users
+    from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: PLC0415
+    from src.infrastructure.db.models import Users  # noqa: PLC0415
 
-    # Create user
-    user = Users(
-        email="all_status_tester@example.com",
-        password_hash="hashed",
-        role=UserRole.USER,
-        is_active=True,
+    # Create user via signup API (uses same db_session via override)
+    s = client.post(
+        "/api/v1/auth/signup",
+        json={"email": "all_status_tester@example.com", "password": "secret123"},
     )
-    db_session.add(user)
-    db_session.commit()
+    assert s.status_code == 200
+    token = s.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Get user from database to get user_id
+    user = db_session.query(Users).filter(Users.email == "all_status_tester@example.com").first()
+    assert user is not None
 
     # Create orders with all new statuses
     repo = OrdersRepository(db_session)
@@ -172,18 +177,9 @@ def test_orders_with_all_statuses(client: TestClient, db_session):
         quantity=1.0,
         price=None,
     )
-    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
     repo.update(pending_order, status=DbOrderStatus.PENDING_EXECUTION)
     db_session.commit()
-
-    # Get auth token
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "all_status_tester@example.com", "password": "secret123"},
-    )
-    token = s.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
 
     # Test filtering by pending_execution
     r = client.get("/api/v1/user/orders?status=pending_execution", headers=headers)
@@ -193,11 +189,11 @@ def test_orders_with_all_statuses(client: TestClient, db_session):
 
 def test_retry_order_success(client: TestClient, db_session):
     """Test retrying a failed order"""
-    from jose import jwt
+    from jose import jwt  # noqa: PLC0415
 
-    from server.app.core.config import settings
+    from server.app.core.config import settings  # noqa: PLC0415
 
-    # Create user via signup to ensure proper session
+    # Create user via signup API (uses same db_session via override)
     s = client.post(
         "/api/v1/auth/signup",
         json={"email": "retry_tester@example.com", "password": "secret123"},
@@ -206,7 +202,7 @@ def test_retry_order_success(client: TestClient, db_session):
     token = s.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Get user_id from token
+    # Get user_id from token (matches user created by signup API)
     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     user_id = payload["uid"]
 

@@ -2,19 +2,23 @@
 Basic tests for paper trading system
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTradingBrokerAdapter
 from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
 from modules.kotak_neo_auto_trader.domain import (
-    Order, Money, OrderType, TransactionType, OrderStatus, ProductType, OrderVariety, Exchange
+    Order,
+    OrderStatus,
+    OrderType,
+    TransactionType,
 )
+from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTradingBrokerAdapter
 
 
 @pytest.fixture
@@ -26,7 +30,7 @@ def paper_config():
         enable_fees=False,
         price_source="mock",
         storage_path="paper_trading/test",
-        enforce_market_hours=False
+        enforce_market_hours=False,
     )
 
 
@@ -90,7 +94,7 @@ class TestMarketOrders:
             symbol="INFY",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
 
         order_id = broker.place_order(order)
@@ -106,7 +110,7 @@ class TestMarketOrders:
             symbol="TCS",
             quantity=5,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
 
         broker.place_order(order)
@@ -122,12 +126,13 @@ class TestMarketOrders:
         initial_balance = broker.get_available_balance().amount
 
         broker.price_provider.set_mock_price("RELIANCE", 2500.00)
+        broker.price_provider.set_mock_price("RELIANCE.NS", 2500.00)
 
         order = Order(
             symbol="RELIANCE",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
 
         broker.place_order(order)
@@ -148,7 +153,7 @@ class TestSellOrders:
             symbol="INFY",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.SELL
+            transaction_type=TransactionType.SELL,
         )
 
         # Should place order but execution will fail
@@ -162,13 +167,14 @@ class TestSellOrders:
         """Test selling with holding succeeds"""
         broker.connect()
         broker.price_provider.set_mock_price("INFY", 1450.00)
+        broker.price_provider.set_mock_price("INFY.NS", 1450.00)
 
         # First buy
         buy_order = Order(
             symbol="INFY",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
         broker.place_order(buy_order)
 
@@ -177,7 +183,7 @@ class TestSellOrders:
             symbol="INFY",
             quantity=5,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.SELL
+            transaction_type=TransactionType.SELL,
         )
         order_id = broker.place_order(sell_order)
 
@@ -195,21 +201,23 @@ class TestPortfolio:
 
         # First buy at 1500
         broker.price_provider.set_mock_price("INFY", 1500.00)
+        broker.price_provider.set_mock_price("INFY.NS", 1500.00)
         order1 = Order(
             symbol="INFY",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
         broker.place_order(order1)
 
         # Second buy at 1400 (averaged down)
         broker.price_provider.set_mock_price("INFY", 1400.00)
+        broker.price_provider.set_mock_price("INFY.NS", 1400.00)
         order2 = Order(
             symbol="INFY",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
         broker.place_order(order2)
 
@@ -233,7 +241,7 @@ class TestOrderRetrieval:
                 symbol="INFY",
                 quantity=5,
                 order_type=OrderType.MARKET,
-                transaction_type=TransactionType.BUY
+                transaction_type=TransactionType.BUY,
             )
             broker.place_order(order)
 
@@ -247,9 +255,24 @@ class TestOrderRetrieval:
         broker.price_provider.set_mock_price("TCS", 3500.00)
 
         # Place orders for different symbols
-        order1 = Order(symbol="INFY", quantity=10, order_type=OrderType.MARKET, transaction_type=TransactionType.BUY)
-        order2 = Order(symbol="TCS", quantity=5, order_type=OrderType.MARKET, transaction_type=TransactionType.BUY)
-        order3 = Order(symbol="INFY", quantity=5, order_type=OrderType.MARKET, transaction_type=TransactionType.BUY)
+        order1 = Order(
+            symbol="INFY",
+            quantity=10,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+        )
+        order2 = Order(
+            symbol="TCS",
+            quantity=5,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+        )
+        order3 = Order(
+            symbol="INFY",
+            quantity=5,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+        )
 
         broker.place_order(order1)
         broker.place_order(order2)
@@ -281,12 +304,13 @@ class TestPersistence:
         broker1 = PaperTradingBrokerAdapter(paper_config)
         broker1.connect()
         broker1.price_provider.set_mock_price("INFY", 1450.00)
+        broker1.price_provider.set_mock_price("INFY.NS", 1450.00)
 
         order = Order(
             symbol="INFY",
             quantity=10,
             order_type=OrderType.MARKET,
-            transaction_type=TransactionType.BUY
+            transaction_type=TransactionType.BUY,
         )
         broker1.place_order(order)
         broker1.disconnect()
@@ -306,4 +330,3 @@ class TestPersistence:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-
