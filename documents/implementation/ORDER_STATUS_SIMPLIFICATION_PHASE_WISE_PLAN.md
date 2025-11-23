@@ -328,73 +328,77 @@ This document provides a detailed, phase-wise implementation plan for the order 
   - [ ] Update tests (Phase 5)
 
   **3.1.5 evaluate_reentries_and_exits()**
-  - [ ] Update sell order creation to use `PENDING` status with `side='sell'`
-  - [ ] Set reason: "Sell order placed at EMA9 target"
-  - [ ] Update tests
+  - [x] Update sell order creation to use `PENDING` status with `side='sell'` (already using side column)
+  - [x] Set reason: "Sell order placed at EMA9 target" (handled via order_tracker)
+  - [ ] Update tests (Phase 5)
 
   **3.1.6 has_active_buy_order()**
-  - [ ] Update status checks to use new statuses
-  - [ ] Filter by `side == "buy"`
-  - [ ] Update tests
+  - [x] Update status checks to use new statuses
+  - [x] Filter by `side == "buy"`
+  - [ ] Update tests (Phase 5)
 
-**Deliverable**: AutoTradeEngine fully updated
+**Deliverable**: ✅ AutoTradeEngine fully updated
 
 #### 3.2 Update OrderTracker
-- [ ] Update `modules/kotak_neo_auto_trader/order_tracker.py`:
+- [x] Update `modules/kotak_neo_auto_trader/order_tracker.py`:
 
   **3.2.1 add_pending_order()**
-  - [ ] Remove status update from `AMO` to `PENDING_EXECUTION`
-  - [ ] `create_amo()` already sets `PENDING`
-  - [ ] Add reason: "Order placed - waiting for market open"
-  - [ ] Update tests
+  - [x] Remove status update from `AMO` to `PENDING_EXECUTION` (create_amo already sets PENDING)
+  - [x] `create_amo()` already sets `PENDING`
+  - [x] Add reason: "Order placed - waiting for market open" (handled in create_amo)
+  - [ ] Update tests (Phase 5)
 
   **3.2.2 update_order_status()**
-  - [ ] Update status mapping:
+  - [x] Update status mapping:
     - `PENDING` → `PENDING` (not `PENDING_EXECUTION`)
-    - `REJECTED` → `FAILED` (not `REJECTED`)
+    - `REJECTED` → `FAILED` (not `REJECTED`) (via mark_rejected)
     - `CANCELLED` → `CANCELLED` (not `CLOSED`)
-  - [ ] Update reason field when status changes
-  - [ ] Update tests
+  - [x] Update reason field when status changes
+  - [ ] Update tests (Phase 5)
 
-**Deliverable**: OrderTracker updated
+  **3.2.3 get_pending_orders()**
+  - [x] Update status checks to use new statuses
+  - [ ] Update tests (Phase 5)
+
+**Deliverable**: ✅ OrderTracker updated
 
 #### 3.3 Update OrderStateManager
-- [ ] Update `modules/kotak_neo_auto_trader/order_state_manager.py`:
+- [x] Update `modules/kotak_neo_auto_trader/order_state_manager.py`:
 
   **3.3.1 sync_with_broker()**
-  - [ ] Update status handling: `REJECTED` → `FAILED` (via `mark_rejected()`)
-  - [ ] Update reason field when status changes
-  - [ ] Update tests
+  - [x] Update status handling: `REJECTED` → `FAILED` (via `mark_rejected()`) (uses domain OrderStatus, not DbOrderStatus)
+  - [x] Update reason field when status changes (uses domain enums, no changes needed)
+  - [ ] Update tests (Phase 5)
 
-**Deliverable**: OrderStateManager updated
+**Deliverable**: ✅ OrderStateManager updated (uses domain enums, no changes needed)
 
 #### 3.4 Update Sell Engine
-- [ ] Update `modules/kotak_neo_auto_trader/sell_engine.py`:
-  - [ ] Change sell order creation from `OrderStatus.SELL` to `OrderStatus.PENDING` with `side='sell'`
-  - [ ] Set reason: "Sell order placed at EMA9 target"
-  - [ ] Update tests
+- [x] Update `modules/kotak_neo_auto_trader/sell_engine.py`:
+  - [x] Change sell order creation from `OrderStatus.SELL` to `OrderStatus.PENDING` with `side='sell'` (already using side column)
+  - [x] Set reason: "Sell order placed at EMA9 target" (handled via order_tracker)
+  - [ ] Update tests (Phase 5)
 
-- [ ] Update `modules/kotak_neo_auto_trader/run_sell_orders.py`:
-  - [ ] Change sell order monitoring from `status == OrderStatus.SELL` to `side == "sell" and status == OrderStatus.PENDING`
-  - [ ] Update all queries to filter by `side` instead of status
-  - [ ] Update tests
+- [x] Update `modules/kotak_neo_auto_trader/run_sell_orders.py`:
+  - [x] Change sell order monitoring from `status == OrderStatus.SELL` to `side == "sell" and status == OrderStatus.PENDING` (already using side column)
+  - [x] Update all queries to filter by `side` instead of status (already implemented)
+  - [ ] Update tests (Phase 5)
 
-**Deliverable**: Sell engine updated
+**Deliverable**: ✅ Sell engine updated (already using side column)
 
 #### 3.5 Update Unified Order Monitor
-- [ ] Update `modules/kotak_neo_auto_trader/unified_order_monitor.py`:
+- [x] Update `modules/kotak_neo_auto_trader/unified_order_monitor.py`:
 
   **3.5.1 check_buy_order_status()**
-  - [ ] Update status checks to use new statuses
-  - [ ] Filter by `side == "buy"`
-  - [ ] Update tests
+  - [x] Update status checks to use new statuses (uses domain OrderStatus, not DbOrderStatus - no changes needed)
+  - [x] Filter by `side == "buy"` (already implemented)
+  - [ ] Update tests (Phase 5)
 
   **3.5.2 check_sell_order_status()**
-  - [ ] Change from `status == OrderStatus.SELL` to `side == "sell" and status == OrderStatus.PENDING`
-  - [ ] Update all status checks
-  - [ ] Update tests
+  - [x] Change from `status == OrderStatus.SELL` to `side == "sell" and status == OrderStatus.PENDING` (uses domain OrderStatus, already using side column)
+  - [x] Update all status checks (uses domain enums, no changes needed)
+  - [ ] Update tests (Phase 5)
 
-**Deliverable**: Unified order monitor updated
+**Deliverable**: ✅ Unified order monitor updated (uses domain enums, no changes needed)
 
 #### 3.6 Update Utility Functions
 - [x] Create `modules/kotak_neo_auto_trader/utils/trading_day_utils.py`:
@@ -403,32 +407,32 @@ This document provides a detailed, phase-wise implementation plan for the order 
   - [ ] Add tests (Phase 5)
 
 - [x] Update `modules/kotak_neo_auto_trader/utils/order_status_parser.py`:
-  - [ ] Update broker status mapping to use new statuses
-  - [ ] Ensure `REJECTED` maps to `FAILED`
-  - [ ] Update tests
+  - [x] Update broker status mapping to use new statuses (uses domain OrderStatus, not DbOrderStatus - no changes needed)
+  - [x] Ensure `REJECTED` maps to `FAILED` (uses domain OrderStatus, mapping handled in repository layer)
+  - [ ] Update tests (Phase 5)
 
-- [ ] Update `modules/kotak_neo_auto_trader/utils/order_field_extractor.py`:
-  - [ ] Update status extraction logic if needed
-  - [ ] Update tests
+- [x] Update `modules/kotak_neo_auto_trader/utils/order_field_extractor.py`:
+  - [x] Update status extraction logic if needed (uses domain OrderStatus, no changes needed)
+  - [ ] Update tests (Phase 5)
 
-**Deliverable**: Utility functions updated
+**Deliverable**: ✅ Utility functions updated (uses domain enums, no changes needed)
 
 ### Testing
 
 #### Unit Tests
-- [ ] Update all existing unit tests (41+ files)
-- [ ] Test status transitions
-- [ ] Test sell order logic with `side='sell'`
-- [ ] Test retry logic with unified `FAILED` status
-- [ ] Test expiry logic
-- [ ] Test reason field handling
+- [ ] Update all existing unit tests (41+ files) (Phase 5)
+- [ ] Test status transitions (Phase 5)
+- [ ] Test sell order logic with `side='sell'` (Phase 5)
+- [ ] Test retry logic with unified `FAILED` status (Phase 5)
+- [ ] Test expiry logic (Phase 5)
+- [ ] Test reason field handling (Phase 5)
 
 #### Integration Tests
-- [ ] Test complete order placement flow
-- [ ] Test sell order flow
-- [ ] Test retry flow
-- [ ] Test expiry flow
-- [ ] Test status synchronization
+- [ ] Test complete order placement flow (Phase 5)
+- [ ] Test sell order flow (Phase 5)
+- [ ] Test retry flow (Phase 5)
+- [ ] Test expiry flow (Phase 5)
+- [ ] Test status synchronization (Phase 5)
 
 ### Exit Criteria
 - ✅ All business logic files updated
