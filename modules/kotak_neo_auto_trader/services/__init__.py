@@ -5,9 +5,12 @@ Centralized services for price fetching, indicators, portfolio management, etc.
 These services eliminate duplicate code across trading services.
 """
 
+from .indicator_service import IndicatorService, get_indicator_service
 from .price_service import PriceService, get_price_service
 
 __all__ = [
     "PriceService",
     "get_price_service",
+    "IndicatorService",
+    "get_indicator_service",
 ]
