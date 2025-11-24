@@ -7,6 +7,7 @@ Create Date: 2025-11-23 20:00:00.000000+00:00
 
 import sqlalchemy as sa
 from sqlalchemy import inspect
+from sqlalchemy.dialects import sqlite
 
 from alembic import op
 
@@ -32,15 +33,27 @@ def upgrade() -> None:
 
     orders_columns = [col["name"] for col in inspector.get_columns("orders")]
 
-    # Drop legacy reason columns
+    # Check if we need to drop any columns
+    columns_to_drop = []
     if "failure_reason" in orders_columns:
-        op.drop_column("orders", "failure_reason")
-
+        columns_to_drop.append("failure_reason")
     if "rejection_reason" in orders_columns:
-        op.drop_column("orders", "rejection_reason")
-
+        columns_to_drop.append("rejection_reason")
     if "cancelled_reason" in orders_columns:
-        op.drop_column("orders", "cancelled_reason")
+        columns_to_drop.append("cancelled_reason")
+
+    if not columns_to_drop:
+        return
+
+    # SQLite requires batch mode for dropping columns
+    if isinstance(conn.dialect, sqlite.dialect):
+        with op.batch_alter_table("orders", schema=None) as batch_op:
+            for col_name in columns_to_drop:
+                batch_op.drop_column(col_name)
+    else:
+        # For PostgreSQL and other databases, drop columns directly
+        for col_name in columns_to_drop:
+            op.drop_column("orders", col_name)
 
 
 def downgrade() -> None:
@@ -58,12 +71,24 @@ def downgrade() -> None:
 
     orders_columns = [col["name"] for col in inspector.get_columns("orders")]
 
-    # Restore legacy reason columns (empty, as we can't split 'reason' back)
+    # Check which columns need to be added
+    columns_to_add = []
     if "failure_reason" not in orders_columns:
-        op.add_column("orders", sa.Column("failure_reason", sa.String(256), nullable=True))
-
+        columns_to_add.append(("failure_reason", sa.String(256)))
     if "rejection_reason" not in orders_columns:
-        op.add_column("orders", sa.Column("rejection_reason", sa.String(256), nullable=True))
-
+        columns_to_add.append(("rejection_reason", sa.String(256)))
     if "cancelled_reason" not in orders_columns:
-        op.add_column("orders", sa.Column("cancelled_reason", sa.String(256), nullable=True))
+        columns_to_add.append(("cancelled_reason", sa.String(256)))
+
+    if not columns_to_add:
+        return
+
+    # SQLite requires batch mode for adding columns (though adding is usually fine)
+    if isinstance(conn.dialect, sqlite.dialect):
+        with op.batch_alter_table("orders", schema=None) as batch_op:
+            for col_name, col_type in columns_to_add:
+                batch_op.add_column(sa.Column(col_name, col_type, nullable=True))
+    else:
+        # For PostgreSQL and other databases, add columns directly
+        for col_name, col_type in columns_to_add:
+            op.add_column("orders", sa.Column(col_name, col_type, nullable=True))
