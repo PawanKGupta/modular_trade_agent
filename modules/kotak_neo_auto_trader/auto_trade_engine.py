@@ -214,6 +214,18 @@ class AutoTradeEngine:
             price_service=self.price_service, enable_caching=True
         )
 
+        # Initialize PortfolioService (Phase 2.1: Portfolio & Position Services)
+        # Portfolio and orders will be set after login
+        from modules.kotak_neo_auto_trader.services import get_portfolio_service
+
+        self.portfolio_service = get_portfolio_service(
+            portfolio=None,  # Will be set after login
+            orders=None,  # Will be set after login
+            auth=self.auth,
+            strategy_config=self.strategy_config,
+            enable_caching=True,
+        )
+
     # ---------------------- Storage Abstraction (Phase 2.3) ----------------------
     def _load_trades_history(self) -> dict[str, Any]:
         """
@@ -1234,6 +1246,10 @@ class AutoTradeEngine:
             self.orders = KotakNeoOrders(self.auth)
             self.portfolio = KotakNeoPortfolio(self.auth)
 
+            # Update PortfolioService with portfolio and orders (Phase 2.1)
+            self.portfolio_service.portfolio = self.portfolio
+            self.portfolio_service.orders = self.orders
+
             # Initialize scrip master for symbol resolution
             try:
                 self.scrip_master = KotakNeoScripMaster(
@@ -1413,18 +1429,34 @@ class AutoTradeEngine:
         return sorted(symbols)
 
     def current_symbols_in_portfolio(self) -> list[str]:
-        symbols = set(self._fetch_holdings_symbols())
-        # Include pending BUY orders too
-        pend = self.orders.get_pending_orders() if self.orders else []
-        for o in pend or []:
-            if str(o.get("transactionType", "")).upper().startswith("B"):
-                sym = str(o.get("tradingSymbol") or "").upper()
-                if sym:
-                    symbols.add(sym)
-        return sorted(symbols)
+        """
+        Get list of symbols currently in portfolio.
+
+        DEPRECATED: Use portfolio_service.get_current_positions() instead.
+        This method is kept for backward compatibility and delegates to PortfolioService.
+        """
+        # Update portfolio_service with current portfolio/orders if available
+        if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
+            self.portfolio_service.portfolio = self.portfolio
+        if self.orders and self.portfolio_service.orders != self.orders:
+            self.portfolio_service.orders = self.orders
+
+        return self.portfolio_service.get_current_positions(include_pending=True)
 
     def portfolio_size(self) -> int:
-        return len(self.current_symbols_in_portfolio())
+        """
+        Get current portfolio size.
+
+        DEPRECATED: Use portfolio_service.get_portfolio_count() instead.
+        This method is kept for backward compatibility and delegates to PortfolioService.
+        """
+        # Update portfolio_service with current portfolio/orders if available
+        if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
+            self.portfolio_service.portfolio = self.portfolio
+        if self.orders and self.portfolio_service.orders != self.orders:
+            self.portfolio_service.orders = self.orders
+
+        return self.portfolio_service.get_portfolio_count(include_pending=True)
 
     def get_affordable_qty(self, price: float) -> int:
         """Return maximum whole quantity affordable from available cash/margin."""
@@ -1555,26 +1587,19 @@ class AutoTradeEngine:
         return [base, f"{base}-EQ", f"{base}-BE", f"{base}-BL", f"{base}-BZ"]
 
     def has_holding(self, base_symbol: str) -> bool:
-        if not self.portfolio:
-            return False
-        variants = set(self._symbol_variants(base_symbol))
-        h = self.portfolio.get_holdings() or {}
+        """
+        Check if symbol is in holdings.
 
-        # Check for 2FA gate - if detected, force re-login and retry once
-        if self._response_requires_2fa(h) and hasattr(self.auth, "force_relogin"):
-            logger.info("2FA gate detected in holdings check, attempting re-login...")
-            try:
-                if self.auth.force_relogin():
-                    h = self.portfolio.get_holdings() or {}
-                    logger.debug("Holdings re-fetched after re-login")
-            except Exception as e:
-                logger.warning(f"Re-login failed during holdings check: {e}")
+        DEPRECATED: Use portfolio_service.has_position() instead.
+        This method is kept for backward compatibility and delegates to PortfolioService.
+        """
+        # Update portfolio_service with current portfolio/orders if available
+        if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
+            self.portfolio_service.portfolio = self.portfolio
+        if self.orders and self.portfolio_service.orders != self.orders:
+            self.portfolio_service.orders = self.orders
 
-        for item in h.get("data") or []:
-            sym = str(item.get("tradingSymbol") or "").upper()
-            if sym in variants:
-                return True
-        return False
+        return self.portfolio_service.has_position(base_symbol)
 
     def has_active_buy_order(self, base_symbol: str) -> bool:
         """
@@ -2310,18 +2335,23 @@ class AutoTradeEngine:
 
             logger.info(f"Found {len(retriable_orders)} retriable FAILED orders to retry")
 
-            # Check portfolio limit
-            try:
-                current_count = len(self.current_symbols_in_portfolio())
-            except Exception:
-                current_count = self.portfolio_size()
+            # Check portfolio limit using PortfolioService
+            # Update portfolio_service with current portfolio/orders if available
+            if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
+                self.portfolio_service.portfolio = self.portfolio
+            if self.orders and self.portfolio_service.orders != self.orders:
+                self.portfolio_service.orders = self.orders
+
+            has_capacity, current_count, max_size = self.portfolio_service.check_portfolio_capacity(
+                include_pending=True
+            )
 
             for db_order in retriable_orders:
                 summary["retried"] += 1
                 symbol = db_order.symbol
 
                 # Check portfolio limit
-                if current_count >= self.strategy_config.max_portfolio_size:
+                if not has_capacity:
                     logger.info(
                         f"Portfolio limit reached ({current_count}/{self.strategy_config.max_portfolio_size}); "
                         "skipping remaining retries"
@@ -2709,23 +2739,29 @@ class AutoTradeEngine:
 
         # OPTIMIZATION: Cache portfolio snapshot and pre-fetch indicators for all recommendations
         # This reduces API calls from O(n) to O(1) for portfolio checks and batches indicator fetches
+        # Update portfolio_service with current portfolio/orders if available
+        if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
+            self.portfolio_service.portfolio = self.portfolio
+        if self.orders and self.portfolio_service.orders != self.orders:
+            self.portfolio_service.orders = self.orders
+
         cached_portfolio_count = None
         cached_holdings_symbols = set()
         try:
-            cached_portfolio_count = len(self.current_symbols_in_portfolio())
-            cached_holdings = self.portfolio.get_holdings() or {}
-            if isinstance(cached_holdings, dict) and "data" in cached_holdings:
-                for item in cached_holdings["data"]:
-                    sym = (
-                        str(item.get("tradingSymbol", ""))
-                        .upper()
-                        .replace("-EQ", "")
-                        .replace("-BE", "")
-                        .replace("-BL", "")
-                        .replace("-BZ", "")
-                    )
-                    if sym:
-                        cached_holdings_symbols.add(sym)
+            cached_portfolio_count = self.portfolio_service.get_portfolio_count(
+                include_pending=True
+            )
+            # Get holdings symbols from PortfolioService (base symbols only)
+            cached_positions = self.portfolio_service.get_current_positions(
+                include_pending=False
+            )  # Only actual holdings, not pending
+            # Extract base symbols (remove -EQ, -BE, etc. suffixes)
+            for sym in cached_positions:
+                base_sym = (
+                    sym.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "")
+                )
+                if base_sym:
+                    cached_holdings_symbols.add(base_sym)
             logger.info(
                 f"Cached portfolio snapshot: {cached_portfolio_count} positions, {len(cached_holdings_symbols)} symbols"
             )
@@ -2844,13 +2880,16 @@ class AutoTradeEngine:
             if cached_portfolio_count is not None:
                 current_count = cached_portfolio_count
             else:
-                try:
-                    current_count = len(self.current_symbols_in_portfolio())
-                except Exception:
-                    current_count = self.portfolio_size()
-            if current_count >= self.strategy_config.max_portfolio_size:
+                # Use PortfolioService for portfolio count
+                current_count = self.portfolio_service.get_portfolio_count(include_pending=True)
+
+            # Use PortfolioService for capacity check
+            has_capacity, current_count, max_size = self.portfolio_service.check_portfolio_capacity(
+                include_pending=True
+            )
+            if not has_capacity:
                 logger.info(
-                    f"Portfolio limit reached ({current_count}/{self.strategy_config.max_portfolio_size}); skipping further entries"
+                    f"Portfolio limit reached ({current_count}/{max_size}); skipping further entries"
                 )
                 summary["skipped_portfolio_limit"] += 1
                 ticker_attempt["status"] = "skipped"
