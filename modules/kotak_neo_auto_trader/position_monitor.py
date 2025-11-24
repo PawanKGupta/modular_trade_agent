@@ -18,9 +18,9 @@ sys.path.insert(0, str(project_root))
 from modules.kotak_neo_auto_trader.live_price_manager import get_live_price_manager  # noqa: E402
 from modules.kotak_neo_auto_trader.services import (  # noqa: E402
     get_indicator_service,
+    get_position_loader,
     get_price_service,
 )
-from modules.kotak_neo_auto_trader.storage import load_history  # noqa: E402
 from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier  # noqa: E402
 from utils.logger import logger  # noqa: E402
 
@@ -102,6 +102,10 @@ class PositionMonitor:
         self.indicator_service = get_indicator_service(
             price_service=self.price_service, enable_caching=True
         )
+        # Initialize PositionLoader (Phase 2.2: Portfolio & Position Services)
+        self.position_loader = get_position_loader(
+            history_path=self.history_path, enable_caching=True
+        )
 
         # Alert thresholds
         self.large_move_threshold = 3.0  # 3% price move
@@ -121,9 +125,8 @@ class PositionMonitor:
         logger.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("")
 
-        # Get open positions from history
-        history = load_history(self.history_path)
-        open_positions = self._get_open_positions(history)
+        # Get open positions using PositionLoader (Phase 2.2)
+        open_positions = self.position_loader.get_positions_by_symbol()
 
         if not open_positions:
             logger.info("No open positions to monitor")
@@ -204,17 +207,13 @@ class PositionMonitor:
         return results
 
     def _get_open_positions(self, history: dict) -> dict[str, list[dict]]:
-        """Get all open positions grouped by symbol."""
-        open_positions = defaultdict(list)
-        trades = history.get("trades", [])
+        """
+        Get all open positions grouped by symbol.
 
-        for trade in trades:
-            if trade.get("status") == "open":
-                symbol = trade.get("symbol")
-                if symbol:
-                    open_positions[symbol].append(trade)
-
-        return dict(open_positions)
+        DEPRECATED: Use position_loader.get_positions_by_symbol() instead.
+        This method is kept for backward compatibility and delegates to PositionLoader.
+        """
+        return self.position_loader.get_positions_by_symbol()
 
     def _check_position_status(self, symbol: str, entries: list[dict]) -> PositionStatus | None:
         """Check status of a position and generate alerts."""
