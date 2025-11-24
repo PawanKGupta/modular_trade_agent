@@ -6,6 +6,11 @@ These services eliminate duplicate code across trading services.
 """
 
 from .indicator_service import IndicatorService, get_indicator_service
+from .order_validation_service import (
+    OrderValidationService,
+    ValidationResult,
+    get_order_validation_service,
+)
 from .portfolio_service import PortfolioService, get_portfolio_service
 from .position_loader import PositionLoader, get_position_loader
 from .price_service import PriceService, get_price_service
@@ -19,4 +24,7 @@ __all__ = [
     "get_portfolio_service",
     "PositionLoader",
     "get_position_loader",
+    "OrderValidationService",
+    "ValidationResult",
+    "get_order_validation_service",
 ]
