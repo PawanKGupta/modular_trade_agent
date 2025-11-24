@@ -2367,14 +2367,20 @@ class AutoTradeEngine:
 
             logger.info(f"Found {len(retriable_orders)} retriable FAILED orders to retry")
 
-            # Check portfolio limit using PortfolioService
+            # Check portfolio limit using OrderValidationService (Phase 3.1)
             # Update portfolio_service with current portfolio/orders if available
             if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
                 self.portfolio_service.portfolio = self.portfolio
             if self.orders and self.portfolio_service.orders != self.orders:
                 self.portfolio_service.orders = self.orders
 
-            has_capacity, current_count, max_size = self.portfolio_service.check_portfolio_capacity(
+            # Update OrderValidationService with portfolio/orders if available
+            if self.portfolio and self.order_validation_service.portfolio != self.portfolio:
+                self.order_validation_service.portfolio = self.portfolio
+            if self.orders and self.order_validation_service.orders != self.orders:
+                self.order_validation_service.orders = self.orders
+
+            has_capacity, current_count, max_size = self.order_validation_service.check_portfolio_capacity(
                 include_pending=True
             )
 
@@ -2392,39 +2398,19 @@ class AutoTradeEngine:
                     break
 
                 # Duplicate prevention: Check if already in holdings
-                # Try broker API first, fallback to database if API fails
-                already_in_holdings = False
-                try:
-                    already_in_holdings = self.has_holding(symbol)
-                except Exception as holdings_error:
-                    logger.warning(
-                        f"Holdings API check failed for {symbol} during retry: {holdings_error}. "
-                        "Falling back to database check."
-                    )
-                    # Database fallback: Check for executed/ongoing orders
-                    if self.orders_repo and self.user_id:
-                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+                # Phase 3.1: Use OrderValidationService for duplicate check (includes holdings + active buy orders)
+                is_duplicate, duplicate_reason = self.order_validation_service.check_duplicate_order(
+                    symbol, check_active_buy_order=True, check_holdings=True
+                )
 
-                        existing_orders = self.orders_repo.list(self.user_id)
-                        for existing_order in existing_orders:
-                            if (
-                                existing_order.symbol == symbol
-                                and existing_order.status == DbOrderStatus.ONGOING
-                            ):
-                                already_in_holdings = True
-                                logger.info(
-                                    f"Database check: {symbol} already has ongoing order (position exists)"
-                                )
-                                break
-
-                if already_in_holdings:
+                if is_duplicate:
                     logger.info(
-                        f"Skipping retry for {symbol}: already in holdings. "
+                        f"Skipping retry for {symbol}: {duplicate_reason}. "
                         "Order no longer needed - marking as cancelled."
                     )
-                    # Mark as cancelled since order is no longer needed (already in holdings)
+                    # Mark as cancelled since order is no longer needed (already in holdings or active order)
                     self.orders_repo.mark_cancelled(
-                        db_order, "Already in holdings - order not needed"
+                        db_order, f"{duplicate_reason} - order not needed"
                     )
                     summary["skipped"] += 1
                     continue
@@ -2949,7 +2935,7 @@ class AutoTradeEngine:
                 ticker_attempt["reason"] = "already_in_holdings"
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
-            
+
             # Use OrderValidationService for duplicate check (includes holdings + active buy orders)
             is_duplicate, duplicate_reason = self.order_validation_service.check_duplicate_order(
                 broker_symbol, check_active_buy_order=False, check_holdings=True
@@ -3034,7 +3020,7 @@ class AutoTradeEngine:
             is_duplicate_order, duplicate_order_reason = self.order_validation_service.check_duplicate_order(
                 broker_symbol, check_active_buy_order=True, check_holdings=False  # Already checked holdings above
             )
-            
+
             variants = set(self._symbol_variants(broker_symbol))
             broker_symbol_base = (
                 broker_symbol.upper()
@@ -3142,7 +3128,7 @@ class AutoTradeEngine:
                         f"Broker API check for active buy order failed for {broker_symbol}: {e}. "
                         "Proceeding with order placement (database check already passed)."
                     )
-            
+
             # If OrderValidationService detected duplicate order from broker API, handle it
             # (Note: Database orders are already handled above for update/cancel logic)
             if is_duplicate_order and not has_db_order:
