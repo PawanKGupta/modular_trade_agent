@@ -220,11 +220,18 @@ class TradingService:
                     self.engine.positions_repo if hasattr(self.engine, "positions_repo") else None
                 )
                 user_id = self.user_id
+                # Phase 3.2: Pass OrderStatusVerifier to SellOrderManager for shared results
+                order_verifier = (
+                    self.engine.order_verifier
+                    if self.engine and hasattr(self.engine, "order_verifier")
+                    else None
+                )
                 self.sell_manager = SellOrderManager(
                     self.auth,
                     price_manager=self.price_cache,
                     positions_repo=positions_repo,
                     user_id=user_id,
+                    order_verifier=order_verifier,  # Phase 3.2: Share OrderStatusVerifier results
                 )
 
                 # Phase 2: Initialize unified order monitor for buy and sell order monitoring

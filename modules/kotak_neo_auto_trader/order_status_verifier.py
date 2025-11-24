@@ -64,6 +64,10 @@ class OrderStatusVerifier:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._last_check_time: Optional[datetime] = None
+        
+        # Phase 3.2: Store verification results for sharing
+        self._verification_results: Dict[str, Dict[str, Any]] = {}  # order_id -> result
+        self._last_verification_counts: Dict[str, int] = {}  # Last verification counts
     
     def start(self, daemon: bool = True) -> None:
         """
@@ -180,6 +184,14 @@ class OrderStatusVerifier:
             symbol = pending_order['symbol']
             expected_qty = pending_order['qty']
             
+            # Phase 3.2: Store initial state before verification
+            initial_status = {
+                'order_id': order_id,
+                'symbol': symbol,
+                'expected_qty': expected_qty,
+                'status': 'PENDING'
+            }
+            
             # Find order in broker's order book
             broker_order = self._find_order_in_broker_orders(
                 order_id,
@@ -194,6 +206,17 @@ class OrderStatusVerifier:
                 if broker_order:
                     # Found in history - parse status and handle accordingly
                     broker_status = self._parse_broker_order_status(broker_order)
+                    
+                    # Phase 3.2: Store verification result for sharing
+                    self._verification_results[order_id] = {
+                        'order_id': order_id,
+                        'symbol': symbol,
+                        'status': broker_status['status'],
+                        'executed_qty': broker_status.get('executed_qty', 0),
+                        'rejection_reason': broker_status.get('rejection_reason'),
+                        'verified_at': datetime.now().isoformat(),
+                        'broker_order': broker_order
+                    }
                     
                     if broker_status['status'] == 'CANCELLED':
                         self._handle_cancellation(
@@ -236,11 +259,35 @@ class OrderStatusVerifier:
                         'quantity': pending_order.get('qty', 0)
                     }
                     broker_status = self._parse_broker_order_status(mock_cancelled_order)
+                    
+                    # Phase 3.2: Store verification result for sharing
+                    self._verification_results[order_id] = {
+                        'order_id': order_id,
+                        'symbol': symbol,
+                        'status': broker_status['status'],
+                        'executed_qty': 0,
+                        'rejection_reason': None,
+                        'verified_at': datetime.now().isoformat(),
+                        'broker_order': mock_cancelled_order
+                    }
+                    
                     self._handle_cancellation(
                         pending_order,
                         mock_cancelled_order,
                         broker_status
                     )
+                    
+                    # Phase 3.2: Store verification result for sharing
+                    self._verification_results[order_id] = {
+                        'order_id': order_id,
+                        'symbol': symbol,
+                        'status': broker_status['status'],
+                        'executed_qty': 0,
+                        'rejection_reason': None,
+                        'verified_at': datetime.now().isoformat(),
+                        'broker_order': mock_cancelled_order
+                    }
+                    
                     counts['cancelled'] += 1
                     continue
                 
@@ -249,11 +296,34 @@ class OrderStatusVerifier:
                     f"Order {order_id} not found in broker order book or history. "
                     f"May have been cancelled or expired."
                 )
+                
+                # Phase 3.2: Store verification result even when not found
+                self._verification_results[order_id] = {
+                    'order_id': order_id,
+                    'symbol': symbol,
+                    'status': 'NOT_FOUND',
+                    'executed_qty': 0,
+                    'rejection_reason': None,
+                    'verified_at': datetime.now().isoformat(),
+                    'broker_order': None
+                }
+                
                 counts['still_pending'] += 1
                 continue
             
             # Parse broker order status
             broker_status = self._parse_broker_order_status(broker_order)
+            
+            # Phase 3.2: Store verification result for sharing
+            self._verification_results[order_id] = {
+                'order_id': order_id,
+                'symbol': symbol,
+                'status': broker_status['status'],
+                'executed_qty': broker_status.get('executed_qty', 0),
+                'rejection_reason': broker_status.get('rejection_reason'),
+                'verified_at': datetime.now().isoformat(),
+                'broker_order': broker_order  # Store full broker order for reference
+            }
             
             if broker_status['status'] == 'EXECUTED':
                 self._handle_execution(
@@ -306,6 +376,9 @@ class OrderStatusVerifier:
             f"{counts['partial']} partial, "
             f"{counts['still_pending']} still pending"
         )
+        
+        # Phase 3.2: Store verification counts for sharing
+        self._last_verification_counts = counts.copy()
         
         return counts
     
@@ -785,6 +858,83 @@ class OrderStatusVerifier:
             return None
         
         return self._last_check_time + timedelta(seconds=self.check_interval_seconds)
+    
+    def get_verification_result(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get verification result for specific order.
+        
+        Phase 3.2: Consolidate order verification
+        
+        Args:
+            order_id: Order ID to check
+        
+        Returns:
+            Verification result dict if found, None otherwise
+        """
+        return self._verification_results.get(order_id)
+    
+    def get_verification_results_for_symbol(self, symbol: str) -> List[Dict[str, Any]]:
+        """
+        Get verification results for all orders matching symbol.
+        
+        Phase 3.2: Consolidate order verification
+        
+        Args:
+            symbol: Symbol to check (supports variants)
+        
+        Returns:
+            List of verification result dicts
+        """
+        # Normalize symbol for comparison
+        base_symbol = symbol.upper().replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "")
+        
+        results = []
+        for order_id, result in self._verification_results.items():
+            result_symbol = result.get('symbol', '').upper().replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "")
+            if result_symbol == base_symbol:
+                results.append(result)
+        
+        return results
+    
+    def get_last_verification_counts(self) -> Dict[str, int]:
+        """
+        Get last verification counts.
+        
+        Phase 3.2: Consolidate order verification
+        
+        Returns:
+            Dict with verification counts from last run
+        """
+        return self._last_verification_counts.copy()
+    
+    def should_skip_verification(self, minutes_threshold: int = 15) -> bool:
+        """
+        Check if verification should be skipped based on last check time.
+        
+        Phase 3.2: Consolidate order verification
+        
+        Args:
+            minutes_threshold: Minutes since last check to skip verification (default: 15)
+        
+        Returns:
+            True if verification should be skipped, False otherwise
+        """
+        if not self._last_check_time:
+            return False  # Never checked, don't skip
+        
+        time_since_last_check = datetime.now() - self._last_check_time
+        threshold_seconds = minutes_threshold * 60
+        
+        should_skip = time_since_last_check.total_seconds() < threshold_seconds
+        
+        if should_skip:
+            logger.debug(
+                f"Skipping verification: last check was "
+                f"{time_since_last_check.total_seconds() / 60:.1f} minutes ago "
+                f"(threshold: {minutes_threshold} minutes)"
+            )
+        
+        return should_skip
 
 
 # Singleton instance

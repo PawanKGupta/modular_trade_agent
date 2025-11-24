@@ -174,11 +174,43 @@ class EODCleanup:
         return results
 
     def _verify_all_pending_orders(self) -> Dict[str, Any]:
-        """Final verification of all pending orders."""
+        """
+        Final verification of all pending orders.
+        
+        Phase 3.2: Consolidate order verification
+        - Checks if OrderStatusVerifier ran within last 15 minutes
+        - Skips verification if OrderStatusVerifier ran recently to avoid duplicate API calls
+        """
         if not self.order_verifier:
             logger.warning("Order verifier not available, skipping")
             return {"skipped": True}
 
+        # Phase 3.2: Check if OrderStatusVerifier ran recently
+        if self.order_verifier.should_skip_verification(minutes_threshold=15):
+            last_check = self.order_verifier.get_last_check_time()
+            if last_check:
+                time_since_check = datetime.now() - last_check
+                logger.info(
+                    f"Skipping EOD verification: OrderStatusVerifier ran "
+                    f"{time_since_check.total_seconds() / 60:.1f} minutes ago "
+                    f"(threshold: 15 minutes). Using existing verification results."
+                )
+                
+                # Return last verification counts from OrderStatusVerifier
+                counts = self.order_verifier.get_last_verification_counts()
+                logger.info(
+                    f"Using OrderStatusVerifier results: "
+                    f"{counts.get('checked', 0)} checked, "
+                    f"{counts.get('executed', 0)} executed, "
+                    f"{counts.get('rejected', 0)} rejected, "
+                    f"{counts.get('still_pending', 0)} still pending"
+                )
+                return {**counts, "skipped": True, "source": "OrderStatusVerifier"}
+            else:
+                logger.warning("OrderStatusVerifier has no last check time, proceeding with verification")
+
+        # OrderStatusVerifier hasn't run recently or doesn't have last check time
+        # Perform verification now
         counts = self.order_verifier.verify_pending_orders()
 
         logger.info(

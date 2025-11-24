@@ -77,6 +77,7 @@ class SellOrderManager:
         order_state_manager: OrderStateManager | None = None,
         positions_repo=None,
         user_id: int | None = None,
+        order_verifier=None,  # Phase 3.2: Optional OrderStatusVerifier for shared results
     ):
         """
         Initialize sell order manager
@@ -99,6 +100,7 @@ class SellOrderManager:
         self.price_manager = price_manager
         self.positions_repo = positions_repo
         self.user_id = user_id
+        self.order_verifier = order_verifier  # Phase 3.2: OrderStatusVerifier for shared results
 
         # Initialize OrderStateManager if not provided (for backward compatibility)
         self.state_manager = order_state_manager
@@ -658,9 +660,40 @@ class SellOrderManager:
         """
         Check which sell orders have been executed
 
+        Phase 3.2: Consolidate order verification
+        - First checks OrderStatusVerifier results if available (avoids duplicate API calls)
+        - Falls back to direct API call if OrderStatusVerifier doesn't have results
+
         Returns:
             List of executed order IDs
         """
+        executed_ids = []
+        
+        # Phase 3.2: Check OrderStatusVerifier results first if available
+        if self.order_verifier:
+            try:
+                # Get verification results for all our tracked sell orders
+                for symbol, order_info in self.active_sell_orders.items():
+                    order_id = order_info.get("order_id")
+                    if not order_id:
+                        continue
+                    
+                    # Check OrderStatusVerifier result for this order
+                    result = self.order_verifier.get_verification_result(order_id)
+                    if result and result.get('status') == 'EXECUTED':
+                        executed_ids.append(str(order_id))
+                        logger.info(
+                            f"Sell order executed (from OrderStatusVerifier): Order ID {order_id}"
+                        )
+                
+                # If we found results from OrderStatusVerifier, return them
+                if executed_ids:
+                    return executed_ids
+            except Exception as e:
+                logger.debug(f"Error checking OrderStatusVerifier results: {e}")
+                # Fall through to direct API call
+        
+        # Fallback: Use direct API call if OrderStatusVerifier not available or no results found
         try:
             executed_orders = self.orders.get_executed_orders()
 
@@ -668,7 +701,6 @@ class SellOrderManager:
                 return []
 
             # Filter for our tracked sell orders
-            executed_ids = []
             for order in executed_orders:
                 order_id = order.get("neoOrdNo") or order.get("orderId")
                 if order_id and any(
@@ -1076,8 +1108,9 @@ class SellOrderManager:
         """
         Check if a symbol has a completed/executed sell order.
 
-        Uses get_orders() directly to get ALL orders (including completed ones).
-        get_pending_orders() filters out completed orders, so we need get_orders().
+        Phase 3.2: Consolidate order verification
+        - First checks OrderStatusVerifier results if available (avoids duplicate API calls)
+        - Falls back to direct API call if OrderStatusVerifier doesn't have results
 
         Args:
             symbol: Base symbol (e.g., 'DALBHARAT') or full symbol (e.g., 'DALBHARAT-EQ')
@@ -1086,6 +1119,32 @@ class SellOrderManager:
             Dict with order details {'order_id': str, 'price': float} if completed order found,
             None otherwise
         """
+        # Phase 3.2: Check OrderStatusVerifier results first if available
+        if self.order_verifier:
+            try:
+                # Get verification results for this symbol
+                verification_results = self.order_verifier.get_verification_results_for_symbol(symbol)
+                
+                # Check if any result shows EXECUTED status (completed sell order)
+                for result in verification_results:
+                    if result.get('status') == 'EXECUTED':
+                        # Extract price from broker_order if available
+                        broker_order = result.get('broker_order')
+                        order_price = 0.0
+                        if broker_order:
+                            order_price = OrderFieldExtractor.get_price(broker_order) or 0.0
+                        
+                        order_id = result.get('order_id', '')
+                        logger.info(
+                            f"Found completed sell order for {symbol} from OrderStatusVerifier: "
+                            f"Order ID {order_id}, Price: Rs {order_price:.2f}"
+                        )
+                        return {"order_id": order_id, "price": order_price}
+            except Exception as e:
+                logger.debug(f"Error checking OrderStatusVerifier results for {symbol}: {e}")
+                # Fall through to direct API call
+        
+        # Fallback: Use direct API call if OrderStatusVerifier not available or no results found
         try:
             # Use get_orders() directly to get ALL orders (including completed ones)
             all_orders = self.orders.get_orders()
