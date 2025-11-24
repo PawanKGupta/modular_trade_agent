@@ -405,7 +405,7 @@ class TradingService:
             if symbols:
                 # Phase 4.1: Use PriceService for centralized subscription management
                 from modules.kotak_neo_auto_trader.services import get_price_service
-                
+
                 price_service = get_price_service(
                     live_price_manager=self.price_cache, enable_caching=True
                 )
@@ -534,7 +534,7 @@ class TradingService:
                         if symbols:
                             # Phase 4.1: Use PriceService for centralized subscription management
                             from modules.kotak_neo_auto_trader.services import get_price_service
-                            
+
                             price_service = get_price_service(
                                 live_price_manager=self.price_cache, enable_caching=True
                             )
@@ -555,6 +555,34 @@ class TradingService:
 
                     except Exception as e:
                         logger.debug(f"Failed to subscribe to symbols: {e}")
+
+                # Phase 4.2: Warm cache for open positions (pre-market warm-up)
+                try:
+                    from modules.kotak_neo_auto_trader.services import (
+                        get_indicator_service,
+                        get_price_service,
+                    )
+
+                    open_positions = self.sell_manager.get_open_positions()
+                    if open_positions:
+                        price_service = get_price_service(
+                            live_price_manager=self.price_cache, enable_caching=True
+                        )
+                        indicator_service = get_indicator_service(
+                            price_service=price_service, enable_caching=True
+                        )
+
+                        # Warm price and indicator caches
+                        price_warm_stats = price_service.warm_cache_for_positions(open_positions)
+                        indicator_warm_stats = indicator_service.warm_cache_for_positions(
+                            open_positions
+                        )
+                        logger.info(
+                            f"Cache warming complete: Price ({price_warm_stats['warmed']}/{len(open_positions)}), "
+                            f"Indicators ({indicator_warm_stats['warmed']}/{len(open_positions)})"
+                        )
+                except Exception as e:
+                    logger.debug(f"Cache warming failed (non-critical): {e}")
 
                 # Place sell orders at market open
                 orders_placed = self.sell_manager.run_at_market_open()
