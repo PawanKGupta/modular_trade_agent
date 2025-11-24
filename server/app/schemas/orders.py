@@ -31,3 +31,6 @@ class OrderResponse(BaseModel):
     execution_price: float | None = None
     execution_qty: float | None = None
     execution_time: str | None = None
+    # Entry type and source tracking
+    entry_type: str | None = None  # 'initial', 'reentry', 'manual'
+    is_manual: bool = False  # Derived from orig_source == 'manual'

@@ -27,6 +27,9 @@ export interface Order {
 	execution_price?: number | null;
 	execution_qty?: number | null;
 	execution_time?: string | null;
+	// Entry type and source tracking
+	entry_type?: string | null; // 'initial', 'reentry', 'manual'
+	is_manual?: boolean; // Derived from orig_source == 'manual'
 }
 
 export interface ListOrdersParams {

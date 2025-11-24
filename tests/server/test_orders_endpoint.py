@@ -1,13 +1,19 @@
 import os
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from jose import jwt
 
 os.environ["DB_URL"] = os.getenv("DB_URL", "sqlite:///./data/test_api_orders.db")
 
+from server.app.core.config import settings  # noqa: E402
 from server.app.core.deps import get_db  # noqa: E402
 from server.app.main import app  # noqa: E402
-from src.infrastructure.persistence.orders_repository import OrdersRepository
+from server.app.schemas.orders import OrderResponse  # noqa: E402
+from src.infrastructure.db.models import Orders  # noqa: E402
+from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: E402
+from src.infrastructure.persistence.orders_repository import OrdersRepository  # noqa: E402
 
 
 @pytest.fixture(scope="function")
@@ -123,7 +129,6 @@ def test_orders_response_includes_monitoring_fields(client: TestClient):
     """Test that order response schema includes new monitoring fields"""
     # This test verifies the API schema includes the new fields
     # Detailed field value tests are covered in repository unit tests
-    from server.app.schemas.orders import OrderResponse
 
     # Verify the schema includes all monitoring fields
     schema_fields = OrderResponse.model_fields.keys()
@@ -131,6 +136,8 @@ def test_orders_response_includes_monitoring_fields(client: TestClient):
     assert "retry_count" in schema_fields
     assert "execution_price" in schema_fields
     assert "execution_qty" in schema_fields
+    assert "entry_type" in schema_fields
+    assert "is_manual" in schema_fields
 
 
 def test_orders_status_validation(client: TestClient):
@@ -190,10 +197,6 @@ def test_orders_with_all_statuses(client: TestClient, db_session):
 
 def test_retry_order_success(client: TestClient, db_session):
     """Test retrying a failed order"""
-    from jose import jwt  # noqa: PLC0415
-
-    from server.app.core.config import settings  # noqa: PLC0415
-
     # Create user via signup API (uses same db_session via override)
     s = client.post(
         "/api/v1/auth/signup",
@@ -230,7 +233,6 @@ def test_retry_order_success(client: TestClient, db_session):
 
     # Verify in DB
     db_session.refresh(failed_order)
-    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
     assert failed_order.status == DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
     assert (
@@ -293,10 +295,6 @@ def test_retry_order_wrong_status(client: TestClient, db_session):
 
 def test_drop_order_success(client: TestClient, db_session):
     """Test dropping an order from retry queue"""
-    from jose import jwt
-
-    from server.app.core.config import settings
-
     # Create user via signup
     s = client.post(
         "/api/v1/auth/signup",
@@ -330,7 +328,6 @@ def test_drop_order_success(client: TestClient, db_session):
 
     # Verify in DB
     db_session.refresh(retry_order)
-    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
     assert retry_order.status == DbOrderStatus.CLOSED
     assert retry_order.closed_at is not None
@@ -390,10 +387,6 @@ def test_drop_order_wrong_status(client: TestClient, db_session):
 
 def test_list_orders_with_filters(client: TestClient, db_session):
     """Test filtering orders by reason and date range"""
-    from jose import jwt
-
-    from server.app.core.config import settings
-
     # Create user via signup
     s = client.post(
         "/api/v1/auth/signup",
@@ -443,8 +436,6 @@ def test_list_orders_with_filters(client: TestClient, db_session):
     assert any("insufficient" in (o.get("reason") or "").lower() for o in data)
 
     # Filter by date range (using today's date)
-    from datetime import datetime
-
     today = datetime.now().strftime("%Y-%m-%d")
     r2 = client.get(
         f"/api/v1/user/orders?from_date={today}&to_date={today}",
@@ -452,3 +443,94 @@ def test_list_orders_with_filters(client: TestClient, db_session):
     )
     assert r2.status_code == 200
     assert isinstance(r2.json(), list)
+
+
+def test_orders_response_includes_entry_type_and_is_manual(client: TestClient, db_session):
+    """Test that order response includes entry_type and is_manual fields"""
+    # Create user via signup
+    s = client.post(
+        "/api/v1/auth/signup",
+        json={"email": "entry_type_tester@example.com", "password": "secret123"},
+    )
+    assert s.status_code == 200
+    token = s.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Get user_id from token
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    user_id = payload["uid"]
+
+    # Create orders with different entry_type and orig_source values
+    repo = OrdersRepository(db_session)
+
+    # Order with entry_type='initial' and orig_source='signal' (is_manual=False)
+    initial_order = repo.create_amo(
+        user_id=user_id,
+        symbol="RELIANCE",
+        side="buy",
+        order_type="market",
+        quantity=10.0,
+        price=None,
+        entry_type="initial",
+        order_metadata={"source": "signal"},
+    )
+    # Set orig_source via direct update (not exposed in create_amo)
+    db_order = db_session.query(Orders).filter(Orders.id == initial_order.id).first()
+    db_order.orig_source = "signal"
+    db_session.commit()
+
+    # Order with entry_type='reentry' and orig_source='signal' (is_manual=False)
+    reentry_order = repo.create_amo(
+        user_id=user_id,
+        symbol="TCS",
+        side="buy",
+        order_type="market",
+        quantity=5.0,
+        price=None,
+        entry_type="reentry",
+        order_metadata={"source": "signal"},
+    )
+    db_order2 = db_session.query(Orders).filter(Orders.id == reentry_order.id).first()
+    db_order2.orig_source = "signal"
+    db_session.commit()
+
+    # Order with orig_source='manual' (is_manual=True)
+    manual_order = repo.create_amo(
+        user_id=user_id,
+        symbol="INFY",
+        side="buy",
+        order_type="market",
+        quantity=3.0,
+        price=None,
+        entry_type="manual",
+        order_metadata={"source": "manual"},
+    )
+    db_order3 = db_session.query(Orders).filter(Orders.id == manual_order.id).first()
+    db_order3.orig_source = "manual"
+    db_session.commit()
+
+    # Fetch orders via API
+    r = client.get("/api/v1/user/orders", headers=headers)
+    assert r.status_code == 200
+    orders = r.json()
+    assert isinstance(orders, list)
+    assert len(orders) >= 3
+
+    # Find orders by symbol
+    initial_resp = next((o for o in orders if o["symbol"] == "RELIANCE"), None)
+    reentry_resp = next((o for o in orders if o["symbol"] == "TCS"), None)
+    manual_resp = next((o for o in orders if o["symbol"] == "INFY"), None)
+
+    assert initial_resp is not None
+    assert reentry_resp is not None
+    assert manual_resp is not None
+
+    # Verify entry_type
+    assert initial_resp["entry_type"] == "initial"
+    assert reentry_resp["entry_type"] == "reentry"
+    assert manual_resp["entry_type"] == "manual"
+
+    # Verify is_manual (derived from orig_source)
+    assert initial_resp["is_manual"] is False  # orig_source='signal'
+    assert reentry_resp["is_manual"] is False  # orig_source='signal'
+    assert manual_resp["is_manual"] is True  # orig_source='manual'

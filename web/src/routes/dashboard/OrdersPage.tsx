@@ -78,6 +78,7 @@ export function OrdersPage() {
 	};
 
 	const isFailed = tab === 'failed';
+	const isOngoingOrClosed = tab === 'ongoing' || tab === 'closed';
 
 	return (
 		<div className="p-4 space-y-4">
@@ -112,9 +113,19 @@ export function OrdersPage() {
 							<th className="text-left p-2">Qty</th>
 							<th className="text-left p-2">Price</th>
 							<th className="text-left p-2">Status</th>
+							<th className="text-left p-2">Created</th>
+							<th className="text-left p-2">Entry Type</th>
+							<th className="text-left p-2">Manual</th>
+							<th className="text-left p-2">Reason</th>
+							{isOngoingOrClosed && (
+								<>
+									<th className="text-left p-2">Exec Price</th>
+									<th className="text-left p-2">Exec Qty</th>
+									<th className="text-left p-2">Exec Time</th>
+								</>
+							)}
 							{isFailed && (
 								<>
-									<th className="text-left p-2">Reason</th>
 									<th className="text-left p-2">Retry Count</th>
 									<th className="text-left p-2">Last Retry</th>
 								</>
@@ -130,13 +141,69 @@ export function OrdersPage() {
 								<td className="p-2 text-[var(--text)]">{o.quantity}</td>
 								<td className="p-2 text-[var(--text)]">{formatPrice(o.price)}</td>
 								<td className="p-2 text-[var(--text)]">{o.status}</td>
-								{isFailed && (
+								<td className="p-2 text-[var(--text)] text-xs">
+									{formatDate(o.created_at)}
+								</td>
+								<td className="p-2 text-[var(--text)]">
+									{o.entry_type ? (
+										<span className="px-2 py-0.5 text-xs rounded bg-blue-500/20 text-blue-300">
+											{o.entry_type}
+										</span>
+									) : (
+										<span className="text-[var(--muted)]">-</span>
+									)}
+								</td>
+								<td className="p-2 text-[var(--text)]">
+									{o.is_manual ? (
+										<span className="px-2 py-0.5 text-xs rounded bg-yellow-500/20 text-yellow-300">
+											Yes
+										</span>
+									) : (
+										<span className="text-[var(--muted)]">No</span>
+									)}
+								</td>
+								<td className="p-2 text-[var(--text)]">
+									{o.reason ? (
+										<span
+											className="cursor-help inline-flex items-center justify-center w-5 h-5 rounded-full bg-[var(--muted)]/20 text-[var(--muted)] hover:bg-[var(--muted)]/30 transition-colors"
+											title={o.reason}
+										>
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												className="w-4 h-4"
+											>
+												<circle cx="12" cy="12" r="10" />
+												<path d="M12 16v-4" />
+												<path d="M12 8h.01" />
+											</svg>
+										</span>
+									) : (
+										<span className="text-[var(--muted)]">-</span>
+									)}
+								</td>
+								{isOngoingOrClosed && (
 									<>
 										<td className="p-2 text-[var(--text)]">
-											{o.reason || o.failure_reason || o.rejection_reason || o.cancelled_reason || '-'}
+											{formatPrice(o.execution_price)}
 										</td>
-										<td className="p-2 text-[var(--text)]">{o.retry_count ?? 0}</td>
 										<td className="p-2 text-[var(--text)]">
+											{o.execution_qty != null ? o.execution_qty : '-'}
+										</td>
+										<td className="p-2 text-[var(--text)] text-xs">
+											{formatDate(o.execution_time)}
+										</td>
+									</>
+								)}
+								{isFailed && (
+									<>
+										<td className="p-2 text-[var(--text)]">{o.retry_count ?? 0}</td>
+										<td className="p-2 text-[var(--text)] text-xs">
 											{formatDate(o.last_retry_attempt || o.first_failed_at)}
 										</td>
 									</>
@@ -167,7 +234,13 @@ export function OrdersPage() {
 							<tr>
 								<td
 									className="p-2 text-[var(--muted)]"
-									colSpan={isFailed ? 9 : 5}
+									colSpan={
+										isFailed
+											? 12
+											: isOngoingOrClosed
+												? 12
+												: 9
+									}
 								>
 									No orders
 								</td>

@@ -18,8 +18,8 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/", response_model=list[OrderResponse])  # noqa: PLR0913
-def list_orders(
+@router.get("/", response_model=list[OrderResponse])
+def list_orders(  # noqa: PLR0913
     status: Annotated[
         Literal[
             "pending",  # Merged: AMO + PENDING_EXECUTION
@@ -124,6 +124,9 @@ def list_orders(
                     execution_price=getattr(o, "execution_price", None),
                     execution_qty=getattr(o, "execution_qty", None),
                     execution_time=format_datetime(getattr(o, "execution_time", None)),
+                    # Entry type and source tracking
+                    entry_type=getattr(o, "entry_type", None),
+                    is_manual=getattr(o, "orig_source", None) == "manual",
                 )
                 result.append(order_response)
             except Exception as e:
@@ -219,6 +222,8 @@ def retry_order(
             execution_price=getattr(updated_order, "execution_price", None),
             execution_qty=getattr(updated_order, "execution_qty", None),
             execution_time=format_datetime(getattr(updated_order, "execution_time", None)),
+            entry_type=getattr(updated_order, "entry_type", None),
+            is_manual=getattr(updated_order, "orig_source", None) == "manual",
         )
     except HTTPException:
         raise
@@ -285,8 +290,8 @@ def drop_order(
 
 @router.get("/statistics", response_model=dict)
 def get_order_statistics(
-    current_user: Users = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: Users = Depends(get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
 ):
     """
     Get order statistics for monitoring.
