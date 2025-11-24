@@ -6,6 +6,7 @@ These services eliminate duplicate code across trading services.
 """
 
 from .indicator_service import IndicatorService, get_indicator_service
+from .portfolio_service import PortfolioService, get_portfolio_service
 from .price_service import PriceService, get_price_service
 
 __all__ = [
@@ -13,4 +14,6 @@ __all__ = [
     "get_price_service",
     "IndicatorService",
     "get_indicator_service",
+    "PortfolioService",
+    "get_portfolio_service",
 ]
