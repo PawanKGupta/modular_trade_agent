@@ -3029,8 +3029,12 @@ class AutoTradeEngine:
                     continue
 
             # 3) Active pending buy order check (system orders)
-            # Check database FIRST to prevent duplicates when service runs multiple times
-            # This is critical because broker API might not return pending orders immediately
+            # Phase 3.1: Use OrderValidationService for duplicate check (broker API + database)
+            # This prevents duplicates when service runs multiple times before broker syncs
+            is_duplicate_order, duplicate_order_reason = self.order_validation_service.check_duplicate_order(
+                broker_symbol, check_active_buy_order=True, check_holdings=False  # Already checked holdings above
+            )
+            
             variants = set(self._symbol_variants(broker_symbol))
             broker_symbol_base = (
                 broker_symbol.upper()
