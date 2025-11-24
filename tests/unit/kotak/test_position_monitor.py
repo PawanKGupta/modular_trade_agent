@@ -62,12 +62,23 @@ class TestPositionMonitorInitialization:
 class TestPositionMonitorPriceServiceIntegration:
     """Test that PositionMonitor uses PriceService correctly"""
 
-    @patch("modules.kotak_neo_auto_trader.position_monitor.load_history")
-    def test_monitor_uses_price_service_for_historical_data(self, mock_load_history):
+    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
+    def test_monitor_uses_price_service_for_historical_data(self, mock_get_position_loader):
         """Test that monitor uses PriceService.get_price() for historical data"""
-        # Mock history
-        mock_load_history.return_value = {
-            "trades": [
+        # Mock PositionLoader
+        mock_position_loader = Mock()
+        mock_position_loader.load_open_positions.return_value = [
+            {
+                "status": "open",
+                "symbol": "RELIANCE",
+                "ticker": "RELIANCE.NS",
+                "qty": 10,
+                "entry_price": 2500.0,
+                "entry_time": "2024-01-01T10:00:00",
+            }
+        ]
+        mock_position_loader.get_positions_by_symbol.return_value = {
+            "RELIANCE": [
                 {
                     "status": "open",
                     "symbol": "RELIANCE",
@@ -78,6 +89,33 @@ class TestPositionMonitorPriceServiceIntegration:
                 }
             ]
         }
+        mock_get_position_loader.return_value = mock_position_loader
+
+        # Mock PositionLoader
+        mock_position_loader = Mock()
+        mock_position_loader.load_open_positions.return_value = [
+            {
+                "status": "open",
+                "symbol": "RELIANCE",
+                "ticker": "RELIANCE.NS",
+                "qty": 10,
+                "entry_price": 2500.0,
+                "entry_time": "2024-01-01T10:00:00",
+            }
+        ]
+        mock_position_loader.get_positions_by_symbol.return_value = {
+            "RELIANCE": [
+                {
+                    "status": "open",
+                    "symbol": "RELIANCE",
+                    "ticker": "RELIANCE.NS",
+                    "qty": 10,
+                    "entry_price": 2500.0,
+                    "entry_time": "2024-01-01T10:00:00",
+                }
+            ]
+        }
+        mock_get_position_loader.return_value = mock_position_loader
 
         # Create monitor with mocked services
         monitor = PositionMonitor(
@@ -98,6 +136,7 @@ class TestPositionMonitorPriceServiceIntegration:
             }
         )
         monitor.price_service.get_price = Mock(return_value=mock_df)
+        monitor.position_loader = mock_position_loader
 
         # Mock IndicatorService
         mock_df_with_indicators = mock_df.copy()
@@ -126,11 +165,23 @@ class TestPositionMonitorPriceServiceIntegration:
         # Verify results
         assert results["monitored"] == 1
 
-    @patch("modules.kotak_neo_auto_trader.position_monitor.load_history")
-    def test_monitor_uses_price_service_for_realtime_price(self, mock_load_history):
+    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
+    def test_monitor_uses_price_service_for_realtime_price(self, mock_get_position_loader):
         """Test that monitor uses PriceService.get_realtime_price()"""
-        mock_load_history.return_value = {
-            "trades": [
+        # Mock PositionLoader
+        mock_position_loader = Mock()
+        mock_position_loader.load_open_positions.return_value = [
+            {
+                "status": "open",
+                "symbol": "RELIANCE",
+                "ticker": "RELIANCE.NS",
+                "qty": 10,
+                "entry_price": 2500.0,
+                "entry_time": "2024-01-01T10:00:00",
+            }
+        ]
+        mock_position_loader.get_positions_by_symbol.return_value = {
+            "RELIANCE": [
                 {
                     "status": "open",
                     "symbol": "RELIANCE",
@@ -141,12 +192,14 @@ class TestPositionMonitorPriceServiceIntegration:
                 }
             ]
         }
+        mock_get_position_loader.return_value = mock_position_loader
 
         monitor = PositionMonitor(
             history_path="test_history.json",
             enable_alerts=False,
             enable_realtime_prices=True,
         )
+        monitor.position_loader = mock_position_loader
 
         # Mock services
         mock_df = pd.DataFrame(
@@ -183,11 +236,23 @@ class TestPositionMonitorPriceServiceIntegration:
 class TestPositionMonitorIndicatorServiceIntegration:
     """Test that PositionMonitor uses IndicatorService correctly"""
 
-    @patch("modules.kotak_neo_auto_trader.position_monitor.load_history")
-    def test_monitor_uses_indicator_service_for_calculations(self, mock_load_history):
+    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
+    def test_monitor_uses_indicator_service_for_calculations(self, mock_get_position_loader):
         """Test that monitor uses IndicatorService.calculate_all_indicators()"""
-        mock_load_history.return_value = {
-            "trades": [
+        # Mock PositionLoader
+        mock_position_loader = Mock()
+        mock_position_loader.load_open_positions.return_value = [
+            {
+                "status": "open",
+                "symbol": "RELIANCE",
+                "ticker": "RELIANCE.NS",
+                "qty": 10,
+                "entry_price": 2500.0,
+                "entry_time": "2024-01-01T10:00:00",
+            }
+        ]
+        mock_position_loader.get_positions_by_symbol.return_value = {
+            "RELIANCE": [
                 {
                     "status": "open",
                     "symbol": "RELIANCE",
@@ -198,12 +263,14 @@ class TestPositionMonitorIndicatorServiceIntegration:
                 }
             ]
         }
+        mock_get_position_loader.return_value = mock_position_loader
 
         monitor = PositionMonitor(
             history_path="test_history.json",
             enable_alerts=False,
             enable_realtime_prices=False,
         )
+        monitor.position_loader = mock_position_loader
 
         # Mock PriceService
         mock_df = pd.DataFrame(
@@ -237,11 +304,23 @@ class TestPositionMonitorIndicatorServiceIntegration:
         assert position.ema9 == 2500.0  # Latest EMA9 value
         assert position.ema200 == 2420.0  # Latest EMA200 value
 
-    @patch("modules.kotak_neo_auto_trader.position_monitor.load_history")
-    def test_monitor_uses_indicator_service_for_realtime_ema9(self, mock_load_history):
+    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
+    def test_monitor_uses_indicator_service_for_realtime_ema9(self, mock_get_position_loader):
         """Test that monitor uses IndicatorService.calculate_ema9_realtime() when needed"""
-        mock_load_history.return_value = {
-            "trades": [
+        # Mock PositionLoader
+        mock_position_loader = Mock()
+        mock_position_loader.load_open_positions.return_value = [
+            {
+                "status": "open",
+                "symbol": "RELIANCE",
+                "ticker": "RELIANCE.NS",
+                "qty": 10,
+                "entry_price": 2500.0,
+                "entry_time": "2024-01-01T10:00:00",
+            }
+        ]
+        mock_position_loader.get_positions_by_symbol.return_value = {
+            "RELIANCE": [
                 {
                     "status": "open",
                     "symbol": "RELIANCE",
@@ -252,12 +331,14 @@ class TestPositionMonitorIndicatorServiceIntegration:
                 }
             ]
         }
+        mock_get_position_loader.return_value = mock_position_loader
 
         monitor = PositionMonitor(
             history_path="test_history.json",
             enable_alerts=False,
             enable_realtime_prices=True,  # Enable real-time prices
         )
+        monitor.position_loader = mock_position_loader
 
         # Mock PriceService
         mock_df = pd.DataFrame(
@@ -297,11 +378,23 @@ class TestPositionMonitorIndicatorServiceIntegration:
 class TestPositionMonitorBackwardCompatibility:
     """Test that PositionMonitor maintains backward compatibility"""
 
-    @patch("modules.kotak_neo_auto_trader.position_monitor.load_history")
-    def test_monitor_returns_same_structure(self, mock_load_history):
+    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
+    def test_monitor_returns_same_structure(self, mock_get_position_loader):
         """Test that monitor returns same structure as before migration"""
-        mock_load_history.return_value = {
-            "trades": [
+        # Mock PositionLoader
+        mock_position_loader = Mock()
+        mock_position_loader.load_open_positions.return_value = [
+            {
+                "status": "open",
+                "symbol": "RELIANCE",
+                "ticker": "RELIANCE.NS",
+                "qty": 10,
+                "entry_price": 2500.0,
+                "entry_time": "2024-01-01T10:00:00",
+            }
+        ]
+        mock_position_loader.get_positions_by_symbol.return_value = {
+            "RELIANCE": [
                 {
                     "status": "open",
                     "symbol": "RELIANCE",
@@ -312,12 +405,14 @@ class TestPositionMonitorBackwardCompatibility:
                 }
             ]
         }
+        mock_get_position_loader.return_value = mock_position_loader
 
         monitor = PositionMonitor(
             history_path="test_history.json",
             enable_alerts=False,
             enable_realtime_prices=False,
         )
+        monitor.position_loader = mock_position_loader
 
         # Mock services
         mock_df = pd.DataFrame(
@@ -359,10 +454,13 @@ class TestPositionMonitorBackwardCompatibility:
             assert hasattr(position, "unrealized_pnl")
             assert hasattr(position, "alerts")
 
-    @patch("modules.kotak_neo_auto_trader.position_monitor.load_history")
-    def test_monitor_handles_no_positions(self, mock_load_history):
+    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
+    def test_monitor_handles_no_positions(self, mock_get_position_loader):
         """Test that monitor handles no open positions correctly"""
-        mock_load_history.return_value = {"trades": []}
+        mock_position_loader = Mock()
+        mock_position_loader.load_open_positions.return_value = []
+        mock_position_loader.get_positions_by_symbol.return_value = {}
+        mock_get_position_loader.return_value = mock_position_loader
 
         monitor = PositionMonitor(
             history_path="test_history.json",
@@ -377,11 +475,23 @@ class TestPositionMonitorBackwardCompatibility:
         assert results["exit_imminent"] == 0
         assert results["averaging_opportunities"] == 0
 
-    @patch("modules.kotak_neo_auto_trader.position_monitor.load_history")
-    def test_monitor_handles_missing_data_gracefully(self, mock_load_history):
+    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
+    def test_monitor_handles_missing_data_gracefully(self, mock_get_position_loader):
         """Test that monitor handles missing price data gracefully"""
-        mock_load_history.return_value = {
-            "trades": [
+        # Mock PositionLoader
+        mock_position_loader = Mock()
+        mock_position_loader.load_open_positions.return_value = [
+            {
+                "status": "open",
+                "symbol": "INVALID",
+                "ticker": "INVALID.NS",
+                "qty": 10,
+                "entry_price": 100.0,
+                "entry_time": "2024-01-01T10:00:00",
+            }
+        ]
+        mock_position_loader.get_positions_by_symbol.return_value = {
+            "INVALID": [
                 {
                     "status": "open",
                     "symbol": "INVALID",
@@ -392,12 +502,14 @@ class TestPositionMonitorBackwardCompatibility:
                 }
             ]
         }
+        mock_get_position_loader.return_value = mock_position_loader
 
         monitor = PositionMonitor(
             history_path="test_history.json",
             enable_alerts=False,
             enable_realtime_prices=False,
         )
+        monitor.position_loader = mock_position_loader
 
         # Mock PriceService to return None (no data)
         monitor.price_service.get_price = Mock(return_value=None)
@@ -412,11 +524,23 @@ class TestPositionMonitorBackwardCompatibility:
 class TestPositionMonitorSubscription:
     """Test that PositionMonitor uses PriceService for subscription"""
 
-    @patch("modules.kotak_neo_auto_trader.position_monitor.load_history")
-    def test_monitor_subscribes_via_price_service(self, mock_load_history):
+    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
+    def test_monitor_subscribes_via_price_service(self, mock_get_position_loader):
         """Test that monitor subscribes to symbols via PriceService"""
-        mock_load_history.return_value = {
-            "trades": [
+        # Mock PositionLoader
+        mock_position_loader = Mock()
+        mock_position_loader.load_open_positions.return_value = [
+            {
+                "status": "open",
+                "symbol": "RELIANCE",
+                "ticker": "RELIANCE.NS",
+                "qty": 10,
+                "entry_price": 2500.0,
+                "entry_time": "2024-01-01T10:00:00",
+            }
+        ]
+        mock_position_loader.get_positions_by_symbol.return_value = {
+            "RELIANCE": [
                 {
                     "status": "open",
                     "symbol": "RELIANCE",
@@ -427,12 +551,14 @@ class TestPositionMonitorSubscription:
                 }
             ]
         }
+        mock_get_position_loader.return_value = mock_position_loader
 
         monitor = PositionMonitor(
             history_path="test_history.json",
             enable_alerts=False,
             enable_realtime_prices=True,
         )
+        monitor.position_loader = mock_position_loader
 
         # Mock services
         mock_df = pd.DataFrame({"close": [2500], "date": [datetime.now()]})

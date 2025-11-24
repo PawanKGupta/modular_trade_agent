@@ -51,12 +51,36 @@ class TestRetryServicePortfolioServiceIntegration:
         mock_orders_repo.get_retriable_failed_orders = Mock(return_value=[mock_order])
         mock_orders_repo.list = Mock(return_value=[])
 
+        # Mock OrderValidationService (it delegates to PortfolioService)
+        # Make check_portfolio_capacity delegate to portfolio_service
+        mock_order_validation_service = Mock()
+        mock_order_validation_service.portfolio_service = mock_portfolio_service
+        mock_order_validation_service.check_portfolio_capacity = Mock(
+            side_effect=lambda include_pending=True: mock_portfolio_service.check_portfolio_capacity(
+                include_pending=include_pending
+            )
+        )
+        mock_order_validation_service.check_duplicate_order = Mock(
+            return_value=(False, None)  # not duplicate
+        )
+        mock_order_validation_service.check_balance = Mock(
+            return_value=(True, 100000.0, 100)  # has_balance, available_cash, affordable_qty
+        )
+        mock_order_validation_service.check_volume_ratio = Mock(
+            return_value=(True, 0.01, None)  # is_valid, volume_ratio, tier_info
+        )
+
         # Create engine instance
         engine = AutoTradeEngine(env_file="test.env")
         engine.portfolio_service = mock_portfolio_service
         engine.indicator_service = mock_indicator_service
+        engine.order_validation_service = mock_order_validation_service
         engine.orders_repo = mock_orders_repo
         engine.user_id = 1
+
+        # Mock strategy config
+        engine.strategy_config = Mock()
+        engine.strategy_config.max_portfolio_size = 10
 
         # Mock other dependencies
         engine.has_active_buy_order = Mock(return_value=False)
@@ -73,7 +97,11 @@ class TestRetryServicePortfolioServiceIntegration:
         # Call retry method
         summary = engine.retry_pending_orders_from_db()
 
-        # Verify PortfolioService was called
+        # Verify OrderValidationService was called (which delegates to PortfolioService)
+        mock_order_validation_service.check_portfolio_capacity.assert_called_once_with(
+            include_pending=True
+        )
+        # Verify PortfolioService was called through OrderValidationService
         mock_portfolio_service.check_portfolio_capacity.assert_called_once_with(
             include_pending=True
         )
@@ -110,21 +138,38 @@ class TestRetryServicePortfolioServiceIntegration:
 
         # Mock orders repository
         mock_orders_repo = Mock()
-        mock_orders_repo.get_retriable_failed_orders = Mock(
-            return_value=[mock_order1, mock_order2]
-        )
+        mock_orders_repo.get_retriable_failed_orders = Mock(return_value=[mock_order1, mock_order2])
         mock_orders_repo.list = Mock(return_value=[])
+
+        # Mock OrderValidationService (it delegates to PortfolioService)
+        # Make check_portfolio_capacity delegate to portfolio_service
+        mock_order_validation_service = Mock()
+        mock_order_validation_service.portfolio_service = mock_portfolio_service
+        mock_order_validation_service.check_portfolio_capacity = Mock(
+            side_effect=lambda include_pending=True: mock_portfolio_service.check_portfolio_capacity(
+                include_pending=include_pending
+            )
+        )
 
         # Create engine instance
         engine = AutoTradeEngine(env_file="test.env")
         engine.portfolio_service = mock_portfolio_service
+        engine.order_validation_service = mock_order_validation_service
         engine.orders_repo = mock_orders_repo
         engine.user_id = 1
+
+        # Mock strategy config
+        engine.strategy_config = Mock()
+        engine.strategy_config.max_portfolio_size = 10
 
         # Call retry method
         summary = engine.retry_pending_orders_from_db()
 
-        # Verify PortfolioService was called
+        # Verify OrderValidationService was called (which delegates to PortfolioService)
+        mock_order_validation_service.check_portfolio_capacity.assert_called_once_with(
+            include_pending=True
+        )
+        # Verify PortfolioService was called through OrderValidationService
         mock_portfolio_service.check_portfolio_capacity.assert_called_once_with(
             include_pending=True
         )
@@ -173,12 +218,41 @@ class TestRetryServicePortfolioServiceIntegration:
         mock_orders_repo.get_retriable_failed_orders = Mock(return_value=[mock_order])
         mock_orders_repo.list = Mock(return_value=[])
 
+        # Mock OrderValidationService (it uses PortfolioService for duplicate checks)
+        # Make check_portfolio_capacity and check_duplicate_order delegate to portfolio_service
+        mock_order_validation_service = Mock()
+        mock_order_validation_service.portfolio_service = mock_portfolio_service
+        mock_order_validation_service.check_portfolio_capacity = Mock(
+            side_effect=lambda include_pending=True: mock_portfolio_service.check_portfolio_capacity(
+                include_pending=include_pending
+            )
+        )
+        # Make check_duplicate_order call portfolio_service.has_position
+        mock_order_validation_service.check_duplicate_order = Mock(
+            side_effect=lambda symbol, **kwargs: (
+                mock_portfolio_service.has_position(symbol),
+                (
+                    "Already in holdings: " + symbol
+                    if mock_portfolio_service.has_position(symbol)
+                    else None
+                ),
+            )
+        )
+
         # Create engine instance
         engine = AutoTradeEngine(env_file="test.env")
         engine.portfolio_service = mock_portfolio_service
         engine.indicator_service = mock_indicator_service
+        engine.order_validation_service = mock_order_validation_service
         engine.orders_repo = mock_orders_repo
         engine.user_id = 1
+
+        # Mock strategy config
+        engine.strategy_config = Mock()
+        engine.strategy_config.max_portfolio_size = 10
+
+        # Mock orders_repo.mark_cancelled
+        engine.orders_repo.mark_cancelled = Mock()
 
         # Mock other dependencies
         engine.has_active_buy_order = Mock(return_value=False)
@@ -195,8 +269,18 @@ class TestRetryServicePortfolioServiceIntegration:
         # Call retry method
         summary = engine.retry_pending_orders_from_db()
 
-        # Verify PortfolioService.has_position was called via has_holding()
-        mock_portfolio_service.has_position.assert_called_once_with("RELIANCE")
+        # Verify OrderValidationService.check_duplicate_order was called (which uses PortfolioService.has_position)
+        mock_order_validation_service.check_duplicate_order.assert_called_once_with(
+            "RELIANCE", check_active_buy_order=True, check_holdings=True
+        )
+        # Verify PortfolioService.has_position was called through OrderValidationService
+        # Note: It may be called multiple times (once in duplicate check, possibly elsewhere)
+        assert mock_portfolio_service.has_position.called
+        assert mock_portfolio_service.has_position.call_count >= 1
+        # Verify it was called with the correct symbol
+        assert any(
+            call[0][0] == "RELIANCE" for call in mock_portfolio_service.has_position.call_args_list
+        )
 
         # Verify order was skipped (already in holdings)
         assert summary["retried"] == 1
@@ -218,9 +302,7 @@ class TestRetryServicePortfolioServiceIntegration:
         mock_portfolio_service = Mock()
         mock_portfolio_service.portfolio = None
         mock_portfolio_service.orders = None
-        mock_portfolio_service.check_portfolio_capacity = Mock(
-            return_value=(True, 5, 10)
-        )
+        mock_portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 5, 10))
         mock_portfolio_service.has_position = Mock(return_value=False)
 
         # Mock IndicatorService
@@ -288,9 +370,7 @@ class TestRetryServicePortfolioServiceBackwardCompatibility:
 
         # Mock PortfolioService
         mock_portfolio_service = Mock()
-        mock_portfolio_service.check_portfolio_capacity = Mock(
-            return_value=(True, 5, 10)
-        )
+        mock_portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 5, 10))
         mock_portfolio_service.has_position = Mock(return_value=False)
 
         # Mock orders repository
@@ -313,4 +393,3 @@ class TestRetryServicePortfolioServiceBackwardCompatibility:
         assert "failed" in summary
         assert "skipped" in summary
         assert all(isinstance(v, int) for v in summary.values())
-

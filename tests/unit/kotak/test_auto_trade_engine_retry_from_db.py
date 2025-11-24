@@ -57,6 +57,42 @@ def auto_trade_engine(mock_auth, strategy_config):
         engine.telegram_notifier = MagicMock()
         engine.telegram_notifier.enabled = True
 
+        # Mock portfolio_service and order_validation_service
+        engine.portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 2, 6))
+        engine.portfolio_service.has_position = Mock(return_value=False)
+        engine.portfolio_service.get_current_positions = Mock(return_value=[])
+        engine.portfolio_service.get_portfolio_count = Mock(return_value=2)
+
+        engine.order_validation_service.check_portfolio_capacity = Mock(
+            side_effect=lambda include_pending=True: engine.portfolio_service.check_portfolio_capacity(
+                include_pending=include_pending
+            )
+        )
+        engine.order_validation_service.check_duplicate_order = Mock(
+            side_effect=lambda symbol, **kwargs: (
+                engine.portfolio_service.has_position(symbol),
+                (
+                    "Already in holdings: " + symbol
+                    if engine.portfolio_service.has_position(symbol)
+                    else None
+                ),
+            )
+        )
+        engine.order_validation_service.check_balance = Mock(return_value=(True, 200000.0, 100))
+        engine.order_validation_service.check_volume_ratio = Mock(return_value=(True, 0.01, None))
+        engine.order_validation_service.portfolio_service = engine.portfolio_service
+
+        # Mock indicator_service
+        engine.indicator_service.get_daily_indicators_dict = Mock(
+            return_value={
+                "close": 2450.0,
+                "rsi10": 25.0,
+                "ema9": 2400.0,
+                "ema200": 2300.0,
+                "avg_volume": 1000000,
+            }
+        )
+
         return engine
 
 
@@ -188,10 +224,25 @@ class TestRetryPendingOrdersFromDB:
 
         auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_order]
 
-        # Mock already in holdings
+        # Mock already in holdings - update portfolio_service mock
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
         auto_trade_engine.portfolio_size = Mock(return_value=2)
         auto_trade_engine.has_holding = Mock(return_value=True)  # Already in holdings
+        auto_trade_engine.portfolio_service.has_position = Mock(
+            return_value=True
+        )  # Already in holdings
+        auto_trade_engine.portfolio_service.get_portfolio_count = Mock(return_value=2)
+
+        # Update order_validation_service mock to reflect holdings status
+        auto_trade_engine.order_validation_service.check_duplicate_order = Mock(
+            return_value=(True, "Already in holdings: RELIANCE")
+        )
+        auto_trade_engine.order_validation_service.check_portfolio_capacity = Mock(
+            return_value=(True, 2, 6)
+        )
+
+        # Mock mark_cancelled
+        auto_trade_engine.orders_repo.mark_cancelled = Mock()
 
         summary = auto_trade_engine.retry_pending_orders_from_db()
 
@@ -221,11 +272,23 @@ class TestRetryPendingOrdersFromDB:
             mock_order2,
         ]
 
-        # Mock portfolio at limit
+        # Mock portfolio at limit - update portfolio_service mock
         auto_trade_engine.current_symbols_in_portfolio = Mock(
             return_value=["A", "B", "C", "D", "E", "F"]
         )
         auto_trade_engine.portfolio_size = Mock(return_value=6)  # At max_portfolio_size
+        auto_trade_engine.portfolio_service.get_portfolio_count = Mock(return_value=6)
+        auto_trade_engine.portfolio_service.check_portfolio_capacity = Mock(
+            return_value=(False, 6, 6)
+        )  # No capacity
+
+        # Update order_validation_service mock to reflect capacity limit
+        auto_trade_engine.order_validation_service.check_portfolio_capacity = Mock(
+            return_value=(False, 6, 6)  # No capacity
+        )
+        auto_trade_engine.order_validation_service.check_duplicate_order = Mock(
+            return_value=(False, None)
+        )
 
         summary = auto_trade_engine.retry_pending_orders_from_db()
 
@@ -328,8 +391,8 @@ class TestRetryPendingOrdersFromDB:
         auto_trade_engine.has_holding = Mock(return_value=False)
         auto_trade_engine.has_active_buy_order = Mock(return_value=False)
 
-        # Mock missing indicators
-        auto_trade_engine.get_daily_indicators = Mock(return_value=None)
+        # Mock missing indicators - use indicator_service
+        auto_trade_engine.indicator_service.get_daily_indicators_dict = Mock(return_value=None)
 
         summary = auto_trade_engine.retry_pending_orders_from_db()
 
@@ -357,8 +420,8 @@ class TestRetryPendingOrdersFromDB:
         auto_trade_engine.has_holding = Mock(return_value=False)
         auto_trade_engine.has_active_buy_order = Mock(return_value=False)
 
-        # Mock invalid price
-        auto_trade_engine.get_daily_indicators = Mock(
+        # Mock invalid price - use indicator_service
+        auto_trade_engine.indicator_service.get_daily_indicators_dict = Mock(
             return_value={
                 "close": 0.0,  # Invalid price
                 "rsi10": 25.0,
@@ -394,8 +457,8 @@ class TestRetryPendingOrdersFromDB:
         auto_trade_engine.has_holding = Mock(return_value=False)
         auto_trade_engine.has_active_buy_order = Mock(return_value=False)
 
-        # Mock indicators
-        auto_trade_engine.get_daily_indicators = Mock(
+        # Mock indicators - use indicator_service
+        auto_trade_engine.indicator_service.get_daily_indicators_dict = Mock(
             return_value={
                 "close": 2450.0,
                 "rsi10": 25.0,
@@ -410,8 +473,10 @@ class TestRetryPendingOrdersFromDB:
         auto_trade_engine.get_available_cash = Mock(return_value=50000.0)
         auto_trade_engine._calculate_execution_capital = Mock(return_value=30000.0)
 
-        # Mock position too large for volume
-        auto_trade_engine.check_position_volume_ratio = Mock(return_value=False)
+        # Mock position too large for volume - use order_validation_service
+        auto_trade_engine.order_validation_service.check_volume_ratio = Mock(
+            return_value=(False, 0.15, "Position too large")  # Invalid volume ratio
+        )
 
         summary = auto_trade_engine.retry_pending_orders_from_db()
 
@@ -420,11 +485,9 @@ class TestRetryPendingOrdersFromDB:
         assert summary["failed"] == 0
         assert summary["skipped"] == 1
 
-        # Verify order was marked as FAILED
-        # Note: retry_pending parameter is ignored - all FAILED orders are retriable
+        # Verify order was marked as FAILED (position too large)
         auto_trade_engine.orders_repo.mark_failed.assert_called_once()
         call_args = auto_trade_engine.orders_repo.mark_failed.call_args
-        # retry_pending parameter kept for backward compatibility but ignored
         assert "not retryable" in call_args.kwargs["failure_reason"]
 
     def test_retry_pending_orders_holdings_api_fallback_to_db(self, auto_trade_engine):
@@ -444,13 +507,18 @@ class TestRetryPendingOrdersFromDB:
         auto_trade_engine.portfolio_size = Mock(return_value=2)
 
         # Mock holdings API failure, but database has ongoing order
-        auto_trade_engine.has_holding = Mock(side_effect=Exception("API error"))
+        # Update order_validation_service to detect duplicate via database
+        auto_trade_engine.portfolio_service.has_position = Mock(side_effect=Exception("API error"))
+        auto_trade_engine.order_validation_service.check_duplicate_order = Mock(
+            return_value=(True, "Active buy order exists for RELIANCE (database: ONGOING)")
+        )
 
         # Mock database has ongoing order for this symbol
         mock_existing_order = Mock()
         mock_existing_order.symbol = "RELIANCE"
         mock_existing_order.status = DbOrderStatus.ONGOING
         auto_trade_engine.orders_repo.list.return_value = [mock_existing_order]
+        auto_trade_engine.orders_repo.mark_cancelled = Mock()
 
         summary = auto_trade_engine.retry_pending_orders_from_db()
 

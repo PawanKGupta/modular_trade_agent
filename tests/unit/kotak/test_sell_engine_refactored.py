@@ -3,21 +3,18 @@
 Tests for refactored sell_engine methods (Phase 1 refactoring)
 """
 
-import pytest
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime
+from unittest.mock import Mock, patch
+
+import pytest
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
 from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
-from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
-from modules.kotak_neo_auto_trader.utils.order_status_parser import OrderStatusParser
-from modules.kotak_neo_auto_trader.domain.value_objects.order_enums import OrderStatus
+from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
 
 
 class TestRefactoredSellEngineMethods:
@@ -267,7 +264,7 @@ class TestRefactoredSellEngineMethods:
     def test_detect_and_handle_manual_buys(self, sell_manager):
         """Test _detect_and_handle_manual_buys"""
         with patch(
-            "modules.kotak_neo_auto_trader.storage.check_manual_buys_of_failed_orders"
+            "modules.kotak_neo_auto_trader.sell_engine.check_manual_buys_of_failed_orders"
         ) as mock_check:
             mock_check.return_value = ["RELIANCE", "TCS"]
 
@@ -279,7 +276,7 @@ class TestRefactoredSellEngineMethods:
     def test_detect_and_handle_manual_buys_empty(self, sell_manager):
         """Test _detect_and_handle_manual_buys with no manual buys"""
         with patch(
-            "modules.kotak_neo_auto_trader.storage.check_manual_buys_of_failed_orders"
+            "modules.kotak_neo_auto_trader.sell_engine.check_manual_buys_of_failed_orders"
         ) as mock_check:
             mock_check.return_value = []
 
@@ -299,7 +296,6 @@ class TestRefactoredSellEngineMethods:
             patch.object(sell_manager, "_handle_manual_sells") as mock_handle_sells,
             patch.object(sell_manager, "_remove_rejected_orders") as mock_remove_rejected,
         ):
-
             mock_detect_buys.return_value = []
             mock_detect_sells.return_value = {}
 
@@ -320,7 +316,6 @@ class TestRefactoredSellEngineMethods:
             patch.object(sell_manager, "_handle_manual_sells") as mock_handle_sells,
             patch.object(sell_manager, "_remove_rejected_orders") as mock_remove_rejected,
         ):
-
             mock_detect_buys.return_value = []
             mock_detect_sells.return_value = {"RELIANCE": {"qty": 5, "orders": []}}
 
@@ -402,7 +397,6 @@ class TestRefactoredSellEngineMethods:
             patch.object(sell_manager, "round_to_tick_size", return_value=2095.30),
             patch.object(sell_manager, "update_sell_order", return_value=False),
         ):
-
             result = sell_manager._check_and_update_single_stock("DALBHARAT", order_info, [])
 
             # Verify lowest_ema9 initialized from target_price
@@ -430,7 +424,6 @@ class TestRefactoredSellEngineMethods:
             patch.object(sell_manager, "round_to_tick_size", return_value=rounded_ema9),
             patch.object(sell_manager, "update_sell_order", return_value=False),
         ):
-
             result = sell_manager._check_and_update_single_stock("DALBHARAT", order_info, [])
 
             # Verify lowest_ema9 initialized from current EMA9 (not target_price)
@@ -456,7 +449,6 @@ class TestRefactoredSellEngineMethods:
             patch.object(sell_manager, "update_sell_order", return_value=False),
             patch("modules.kotak_neo_auto_trader.sell_engine.logger") as mock_logger,
         ):
-
             result = sell_manager._check_and_update_single_stock("DALBHARAT", order_info, [])
 
             # Verify log was called with correct values
@@ -484,7 +476,6 @@ class TestRefactoredSellEngineMethods:
             patch.object(sell_manager, "round_to_tick_size", return_value=rounded_ema9),
             patch.object(sell_manager, "update_sell_order", return_value=False),
         ):
-
             result = sell_manager._check_and_update_single_stock("RELIANCE", order_info, [])
 
             # Verify lowest_ema9 initialized from current EMA9
@@ -510,7 +501,6 @@ class TestRefactoredSellEngineMethods:
             patch.object(sell_manager, "round_to_tick_size", return_value=rounded_ema9),
             patch.object(sell_manager, "update_sell_order", return_value=False),
         ):
-
             result = sell_manager._check_and_update_single_stock("RELIANCE", order_info, [])
 
             # Verify existing lowest_ema9 preserved (not overwritten)

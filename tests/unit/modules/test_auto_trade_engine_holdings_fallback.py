@@ -73,17 +73,30 @@ class TestHoldingsAPIRetryAndFallback:
 
     def test_holdings_api_success_on_first_attempt(self, engine, mock_portfolio, recommendations):
         """Test that holdings API success on first attempt proceeds normally."""
+        # Mock portfolio.get_holdings to return proper dict structure
         mock_portfolio.get_holdings.return_value = {"data": []}
+
+        # Mock portfolio_service methods (used during placement)
+        engine.portfolio_service.get_current_positions = Mock(return_value=[])
+        engine.portfolio_service.get_portfolio_count = Mock(return_value=0)
+        engine.portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 0, 10))
+        engine.portfolio_service.has_position = Mock(return_value=False)
+
+        # Mock OrderValidationService
+        engine.order_validation_service.check_balance = Mock(return_value=(True, 200000.0, 100))
+        engine.order_validation_service.check_portfolio_capacity = Mock(return_value=(True, 0, 10))
+        engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
+        engine.order_validation_service.check_volume_ratio = Mock(return_value=(True, 0.01, None))
+        engine.order_validation_service.get_available_cash = Mock(return_value=200000.0)
 
         with (
             patch.object(engine, "_get_failed_orders", return_value=[]),
-            patch.object(engine, "has_holding", return_value=False),
             patch.object(engine, "_attempt_place_order", return_value=(False, None)),
         ):
             result = engine.place_new_entries(recommendations)
 
-            # get_holdings is called for pre-flight check and potentially during placement
-            assert mock_portfolio.get_holdings.call_count >= 1
+            # get_holdings is called for pre-flight check
+            assert mock_portfolio.get_holdings.called
             # Order was attempted but failed due to insufficient balance (mocked)
             # The test verifies that holdings API was called successfully
             assert "attempted" in result
@@ -100,10 +113,22 @@ class TestHoldingsAPIRetryAndFallback:
             {"data": []},
         ]
 
+        # Mock portfolio_service methods (used during placement)
+        engine.portfolio_service.get_current_positions = Mock(return_value=[])
+        engine.portfolio_service.get_portfolio_count = Mock(return_value=0)
+        engine.portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 0, 10))
+        engine.portfolio_service.has_position = Mock(return_value=False)
+
+        # Mock OrderValidationService
+        engine.order_validation_service.check_balance = Mock(return_value=(True, 200000.0, 100))
+        engine.order_validation_service.check_portfolio_capacity = Mock(return_value=(True, 0, 10))
+        engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
+        engine.order_validation_service.check_volume_ratio = Mock(return_value=(True, 0.01, None))
+        engine.order_validation_service.get_available_cash = Mock(return_value=200000.0)
+
         with (
             patch("time.sleep"),
             patch.object(engine, "_get_failed_orders", return_value=[]),
-            patch.object(engine, "has_holding", return_value=False),
             patch.object(engine, "_attempt_place_order", return_value=(False, None)),
         ):
             result = engine.place_new_entries(recommendations)
@@ -121,10 +146,22 @@ class TestHoldingsAPIRetryAndFallback:
         engine.db = mock_db
         engine.user_id = 1
 
+        # Mock portfolio_service methods (used during placement)
+        engine.portfolio_service.get_current_positions = Mock(return_value=[])
+        engine.portfolio_service.get_portfolio_count = Mock(return_value=0)
+        engine.portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 0, 10))
+        engine.portfolio_service.has_position = Mock(return_value=False)
+
+        # Mock OrderValidationService
+        engine.order_validation_service.check_balance = Mock(return_value=(True, 200000.0, 100))
+        engine.order_validation_service.check_portfolio_capacity = Mock(return_value=(True, 0, 10))
+        engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
+        engine.order_validation_service.check_volume_ratio = Mock(return_value=(True, 0.01, None))
+        engine.order_validation_service.get_available_cash = Mock(return_value=200000.0)
+
         with (
             patch("time.sleep"),
             patch.object(engine, "_get_failed_orders", return_value=[]),
-            patch.object(engine, "has_holding", return_value=False),
             patch.object(engine, "_attempt_place_order", return_value=(False, None)),
         ):
             result = engine.place_new_entries(recommendations)

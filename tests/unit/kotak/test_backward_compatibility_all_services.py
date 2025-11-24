@@ -154,16 +154,21 @@ class TestBackwardCompatibilityReturnTypes:
         assert "skipped" in result
         assert all(isinstance(v, int) for v in result.values())
 
-    @patch("modules.kotak_neo_auto_trader.position_monitor.load_history")
-    def test_position_monitor_return_type(self, mock_load_history):
+    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
+    def test_position_monitor_return_type(self, mock_get_position_loader):
         """Test that monitor_all_positions() returns correct structure"""
-        mock_load_history.return_value = {"trades": []}
+        # Mock PositionLoader
+        mock_position_loader = Mock()
+        mock_position_loader.load_open_positions.return_value = []
+        mock_position_loader.get_positions_by_symbol.return_value = {}
+        mock_get_position_loader.return_value = mock_position_loader
 
         monitor = PositionMonitor(
             history_path="test_history.json",
             enable_alerts=False,
             enable_realtime_prices=False,
         )
+        monitor.position_loader = mock_position_loader
 
         # Mock services
         monitor.price_service.get_price = Mock(return_value=pd.DataFrame())

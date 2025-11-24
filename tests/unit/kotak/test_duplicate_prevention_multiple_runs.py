@@ -138,6 +138,32 @@ class TestDuplicatePreventionMultipleRuns:
         )
         auto_trade_engine.orders.get_pending_orders = MagicMock(return_value=[])
 
+        # Mock portfolio_service and order_validation_service
+        auto_trade_engine.portfolio_service.get_current_positions = MagicMock(return_value=[])
+        auto_trade_engine.portfolio_service.get_portfolio_count = MagicMock(return_value=0)
+        auto_trade_engine.portfolio_service.check_portfolio_capacity = MagicMock(
+            return_value=(True, 0, 10)
+        )
+        auto_trade_engine.portfolio_service.has_position = MagicMock(return_value=False)
+
+        auto_trade_engine.order_validation_service.check_balance = MagicMock(
+            return_value=(True, 200000.0, 100)
+        )
+        auto_trade_engine.order_validation_service.check_portfolio_capacity = MagicMock(
+            return_value=(True, 0, 10)
+        )
+        auto_trade_engine.order_validation_service.check_duplicate_order = MagicMock(
+            return_value=(False, None)
+        )
+        auto_trade_engine.order_validation_service.check_volume_ratio = MagicMock(
+            return_value=(True, 0.01, None)
+        )
+        auto_trade_engine.order_validation_service.get_available_cash = MagicMock(
+            return_value=200000.0
+        )
+        auto_trade_engine.order_validation_service.orders = auto_trade_engine.orders
+        auto_trade_engine.order_validation_service.orders_repo = auto_trade_engine.orders_repo
+
         # Mock indicators - need to patch static method to prevent real API calls
         mock_indicators = {
             "close": 2500.0,

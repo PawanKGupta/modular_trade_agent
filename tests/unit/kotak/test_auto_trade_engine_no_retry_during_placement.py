@@ -145,11 +145,36 @@ class TestNoRetryDuringPlacement:
             }
         )
 
-        # Mock insufficient balance
+        # Mock insufficient balance - use order_validation_service
         auto_trade_engine.get_affordable_qty = Mock(return_value=5)  # Less than required
         auto_trade_engine.get_available_cash = Mock(return_value=10000.0)
         auto_trade_engine.check_position_volume_ratio = Mock(return_value=True)
         auto_trade_engine._calculate_execution_capital = Mock(return_value=30000.0)
+
+        # Mock portfolio_service and order_validation_service
+        auto_trade_engine.portfolio_service.get_current_positions = Mock(return_value=[])
+        auto_trade_engine.portfolio_service.get_portfolio_count = Mock(return_value=2)
+        auto_trade_engine.portfolio_service.check_portfolio_capacity = Mock(
+            return_value=(True, 2, 6)
+        )
+        auto_trade_engine.portfolio_service.has_position = Mock(return_value=False)
+
+        # Mock order_validation_service to return insufficient balance
+        auto_trade_engine.order_validation_service.check_balance = Mock(
+            return_value=(False, 10000.0, 5)  # Insufficient balance
+        )
+        auto_trade_engine.order_validation_service.check_portfolio_capacity = Mock(
+            return_value=(True, 2, 6)
+        )
+        auto_trade_engine.order_validation_service.check_duplicate_order = Mock(
+            return_value=(False, None)
+        )
+        auto_trade_engine.order_validation_service.check_volume_ratio = Mock(
+            return_value=(True, 0.01, None)
+        )
+        auto_trade_engine.order_validation_service.get_available_cash = Mock(return_value=10000.0)
+        auto_trade_engine.order_validation_service.orders = auto_trade_engine.orders
+        auto_trade_engine.order_validation_service.orders_repo = auto_trade_engine.orders_repo
 
         # Mock _add_failed_order
         auto_trade_engine._add_failed_order = Mock()

@@ -49,13 +49,25 @@ class TestPositionCache:
             cache = PositionCache()
             cache.set(temp_path, "data1")
 
-            # Modify file
+            # Verify cache is set correctly (before file change)
+            result_before = cache.get(temp_path)
+            assert result_before is not None
+            data_before, is_valid_before = result_before
+            assert data_before == "data1"
+            assert is_valid_before is True
+
+            # Modify file and force mtime update
             with open(temp_path, "w") as f:
                 json.dump({"test": "data2"}, f)
+            # Force mtime update to ensure change is detected
+            import time as time_module
 
-            # Cache should be invalidated
-            result = cache.get(temp_path)
-            assert result is None
+            time_module.sleep(0.1)
+            os.utime(temp_path, None)  # Update mtime to current time
+
+            # Cache should be invalidated (file changed)
+            result_after = cache.get(temp_path)
+            assert result_after is None, f"Expected None after file change, got {result_after}"
         finally:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)

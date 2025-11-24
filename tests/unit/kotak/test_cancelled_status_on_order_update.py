@@ -63,6 +63,24 @@ class TestCancelledStatusOnOrderUpdate:
             engine.get_affordable_qty = Mock(return_value=20)
             engine.get_available_cash = Mock(return_value=100000.0)
             engine.portfolio.get_holdings = Mock(return_value={"data": []})
+            engine._get_failed_orders = Mock(return_value=[])
+
+            # Mock portfolio_service and order_validation_service
+            engine.portfolio_service.get_current_positions = Mock(return_value=[])
+            engine.portfolio_service.get_portfolio_count = Mock(return_value=0)
+            engine.portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 0, 10))
+            engine.portfolio_service.has_position = Mock(return_value=False)
+
+            engine.order_validation_service.check_balance = Mock(return_value=(True, 200000.0, 100))
+            engine.order_validation_service.check_portfolio_capacity = Mock(
+                return_value=(True, 0, 10)
+            )
+            engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
+            engine.order_validation_service.check_volume_ratio = Mock(
+                return_value=(True, 0.01, None)
+            )
+            engine.order_validation_service.get_available_cash = Mock(return_value=200000.0)
+
             return engine
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.get_daily_indicators")
@@ -171,8 +189,15 @@ class TestCancelledStatusOnOrderUpdate:
         mock_get_indicators.return_value = mock_indicators
         auto_trade_engine.get_daily_indicators.return_value = mock_indicators
 
-        # Mock sufficient cash
+        # Mock sufficient cash and balance validation
         auto_trade_engine.get_available_cash.return_value = 200000.0
+        auto_trade_engine.order_validation_service.check_balance = Mock(
+            return_value=(True, 200000.0, 100)
+        )
+        auto_trade_engine.order_validation_service.get_available_cash = Mock(return_value=200000.0)
+        auto_trade_engine.order_validation_service.check_volume_ratio = Mock(
+            return_value=(True, 0.01, None)
+        )
 
         # Mock recommendation
         rec = Recommendation(
@@ -192,7 +217,7 @@ class TestCancelledStatusOnOrderUpdate:
         assert update_call[1]["status"] == DbOrderStatus.CANCELLED
         assert "cancelled due to parameter update" in update_call[1]["cancelled_reason"].lower()
 
-        # Verify new order was placed
+        # Verify new order was placed (balance check should pass now)
         auto_trade_engine._attempt_place_order.assert_called_once()
 
     def test_failed_order_marked_cancelled_when_qty_changes(self, auto_trade_engine):
