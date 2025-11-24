@@ -2370,8 +2370,10 @@ class AutoTradeEngine:
                 # Get ticker from order or try to construct it
                 ticker = getattr(db_order, "ticker", None) or f"{symbol}.NS"
 
-                # Get fresh indicators
-                ind = AutoTradeEngine.get_daily_indicators(ticker)
+                # Get fresh indicators using IndicatorService
+                ind = self.indicator_service.get_daily_indicators_dict(
+                    ticker=ticker, rsi_period=None, config=self.strategy_config
+                )
                 if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
                     logger.warning(f"Skipping retry {symbol}: missing indicators")
                     summary["skipped"] += 1
