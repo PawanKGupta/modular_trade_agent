@@ -313,7 +313,7 @@ class TestAutoTradeEngineServiceIntegration:
                 "open": range(2490, 3290),
                 "high": range(2510, 3310),
                 "low": range(2480, 3280),
-                "volume": range(1000000, 1800000),
+                "volume": range(1000000, 1000800),
                 "date": pd.date_range("2022-01-01", periods=800),
             }
         )
