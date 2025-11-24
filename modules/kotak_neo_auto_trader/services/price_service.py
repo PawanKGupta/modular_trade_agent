@@ -118,6 +118,11 @@ class PriceService:
         self.realtime_cache_ttl = realtime_cache_ttl
         self._cache = PriceCache() if enable_caching else None
 
+        # Phase 4.1: Subscription management
+        # Track which symbols are subscribed and by which services
+        self._subscriptions: dict[str, set[str]] = {}  # symbol -> set of service_ids
+        self._subscribed_symbols: set[str] = set()  # All currently subscribed symbols
+
         logger.debug(
             f"PriceService initialized (caching: {enable_caching}, "
             f"historical_ttl: {historical_cache_ttl}s, realtime_ttl: {realtime_cache_ttl}s)"
@@ -269,12 +274,19 @@ class PriceService:
         logger.warning(f"Could not get real-time price for {symbol}")
         return None
 
-    def subscribe_to_symbols(self, symbols: list[str]) -> bool:
+    def subscribe_to_symbols(
+        self, symbols: list[str], service_id: str = "default"
+    ) -> bool:
         """
         Subscribe to real-time price updates for symbols.
 
+        Phase 4.1: Centralize Live Price Subscription
+        - Subscription deduplication: Avoid subscribing to same symbol twice
+        - Subscription lifecycle: Track which services subscribe to which symbols
+
         Args:
             symbols: List of symbols to subscribe to
+            service_id: Identifier for the service requesting subscription (for tracking)
 
         Returns:
             True if subscription successful, False otherwise
@@ -283,31 +295,73 @@ class PriceService:
             logger.debug("No live price manager available for subscription")
             return False
 
+        if not symbols:
+            return True  # No symbols to subscribe to
+
         try:
-            # Check if live_price_manager has subscribe method
-            if hasattr(self.live_price_manager, "subscribe_to_positions"):
-                self.live_price_manager.subscribe_to_positions(symbols)
-                logger.debug(f"Subscribed to {len(symbols)} symbols via LivePriceManager")
-                return True
-            elif hasattr(self.live_price_manager, "subscribe"):
-                # LivePriceCache interface
-                for symbol in symbols:
-                    self.live_price_manager.subscribe(symbol)
-                logger.debug(f"Subscribed to {len(symbols)} symbols via LivePriceCache")
-                return True
+            # Phase 4.1: Track subscriptions per service
+            normalized_symbols = [s.upper().strip() for s in symbols if s]
+            
+            # Find symbols that need new subscriptions (not already subscribed)
+            symbols_to_subscribe = [
+                symbol
+                for symbol in normalized_symbols
+                if symbol not in self._subscribed_symbols
+            ]
+
+            # Track all symbols for this service (even if already subscribed)
+            for symbol in normalized_symbols:
+                if symbol not in self._subscriptions:
+                    self._subscriptions[symbol] = set()
+                self._subscriptions[symbol].add(service_id)
+
+            # Only subscribe to symbols that aren't already subscribed
+            if symbols_to_subscribe:
+                # Check if live_price_manager has subscribe method
+                if hasattr(self.live_price_manager, "subscribe_to_positions"):
+                    self.live_price_manager.subscribe_to_positions(symbols_to_subscribe)
+                    logger.debug(
+                        f"Subscribed to {len(symbols_to_subscribe)} new symbols via LivePriceManager "
+                        f"(service: {service_id}, total subscribed: {len(self._subscribed_symbols) + len(symbols_to_subscribe)})"
+                    )
+                elif hasattr(self.live_price_manager, "subscribe"):
+                    # LivePriceCache interface
+                    for symbol in symbols_to_subscribe:
+                        self.live_price_manager.subscribe(symbol)
+                    logger.debug(
+                        f"Subscribed to {len(symbols_to_subscribe)} new symbols via LivePriceCache "
+                        f"(service: {service_id}, total subscribed: {len(self._subscribed_symbols) + len(symbols_to_subscribe)})"
+                    )
+                else:
+                    logger.warning("Live price manager does not support subscription")
+                    return False
+
+                # Update subscribed symbols set
+                self._subscribed_symbols.update(symbols_to_subscribe)
             else:
-                logger.warning("Live price manager does not support subscription")
-                return False
+                logger.debug(
+                    f"All {len(normalized_symbols)} symbols already subscribed "
+                    f"(service: {service_id}, deduplication saved {len(normalized_symbols)} subscriptions)"
+                )
+
+            return True
         except Exception as e:
             logger.error(f"Failed to subscribe to symbols: {e}")
             return False
 
-    def unsubscribe_from_symbols(self, symbols: list[str]) -> bool:
+    def unsubscribe_from_symbols(
+        self, symbols: list[str], service_id: str = "default"
+    ) -> bool:
         """
         Unsubscribe from real-time price updates for symbols.
 
+        Phase 4.1: Centralize Live Price Subscription
+        - Only unsubscribes if no other services need the symbol
+        - Tracks subscription lifecycle
+
         Args:
             symbols: List of symbols to unsubscribe from
+            service_id: Identifier for the service requesting unsubscription
 
         Returns:
             True if unsubscription successful, False otherwise
@@ -315,21 +369,92 @@ class PriceService:
         if not self.live_price_manager:
             return False
 
+        if not symbols:
+            return True  # No symbols to unsubscribe from
+
         try:
-            if hasattr(self.live_price_manager, "unsubscribe_from_positions"):
-                self.live_price_manager.unsubscribe_from_positions(symbols)
-                logger.debug(f"Unsubscribed from {len(symbols)} symbols")
-                return True
-            elif hasattr(self.live_price_manager, "unsubscribe"):
-                for symbol in symbols:
-                    self.live_price_manager.unsubscribe(symbol)
-                logger.debug(f"Unsubscribed from {len(symbols)} symbols")
-                return True
+            normalized_symbols = [s.upper().strip() for s in symbols if s]
+            
+            # Remove service from subscription tracking
+            symbols_to_unsubscribe = []
+            for symbol in normalized_symbols:
+                if symbol in self._subscriptions:
+                    self._subscriptions[symbol].discard(service_id)
+                    
+                    # Only unsubscribe if no other services need this symbol
+                    if not self._subscriptions[symbol]:
+                        symbols_to_unsubscribe.append(symbol)
+                        self._subscriptions.pop(symbol, None)
+                        self._subscribed_symbols.discard(symbol)
+
+            # Only unsubscribe from symbols that no services need
+            if symbols_to_unsubscribe:
+                if hasattr(self.live_price_manager, "unsubscribe_from_positions"):
+                    self.live_price_manager.unsubscribe_from_positions(symbols_to_unsubscribe)
+                    logger.debug(
+                        f"Unsubscribed from {len(symbols_to_unsubscribe)} symbols "
+                        f"(service: {service_id}, total subscribed: {len(self._subscribed_symbols)})"
+                    )
+                    return True
+                elif hasattr(self.live_price_manager, "unsubscribe"):
+                    for symbol in symbols_to_unsubscribe:
+                        self.live_price_manager.unsubscribe(symbol)
+                    logger.debug(
+                        f"Unsubscribed from {len(symbols_to_unsubscribe)} symbols "
+                        f"(service: {service_id}, total subscribed: {len(self._subscribed_symbols)})"
+                    )
+                    return True
             else:
-                return False
+                logger.debug(
+                    f"Symbols still needed by other services, not unsubscribing "
+                    f"(service: {service_id})"
+                )
+                return True
+
+            return False
         except Exception as e:
             logger.error(f"Failed to unsubscribe from symbols: {e}")
             return False
+
+    def get_subscribed_symbols(self) -> set[str]:
+        """
+        Get all currently subscribed symbols.
+
+        Phase 4.1: Subscription lifecycle tracking
+
+        Returns:
+            Set of subscribed symbols
+        """
+        return self._subscribed_symbols.copy()
+
+    def get_subscriptions_by_service(self, service_id: str) -> set[str]:
+        """
+        Get symbols subscribed by a specific service.
+
+        Phase 4.1: Subscription lifecycle tracking
+
+        Args:
+            service_id: Service identifier
+
+        Returns:
+            Set of symbols subscribed by the service
+        """
+        service_symbols = set()
+        for symbol, services in self._subscriptions.items():
+            if service_id in services:
+                service_symbols.add(symbol)
+        return service_symbols
+
+    def get_all_subscriptions(self) -> dict[str, set[str]]:
+        """
+        Get all subscription mappings (symbol -> set of service_ids).
+
+        Phase 4.1: Subscription lifecycle tracking
+
+        Returns:
+            Dict mapping symbols to sets of service IDs
+        """
+        return {symbol: services.copy() for symbol, services in self._subscriptions.items()}
 
     def clear_cache(self):
         """Clear all cached price data"""

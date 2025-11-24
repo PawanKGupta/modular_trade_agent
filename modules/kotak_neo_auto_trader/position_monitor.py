@@ -143,11 +143,16 @@ class PositionMonitor:
         # Subscribe to live prices for all open positions
         symbols = list(open_positions.keys())
         if symbols:
-            # Use PriceService for subscription (maintains backward compatibility)
+            # Phase 4.1: Use PriceService for centralized subscription with deduplication
             try:
-                subscribed = self.price_service.subscribe_to_symbols(symbols)
+                subscribed = self.price_service.subscribe_to_symbols(
+                    symbols, service_id="position_monitor"
+                )
                 if subscribed:
-                    logger.info(f"[OK] Subscribed to live prices for {len(symbols)} positions")
+                    logger.info(
+                        f"[OK] Subscribed to live prices for {len(symbols)} positions "
+                        f"(via PriceService - deduplication enabled)"
+                    )
                 elif self.price_manager:
                     # Fallback to direct price_manager subscription
                     try:

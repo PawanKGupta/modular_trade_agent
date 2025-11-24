@@ -403,9 +403,24 @@ class TradingService:
                 logger.debug(f"Could not fetch orders for subscription: {e}")
 
             if symbols:
-                # Subscribe to positions for real-time prices (only SELL orders)
-                self.price_cache.subscribe(symbols)
-                logger.info(f"Subscribed to WebSocket for sell orders: {', '.join(symbols)}")
+                # Phase 4.1: Use PriceService for centralized subscription management
+                from modules.kotak_neo_auto_trader.services import get_price_service
+                
+                price_service = get_price_service(
+                    live_price_manager=self.price_cache, enable_caching=True
+                )
+                subscribed = price_service.subscribe_to_symbols(
+                    symbols, service_id="sell_monitor"
+                )
+                if subscribed:
+                    logger.info(
+                        f"Subscribed to WebSocket for sell orders: {', '.join(symbols)} "
+                        f"(via PriceService - deduplication enabled)"
+                    )
+                else:
+                    # Fallback to direct subscription if PriceService fails
+                    self.price_cache.subscribe(symbols)
+                    logger.info(f"Subscribed to WebSocket for sell orders: {', '.join(symbols)}")
             else:
                 logger.debug(
                     "No active sell orders found to subscribe (will subscribe as orders are placed)"
@@ -517,11 +532,26 @@ class TradingService:
                                         symbols.append(base_symbol)
 
                         if symbols:
-                            # Subscribe to any new symbols (existing ones already subscribed)
-                            self.price_cache.subscribe(symbols)
-                            logger.debug(
-                                f"Subscribed to {len(symbols)} symbols for sell monitoring: {', '.join(symbols)}"
+                            # Phase 4.1: Use PriceService for centralized subscription management
+                            from modules.kotak_neo_auto_trader.services import get_price_service
+                            
+                            price_service = get_price_service(
+                                live_price_manager=self.price_cache, enable_caching=True
                             )
+                            subscribed = price_service.subscribe_to_symbols(
+                                symbols, service_id="sell_monitor"
+                            )
+                            if subscribed:
+                                logger.debug(
+                                    f"Subscribed to {len(symbols)} symbols for sell monitoring: "
+                                    f"{', '.join(symbols)} (via PriceService - deduplication enabled)"
+                                )
+                            else:
+                                # Fallback to direct subscription if PriceService fails
+                                self.price_cache.subscribe(symbols)
+                                logger.debug(
+                                    f"Subscribed to {len(symbols)} symbols for sell monitoring: {', '.join(symbols)}"
+                                )
 
                     except Exception as e:
                         logger.debug(f"Failed to subscribe to symbols: {e}")
