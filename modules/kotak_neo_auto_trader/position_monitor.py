@@ -5,22 +5,29 @@ Monitors open positions during market hours and sends alerts
 """
 
 import sys
-from pathlib import Path
-from typing import Dict, List, Any, Optional
-from datetime import datetime
+from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from utils.logger import logger
-from modules.kotak_neo_auto_trader.storage import load_history
-from modules.kotak_neo_auto_trader.tracking_scope import get_tracked_symbols, get_tracking_entry
-from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
-from modules.kotak_neo_auto_trader.live_price_manager import get_live_price_manager
-from core.data_fetcher import fetch_ohlcv_yf
-from core.indicators import compute_indicators
+from modules.kotak_neo_auto_trader.live_price_manager import get_live_price_manager  # noqa: E402
+from modules.kotak_neo_auto_trader.services import (  # noqa: E402
+    get_indicator_service,
+    get_price_service,
+)
+from modules.kotak_neo_auto_trader.storage import load_history  # noqa: E402
+from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier  # noqa: E402
+from utils.logger import logger  # noqa: E402
+
+# Constants
+RSI_EXIT_THRESHOLD = 50.0
+RSI_AVERAGING_LEVEL_20 = 20.0
+RSI_AVERAGING_LEVEL_10 = 10.0
 
 
 @dataclass
@@ -42,7 +49,7 @@ class PositionStatus:
     exit_imminent: bool
     averaging_opportunity: bool
     alert_level: str  # 'info', 'warning', 'critical'
-    alerts: List[str]
+    alerts: list[str]
 
 
 class PositionMonitor:
@@ -80,7 +87,7 @@ class PositionMonitor:
         self.enable_alerts = enable_alerts
         self.enable_realtime_prices = enable_realtime_prices
 
-        # Live price manager (for real-time LTP)
+        # Live price manager (for real-time LTP) - kept for backward compatibility
         if enable_realtime_prices:
             self.price_manager = live_price_manager or get_live_price_manager(
                 enable_websocket=True, enable_yfinance_fallback=True
@@ -88,12 +95,20 @@ class PositionMonitor:
         else:
             self.price_manager = None
 
+        # Initialize unified services
+        self.price_service = get_price_service(
+            live_price_manager=self.price_manager, enable_caching=True
+        )
+        self.indicator_service = get_indicator_service(
+            price_service=self.price_service, enable_caching=True
+        )
+
         # Alert thresholds
         self.large_move_threshold = 3.0  # 3% price move
         self.exit_proximity_threshold = 2.0  # Within 2% of EMA9
         self.rsi_exit_warning = 45.0  # Alert when RSI > 45 (near 50)
 
-    def monitor_all_positions(self) -> Dict[str, Any]:
+    def monitor_all_positions(self) -> dict[str, Any]:
         """
         Monitor all open positions and send alerts.
 
@@ -123,11 +138,20 @@ class PositionMonitor:
         logger.info("")
 
         # Subscribe to live prices for all open positions
-        if self.price_manager:
-            symbols = list(open_positions.keys())
+        symbols = list(open_positions.keys())
+        if symbols:
+            # Use PriceService for subscription (maintains backward compatibility)
             try:
-                self.price_manager.subscribe_to_positions(symbols)
-                logger.info(f"[OK] Subscribed to live prices for {len(symbols)} positions")
+                subscribed = self.price_service.subscribe_to_symbols(symbols)
+                if subscribed:
+                    logger.info(f"[OK] Subscribed to live prices for {len(symbols)} positions")
+                elif self.price_manager:
+                    # Fallback to direct price_manager subscription
+                    try:
+                        self.price_manager.subscribe_to_positions(symbols)
+                        logger.info(f"[OK] Subscribed to live prices for {len(symbols)} positions")
+                    except Exception as e:
+                        logger.warning(f"Live price subscription failed: {e}")
             except Exception as e:
                 logger.warning(f"Live price subscription failed: {e}")
 
@@ -179,10 +203,8 @@ class PositionMonitor:
 
         return results
 
-    def _get_open_positions(self, history: Dict) -> Dict[str, List[Dict]]:
+    def _get_open_positions(self, history: dict) -> dict[str, list[dict]]:
         """Get all open positions grouped by symbol."""
-        from collections import defaultdict
-
         open_positions = defaultdict(list)
         trades = history.get("trades", [])
 
@@ -194,7 +216,7 @@ class PositionMonitor:
 
         return dict(open_positions)
 
-    def _check_position_status(self, symbol: str, entries: List[Dict]) -> Optional[PositionStatus]:
+    def _check_position_status(self, symbol: str, entries: list[dict]) -> PositionStatus | None:
         """Check status of a position and generate alerts."""
 
         # Get ticker
@@ -202,58 +224,54 @@ class PositionMonitor:
         if not ticker or ticker == ".NS":
             ticker = f"{symbol}.NS"
 
-        # Get current market data
+        # Get current market data using unified services
         try:
-            df = fetch_ohlcv_yf(ticker, days=200, interval="1d", add_current_day=True)
+            # Use PriceService for historical data
+            df = self.price_service.get_price(ticker, days=200, interval="1d", add_current_day=True)
             if df is None or df.empty:
                 logger.warning(f"No data for {symbol}")
                 return None
 
-            df = compute_indicators(df)
+            # Use IndicatorService for indicator calculations
+            df = self.indicator_service.calculate_all_indicators(df)
+            if df is None or df.empty:
+                logger.warning(f"Failed to calculate indicators for {symbol}")
+                return None
+
             latest = df.iloc[-1]
 
-            # Use real-time LTP if available, else fall back to close price
-            if self.price_manager:
-                try:
-                    # Handle both LivePriceCache (single arg) and LivePriceManager (two args)
-                    if hasattr(self.price_manager, "get_ltp"):
-                        import inspect
+            # Use PriceService for real-time LTP
+            current_price = self.price_service.get_realtime_price(
+                symbol=symbol, ticker=ticker, broker_symbol=None
+            )
 
-                        sig = inspect.signature(self.price_manager.get_ltp)
-                        if len(sig.parameters) == 2:  # LivePriceManager: get_ltp(symbol, ticker)
-                            current_price = self.price_manager.get_ltp(symbol, ticker)
-                        else:  # LivePriceCache: get_ltp(symbol)
-                            current_price = self.price_manager.get_ltp(symbol)
-
-                        if current_price is None:
-                            logger.debug(
-                                f"Could not get real-time LTP for {symbol}, using close price"
-                            )
-                            current_price = float(latest["close"])
-                        else:
-                            logger.debug(f"Using real-time LTP for {symbol}: Rs {current_price}")
-                    else:
-                        current_price = float(latest["close"])
-                except Exception as e:
-                    logger.debug(
-                        f"Error getting real-time LTP for {symbol}: {e}, using close price"
-                    )
-                    current_price = float(latest["close"])
-            else:
+            # Fallback to close price if real-time price unavailable
+            if current_price is None:
                 current_price = float(latest["close"])
+                logger.debug(
+                    f"Could not get real-time LTP for {symbol}, "
+                    f"using close price: Rs {current_price}"
+                )
+            else:
+                logger.debug(f"Using real-time LTP for {symbol}: Rs {current_price}")
 
-            rsi10 = float(latest["rsi10"])
+            # Get RSI10 from calculated indicators
+            rsi10 = float(latest.get("rsi10", 0))
 
-            # Calculate EMA9 with real-time LTP
-            # Append current_price to the series and recalculate EMA9
-            close_series = df["close"].copy()
-            if self.price_manager and current_price != float(latest["close"]):
-                # Add real-time price as latest data point
-                import pandas as pd
+            # Calculate EMA9 with real-time LTP using IndicatorService
+            # This matches the exact logic from the original implementation
+            if self.enable_realtime_prices and current_price != float(latest["close"]):
+                # Use real-time EMA9 calculation when real-time price differs from close
+                ema9 = self.indicator_service.calculate_ema9_realtime(
+                    ticker=ticker, broker_symbol=None, current_ltp=current_price
+                )
+                if ema9 is None:
+                    # Fallback to historical EMA9 if real-time calculation fails
+                    ema9 = float(latest.get("ema9", 0))
+            else:
+                # Use historical EMA9 from indicators
+                ema9 = float(latest.get("ema9", 0))
 
-                close_series = pd.concat([close_series, pd.Series([current_price])])
-
-            ema9 = float(close_series.ewm(span=9).mean().iloc[-1])
             ema200 = float(latest.get("ema200", 0))
 
         except Exception as e:
@@ -277,7 +295,7 @@ class PositionMonitor:
         try:
             entry_time = datetime.fromisoformat(entry_time_str)
             days_held = (datetime.now() - entry_time).days
-        except:
+        except (ValueError, TypeError):
             days_held = 0
 
         # Generate alerts
@@ -296,26 +314,26 @@ class PositionMonitor:
             exit_imminent = True
             alert_level = "warning"
 
-        if rsi10 > 50:
-            alerts.append(f"EXIT: RSI10 ({rsi10:.1f}) > 50")
+        if rsi10 > RSI_EXIT_THRESHOLD:
+            alerts.append(f"EXIT: RSI10 ({rsi10:.1f}) > {RSI_EXIT_THRESHOLD}")
             exit_imminent = True
             alert_level = "critical"
         elif rsi10 > self.rsi_exit_warning:
-            alerts.append(f"EXIT APPROACHING: RSI10 ({rsi10:.1f}) near 50")
+            alerts.append(f"EXIT APPROACHING: RSI10 ({rsi10:.1f}) near {RSI_EXIT_THRESHOLD}")
             exit_imminent = True
             alert_level = "warning"
 
         # Check averaging opportunities
         levels = entries[0].get("levels_taken", {"30": True, "20": False, "10": False})
 
-        if rsi10 < 20 and levels.get("30") and not levels.get("20"):
-            alerts.append(f"AVERAGING OPPORTUNITY: RSI10 ({rsi10:.1f}) < 20")
+        if rsi10 < RSI_AVERAGING_LEVEL_20 and levels.get("30") and not levels.get("20"):
+            alerts.append(f"AVERAGING OPPORTUNITY: RSI10 ({rsi10:.1f}) < {RSI_AVERAGING_LEVEL_20}")
             averaging_opportunity = True
             if alert_level == "info":
                 alert_level = "warning"
 
-        if rsi10 < 10 and levels.get("20") and not levels.get("10"):
-            alerts.append(f"AVERAGING OPPORTUNITY: RSI10 ({rsi10:.1f}) < 10")
+        if rsi10 < RSI_AVERAGING_LEVEL_10 and levels.get("20") and not levels.get("10"):
+            alerts.append(f"AVERAGING OPPORTUNITY: RSI10 ({rsi10:.1f}) < {RSI_AVERAGING_LEVEL_10}")
             averaging_opportunity = True
             if alert_level == "info":
                 alert_level = "warning"
@@ -324,7 +342,7 @@ class PositionMonitor:
         if abs(unrealized_pnl_pct) > self.large_move_threshold:
             direction = "GAIN" if unrealized_pnl_pct > 0 else "LOSS"
             alerts.append(
-                f"{direction}: {abs(unrealized_pnl_pct):.1f}% " f"(Rs {abs(unrealized_pnl):,.0f})"
+                f"{direction}: {abs(unrealized_pnl_pct):.1f}% (Rs {abs(unrealized_pnl):,.0f})"
             )
             if alert_level == "info":
                 alert_level = "warning"
