@@ -176,7 +176,7 @@ class EODCleanup:
     def _verify_all_pending_orders(self) -> Dict[str, Any]:
         """
         Final verification of all pending orders.
-        
+
         Phase 3.2: Consolidate order verification
         - Checks if OrderStatusVerifier ran within last 15 minutes
         - Skips verification if OrderStatusVerifier ran recently to avoid duplicate API calls
@@ -195,7 +195,7 @@ class EODCleanup:
                     f"{time_since_check.total_seconds() / 60:.1f} minutes ago "
                     f"(threshold: 15 minutes). Using existing verification results."
                 )
-                
+
                 # Return last verification counts from OrderStatusVerifier
                 counts = self.order_verifier.get_last_verification_counts()
                 logger.info(

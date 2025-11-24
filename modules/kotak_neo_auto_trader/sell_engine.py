@@ -668,7 +668,7 @@ class SellOrderManager:
             List of executed order IDs
         """
         executed_ids = []
-        
+
         # Phase 3.2: Check OrderStatusVerifier results first if available
         if self.order_verifier:
             try:
@@ -677,7 +677,7 @@ class SellOrderManager:
                     order_id = order_info.get("order_id")
                     if not order_id:
                         continue
-                    
+
                     # Check OrderStatusVerifier result for this order
                     result = self.order_verifier.get_verification_result(order_id)
                     if result and result.get('status') == 'EXECUTED':
@@ -685,14 +685,14 @@ class SellOrderManager:
                         logger.info(
                             f"Sell order executed (from OrderStatusVerifier): Order ID {order_id}"
                         )
-                
+
                 # If we found results from OrderStatusVerifier, return them
                 if executed_ids:
                     return executed_ids
             except Exception as e:
                 logger.debug(f"Error checking OrderStatusVerifier results: {e}")
                 # Fall through to direct API call
-        
+
         # Fallback: Use direct API call if OrderStatusVerifier not available or no results found
         try:
             executed_orders = self.orders.get_executed_orders()
@@ -1124,7 +1124,7 @@ class SellOrderManager:
             try:
                 # Get verification results for this symbol
                 verification_results = self.order_verifier.get_verification_results_for_symbol(symbol)
-                
+
                 # Check if any result shows EXECUTED status (completed sell order)
                 for result in verification_results:
                     if result.get('status') == 'EXECUTED':
@@ -1133,7 +1133,7 @@ class SellOrderManager:
                         order_price = 0.0
                         if broker_order:
                             order_price = OrderFieldExtractor.get_price(broker_order) or 0.0
-                        
+
                         order_id = result.get('order_id', '')
                         logger.info(
                             f"Found completed sell order for {symbol} from OrderStatusVerifier: "
@@ -1143,7 +1143,7 @@ class SellOrderManager:
             except Exception as e:
                 logger.debug(f"Error checking OrderStatusVerifier results for {symbol}: {e}")
                 # Fall through to direct API call
-        
+
         # Fallback: Use direct API call if OrderStatusVerifier not available or no results found
         try:
             # Use get_orders() directly to get ALL orders (including completed ones)
