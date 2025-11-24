@@ -381,14 +381,24 @@ class SellOrderManager:
 
     def get_open_positions(self) -> list[dict[str, Any]]:
         """
-        Get all open positions from trade history
+        Get all open positions from trade history.
 
-        DEPRECATED: Use position_loader.load_open_positions() instead.
-        This method is kept for backward compatibility and delegates to PositionLoader.
+        .. deprecated:: Phase 2.2
+           Use :meth:`position_loader.load_open_positions` instead.
+           This method is kept for backward compatibility and delegates to PositionLoader.
+           Will be removed in a future version.
 
         Returns:
-            List of open trade entries
+            List of open trade entries from trade history
         """
+        import warnings
+
+        warnings.warn(
+            "get_open_positions() is deprecated. "
+            "Use position_loader.load_open_positions() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # Use PositionLoader to get open positions (Phase 2.2)
         return self.position_loader.load_open_positions()
 

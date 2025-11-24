@@ -1464,9 +1464,22 @@ class AutoTradeEngine:
         """
         Get list of symbols currently in portfolio.
 
-        DEPRECATED: Use portfolio_service.get_current_positions() instead.
-        This method is kept for backward compatibility and delegates to PortfolioService.
+        .. deprecated:: Phase 2.1
+           Use :meth:`portfolio_service.get_current_positions` instead.
+           This method is kept for backward compatibility and delegates to PortfolioService.
+           Will be removed in a future version.
+
+        Returns:
+            List of symbols currently in portfolio (includes pending buy orders by default)
         """
+        import warnings
+
+        warnings.warn(
+            "current_symbols_in_portfolio() is deprecated. "
+            "Use portfolio_service.get_current_positions() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # Update portfolio_service with current portfolio/orders if available
         if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
             self.portfolio_service.portfolio = self.portfolio
@@ -1479,9 +1492,22 @@ class AutoTradeEngine:
         """
         Get current portfolio size.
 
-        DEPRECATED: Use portfolio_service.get_portfolio_count() instead.
-        This method is kept for backward compatibility and delegates to PortfolioService.
+        .. deprecated:: Phase 2.1
+           Use :meth:`portfolio_service.get_portfolio_count` instead.
+           This method is kept for backward compatibility and delegates to PortfolioService.
+           Will be removed in a future version.
+
+        Returns:
+            Current portfolio size (includes pending buy orders by default)
         """
+        import warnings
+
+        warnings.warn(
+            "portfolio_size() is deprecated. "
+            "Use portfolio_service.get_portfolio_count() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # Update portfolio_service with current portfolio/orders if available
         if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
             self.portfolio_service.portfolio = self.portfolio
@@ -1622,9 +1648,25 @@ class AutoTradeEngine:
         """
         Check if symbol is in holdings.
 
-        DEPRECATED: Use portfolio_service.has_position() instead.
-        This method is kept for backward compatibility and delegates to PortfolioService.
+        .. deprecated:: Phase 2.1
+           Use :meth:`portfolio_service.has_position` instead.
+           This method is kept for backward compatibility and delegates to PortfolioService.
+           Will be removed in a future version.
+
+        Args:
+            base_symbol: Base symbol to check (e.g., 'RELIANCE')
+
+        Returns:
+            True if symbol is in holdings, False otherwise
         """
+        import warnings
+
+        warnings.warn(
+            f"has_holding() is deprecated. "
+            f"Use portfolio_service.has_position('{base_symbol}') instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # Update portfolio_service with current portfolio/orders if available
         if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
             self.portfolio_service.portfolio = self.portfolio
