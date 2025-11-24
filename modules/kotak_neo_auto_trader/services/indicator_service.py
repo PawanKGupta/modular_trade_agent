@@ -95,7 +95,11 @@ class IndicatorService:
         self.price_service = price_service
         self.enable_caching = enable_caching
         self.cache_ttl = cache_ttl
+        self._base_cache_ttl = cache_ttl
         self._cache = IndicatorCache() if enable_caching else None
+
+        # Phase 4.2: Adaptive TTL tracking
+        self._last_market_state: str | None = None
 
         logger.debug(f"IndicatorService initialized (caching: {enable_caching}, ttl: {cache_ttl}s)")
 
@@ -126,10 +130,17 @@ class IndicatorService:
         # Create cache key
         cache_key = f"rsi_{hash(str(df.index[-5:]))}_{period}"
 
-        # Check cache first
+        # Phase 4.2: Use adaptive TTL if caching enabled
+        if self.enable_caching:
+            adaptive_ttl = self.get_adaptive_ttl()
+        else:
+            adaptive_ttl = self.cache_ttl
+
+        # Check cache first (with adaptive TTL)
         if self._cache:
-            cached = self._cache.get(cache_key, self.cache_ttl)
+            cached = self._cache.get(cache_key, ttl_seconds=adaptive_ttl)
             if cached is not None:
+                logger.debug(f"Cache hit (adaptive TTL: {adaptive_ttl}s) for EMA{period}")
                 return cached.copy()
 
         try:
@@ -187,10 +198,17 @@ class IndicatorService:
         # Create cache key
         cache_key = f"ema_{hash(str(df.index[-5:]))}_{period}_{adjust}"
 
-        # Check cache first
+        # Phase 4.2: Use adaptive TTL if caching enabled
+        if self.enable_caching:
+            adaptive_ttl = self.get_adaptive_ttl()
+        else:
+            adaptive_ttl = self.cache_ttl
+
+        # Check cache first (with adaptive TTL)
         if self._cache:
-            cached = self._cache.get(cache_key, self.cache_ttl)
+            cached = self._cache.get(cache_key, ttl_seconds=adaptive_ttl)
             if cached is not None:
+                logger.debug(f"Cache hit (adaptive TTL: {adaptive_ttl}s) for EMA{period}")
                 return cached.copy()
 
         try:
@@ -331,10 +349,17 @@ class IndicatorService:
         # Create cache key
         cache_key = f"all_indicators_{hash(str(df.index[-10:]))}_rsi{rsi_period}_ema{ema_period}"
 
-        # Check cache first
+        # Phase 4.2: Use adaptive TTL if caching enabled
+        if self.enable_caching:
+            adaptive_ttl = self.get_adaptive_ttl()
+        else:
+            adaptive_ttl = self.cache_ttl
+
+        # Check cache first (with adaptive TTL)
         if self._cache:
-            cached = self._cache.get(cache_key, self.cache_ttl)
+            cached = self._cache.get(cache_key, ttl_seconds=adaptive_ttl)
             if cached is not None:
+                logger.debug(f"Cache hit (adaptive TTL: {adaptive_ttl}s) for all indicators")
                 return cached.copy()
 
         try:
@@ -442,6 +467,115 @@ class IndicatorService:
         except Exception as e:
             logger.warning(f"Failed to get indicators for {ticker}: {e}")
             return None
+
+    def get_adaptive_ttl(self) -> int:
+        """
+        Get adaptive cache TTL based on market conditions.
+
+        Phase 4.2: Enhanced Caching Strategy
+        - Longer TTL when market is closed (data doesn't change)
+        - Shorter TTL during market hours (fresher data)
+        - Medium TTL for pre-market/post-market hours
+
+        Returns:
+            Adaptive TTL in seconds
+        """
+        from datetime import time as dt_time
+
+        now = datetime.now().time()
+        market_open = dt_time(9, 15)
+        market_close = dt_time(15, 30)
+
+        # Determine market state
+        if market_open <= now <= market_close:
+            market_state = "open"
+        elif now < market_open:
+            market_state = "pre_market"
+        else:
+            market_state = "post_market"  # After market close
+
+        self._last_market_state = market_state
+
+        if market_state == "open":
+            # Market open: shorter TTL for fresher indicators
+            return int(self._base_cache_ttl * 0.7)  # 70% of base (42 sec)
+        elif market_state == "post_market":
+            # Market closed: longer TTL (indicators won't change)
+            return int(self._base_cache_ttl * 3)  # 3x base (3 min)
+        else:  # pre_market
+            # Pre-market: medium TTL
+            return int(self._base_cache_ttl * 1.5)  # 1.5x base (90 sec)
+
+    def warm_cache_for_positions(
+        self, positions: list[dict[str, Any]] | dict[str, list[dict[str, Any]]]
+    ) -> dict[str, int]:
+        """
+        Warm cache for open positions.
+
+        Phase 4.2: Cache Warming Strategies
+        Pre-populates cache with indicator data for all open positions.
+
+        Args:
+            positions: List of position dicts or dict grouped by symbol
+
+        Returns:
+            Dict with warming statistics: {'warmed': int, 'failed': int}
+        """
+        if not positions:
+            return {"warmed": 0, "failed": 0}
+
+        warmed = 0
+        failed = 0
+
+        # Handle both list and dict formats
+        if isinstance(positions, dict):
+            # Grouped by symbol: {symbol: [trade1, trade2, ...]}
+            symbols = list(positions.keys())
+        else:
+            # List of trades: extract unique symbols
+            symbols = list(
+                set(
+                    trade.get("symbol", "").upper().replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "")
+                    for trade in positions
+                    if trade.get("symbol")
+                )
+            )
+
+        logger.info(f"Warming indicator cache for {len(symbols)} positions...")
+
+        if not self.price_service:
+            logger.warning("No price_service available for cache warming")
+            return {"warmed": 0, "failed": len(symbols)}
+
+        for symbol in symbols:
+            try:
+                # Get ticker from symbol (assume NSE)
+                ticker = f"{symbol}.NS"
+
+                # Warm price cache first (needed for indicators)
+                df = self.price_service.get_price(ticker, days=365, interval="1d", add_current_day=True)
+                if df is None or df.empty:
+                    failed += 1
+                    continue
+
+                # Warm indicator cache
+                indicators_df = self.calculate_all_indicators(df)
+                if indicators_df is not None and not indicators_df.empty:
+                    warmed += 1
+                    logger.debug(f"Cache warmed for {symbol} indicators")
+                else:
+                    failed += 1
+                    logger.debug(f"Failed to warm cache for {symbol} indicators")
+
+            except Exception as e:
+                logger.debug(f"Error warming indicator cache for {symbol}: {e}")
+                failed += 1
+
+        logger.info(
+            f"Indicator cache warming complete: {warmed} positions warmed, {failed} failed"
+        )
+
+        return {"warmed": warmed, "failed": failed}
 
     def clear_cache(self):
         """Clear all cached indicator data"""

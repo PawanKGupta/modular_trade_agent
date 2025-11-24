@@ -43,7 +43,11 @@ class PriceCache:
         self._realtime_cache: dict[str, dict[str, Any]] = {}
 
     def get_historical(self, key: str, ttl_seconds: int = 300) -> pd.DataFrame | None:
-        """Get cached historical data if not expired"""
+        """
+        Get cached historical data if not expired
+        
+        Phase 4.2: Adaptive TTL support
+        """
         if key in self._cache:
             entry = self._cache[key]
             age = (datetime.now() - entry["timestamp"]).total_seconds()
@@ -123,6 +127,11 @@ class PriceService:
         self._subscriptions: dict[str, set[str]] = {}  # symbol -> set of service_ids
         self._subscribed_symbols: set[str] = set()  # All currently subscribed symbols
 
+        # Phase 4.2: Adaptive TTL tracking
+        self._last_market_state: str | None = None  # 'open', 'closed', 'pre_market', 'post_market'
+        self._base_historical_ttl = historical_cache_ttl
+        self._base_realtime_ttl = realtime_cache_ttl
+
         logger.debug(
             f"PriceService initialized (caching: {enable_caching}, "
             f"historical_ttl: {historical_cache_ttl}s, realtime_ttl: {realtime_cache_ttl}s)"
@@ -161,10 +170,17 @@ class PriceService:
         # Create cache key
         cache_key = f"{ticker}_{days}_{interval}_{end_date}_{add_current_day}"
 
-        # Check cache first
+        # Phase 4.2: Use adaptive TTL if caching enabled
+        if self.enable_caching:
+            adaptive_ttl = self.get_adaptive_ttl(data_type="historical")
+        else:
+            adaptive_ttl = self.historical_cache_ttl
+
+        # Check cache first (with adaptive TTL)
         if self._cache:
-            cached_data = self._cache.get_historical(cache_key, self.historical_cache_ttl)
+            cached_data = self._cache.get_historical(cache_key, ttl_seconds=adaptive_ttl)
             if cached_data is not None:
+                logger.debug(f"Cache hit (adaptive TTL: {adaptive_ttl}s) for {ticker}")
                 return cached_data.copy()
 
         # Fetch from yfinance (same as original fetch_ohlcv_yf call)
@@ -218,10 +234,17 @@ class PriceService:
         # Create cache key
         cache_key = f"{symbol}_{ticker}_{broker_symbol}"
 
-        # Check cache first
+        # Phase 4.2: Use adaptive TTL if caching enabled
+        if self.enable_caching:
+            adaptive_ttl = self.get_adaptive_ttl(data_type="realtime")
+        else:
+            adaptive_ttl = self.realtime_cache_ttl
+
+        # Check cache first (with adaptive TTL)
         if self._cache:
-            cached_price = self._cache.get_realtime(cache_key, self.realtime_cache_ttl)
+            cached_price = self._cache.get_realtime(cache_key, ttl_seconds=adaptive_ttl)
             if cached_price is not None:
+                logger.debug(f"Cache hit (adaptive TTL: {adaptive_ttl}s) for real-time price: {symbol}")
                 return cached_price
 
         # Try LivePriceManager/LivePriceCache first (real-time WebSocket prices)
@@ -301,7 +324,7 @@ class PriceService:
         try:
             # Phase 4.1: Track subscriptions per service
             normalized_symbols = [s.upper().strip() for s in symbols if s]
-            
+
             # Find symbols that need new subscriptions (not already subscribed)
             symbols_to_subscribe = [
                 symbol
@@ -374,13 +397,13 @@ class PriceService:
 
         try:
             normalized_symbols = [s.upper().strip() for s in symbols if s]
-            
+
             # Remove service from subscription tracking
             symbols_to_unsubscribe = []
             for symbol in normalized_symbols:
                 if symbol in self._subscriptions:
                     self._subscriptions[symbol].discard(service_id)
-                    
+
                     # Only unsubscribe if no other services need this symbol
                     if not self._subscriptions[symbol]:
                         symbols_to_unsubscribe.append(symbol)
@@ -455,6 +478,176 @@ class PriceService:
             Dict mapping symbols to sets of service IDs
         """
         return {symbol: services.copy() for symbol, services in self._subscriptions.items()}
+
+    def get_adaptive_ttl(self, data_type: str = "historical") -> int:
+        """
+        Get adaptive cache TTL based on market conditions.
+
+        Phase 4.2: Enhanced Caching Strategy
+        - Longer TTL when market is closed (data doesn't change)
+        - Shorter TTL during market hours (fresher data)
+        - Medium TTL for pre-market/post-market hours
+
+        Args:
+            data_type: Type of data ('historical' or 'realtime')
+
+        Returns:
+            Adaptive TTL in seconds
+        """
+        from datetime import time as dt_time
+
+        now = datetime.now().time()
+        market_open = dt_time(9, 15)
+        market_close = dt_time(15, 30)
+
+        # Determine market state
+        if market_open <= now <= market_close:
+            market_state = "open"
+        elif now < market_open:
+            market_state = "pre_market"
+        else:
+            market_state = "post_market"  # After market close
+
+        self._last_market_state = market_state
+
+        if data_type == "historical":
+            # Historical data TTL based on market state
+            if market_state == "open":
+                # Market open: shorter TTL for fresher data
+                return int(self._base_historical_ttl * 0.7)  # 70% of base (3.5 min)
+            elif market_state == "post_market":
+                # Market closed: longer TTL (data won't change)
+                return int(self._base_historical_ttl * 3)  # 3x base (15 min)
+            else:  # pre_market
+                # Pre-market: medium TTL
+                return int(self._base_historical_ttl * 1.5)  # 1.5x base (7.5 min)
+        else:  # realtime
+            # Real-time data TTL based on market state
+            if market_state == "open":
+                # Market open: shorter TTL for fresher prices
+                return int(self._base_realtime_ttl * 0.7)  # 70% of base (21 sec)
+            elif market_state == "post_market":
+                # Market closed: longer TTL (prices won't change)
+                return int(self._base_realtime_ttl * 5)  # 5x base (2.5 min)
+            else:  # pre_market
+                # Pre-market: medium TTL
+                return int(self._base_realtime_ttl * 2)  # 2x base (1 min)
+
+    def warm_cache_for_positions(
+        self, positions: list[dict[str, Any]] | dict[str, list[dict[str, Any]]]
+    ) -> dict[str, int]:
+        """
+        Warm cache for open positions.
+
+        Phase 4.2: Cache Warming Strategies
+        Pre-populates cache with price and indicator data for all open positions.
+
+        Args:
+            positions: List of position dicts or dict grouped by symbol
+
+        Returns:
+            Dict with warming statistics: {'warmed': int, 'failed': int}
+        """
+        if not positions:
+            return {"warmed": 0, "failed": 0}
+
+        warmed = 0
+        failed = 0
+
+        # Handle both list and dict formats
+        if isinstance(positions, dict):
+            # Grouped by symbol: {symbol: [trade1, trade2, ...]}
+            symbols = list(positions.keys())
+        else:
+            # List of trades: extract unique symbols
+            symbols = list(
+                set(
+                    trade.get("symbol", "").upper().replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "")
+                    for trade in positions
+                    if trade.get("symbol")
+                )
+            )
+
+        logger.info(f"Warming cache for {len(symbols)} positions...")
+
+        for symbol in symbols:
+            try:
+                # Get ticker from symbol (assume NSE)
+                ticker = f"{symbol}.NS"
+
+                # Warm historical price cache
+                df = self.get_price(ticker, days=365, interval="1d", add_current_day=True)
+                if df is not None and not df.empty:
+                    warmed += 1
+                    logger.debug(f"Cache warmed for {symbol} historical prices")
+                else:
+                    failed += 1
+                    logger.debug(f"Failed to warm cache for {symbol} historical prices")
+
+            except Exception as e:
+                logger.debug(f"Error warming cache for {symbol}: {e}")
+                failed += 1
+
+        logger.info(
+            f"Cache warming complete: {warmed} positions warmed, {failed} failed"
+        )
+
+        return {"warmed": warmed, "failed": failed}
+
+    def warm_cache_for_recommendations(
+        self, recommendations: list[Any]
+    ) -> dict[str, int]:
+        """
+        Warm cache for recommendation symbols.
+
+        Phase 4.2: Cache Warming Strategies
+        Pre-populates cache with price data for symbols in recommendations.
+
+        Args:
+            recommendations: List of Recommendation objects or dicts with 'ticker' field
+
+        Returns:
+            Dict with warming statistics: {'warmed': int, 'failed': int}
+        """
+        if not recommendations:
+            return {"warmed": 0, "failed": 0}
+
+        warmed = 0
+        failed = 0
+
+        logger.info(f"Warming cache for {len(recommendations)} recommendations...")
+
+        for rec in recommendations:
+            try:
+                # Extract ticker from recommendation
+                if hasattr(rec, "ticker"):
+                    ticker = rec.ticker
+                elif isinstance(rec, dict):
+                    ticker = rec.get("ticker", "")
+                else:
+                    continue
+
+                if not ticker:
+                    continue
+
+                # Warm historical price cache
+                df = self.get_price(ticker, days=365, interval="1d", add_current_day=True)
+                if df is not None and not df.empty:
+                    warmed += 1
+                    logger.debug(f"Cache warmed for {ticker} historical prices")
+                else:
+                    failed += 1
+                    logger.debug(f"Failed to warm cache for {ticker} historical prices")
+
+            except Exception as e:
+                logger.debug(f"Error warming cache for recommendation: {e}")
+                failed += 1
+
+        logger.info(
+            f"Cache warming complete: {warmed} recommendations warmed, {failed} failed"
+        )
+
+        return {"warmed": warmed, "failed": failed}
 
     def clear_cache(self):
         """Clear all cached price data"""
