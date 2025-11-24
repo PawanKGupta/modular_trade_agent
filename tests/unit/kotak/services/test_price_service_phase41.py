@@ -206,7 +206,7 @@ class TestPriceServiceBackwardCompatibility:
 
         assert result is True
         broker_client.subscribe_to_positions.assert_called_once()
-        
+
         # Verify default service_id is tracked
         subscriptions = service.get_all_subscriptions()
         assert "RELIANCE" in subscriptions

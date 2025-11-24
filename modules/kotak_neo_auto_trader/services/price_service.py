@@ -45,7 +45,7 @@ class PriceCache:
     def get_historical(self, key: str, ttl_seconds: int = 300) -> pd.DataFrame | None:
         """
         Get cached historical data if not expired
-        
+
         Phase 4.2: Adaptive TTL support
         """
         if key in self._cache:
