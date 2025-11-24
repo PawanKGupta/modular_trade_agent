@@ -2545,8 +2545,11 @@ class AutoTradeEngine:
                         summary["skipped"] += 1
                         continue
 
-                # Check position-to-volume ratio
-                if not self.check_position_volume_ratio(qty, avg_vol, symbol, close):
+                # Check position-to-volume ratio - Phase 3.1: Use OrderValidationService
+                is_valid_volume, volume_ratio, tier_info = self.order_validation_service.check_volume_ratio(
+                    qty, avg_vol, symbol, close
+                )
+                if not is_valid_volume:
                     logger.info(
                         f"Skipping retry {symbol}: position size too large relative to volume"
                     )
