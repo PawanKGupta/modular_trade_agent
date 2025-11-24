@@ -5,7 +5,7 @@ Tests verify the centralized holdings/positions check service
 maintains backward compatibility with existing methods.
 """
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from modules.kotak_neo_auto_trader.services.portfolio_service import (
     PortfolioCache,
@@ -314,9 +314,7 @@ class TestPortfolioServiceCheckCapacity:
         """Test check_portfolio_capacity() when at limit"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={
-                "data": [{"tradingSymbol": f"STOCK{i}"} for i in range(10)]
-            }
+            return_value={"data": [{"tradingSymbol": f"STOCK{i}"} for i in range(10)]}
         )
 
         mock_config = Mock()
@@ -402,4 +400,3 @@ class TestPortfolioServiceCaching:
         service.invalidate_holdings_cache()
         service.has_position("RELIANCE")  # Should fetch again
         assert mock_portfolio.get_holdings.call_count == 2
-
