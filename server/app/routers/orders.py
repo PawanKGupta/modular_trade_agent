@@ -32,9 +32,9 @@ def list_orders(
         | None,
         Query(description="Filter by order status"),
     ] = None,
-    failure_reason: Annotated[
+    reason: Annotated[
         str | None,
-        Query(description="Filter by failure reason (partial match)"),
+        Query(description="Filter by reason (partial match)"),
     ] = None,
     from_date: Annotated[
         str | None,
@@ -62,12 +62,11 @@ def list_orders(
         items = repo.list(current.id, db_status)
 
         # Apply additional filters
-        if failure_reason:
+        if reason:
             items = [
                 o
                 for o in items
-                if getattr(o, "reason", None)
-                and failure_reason.lower() in getattr(o, "reason", "").lower()
+                if getattr(o, "reason", None) and reason.lower() in getattr(o, "reason", "").lower()
             ]
 
         if from_date or to_date:
@@ -125,10 +124,6 @@ def list_orders(
                     execution_price=getattr(o, "execution_price", None),
                     execution_qty=getattr(o, "execution_qty", None),
                     execution_time=format_datetime(getattr(o, "execution_time", None)),
-                    # Legacy fields (for backward compatibility)
-                    failure_reason=getattr(o, "failure_reason", None),
-                    rejection_reason=getattr(o, "rejection_reason", None),
-                    cancelled_reason=getattr(o, "cancelled_reason", None),
                 )
                 result.append(order_response)
             except Exception as e:
@@ -224,10 +219,6 @@ def retry_order(
             execution_price=getattr(updated_order, "execution_price", None),
             execution_qty=getattr(updated_order, "execution_qty", None),
             execution_time=format_datetime(getattr(updated_order, "execution_time", None)),
-            # Legacy fields (for backward compatibility)
-            failure_reason=getattr(updated_order, "failure_reason", None),
-            rejection_reason=getattr(updated_order, "rejection_reason", None),
-            cancelled_reason=getattr(updated_order, "cancelled_reason", None),
         )
     except HTTPException:
         raise

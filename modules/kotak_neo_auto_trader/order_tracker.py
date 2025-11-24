@@ -187,7 +187,6 @@ class OrderTracker:
                         return
                 else:
                     # Create order in DB
-                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                     db_order = self.orders_repo.create_amo(
                         user_id=self.user_id,
@@ -308,7 +307,12 @@ class OrderTracker:
                         "order_type": (
                             db_order.order_type.upper() if db_order.order_type else "MARKET"
                         ),
-                        "variety": "AMO" if db_order.order_metadata and db_order.order_metadata.get("variety") == "AMO" else "REGULAR",
+                        "variety": (
+                            "AMO"
+                            if db_order.order_metadata
+                            and db_order.order_metadata.get("variety") == "AMO"
+                            else "REGULAR"
+                        ),
                         "price": db_order.price or 0.0,
                         "placed_at": (
                             db_order.placed_at.isoformat()
@@ -321,7 +325,7 @@ class OrderTracker:
                             else datetime.now().isoformat()
                         ),
                         "status": db_order.status.value if db_order.status else "PENDING",
-                        "rejection_reason": db_order.rejection_reason,
+                        "rejection_reason": getattr(db_order, "reason", None),
                         "check_count": 0,  # Not tracked in DB
                         "executed_qty": db_order.execution_qty or 0,
                     }
@@ -544,8 +548,6 @@ class OrderTracker:
         # Phase 7: Read from DB first if available
         if self.use_db and self.orders_repo:
             try:
-                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                 # Find order in DB
                 db_order = self.orders_repo.get_by_broker_order_id(
                     self.user_id, order_id
@@ -561,7 +563,12 @@ class OrderTracker:
                         "order_type": (
                             db_order.order_type.upper() if db_order.order_type else "MARKET"
                         ),
-                        "variety": ("AMO" if db_order.order_metadata and db_order.order_metadata.get("variety") == "AMO" else "REGULAR"),
+                        "variety": (
+                            "AMO"
+                            if db_order.order_metadata
+                            and db_order.order_metadata.get("variety") == "AMO"
+                            else "REGULAR"
+                        ),
                         "price": db_order.price or 0.0,
                         "placed_at": (
                             db_order.placed_at.isoformat()
@@ -574,7 +581,7 @@ class OrderTracker:
                             else datetime.now().isoformat()
                         ),
                         "status": db_order.status.value if db_order.status else "PENDING",
-                        "rejection_reason": db_order.rejection_reason,
+                        "rejection_reason": getattr(db_order, "reason", None),
                         "check_count": 0,
                         "executed_qty": db_order.execution_qty or 0,
                     }

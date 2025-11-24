@@ -27,15 +27,11 @@ export interface Order {
 	execution_price?: number | null;
 	execution_qty?: number | null;
 	execution_time?: string | null;
-	// Legacy fields (deprecated, kept for backward compatibility)
-	failure_reason?: string | null; // Deprecated: use reason
-	rejection_reason?: string | null; // Deprecated: use reason
-	cancelled_reason?: string | null; // Deprecated: use reason
 }
 
 export interface ListOrdersParams {
 	status?: OrderStatus;
-	failure_reason?: string;
+	reason?: string;
 	from_date?: string;
 	to_date?: string;
 }

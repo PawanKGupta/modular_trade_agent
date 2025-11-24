@@ -125,19 +125,9 @@ class Orders(Base):
     # Failure and retry tracking fields
     # Unified reason field (replaces failure_reason, rejection_reason, cancelled_reason)
     reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    # Legacy reason fields (kept temporarily for migration, will be deprecated)
-    failure_reason: Mapped[str | None] = mapped_column(
-        String(256), nullable=True
-    )  # Deprecated: use reason
     first_failed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_retry_attempt: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    rejection_reason: Mapped[str | None] = mapped_column(
-        String(256), nullable=True
-    )  # Deprecated: use reason
-    cancelled_reason: Mapped[str | None] = mapped_column(
-        String(256), nullable=True
-    )  # Deprecated: use reason
     last_status_check: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Execution tracking fields
     execution_price: Mapped[float | None] = mapped_column(Float, nullable=True)

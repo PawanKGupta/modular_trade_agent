@@ -31,7 +31,3 @@ class OrderResponse(BaseModel):
     execution_price: float | None = None
     execution_qty: float | None = None
     execution_time: str | None = None
-    # Legacy fields (deprecated, kept for backward compatibility)
-    failure_reason: str | None = None  # Deprecated: use reason
-    rejection_reason: str | None = None  # Deprecated: use reason
-    cancelled_reason: str | None = None  # Deprecated: use reason

@@ -86,10 +86,7 @@ WHERE status IN ('amo', 'pending_execution', 'retry_pending', 'rejected', 'sell'
 -- Check reason field usage
 SELECT
     COUNT(*) as total_orders,
-    COUNT(reason) as orders_with_reason,
-    COUNT(failure_reason) as orders_with_failure_reason,
-    COUNT(rejection_reason) as orders_with_rejection_reason,
-    COUNT(cancelled_reason) as orders_with_cancelled_reason
+    COUNT(reason) as orders_with_reason
 FROM orders;
 ```
 
@@ -162,13 +159,10 @@ FROM orders
 WHERE status IN ('amo', 'pending_execution', 'retry_pending', 'rejected', 'sell');
 -- Expected: 0
 
--- Verify reason data migration
+-- Verify reason field usage
 SELECT
     COUNT(*) as total_orders,
-    COUNT(reason) as orders_with_reason,
-    SUM(CASE WHEN reason IS NOT NULL AND failure_reason IS NULL
-             AND rejection_reason IS NULL AND cancelled_reason IS NULL
-        THEN 1 ELSE 0 END) as migrated_reasons
+    COUNT(reason) as orders_with_reason
 FROM orders;
 ```
 
@@ -264,7 +258,7 @@ FROM orders;
 #### Order Failure
 ```bash
 # Test order failure
-# Expected: Order status='failed', reason='<failure_reason>', retry_count incremented
+# Expected: Order status='failed', reason='<reason>', retry_count incremented
 ```
 
 #### Retry Logic
@@ -509,7 +503,7 @@ git checkout <previous_commit_hash>
 **Migration Name**: `order_status_simplification_and_unified_reason`
 **Previous Migration**: `c38b470b20d1`
 
-**Changes:**
+**Migration 1 (`873e86bc5772`):**
 1. Adds `reason` column (String(512), nullable)
 2. Migrates `failure_reason` → `reason`
 3. Migrates `rejection_reason` → `reason`
@@ -520,6 +514,10 @@ git checkout <previous_commit_hash>
 8. Migrates `REJECTED` → `FAILED`
 9. Migrates `SELL` → `PENDING` (for orders with side='sell')
 
+**Migration 2 (`3473a345c7fb`):**
+1. Drops legacy reason columns: `failure_reason`, `rejection_reason`, `cancelled_reason`
+2. All reason data is now stored in the unified `reason` field
+
 ### B. Rollback Script
 
 ```python
@@ -528,11 +526,10 @@ alembic downgrade c38b470b20d1
 
 # Manual rollback SQL (if needed)
 # Note: This is approximate - some data may be lost
+# Note: Legacy reason columns (failure_reason, rejection_reason, cancelled_reason) have been dropped.
+# To rollback, you would need to recreate these columns first, then split the unified 'reason' field.
 UPDATE orders SET status = 'amo' WHERE status = 'pending' AND side = 'buy';
 UPDATE orders SET status = 'retry_pending' WHERE status = 'failed' AND first_failed_at IS NOT NULL;
-UPDATE orders SET failure_reason = reason WHERE status IN ('failed', 'retry_pending') AND reason IS NOT NULL;
-UPDATE orders SET rejection_reason = reason WHERE reason LIKE 'Broker rejected:%' AND reason IS NOT NULL;
-UPDATE orders SET cancelled_reason = reason WHERE status = 'cancelled' AND reason IS NOT NULL;
 ```
 
 ### C. Validation Queries

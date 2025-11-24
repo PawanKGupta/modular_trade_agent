@@ -47,7 +47,9 @@ def test_orders_list_with_auth(client: TestClient):
     assert isinstance(r.json(), list)
 
     # Filter by status param (should still work and return list, possibly empty)
-    r2 = client.get("/api/v1/user/orders?status=pending", headers=headers)  # AMO merged into PENDING
+    r2 = client.get(
+        "/api/v1/user/orders?status=pending", headers=headers
+    )  # AMO merged into PENDING
     assert r2.status_code == 200
     assert isinstance(r2.json(), list)
 
@@ -125,9 +127,8 @@ def test_orders_response_includes_monitoring_fields(client: TestClient):
 
     # Verify the schema includes all monitoring fields
     schema_fields = OrderResponse.model_fields.keys()
-    assert "failure_reason" in schema_fields
+    assert "reason" in schema_fields
     assert "retry_count" in schema_fields
-    assert "rejection_reason" in schema_fields
     assert "execution_price" in schema_fields
     assert "execution_qty" in schema_fields
 
@@ -232,7 +233,9 @@ def test_retry_order_success(client: TestClient, db_session):
     from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
     assert failed_order.status == DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
-    assert failed_order.retry_count == 2  # mark_failed increments to 1, retry endpoint increments to 2
+    assert (
+        failed_order.retry_count == 2
+    )  # mark_failed increments to 1, retry endpoint increments to 2
     assert failed_order.last_retry_attempt is not None
 
 
@@ -386,7 +389,7 @@ def test_drop_order_wrong_status(client: TestClient, db_session):
 
 
 def test_list_orders_with_filters(client: TestClient, db_session):
-    """Test filtering orders by failure_reason and date range"""
+    """Test filtering orders by reason and date range"""
     from jose import jwt
 
     from server.app.core.config import settings
@@ -428,19 +431,16 @@ def test_list_orders_with_filters(client: TestClient, db_session):
 
     db_session.commit()
 
-    # Filter by reason (unified field, failure_reason is legacy)
+    # Filter by reason (unified field)
     r = client.get(
-        "/api/v1/user/orders?status=failed&failure_reason=insufficient",
+        "/api/v1/user/orders?status=failed&reason=insufficient",
         headers=headers,
     )
     assert r.status_code == 200
     data = r.json()
     assert len(data) >= 1
-    # Check both reason (unified) and failure_reason (legacy) fields
-    assert any(
-        "insufficient" in (o.get("reason") or o.get("failure_reason") or "").lower()
-        for o in data
-    )
+    # Check reason field
+    assert any("insufficient" in (o.get("reason") or "").lower() for o in data)
 
     # Filter by date range (using today's date)
     from datetime import datetime

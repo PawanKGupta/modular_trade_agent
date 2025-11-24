@@ -120,25 +120,30 @@ ongoing_buy_orders = [
 
 ## Part 2: Unified Reason Field
 
-### Current Fields
+### Previous Fields (Removed)
 ```python
-class Orders(Base):
-    failure_reason: str | None      # For FAILED/RETRY_PENDING
-    rejection_reason: str | None     # For REJECTED
-    cancelled_reason: str | None    # For CANCELLED
+# These fields have been removed and replaced with unified 'reason' field:
+# failure_reason: str | None      # For FAILED/RETRY_PENDING
+# rejection_reason: str | None     # For REJECTED
+# cancelled_reason: str | None    # For CANCELLED
 ```
 
-### Target Field
+### Current Field
 ```python
 class Orders(Base):
     reason: str | None  # Unified reason field for all states
 ```
 
 ### Migration Strategy
-- Migrate `failure_reason` → `reason` (for FAILED/RETRY_PENDING orders)
-- Migrate `rejection_reason` → `reason` (for REJECTED orders)
-- Migrate `cancelled_reason` → `reason` (for CANCELLED orders)
-- Set default `reason` for other states if needed (optional)
+1. **First Migration** (`873e86bc5772`):
+   - Add unified `reason` field
+   - Migrate `failure_reason` → `reason` (for FAILED/RETRY_PENDING orders)
+   - Migrate `rejection_reason` → `reason` (for REJECTED orders)
+   - Migrate `cancelled_reason` → `reason` (for CANCELLED orders)
+
+2. **Second Migration** (`3473a345c7fb`):
+   - Drop legacy columns: `failure_reason`, `rejection_reason`, `cancelled_reason`
+   - All reason data is now stored in the unified `reason` field
 
 ---
 
@@ -200,10 +205,8 @@ class Orders(Base):
     # Add new unified reason field
     reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
-    # Keep old fields temporarily for migration (mark as deprecated)
-    # failure_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)  # Deprecated
-    # rejection_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)  # Deprecated
-    # cancelled_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)  # Deprecated
+    # Note: Legacy reason columns (failure_reason, rejection_reason, cancelled_reason)
+    # have been removed. All reason data is stored in the unified 'reason' field.
 ```
 
 #### 1.3 Create Alembic Migration

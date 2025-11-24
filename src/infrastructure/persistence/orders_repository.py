@@ -53,18 +53,12 @@ class OrdersRepository:
         if "entry_type" in orders_columns:
             optional_columns.append("entry_type")
         # Order monitoring fields
-        if "failure_reason" in orders_columns:
-            optional_columns.append("failure_reason")
         if "first_failed_at" in orders_columns:
             optional_columns.append("first_failed_at")
         if "last_retry_attempt" in orders_columns:
             optional_columns.append("last_retry_attempt")
         if "retry_count" in orders_columns:
             optional_columns.append("retry_count")
-        if "rejection_reason" in orders_columns:
-            optional_columns.append("rejection_reason")
-        if "cancelled_reason" in orders_columns:
-            optional_columns.append("cancelled_reason")
         if "reason" in orders_columns:
             optional_columns.append("reason")
         if "last_status_check" in orders_columns:
@@ -163,8 +157,6 @@ class OrdersRepository:
             if "entry_type" in orders_columns:
                 order_kwargs["entry_type"] = row_dict.get("entry_type")
             # Order monitoring fields
-            if "failure_reason" in orders_columns:
-                order_kwargs["failure_reason"] = row_dict.get("failure_reason")
             if "first_failed_at" in orders_columns:
                 order_kwargs["first_failed_at"] = parse_datetime(row_dict.get("first_failed_at"))
             if "last_retry_attempt" in orders_columns:
@@ -173,10 +165,8 @@ class OrdersRepository:
                 )
             if "retry_count" in orders_columns:
                 order_kwargs["retry_count"] = row_dict.get("retry_count") or 0
-            if "rejection_reason" in orders_columns:
-                order_kwargs["rejection_reason"] = row_dict.get("rejection_reason")
-            if "cancelled_reason" in orders_columns:
-                order_kwargs["cancelled_reason"] = row_dict.get("cancelled_reason")
+            if "reason" in orders_columns:
+                order_kwargs["reason"] = row_dict.get("reason")
             if "reason" in orders_columns:
                 order_kwargs["reason"] = row_dict.get("reason")
             if "last_status_check" in orders_columns:
