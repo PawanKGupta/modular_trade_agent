@@ -375,22 +375,14 @@ class SellOrderManager:
         """
         Get all open positions from trade history
 
+        DEPRECATED: Use position_loader.load_open_positions() instead.
+        This method is kept for backward compatibility and delegates to PositionLoader.
+
         Returns:
             List of open trade entries
         """
-        try:
-            history = load_history(self.history_path)
-            trades = history.get("trades", [])
-
-            # Filter for open positions
-            open_trades = [t for t in trades if t.get("status") == "open"]
-
-            logger.info(f"Found {len(open_trades)} open positions in trade history")
-            return open_trades
-
-        except Exception as e:
-            logger.error(f"Error loading open positions: {e}")
-            return []
+        # Use PositionLoader to get open positions (Phase 2.2)
+        return self.position_loader.load_open_positions()
 
     def get_current_ema9(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
