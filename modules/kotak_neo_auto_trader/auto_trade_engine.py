@@ -21,9 +21,11 @@ from typing import Any
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 # Core market data
-from core.data_fetcher import fetch_ohlcv_yf
-from core.indicators import compute_indicators
 from core.telegram import send_telegram
+from modules.kotak_neo_auto_trader.services import (
+    get_indicator_service,
+    get_price_service,
+)
 from utils.logger import logger
 
 # Kotak Neo modules
@@ -204,6 +206,13 @@ class AutoTradeEngine:
         self.order_verifier = None
         self.manual_matcher = None
         self.eod_cleanup = None
+
+        # Initialize unified services (Phase 1.3: Duplicate steps consolidation)
+        # Services initialized without price_manager initially (can be updated later if needed)
+        self.price_service = get_price_service(enable_caching=True)
+        self.indicator_service = get_indicator_service(
+            price_service=self.price_service, enable_caching=True
+        )
 
     # ---------------------- Storage Abstraction (Phase 2.3) ----------------------
     def _load_trades_history(self) -> dict[str, Any]:
@@ -722,7 +731,9 @@ class AutoTradeEngine:
     def market_was_open_today() -> bool:
         # Try NIFTY 50 index to detect trading day
         try:
-            df = fetch_ohlcv_yf("^NSEI", days=5, interval="1d", add_current_day=True)
+            # Use PriceService for fetching NIFTY data
+            price_service = get_price_service(enable_caching=True)
+            df = price_service.get_price("^NSEI", days=5, interval="1d", add_current_day=True)
             if df is None or df.empty:
                 return False
             latest = df["date"].iloc[-1].date()
@@ -999,52 +1010,30 @@ class AutoTradeEngine:
 
     @staticmethod
     def get_daily_indicators(ticker: str) -> dict[str, Any] | None:
+        """
+        Static method for backward compatibility.
+
+        Uses IndicatorService directly for calculation.
+        For new code, prefer instance method: engine.get_daily_indicators(ticker)
+
+        Args:
+            ticker: Stock ticker (e.g., 'RELIANCE.NS')
+
+        Returns:
+            Dict with keys: close, rsi10, ema9, ema200, avg_volume
+        """
+        # Use IndicatorService directly for static calls (backward compatibility)
         try:
-            from pathlib import Path
-            from sys import path as sys_path
-
-            project_root = Path(__file__).parent.parent.parent
-            if str(project_root) not in sys_path:
-                sys_path.insert(0, str(project_root))
-            from config.settings import VOLUME_LOOKBACK_DAYS
-
-            df = fetch_ohlcv_yf(ticker, days=800, interval="1d", add_current_day=False)
-            # Use configurable RSI period from StrategyConfig
+            price_service = get_price_service(enable_caching=True)
+            indicator_service = get_indicator_service(
+                price_service=price_service, enable_caching=True
+            )
             from config.strategy_config import StrategyConfig
 
             strategy_config = StrategyConfig.default()
-            df = compute_indicators(df, rsi_period=strategy_config.rsi_period)
-            if df is None or df.empty:
-                return None
-            last = df.iloc[-1]
-            # Calculate average volume over configurable period (default: 50 days)
-            avg_vol = (
-                df["volume"].tail(VOLUME_LOOKBACK_DAYS).mean() if "volume" in df.columns else 0
+            return indicator_service.get_daily_indicators_dict(
+                ticker=ticker, rsi_period=None, config=strategy_config
             )
-
-            # Use configurable RSI column name
-            rsi_col = f"rsi{strategy_config.rsi_period}"
-            # Fallback to 'rsi10' for backward compatibility
-            if rsi_col not in last.index and "rsi10" in last.index:
-                rsi_col = "rsi10"
-
-            return {
-                "close": float(last["close"]),
-                "rsi10": (
-                    float(last[rsi_col]) if rsi_col in last.index else 0.0
-                ),  # Keep 'rsi10' key for backward compatibility
-                "ema9": (
-                    float(df["close"].ewm(span=config.EMA_SHORT).mean().iloc[-1])
-                    if "ema9" not in df.columns
-                    else float(last.get("ema9", 0))
-                ),
-                "ema200": (
-                    float(last["ema200"])
-                    if "ema200" in df.columns
-                    else float(df["close"].ewm(span=config.EMA_LONG).mean().iloc[-1])
-                ),
-                "avg_volume": float(avg_vol),
-            }
         except Exception as e:
             logger.warning(f"Failed to get indicators for {ticker}: {e}")
             return None
@@ -1197,7 +1186,7 @@ class AutoTradeEngine:
 
                 # Add tracked holding to history
                 ticker = f"{base}.NS"
-                ind = self.get_daily_indicators(ticker) or {}
+                ind = AutoTradeEngine.get_daily_indicators(ticker) or {}
                 qty = int(item.get("quantity") or 0)
                 entry_price = (
                     item.get("avgPrice") or item.get("price") or item.get("ltp") or ind.get("close")
@@ -2382,7 +2371,7 @@ class AutoTradeEngine:
                 ticker = getattr(db_order, "ticker", None) or f"{symbol}.NS"
 
                 # Get fresh indicators
-                ind = self.get_daily_indicators(ticker)
+                ind = AutoTradeEngine.get_daily_indicators(ticker)
                 if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
                     logger.warning(f"Skipping retry {symbol}: missing indicators")
                     summary["skipped"] += 1
