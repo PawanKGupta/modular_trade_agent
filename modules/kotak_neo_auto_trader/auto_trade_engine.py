@@ -226,6 +226,18 @@ class AutoTradeEngine:
             enable_caching=True,
         )
 
+        # Initialize OrderValidationService (Phase 3.1: Order Validation & Verification)
+        # Portfolio, orders, and orders_repo will be set after login
+        from modules.kotak_neo_auto_trader.services import get_order_validation_service
+
+        self.order_validation_service = get_order_validation_service(
+            portfolio_service=self.portfolio_service,
+            portfolio=None,  # Will be set after login
+            orders=None,  # Will be set after login
+            orders_repo=self.orders_repo if hasattr(self, "orders_repo") else None,
+            user_id=self.user_id,
+        )
+
     # ---------------------- Storage Abstraction (Phase 2.3) ----------------------
     def _load_trades_history(self) -> dict[str, Any]:
         """
@@ -1250,6 +1262,14 @@ class AutoTradeEngine:
             self.portfolio_service.portfolio = self.portfolio
             self.portfolio_service.orders = self.orders
 
+            # Update OrderValidationService with portfolio and orders (Phase 3.1)
+            self.order_validation_service.portfolio = self.portfolio
+            self.order_validation_service.orders = self.orders
+            if self.orders_repo:
+                self.order_validation_service.orders_repo = self.orders_repo
+            if self.user_id:
+                self.order_validation_service.user_id = self.user_id
+
             # Initialize scrip master for symbol resolution
             try:
                 self.scrip_master = KotakNeoScripMaster(
@@ -1269,6 +1289,18 @@ class AutoTradeEngine:
         if ok:
             self.orders = KotakNeoOrders(self.auth)
             self.portfolio = KotakNeoPortfolio(self.auth)
+
+            # Update PortfolioService with portfolio and orders (Phase 2.1)
+            self.portfolio_service.portfolio = self.portfolio
+            self.portfolio_service.orders = self.orders
+
+            # Update OrderValidationService with portfolio and orders (Phase 3.1)
+            self.order_validation_service.portfolio = self.portfolio
+            self.order_validation_service.orders = self.orders
+            if self.orders_repo:
+                self.order_validation_service.orders_repo = self.orders_repo
+            if self.user_id:
+                self.order_validation_service.user_id = self.user_id
 
             # Initialize scrip master for symbol resolution
             try:
@@ -2883,8 +2915,9 @@ class AutoTradeEngine:
                 # Use PortfolioService for portfolio count
                 current_count = self.portfolio_service.get_portfolio_count(include_pending=True)
 
-            # Use PortfolioService for capacity check
-            has_capacity, current_count, max_size = self.portfolio_service.check_portfolio_capacity(
+            # Use OrderValidationService for capacity check (Phase 3.1)
+            # OrderValidationService delegates to PortfolioService
+            has_capacity, current_count, max_size = self.order_validation_service.check_portfolio_capacity(
                 include_pending=True
             )
             if not has_capacity:
@@ -2897,7 +2930,8 @@ class AutoTradeEngine:
                 summary["ticker_attempts"].append(ticker_attempt)
                 break
             summary["attempted"] += 1
-            # 1) Holding check (use cached holdings if available)
+            # 1) Holding check (use cached holdings if available) - Phase 3.1: Use OrderValidationService for duplicate check
+            # Check cached holdings first for performance
             broker_symbol_base = (
                 broker_symbol.upper()
                 .replace("-EQ", "")
@@ -2915,14 +2949,19 @@ class AutoTradeEngine:
                 ticker_attempt["reason"] = "already_in_holdings"
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
-            elif self.has_holding(broker_symbol):  # Fallback to live check if cache miss
+            
+            # Use OrderValidationService for duplicate check (includes holdings + active buy orders)
+            is_duplicate, duplicate_reason = self.order_validation_service.check_duplicate_order(
+                broker_symbol, check_active_buy_order=False, check_holdings=True
+            )
+            if is_duplicate:
                 logger.info(
-                    f"Skipping {broker_symbol}: already in holdings. "
+                    f"Skipping {broker_symbol}: {duplicate_reason}. "
                     "System does not track existing holdings - keeping portfolios separate."
                 )
                 summary["skipped_duplicates"] += 1
                 ticker_attempt["status"] = "skipped"
-                ticker_attempt["reason"] = "already_in_holdings"
+                ticker_attempt["reason"] = "already_in_holdings" if "holdings" in duplicate_reason.lower() else "duplicate_order"
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
             # 2) Check for manual AMO orders -> link to DB and skip placing
@@ -3099,6 +3138,20 @@ class AutoTradeEngine:
                         f"Broker API check for active buy order failed for {broker_symbol}: {e}. "
                         "Proceeding with order placement (database check already passed)."
                     )
+            
+            # If OrderValidationService detected duplicate order from broker API, handle it
+            # (Note: Database orders are already handled above for update/cancel logic)
+            if is_duplicate_order and not has_db_order:
+                # Duplicate detected by OrderValidationService (broker API or database)
+                logger.info(
+                    f"Skipping {broker_symbol}: {duplicate_order_reason}. "
+                    "Will not place duplicate order."
+                )
+                summary["skipped_duplicates"] += 1
+                ticker_attempt["status"] = "skipped"
+                ticker_attempt["reason"] = "duplicate_order"
+                summary["ticker_attempts"].append(ticker_attempt)
+                continue
 
             # Use cached indicators if available, otherwise fetch
             ind = cached_indicators.get(rec.ticker)
@@ -3250,9 +3303,12 @@ class AutoTradeEngine:
                 # else: CLOSED/CANCELLED orders - allow new order placement (don't block)
                 # These represent completed/cancelled trades and should not prevent new opportunities
 
-            # Check position-to-volume ratio (liquidity filter)
+            # Check position-to-volume ratio (liquidity filter) - Phase 3.1: Use OrderValidationService
             avg_vol = ind.get("avg_volume", 0)
-            if not self.check_position_volume_ratio(qty, avg_vol, broker_symbol, close):
+            is_valid_volume, volume_ratio, tier_info = self.order_validation_service.check_volume_ratio(
+                qty, avg_vol, broker_symbol, close
+            )
+            if not is_valid_volume:
                 logger.info(f"Skipping {broker_symbol}: position size too large relative to volume")
                 summary["skipped_invalid_qty"] += 1
                 ticker_attempt["status"] = "skipped"
@@ -3263,9 +3319,11 @@ class AutoTradeEngine:
                 continue
 
             # Balance check (CNC needs cash) -> notify on insufficiency and save for retry
-            affordable = self.get_affordable_qty(close)
-            if affordable < config.MIN_QTY or qty > affordable:
-                avail_cash = self.get_available_cash()
+            # Phase 3.1: Use OrderValidationService
+            has_sufficient_balance, avail_cash, affordable = self.order_validation_service.check_balance(
+                close, qty
+            )
+            if not has_sufficient_balance:
                 required_cash = qty * close
                 shortfall = max(0.0, required_cash - (avail_cash or 0.0))
                 # Telegram message with emojis
