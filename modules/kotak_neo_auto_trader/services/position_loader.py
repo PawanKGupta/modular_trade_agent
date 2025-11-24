@@ -42,7 +42,7 @@ class PositionCache:
             path: Path to history file
 
         Returns:
-            Tuple of (cached_data, is_valid) or None if not cached
+            Tuple of (cached_data, is_valid) or None if not cached or invalid
         """
         with self._lock:
             if path not in self._cache:
@@ -60,7 +60,8 @@ class PositionCache:
                     del self._cache[path]
                     return None
                 # File doesn't exist, invalidate cache
-                del self._cache[path]
+                if path in self._cache:
+                    del self._cache[path]
                 return None
             except OSError:
                 # Error accessing file, invalidate cache
