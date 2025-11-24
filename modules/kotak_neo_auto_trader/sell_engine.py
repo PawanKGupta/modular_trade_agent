@@ -133,6 +133,12 @@ class SellOrderManager:
         self.indicator_service = get_indicator_service(
             price_service=self.price_service, enable_caching=True
         )
+        # Initialize PositionLoader (Phase 2.2: Portfolio & Position Services)
+        from modules.kotak_neo_auto_trader.services import get_position_loader
+
+        self.position_loader = get_position_loader(
+            history_path=self.history_path, enable_caching=True
+        )
 
         # Track active sell orders {symbol: {'order_id': str, 'target_price': float}}
         # Legacy mode: Used when OrderStateManager is not available
