@@ -9,53 +9,58 @@ Manages profit-taking sell orders with EMA9 target tracking:
 """
 
 import sys
-from pathlib import Path
-from typing import List, Dict, Optional, Any
-from datetime import datetime, time as dt_time
-from math import floor
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from datetime import time as dt_time
+from decimal import ROUND_UP, Decimal
+from pathlib import Path
+from typing import Any
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from utils.logger import logger
-from core.data_fetcher import fetch_ohlcv_yf
-from core.indicators import compute_indicators
+from modules.kotak_neo_auto_trader.services import (  # noqa: E402
+    get_indicator_service,
+    get_price_service,
+)
+from utils.logger import logger  # noqa: E402
 
 try:
+    from . import config
     from .auth import KotakNeoAuth
+    from .market_data import KotakNeoMarketData
+    from .order_state_manager import OrderStateManager
     from .orders import KotakNeoOrders
     from .portfolio import KotakNeoPortfolio
-    from .market_data import KotakNeoMarketData
-    from .storage import load_history, save_history
     from .scrip_master import KotakNeoScripMaster
-    from .live_price_cache import LivePriceCache
-    from .order_state_manager import OrderStateManager
-    from .utils.symbol_utils import extract_ticker_base, extract_base_symbol, get_lookup_symbol
-    from .utils.price_manager_utils import get_ltp_from_manager
+    from .storage import (
+        check_manual_buys_of_failed_orders,
+        load_history,
+        save_history,
+    )
     from .utils.order_field_extractor import OrderFieldExtractor
     from .utils.order_status_parser import OrderStatusParser
-    from . import config
+    from .utils.symbol_utils import extract_base_symbol, extract_ticker_base
 except ImportError:
+    from modules.kotak_neo_auto_trader import config
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+    from modules.kotak_neo_auto_trader.market_data import KotakNeoMarketData
+    from modules.kotak_neo_auto_trader.order_state_manager import OrderStateManager
     from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
     from modules.kotak_neo_auto_trader.portfolio import KotakNeoPortfolio
-    from modules.kotak_neo_auto_trader.market_data import KotakNeoMarketData
-    from modules.kotak_neo_auto_trader.storage import load_history, save_history
     from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
-    from modules.kotak_neo_auto_trader.live_price_cache import LivePriceCache
-    from modules.kotak_neo_auto_trader.order_state_manager import OrderStateManager
-    from modules.kotak_neo_auto_trader.utils.symbol_utils import (
-        extract_ticker_base,
-        extract_base_symbol,
-        get_lookup_symbol,
+    from modules.kotak_neo_auto_trader.storage import (
+        check_manual_buys_of_failed_orders,
+        load_history,
+        save_history,
     )
-    from modules.kotak_neo_auto_trader.utils.price_manager_utils import get_ltp_from_manager
     from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
     from modules.kotak_neo_auto_trader.utils.order_status_parser import OrderStatusParser
-    from modules.kotak_neo_auto_trader import config
+    from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+        extract_base_symbol,
+        extract_ticker_base,
+    )
 
 
 class SellOrderManager:
@@ -69,7 +74,7 @@ class SellOrderManager:
         history_path: str = None,
         max_workers: int = 10,
         price_manager=None,
-        order_state_manager: Optional[OrderStateManager] = None,
+        order_state_manager: OrderStateManager | None = None,
         positions_repo=None,
         user_id: int | None = None,
     ):
@@ -121,12 +126,20 @@ class SellOrderManager:
         except Exception as e:
             logger.warning(f"Failed to load scrip master: {e}. Will use symbols as-is.")
 
+        # Initialize unified services
+        self.price_service = get_price_service(
+            live_price_manager=self.price_manager, enable_caching=True
+        )
+        self.indicator_service = get_indicator_service(
+            price_service=self.price_service, enable_caching=True
+        )
+
         # Track active sell orders {symbol: {'order_id': str, 'target_price': float}}
         # Legacy mode: Used when OrderStateManager is not available
-        self.active_sell_orders: Dict[str, Dict[str, Any]] = {}
+        self.active_sell_orders: dict[str, dict[str, Any]] = {}
 
         # Track lowest EMA9 values {symbol: float}
-        self.lowest_ema9: Dict[str, float] = {}
+        self.lowest_ema9: dict[str, float] = {}
 
         logger.info(f"SellOrderManager initialized with {max_workers} worker threads")
 
@@ -136,7 +149,7 @@ class SellOrderManager:
         order_id: str,
         target_price: float,
         qty: int,
-        ticker: Optional[str] = None,
+        ticker: str | None = None,
         **kwargs,
     ) -> None:
         """
@@ -206,7 +219,7 @@ class SellOrderManager:
                 return True
             return False
 
-    def _remove_order(self, symbol: str, reason: Optional[str] = None) -> bool:
+    def _remove_order(self, symbol: str, reason: str | None = None) -> bool:
         """
         Helper method to remove order using OrderStateManager if available.
 
@@ -243,7 +256,7 @@ class SellOrderManager:
                 return True
             return False
 
-    def _get_active_orders(self) -> Dict[str, Dict[str, Any]]:
+    def _get_active_orders(self) -> dict[str, dict[str, Any]]:
         """
         Helper method to get active orders, syncing from OrderStateManager if available.
 
@@ -269,7 +282,7 @@ class SellOrderManager:
         symbol: str,
         order_id: str,
         execution_price: float,
-        execution_qty: Optional[int] = None,
+        execution_qty: int | None = None,
     ) -> bool:
         """
         Helper method to mark order as executed using OrderStateManager if available.
@@ -335,20 +348,17 @@ class SellOrderManager:
                 tick_size = 0.01
             else:
                 tick_size = 0.05
+        # NSE tick size rules (cash equity segment)
+        # 0-100: Rs 0.05
+        # 100-1000: Rs 0.05
+        # 1000+: Rs 0.10
+        elif price >= 1000:
+            tick_size = 0.10
         else:
-            # NSE tick size rules (cash equity segment)
-            # 0-100: Rs 0.05
-            # 100-1000: Rs 0.05
-            # 1000+: Rs 0.10
-            if price >= 1000:
-                tick_size = 0.10
-            else:
-                tick_size = 0.05
+            tick_size = 0.05
 
         # Round UP to next valid tick (ceiling)
         # Use decimal arithmetic to avoid floating point precision issues
-        from decimal import Decimal, ROUND_UP
-
         # Convert to Decimal for precise arithmetic
         price_decimal = Decimal(str(price))
         tick_decimal = Decimal(str(tick_size))
@@ -361,7 +371,7 @@ class SellOrderManager:
         # Convert back to float with 2 decimal places
         return float(rounded.quantize(Decimal("0.01")))
 
-    def get_open_positions(self) -> List[Dict[str, Any]]:
+    def get_open_positions(self) -> list[dict[str, Any]]:
         """
         Get all open positions from trade history
 
@@ -382,13 +392,15 @@ class SellOrderManager:
             logger.error(f"Error loading open positions: {e}")
             return []
 
-    def get_current_ema9(self, ticker: str, broker_symbol: str = None) -> Optional[float]:
+    def get_current_ema9(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
         Calculate real-time daily EMA9 value using current LTP
 
         EMA9 updates in real-time during trading as current candle forms.
         Formula: Today's EMA9 = (Current LTP x k) + (Yesterday's EMA9 x (1 - k))
         where k = 2 / (period + 1) = 2 / 10 = 0.2
+
+        This method now uses IndicatorService for calculation, maintaining exact same behavior.
 
         Args:
             ticker: Stock ticker (e.g., 'RELIANCE.NS')
@@ -397,49 +409,18 @@ class SellOrderManager:
         Returns:
             Current real-time EMA9 value or None if failed
         """
-        try:
-            # Step 1: Get historical daily data (exclude current day for past EMA)
-            df = fetch_ohlcv_yf(ticker, days=200, interval="1d", add_current_day=False)
+        # Use IndicatorService for real-time EMA9 calculation
+        # This maintains exact same logic as before but uses unified service
+        return self.indicator_service.calculate_ema9_realtime(
+            ticker=ticker, broker_symbol=broker_symbol, current_ltp=None
+        )
 
-            if df is None or df.empty:
-                logger.warning(f"No historical data for {ticker}")
-                return None
-
-            # Step 2: Calculate EMA9 on historical data
-            if len(df) < 9:
-                logger.warning(f"Insufficient data for EMA9 calculation: {len(df)} days")
-                return None
-
-            # Calculate EMA9 using exponential weighted mean
-            ema_series = df["close"].ewm(span=9, adjust=False).mean()
-            yesterday_ema9 = float(ema_series.iloc[-1])
-
-            # Step 3: Get current LTP (today's price)
-            current_ltp = self.get_current_ltp(ticker, broker_symbol)
-
-            if current_ltp is None:
-                logger.warning(f"No LTP available for {ticker}, using yesterday's EMA9")
-                return yesterday_ema9
-
-            # Step 4: Calculate today's EMA9 with current LTP
-            # EMA formula: EMA_today = (Price_today x k) + (EMA_yesterday x (1 - k))
-            # where k = 2 / (period + 1) = 2 / (9 + 1) = 0.2
-            k = 2.0 / (9 + 1)
-            current_ema9 = (current_ltp * k) + (yesterday_ema9 * (1 - k))
-
-            logger.info(
-                f"{ticker.replace('.NS', '')}: LTP=Rs {current_ltp:.2f}, Yesterday EMA9=Rs {yesterday_ema9:.2f} -> Current EMA9=Rs {current_ema9:.2f}"
-            )
-            return current_ema9
-
-        except Exception as e:
-            logger.error(f"Error calculating real-time EMA9 for {ticker}: {e}")
-            return None
-
-    def get_current_ltp(self, ticker: str, broker_symbol: str = None) -> Optional[float]:
+    def get_current_ltp(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
         Get current Last Traded Price for a ticker
         Uses LivePriceManager if available, falls back to yfinance
+
+        This method now uses PriceService for fetching, maintaining exact same behavior.
 
         Args:
             ticker: Stock ticker (e.g., 'RELIANCE.NS')
@@ -451,38 +432,13 @@ class SellOrderManager:
         # Extract base symbol using utility function
         base_symbol = extract_ticker_base(ticker)
 
-        # Try LivePriceCache/LivePriceManager first (real-time WebSocket prices)
-        if self.price_manager:
-            try:
-                # Get appropriate lookup symbol (prioritize broker_symbol for correct instrument token)
-                lookup_symbol = get_lookup_symbol(broker_symbol, base_symbol)
+        # Use PriceService for real-time price fetching
+        # This maintains exact same logic as before but uses unified service
+        return self.price_service.get_realtime_price(
+            symbol=base_symbol, ticker=ticker, broker_symbol=broker_symbol
+        )
 
-                # Use utility function to handle different price manager interfaces
-                ltp = get_ltp_from_manager(self.price_manager, lookup_symbol, ticker)
-
-                if ltp is not None:
-                    logger.info(f"{base_symbol} LTP from WebSocket: Rs {ltp:.2f}")
-                    return ltp
-            except Exception as e:
-                logger.debug(f"WebSocket LTP failed for {base_symbol}: {e}")
-
-        # Fallback to yfinance (delayed ~15-20 min)
-        try:
-            df = fetch_ohlcv_yf(ticker, days=1, interval="1m", add_current_day=True)
-
-            if df is None or df.empty:
-                logger.warning(f"No LTP data for {ticker} from yfinance")
-                return None
-
-            ltp = float(df["close"].iloc[-1])
-            logger.info(f"{base_symbol} LTP from yfinance (delayed ~15min): Rs {ltp:.2f}")
-            return ltp
-
-        except Exception as e:
-            logger.error(f"Error fetching LTP for {ticker}: {e}")
-            return None
-
-    def place_sell_order(self, trade: Dict[str, Any], target_price: float) -> Optional[str]:
+    def place_sell_order(self, trade: dict[str, Any], target_price: float) -> str | None:
         """
         Place a limit sell order for a position
 
@@ -496,7 +452,7 @@ class SellOrderManager:
         try:
             symbol = trade.get("placed_symbol") or trade.get("symbol")
             if not symbol:
-                logger.error(f"No symbol found in trade entry")
+                logger.error("No symbol found in trade entry")
                 return None
 
             # Ensure symbol has exchange suffix
@@ -622,7 +578,7 @@ class SellOrderManager:
             logger.error(f"Error updating sell order: {e}")
             # Try fallback on exception
             try:
-                logger.info(f"Falling back to cancel+replace due to error")
+                logger.info("Falling back to cancel+replace due to error")
                 return self._cancel_and_replace_order(order_id, symbol, qty, rounded_price)
             except Exception as e2:
                 logger.error(f"Fallback also failed: {e2}")
@@ -700,7 +656,7 @@ class SellOrderManager:
             logger.error(f"Error in cancel+replace: {e}")
             return False
 
-    def check_order_execution(self) -> List[str]:
+    def check_order_execution(self) -> list[str]:
         """
         Check which sell orders have been executed
 
@@ -781,7 +737,6 @@ class SellOrderManager:
                     try:
                         pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
                         if pos:
-                            from datetime import datetime
                             pos.closed_at = datetime.now()
                             self.positions_repo.db.commit()
                             logger.debug(f"Position {symbol} marked as closed in DB")
@@ -830,15 +785,13 @@ class SellOrderManager:
         except Exception as e:
             logger.warning(f"Error cleaning up rejected orders: {e}")
 
-    def _detect_and_handle_manual_buys(self) -> List[str]:
+    def _detect_and_handle_manual_buys(self) -> list[str]:
         """
         Detect manual buys of failed orders.
 
         Returns:
             List of symbols that were manually bought
         """
-        from .storage import check_manual_buys_of_failed_orders
-
         manual_buys = check_manual_buys_of_failed_orders(self.history_path, self.orders)
         if manual_buys:
             logger.info(
@@ -846,7 +799,7 @@ class SellOrderManager:
             )
         return manual_buys
 
-    def _detect_manual_sells(self) -> Dict[str, Dict[str, Any]]:
+    def _detect_manual_sells(self) -> dict[str, dict[str, Any]]:
         """
         Detect manual sell orders by checking executed SELL orders.
 
@@ -895,7 +848,7 @@ class SellOrderManager:
         """
         return any(info.get("order_id") == order_id for info in self.active_sell_orders.values())
 
-    def _handle_manual_sells(self, manual_sells: Dict[str, Dict[str, Any]]):
+    def _handle_manual_sells(self, manual_sells: dict[str, dict[str, Any]]):
         """
         Handle detected manual sells: cancel bot orders, update trade history.
 
@@ -940,7 +893,7 @@ class SellOrderManager:
         for symbol in rejected_symbols:
             self._remove_from_tracking(symbol)
 
-    def _cancel_bot_order_for_manual_sell(self, symbol: str, order_info: Dict[str, Any]):
+    def _cancel_bot_order_for_manual_sell(self, symbol: str, order_info: dict[str, Any]):
         """
         Cancel bot order when manual sell detected.
 
@@ -957,7 +910,7 @@ class SellOrderManager:
                 logger.warning(f"Failed to cancel order {order_id}: {e}")
 
     def _update_trade_history_for_manual_sell(
-        self, symbol: str, sell_info: Dict[str, Any], remaining_qty: int
+        self, symbol: str, sell_info: dict[str, Any], remaining_qty: int
     ):
         """
         Update trade history for manual sell.
@@ -1012,7 +965,7 @@ class SellOrderManager:
             logger.warning(f"Could not update trade history for manual sale of {symbol}: {e}")
 
     def _mark_trade_as_closed(
-        self, trade: Dict[str, Any], sell_info: Dict[str, Any], sold_qty: int, exit_reason: str
+        self, trade: dict[str, Any], sell_info: dict[str, Any], sold_qty: int, exit_reason: str
     ):
         """
         Mark trade as closed in trade history.
@@ -1037,7 +990,7 @@ class SellOrderManager:
             trade["pnl"] = pnl
             trade["pnl_pct"] = pnl_pct
 
-    def _calculate_avg_price_from_orders(self, orders: List[Dict[str, Any]]) -> float:
+    def _calculate_avg_price_from_orders(self, orders: list[dict[str, Any]]) -> float:
         """
         Calculate average price from order list.
 
@@ -1091,8 +1044,8 @@ class SellOrderManager:
             logger.info(f"Cleaned up {len(rejected_symbols)} invalid orders from tracking")
 
     def _find_order_in_broker_orders(
-        self, order_id: str, broker_orders: List[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
+        self, order_id: str, broker_orders: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
         """
         Find order in broker orders list by order ID.
 
@@ -1109,7 +1062,7 @@ class SellOrderManager:
                 return order
         return None
 
-    def _remove_from_tracking(self, symbol: str, reason: Optional[str] = None):
+    def _remove_from_tracking(self, symbol: str, reason: str | None = None):
         """
         Remove symbol from active tracking.
 
@@ -1121,7 +1074,7 @@ class SellOrderManager:
         if symbol in self.lowest_ema9:
             del self.lowest_ema9[symbol]
 
-    def has_completed_sell_order(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def has_completed_sell_order(self, symbol: str) -> dict[str, Any] | None:
         """
         Check if a symbol has a completed/executed sell order.
 
@@ -1175,7 +1128,7 @@ class SellOrderManager:
             logger.debug(f"Error checking for completed sell order for {symbol}: {e}")
             return None
 
-    def get_existing_sell_orders(self) -> Dict[str, Dict[str, Any]]:
+    def get_existing_sell_orders(self) -> dict[str, dict[str, Any]]:
         """
         Get existing pending sell orders from broker to avoid duplicates
 
@@ -1268,11 +1221,10 @@ class SellOrderManager:
                         logger.info(
                             f"Updated trade history: {symbol} marked as closed (Order ID: {order_id}, Price: Rs {order_price:.2f})"
                         )
-                else:
-                    if self.mark_position_closed(symbol, order_price, order_id):
-                        logger.info(
-                            f"Updated trade history: {symbol} marked as closed (Order ID: {order_id}, Price: Rs {order_price:.2f})"
-                        )
+                elif self.mark_position_closed(symbol, order_price, order_id):
+                    logger.info(
+                        f"Updated trade history: {symbol} marked as closed (Order ID: {order_id}, Price: Rs {order_price:.2f})"
+                    )
                 continue
 
             # Check for existing order with same symbol and quantity (avoid duplicate)
@@ -1337,8 +1289,8 @@ class SellOrderManager:
         return orders_placed
 
     def _check_and_update_single_stock(
-        self, symbol: str, order_info: Dict[str, Any], executed_ids: List[str]
-    ) -> Dict[str, Any]:
+        self, symbol: str, order_info: dict[str, Any], executed_ids: list[str]
+    ) -> dict[str, Any]:
         """
         Check and update a single stock (used for parallel processing)
 
@@ -1433,7 +1385,7 @@ class SellOrderManager:
 
         return result
 
-    def monitor_and_update(self) -> Dict[str, int]:
+    def monitor_and_update(self) -> dict[str, int]:  # noqa: PLR0912, PLR0915
         """
         Monitor EMA9 and update sell orders if lower value found (parallel processing)
 
@@ -1478,10 +1430,9 @@ class SellOrderManager:
                     if self._mark_order_executed(symbol, completed_order_id, order_price):
                         symbols_executed.append(symbol)
                         logger.info(f"Position closed: {symbol} - removing from tracking")
-                else:
-                    if self.mark_position_closed(symbol, order_price, completed_order_id):
-                        symbols_executed.append(symbol)
-                        logger.info(f"Position closed: {symbol} - removing from tracking")
+                elif self.mark_position_closed(symbol, order_price, completed_order_id):
+                    symbols_executed.append(symbol)
+                    logger.info(f"Position closed: {symbol} - removing from tracking")
                 continue
 
             # Also check executed_ids (from get_executed_orders())
@@ -1492,10 +1443,9 @@ class SellOrderManager:
                     if self._mark_order_executed(symbol, order_id, current_price):
                         symbols_executed.append(symbol)
                         logger.info(f"Order executed: {symbol} - removing from tracking")
-                else:
-                    if self.mark_position_closed(symbol, current_price, order_id):
-                        symbols_executed.append(symbol)
-                        logger.info(f"Order executed: {symbol} - removing from tracking")
+                elif self.mark_position_closed(symbol, current_price, order_id):
+                    symbols_executed.append(symbol)
+                    logger.info(f"Order executed: {symbol} - removing from tracking")
 
         # Clean up executed orders
         for symbol in symbols_executed:
