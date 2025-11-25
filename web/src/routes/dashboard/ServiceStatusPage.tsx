@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { getServiceStatus, getTaskHistory, getServiceLogs, startService, stopService, type ServiceStatus, type TaskExecution, type ServiceLog } from '@/api/service';
+import { getServiceStatus, getTaskHistory, getServiceLogs, startService, stopService, getIndividualServicesStatus, type ServiceStatus, type TaskExecution, type ServiceLog, type IndividualServicesStatus } from '@/api/service';
 import { formatTimeAgo } from '@/utils/time';
 import { ServiceControls } from './ServiceControls';
 import { ServiceTasksTable } from './ServiceTasksTable';
@@ -36,6 +36,13 @@ export function ServiceStatusPage() {
 		refetchInterval: autoRefresh ? 15000 : false, // Refresh every 15s
 	});
 
+	// Individual services status query
+	const { data: individualStatus } = useQuery<IndividualServicesStatus>({
+		queryKey: ['individualServicesStatus'],
+		queryFn: getIndividualServicesStatus,
+		refetchInterval: autoRefresh ? 5000 : false, // Refresh every 5s
+	});
+
 	// Start/stop mutations
 	const startMutation = useMutation({
 		mutationFn: startService,
@@ -66,6 +73,11 @@ export function ServiceStatusPage() {
 	const isRunning = status?.service_running ?? false;
 	const lastHeartbeat = status?.last_heartbeat ? new Date(status.last_heartbeat) : null;
 	const lastTaskExecution = status?.last_task_execution ? new Date(status.last_task_execution) : null;
+
+	// Check if any individual service is running or any run-once is running
+	const services = individualStatus?.services || {};
+	const anyIndividualServiceRunning = Object.values(services).some(service => service.is_running);
+	const anyRunOnceRunning = Object.values(services).some(service => service.last_execution_status === 'running');
 
 	return (
 		<div className="p-4 space-y-6">
@@ -145,6 +157,8 @@ export function ServiceStatusPage() {
 						onStop={() => stopMutation.mutate()}
 						isStarting={startMutation.isPending}
 						isStopping={stopMutation.isPending}
+						anyIndividualServiceRunning={anyIndividualServiceRunning}
+						anyRunOnceRunning={anyRunOnceRunning}
 					/>
 				</div>
 			</div>

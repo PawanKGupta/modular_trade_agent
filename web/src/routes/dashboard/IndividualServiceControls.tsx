@@ -140,12 +140,26 @@ export function IndividualServiceControls({
 				}
 			| undefined) ?? undefined;
 
-	const canStartIndividual = !unifiedServiceRunning && !service.is_running;
 	// "Run Once" is disabled if service is running OR if there's a "running" execution
 	const isRunOnceRunning = service.last_execution_status === 'running';
-	const canRunOnce = !service.is_running && !isRunOnceRunning; // Can run once even if unified is running
+	// Disable individual service start button if unified service is running, service is already running, or run-once is running
+	const canStartIndividual = !unifiedServiceRunning && !service.is_running && !isRunOnceRunning;
+	const canRunOnce = !service.is_running && !isRunOnceRunning;
 
 	const handleRunOnce = () => {
+		// Show warning if unified service is running
+		if (unifiedServiceRunning) {
+			const confirmed = window.confirm(
+				`WARNING: The unified service is currently running.\n\n` +
+				`Running "${taskDisplayName}" manually may interfere with the unified service's scheduled tasks.\n\n` +
+				`Do you want to proceed with running this task?`
+			);
+
+			if (!confirmed) {
+				return; // User declined, don't run the task
+			}
+		}
+
 		runOnceMutation.mutate(service.task_name);
 	};
 
@@ -255,7 +269,9 @@ export function IndividualServiceControls({
 							? 'Cannot start individual service when unified service is running'
 							: service.is_running
 								? 'Service is already running'
-								: 'Start this service'
+								: isRunOnceRunning
+									? 'Cannot start service while run-once task is executing'
+									: 'Start this service'
 					}
 				>
 					{startMutation.isPending ? 'Starting...' : 'Start Service'}
