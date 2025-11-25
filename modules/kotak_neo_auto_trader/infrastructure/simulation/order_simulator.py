@@ -4,19 +4,18 @@ Simulates realistic order execution with slippage and fees
 """
 
 import random
-import time
-from typing import Optional, Tuple
-from datetime import datetime, time as dt_time
-
 import sys
+import time
+from datetime import datetime
+from datetime import time as dt_time
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger
 
-from ...domain import Order, Money, OrderType, OrderStatus
 from ...config.paper_trading_config import PaperTradingConfig
+from ...domain import Money, Order, OrderType
 from .price_provider import PriceProvider
 
 
@@ -44,7 +43,7 @@ class OrderSimulator:
         self.config = config
         self.price_provider = price_provider
 
-    def execute_order(self, order: Order) -> Tuple[bool, str, Optional[Money]]:
+    def execute_order(self, order: Order) -> tuple[bool, str, Money | None]:
         """
         Simulate order execution
 
@@ -62,10 +61,27 @@ class OrderSimulator:
         if not self.config.instant_execution:
             self._simulate_delay()
 
+        # Get price symbol with proper suffix for Indian stocks
+        # Try to get original ticker from order metadata first (if available)
+        price_symbol = order.symbol
+        if hasattr(order, "metadata") and order.metadata and "original_ticker" in order.metadata:
+            price_symbol = order.metadata["original_ticker"]
+        elif (
+            hasattr(order, "_metadata") and order._metadata and "original_ticker" in order._metadata
+        ):
+            price_symbol = order._metadata["original_ticker"]
+        elif not price_symbol.endswith(".NS") and not price_symbol.endswith(".BO"):
+            # If no metadata and no suffix, try adding .NS for NSE (most common)
+            price_symbol = f"{price_symbol}.NS"
+            logger.debug(f"? Added .NS suffix for price fetching: {price_symbol}")
+
         # Get current price
-        current_price = self.price_provider.get_price(order.symbol)
+        current_price = self.price_provider.get_price(price_symbol)
         if current_price is None:
-            return False, f"Price not available for {order.symbol}", None
+            # Try without suffix as fallback
+            current_price = self.price_provider.get_price(order.symbol)
+            if current_price is None:
+                return False, f"Price not available for {order.symbol} (tried {price_symbol})", None
 
         current_price_money = Money(current_price)
 
@@ -77,7 +93,7 @@ class OrderSimulator:
         else:
             return False, f"Unsupported order type: {order.order_type}", None
 
-    def _execute_market_order(self, order: Order, current_price: Money) -> Tuple[bool, str, Money]:
+    def _execute_market_order(self, order: Order, current_price: Money) -> tuple[bool, str, Money]:
         """
         Execute market order with slippage
 
@@ -101,7 +117,7 @@ class OrderSimulator:
 
     def _execute_limit_order(
         self, order: Order, current_price: Money
-    ) -> Tuple[bool, str, Optional[Money]]:
+    ) -> tuple[bool, str, Money | None]:
         """
         Execute limit order if price condition is met
 
@@ -128,18 +144,17 @@ class OrderSimulator:
                 return True, "Limit order executed", execution_price
             else:
                 return False, "Price above limit", None
+        # Sell limit: execute if current price >= limit price
+        elif current_price.amount >= order.price.amount:
+            execution_price = order.price  # Execute at limit price
+            logger.info(
+                f"? Limit SELL executed: {order.symbol} "
+                f"@ Rs {execution_price.amount:.2f} "
+                f"(Limit: Rs {order.price.amount:.2f})"
+            )
+            return True, "Limit order executed", execution_price
         else:
-            # Sell limit: execute if current price >= limit price
-            if current_price.amount >= order.price.amount:
-                execution_price = order.price  # Execute at limit price
-                logger.info(
-                    f"? Limit SELL executed: {order.symbol} "
-                    f"@ Rs {execution_price.amount:.2f} "
-                    f"(Limit: Rs {order.price.amount:.2f})"
-                )
-                return True, "Limit order executed", execution_price
-            else:
-                return False, "Price below limit", None
+            return False, "Price below limit", None
 
     def _apply_slippage(self, price: Money, is_buy: bool) -> Money:
         """
@@ -238,7 +253,7 @@ class OrderSimulator:
         # Execute if current time >= AMO execution time
         return now >= amo_time
 
-    def validate_order_value(self, order_value: float, available_cash: float) -> Tuple[bool, str]:
+    def validate_order_value(self, order_value: float, available_cash: float) -> tuple[bool, str]:
         """
         Validate order value against limits
 

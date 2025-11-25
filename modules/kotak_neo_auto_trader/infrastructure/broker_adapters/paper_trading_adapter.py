@@ -3,30 +3,28 @@ Paper Trading Broker Adapter
 Simulates broker operations without real money
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-import uuid
-
 import sys
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger
 
+from ...config.paper_trading_config import PaperTradingConfig
 from ...domain import (
-    Order,
+    Exchange,
     Holding,
-    Money,
     IBrokerGateway,
+    Money,
+    Order,
+    OrderStatus,
     OrderType,
     TransactionType,
-    OrderStatus,
-    Exchange,
 )
-from ...config.paper_trading_config import PaperTradingConfig
 from ..persistence import PaperTradeStore
-from ..simulation import PortfolioManager, OrderSimulator, PriceProvider
+from ..simulation import OrderSimulator, PortfolioManager, PriceProvider
 
 
 class PaperTradingBrokerAdapter(IBrokerGateway):
@@ -42,9 +40,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
     No real money involved - perfect for testing strategies!
     """
 
-    def __init__(
-        self, config: Optional[PaperTradingConfig] = None, storage_path: Optional[str] = None
-    ):
+    def __init__(self, config: PaperTradingConfig | None = None, storage_path: str | None = None):
         """
         Initialize paper trading adapter
 
@@ -88,8 +84,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         else:
             # Restore existing state
             logger.info(
-                f"?? Restoring paper trading account "
-                f"(Balance: Rs {account['available_cash']:,.2f})"
+                f"?? Restoring paper trading account (Balance: Rs {account['available_cash']:,.2f})"
             )
             self._restore_state()
 
@@ -218,10 +213,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 and "original_ticker" in order._metadata
             ):
                 price_symbol = order._metadata["original_ticker"]
-            else:
-                # Try with .NS suffix if not present
-                if not price_symbol.endswith(".NS") and not price_symbol.endswith(".BO"):
-                    price_symbol = f"{price_symbol}.NS"
+            # Try with .NS suffix if not present
+            elif not price_symbol.endswith(".NS") and not price_symbol.endswith(".BO"):
+                price_symbol = f"{price_symbol}.NS"
 
             estimated_price = self.price_provider.get_price(price_symbol)
             if estimated_price is None:
@@ -269,7 +263,11 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 f"{order.quantity} @ Rs {execution_price.amount:.2f}"
             )
         else:
-            logger.info(f"?? Order pending: {message}")
+            # Order execution failed or pending
+            logger.warning(
+                f"[WARN]? Order execution failed for {order.symbol}: {message}. "
+                f"Order remains in {order.status.value} status."
+            )
 
         # Save updated order
         self._save_order(order)
@@ -354,7 +352,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         logger.info(f"? Cancelled order: {order_id}")
         return True
 
-    def get_order(self, order_id: str) -> Optional[Order]:
+    def get_order(self, order_id: str) -> Order | None:
         """Get order by ID"""
         if not self.is_connected():
             raise ConnectionError("Not connected")
@@ -365,7 +363,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         return self._dict_to_order(order_dict)
 
-    def get_all_orders(self) -> List[Order]:
+    def get_all_orders(self) -> list[Order]:
         """Get all orders"""
         if not self.is_connected():
             raise ConnectionError("Not connected")
@@ -373,7 +371,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         orders_data = self.store.get_all_orders()
         return [self._dict_to_order(o) for o in orders_data]
 
-    def get_pending_orders(self) -> List[Order]:
+    def get_pending_orders(self) -> list[Order]:
         """Get pending orders"""
         if not self.is_connected():
             raise ConnectionError("Not connected")
@@ -383,7 +381,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
     # ===== PORTFOLIO MANAGEMENT =====
 
-    def get_holdings(self) -> List[Holding]:
+    def get_holdings(self) -> list[Holding]:
         """Get all holdings"""
         if not self.is_connected():
             raise ConnectionError("Not connected")
@@ -398,7 +396,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         return holdings
 
-    def get_holding(self, symbol: str) -> Optional[Holding]:
+    def get_holding(self, symbol: str) -> Holding | None:
         """Get holding for symbol"""
         if not self.is_connected():
             raise ConnectionError("Not connected")
@@ -415,7 +413,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
     # ===== ACCOUNT MANAGEMENT =====
 
-    def get_account_limits(self) -> Dict[str, Any]:
+    def get_account_limits(self) -> dict[str, Any]:
         """Get account limits"""
         if not self.is_connected():
             raise ConnectionError("Not connected")
@@ -442,7 +440,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
     # ===== UTILITY METHODS =====
 
-    def search_orders_by_symbol(self, symbol: str) -> List[Order]:
+    def search_orders_by_symbol(self, symbol: str) -> list[Order]:
         """Search orders by symbol"""
         if not self.is_connected():
             raise ConnectionError("Not connected")
@@ -550,7 +548,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             )
             self.store.add_or_update_holding(holding["symbol"], holding_data)
 
-    def _dict_to_order(self, order_dict: Dict) -> Order:
+    def _dict_to_order(self, order_dict: dict) -> Order:
         """Convert dictionary to Order entity"""
         # Parse price - handle both numeric and formatted strings (for backward compatibility)
         price = None
@@ -597,7 +595,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         self._initialize()
         logger.info("? Account reset complete")
 
-    def get_summary(self) -> Dict:
+    def get_summary(self) -> dict:
         """Get comprehensive account summary"""
         if not self.is_connected():
             self.connect()
