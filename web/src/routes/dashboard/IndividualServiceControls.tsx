@@ -116,6 +116,15 @@ export function IndividualServiceControls({
 	const runOnceMutation = useMutation({
 		mutationFn: (taskName: string) => runTaskOnce({ task_name: taskName }),
 		onSuccess: (response) => {
+			// Handle backend rejection (e.g., unified service conflict)
+			if (!response.success) {
+				setConflictMessage(response.message || 'Task execution failed');
+				setShowConflictWarning(true);
+				setTimeout(() => setShowConflictWarning(false), 8000);
+				return;
+			}
+
+			// Handle warning conflicts (still successful)
 			if (response.has_conflict) {
 				setConflictMessage(response.conflict_message || 'Conflict detected');
 				setShowConflictWarning(true);
@@ -144,22 +153,13 @@ export function IndividualServiceControls({
 	const isRunOnceRunning = service.last_execution_status === 'running';
 	// Disable individual service start button if unified service is running, service is already running, or run-once is running
 	const canStartIndividual = !unifiedServiceRunning && !service.is_running && !isRunOnceRunning;
-	const canRunOnce = !service.is_running && !isRunOnceRunning;
+
+	// Run-once is blocked if unified service is running (except for analysis which doesn't need broker session)
+	const isBlockedByUnifiedService = unifiedServiceRunning && service.task_name !== 'analysis';
+	const canRunOnce = !service.is_running && !isRunOnceRunning && !isBlockedByUnifiedService;
 
 	const handleRunOnce = () => {
-		// Show warning if unified service is running
-		if (unifiedServiceRunning) {
-			const confirmed = window.confirm(
-				`WARNING: The unified service is currently running.\n\n` +
-				`Running "${taskDisplayName}" manually may interfere with the unified service's scheduled tasks.\n\n` +
-				`Do you want to proceed with running this task?`
-			);
-
-			if (!confirmed) {
-				return; // User declined, don't run the task
-			}
-		}
-
+		// No warning dialog needed - backend enforces the block
 		runOnceMutation.mutate(service.task_name);
 	};
 
@@ -300,7 +300,9 @@ export function IndividualServiceControls({
 							? 'Service is already running'
 							: isRunOnceRunning
 								? 'Task is currently running'
-								: 'Run this task once immediately'
+								: isBlockedByUnifiedService
+									? 'Cannot run while unified service is active (would cause session conflicts). Stop unified service first.'
+									: 'Run this task once immediately'
 					}
 				>
 					{runOnceMutation.isPending || isRunOnceRunning ? 'Running...' : 'Run Once'}

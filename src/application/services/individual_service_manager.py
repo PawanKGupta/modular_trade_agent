@@ -215,12 +215,17 @@ class IndividualServiceManager:
         Returns:
             (success: bool, message: str, execution_details: dict)
         """
-        # Check for conflicts (but allow if unified is running, just warn)
-        has_conflict, conflict_message = self._conflict_service.check_conflict(user_id, task_name)
-        if has_conflict:
-            # Still allow but return warning
-            logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
-            logger.warning(f"Conflict detected for run_once: {conflict_message}")
+        # CRITICAL: Block run-once if unified service is running (prevents session conflicts)
+        # Exception: Analysis task doesn't need broker session, so it's safe
+        if task_name != "analysis" and self._conflict_service.is_unified_service_running(user_id):
+            return (
+                False,
+                "Cannot run task while unified service is active. Running this task would "
+                "create a new broker session, causing JWT authentication conflicts with the "
+                "unified service. Please stop the unified service first, or wait for this "
+                "task to run via its schedule.",
+                {},
+            )
 
         # Check if task is already running
         if self._conflict_service.is_task_running(user_id, task_name):
