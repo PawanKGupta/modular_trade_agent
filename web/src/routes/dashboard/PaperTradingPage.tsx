@@ -166,12 +166,12 @@ export function PaperTradingPage() {
 								<tr>
 									<th className="text-left p-2">Symbol</th>
 									<th className="text-right p-2">Quantity</th>
-									<th className="text-right p-2">Avg Price</th>
-									<th className="text-right p-2">Current</th>
-									<th className="text-right p-2">Target</th>
+									<th className="text-right p-2">Avg Price (Rs)</th>
+									<th className="text-right p-2">Current (Rs)</th>
+									<th className="text-right p-2">Target (Rs)</th>
 									<th className="text-right p-2">To Target</th>
-									<th className="text-right p-2">Market Value</th>
-									<th className="text-right p-2">P&L</th>
+									<th className="text-right p-2">Market Value (Rs)</th>
+									<th className="text-right p-2">P&L (Rs)</th>
 									<th className="text-right p-2">P&L %</th>
 								</tr>
 							</thead>
@@ -181,13 +181,30 @@ export function PaperTradingPage() {
 										<td className="p-2 text-[var(--text)] font-medium">{h.symbol}</td>
 										<td className="p-2 text-right text-[var(--text)]">{h.quantity}</td>
 										<td className="p-2 text-right text-[var(--text)]">
-											{formatMoney(h.average_price)}
+											<span className="font-mono">
+												{h.average_price.toLocaleString('en-IN', {
+													minimumFractionDigits: 2,
+													maximumFractionDigits: 2,
+												})}
+											</span>
 										</td>
 										<td className="p-2 text-right text-[var(--text)]">
-											{formatMoney(h.current_price)}
+											<span className="font-mono">
+												{h.current_price.toLocaleString('en-IN', {
+													minimumFractionDigits: 2,
+													maximumFractionDigits: 2,
+												})}
+											</span>
 										</td>
 										<td className="p-2 text-right text-[var(--text)]">
-											{h.target_price ? formatMoney(h.target_price) : (
+											{h.target_price ? (
+												<span className="font-mono">
+													{h.target_price.toLocaleString('en-IN', {
+														minimumFractionDigits: 2,
+														maximumFractionDigits: 2,
+													})}
+												</span>
+											) : (
 												<span className="text-[var(--muted)]">-</span>
 											)}
 										</td>
@@ -208,14 +225,24 @@ export function PaperTradingPage() {
 											)}
 										</td>
 										<td className="p-2 text-right text-[var(--text)]">
-											{formatMoney(h.market_value)}
+											<span className="font-mono">
+												{h.market_value.toLocaleString('en-IN', {
+													minimumFractionDigits: 2,
+													maximumFractionDigits: 2,
+												})}
+											</span>
 										</td>
 										<td
 											className={`p-2 text-right font-medium ${
 												h.pnl >= 0 ? 'text-green-400' : 'text-red-400'
 											}`}
 										>
-											{formatMoney(h.pnl)}
+											<span className="font-mono">
+												{h.pnl.toLocaleString('en-IN', {
+													minimumFractionDigits: 2,
+													maximumFractionDigits: 2,
+												})}
+											</span>
 										</td>
 										<td
 											className={`p-2 text-right font-medium ${
@@ -314,7 +341,7 @@ export function PaperTradingPage() {
 									<th className="text-left p-2">Side</th>
 									<th className="text-left p-2">Type</th>
 									<th className="text-right p-2">Qty</th>
-									<th className="text-right p-2">Price</th>
+									<th className="text-right p-2">Price (Rs)</th>
 									<th className="text-left p-2">Status</th>
 								</tr>
 							</thead>
