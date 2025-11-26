@@ -112,42 +112,40 @@ export function ServiceTasksTable({ tasks, isLoading }: ServiceTasksTableProps) 
 			</div>
 
 			{/* Table */}
-			<div className="overflow-x-auto">
-				<table className="w-full text-sm">
-					<thead>
-						<tr className="border-b border-[#1e293b]">
-							<th className="text-left p-2 text-[var(--muted)]">Task Name</th>
-							<th className="text-left p-2 text-[var(--muted)]">Executed At</th>
-							<th className="text-left p-2 text-[var(--muted)]">Status</th>
-							<th className="text-left p-2 text-[var(--muted)]">Duration</th>
-							<th className="text-left p-2 text-[var(--muted)]">Details</th>
-						</tr>
-					</thead>
-					<tbody>
-						{currentTasks.map((task) => (
-							<tr key={task.id} className="border-b border-[#1e293b] hover:bg-[#0f1720]">
-								<td className="p-2 font-medium text-[var(--text)]">{task.task_name}</td>
-								<td className="p-2 text-[var(--muted)]">
-									{new Date(task.executed_at).toLocaleString()}
-								</td>
-								<td className={`p-2 font-medium ${getStatusColor(task.status)}`}>
-									{task.status.toUpperCase()}
-								</td>
-								<td className="p-2 text-[var(--text)]">{task.duration_seconds.toFixed(2)}s</td>
-								<td className="p-2">
-									{task.details ? (
-										<details className="cursor-pointer">
-											<summary className="text-blue-400 hover:text-blue-300">View</summary>
-											<TaskDetailsView details={task.details} />
-										</details>
-									) : (
-										<span className="text-[var(--muted)]">-</span>
-									)}
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
+			<div className="space-y-2">
+				{currentTasks.map((task) => (
+					<details key={task.id} className="bg-[var(--panel)] border border-[#1e293b] rounded-lg overflow-hidden group">
+						{/* Compact Task Row - Summary */}
+						<summary className="grid grid-cols-[2fr_2.5fr_1.2fr_1fr_auto] gap-2 p-3 hover:bg-[#0f1720] items-center cursor-pointer list-none">
+							<div className="font-medium text-[var(--text)] truncate">{task.task_name}</div>
+							<div className="text-[var(--muted)] text-xs">
+								{new Date(task.executed_at).toLocaleString()}
+							</div>
+							<div className={`font-medium text-xs ${getStatusColor(task.status)}`}>
+								{task.status.toUpperCase()}
+							</div>
+							<div className="text-[var(--text)] text-xs">{task.duration_seconds.toFixed(2)}s</div>
+							<div className="flex items-center justify-end">
+								{task.details ? (
+									<div className="text-blue-400 hover:text-blue-300 flex items-center gap-1 text-xs">
+										<span className="group-open:rotate-90 transition-transform">▶</span>
+										<span className="group-open:hidden">View</span>
+										<span className="hidden group-open:inline">Close</span>
+									</div>
+								) : (
+									<span className="text-[var(--muted)] text-xs">-</span>
+								)}
+							</div>
+						</summary>
+
+						{/* Expanded Details */}
+						{task.details && (
+							<div className="border-t border-[#1e293b]">
+								<TaskDetailsView details={task.details} />
+							</div>
+						)}
+					</details>
+				))}
 			</div>
 		</div>
 	);
