@@ -1,10 +1,11 @@
 {
-  "initial_capital": 100000.0,
+  "initial_capital": 1000000.0,
   "enable_slippage": true,
   "slippage_percentage": 0.2,
   "execution_delay_ms": 100,
   "enable_fees": true,
-  "enforce_market_hours": true,
+  "enforce_market_hours": false,
+  "max_position_size": 1000000.0,
   "storage_path": "paper_trading/user_3",
   "price_source": "live"
 }

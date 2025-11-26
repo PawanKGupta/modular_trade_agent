@@ -111,14 +111,14 @@ class PaperTradingServiceAdapter:
             self.logger.info("=" * 80, action="initialize")
 
             # Create paper trading configuration
-            # Set max_position_size from strategy_config.user_capital if available
-            max_position_size = 50000.0  # Default
-            if self.strategy_config and hasattr(self.strategy_config, "user_capital"):
-                max_position_size = self.strategy_config.user_capital
-                self.logger.info(
-                    f"Using max_position_size from trading config: Rs {max_position_size:,.2f}",
-                    action="initialize",
-                )
+            # For paper trading, max_position_size should match paper_trading_initial_capital
+            # This allows the full capital to be used for a single position if needed
+            max_position_size = self.initial_capital  # Use paper trading capital
+            self.logger.info(
+                f"Paper Trading Config - Initial Capital: Rs {self.initial_capital:,.2f}, "
+                f"Max Position Size: Rs {max_position_size:,.2f}",
+                action="initialize",
+            )
 
             self.logger.info(
                 f"Creating paper trading config (Capital: Rs {self.initial_capital:,.2f}, "

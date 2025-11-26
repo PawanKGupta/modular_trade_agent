@@ -86,6 +86,12 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             logger.info(
                 f"?? Restoring paper trading account (Balance: Rs {account['available_cash']:,.2f})"
             )
+            # Always save the current config to ensure max_position_size and other settings are up-to-date
+            config_file = self.store.storage_path / "config.json"
+            import json
+
+            with open(config_file, "w") as f:
+                json.dump(self.config.to_dict(), f, indent=2)
             self._restore_state()
 
     def _restore_state(self) -> None:

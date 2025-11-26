@@ -11,6 +11,7 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 
 	const maxPositionsChange = config.max_portfolio_size - defaultConfig.max_portfolio_size;
 	const capitalChange = config.user_capital - defaultConfig.user_capital;
+	const paperCapitalChange = config.paper_trading_initial_capital - (defaultConfig.paper_trading_initial_capital ?? 300000);
 
 	return (
 		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
@@ -40,6 +41,35 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 						</div>
 					)}
 				</div>
+				<div>
+					<label htmlFor="paper_trading_initial_capital" className="block text-sm mb-1">
+						Paper Trading Initial Capital (Rs )
+						{!isDefault('paper_trading_initial_capital') && <span className="text-yellow-400 ml-1">*</span>}
+					</label>
+					<input
+						id="paper_trading_initial_capital"
+						type="number"
+						step="10000"
+						min="0"
+						value={config.paper_trading_initial_capital ?? 300000}
+						onChange={(e) => onChange({ paper_trading_initial_capital: parseFloat(e.target.value) || 300000 })}
+						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+					/>
+					<div className="text-xs text-[var(--muted)] mt-1">
+						Default: Rs {(defaultConfig.paper_trading_initial_capital ?? 300000).toLocaleString()}
+					</div>
+					{paperCapitalChange !== 0 && (
+						<div className={`text-xs mt-1 ${paperCapitalChange > 0 ? 'text-green-400' : 'text-red-400'}`}>
+							{paperCapitalChange > 0 ? '+' : ''}Rs {Math.abs(paperCapitalChange).toLocaleString()} from default
+						</div>
+					)}
+					<div className="text-xs text-blue-400 mt-1">
+						💡 Starting balance for paper trading simulation
+					</div>
+				</div>
+			</div>
+
+			<div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
 				<div>
 					<label htmlFor="max_portfolio_size" className="block text-sm mb-1">
 						Max Portfolio Size

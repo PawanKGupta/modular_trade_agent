@@ -193,7 +193,7 @@ class MultiUserTradingService:
             # Clean up thread-local session
             thread_db.close()
 
-    def start_service(self, user_id: int) -> bool:  # noqa: PLR0915
+    def start_service(self, user_id: int) -> bool:  # noqa: PLR0915, PLR0912
         """
         Start trading service for a user.
 
@@ -298,7 +298,7 @@ class MultiUserTradingService:
                         user_id=user_id,
                         db_session=self.db,
                         strategy_config=strategy_config,
-                        initial_capital=100000.0,  # Default capital, can be made configurable
+                        initial_capital=user_config.paper_trading_initial_capital,
                         storage_path=None,  # Will default to user_3
                         skip_execution_tracking=False,
                     )

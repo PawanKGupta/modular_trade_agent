@@ -3,10 +3,10 @@ Paper Trading Configuration
 Settings for paper trading simulation
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, Any
 import json
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -130,7 +130,7 @@ class PaperTradingConfig:
         charge_percentage = self.get_total_charges_percentage(is_buy)
         return (order_value * charge_percentage) / 100
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert configuration to dictionary"""
         return {
             "initial_capital": self.initial_capital,
@@ -139,12 +139,13 @@ class PaperTradingConfig:
             "execution_delay_ms": self.execution_delay_ms,
             "enable_fees": self.enable_fees,
             "enforce_market_hours": self.enforce_market_hours,
+            "max_position_size": self.max_position_size,
             "storage_path": self.storage_path,
             "price_source": self.price_source,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PaperTradingConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "PaperTradingConfig":
         """Create configuration from dictionary"""
         return cls(**data)
 
@@ -157,7 +158,7 @@ class PaperTradingConfig:
     @classmethod
     def load_from_file(cls, filepath: Path) -> "PaperTradingConfig":
         """Load configuration from JSON file"""
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             data = json.load(f)
         return cls.from_dict(data)
 

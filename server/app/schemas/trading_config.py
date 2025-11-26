@@ -16,6 +16,7 @@ class TradingConfigResponse(BaseModel):
 
     # Capital & Position Management
     user_capital: float
+    paper_trading_initial_capital: float
     max_portfolio_size: int
     max_position_volume_ratio: float
     min_absolute_avg_volume: int
@@ -77,6 +78,7 @@ class TradingConfigUpdateRequest(BaseModel):
 
     # Capital & Position Management
     user_capital: float | None = Field(None, gt=0)
+    paper_trading_initial_capital: float | None = Field(None, gt=0)
     max_portfolio_size: int | None = Field(None, ge=1, le=20)
     max_position_volume_ratio: float | None = Field(None, ge=0, le=1)
     min_absolute_avg_volume: int | None = Field(None, ge=0)

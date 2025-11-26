@@ -481,14 +481,14 @@ class IndividualServiceManager:
                 PaperTradingServiceAdapter,
             )
 
-            # Get initial capital from settings or use default
-            initial_capital = getattr(settings, "paper_trading_capital", None) or 100000.0
+            # Load user trading config to get paper_trading_initial_capital
+            user_config = self._config_repo.get_or_create_default(user_id)
 
             service = PaperTradingServiceAdapter(
                 user_id=user_id,
                 db_session=self.db,
                 strategy_config=strategy_config,
-                initial_capital=initial_capital,
+                initial_capital=user_config.paper_trading_initial_capital,
                 storage_path=None,  # Will use user-specific path
                 skip_execution_tracking=True,
             )
