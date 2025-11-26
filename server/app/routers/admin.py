@@ -9,6 +9,7 @@ from src.infrastructure.db.models import UserRole, Users
 from src.infrastructure.persistence.service_schedule_repository import (
     ServiceScheduleRepository,
 )
+from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.user_repository import UserRepository
 
 from ..core.deps import get_current_user, get_db, require_admin
@@ -43,6 +44,10 @@ def create_user(payload: AdminUserCreate, db: Session = Depends(get_db)):
     u = repo.create_user(
         email=payload.email, password=payload.password, name=payload.name, role=role
     )
+
+    # Create default settings for new user (required for trading service)
+    SettingsRepository(db).ensure_default(u.id)
+
     return AdminUserResponse(
         id=u.id, email=u.email, name=u.name, role=u.role.value, is_active=u.is_active
     )
