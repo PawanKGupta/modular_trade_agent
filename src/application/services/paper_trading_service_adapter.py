@@ -876,10 +876,22 @@ class PaperTradingEngineAdapter:
                 )
                 return summary
 
-        # Get current holdings to check for duplicates
+        # Get current holdings and pending orders to check for duplicates
         holdings = self.broker.get_holdings()
-        # Normalize symbols (remove .NS suffix and uppercase)
+        pending_orders = self.broker.get_all_orders()
+        
+        # Normalize symbols from holdings (remove .NS suffix and uppercase)
         current_symbols = {h.symbol.replace(".NS", "").upper() for h in holdings}
+        
+        # Also check pending/open buy orders to prevent duplicates
+        for order in pending_orders:
+            if order.is_buy_order() and order.is_active():
+                normalized_symbol = order.symbol.replace(".NS", "").upper()
+                current_symbols.add(normalized_symbol)
+                self.logger.debug(
+                    f"Found pending buy order for {order.symbol} (Status: {order.status})",
+                    action="place_new_entries",
+                )
 
         # Check portfolio limit (from strategy config or default 6)
         max_portfolio_size = (
@@ -952,10 +964,11 @@ class PaperTradingEngineAdapter:
             # Normalize ticker for comparison (remove .NS suffix and uppercase)
             normalized_ticker = rec.ticker.replace(".NS", "").upper()
 
-            # Skip if already in portfolio
+            # Skip if already in portfolio or has pending buy order
             if normalized_ticker in current_symbols:
                 self.logger.debug(
-                    f"Skipping {rec.ticker} - already in portfolio", action="place_new_entries"
+                    f"Skipping {rec.ticker} - already in portfolio or has pending order",
+                    action="place_new_entries",
                 )
                 summary["skipped_duplicates"] += 1
                 continue
