@@ -852,8 +852,10 @@ class AutoTradeEngine:
         # Priority 2: If database session is available, load from Signals table (unified source)
         if self.db and self.user_id:
             try:
-                from src.infrastructure.db.timezone_utils import ist_now
-                from src.infrastructure.persistence.signals_repository import SignalsRepository
+                from src.infrastructure.db.timezone_utils import ist_now  # noqa: PLC0415
+                from src.infrastructure.persistence.signals_repository import (  # noqa: PLC0415
+                    SignalsRepository,
+                )
 
                 signals_repo = SignalsRepository(self.db)
 
@@ -1959,6 +1961,22 @@ class AutoTradeEngine:
             f"Order placed successfully: {placed_symbol or broker_symbol} "
             f"(order_id: {order_id}, qty: {qty})"
         )
+
+        # Mark signal as TRADED (Phase 2.3: Database integration)
+        if self.db_session:
+            try:
+                from src.infrastructure.persistence.signals_repository import (  # noqa: PLC0415
+                    SignalsRepository,
+                )
+
+                signals_repo = SignalsRepository(self.db_session)
+                # Use the base symbol (without series suffix like -EQ)
+                base_symbol = broker_symbol.split("-")[0] if "-" in broker_symbol else broker_symbol
+                if signals_repo.mark_as_traded(base_symbol):
+                    logger.info(f"Marked signal for {base_symbol} as TRADED")
+            except Exception as mark_error:
+                # Don't fail order placement if marking fails
+                logger.warning(f"Failed to mark signal as traded for {broker_symbol}: {mark_error}")
 
         order_type = "LIMIT" if use_limit_order else "MARKET"
 

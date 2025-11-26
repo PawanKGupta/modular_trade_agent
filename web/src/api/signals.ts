@@ -1,8 +1,11 @@
 import { api } from './client';
 
+export type SignalStatus = 'active' | 'expired' | 'traded' | 'rejected';
+
 export type BuyingZoneItem = {
 	id: number;
 	symbol: string;
+	status: SignalStatus;
 	// Technical indicators
 	rsi10?: number | null;
 	ema9?: number | null;
@@ -68,11 +71,19 @@ export type BuyingZoneItem = {
 };
 
 export type DateFilter = 'today' | 'yesterday' | 'last_10_days' | null;
+export type StatusFilter = 'active' | 'expired' | 'traded' | 'rejected' | 'all';
 
-export async function getBuyingZone(limit = 100, dateFilter: DateFilter = null): Promise<BuyingZoneItem[]> {
+export async function getBuyingZone(
+	limit = 100,
+	dateFilter: DateFilter = null,
+	statusFilter: StatusFilter = 'active'
+): Promise<BuyingZoneItem[]> {
 	const params: Record<string, any> = { limit };
 	if (dateFilter) {
 		params.date_filter = dateFilter;
+	}
+	if (statusFilter) {
+		params.status_filter = statusFilter;
 	}
 	const res = await api.get('/signals/buying-zone', { params });
 	return res.data as BuyingZoneItem[];
@@ -86,4 +97,8 @@ export async function getBuyingZoneColumns(): Promise<string[]> {
 export async function saveBuyingZoneColumns(columns: string[]): Promise<string[]> {
 	const res = await api.put('/user/buying-zone-columns', { columns });
 	return (res.data as { columns: string[] }).columns;
+}
+
+export async function rejectSignal(symbol: string): Promise<void> {
+	await api.patch(`/signals/signals/${symbol}/reject`);
 }

@@ -37,6 +37,15 @@ class ScheduleType(str, Enum):
     ONCE = "once"  # Runs once at scheduled time and stops
 
 
+class SignalStatus(str, Enum):
+    """Status of a signal in the buying zone"""
+
+    ACTIVE = "active"  # Fresh signal, can be traded
+    EXPIRED = "expired"  # Expired (past next analysis run)
+    TRADED = "traded"  # Order placed for this signal
+    REJECTED = "rejected"  # User manually rejected this signal
+
+
 class Users(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
@@ -188,6 +197,9 @@ class PnlDaily(Base):
 class Signals(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    status: Mapped[SignalStatus] = mapped_column(
+        SAEnum(SignalStatus), default=SignalStatus.ACTIVE, index=True, nullable=False
+    )
     # Technical indicators
     rsi10: Mapped[float | None] = mapped_column(Float, nullable=True)
     ema9: Mapped[float | None] = mapped_column(Float, nullable=True)

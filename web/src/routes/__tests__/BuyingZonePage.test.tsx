@@ -1,13 +1,20 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { BuyingZonePage } from '../dashboard/BuyingZonePage';
 import { withProviders } from '@/test/utils';
 import * as signalsApi from '@/api/signals';
 
 describe('BuyingZonePage', () => {
 	beforeEach(() => {
-		// Reset any state if needed
+		// Reset any spies
+		vi.clearAllMocks();
+	});
+
+	afterEach(async () => {
+		// Reset MSW handlers after each test to prevent handler pollution
+		const { server } = await import('@/mocks/server');
+		server.resetHandlers();
 	});
 
 	it('renders signals rows from API', async () => {
@@ -604,6 +611,604 @@ describe('BuyingZonePage', () => {
 				expect(screen.getByText('VALID')).toBeInTheDocument();
 				// Should also display invalid signal (under "Invalid Date" or similar)
 				expect(screen.getByText('INVALID')).toBeInTheDocument();
+			});
+		});
+	});
+
+	describe('Signal Status', () => {
+		it('displays status filter dropdown with all options', async () => {
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Find status filter dropdown (first combobox)
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0]; // First combobox is status filter
+			expect(statusFilter).toBeInTheDocument();
+
+			// Check all options are present
+			const options = statusFilter.querySelectorAll('option');
+			expect(options).toHaveLength(5);
+			expect(options[0].textContent).toContain('Active');
+			expect(options[1].textContent).toContain('All');
+			expect(options[2].textContent).toContain('Expired');
+			expect(options[3].textContent).toContain('Traded');
+			expect(options[4].textContent).toContain('Rejected');
+		});
+
+		it('defaults to showing only active signals', async () => {
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0]; // First combobox is status filter
+			expect(statusFilter).toHaveValue('active');
+		});
+
+		it('changes status filter when user selects different option', async () => {
+			const getBuyingZoneSpy = vi.spyOn(signalsApi, 'getBuyingZone');
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0]; // First combobox is status filter
+
+			// Change to 'all'
+			fireEvent.change(statusFilter, { target: { value: 'all' } });
+
+			await waitFor(() => {
+				expect(statusFilter).toHaveValue('all');
+				expect(getBuyingZoneSpy).toHaveBeenCalledWith(100, null, 'all');
+			});
+		});
+
+		it('displays status badges with correct colors for active signals', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'ACTIVE1',
+							status: 'active',
+							ts: '2024-01-15T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			// Wait for page to load and badge to appear
+			await waitFor(() => {
+				// Get all elements with "✓ Active" text (dropdown option + badge)
+				const badges = screen.getAllByText('✓ Active');
+				// The badge (span) will be in the table, not in a select option
+				const badge = badges.find(el => el.tagName === 'SPAN');
+				expect(badge).toBeInTheDocument();
+				expect(badge).toHaveClass('text-green-400');
+			});
+		});
+
+		it('displays status badges with correct colors for expired signals', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'EXPIRED1',
+							status: 'expired',
+							ts: '2024-01-15T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			// Wait for page to load
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Need to change filter to see expired signals
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0]; // First combobox is status filter
+			fireEvent.change(statusFilter, { target: { value: 'expired' } });
+
+			await waitFor(() => {
+				// Get all elements with "⏰ Expired" text (dropdown option + badge)
+				const badges = screen.getAllByText('⏰ Expired');
+				// The badge (span) will be in the table, not in a select option
+				const badge = badges.find(el => el.tagName === 'SPAN');
+				expect(badge).toBeInTheDocument();
+				expect(badge).toHaveClass('text-gray-400');
+			});
+		});
+
+		it('displays status badges with correct colors for traded signals', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'TRADED1',
+							status: 'traded',
+							ts: '2024-01-15T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			// Wait for page to load
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Need to change filter to see traded signals
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0]; // First combobox is status filter
+			fireEvent.change(statusFilter, { target: { value: 'traded' } });
+
+			await waitFor(() => {
+				// Get all elements with "✅ Traded" text (dropdown option + badge)
+				const badges = screen.getAllByText('✅ Traded');
+				// The badge (span) will be in the table, not in a select option
+				const badge = badges.find(el => el.tagName === 'SPAN');
+				expect(badge).toBeInTheDocument();
+				expect(badge).toHaveClass('text-blue-400');
+			});
+		});
+
+		it('displays status badges with correct colors for rejected signals', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'REJECTED1',
+							status: 'rejected',
+							ts: '2024-01-15T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			// Wait for page to load
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Need to change filter to see rejected signals
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0]; // First combobox is status filter
+			fireEvent.change(statusFilter, { target: { value: 'rejected' } });
+
+			await waitFor(() => {
+				// Get all elements with "❌ Rejected" text (dropdown option + badge)
+				const badges = screen.getAllByText('❌ Rejected');
+				// The badge (span) will be in the table, not in a select option
+				const badge = badges.find(el => el.tagName === 'SPAN');
+				expect(badge).toBeInTheDocument();
+				expect(badge).toHaveClass('text-red-400');
+			});
+		});
+
+		it('shows reject button only for active signals', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'ACTIVE1',
+							status: 'active',
+							ts: '2024-01-15T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			// Wait for page and button to load
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+				const rejectButton = screen.getByRole('button', { name: /Reject/i });
+				expect(rejectButton).toBeInTheDocument();
+				expect(rejectButton).not.toBeDisabled();
+			});
+		});
+
+		it('does not show reject button for expired signals', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'EXPIRED1',
+							status: 'expired',
+							ts: '2024-01-15T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			// Wait for page to load
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Change to expired filter
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0]; // First combobox is status filter
+			fireEvent.change(statusFilter, { target: { value: 'expired' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('EXPIRED1')).toBeInTheDocument();
+			});
+
+			// No reject button should be present
+			const rejectButton = screen.queryByRole('button', { name: /Reject/i });
+			expect(rejectButton).not.toBeInTheDocument();
+		});
+
+		it('calls rejectSignal API when reject button is clicked', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			const rejectSpy = vi.spyOn(signalsApi, 'rejectSignal').mockResolvedValue(undefined);
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'ACTIVE1',
+							status: 'active',
+							ts: '2024-01-15T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			// Wait for data and button to load
+			await waitFor(() => {
+				expect(screen.getByText('ACTIVE1')).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /Reject/i })).toBeInTheDocument();
+			});
+
+			const rejectButton = screen.getByRole('button', { name: /Reject/i });
+			fireEvent.click(rejectButton);
+
+			await waitFor(() => {
+				expect(rejectSpy).toHaveBeenCalledWith('ACTIVE1');
+			});
+		});
+
+		it('refetches data after rejecting a signal', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			let callCount = 0;
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
+					const url = new URL(request.url);
+					// Only count buying-zone calls, not column settings
+					if (url.pathname.includes('buying-zone')) {
+						callCount++;
+						if (callCount === 1) {
+							return HttpResponse.json([
+								{
+									symbol: 'ACTIVE1',
+									status: 'active',
+									ts: '2024-01-15T10:00:00',
+									distance_to_ema9: 5.5,
+									backtest_score: 75.5,
+									confidence: 0.85,
+									ml_confidence: 0.82,
+								},
+							]);
+						} else {
+							// After rejection, signal is removed from active filter
+							return HttpResponse.json([]);
+						}
+					}
+					return HttpResponse.json([]);
+				}),
+				http.patch('*/api/v1/signals/signals/ACTIVE1/reject', () => {
+					return HttpResponse.json({ message: 'Signal rejected', symbol: 'ACTIVE1', status: 'rejected' });
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			// Wait for page to load first
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Then wait for data and button to load (status column is now default, so reject button should be visible)
+			await waitFor(
+				() => {
+					expect(screen.getByText('ACTIVE1')).toBeInTheDocument();
+					expect(screen.getByRole('button', { name: /Reject/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			const rejectButton = screen.getByRole('button', { name: /Reject/i });
+			fireEvent.click(rejectButton);
+
+			// After rejection, signal should disappear (since we're filtering by active)
+			await waitFor(() => {
+				expect(screen.queryByText('ACTIVE1')).not.toBeInTheDocument();
+				expect(screen.getByText(/No signals found/i)).toBeInTheDocument();
+			});
+		});
+
+		it('displays mixed statuses correctly when filter is set to "all"', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'ACTIVE1',
+							status: 'active',
+							ts: '2024-01-15T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+						{
+							symbol: 'EXPIRED1',
+							status: 'expired',
+							ts: '2024-01-15T09:00:00',
+							distance_to_ema9: 3.2,
+							backtest_score: 80.0,
+							confidence: 0.90,
+							ml_confidence: 0.88,
+						},
+						{
+							symbol: 'TRADED1',
+							status: 'traded',
+							ts: '2024-01-15T08:00:00',
+							distance_to_ema9: 4.1,
+							backtest_score: 70.0,
+							confidence: 0.75,
+							ml_confidence: 0.72,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Change filter to 'all' - use getAllByRole to get both filters, first is status
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0]; // First combobox is status filter
+			fireEvent.change(statusFilter, { target: { value: 'all' } });
+
+			await waitFor(() => {
+				// All three signals should be visible
+				expect(screen.getByText('ACTIVE1')).toBeInTheDocument();
+				expect(screen.getByText('EXPIRED1')).toBeInTheDocument();
+				expect(screen.getByText('TRADED1')).toBeInTheDocument();
+
+				// All badges should be present (using getAllByText since text appears in dropdown too)
+				const activeBadges = screen.getAllByText('✓ Active');
+				expect(activeBadges.find(el => el.tagName === 'SPAN')).toBeInTheDocument();
+
+				const expiredBadges = screen.getAllByText('⏰ Expired');
+				expect(expiredBadges.find(el => el.tagName === 'SPAN')).toBeInTheDocument();
+
+				const tradedBadges = screen.getAllByText('✅ Traded');
+				expect(tradedBadges.find(el => el.tagName === 'SPAN')).toBeInTheDocument();
+			});
+		});
+
+		it('updates results count to reflect status filter', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
+					const url = new URL(request.url);
+					const statusFilter = url.searchParams.get('status_filter');
+
+					if (statusFilter === 'active') {
+						return HttpResponse.json([
+							{
+								symbol: 'ACTIVE1',
+								status: 'active',
+								ts: '2024-01-15T10:00:00',
+								distance_to_ema9: 5.5,
+								backtest_score: 75.5,
+								confidence: 0.85,
+								ml_confidence: 0.82,
+							},
+							{
+								symbol: 'ACTIVE2',
+								status: 'active',
+								ts: '2024-01-15T10:00:00',
+								distance_to_ema9: 3.2,
+								backtest_score: 80.0,
+								confidence: 0.90,
+								ml_confidence: 0.88,
+							},
+						]);
+					} else if (statusFilter === 'expired') {
+						return HttpResponse.json([
+							{
+								symbol: 'EXPIRED1',
+								status: 'expired',
+								ts: '2024-01-15T09:00:00',
+								distance_to_ema9: 4.1,
+								backtest_score: 70.0,
+								confidence: 0.75,
+								ml_confidence: 0.72,
+							},
+						]);
+					}
+					return HttpResponse.json([]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			// Should show 2 active signals
+			await waitFor(() => {
+				expect(screen.getByText(/Showing 2 active signals/i)).toBeInTheDocument();
+			});
+
+			// Change to expired - use getAllByRole to get both filters, first is status
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0]; // First combobox is status filter
+			fireEvent.change(statusFilter, { target: { value: 'expired' } });
+
+			// Should show 1 expired signal
+			await waitFor(() => {
+				expect(screen.getByText(/Showing 1 expired signal/i)).toBeInTheDocument();
 			});
 		});
 	});

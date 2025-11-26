@@ -4,7 +4,7 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Signals
+from src.infrastructure.db.models import Signals, SignalStatus
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.signals_repository import SignalsRepository
 
@@ -19,6 +19,10 @@ def buying_zone(
     date_filter: str | None = Query(
         None,
         description="Filter by date: 'today', 'yesterday', or 'last_10_days'",
+    ),
+    status_filter: str | None = Query(
+        "active",
+        description="Filter by status: 'active', 'expired', 'traded', 'rejected', or 'all'",
     ),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
@@ -37,11 +41,21 @@ def buying_zone(
     else:
         # Default: recent (no date filter)
         items = repo.recent(limit=limit)
+
+    # Apply status filter
+    if status_filter and status_filter != "all":
+        try:
+            status_enum = SignalStatus(status_filter.lower())
+            items = [s for s in items if s.status == status_enum]
+        except ValueError:
+            # Invalid status filter, ignore and return all
+            pass
     # Map to client shape with all analysis result fields
     return [
         {
             "id": s.id,
             "symbol": s.symbol,
+            "status": s.status.value,
             # Technical indicators
             "rsi10": s.rsi10,
             "ema9": s.ema9,
@@ -107,3 +121,28 @@ def buying_zone(
         }
         for s in items
     ]
+
+
+@router.patch("/signals/{symbol}/reject")
+def reject_signal(
+    symbol: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Mark a signal as REJECTED - user manually decided not to trade it"""
+    repo = SignalsRepository(db)
+    success = repo.mark_as_rejected(symbol)
+
+    if not success:
+        from fastapi import HTTPException, status
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No active signal found for symbol: {symbol}",
+        )
+
+    return {
+        "message": f"Signal for {symbol} marked as REJECTED",
+        "symbol": symbol,
+        "status": "rejected",
+    }

@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -34,6 +35,7 @@ from src.infrastructure.persistence.individual_service_task_execution_repository
 )
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
+from src.infrastructure.persistence.signals_repository import SignalsRepository
 from src.infrastructure.persistence.user_trading_config_repository import (
     UserTradingConfigRepository,
 )
@@ -393,7 +395,8 @@ class IndividualServiceManager:
                 if not broker_creds:
                     raise ValueError(
                         f"Failed to decrypt broker credentials for user_id={user_id}. "
-                        f"Please reconfigure your broker credentials, or switch to paper trading mode."
+                        f"Please reconfigure your broker credentials, or switch to "
+                        f"paper trading mode."
                     )
 
             # Execute task based on task_name
@@ -428,8 +431,6 @@ class IndividualServiceManager:
             duration = time.time() - start_time
             error_details = {"error": str(e), "error_type": type(e).__name__}
             # Include traceback for better debugging
-            import traceback
-
             error_details["traceback"] = traceback.format_exc()
 
             logger.error(
@@ -672,9 +673,10 @@ class IndividualServiceManager:
                                     task_name="analysis",
                                 )
                             except Exception as persist_error:
-                                # Log error but don't fail - subprocess already completed successfully
+                                # Log error but don't fail - subprocess completed
                                 logger.error(
-                                    f"Failed to persist analysis results (but subprocess completed): {persist_error}",
+                                    f"Failed to persist analysis results "
+                                    f"(but subprocess completed): {persist_error}",
                                     exc_info=persist_error,
                                     action="run_analysis",
                                     task_name="analysis",
@@ -850,7 +852,7 @@ class IndividualServiceManager:
             if not should_update:
                 from datetime import time as time_class  # noqa: PLC0415
 
-                from src.infrastructure.db.timezone_utils import ist_now
+                from src.infrastructure.db.timezone_utils import ist_now  # noqa: PLC0415
 
                 now = ist_now()
                 current_time = now.time()
@@ -870,13 +872,25 @@ class IndividualServiceManager:
                     )
 
                 logger.warning(
-                    f"Signals update skipped: {reason}. Analysis completed but results not persisted to Signals table.",
+                    f"Signals update skipped: {reason}. Analysis completed but results "
+                    f"not persisted to Signals table.",
                     action="run_analysis",
                     task_name="analysis",
                 )
                 summary["skipped_reason"] = reason
                 summary["skipped"] = len(processed_rows)
                 return summary
+
+            # Mark old signals as expired before adding new ones
+            signals_repo = SignalsRepository(self.db)
+            expired_count = signals_repo.mark_old_signals_as_expired()
+            if expired_count > 0:
+                logger.info(
+                    f"Marked {expired_count} old signals as EXPIRED",
+                    action="run_analysis",
+                    task_name="analysis",
+                )
+                summary["expired"] = expired_count
 
             logger.info(
                 f"Calling deduplicate_and_update_signals with {len(processed_rows)} signals",
@@ -1067,7 +1081,7 @@ class IndividualServiceManager:
         if "ts" not in normalized:
             normalized["ts"] = row.get("ts") or row.get("timestamp")
             if normalized["ts"] is None:
-                from src.infrastructure.db.timezone_utils import ist_now
+                from src.infrastructure.db.timezone_utils import ist_now  # noqa: PLC0415
 
                 normalized["ts"] = ist_now()
 
@@ -1133,8 +1147,6 @@ class IndividualServiceManager:
         )
 
         # Get DB_URL from environment to pass to child process
-        import os
-
         env = os.environ.copy()
         db_url = os.getenv("DB_URL")
         if db_url:
@@ -1169,9 +1181,9 @@ class IndividualServiceManager:
         if self._schedules_checked:
             return
 
-        from datetime import time
+        from datetime import time  # noqa: PLC0415
 
-        from src.infrastructure.persistence.service_schedule_repository import (
+        from src.infrastructure.persistence.service_schedule_repository import (  # noqa: PLC0415
             ServiceScheduleRepository,
         )
 
@@ -1329,7 +1341,8 @@ class IndividualServiceManager:
                         user_id=user_id, db=self.db, module="IndividualService"
                     )
                     logger.debug(
-                        f"Thread finished for {task_name}, refreshed execution status: {latest_execution.status}",
+                        f"Thread finished for {task_name}, refreshed execution "
+                        f"status: {latest_execution.status}",
                         action="get_status",
                         task_name=task_name,
                     )
@@ -1354,7 +1367,9 @@ class IndividualServiceManager:
                         user_id=user_id, db=self.db, module="IndividualService"
                     )
                     logger.warning(
-                        f"Detected stale 'running' execution for {task_name} (age: {execution_age.total_seconds():.0f}s, thread_alive: {thread_is_alive}). Marking as failed.",
+                        f"Detected stale 'running' execution for {task_name} "
+                        f"(age: {execution_age.total_seconds():.0f}s, "
+                        f"thread_alive: {thread_is_alive}). Marking as failed.",
                         action="get_status",
                         task_name=task_name,
                     )
@@ -1406,7 +1421,8 @@ class IndividualServiceManager:
                                 user_id=user_id, db=self.db, module="IndividualService"
                             )
                             logger.info(
-                                f"Internal process for {task_name} is alive but DB says stopped. Syncing DB to running.",
+                                f"Internal process for {task_name} is alive but DB says "
+                                f"stopped. Syncing DB to running.",
                                 action="get_status",
                                 task_name=task_name,
                             )

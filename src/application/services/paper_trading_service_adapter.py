@@ -834,7 +834,9 @@ class PaperTradingEngineAdapter:
             List of Recommendation objects
         """
         from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
-        from src.infrastructure.persistence.signals_repository import SignalsRepository
+        from src.infrastructure.persistence.signals_repository import (  # noqa: PLC0415
+            SignalsRepository,
+        )
 
         try:
             # Query Signals table for buy/strong_buy recommendations
@@ -1139,6 +1141,25 @@ class PaperTradingEngineAdapter:
                         action="place_new_entries",
                     )
                     summary["placed"] += 1
+
+                    # Mark signal as TRADED
+                    try:
+                        from src.infrastructure.persistence.signals_repository import (
+                            SignalsRepository,
+                        )
+
+                        signals_repo = SignalsRepository(self.db)
+                        if signals_repo.mark_as_traded(symbol):
+                            self.logger.info(
+                                f"Marked signal for {symbol} as TRADED",
+                                action="place_new_entries",
+                            )
+                    except Exception as mark_error:
+                        # Don't fail order placement if marking fails
+                        self.logger.warning(
+                            f"Failed to mark signal as traded for {symbol}: {mark_error}",
+                            action="place_new_entries",
+                        )
                 except Exception as order_error:
                     self.logger.error(
                         f"? Failed to place order for {rec.ticker}: {order_error}",

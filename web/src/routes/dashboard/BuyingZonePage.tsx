@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useMemo, useEffect } from 'react';
-import { getBuyingZone, getBuyingZoneColumns, saveBuyingZoneColumns, type BuyingZoneItem, type DateFilter } from '@/api/signals';
+import { getBuyingZone, getBuyingZoneColumns, saveBuyingZoneColumns, rejectSignal, type BuyingZoneItem, type DateFilter, type StatusFilter } from '@/api/signals';
 
 type ColumnKey =
 	| 'symbol'
+	| 'status'
 	| 'rsi10'
 	| 'ema9'
 	| 'ema200'
@@ -53,6 +54,7 @@ interface ColumnDef {
 
 const ALL_COLUMNS: ColumnDef[] = [
 	{ key: 'symbol', label: 'Stock Symbol', mandatory: true },
+	{ key: 'status', label: 'Status' },
 	// Technical indicators
 	{ key: 'rsi10', label: 'RSI10', formatter: (v) => (v != null ? v.toFixed(1) : '-') },
 	{ key: 'ema9', label: 'EMA9', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
@@ -117,16 +119,26 @@ const ALL_COLUMNS: ColumnDef[] = [
 const MIN_COLUMNS = 5;
 const MAX_COLUMNS = 20;
 
-// Default columns: Symbol, Distance to EMA9, Backtest, Confidence, ML Confidence
-const DEFAULT_COLUMNS: ColumnKey[] = ['symbol', 'distance_to_ema9', 'backtest_score', 'confidence', 'ml_confidence'];
+// Default columns: Symbol, Status, Distance to EMA9, Backtest, Confidence, ML Confidence
+const DEFAULT_COLUMNS: ColumnKey[] = ['symbol', 'status', 'distance_to_ema9', 'backtest_score', 'confidence', 'ml_confidence'];
 
 export function BuyingZonePage() {
 	const qc = useQueryClient();
 	const [dateFilter, setDateFilter] = useState<DateFilter>(null);
+	const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
 
-	const { data, isLoading, error } = useQuery<BuyingZoneItem[]>({
-		queryKey: ['buying-zone', dateFilter],
-		queryFn: () => getBuyingZone(100, dateFilter),
+	const { data, isLoading, error} = useQuery<BuyingZoneItem[]>({
+		queryKey: ['buying-zone', dateFilter, statusFilter],
+		queryFn: () => getBuyingZone(100, dateFilter, statusFilter),
+	});
+
+	// Reject signal mutation
+	const rejectMutation = useMutation({
+		mutationFn: (symbol: string) => rejectSignal(symbol),
+		onSuccess: () => {
+			// Refetch buying zone data
+			qc.invalidateQueries({ queryKey: ['buying-zone'] });
+		},
 	});
 
 	// Load saved columns from API
@@ -250,6 +262,22 @@ export function BuyingZonePage() {
 			<div className="flex items-center justify-between">
 				<h1 className="text-xl font-semibold text-[var(--text)]">Buying Zone</h1>
 				<div className="flex items-center gap-4">
+					{/* Status Filter */}
+					<div className="flex items-center gap-2">
+						<label className="text-sm text-[var(--muted)]">Status:</label>
+						<select
+							value={statusFilter}
+							onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+							className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-1.5 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+						>
+							<option value="active">✓ Active</option>
+							<option value="all">All Statuses</option>
+							<option value="expired">⏰ Expired</option>
+							<option value="traded">✅ Traded</option>
+							<option value="rejected">❌ Rejected</option>
+						</select>
+					</div>
+
 					{/* Date Filter */}
 					<div className="flex items-center gap-2">
 						<label className="text-sm text-[var(--muted)]">Date Filter:</label>
@@ -374,7 +402,7 @@ export function BuyingZonePage() {
 			{/* Results Count */}
 			{(data ?? []).length > 0 && (
 				<div className="text-sm text-[var(--muted)]">
-					Showing {data.length} signal{data.length === 1 ? '' : 's'}
+					Showing {data.length} {statusFilter === 'active' ? 'active' : statusFilter} signal{data.length === 1 ? '' : 's'}
 					{dateFilter === 'today' && ' from today'}
 					{dateFilter === 'yesterday' && ' from yesterday'}
 					{dateFilter === 'last_10_days' && ' from last 10 days'}
@@ -425,6 +453,56 @@ export function BuyingZonePage() {
 													return (
 														<tr key={row.id} className="border-t border-[#1e293b] hover:bg-[#0f1720]">
 															{visibleColumns.map((col) => {
+																// Special rendering for status column
+																if (col.key === 'status') {
+																	const status = row.status;
+																	let badgeClass = '';
+																	let badgeText = '';
+
+																	switch (status) {
+																		case 'active':
+																			badgeClass = 'bg-green-500/20 text-green-400 border border-green-500/30';
+																			badgeText = '✓ Active';
+																			break;
+																		case 'expired':
+																			badgeClass = 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
+																			badgeText = '⏰ Expired';
+																			break;
+																		case 'traded':
+																			badgeClass = 'bg-blue-500/20 text-blue-400 border border-blue-500/30';
+																			badgeText = '✅ Traded';
+																			break;
+																		case 'rejected':
+																			badgeClass = 'bg-red-500/20 text-red-400 border border-red-500/30';
+																			badgeText = '❌ Rejected';
+																			break;
+																		default:
+																			badgeClass = 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
+																			badgeText = status || '-';
+																	}
+
+																	return (
+																		<td key={col.key} className="py-2 px-3">
+																			<div className="flex items-center gap-2">
+																				<span className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass}`}>
+																					{badgeText}
+																				</span>
+																				{status === 'active' && (
+																					<button
+																						onClick={() => rejectMutation.mutate(row.symbol)}
+																						disabled={rejectMutation.isPending}
+																						className="text-xs px-2 py-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 disabled:opacity-50"
+																						title="Reject this signal"
+																					>
+																						Reject
+																					</button>
+																				)}
+																			</div>
+																		</td>
+																	);
+																}
+
+																// Regular columns
 																let displayValue: string;
 																if (col.formatter) {
 																	displayValue = col.formatter((row as any)[col.key], row);

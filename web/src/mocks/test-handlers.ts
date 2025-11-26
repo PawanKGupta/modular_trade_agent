@@ -484,6 +484,7 @@ http.post(API('/auth/refresh'), async () => {
 			{
 				id: 1,
 				symbol: 'TCS',
+				status: 'active',
 				rsi10: 25.2,
 				ema9: 100,
 				ema200: 90,
@@ -518,6 +519,7 @@ http.post(API('/auth/refresh'), async () => {
 			{
 				id: 2,
 				symbol: 'INFY',
+				status: 'active',
 				rsi10: 28.5,
 				ema9: 1500,
 				ema200: 1450,
@@ -534,6 +536,13 @@ http.post(API('/auth/refresh'), async () => {
 				ts: new Date().toISOString(),
 			},
 		]);
+	}),
+	http.patch(API('/signals/signals/:symbol/reject'), async ({ params }) => {
+		return HttpResponse.json({
+			message: `Signal for ${params.symbol} marked as REJECTED`,
+			symbol: params.symbol,
+			status: 'rejected',
+		});
 	}),
 	// buying zone columns
 	http.get(API('/user/buying-zone-columns'), async () => {
