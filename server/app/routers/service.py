@@ -59,6 +59,7 @@ def start_service(
     """Start trading service for current user"""
     try:
         success = trading_service.start_service(current.id)
+        db.commit()  # Explicitly commit status changes
         if success:
             return ServiceStartResponse(
                 success=True,
@@ -72,11 +73,13 @@ def start_service(
                 service_running=False,
             )
     except ValueError as e:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
     except Exception as e:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error starting service: {str(e)}",
@@ -92,6 +95,7 @@ def stop_service(
     """Stop trading service for current user"""
     try:
         success = trading_service.stop_service(current.id)
+        db.commit()  # Explicitly commit status changes
         if success:
             return ServiceStopResponse(
                 success=True,
@@ -105,6 +109,7 @@ def stop_service(
                 service_running=True,
             )
     except Exception as e:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error stopping service: {str(e)}",

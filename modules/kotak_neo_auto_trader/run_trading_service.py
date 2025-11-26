@@ -111,6 +111,10 @@ class TradingService:
         self.price_cache: LivePriceCache | None = None
         self.scrip_master: KotakNeoScripMaster | None = None
         self.running = False
+
+        # Initialize schedule manager for dynamic task scheduling
+        from src.application.services.schedule_manager import ScheduleManager  # noqa: PLC0415
+        self._schedule_manager = ScheduleManager(db_session)
         self.shutdown_requested = False
 
         # Task execution flags (reset daily)
@@ -1054,33 +1058,54 @@ class TradingService:
                     # Only run tasks on trading days (Mon-Fri)
                     if self.is_trading_day():
                         logger.debug("  -> Trading day detected - checking tasks...")
-                        # 9:00 AM - Pre-market retry
-                        if self.should_run_task("premarket_retry", dt_time(9, 0)):
-                            self.run_premarket_retry()
 
-                        # 9:05 AM - Pre-market AMO quantity adjustment
+                        # Pre-market retry (uses DB schedule)
+                        premarket_schedule = self._schedule_manager.get_schedule("premarket_retry")
+                        if premarket_schedule and premarket_schedule.enabled:
+                            premarket_time = premarket_schedule.schedule_time
+                            if self.should_run_task("premarket_retry", dt_time(premarket_time.hour, premarket_time.minute)):
+                                self.run_premarket_retry()
+
+                        # Pre-market AMO quantity adjustment (hardcoded 9:05 AM - 5 mins after premarket retry)
                         if self.should_run_task("premarket_amo_adjustment", dt_time(9, 5)):
                             self.run_premarket_amo_adjustment()
 
-                        # 9:15 AM onwards - Sell monitoring (continuous)
-                        if current_time >= dt_time(9, 15) and self.is_market_hours():
-                            self.run_sell_monitor()
+                        # Sell monitoring (continuous, uses DB schedule)
+                        sell_schedule = self._schedule_manager.get_schedule("sell_monitor")
+                        if sell_schedule and sell_schedule.enabled and sell_schedule.is_continuous:
+                            start_time = sell_schedule.schedule_time
+                            end_time = sell_schedule.end_time or dt_time(15, 30)
+                            if (current_time >= dt_time(start_time.hour, start_time.minute)
+                                and current_time <= dt_time(end_time.hour, end_time.minute)):
+                                self.run_sell_monitor()
 
-                        # 9:30 AM, 10:30 AM, 11:30 AM, etc. - Position monitoring (hourly)
-                        if current_time.minute == 30 and 9 <= current_time.hour <= 15:
-                            self.run_position_monitor()
+                        # Position monitoring (hourly, uses DB schedule)
+                        position_schedule = self._schedule_manager.get_schedule("position_monitor")
+                        if position_schedule and position_schedule.enabled and position_schedule.is_hourly:
+                            start_time = position_schedule.schedule_time
+                            if current_time.minute == start_time.minute and start_time.hour <= current_time.hour <= 15:
+                                self.run_position_monitor()
 
-                        # 4:00 PM - Analysis
-                        if self.should_run_task("analysis", dt_time(16, 0)):
-                            self.run_analysis()
+                        # Analysis (uses DB schedule)
+                        analysis_schedule = self._schedule_manager.get_schedule("analysis")
+                        if analysis_schedule and analysis_schedule.enabled:
+                            analysis_time = analysis_schedule.schedule_time
+                            if self.should_run_task("analysis", dt_time(analysis_time.hour, analysis_time.minute)):
+                                self.run_analysis()
 
-                        # 4:05 PM - Buy orders
-                        if self.should_run_task("buy_orders", dt_time(16, 5)):
-                            self.run_buy_orders()
+                        # Buy orders (uses DB schedule)
+                        buy_schedule = self._schedule_manager.get_schedule("buy_orders")
+                        if buy_schedule and buy_schedule.enabled:
+                            buy_time = buy_schedule.schedule_time
+                            if self.should_run_task("buy_orders", dt_time(buy_time.hour, buy_time.minute)):
+                                self.run_buy_orders()
 
-                        # 6:00 PM - EOD cleanup (resets for next day)
-                        if self.should_run_task("eod_cleanup", dt_time(18, 0)):
-                            self.run_eod_cleanup()
+                        # EOD cleanup (uses DB schedule)
+                        eod_schedule = self._schedule_manager.get_schedule("eod_cleanup")
+                        if eod_schedule and eod_schedule.enabled:
+                            eod_time = eod_schedule.schedule_time
+                            if self.should_run_task("eod_cleanup", dt_time(eod_time.hour, eod_time.minute)):
+                                self.run_eod_cleanup()
 
                 # Periodic heartbeat log (every 5 minutes to show service is alive)
                 if now.minute % 5 == 0 and now.second < 30:

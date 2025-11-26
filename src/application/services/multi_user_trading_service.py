@@ -22,6 +22,7 @@ from src.application.services.broker_credentials import (
 )
 from src.application.services.config_converter import user_config_to_strategy_config
 from src.application.services.paper_trading_service_adapter import PaperTradingServiceAdapter
+from src.application.services.schedule_manager import ScheduleManager
 from src.infrastructure.logging import get_user_logger
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
@@ -56,6 +57,7 @@ class MultiUserTradingService:
         self._service_status_repo = ServiceStatusRepository(db)
         self._settings_repo = SettingsRepository(db)
         self._config_repo = UserTradingConfigRepository(db)
+        self._schedule_manager = ScheduleManager(db)
         self._logger = get_user_logger(
             user_id=0, db=db, module="MultiUserTradingService"
         )  # System-level logger
@@ -87,6 +89,7 @@ class MultiUserTradingService:
 
             service.running = True
             last_check = None
+            heartbeat_counter = 0  # Log heartbeat every 5 minutes
 
             while service.running and not getattr(service, "shutdown_requested", False):
                 try:
@@ -106,18 +109,25 @@ class MultiUserTradingService:
                         time.sleep(60)
                         continue
 
-                    # Task scheduling (matches real trading service)
-                    # 9:00 AM - Pre-market retry
-                    if dt_time(9, 0) <= current_time < dt_time(9, 1):
-                        if not service.tasks_completed.get("premarket_retry"):
-                            try:
-                                service.run_premarket_retry()
-                            except Exception as e:
-                                user_logger.error(
-                                    f"Pre-market retry failed: {e}",
-                                    exc_info=True,
-                                    action="scheduler",
-                                )
+                    # Task scheduling (uses database schedule configuration)
+                    # Pre-market retry
+                    premarket_schedule = self._schedule_manager.get_schedule("premarket_retry")
+                    if premarket_schedule and premarket_schedule.enabled:
+                        premarket_time = premarket_schedule.schedule_time
+                        if (
+                            dt_time(premarket_time.hour, premarket_time.minute)
+                            <= current_time
+                            < dt_time(premarket_time.hour, premarket_time.minute + 1)
+                        ):
+                            if not service.tasks_completed.get("premarket_retry"):
+                                try:
+                                    service.run_premarket_retry()
+                                except Exception as e:
+                                    user_logger.error(
+                                        f"Pre-market retry failed: {e}",
+                                        exc_info=True,
+                                        action="scheduler",
+                                    )
 
                     # 9:05 AM - Pre-market AMO adjustment (NO-OP for paper trading, kept for parity)
                     if dt_time(9, 5) <= current_time < dt_time(9, 6):
@@ -132,56 +142,126 @@ class MultiUserTradingService:
                                     action="scheduler",
                                 )
 
-                    # 9:15 AM onwards - Sell monitoring (continuous during market hours)
-                    if current_time >= dt_time(9, 15) and dt_time(9, 15) <= current_time <= dt_time(
-                        15, 30
-                    ):
-                        try:
-                            service.run_sell_monitor()
-                        except Exception as e:
-                            user_logger.error(
-                                f"Sell monitoring failed: {e}",
-                                exc_info=True,
-                                action="scheduler",
-                            )
-
-                    # 9:30 AM, 10:30 AM, etc. - Position monitoring (hourly at :30)
-                    if current_time.minute == 30 and 9 <= now.hour <= 15:  # noqa: PLR2004
-                        hour_key = now.strftime("%Y-%m-%d %H")
-                        if not service.tasks_completed.get("position_monitor", {}).get(hour_key):
+                    # Sell monitoring (continuous during market hours, uses DB schedule)
+                    sell_schedule = self._schedule_manager.get_schedule("sell_monitor")
+                    if sell_schedule and sell_schedule.enabled and sell_schedule.is_continuous:
+                        start_time = sell_schedule.schedule_time
+                        end_time = sell_schedule.end_time or dt_time(15, 30)
+                        if (
+                            current_time >= dt_time(start_time.hour, start_time.minute)
+                            and current_time <= dt_time(end_time.hour, end_time.minute)
+                        ):
                             try:
-                                service.run_position_monitor()
+                                service.run_sell_monitor()
                             except Exception as e:
                                 user_logger.error(
-                                    f"Position monitoring failed: {e}",
+                                    f"Sell monitoring failed: {e}",
                                     exc_info=True,
                                     action="scheduler",
                                 )
 
-                    # 4:00 PM - Analysis (handled by individual service - skip)
-                    # 4:05 PM - Buy orders
-                    if dt_time(16, 5) <= current_time < dt_time(16, 6):
-                        if not service.tasks_completed.get("buy_orders"):
-                            try:
-                                service.run_buy_orders()
-                            except Exception as e:
-                                user_logger.error(
-                                    f"Buy orders failed: {e}",
-                                    exc_info=True,
-                                    action="scheduler",
-                                )
+                    # Position monitoring (hourly, uses DB schedule)
+                    position_schedule = self._schedule_manager.get_schedule("position_monitor")
+                    if position_schedule and position_schedule.enabled and position_schedule.is_hourly:
+                        start_time = position_schedule.schedule_time
+                        # Run hourly at the scheduled minute (e.g., every hour at :30)
+                        if current_time.minute == start_time.minute and start_time.hour <= now.hour <= 15:  # noqa: PLR2004
+                            hour_key = now.strftime("%Y-%m-%d %H")
+                            if not service.tasks_completed.get("position_monitor", {}).get(hour_key):
+                                try:
+                                    service.run_position_monitor()
+                                except Exception as e:
+                                    user_logger.error(
+                                        f"Position monitoring failed: {e}",
+                                        exc_info=True,
+                                        action="scheduler",
+                                    )
 
-                    # 6:00 PM - EOD cleanup
-                    if dt_time(18, 0) <= current_time < dt_time(18, 1):
-                        if not service.tasks_completed.get("eod_cleanup"):
-                            try:
-                                service.run_eod_cleanup()
-                            except Exception as e:
-                                user_logger.error(
-                                    f"EOD cleanup failed: {e}",
-                                    exc_info=True,
-                                    action="scheduler",
-                                )
+                    # 4:00 PM - Analysis (check custom schedule from DB and trigger via Individual Service Manager)
+                    analysis_schedule = self._schedule_manager.get_schedule("analysis")
+                    if analysis_schedule and analysis_schedule.enabled:
+                        analysis_time = analysis_schedule.schedule_time
+                        analysis_hour = analysis_time.hour
+                        analysis_minute = analysis_time.minute
+                        if (
+                            dt_time(analysis_hour, analysis_minute)
+                            <= current_time
+                            < dt_time(analysis_hour, analysis_minute + 1)
+                        ):
+                            if not service.tasks_completed.get("analysis"):
+                                try:
+                                    from src.application.services.individual_service_manager import (  # noqa: PLC0415
+                                        IndividualServiceManager,
+                                    )
+                                    from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
+
+                                    user_logger.info(
+                                        f"Starting analysis task (scheduled at {analysis_time})",
+                                        action="scheduler",
+                                    )
+
+                                    # Create fresh DB session for analysis (avoid session conflict)
+                                    analysis_db = SessionLocal()
+                                    try:
+                                        # Trigger analysis via Individual Service Manager with fresh session
+                                        service_manager = IndividualServiceManager(analysis_db)
+                                        success, message, _ = service_manager.run_once(
+                                            user_id, "analysis", execution_type="scheduled"
+                                        )
+
+                                        if success:
+                                            service.tasks_completed["analysis"] = True
+                                            user_logger.info(
+                                                f"Analysis task triggered: {message}", action="scheduler"
+                                            )
+                                        else:
+                                            user_logger.warning(
+                                                f"Failed to trigger analysis: {message}", action="scheduler"
+                                            )
+                                    finally:
+                                        analysis_db.close()
+                                except Exception as e:
+                                    user_logger.error(
+                                        f"Analysis failed: {e}", exc_info=True, action="scheduler"
+                                    )
+
+                    # Buy orders (uses DB schedule)
+                    buy_schedule = self._schedule_manager.get_schedule("buy_orders")
+                    if buy_schedule and buy_schedule.enabled:
+                        buy_time = buy_schedule.schedule_time
+                        if (
+                            dt_time(buy_time.hour, buy_time.minute)
+                            <= current_time
+                            < dt_time(buy_time.hour, buy_time.minute + 1)
+                        ):
+                            if not service.tasks_completed.get("buy_orders"):
+                                try:
+                                    service.run_buy_orders()
+                                except Exception as e:
+                                    user_logger.error(
+                                        f"Buy orders failed: {e}",
+                                        exc_info=True,
+                                        action="scheduler",
+                                    )
+
+                    # EOD cleanup (uses DB schedule)
+                    eod_schedule = self._schedule_manager.get_schedule("eod_cleanup")
+                    if eod_schedule and eod_schedule.enabled:
+                        eod_time = eod_schedule.schedule_time
+                        if (
+                            dt_time(eod_time.hour, eod_time.minute)
+                            <= current_time
+                            < dt_time(eod_time.hour, eod_time.minute + 1)
+                        ):
+                            if not service.tasks_completed.get("eod_cleanup"):
+                                try:
+                                    service.run_eod_cleanup()
+                                except Exception as e:
+                                    user_logger.error(
+                                        f"EOD cleanup failed: {e}",
+                                        exc_info=True,
+                                        action="scheduler",
+                                    )
 
                     # Update heartbeat every minute using thread-local session
                     try:
@@ -189,6 +269,14 @@ class MultiUserTradingService:
                         thread_status_repo = ServiceStatusRepository(thread_db)
                         thread_status_repo.update_heartbeat(user_id)
                         thread_db.commit()
+
+                        # Log heartbeat every 5 minutes
+                        heartbeat_counter += 1
+                        if heartbeat_counter == 1 or heartbeat_counter % 300 == 0:  # First update, then every 5 minutes
+                            user_logger.info(
+                                f"💓 Scheduler heartbeat (running for {heartbeat_counter // 60} minutes)",
+                                action="scheduler",
+                            )
                     except Exception as e:
                         user_logger.warning(f"Failed to update heartbeat: {e}", action="scheduler")
                         thread_db.rollback()

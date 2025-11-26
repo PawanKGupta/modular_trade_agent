@@ -37,7 +37,7 @@ class ServiceStatusRepository:
         status = self.get_or_create(user_id)
         status.service_running = running
         status.updated_at = ist_now()
-        self.db.commit()
+        self.db.flush()  # Flush changes without committing (let caller manage transaction)
         self.db.refresh(status)
         return status
 
@@ -46,7 +46,7 @@ class ServiceStatusRepository:
         status = self.get_or_create(user_id)
         status.last_heartbeat = ist_now()
         status.updated_at = ist_now()
-        self.db.commit()
+        self.db.flush()  # Flush changes without committing (let caller manage transaction)
         self.db.refresh(status)
         return status
 
@@ -55,7 +55,7 @@ class ServiceStatusRepository:
         status = self.get_or_create(user_id)
         status.last_task_execution = ist_now()
         status.updated_at = ist_now()
-        self.db.commit()
+        self.db.flush()  # Flush changes without committing (let caller manage transaction)
         self.db.refresh(status)
         return status
 
@@ -66,7 +66,7 @@ class ServiceStatusRepository:
         if error_message:
             status.last_error = error_message[:512]  # Truncate to max length
         status.updated_at = ist_now()
-        self.db.commit()
+        self.db.flush()  # Flush changes without committing (let caller manage transaction)
         self.db.refresh(status)
         return status
 
@@ -76,6 +76,6 @@ class ServiceStatusRepository:
         status.error_count = 0
         status.last_error = None
         status.updated_at = ist_now()
-        self.db.commit()
+        self.db.flush()  # Flush changes without committing (let caller manage transaction)
         self.db.refresh(status)
         return status
