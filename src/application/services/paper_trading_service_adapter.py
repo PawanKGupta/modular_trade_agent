@@ -178,6 +178,7 @@ class PaperTradingServiceAdapter:
                 db_session=self.db,
                 strategy_config=self.strategy_config,
                 logger=self.logger,
+                storage_path=self.storage_path,
             )
 
             self.logger.info("Service initialized successfully", action="initialize")
@@ -774,7 +775,9 @@ class PaperTradingEngineAdapter:
     This allows existing code that uses AutoTradeEngine to work with paper trading.
     """
 
-    def __init__(self, broker, user_id, db_session, strategy_config, logger):
+    def __init__(  # noqa: PLR0913
+        self, broker, user_id, db_session, strategy_config, logger, storage_path=None
+    ):
         """
         Initialize paper trading engine adapter.
 
@@ -784,12 +787,14 @@ class PaperTradingEngineAdapter:
             db_session: Database session
             strategy_config: Strategy configuration
             logger: Logger instance
+            storage_path: Storage path for metadata files
         """
         self.broker = broker
         self.user_id = user_id
         self.db = db_session
         self.strategy_config = strategy_config
         self.logger = logger
+        self.storage_path = storage_path or broker.store.storage_path
 
     def load_latest_recommendations(self):
         """
@@ -1137,10 +1142,19 @@ class PaperTradingEngineAdapter:
         """
         Monitor positions for reentry/exit signals (paper trading).
 
+        Implements the same re-entry logic as real trading:
+        - RSI-based re-entry at levels 30, 20, 10
+        - Daily cap (1 re-entry per symbol per day)
+        - Duplicate prevention (no active buy orders)
+        - Reset logic (when RSI > 30)
+
         Returns:
             Summary dict with monitoring statistics
         """
-        summary = {"checked": 0, "updated": 0, "executed": 0}
+        from datetime import datetime
+        from math import floor
+
+        summary = {"checked": 0, "reentries": 0, "skipped": 0}
 
         if not self.broker or not self.broker.is_connected():
             self.logger.error("Paper trading broker not connected", action="monitor_positions")
@@ -1150,10 +1164,286 @@ class PaperTradingEngineAdapter:
         holdings = self.broker.get_holdings()
         summary["checked"] = len(holdings)
 
-        # In paper trading, we would check positions and update sell orders
-        # For now, just log that monitoring is active
-        self.logger.debug(
-            f"Monitoring {len(holdings)} positions (paper trading)", action="monitor_positions"
+        if not holdings:
+            self.logger.debug("No holdings to monitor", action="monitor_positions")
+            return summary
+
+        # Load position metadata (levels_taken, reset_ready, reentry_dates)
+        metadata = self._load_position_metadata()
+
+        # Group holdings by symbol for re-entry evaluation
+        for holding in holdings:
+            symbol = holding.symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
+            ticker = f"{symbol}.NS"
+
+            try:
+                # Get daily indicators (RSI, price, EMA9)
+                indicators = self._get_daily_indicators(ticker)
+                if not indicators:
+                    self.logger.warning(
+                        f"Skip {symbol}: missing indicators", action="monitor_positions"
+                    )
+                    continue
+
+                rsi = indicators.get("rsi10", 0)
+                price = indicators.get("close", 0)
+
+                if price <= 0 or rsi <= 0:
+                    continue
+
+                # Initialize metadata for this symbol if not exists
+                if symbol not in metadata:
+                    metadata[symbol] = {
+                        "levels_taken": {"30": False, "20": False, "10": False},
+                        "reset_ready": False,
+                        "reentry_dates": [],
+                    }
+
+                levels = metadata[symbol]["levels_taken"]
+                reset_ready = metadata[symbol]["reset_ready"]
+                reentry_dates = metadata[symbol].get("reentry_dates", [])
+
+                # Reset handling: if RSI > 30, allow future cycles
+                if rsi > 30:
+                    metadata[symbol]["reset_ready"] = True
+                    self.logger.debug(
+                        f"{symbol}: RSI={rsi:.1f} > 30, marked reset_ready",
+                        action="monitor_positions",
+                    )
+
+                # If reset_ready and RSI drops below 30 again, trigger NEW CYCLE
+                if rsi < 30 and reset_ready:
+                    # This is a NEW CYCLE - reset all levels
+                    metadata[symbol]["levels_taken"] = {
+                        "30": False,
+                        "20": False,
+                        "10": False,
+                    }
+                    metadata[symbol]["reset_ready"] = False
+                    levels = metadata[symbol]["levels_taken"]
+                    self.logger.info(
+                        f"{symbol}: NEW CYCLE - RSI={rsi:.1f} < 30 after reset",
+                        action="monitor_positions",
+                    )
+                    # Immediately trigger reentry at this RSI<30 level
+                    next_level = 30
+                else:
+                    # Normal progression through levels
+                    next_level = None
+                    if levels.get("30") and not levels.get("20") and rsi < 20:
+                        next_level = 20
+                    elif levels.get("20") and not levels.get("10") and rsi < 10:
+                        next_level = 10
+                    elif not levels.get("30") and rsi < 30:
+                        # First level entry
+                        next_level = 30
+
+                if next_level is not None:
+                    # Daily cap: allow max 1 re-entry per symbol per day
+                    today = datetime.now().date().isoformat()
+                    today_reentries = sum(1 for d in reentry_dates if d == today)
+
+                    if today_reentries >= 1:
+                        self.logger.info(
+                            f"Re-entry daily cap reached for {symbol}; skipping today",
+                            action="monitor_positions",
+                        )
+                        summary["skipped"] += 1
+                        continue
+
+                    # Calculate execution capital based on liquidity
+                    avg_vol = indicators.get("avg_volume", 0)
+                    execution_capital = self._calculate_execution_capital(price, avg_vol)
+
+                    qty = max(1, floor(execution_capital / price))
+
+                    # Balance check for re-entry
+                    account = self.broker.store.get_account()
+                    available_cash = account.get("available_cash", 0) if account else 0
+                    affordable = floor(available_cash / price) if price > 0 else 0
+
+                    if affordable < 1:
+                        self.logger.warning(
+                            f"Re-entry skip {symbol}: insufficient funds (need Rs {price:.2f})",
+                            action="monitor_positions",
+                        )
+                        summary["skipped"] += 1
+                        continue
+
+                    if qty > affordable:
+                        self.logger.info(
+                            f"Re-entry reducing qty from {qty} to {affordable} based on funds",
+                            action="monitor_positions",
+                        )
+                        qty = affordable
+
+                    if qty > 0:
+                        # Re-entry duplicate protection: check for active buy orders
+                        pending_orders = self.broker.get_all_orders()
+                        has_active_buy = any(
+                            order.symbol.replace(".NS", "").replace("-EQ", "") == symbol
+                            and order.transaction_type.value == "BUY"
+                            and order.status.value in ["PENDING", "OPEN"]
+                            for order in pending_orders
+                        )
+
+                        if has_active_buy:
+                            self.logger.info(
+                                f"Re-entry skip {symbol}: pending buy order exists",
+                                action="monitor_positions",
+                            )
+                            summary["skipped"] += 1
+                            continue
+
+                        # Place market buy order for re-entry (averaging down)
+                        from modules.kotak_neo_auto_trader.domain import (
+                            Order,
+                            OrderType,
+                            TransactionType,
+                        )
+
+                        reentry_order = Order(
+                            symbol=ticker,
+                            quantity=qty,
+                            order_type=OrderType.MARKET,
+                            transaction_type=TransactionType.BUY,
+                        )
+
+                        order_id = self.broker.place_order(reentry_order)
+
+                        if order_id:
+                            self.logger.info(
+                                f"Re-entry {symbol}: qty={qty} at ~Rs{price:.2f} "
+                                f"(RSI={rsi:.1f}, Level={next_level})",
+                                action="monitor_positions",
+                            )
+
+                            # Update metadata
+                            metadata[symbol]["levels_taken"][str(next_level)] = True
+                            metadata[symbol]["reentry_dates"].append(today)
+                            summary["reentries"] += 1
+                        else:
+                            self.logger.warning(
+                                f"Re-entry order failed for {symbol}", action="monitor_positions"
+                            )
+                            summary["skipped"] += 1
+
+            except Exception as e:
+                self.logger.error(
+                    f"Error monitoring {symbol}: {e}",
+                    exc_info=True,
+                    action="monitor_positions",
+                )
+
+        # Save updated metadata
+        self._save_position_metadata(metadata)
+
+        self.logger.info(
+            f"Position monitoring: checked={summary['checked']}, "
+            f"reentries={summary['reentries']}, skipped={summary['skipped']}",
+            action="monitor_positions",
         )
 
         return summary
+
+    def _load_position_metadata(self) -> dict:
+        """Load position metadata (levels_taken, reset_ready, reentry_dates)"""
+        import json
+
+        metadata_file = Path(self.storage_path) / "position_metadata.json"
+
+        try:
+            if metadata_file.exists():
+                with open(metadata_file) as f:
+                    return json.load(f)
+        except Exception as e:
+            self.logger.warning(f"Failed to load position metadata: {e}")
+
+        return {}
+
+    def _save_position_metadata(self, metadata: dict):
+        """Save position metadata to file"""
+        import json
+
+        metadata_file = Path(self.storage_path) / "position_metadata.json"
+
+        try:
+            metadata_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(metadata_file, "w") as f:
+                json.dump(metadata, f, indent=2)
+        except Exception as e:
+            self.logger.error(f"Failed to save position metadata: {e}")
+
+    def _get_daily_indicators(self, ticker: str) -> dict | None:
+        """
+        Get daily indicators (RSI, EMA9, price, volume) for a ticker.
+
+        Args:
+            ticker: Stock ticker (e.g., "INFY.NS")
+
+        Returns:
+            Dict with indicators or None if failed
+        """
+        try:
+            import pandas_ta as ta
+
+            from core.data_fetcher import fetch_ohlcv_yf
+
+            # Fetch 60 days of data for stable indicators
+            data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
+
+            if data is None or len(data) < 30:
+                return None
+
+            # Calculate indicators
+            data["rsi10"] = ta.rsi(data["close"], length=10)
+            data["ema9"] = ta.ema(data["close"], length=9)
+
+            # Get latest values
+            latest = data.iloc[-1]
+
+            return {
+                "close": float(latest["close"]),
+                "rsi10": float(latest["rsi10"]),
+                "ema9": float(latest["ema9"]),
+                "avg_volume": float(data["volume"].mean()),
+            }
+        except Exception as e:
+            self.logger.warning(f"Failed to get indicators for {ticker}: {e}")
+            return None
+
+    def _calculate_execution_capital(self, price: float, avg_volume: float) -> float:
+        """
+        Calculate execution capital based on liquidity (matches real trading logic).
+
+        Args:
+            price: Current stock price
+            avg_volume: Average daily volume
+
+        Returns:
+            Execution capital in Rs
+        """
+        # Default capital from strategy config
+        default_capital = (
+            self.strategy_config.user_capital
+            if self.strategy_config and hasattr(self.strategy_config, "user_capital")
+            else 20000.0
+        )
+
+        # If volume data not available, use default
+        if not avg_volume or avg_volume <= 0:
+            return default_capital
+
+        # Calculate liquidity-based capital
+        # This matches the logic from AutoTradeEngine.calculate_execution_capital
+        avg_value = price * avg_volume
+
+        # Tiers based on daily value traded
+        if avg_value >= 100_000_000:  # >= 10 crore
+            return min(50000.0, default_capital * 2.5)
+        elif avg_value >= 50_000_000:  # >= 5 crore
+            return min(40000.0, default_capital * 2.0)
+        elif avg_value >= 20_000_000:  # >= 2 crore
+            return min(30000.0, default_capital * 1.5)
+        else:
+            return default_capital
