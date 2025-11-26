@@ -1904,4 +1904,85 @@ The Individual Service Management section displayed an incorrect message when th
 
 ---
 
+## Bug #75: Task Execution History Showing Long Unpaginated List (MEDIUM)
+
+**Date Fixed**: November 26, 2025
+**Status**: ✅ Fixed
+
+### Description
+The Task Execution History section displayed all task executions in a single long list without pagination, making it difficult to navigate through historical task executions. With 50+ task entries, the page became very long and hard to use.
+
+### Root Cause
+- `ServiceTasksTable` component rendered all tasks directly without pagination
+- No pagination controls or page size selection
+- All tasks were displayed at once, regardless of count
+
+### Expected Behavior
+1. Display tasks in pages (default 10 per page)
+2. Allow users to select page size (10, 25, 50 items per page)
+3. Provide pagination controls (first, prev, next, last)
+4. Show current page information (e.g., "Showing 1-10 of 50 tasks")
+5. Maintain current page when possible, reset to page 1 on page size change
+
+### Fix Applied
+**Files Updated:**
+- `web/src/routes/dashboard/ServiceTasksTable.tsx`
+
+**Changes:**
+
+1. **Added pagination state**:
+```typescript
+const [currentPage, setCurrentPage] = useState(1);
+const [pageSize, setPageSize] = useState(10);
+```
+
+2. **Calculate paginated data**:
+```typescript
+const totalPages = Math.ceil(tasks.length / pageSize);
+const startIndex = (currentPage - 1) * pageSize;
+const endIndex = startIndex + pageSize;
+const currentTasks = useMemo(() => tasks.slice(startIndex, endIndex), [tasks, startIndex, endIndex]);
+```
+
+3. **Added pagination controls**:
+- Page size selector (10, 25, 50 items)
+- Navigation buttons (First «, Previous ‹, Next ›, Last »)
+- Current page indicator ("Page X of Y")
+- Item count ("Showing 1-10 of 50 tasks")
+
+4. **Smart page reset logic**:
+- Reset to page 1 when page size changes
+- Reset to page 1 if current page exceeds total pages after data changes
+
+### Test Coverage
+- Manual verification with different page sizes (10, 25, 50)
+- Tested pagination controls (all buttons work correctly)
+- Verified page reset behavior when changing page size
+- Tested with various task counts (5, 20, 50+ tasks)
+
+### Impact
+- ✅ Improved navigation through task history
+- ✅ Reduced page length and improved load performance
+- ✅ Flexible page size selection for user preference
+- ✅ Clear page indicators and controls
+- ✅ Better UX for viewing large task histories
+
+### Visual Example
+
+**Before:**
+```
+Task Execution History
+[50+ tasks displayed in one long list]
+```
+
+**After:**
+```
+Task Execution History
+Showing 1-10 of 50 tasks    [Per page: 10 ▼]  « ‹ Page 1 of 5 › »
+
+[Table with 10 tasks]
+```
+
+---
+
 *Last Updated: November 26, 2025*
