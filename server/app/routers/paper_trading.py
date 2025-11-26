@@ -120,9 +120,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
             try:
                 stock = yf.Ticker(ticker)
-                live_price = stock.info.get("currentPrice") or stock.info.get(
-                    "regularMarketPrice"
-                )
+                live_price = stock.info.get("currentPrice") or stock.info.get("regularMarketPrice")
                 current_price = (
                     float(live_price) if live_price else float(h.get("current_price", 0))
                 )
@@ -139,16 +137,8 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             else 0.0
         )
 
-        account = PaperTradingAccount(
-            initial_capital=account_data["initial_capital"],
-            available_cash=account_data["available_cash"],
-            total_pnl=account_data.get("total_pnl", 0.0),
-            realized_pnl=account_data.get("realized_pnl", 0.0),
-            unrealized_pnl=account_data.get("unrealized_pnl", 0.0),
-            portfolio_value=portfolio_value,
-            total_value=total_value,
-            return_percentage=return_pct,
-        )
+        # Get realized P&L from stored account (from completed trades)
+        realized_pnl = account_data.get("realized_pnl", 0.0)
 
         # Load target prices from service adapter's active_sell_orders
         target_prices = {}
@@ -201,8 +191,10 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                 logger.debug(f"Failed to calculate EMA9 for {symbol}: {e}")
                 return None
 
-        # Holdings
+        # Holdings (calculate unrealized P&L with live prices)
         holdings = []
+        unrealized_pnl_total = 0.0
+
         for symbol, holding in sorted(holdings_data.items()):
             qty = holding.get("quantity", 0)
             avg_price = float(holding.get("average_price", 0))
@@ -217,6 +209,9 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             market_value = qty * current_price
             pnl = market_value - cost_basis
             pnl_pct = ((current_price - avg_price) / avg_price * 100) if avg_price > 0 else 0.0
+
+            # Accumulate unrealized P&L
+            unrealized_pnl_total += pnl
 
             # Get target price (frozen EMA9) if available, or calculate it
             target_price = target_prices.get(symbol)
@@ -242,6 +237,21 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                     distance_to_target=distance_to_target,
                 )
             )
+
+        # Calculate total P&L with live prices
+        total_pnl = realized_pnl + unrealized_pnl_total
+
+        # Create account object with recalculated P&L
+        account = PaperTradingAccount(
+            initial_capital=account_data["initial_capital"],
+            available_cash=account_data["available_cash"],
+            total_pnl=total_pnl,
+            realized_pnl=realized_pnl,
+            unrealized_pnl=unrealized_pnl_total,
+            portfolio_value=portfolio_value,
+            total_value=total_value,
+            return_percentage=return_pct,
+        )
 
         # Recent orders (last 50)
         orders_data = store.get_all_orders()
@@ -292,6 +302,4 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
 
     except Exception as e:
         logger.exception(f"Error fetching paper trading portfolio for user {current.id}: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch portfolio: {str(e)}"
-        ) from e
+        raise HTTPException(status_code=500, detail=f"Failed to fetch portfolio: {str(e)}") from e
