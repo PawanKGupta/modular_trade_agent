@@ -20,7 +20,10 @@ debug_*.py
 demo_candle_analysis.py
 check_market_timing.pydata_backups/
 data_backups/
-paper_trading/test
+
+# Paper trading test runtime data
+paper_trading/test/
+paper_trading/test/*.json
 
 # Paper trading runtime data (user-specific files)
 paper_trading/user_*/account.json
@@ -72,6 +75,7 @@ NEXT_STEPS_*.md
 # Test output and temporary files
 test_output/
 pending_orders.json
+test_history.json
 
 # Backup files
 *_old_buggy.py
