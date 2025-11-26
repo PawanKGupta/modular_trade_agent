@@ -353,9 +353,16 @@ export function PaperTradingPage() {
 										</td>
 										<td className="p-2 text-right text-[var(--text)]">{order.quantity}</td>
 										<td className="p-2 text-right text-[var(--text)]">
-											{order.execution_price
-												? formatMoney(order.execution_price)
-												: '-'}
+											{order.execution_price ? (
+												<span className="font-mono">
+													{order.execution_price.toLocaleString('en-IN', {
+														minimumFractionDigits: 2,
+														maximumFractionDigits: 2,
+													})}
+												</span>
+											) : (
+												'-'
+											)}
 										</td>
 										<td className="p-2">
 											<span
