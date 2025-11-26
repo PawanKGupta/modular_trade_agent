@@ -165,9 +165,7 @@ class PaperTradingServiceAdapter:
                         f"Executed {len(market_orders)} pending orders", action="initialize"
                     )
             except Exception as e:
-                self.logger.warning(
-                    f"Failed to execute pending orders: {e}", action="initialize"
-                )
+                self.logger.warning(f"Failed to execute pending orders: {e}", action="initialize")
 
             # Initialize reporter
             self.reporter = PaperTradeReporter(self.broker.store)
@@ -727,7 +725,7 @@ class PaperTradingServiceAdapter:
             import json
 
             self._sell_orders_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._sell_orders_file, 'w') as f:
+            with open(self._sell_orders_file, "w") as f:
                 json.dump(self.active_sell_orders, f, indent=2)
 
             self.logger.debug(

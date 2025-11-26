@@ -10,7 +10,8 @@ from __future__ import annotations
 import os
 import threading
 import time
-from datetime import datetime, time as dt_time
+from datetime import datetime
+from datetime import time as dt_time
 
 from sqlalchemy.orm import Session
 
@@ -59,39 +60,39 @@ class MultiUserTradingService:
             user_id=0, db=db, module="MultiUserTradingService"
         )  # System-level logger
         self._task_name = "unified_service"
-    
+
     def _run_paper_trading_scheduler(self, service: PaperTradingServiceAdapter, user_id: int):
         """
         Run paper trading service scheduler in background thread.
-        
+
         Args:
             service: PaperTradingServiceAdapter instance
             user_id: User ID for this service
         """
         user_logger = get_user_logger(user_id=user_id, db=self.db, module="PaperTradingScheduler")
         user_logger.info("Paper trading scheduler started", action="scheduler")
-        
+
         service.running = True
         last_check = None
-        
+
         while service.running and not getattr(service, "shutdown_requested", False):
             try:
                 now = datetime.now()
                 current_time = now.time()
-                
+
                 # Check only once per minute
                 current_minute = now.strftime("%Y-%m-%d %H:%M")
                 if current_minute == last_check:
                     time.sleep(1)
                     continue
-                
+
                 last_check = current_minute
-                
+
                 # Only run on trading days (Monday-Friday)
                 if now.weekday() >= 5:  # Weekend
                     time.sleep(60)
                     continue
-                
+
                 # Task scheduling (matches real trading service)
                 # 9:00 AM - Pre-market retry
                 if dt_time(9, 0) <= current_time < dt_time(9, 1):
@@ -99,15 +100,21 @@ class MultiUserTradingService:
                         try:
                             service.run_premarket_retry()
                         except Exception as e:
-                            user_logger.error(f"Pre-market retry failed: {e}", exc_info=True, action="scheduler")
-                
+                            user_logger.error(
+                                f"Pre-market retry failed: {e}", exc_info=True, action="scheduler"
+                            )
+
                 # 9:15 AM onwards - Sell monitoring (continuous during market hours)
-                if current_time >= dt_time(9, 15) and dt_time(9, 15) <= current_time <= dt_time(15, 30):
+                if current_time >= dt_time(9, 15) and dt_time(9, 15) <= current_time <= dt_time(
+                    15, 30
+                ):
                     try:
                         service.run_sell_monitor()
                     except Exception as e:
-                        user_logger.error(f"Sell monitoring failed: {e}", exc_info=True, action="scheduler")
-                
+                        user_logger.error(
+                            f"Sell monitoring failed: {e}", exc_info=True, action="scheduler"
+                        )
+
                 # 9:30 AM, 10:30 AM, etc. - Position monitoring (hourly at :30)
                 if current_time.minute == 30 and 9 <= now.hour <= 15:
                     hour_key = now.strftime("%Y-%m-%d %H")
@@ -115,8 +122,12 @@ class MultiUserTradingService:
                         try:
                             service.run_position_monitor()
                         except Exception as e:
-                            user_logger.error(f"Position monitoring failed: {e}", exc_info=True, action="scheduler")
-                
+                            user_logger.error(
+                                f"Position monitoring failed: {e}",
+                                exc_info=True,
+                                action="scheduler",
+                            )
+
                 # 4:00 PM - Analysis (handled by individual service - skip)
                 # 4:05 PM - Buy orders
                 if dt_time(16, 5) <= current_time < dt_time(16, 6):
@@ -124,29 +135,33 @@ class MultiUserTradingService:
                         try:
                             service.run_buy_orders()
                         except Exception as e:
-                            user_logger.error(f"Buy orders failed: {e}", exc_info=True, action="scheduler")
-                
+                            user_logger.error(
+                                f"Buy orders failed: {e}", exc_info=True, action="scheduler"
+                            )
+
                 # 6:00 PM - EOD cleanup
                 if dt_time(18, 0) <= current_time < dt_time(18, 1):
                     if not service.tasks_completed.get("eod_cleanup"):
                         try:
                             service.run_eod_cleanup()
                         except Exception as e:
-                            user_logger.error(f"EOD cleanup failed: {e}", exc_info=True, action="scheduler")
-                
+                            user_logger.error(
+                                f"EOD cleanup failed: {e}", exc_info=True, action="scheduler"
+                            )
+
                 # Update heartbeat every minute
                 try:
                     self._service_status_repo.update_heartbeat(user_id)
                     self.db.commit()
                 except Exception as e:
                     user_logger.warning(f"Failed to update heartbeat: {e}", action="scheduler")
-                
+
                 time.sleep(1)
-                
+
             except Exception as e:
                 user_logger.error(f"Scheduler error: {e}", exc_info=True, action="scheduler")
                 time.sleep(60)
-        
+
         service.running = False
         user_logger.info("Paper trading scheduler stopped", action="scheduler")
 
@@ -259,7 +274,7 @@ class MultiUserTradingService:
                         storage_path=None,  # Will default to user_3
                         skip_execution_tracking=False,
                     )
-                    
+
                     # Initialize paper trading service
                     if not service.initialize():
                         user_logger.error(
@@ -268,20 +283,20 @@ class MultiUserTradingService:
                             task_name=self._task_name,
                         )
                         raise RuntimeError("Paper trading service initialization failed")
-                    
+
                     # Store service instance
                     self._services[user_id] = service
-                    
+
                     # Start scheduler in background thread
                     service_thread = threading.Thread(
                         target=self._run_paper_trading_scheduler,
                         args=(service, user_id),
                         daemon=True,
-                        name=f"PaperTradingScheduler-{user_id}"
+                        name=f"PaperTradingScheduler-{user_id}",
                     )
                     service_thread.start()
                     self._service_threads[user_id] = service_thread
-                    
+
                     user_logger.info(
                         "Paper trading service started with scheduler",
                         action="start_service",
@@ -296,19 +311,17 @@ class MultiUserTradingService:
                         strategy_config=strategy_config,
                         env_file=temp_env_file,
                     )
-                    
+
                     # Store service instance
                     self._services[user_id] = service
-                    
+
                     # Start real trading service in background thread
                     service_thread = threading.Thread(
-                        target=service.run,
-                        daemon=True,
-                        name=f"TradingService-{user_id}"
+                        target=service.run, daemon=True, name=f"TradingService-{user_id}"
                     )
                     service_thread.start()
                     self._service_threads[user_id] = service_thread
-                    
+
                     user_logger.info(
                         "Broker trading service started with scheduler",
                         action="start_service",
@@ -371,7 +384,9 @@ class MultiUserTradingService:
 
                 # Wait for service thread to stop (with timeout)
                 if service_thread and service_thread.is_alive():
-                    user_logger.info("Waiting for scheduler thread to stop...", action="stop_service")
+                    user_logger.info(
+                        "Waiting for scheduler thread to stop...", action="stop_service"
+                    )
                     service_thread.join(timeout=10.0)
                     if service_thread.is_alive():
                         user_logger.warning(

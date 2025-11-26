@@ -56,4 +56,3 @@ export async function getPaperTradingPortfolio(): Promise<PaperTradingPortfolio>
 	const res = await api.get('/user/paper-trading/portfolio');
 	return res.data;
 }
-
