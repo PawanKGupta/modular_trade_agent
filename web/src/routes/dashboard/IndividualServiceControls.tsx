@@ -250,7 +250,7 @@ export function IndividualServiceControls({
 			{/* Conflict Warning */}
 			{showConflictWarning && conflictMessage && (
 				<div className="mb-3 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-sm text-yellow-400">
-					[WARN]? {conflictMessage}
+					⚠ {conflictMessage}
 				</div>
 			)}
 

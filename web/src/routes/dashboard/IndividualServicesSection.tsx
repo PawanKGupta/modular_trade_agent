@@ -53,7 +53,7 @@ export function IndividualServicesSection({
 				</h2>
 				<p className="text-sm text-[var(--muted)]">
 					{unifiedServiceRunning
-						? 'Unified service is running. Individual services cannot be started, but you can run tasks once.'
+						? 'Unified service is running. Individual services and most "Run Once" tasks are disabled to prevent broker session conflicts.'
 						: 'Start individual services to run specific tasks on their own schedule.'}
 				</p>
 			</div>

@@ -1848,4 +1848,60 @@ Stack trace:
 
 ---
 
+## Bug #74: Misleading Individual Service Management Message (LOW)
+
+**Date Fixed**: November 26, 2025
+**Status**: ✅ Fixed
+
+### Description
+The Individual Service Management section displayed an incorrect message when the unified service was running: "Individual services cannot be started, but you can run tasks once." This was misleading because most "Run Once" tasks are also blocked when the unified service is running (to prevent broker session conflicts).
+
+### Root Cause
+- The message was written based on old behavior or assumptions
+- The actual implementation blocks most "Run Once" tasks when unified service is running (except analysis task which doesn't need broker session)
+- The message didn't reflect the session conflict prevention logic
+
+### Expected Behavior
+- Accurately describe that both individual services AND most "Run Once" tasks are disabled
+- Explain the reason (broker session conflicts)
+- Be clear about what users need to do (stop unified service first)
+
+### Fix Applied
+**Files Updated:**
+- `web/src/routes/dashboard/IndividualServicesSection.tsx`
+- `web/src/routes/dashboard/IndividualServiceControls.tsx`
+
+**Changes:**
+
+1. **Updated section header message**:
+```typescript
+// Before:
+'Unified service is running. Individual services cannot be started, but you can run tasks once.'
+
+// After:
+'Unified service is running. Individual services and most "Run Once" tasks are disabled to prevent broker session conflicts.'
+```
+
+2. **Fixed conflict warning symbol**:
+```typescript
+// Before:
+[WARN]? {conflictMessage}
+
+// After:
+⚠ {conflictMessage}
+```
+
+### Test Coverage
+- Manual visual verification of the Individual Service Management section
+- Message accurately reflects the actual behavior
+- Warning symbol displays properly
+
+### Impact
+- ✅ Clear and accurate information for users
+- ✅ Prevents confusion about "Run Once" availability
+- ✅ Explains the reason (session conflicts)
+- ✅ Better UX with proper warning symbol
+
+---
+
 *Last Updated: November 26, 2025*
