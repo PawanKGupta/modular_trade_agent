@@ -64,8 +64,9 @@ class PaperTradingPortfolio(BaseModel):
 
 
 @router.get("/portfolio", response_model=PaperTradingPortfolio)
-def get_paper_trading_portfolio(  # noqa: PLR0915
-    db: Session = Depends(get_db), current: Users = Depends(get_current_user)  # noqa: B008
+def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
+    db: Session = Depends(get_db),  # noqa: B008
+    current: Users = Depends(get_current_user),  # noqa: B008
 ):
     """Get paper trading portfolio for the current user"""
     try:
@@ -109,9 +110,27 @@ def get_paper_trading_portfolio(  # noqa: PLR0915
 
         # Calculate portfolio value
         holdings_data = store.get_all_holdings()
-        portfolio_value = sum(
-            h.get("quantity", 0) * float(h.get("current_price", 0)) for h in holdings_data.values()
-        )
+
+        # Fetch live prices using yfinance (broker-agnostic)
+        import yfinance as yf  # noqa: PLC0415
+
+        portfolio_value = 0.0
+        for symbol, h in holdings_data.items():
+            qty = h.get("quantity", 0)
+            ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+            try:
+                stock = yf.Ticker(ticker)
+                live_price = stock.info.get("currentPrice") or stock.info.get(
+                    "regularMarketPrice"
+                )
+                current_price = (
+                    float(live_price) if live_price else float(h.get("current_price", 0))
+                )
+            except Exception:
+                # Fallback to stored price if live fetch fails
+                current_price = float(h.get("current_price", 0))
+            portfolio_value += qty * current_price
+
         total_value = account_data["available_cash"] + portfolio_value
         return_pct = (
             ((total_value - account_data["initial_capital"]) / account_data["initial_capital"])
@@ -135,7 +154,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915
         target_prices = {}
         try:
             # Try to load active sell orders from service adapter storage
-            import json
+            import json  # noqa: PLC0415
 
             sell_orders_file = store_path / "active_sell_orders.json"
             if sell_orders_file.exists():
@@ -147,13 +166,25 @@ def get_paper_trading_portfolio(  # noqa: PLR0915
         except Exception as e:
             logger.debug(f"Could not load target prices: {e}")
 
+        # Helper function to get live price
+        def get_live_price(symbol: str) -> float | None:
+            """Fetch live price for a symbol using yfinance"""
+            try:
+                ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+                stock = yf.Ticker(ticker)
+                price = stock.info.get("currentPrice") or stock.info.get("regularMarketPrice")
+                return float(price) if price else None
+            except Exception as e:
+                logger.debug(f"Failed to fetch live price for {symbol}: {e}")
+                return None
+
         # Calculate target prices on-the-fly if not available
         def calculate_ema9_target(symbol: str) -> float | None:
             """Calculate EMA9 target for a holding"""
             try:
-                import pandas_ta as ta
+                import pandas_ta as ta  # noqa: PLC0415
 
-                from core.data_fetcher import fetch_ohlcv_yf
+                from core.data_fetcher import fetch_ohlcv_yf  # noqa: PLC0415
 
                 ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
                 data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
@@ -161,12 +192,11 @@ def get_paper_trading_portfolio(  # noqa: PLR0915
                 if data is None or data.empty:
                     return None
 
-                data["EMA9"] = ta.ema(data["Close"], length=9)
-                ema9 = data.iloc[-1]["EMA9"]
+                # Use lowercase column names (as returned by fetch_ohlcv_yf)
+                data["ema9"] = ta.ema(data["close"], length=9)
+                ema9 = data.iloc[-1]["ema9"]
 
-                return (
-                    float(ema9) if not data.iloc[-1]["EMA9"] != data.iloc[-1]["EMA9"] else None
-                )  # Check for NaN
+                return float(ema9) if not data.iloc[-1]["ema9"] != data.iloc[-1]["ema9"] else None
             except Exception as e:
                 logger.debug(f"Failed to calculate EMA9 for {symbol}: {e}")
                 return None
@@ -176,7 +206,13 @@ def get_paper_trading_portfolio(  # noqa: PLR0915
         for symbol, holding in sorted(holdings_data.items()):
             qty = holding.get("quantity", 0)
             avg_price = float(holding.get("average_price", 0))
-            current_price = float(holding.get("current_price", 0))
+
+            # Fetch live price, fallback to stored price if fetch fails
+            current_price = get_live_price(symbol)
+            if current_price is None:
+                current_price = float(holding.get("current_price", 0))
+                logger.debug(f"Using stored price for {symbol}: {current_price}")
+
             cost_basis = qty * avg_price
             market_value = qty * current_price
             pnl = market_value - cost_basis
@@ -256,4 +292,6 @@ def get_paper_trading_portfolio(  # noqa: PLR0915
 
     except Exception as e:
         logger.exception(f"Error fetching paper trading portfolio for user {current.id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch portfolio: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch portfolio: {str(e)}"
+        ) from e

@@ -625,18 +625,18 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        # Mock OHLCV data where High >= Target
+        # Mock OHLCV data where High >= Target (use lowercase columns like fetch_ohlcv_yf returns)
         mock_data = pd.DataFrame(
             {
-                "High": [2650.0],  # High >= 2600.0 (target reached!)
-                "Close": [2620.0],
-                "RSI10": [45.0],  # RSI < 50 (not triggered)
+                "high": [2650.0],  # High >= 2600.0 (target reached!)
+                "close": [2620.0],
+                "rsi10": [45.0],  # RSI < 50 (not triggered)
             }
         )
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
             with patch("pandas_ta.rsi") as mock_rsi:
-                mock_data["RSI10"] = 45.0
+                mock_data["rsi10"] = 45.0
                 mock_rsi.return_value = pd.Series([45.0])
 
                 adapter_with_holdings._monitor_sell_orders()
@@ -661,18 +661,18 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        # Mock OHLCV data where RSI > 50 but High < Target
+        # Mock OHLCV data where RSI > 50 but High < Target (use lowercase columns like fetch_ohlcv_yf returns)
         mock_data = pd.DataFrame(
             {
-                "High": [2550.0],  # High < Target (not reached)
-                "Close": [2520.0],
-                "RSI10": [52.0],  # RSI > 50 (falling knife exit!)
+                "high": [2550.0],  # High < Target (not reached)
+                "close": [2520.0],
+                "rsi10": [52.0],  # RSI > 50 (falling knife exit!)
             }
         )
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
             with patch("pandas_ta.rsi") as mock_rsi:
-                mock_data["RSI10"] = 52.0
+                mock_data["rsi10"] = 52.0
                 mock_rsi.return_value = pd.Series([52.0])
 
                 adapter_with_holdings._monitor_sell_orders()

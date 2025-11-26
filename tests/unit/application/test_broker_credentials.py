@@ -313,11 +313,13 @@ class TestMultiUserTradingServiceBrokerAuth:
         db_session.add(settings)
         db_session.commit()
 
+        # Mock PaperTradingServiceAdapter for paper mode
         with patch(
-            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
-        ) as mock_service_class:
+            "src.application.services.multi_user_trading_service.PaperTradingServiceAdapter"
+        ) as mock_paper_service_class:
             mock_service = MagicMock()
-            mock_service_class.return_value = mock_service
+            mock_service.initialize.return_value = True
+            mock_paper_service_class.return_value = mock_service
 
             service_manager = MultiUserTradingService(db_session)
 
@@ -325,8 +327,8 @@ class TestMultiUserTradingServiceBrokerAuth:
             result = service_manager.start_service(user.id)
             assert result is True
 
-            # Verify TradingService was called
-            call_args = mock_service_class.call_args
+            # Verify PaperTradingServiceAdapter was called (not TradingService)
+            call_args = mock_paper_service_class.call_args
             assert call_args is not None
             assert call_args.kwargs["user_id"] == user.id
 
