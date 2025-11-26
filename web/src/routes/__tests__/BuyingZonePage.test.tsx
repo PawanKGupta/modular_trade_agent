@@ -368,4 +368,243 @@ describe('BuyingZonePage', () => {
 			}
 		}
 	});
+
+	describe('Date Grouping', () => {
+		it('groups signals by date', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			// Mock signals with different dates
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'STOCK1',
+							ts: '2024-01-15T10:30:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+						{
+							symbol: 'STOCK2',
+							ts: '2024-01-15T11:00:00',
+							distance_to_ema9: 3.2,
+							backtest_score: 80.0,
+							confidence: 0.90,
+							ml_confidence: 0.88,
+						},
+						{
+							symbol: 'STOCK3',
+							ts: '2024-01-14T14:00:00',
+							distance_to_ema9: 4.1,
+							backtest_score: 70.0,
+							confidence: 0.75,
+							ml_confidence: 0.72,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			// Should display two date headers (2024-01-15 and 2024-01-14)
+			await waitFor(() => {
+				expect(screen.getByText(/Jan 15, 2024/i)).toBeInTheDocument();
+				expect(screen.getByText(/Jan 14, 2024/i)).toBeInTheDocument();
+			});
+
+			// Should display all stocks
+			expect(screen.getByText('STOCK1')).toBeInTheDocument();
+			expect(screen.getByText('STOCK2')).toBeInTheDocument();
+			expect(screen.getByText('STOCK3')).toBeInTheDocument();
+		});
+
+		it('displays date header with correct format', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'TEST',
+							ts: '2024-03-20T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				// Check for formatted date (e.g., "Wed, Mar 20, 2024")
+				expect(screen.getByText(/Mar 20, 2024/i)).toBeInTheDocument();
+			});
+		});
+
+		it('sorts dates in descending order (newest first)', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'OLD',
+							ts: '2024-01-10T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+						{
+							symbol: 'NEW',
+							ts: '2024-01-20T10:00:00',
+							distance_to_ema9: 3.2,
+							backtest_score: 80.0,
+							confidence: 0.90,
+							ml_confidence: 0.88,
+						},
+						{
+							symbol: 'MID',
+							ts: '2024-01-15T10:00:00',
+							distance_to_ema9: 4.1,
+							backtest_score: 70.0,
+							confidence: 0.75,
+							ml_confidence: 0.72,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				// Get all h2 elements (date headers)
+				const dateHeaders = screen.getAllByRole('heading', { level: 2 });
+				// First date should be newest (Jan 20)
+				expect(dateHeaders[0].textContent).toContain('Jan 20');
+			});
+		});
+
+		it('groups multiple signals under same date', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'STOCK1',
+							ts: '2024-01-15T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+						{
+							symbol: 'STOCK2',
+							ts: '2024-01-15T11:00:00',
+							distance_to_ema9: 3.2,
+							backtest_score: 80.0,
+							confidence: 0.90,
+							ml_confidence: 0.88,
+						},
+						{
+							symbol: 'STOCK3',
+							ts: '2024-01-15T14:00:00',
+							distance_to_ema9: 4.1,
+							backtest_score: 70.0,
+							confidence: 0.75,
+							ml_confidence: 0.72,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				// Should have only one date header (checking for "Jan 15, 2024")
+				expect(screen.getByText(/Jan 15, 2024/i)).toBeInTheDocument();
+
+				// Should have all three stocks under that date
+				expect(screen.getByText('STOCK1')).toBeInTheDocument();
+				expect(screen.getByText('STOCK2')).toBeInTheDocument();
+				expect(screen.getByText('STOCK3')).toBeInTheDocument();
+			});
+		});
+
+		it('handles signals with invalid timestamps gracefully', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', () => {
+					return HttpResponse.json([
+						{
+							symbol: 'VALID',
+							ts: '2024-01-15T10:00:00',
+							distance_to_ema9: 5.5,
+							backtest_score: 75.5,
+							confidence: 0.85,
+							ml_confidence: 0.82,
+						},
+						{
+							symbol: 'INVALID',
+							ts: 'invalid-date',
+							distance_to_ema9: 3.2,
+							backtest_score: 80.0,
+							confidence: 0.90,
+							ml_confidence: 0.88,
+						},
+					]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				// Should still display valid signal
+				expect(screen.getByText('VALID')).toBeInTheDocument();
+				// Should also display invalid signal (under "Invalid Date" or similar)
+				expect(screen.getByText('INVALID')).toBeInTheDocument();
+			});
+		});
+	});
 });

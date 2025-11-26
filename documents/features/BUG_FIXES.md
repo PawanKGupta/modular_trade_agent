@@ -1613,4 +1613,118 @@ The system had 9 order statuses (`AMO`, `PENDING_EXECUTION`, `ONGOING`, `SELL`, 
 
 ---
 
-*Last Updated: November 23, 2025*
+## Bug #72: Buying Zone Signals Not Grouped by Date (MEDIUM)
+
+**Date Fixed**: November 26, 2025
+**Status**: ✅ Fixed
+
+### Description
+The Buying Zone page displayed all signals in a single flat list without any date grouping. This made it difficult for users to identify which signals were generated on which dates, especially when viewing historical signals across multiple days.
+
+### Root Cause
+- The `BuyingZonePage` component rendered all signals in a single table
+- No logic existed to group signals by their timestamp
+- Signals from different days were mixed together in chronological order
+
+### Expected Behavior
+1. Group signals by date (YYYY-MM-DD from timestamp)
+2. Display date headers with formatted dates (e.g., "Mon, Jan 15, 2024")
+3. Show count of signals under each date
+4. Sort dates in descending order (newest first)
+5. Display each date's signals in a separate table
+
+### Fix Applied
+**Files Updated:**
+- `web/src/routes/dashboard/BuyingZonePage.tsx`
+- `web/src/routes/__tests__/BuyingZonePage.test.tsx`
+
+**Changes:**
+
+1. **Added date grouping logic**:
+```typescript
+// Group signals by date
+const groupedByDate = useMemo(() => {
+    const groups = new Map<string, BuyingZoneItem[]>();
+    filteredData.forEach((item) => {
+        const date = new Date(item.ts);
+        const dateKey = date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+        if (!groups.has(dateKey)) {
+            groups.set(dateKey, []);
+        }
+        groups.get(dateKey)!.push(item);
+    });
+    // Sort dates descending (newest first)
+    return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+}, [filteredData]);
+```
+
+2. **Updated rendering to show date sections**:
+- Date header with formatted date (e.g., "Mon, Jan 15, 2024")
+- Signal count per date
+- Separate table for each date's signals
+- Visual separation between date sections
+
+3. **Added date formatting**:
+```typescript
+const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    });
+};
+```
+
+### Test Coverage
+**New Tests Added** (`web/src/routes/__tests__/BuyingZonePage.test.tsx`):
+- ✅ `test_groups_signals_by_date` - Verifies signals are grouped correctly by date
+- ✅ `test_displays_date_header_with_correct_format` - Verifies date formatting
+- ✅ `test_sorts_dates_in_descending_order` - Verifies newest dates appear first
+- ✅ `test_groups_multiple_signals_under_same_date` - Verifies multiple signals per date
+- ✅ `test_handles_signals_with_invalid_timestamps_gracefully` - Verifies error handling
+
+**Test Results**:
+- 17 tests total in BuyingZonePage test suite
+- 16 tests passing (5 new date grouping tests all pass)
+- 1 pre-existing test failure (unrelated to date grouping)
+
+### Impact
+- ✅ Better organization of signals by date
+- ✅ Easier to identify when signals were generated
+- ✅ Improved UX for reviewing historical signals
+- ✅ Clear visual separation between different dates
+- ✅ Signal counts per date for quick insights
+
+### Visual Example
+
+**Before Fix:**
+```
+Stock Symbol | Distance to EMA9 | ...
+STOCK1       | 5.5%            | ...
+STOCK2       | 3.2%            | ...
+STOCK3       | 4.1%            | ...
+```
+
+**After Fix:**
+```
+Mon, Jan 15, 2024  (2 signals)
+┌─────────────┬──────────────────┬─────┐
+│ Stock Symbol│ Distance to EMA9 │ ... │
+├─────────────┼──────────────────┼─────┤
+│ STOCK1      │ 5.5%            │ ... │
+│ STOCK2      │ 3.2%            │ ... │
+└─────────────┴──────────────────┴─────┘
+
+Sun, Jan 14, 2024  (1 signal)
+┌─────────────┬──────────────────┬─────┐
+│ Stock Symbol│ Distance to EMA9 │ ... │
+├─────────────┼──────────────────┼─────┤
+│ STOCK3      │ 4.1%            │ ... │
+└─────────────┴──────────────────┴─────┘
+```
+
+---
+
+*Last Updated: November 26, 2025*

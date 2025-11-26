@@ -218,6 +218,30 @@ export function BuyingZonePage() {
 		return ALL_COLUMNS.filter((col) => selectedColumns.has(col.key));
 	}, [selectedColumns]);
 
+	// Group signals by date
+	const signalsByDate = useMemo(() => {
+		if (!data || data.length === 0) return new Map<string, BuyingZoneItem[]>();
+
+		const grouped = new Map<string, BuyingZoneItem[]>();
+		data.forEach((signal) => {
+			// Extract date from timestamp (YYYY-MM-DD)
+			const date = signal.ts.split('T')[0];
+			if (!grouped.has(date)) {
+				grouped.set(date, []);
+			}
+			grouped.get(date)!.push(signal);
+		});
+
+		// Sort dates descending (newest first)
+		const sortedDates = Array.from(grouped.keys()).sort((a, b) => b.localeCompare(a));
+		const sortedMap = new Map<string, BuyingZoneItem[]>();
+		sortedDates.forEach((date) => {
+			sortedMap.set(date, grouped.get(date)!);
+		});
+
+		return sortedMap;
+	}, [data]);
+
 	if (isLoading) return <div className="p-4 text-[var(--text)]">Loading...</div>;
 	if (error) return <div className="p-4 text-red-400">Failed to load</div>;
 
@@ -355,53 +379,80 @@ export function BuyingZonePage() {
 					{dateFilter === 'yesterday' && ' from yesterday'}
 					{dateFilter === 'last_10_days' && ' from last 10 days'}
 					{!dateFilter && ' (most recent)'}
+					{signalsByDate.size > 1 && ` across ${signalsByDate.size} days`}
 				</div>
 			)}
 
-			{/* Table */}
-			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg overflow-hidden">
-				<div className="overflow-x-auto">
-					<table className="w-full text-sm">
-						<thead className="bg-[#0f172a] text-[var(--muted)]">
-							<tr>
-								{visibleColumns.map((col) => (
-									<th key={col.key} className="py-2 px-3 text-left">
-										{col.label}
-									</th>
-								))}
-							</tr>
-						</thead>
-						<tbody>
-							{(data ?? []).map((row) => {
-								return (
-									<tr key={row.id} className="border-t border-[#1e293b] hover:bg-[#0f1720]">
-										{visibleColumns.map((col) => {
-											let displayValue: string;
-											if (col.formatter) {
-												displayValue = col.formatter((row as any)[col.key], row);
-											} else {
-												displayValue = String((row as any)[col.key] ?? '-');
-											}
-											return (
-												<td key={col.key} className="py-2 px-3 text-[var(--text)]">
-													{displayValue}
-												</td>
-											);
-										})}
-									</tr>
-								);
-							})}
-							{(data ?? []).length === 0 && (
-								<tr>
-									<td className="py-4 px-3 text-center text-[var(--muted)]" colSpan={visibleColumns.length}>
-										No signals found
-									</td>
-								</tr>
-							)}
-						</tbody>
-					</table>
+			{/* Date-wise Tables */}
+			{signalsByDate.size > 0 ? (
+				<div className="space-y-6">
+					{Array.from(signalsByDate.entries()).map(([date, signals]) => {
+						const dateObj = new Date(date);
+						const formattedDate = dateObj.toLocaleDateString('en-US', {
+							weekday: 'short',
+							year: 'numeric',
+							month: 'short',
+							day: 'numeric',
+						});
+
+						return (
+							<div key={date} className="space-y-2">
+								{/* Date Header */}
+								<div className="flex items-center gap-3">
+									<h2 className="text-lg font-semibold text-[var(--text)]">
+										{formattedDate}
+									</h2>
+									<span className="text-sm text-[var(--muted)]">
+										({signals.length} signal{signals.length === 1 ? '' : 's'})
+									</span>
+								</div>
+
+								{/* Table for this date */}
+								<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg overflow-hidden">
+									<div className="overflow-x-auto">
+										<table className="w-full text-sm">
+											<thead className="bg-[#0f172a] text-[var(--muted)]">
+												<tr>
+													{visibleColumns.map((col) => (
+														<th key={col.key} className="py-2 px-3 text-left">
+															{col.label}
+														</th>
+													))}
+												</tr>
+											</thead>
+											<tbody>
+												{signals.map((row) => {
+													return (
+														<tr key={row.id} className="border-t border-[#1e293b] hover:bg-[#0f1720]">
+															{visibleColumns.map((col) => {
+																let displayValue: string;
+																if (col.formatter) {
+																	displayValue = col.formatter((row as any)[col.key], row);
+																} else {
+																	displayValue = String((row as any)[col.key] ?? '-');
+																}
+																return (
+																	<td key={col.key} className="py-2 px-3 text-[var(--text)]">
+																		{displayValue}
+																	</td>
+																);
+															})}
+														</tr>
+													);
+												})}
+											</tbody>
+										</table>
+									</div>
+								</div>
+							</div>
+						);
+					})}
 				</div>
-			</div>
+			) : (
+				<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-8">
+					<div className="text-center text-[var(--muted)]">No signals found</div>
+				</div>
+			)}
 		</div>
 	);
 }
