@@ -133,6 +133,7 @@ class TestPaperTradingIntegration:
         """Test averaging down positions"""
         # First buy at 1450
         broker.price_provider.set_mock_price("INFY", 1450.00)
+        broker.price_provider.set_mock_price("INFY.NS", 1450.00)
         order1 = Order(
             symbol="INFY",
             quantity=10,
@@ -143,6 +144,7 @@ class TestPaperTradingIntegration:
 
         # Second buy at 1350 (averaged down)
         broker.price_provider.set_mock_price("INFY", 1350.00)
+        broker.price_provider.set_mock_price("INFY.NS", 1350.00)  # FIX: Also set .NS suffix
         order2 = Order(
             symbol="INFY",
             quantity=10,
@@ -154,7 +156,7 @@ class TestPaperTradingIntegration:
         # Verify averaged price
         holding = broker.get_holding("INFY")
         assert holding.quantity == 20
-        # Average should be around 1400
+        # Average should be around 1400: (10*1450 + 10*1350) / 20 = 1400
         assert 1390 < holding.average_price.amount < 1410
 
     def test_with_use_case(self, broker):
