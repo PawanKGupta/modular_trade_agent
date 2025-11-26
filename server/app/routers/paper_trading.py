@@ -3,7 +3,9 @@ Paper Trading API endpoints
 """
 
 import logging
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -54,6 +56,36 @@ class PaperTradingOrder(BaseModel):
     execution_price: float | None = None
     created_at: str
     executed_at: str | None = None
+
+
+class PaperTradingTransaction(BaseModel):
+    order_id: str
+    symbol: str
+    transaction_type: str  # BUY or SELL
+    quantity: int
+    price: float
+    order_value: float
+    charges: float
+    timestamp: str
+
+
+class ClosedPosition(BaseModel):
+    symbol: str
+    entry_price: float
+    exit_price: float
+    quantity: int
+    buy_date: str
+    sell_date: str
+    holding_days: int
+    realized_pnl: float
+    pnl_percentage: float
+    charges: float
+
+
+class TradeHistory(BaseModel):
+    transactions: list[PaperTradingTransaction]
+    closed_positions: list[ClosedPosition]
+    statistics: dict[str, Any]
 
 
 class PaperTradingPortfolio(BaseModel):
@@ -303,3 +335,184 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
     except Exception as e:
         logger.exception(f"Error fetching paper trading portfolio for user {current.id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch portfolio: {str(e)}") from e
+
+
+@router.get("/history", response_model=TradeHistory)
+def get_paper_trading_history(  # noqa: PLR0915
+    current: Users = Depends(get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> TradeHistory:
+    """
+    Get complete paper trading transaction history
+
+    Returns:
+        - All transactions (buys and sells)
+        - Closed positions with P&L
+        - Statistics
+    """
+    try:
+        # Get user's paper trading storage path
+        store_path = Path("paper_trading") / f"user_{current.id}"
+
+        if not store_path.exists():
+            # Return empty history if no data exists
+            return TradeHistory(
+                transactions=[],
+                closed_positions=[],
+                statistics={
+                    "total_trades": 0,
+                    "profitable_trades": 0,
+                    "losing_trades": 0,
+                    "breakeven_trades": 0,
+                    "win_rate": 0.0,
+                    "total_profit": 0.0,
+                    "total_loss": 0.0,
+                    "net_pnl": 0.0,
+                    "avg_profit_per_trade": 0.0,
+                    "avg_loss_per_trade": 0.0,
+                    "total_transactions": 0,
+                },
+            )
+
+        # Initialize store
+        store = PaperTradeStore(storage_path=str(store_path), auto_save=False)
+
+        # Get all transactions
+        all_transactions = store.get_all_transactions()
+
+        # Convert transactions to response format
+        transactions = [
+            PaperTradingTransaction(
+                order_id=t.get("order_id", ""),
+                symbol=t.get("symbol", ""),
+                transaction_type=t.get("transaction_type", ""),
+                quantity=t.get("quantity", 0),
+                price=t.get("price", 0.0),
+                order_value=t.get("order_value", 0.0),
+                charges=t.get("charges", 0.0),
+                timestamp=t.get("timestamp", ""),
+            )
+            for t in all_transactions
+        ]
+
+        # Calculate closed positions from transactions
+        # Group by symbol and match buys with sells
+        closed_positions = []
+        symbol_transactions: dict[str, dict[str, list]] = {}
+
+        # Group transactions by symbol
+        for txn in all_transactions:
+            symbol = txn.get("symbol", "")
+            if symbol not in symbol_transactions:
+                symbol_transactions[symbol] = {"buys": [], "sells": []}
+
+            if txn.get("transaction_type") == "BUY":
+                symbol_transactions[symbol]["buys"].append(txn)
+            elif txn.get("transaction_type") == "SELL":
+                symbol_transactions[symbol]["sells"].append(txn)
+
+        # Match buys with sells to create closed positions (FIFO)
+        for symbol, txns in symbol_transactions.items():
+            buys = sorted(txns["buys"], key=lambda x: x.get("timestamp", ""))
+            sells = sorted(txns["sells"], key=lambda x: x.get("timestamp", ""))
+
+            buy_queue = buys.copy()
+            sell_queue = sells.copy()
+
+            while buy_queue and sell_queue:
+                buy = buy_queue[0]
+                sell = sell_queue[0]
+
+                buy_qty_remaining = buy.get("quantity", 0)
+                sell_qty_remaining = sell.get("quantity", 0)
+
+                # Match quantities
+                matched_qty = min(buy_qty_remaining, sell_qty_remaining)
+
+                if matched_qty > 0:
+                    # Create closed position
+                    buy_price = buy.get("price", 0.0)
+                    sell_price = sell.get("price", 0.0)
+                    buy_charges = buy.get("charges", 0.0)
+                    sell_charges = sell.get("charges", 0.0)
+
+                    # Calculate P&L
+                    cost = (buy_price * matched_qty) + buy_charges
+                    revenue = (sell_price * matched_qty) - sell_charges
+                    pnl = revenue - cost
+                    pnl_pct = (pnl / cost * 100) if cost > 0 else 0.0
+
+                    # Calculate holding period
+                    buy_date_str = buy.get("timestamp", "")
+                    sell_date_str = sell.get("timestamp", "")
+                    holding_days = 0
+
+                    try:
+                        buy_date = datetime.fromisoformat(buy_date_str)
+                        sell_date = datetime.fromisoformat(sell_date_str)
+                        holding_days = (sell_date - buy_date).days
+                    except (ValueError, TypeError):
+                        holding_days = 0
+
+                    closed_positions.append(
+                        ClosedPosition(
+                            symbol=symbol,
+                            entry_price=buy_price,
+                            exit_price=sell_price,
+                            quantity=matched_qty,
+                            buy_date=buy_date_str,
+                            sell_date=sell_date_str,
+                            holding_days=holding_days,
+                            realized_pnl=pnl,
+                            pnl_percentage=pnl_pct,
+                            charges=buy_charges + sell_charges,
+                        )
+                    )
+
+                    # Update quantities
+                    buy["quantity"] = buy_qty_remaining - matched_qty
+                    sell["quantity"] = sell_qty_remaining - matched_qty
+
+                # Remove fully matched transactions
+                if buy.get("quantity", 0) == 0:
+                    buy_queue.pop(0)
+                if sell.get("quantity", 0) == 0:
+                    sell_queue.pop(0)
+
+        # Calculate statistics
+        total_trades = len(closed_positions)
+        profitable_trades = sum(1 for p in closed_positions if p.realized_pnl > 0)
+        losing_trades = sum(1 for p in closed_positions if p.realized_pnl < 0)
+        breakeven_trades = sum(1 for p in closed_positions if p.realized_pnl == 0)
+
+        total_profit = sum(p.realized_pnl for p in closed_positions if p.realized_pnl > 0)
+        total_loss = sum(p.realized_pnl for p in closed_positions if p.realized_pnl < 0)
+        net_pnl = sum(p.realized_pnl for p in closed_positions)
+
+        win_rate = (profitable_trades / total_trades * 100) if total_trades > 0 else 0.0
+        avg_profit = total_profit / profitable_trades if profitable_trades > 0 else 0.0
+        avg_loss = total_loss / losing_trades if losing_trades > 0 else 0.0
+
+        statistics = {
+            "total_trades": total_trades,
+            "profitable_trades": profitable_trades,
+            "losing_trades": losing_trades,
+            "breakeven_trades": breakeven_trades,
+            "win_rate": win_rate,
+            "total_profit": total_profit,
+            "total_loss": total_loss,
+            "net_pnl": net_pnl,
+            "avg_profit_per_trade": avg_profit,
+            "avg_loss_per_trade": avg_loss,
+            "total_transactions": len(all_transactions),
+        }
+
+        return TradeHistory(
+            transactions=transactions, closed_positions=closed_positions, statistics=statistics
+        )
+
+    except Exception as e:
+        logger.exception(f"Error fetching paper trading history for user {current.id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch trade history: {str(e)}"
+        ) from e

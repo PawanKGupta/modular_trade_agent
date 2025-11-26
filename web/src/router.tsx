@@ -6,6 +6,7 @@ import { DashboardHome } from './routes/dashboard/DashboardHome';
 import { BuyingZonePage } from './routes/dashboard/BuyingZonePage';
 import { OrdersPage } from './routes/dashboard/OrdersPage';
 import { PaperTradingPage } from './routes/dashboard/PaperTradingPage';
+import { PaperTradingHistoryPage } from './routes/dashboard/PaperTradingHistoryPage';
 import { PnlPage } from './routes/dashboard/PnlPage';
 import { TargetsPage } from './routes/dashboard/TargetsPage';
 import { ActivityPage } from './routes/dashboard/ActivityPage';
@@ -35,6 +36,7 @@ export function createAppRouter() {
 				{ path: 'buying-zone', element: <BuyingZonePage /> },
 				{ path: 'orders', element: <OrdersPage /> },
 				{ path: 'paper-trading', element: <PaperTradingPage /> },
+				{ path: 'paper-trading-history', element: <PaperTradingHistoryPage /> },
 				{ path: 'pnl', element: <PnlPage /> },
 				{ path: 'targets', element: <TargetsPage /> },
 				{ path: 'activity', element: <ActivityPage /> },

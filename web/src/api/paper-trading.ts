@@ -52,7 +52,56 @@ export interface PaperTradingPortfolio {
 	};
 }
 
+export interface PaperTradingTransaction {
+	order_id: string;
+	symbol: string;
+	transaction_type: string;
+	quantity: number;
+	price: number;
+	order_value: number;
+	charges: number;
+	timestamp: string;
+}
+
+export interface ClosedPosition {
+	symbol: string;
+	entry_price: number;
+	exit_price: number;
+	quantity: number;
+	buy_date: string;
+	sell_date: string;
+	holding_days: number;
+	realized_pnl: number;
+	pnl_percentage: number;
+	charges: number;
+}
+
+export interface TradeHistoryStatistics {
+	total_trades: number;
+	profitable_trades: number;
+	losing_trades: number;
+	breakeven_trades: number;
+	win_rate: number;
+	total_profit: number;
+	total_loss: number;
+	net_pnl: number;
+	avg_profit_per_trade: number;
+	avg_loss_per_trade: number;
+	total_transactions: number;
+}
+
+export interface TradeHistory {
+	transactions: PaperTradingTransaction[];
+	closed_positions: ClosedPosition[];
+	statistics: TradeHistoryStatistics;
+}
+
 export async function getPaperTradingPortfolio(): Promise<PaperTradingPortfolio> {
 	const res = await api.get('/user/paper-trading/portfolio');
+	return res.data;
+}
+
+export async function getPaperTradingHistory(): Promise<TradeHistory> {
+	const res = await api.get('/user/paper-trading/history');
 	return res.data;
 }
