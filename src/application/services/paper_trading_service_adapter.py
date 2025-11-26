@@ -879,10 +879,10 @@ class PaperTradingEngineAdapter:
         # Get current holdings and pending orders to check for duplicates
         holdings = self.broker.get_holdings()
         pending_orders = self.broker.get_all_orders()
-        
+
         # Normalize symbols from holdings (remove .NS suffix and uppercase)
         current_symbols = {h.symbol.replace(".NS", "").upper() for h in holdings}
-        
+
         # Also check pending/open buy orders to prevent duplicates
         for order in pending_orders:
             if order.is_buy_order() and order.is_active():

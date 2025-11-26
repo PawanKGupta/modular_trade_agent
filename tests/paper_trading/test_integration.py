@@ -3,7 +3,6 @@ Integration Tests for Paper Trading System
 """
 
 import pytest
-from datetime import datetime
 
 from modules.kotak_neo_auto_trader.application.dto import OrderRequest
 from modules.kotak_neo_auto_trader.application.use_cases import PlaceOrderUseCase
@@ -447,8 +446,7 @@ class TestFrozenEMA9SellStrategy:
 
     def test_sell_order_placement_at_target(self, broker):
         """Test that sell orders can be placed at frozen EMA9 target"""
-        from decimal import Decimal
-        
+
         # Verify we have holdings
         holdings = broker.get_holdings()
         assert len(holdings) == 2
@@ -456,8 +454,10 @@ class TestFrozenEMA9SellStrategy:
         # In real implementation, sell orders would be placed at EMA9
         # Here we simulate placing limit sell orders at target price
         for holding in holdings:
-            target_price = float(holding.average_price.amount) * 1.04  # 4% above entry (simulated EMA9)
-            
+            target_price = (
+                float(holding.average_price.amount) * 1.04
+            )  # 4% above entry (simulated EMA9)
+
             sell_order = Order(
                 symbol=holding.symbol,
                 quantity=holding.quantity,
@@ -493,7 +493,7 @@ class TestFrozenEMA9SellStrategy:
         # Re-fetch order to trigger execution check
         # Note: In real implementation, order simulator checks this
         order_obj = broker.get_order(order_id)
-        
+
         # Order should execute when price >= limit price
         # This tests the order execution logic
         assert order_obj is not None
@@ -508,7 +508,7 @@ class TestFrozenEMA9SellStrategy:
             transaction_type=TransactionType.SELL,
         )
         sell_order._metadata = {"exit_reason": "RSI > 50"}
-        
+
         order_id = broker.place_order(sell_order)
         assert order_id is not None
 
@@ -529,7 +529,7 @@ class TestFrozenEMA9SellStrategy:
 
         # Place sell order for one holding at higher price (profit)
         reliance_holding = next(h for h in initial_holdings if "RELIANCE" in h.symbol)
-        
+
         # Update price higher to simulate profit
         broker.price_provider.set_mock_price("RELIANCE", 2600.00)
         broker.price_provider.set_mock_price("RELIANCE.NS", 2600.00)
@@ -537,10 +537,10 @@ class TestFrozenEMA9SellStrategy:
         # Get updated holdings with new prices
         updated_holdings = broker.get_holdings()
         reliance_updated = next(h for h in updated_holdings if "RELIANCE" in h.symbol)
-        
+
         # Calculate P&L - should be positive
         pnl = reliance_updated.calculate_pnl()
-        
+
         # Should have profit (bought at 2500, now at 2600)
         assert pnl.amount > 0
 
