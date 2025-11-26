@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
 """
 Test to inspect client attributes for server_id/sid
+
+⚠️  SECURITY WARNING ⚠️
+This script INTENTIONALLY prints sensitive authentication tokens and credentials.
+**NEVER** run this in production or save its output to version control.
+**NEVER** share the output publicly or in logs that might be exposed.
+
+This is ONLY for local development debugging of authentication issues.
+Use at your own risk and ensure output is deleted after use.
 """
+
+# ruff: noqa: E402  - Imports after path modification (required for standalone script)
 
 import sys
 from pathlib import Path
@@ -11,7 +21,11 @@ sys.path.insert(0, str(project_root))
 
 from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
 
-print("Inspecting client attributes after login")
+print("=" * 80)
+print("⚠️  SECURITY WARNING: This script prints sensitive tokens! ⚠️")
+print("⚠️  DO NOT run in production or save output! ⚠️")
+print("=" * 80)
+print("\nInspecting client attributes after login")
 print("=" * 80)
 
 # Login
@@ -68,7 +82,7 @@ if hasattr(auth.client, "session"):
                 val = getattr(session, attr)
                 if not callable(val):
                     print(f"  session.{attr:25s} = {val}")
-            except:
+            except Exception:  # noqa: S110  - Expected to fail for some attributes
                 pass
 
 if hasattr(auth.client, "configuration"):
@@ -80,9 +94,13 @@ if hasattr(auth.client, "configuration"):
                 val = getattr(config, attr)
                 if not callable(val):
                     print(f"  config.{attr:25s} = {val}")
-            except:
+            except Exception:  # noqa: S110  - Expected to fail for some attributes
                 pass
 
 print("\n" + "=" * 80)
 auth.logout()
 print("? Done")
+print("\n" + "=" * 80)
+print("⚠️  REMINDER: DELETE THIS OUTPUT IMMEDIATELY! ⚠️")
+print("⚠️  Contains sensitive authentication tokens! ⚠️")
+print("=" * 80)

@@ -21,6 +21,12 @@ demo_candle_analysis.py
 check_market_timing.pydata_backups/
 data_backups/
 
+# Dev test outputs (may contain sensitive tokens/credentials)
+modules/kotak_neo_auto_trader/dev_tests/logs/
+modules/kotak_neo_auto_trader/dev_tests/output/
+modules/kotak_neo_auto_trader/dev_tests/*_output.txt
+modules/kotak_neo_auto_trader/dev_tests/*_tokens.txt
+
 # Paper trading test runtime data
 paper_trading/test/
 paper_trading/test/*.json
