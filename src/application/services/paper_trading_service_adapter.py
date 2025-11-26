@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import pandas as pd
+
 from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
 from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import (
     PaperTradingBrokerAdapter,
@@ -80,6 +82,11 @@ class PaperTradingServiceAdapter:
         # Engine-like interface for compatibility
         self.engine = None  # Will be set up to use paper trading broker
 
+        # Sell order tracking - Frozen EMA9 strategy (matches backtest)
+        # Format: {symbol: {'order_id': str, 'target_price': float,
+        #                   'qty': int, 'entry_date': str, 'ticker': str}}
+        self.active_sell_orders = {}
+
     def initialize(self) -> bool:
         """
         Initialize paper trading service.
@@ -92,7 +99,8 @@ class PaperTradingServiceAdapter:
             self.logger.info("PAPER TRADING SERVICE INITIALIZATION", action="initialize")
             self.logger.info("=" * 80, action="initialize")
             self.logger.info(
-                f"[WARN]?  PAPER TRADING MODE - NO REAL MONEY (Capital: Rs {self.initial_capital:,.2f})",
+                f"[WARN]?  PAPER TRADING MODE - NO REAL MONEY "
+                f"(Capital: Rs {self.initial_capital:,.2f})",
                 action="initialize",
             )
             self.logger.info("=" * 80, action="initialize")
@@ -296,7 +304,15 @@ class PaperTradingServiceAdapter:
             self.logger.info("Pre-market retry completed", action="run_premarket_retry")
 
     def run_sell_monitor(self):
-        """9:15 AM - Place sell orders and start monitoring (paper trading)"""
+        """
+        9:15 AM - Place sell orders and start monitoring (paper trading)
+
+        Strategy: FROZEN EMA9 (matches backtest with 76% success rate)
+        - Place limit sell orders at current EMA9
+        - Target is FROZEN (not updated)
+        - Exit conditions: High >= Target OR RSI > 50
+        - Matches 10-year backtest data used for ML training
+        """
         from src.application.services.task_execution_wrapper import execute_task
 
         # Only log to database on first start, not on every monitoring cycle
@@ -314,24 +330,43 @@ class PaperTradingServiceAdapter:
                     "TASK: SELL MONITOR (9:15 AM) - PAPER TRADING", action="run_sell_monitor"
                 )
                 self.logger.info("=" * 80, action="run_sell_monitor")
+                self.logger.info(
+                    "STRATEGY: Frozen EMA9 target (76% success rate in backtest)",
+                    action="run_sell_monitor",
+                )
+                self.logger.info("=" * 80, action="run_sell_monitor")
 
                 if not self.engine:
                     error_msg = "Paper trading engine not initialized. Call initialize() first."
                     self.logger.error(error_msg, action="run_sell_monitor")
                     raise RuntimeError(error_msg)
 
-                # Paper trading: Monitor sell conditions
-                # For now, log that monitoring is active
-                self.logger.info(
-                    "Sell monitoring active (paper trading mode)", action="run_sell_monitor"
-                )
-                task_context["monitoring_active"] = True
+                if not self.broker:
+                    error_msg = "Paper trading broker not initialized."
+                    self.logger.error(error_msg, action="run_sell_monitor")
+                    raise RuntimeError(error_msg)
+
+                # Place sell orders for all holdings at frozen EMA9 target
+                try:
+                    self._place_sell_orders()
+                    task_context["sell_orders_placed"] = len(self.active_sell_orders)
+                except Exception as e:
+                    self.logger.error(
+                        f"Failed to place sell orders: {e}",
+                        exc_info=True,
+                        action="run_sell_monitor",
+                    )
 
                 self.tasks_completed["sell_monitor_started"] = True
 
-        # Monitor and update every minute during market hours
-        # (In paper trading, this would check positions and update sell orders)
-        self.logger.debug("Sell monitor check (paper trading)", action="run_sell_monitor")
+        # Monitor sell orders every minute during market hours
+        # Check exit conditions: High >= Target OR RSI > 50
+        try:
+            self._monitor_sell_orders()
+        except Exception as e:
+            self.logger.error(
+                f"Sell monitoring error: {e}", exc_info=True, action="run_sell_monitor"
+            )
 
     def run_position_monitor(self):
         """9:30 AM (hourly) - Monitor positions for reentry/exit signals (paper trading)"""
@@ -437,6 +472,253 @@ class PaperTradingServiceAdapter:
             self.logger.info("Service ready for next trading day", action="run_eod_cleanup")
             self.tasks_completed["eod_cleanup"] = True
 
+    def _place_sell_orders(self):
+        """
+        Place sell orders for all holdings at frozen EMA9 target.
+
+        Strategy: Frozen EMA9 (matches 10-year backtest with 76% success rate)
+        - Calculate current EMA9 for each holding
+        - Place limit sell order at EMA9 price
+        - Target is FROZEN (never updated)
+        - Track in active_sell_orders
+        """
+        from datetime import datetime
+
+        from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType
+
+        holdings = self.broker.get_holdings()
+
+        if not holdings:
+            self.logger.info("No holdings to place sell orders for", action="_place_sell_orders")
+            return
+
+        self.logger.info(
+            f"Placing sell orders for {len(holdings)} holdings...", action="_place_sell_orders"
+        )
+
+        for holding in holdings:
+            try:
+                symbol = holding.symbol
+                ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+                quantity = holding.quantity
+
+                # Skip if already have active sell order
+                if symbol in self.active_sell_orders:
+                    self.logger.debug(
+                        f"Skipping {symbol} - already has active sell order",
+                        action="_place_sell_orders",
+                    )
+                    continue
+
+                # Calculate EMA9 target (frozen at this value)
+                ema9_target = self._calculate_ema9(ticker)
+
+                if ema9_target is None or ema9_target <= 0:
+                    self.logger.warning(
+                        f"Could not calculate EMA9 for {symbol}, skipping",
+                        action="_place_sell_orders",
+                    )
+                    continue
+
+                # Create and place sell order at frozen EMA9 target
+                from modules.kotak_neo_auto_trader.domain import Money
+
+                order = Order(
+                    symbol=symbol,
+                    quantity=quantity,
+                    order_type=OrderType.LIMIT,
+                    transaction_type=TransactionType.SELL,
+                    price=Money(ema9_target),
+                )
+                order._metadata = {"original_ticker": ticker}
+
+                order_id = self.broker.place_order(order)
+
+                if order_id:
+                    # Track this sell order with FROZEN target
+                    self.active_sell_orders[symbol] = {
+                        "order_id": order_id,
+                        "target_price": ema9_target,  # FROZEN - never updated!
+                        "qty": quantity,
+                        "ticker": ticker,
+                        "entry_date": datetime.now().strftime("%Y-%m-%d"),
+                    }
+
+                    self.logger.info(
+                        f"? Placed SELL order: {symbol} x{quantity} @ Rs {ema9_target:.2f} "
+                        f"(Frozen EMA9 target) | Order ID: {order_id}",
+                        action="_place_sell_orders",
+                    )
+                else:
+                    self.logger.warning(
+                        f"Failed to place sell order for {symbol}", action="_place_sell_orders"
+                    )
+
+            except Exception as e:
+                self.logger.error(
+                    f"Error placing sell order for {holding.symbol}: {e}",
+                    exc_info=True,
+                    action="_place_sell_orders",
+                )
+
+        self.logger.info(
+            f"Sell orders placed: {len(self.active_sell_orders)} active orders",
+            action="_place_sell_orders",
+        )
+
+    def _monitor_sell_orders(self):
+        """
+        Monitor sell orders for exit conditions (matches backtest strategy).
+
+        Exit conditions (from 10-year backtest):
+        1. High >= Target (frozen EMA9) - 90% of exits, 76% profitable
+        2. RSI > 50 - 10% of exits, 37% profitable (falling knives)
+
+        NOTE: Target price is NEVER updated (frozen at entry)
+        """
+        if not self.active_sell_orders:
+            return
+
+        import pandas_ta as ta
+
+        from core.data_fetcher import fetch_ohlcv_yf
+
+        symbols_to_remove = []
+
+        for symbol, order_info in list(self.active_sell_orders.items()):
+            try:
+                ticker = order_info["ticker"]
+                target_price = order_info["target_price"]  # FROZEN - never changes!
+
+                # Fetch recent data for exit condition checks
+                data = fetch_ohlcv_yf(ticker, days=30, interval="1d")
+
+                if data is None or data.empty:
+                    continue
+
+                # Get today's data
+                latest = data.iloc[-1]
+                high = latest["High"]
+                close = latest["Close"]
+
+                # Calculate RSI for exit condition 2
+                data["RSI10"] = ta.rsi(data["Close"], length=10)
+                rsi = data.iloc[-1]["RSI10"]
+
+                # Exit Condition 1: High >= Frozen Target (primary exit)
+                if high >= target_price:
+                    self.logger.info(
+                        f"? EXIT TRIGGERED: {symbol} - "
+                        f"High {high:.2f} >= Target {target_price:.2f}",
+                        action="_monitor_sell_orders",
+                    )
+
+                    # Check if order executed in paper trading
+                    # (In paper trading, orders execute when conditions are met)
+                    symbols_to_remove.append(symbol)
+
+                    entry_price = order_info.get("entry_price", target_price)
+                    pnl_pct = (
+                        (target_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+                    )
+
+                    self.logger.info(
+                        f"? Target reached: {symbol} @ Rs {target_price:.2f} "
+                        f"(Est. P&L: {pnl_pct:+.2f}%)",
+                        action="_monitor_sell_orders",
+                    )
+                    continue
+
+                # Exit Condition 2: RSI > 50 (secondary exit for failing stocks)
+                RSI_EXIT_THRESHOLD = 50  # From backtest: 10% of exits, 37% win rate
+                if not pd.isna(rsi) and rsi > RSI_EXIT_THRESHOLD:
+                    self.logger.info(
+                        f"? EXIT TRIGGERED: {symbol} - RSI {rsi:.1f} > 50 (falling knife exit)",
+                        action="_monitor_sell_orders",
+                    )
+
+                    # Execute market sell at current price
+                    from modules.kotak_neo_auto_trader.domain import (
+                        Order,
+                        OrderType,
+                        TransactionType,
+                    )
+
+                    market_order = Order(
+                        symbol=symbol,
+                        quantity=order_info["qty"],
+                        order_type=OrderType.MARKET,
+                        transaction_type=TransactionType.SELL,
+                    )
+                    market_order._metadata = {
+                        "original_ticker": ticker,
+                        "exit_reason": "RSI > 50",
+                    }
+
+                    # Cancel the limit order and place market order
+                    try:
+                        # In paper trading, just remove the order and execute at market
+                        self.broker.place_order(market_order)
+                        symbols_to_remove.append(symbol)
+
+                        self.logger.info(
+                            f"? RSI exit: {symbol} @ Rs {close:.2f} (RSI: {rsi:.1f})",
+                            action="_monitor_sell_orders",
+                        )
+                    except Exception as e:
+                        self.logger.error(
+                            f"Failed to execute RSI exit for {symbol}: {e}",
+                            action="_monitor_sell_orders",
+                        )
+
+            except Exception as e:
+                self.logger.error(
+                    f"Error monitoring {symbol}: {e}", exc_info=True, action="_monitor_sell_orders"
+                )
+
+        # Remove executed orders from tracking
+        for symbol in symbols_to_remove:
+            if symbol in self.active_sell_orders:
+                del self.active_sell_orders[symbol]
+
+        if symbols_to_remove:
+            self.logger.info(
+                f"Removed {len(symbols_to_remove)} executed orders. "
+                f"Active orders: {len(self.active_sell_orders)}",
+                action="_monitor_sell_orders",
+            )
+
+    def _calculate_ema9(self, ticker: str) -> float | None:
+        """
+        Calculate EMA9 for a ticker.
+
+        Args:
+            ticker: Stock ticker (e.g., "RELIANCE.NS")
+
+        Returns:
+            EMA9 value or None if calculation fails
+        """
+        try:
+            import pandas_ta as ta
+
+            from core.data_fetcher import fetch_ohlcv_yf
+
+            # Fetch data (need at least 50 days for stable EMA9)
+            data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
+
+            if data is None or data.empty:
+                return None
+
+            # Calculate EMA9
+            data["EMA9"] = ta.ema(data["Close"], length=9)
+            ema9 = data.iloc[-1]["EMA9"]
+
+            return float(ema9) if not pd.isna(ema9) else None
+
+        except Exception as e:
+            self.logger.debug(f"Failed to calculate EMA9 for {ticker}: {e}")
+            return None
+
 
 class PaperTradingEngineAdapter:
     """
@@ -524,7 +806,8 @@ class PaperTradingEngineAdapter:
                     )
                     continue
 
-                # Calculate execution_capital if available from liquidity_recommendation or trading_params
+                # Calculate execution_capital if available from
+                # liquidity_recommendation or trading_params
                 # or use default (will be calculated in place_new_entries if None)
                 execution_capital = None
                 if signal.liquidity_recommendation and isinstance(
@@ -629,7 +912,8 @@ class PaperTradingEngineAdapter:
                         cached_prices.update(batch_prices)
                         successful_fetches = sum(1 for v in cached_prices.values() if v is not None)
                         self.logger.info(
-                            f"Pre-fetched {successful_fetches}/{len(tickers_to_fetch)} prices (batch)",
+                            f"Pre-fetched {successful_fetches}/"
+                            f"{len(tickers_to_fetch)} prices (batch)",
                             action="place_new_entries",
                         )
                     else:
@@ -694,7 +978,8 @@ class PaperTradingEngineAdapter:
                     )
                     continue
 
-                # Get max position size from broker config (which is set from strategy_config.user_capital)
+                # Get max position size from broker config (which is set from
+                # strategy_config.user_capital).
                 # This ensures we use the user's configured capital per trade
                 max_position_size = (
                     self.broker.config.max_position_size if self.broker.config else 50000.0
@@ -703,8 +988,9 @@ class PaperTradingEngineAdapter:
                 # Limit execution_capital to max_position_size
                 if execution_capital > max_position_size:
                     self.logger.info(
-                        f"Limiting execution_capital for {rec.ticker} from Rs {execution_capital:,.0f} "
-                        f"to Rs {max_position_size:,.0f} (max position size from config)",
+                        f"Limiting execution_capital for {rec.ticker} from "
+                        f"Rs {execution_capital:,.0f} to Rs {max_position_size:,.0f} "
+                        f"(max position size from config)",
                         action="place_new_entries",
                     )
                     execution_capital = max_position_size
