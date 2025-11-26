@@ -23,7 +23,7 @@ def _config_to_response(config) -> TradingConfigResponse:
         rsi_near_oversold=config.rsi_near_oversold,
         # Capital & Position Management
         user_capital=config.user_capital,
-        paper_trading_initial_capital=getattr(config, "paper_trading_initial_capital", 300000.0),
+        paper_trading_initial_capital=getattr(config, "paper_trading_initial_capital", 1000000.0),
         max_portfolio_size=config.max_portfolio_size,
         max_position_volume_ratio=config.max_position_volume_ratio,
         min_absolute_avg_volume=config.min_absolute_avg_volume,

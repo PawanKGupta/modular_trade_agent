@@ -27,7 +27,7 @@ def test_config_to_response_handles_missing_paper_capital():
             self.rsi_oversold = 30.0
             self.rsi_extreme_oversold = 20.0
             self.rsi_near_oversold = 40.0
-            self.user_capital = 200000.0
+            self.user_capital = 100000.0
             # paper_trading_initial_capital NOT defined
             self.max_portfolio_size = 6
             self.max_position_volume_ratio = 0.1
@@ -70,8 +70,8 @@ def test_config_to_response_handles_missing_paper_capital():
     response = _config_to_response(old_config)
 
     # Should use default value
-    assert response.paper_trading_initial_capital == 300000.0
-    assert response.user_capital == 200000.0
+    assert response.paper_trading_initial_capital == 1000000.0
+    assert response.user_capital == 100000.0
 
 
 def test_config_to_response_uses_existing_paper_capital():
@@ -82,7 +82,7 @@ def test_config_to_response_uses_existing_paper_capital():
     mock_config.rsi_oversold = 30.0
     mock_config.rsi_extreme_oversold = 20.0
     mock_config.rsi_near_oversold = 40.0
-    mock_config.user_capital = 200000.0
+    mock_config.user_capital = 100000.0
     mock_config.paper_trading_initial_capital = 500000.0  # Custom value
     mock_config.max_portfolio_size = 6
     mock_config.max_position_volume_ratio = 0.1
@@ -123,4 +123,4 @@ def test_config_to_response_uses_existing_paper_capital():
 
     # Should use the actual value
     assert response.paper_trading_initial_capital == 500000.0
-    assert response.user_capital == 200000.0
+    assert response.user_capital == 100000.0
