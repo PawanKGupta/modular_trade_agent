@@ -56,6 +56,28 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 				</div>
 
 				<div>
+					<label htmlFor="enable_premarket_amo_adjustment" className="flex items-center gap-2">
+						<input
+							id="enable_premarket_amo_adjustment"
+							type="checkbox"
+							checked={config.enable_premarket_amo_adjustment}
+							onChange={(e) => onChange({ enable_premarket_amo_adjustment: e.target.checked })}
+							className="rounded"
+						/>
+						<span className="text-sm">
+							Enable Pre-Market AMO Adjustment (9:05 AM)
+							{!isDefault('enable_premarket_amo_adjustment') && <span className="text-yellow-400 ml-1">*</span>}
+						</span>
+					</label>
+					<div className="text-xs text-[var(--muted)] mt-1 ml-6">
+						Default: {defaultConfig.enable_premarket_amo_adjustment ? 'Enabled' : 'Disabled'}
+					</div>
+					<div className="text-xs text-blue-400 mt-1 ml-6">
+						Automatically adjust AMO order quantities at 9:05 AM based on pre-market prices to keep capital constant
+					</div>
+				</div>
+
+				<div>
 					<label htmlFor="min_combined_score" className="block text-sm mb-1">
 						Min Combined Score
 						{!isDefault('min_combined_score') && <span className="text-yellow-400 ml-1">*</span>}

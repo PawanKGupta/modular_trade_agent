@@ -54,6 +54,7 @@ def _config_to_response(config) -> TradingConfigResponse:
         allow_duplicate_recommendations_same_day=config.allow_duplicate_recommendations_same_day,
         exit_on_ema9_or_rsi50=config.exit_on_ema9_or_rsi50,
         min_combined_score=config.min_combined_score,
+        enable_premarket_amo_adjustment=getattr(config, "enable_premarket_amo_adjustment", True),
         # News Sentiment
         news_sentiment_enabled=config.news_sentiment_enabled,
         news_sentiment_lookback_days=config.news_sentiment_lookback_days,

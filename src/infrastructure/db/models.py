@@ -425,6 +425,10 @@ class UserTradingConfig(Base):
     )
     exit_on_ema9_or_rsi50: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     min_combined_score: Mapped[int] = mapped_column(Integer, default=25, nullable=False)
+    # Pre-Market AMO Adjustment
+    enable_premarket_amo_adjustment: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )  # Adjust AMO quantities based on pre-market prices to keep capital constant
     # News Sentiment
     news_sentiment_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     news_sentiment_lookback_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False)

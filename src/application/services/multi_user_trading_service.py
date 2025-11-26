@@ -119,6 +119,19 @@ class MultiUserTradingService:
                                     action="scheduler",
                                 )
 
+                    # 9:05 AM - Pre-market AMO adjustment (NO-OP for paper trading, kept for parity)
+                    if dt_time(9, 5) <= current_time < dt_time(9, 6):
+                        if not service.tasks_completed.get("premarket_amo_adjustment"):
+                            try:
+                                service.adjust_amo_quantities_premarket()
+                                service.tasks_completed["premarket_amo_adjustment"] = True
+                            except Exception as e:
+                                user_logger.error(
+                                    f"Pre-market AMO adjustment failed: {e}",
+                                    exc_info=True,
+                                    action="scheduler",
+                                )
+
                     # 9:15 AM onwards - Sell monitoring (continuous during market hours)
                     if current_time >= dt_time(9, 15) and dt_time(9, 15) <= current_time <= dt_time(
                         15, 30

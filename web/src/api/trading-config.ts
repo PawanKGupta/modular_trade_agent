@@ -45,6 +45,7 @@ export interface TradingConfig {
 	allow_duplicate_recommendations_same_day: boolean;
 	exit_on_ema9_or_rsi50: boolean;
 	min_combined_score: number;
+	enable_premarket_amo_adjustment: boolean;
 
 	// News Sentiment
 	news_sentiment_enabled: boolean;
@@ -93,6 +94,7 @@ export interface TradingConfigUpdate {
 	allow_duplicate_recommendations_same_day?: boolean;
 	exit_on_ema9_or_rsi50?: boolean;
 	min_combined_score?: number;
+	enable_premarket_amo_adjustment?: boolean;
 	news_sentiment_enabled?: boolean;
 	news_sentiment_lookback_days?: number;
 	news_sentiment_min_articles?: number;
@@ -159,6 +161,7 @@ export const DEFAULT_CONFIG: TradingConfig = {
 	allow_duplicate_recommendations_same_day: false,
 	exit_on_ema9_or_rsi50: true,
 	min_combined_score: 50,
+	enable_premarket_amo_adjustment: true,
 	news_sentiment_enabled: false,
 	news_sentiment_lookback_days: 7,
 	news_sentiment_min_articles: 3,

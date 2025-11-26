@@ -52,6 +52,7 @@ class TradingConfigResponse(BaseModel):
     allow_duplicate_recommendations_same_day: bool
     exit_on_ema9_or_rsi50: bool
     min_combined_score: int
+    enable_premarket_amo_adjustment: bool
 
     # News Sentiment
     news_sentiment_enabled: bool
@@ -114,6 +115,7 @@ class TradingConfigUpdateRequest(BaseModel):
     allow_duplicate_recommendations_same_day: bool | None = None
     exit_on_ema9_or_rsi50: bool | None = None
     min_combined_score: int | None = Field(None, ge=0, le=100)
+    enable_premarket_amo_adjustment: bool | None = None
 
     # News Sentiment
     news_sentiment_enabled: bool | None = None

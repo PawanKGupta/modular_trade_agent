@@ -119,6 +119,7 @@ class TradingService:
             "buy_orders": False,
             "eod_cleanup": False,
             "premarket_retry": False,
+            "premarket_amo_adjustment": False,
             "sell_monitor_started": False,
             "position_monitor": {},  # Track hourly runs
         }
@@ -409,9 +410,7 @@ class TradingService:
                 price_service = get_price_service(
                     live_price_manager=self.price_cache, enable_caching=True
                 )
-                subscribed = price_service.subscribe_to_symbols(
-                    symbols, service_id="sell_monitor"
-                )
+                subscribed = price_service.subscribe_to_symbols(symbols, service_id="sell_monitor")
                 if subscribed:
                     logger.info(
                         f"Subscribed to WebSocket for sell orders: {', '.join(symbols)} "
@@ -479,6 +478,36 @@ class TradingService:
 
             self.tasks_completed["premarket_retry"] = True
             logger.info("Pre-market retry completed")
+
+    def run_premarket_amo_adjustment(self):
+        """9:05 AM - Adjust AMO order quantities based on pre-market prices"""
+        from src.application.services.task_execution_wrapper import execute_task
+
+        with execute_task(
+            self.user_id,
+            self.db,
+            "premarket_amo_adjustment",
+            self.logger,
+            track_execution=not self.skip_execution_tracking,
+        ) as task_context:
+            logger.info("")
+            logger.info("=" * 80)
+            logger.info("TASK: PRE-MARKET AMO ADJUSTMENT (9:05 AM)")
+            logger.info("=" * 80)
+
+            # Adjust AMO order quantities based on pre-market prices
+            summary = self.engine.adjust_amo_quantities_premarket()
+            logger.info(f"Pre-market AMO adjustment summary: {summary}")
+            task_context["summary"] = summary
+            task_context["total_orders"] = summary.get("total_orders", 0)
+            task_context["adjusted"] = summary.get("adjusted", 0)
+            task_context["no_adjustment_needed"] = summary.get("no_adjustment_needed", 0)
+            task_context["price_unavailable"] = summary.get("price_unavailable", 0)
+            task_context["modification_failed"] = summary.get("modification_failed", 0)
+            task_context["skipped_not_enabled"] = summary.get("skipped_not_enabled", 0)
+
+            self.tasks_completed["premarket_amo_adjustment"] = True
+            logger.info("Pre-market AMO adjustment completed")
 
     def run_sell_monitor(self):
         """9:15 AM - Place sell orders and start monitoring (runs continuously)"""
@@ -971,6 +1000,7 @@ class TradingService:
             self.tasks_completed["analysis"] = False
             self.tasks_completed["buy_orders"] = False
             self.tasks_completed["premarket_retry"] = False
+            self.tasks_completed["premarket_amo_adjustment"] = False
             self.tasks_completed["sell_monitor_started"] = False
             self.tasks_completed["position_monitor"] = {}
             task_context["tasks_reset"] = True
@@ -1027,6 +1057,10 @@ class TradingService:
                         # 9:00 AM - Pre-market retry
                         if self.should_run_task("premarket_retry", dt_time(9, 0)):
                             self.run_premarket_retry()
+
+                        # 9:05 AM - Pre-market AMO quantity adjustment
+                        if self.should_run_task("premarket_amo_adjustment", dt_time(9, 5)):
+                            self.run_premarket_amo_adjustment()
 
                         # 9:15 AM onwards - Sell monitoring (continuous)
                         if current_time >= dt_time(9, 15) and self.is_market_hours():

@@ -1503,8 +1503,7 @@ class AutoTradeEngine:
         import warnings
 
         warnings.warn(
-            "portfolio_size() is deprecated. "
-            "Use portfolio_service.get_portfolio_count() instead.",
+            "portfolio_size() is deprecated. Use portfolio_service.get_portfolio_count() instead.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -2422,8 +2421,8 @@ class AutoTradeEngine:
             if self.orders and self.order_validation_service.orders != self.orders:
                 self.order_validation_service.orders = self.orders
 
-            has_capacity, current_count, max_size = self.order_validation_service.check_portfolio_capacity(
-                include_pending=True
+            has_capacity, current_count, max_size = (
+                self.order_validation_service.check_portfolio_capacity(include_pending=True)
             )
 
             for db_order in retriable_orders:
@@ -2441,8 +2440,10 @@ class AutoTradeEngine:
 
                 # Duplicate prevention: Check if already in holdings
                 # Phase 3.1: Use OrderValidationService for duplicate check (includes holdings + active buy orders)
-                is_duplicate, duplicate_reason = self.order_validation_service.check_duplicate_order(
-                    symbol, check_active_buy_order=True, check_holdings=True
+                is_duplicate, duplicate_reason = (
+                    self.order_validation_service.check_duplicate_order(
+                        symbol, check_active_buy_order=True, check_holdings=True
+                    )
                 )
 
                 if is_duplicate:
@@ -2588,8 +2589,8 @@ class AutoTradeEngine:
                         continue
 
                 # Check position-to-volume ratio - Phase 3.1: Use OrderValidationService
-                is_valid_volume, volume_ratio, tier_info = self.order_validation_service.check_volume_ratio(
-                    qty, avg_vol, symbol, close
+                is_valid_volume, volume_ratio, tier_info = (
+                    self.order_validation_service.check_volume_ratio(qty, avg_vol, symbol, close)
                 )
                 if not is_valid_volume:
                     logger.info(
@@ -2674,6 +2675,194 @@ class AutoTradeEngine:
 
         except Exception as e:
             logger.error(f"Error retrying pending orders from DB: {e}", exc_info=e)
+            return summary
+
+    # ---------------------- Pre-Market AMO Adjustment ----------------------
+
+    def adjust_amo_quantities_premarket(self) -> dict[str, int]:
+        """
+        Pre-market AMO quantity adjuster (runs at 9:05 AM)
+
+        Adjusts AMO order quantities based on pre-market prices
+        to keep capital constant (user_capital per trade).
+
+        Handles gaps up (reduce qty) and gaps down (increase qty)
+        to prevent order rejections due to insufficient funds.
+
+        Returns:
+            Summary dict with adjustment statistics
+        """
+        summary = {
+            "total_orders": 0,
+            "adjusted": 0,
+            "no_adjustment_needed": 0,
+            "price_unavailable": 0,
+            "modification_failed": 0,
+            "skipped_not_enabled": 0,
+        }
+
+        # Check if feature is enabled
+        if not self.strategy_config.enable_premarket_amo_adjustment:
+            logger.info("Pre-market AMO adjustment is disabled in config - skipping")
+            summary["skipped_not_enabled"] = 1
+            return summary
+
+        logger.info("🔄 Starting pre-market AMO quantity adjustment...")
+
+        # Check authentication
+        if not self.auth or not self.auth.is_authenticated():
+            logger.warning("Session expired - attempting re-authentication...")
+            if not self.login():
+                logger.error("Re-authentication failed - cannot adjust AMO orders")
+                return summary
+
+        if not self.orders or not self.portfolio:
+            logger.error("Orders or portfolio not initialized - attempting login...")
+            if not self.login():
+                logger.error("Login failed - cannot adjust AMO orders")
+                return summary
+
+        try:
+            # 1. Get all pending orders from broker
+            logger.info("Fetching pending AMO orders from broker...")
+            pending_orders = self.orders.get_order_book()
+
+            if not pending_orders:
+                logger.info("No pending orders found - nothing to adjust")
+                return summary
+
+            # Filter only AMO/pending orders
+            amo_orders = [
+                order
+                for order in pending_orders
+                if order.get("orderValidity", "").upper() == "DAY"  # AMO orders
+                and order.get("orderStatus", "").upper() in ["PENDING", "OPEN", "TRIGGER_PENDING"]
+                and order.get("transactionType", "").upper() == "BUY"
+            ]
+
+            if not amo_orders:
+                logger.info("No pending AMO buy orders found - nothing to adjust")
+                return summary
+
+            logger.info(f"Found {len(amo_orders)} pending AMO buy orders")
+            summary["total_orders"] = len(amo_orders)
+
+            # 2. Process each AMO order
+            from .market_data import KotakNeoMarketData
+
+            market_data = KotakNeoMarketData(self.auth)
+
+            for order in amo_orders:
+                symbol = order.get("symbol", order.get("tradingSymbol", ""))
+                original_qty = int(order.get("quantity", 0))
+                order_id = order.get("nOrdNo", order.get("orderId", ""))
+
+                if not symbol or not original_qty or not order_id:
+                    logger.warning(f"Incomplete order data - skipping: {order}")
+                    continue
+
+                # Extract base symbol (remove -EQ suffix if present)
+                base_symbol = symbol.replace("-EQ", "")
+
+                logger.info(f"Processing {base_symbol}: current qty={original_qty}")
+
+                # 3. Fetch pre-market price
+                premarket_price = market_data.get_ltp(symbol, exchange="NSE")
+
+                if not premarket_price or premarket_price <= 0:
+                    logger.warning(f"{base_symbol}: Pre-market price not available, skipping")
+                    summary["price_unavailable"] += 1
+                    continue
+
+                logger.info(f"{base_symbol}: Pre-market price = Rs {premarket_price:.2f}")
+
+                # 4. Recalculate quantity to keep capital constant
+                target_capital = self.strategy_config.user_capital
+                new_qty = max(config.MIN_QTY, floor(target_capital / premarket_price))
+
+                # 5. Check if quantity adjustment is needed
+                if new_qty == original_qty:
+                    logger.info(f"{base_symbol}: No adjustment needed (qty={original_qty})")
+                    summary["no_adjustment_needed"] += 1
+                    continue
+
+                # Calculate gap percentage
+                original_value = original_qty * premarket_price
+                gap_pct = (
+                    (premarket_price - (target_capital / original_qty))
+                    / (target_capital / original_qty)
+                ) * 100
+
+                # 6. Modify the AMO order
+                logger.info(
+                    f"{base_symbol}: Adjusting AMO qty {original_qty} → {new_qty} "
+                    f"(gap: {gap_pct:+.2f}%, premarket: Rs {premarket_price:.2f})"
+                )
+
+                try:
+                    result = self.orders.modify_order(
+                        order_id=order_id,
+                        quantity=new_qty,
+                        order_type="MKT",  # Keep as MARKET order
+                    )
+
+                    if result and result.get("stat", "").lower() == "ok":
+                        logger.info(
+                            f"✅ {base_symbol}: AMO order modified successfully (#{order_id})"
+                        )
+                        summary["adjusted"] += 1
+
+                        # Update database record if exists
+                        if self.db and self.orders_repo:
+                            try:
+                                db_order = self.orders_repo.get_by_broker_order_id(
+                                    self.user_id, order_id
+                                )
+                                if db_order:
+                                    self.orders_repo.update(db_order, quantity=new_qty)
+                                    logger.info(
+                                        f"{base_symbol}: DB order record updated with new qty={new_qty}"
+                                    )
+                            except Exception as db_err:
+                                logger.warning(
+                                    f"{base_symbol}: Failed to update DB record: {db_err}"
+                                )
+
+                        # Send Telegram notification
+                        if self.telegram_notifier and self.telegram_notifier.enabled:
+                            try:
+                                self.telegram_notifier.send_message(
+                                    f"📊 Pre-Market Adjustment\n"
+                                    f"Symbol: {base_symbol}\n"
+                                    f"Qty: {original_qty} → {new_qty} ({new_qty - original_qty:+d})\n"
+                                    f"Gap: {gap_pct:+.2f}%\n"
+                                    f"Pre-market: Rs {premarket_price:.2f}"
+                                )
+                            except Exception as notify_err:
+                                logger.warning(
+                                    f"Failed to send Telegram notification: {notify_err}"
+                                )
+                    else:
+                        logger.error(f"❌ {base_symbol}: AMO modification failed: {result}")
+                        summary["modification_failed"] += 1
+
+                except Exception as e:
+                    logger.error(f"❌ {base_symbol}: Error modifying AMO: {e}", exc_info=True)
+                    summary["modification_failed"] += 1
+
+            # Summary
+            logger.info(
+                f"✅ Pre-market adjustment complete: "
+                f"{summary['adjusted']} adjusted, "
+                f"{summary['no_adjustment_needed']} unchanged, "
+                f"{summary['price_unavailable']} price N/A, "
+                f"{summary['modification_failed']} failed"
+            )
+
+            return summary
+
+        except Exception as e:
+            logger.error(f"Error during pre-market AMO adjustment: {e}", exc_info=True)
             return summary
 
     # ---------------------- New entries ----------------------
@@ -2948,8 +3137,8 @@ class AutoTradeEngine:
 
             # Use OrderValidationService for capacity check (Phase 3.1)
             # OrderValidationService delegates to PortfolioService
-            has_capacity, current_count, max_size = self.order_validation_service.check_portfolio_capacity(
-                include_pending=True
+            has_capacity, current_count, max_size = (
+                self.order_validation_service.check_portfolio_capacity(include_pending=True)
             )
             if not has_capacity:
                 logger.info(
@@ -2992,7 +3181,11 @@ class AutoTradeEngine:
                 )
                 summary["skipped_duplicates"] += 1
                 ticker_attempt["status"] = "skipped"
-                ticker_attempt["reason"] = "already_in_holdings" if "holdings" in duplicate_reason.lower() else "duplicate_order"
+                ticker_attempt["reason"] = (
+                    "already_in_holdings"
+                    if "holdings" in duplicate_reason.lower()
+                    else "duplicate_order"
+                )
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
             # 2) Check for manual AMO orders -> link to DB and skip placing
@@ -3062,8 +3255,12 @@ class AutoTradeEngine:
             # 3) Active pending buy order check (system orders)
             # Phase 3.1: Use OrderValidationService for duplicate check (broker API + database)
             # This prevents duplicates when service runs multiple times before broker syncs
-            is_duplicate_order, duplicate_order_reason = self.order_validation_service.check_duplicate_order(
-                broker_symbol, check_active_buy_order=True, check_holdings=False  # Already checked holdings above
+            is_duplicate_order, duplicate_order_reason = (
+                self.order_validation_service.check_duplicate_order(
+                    broker_symbol,
+                    check_active_buy_order=True,
+                    check_holdings=False,  # Already checked holdings above
+                )
             )
 
             variants = set(self._symbol_variants(broker_symbol))
@@ -3340,8 +3537,8 @@ class AutoTradeEngine:
 
             # Check position-to-volume ratio (liquidity filter) - Phase 3.1: Use OrderValidationService
             avg_vol = ind.get("avg_volume", 0)
-            is_valid_volume, volume_ratio, tier_info = self.order_validation_service.check_volume_ratio(
-                qty, avg_vol, broker_symbol, close
+            is_valid_volume, volume_ratio, tier_info = (
+                self.order_validation_service.check_volume_ratio(qty, avg_vol, broker_symbol, close)
             )
             if not is_valid_volume:
                 logger.info(f"Skipping {broker_symbol}: position size too large relative to volume")
@@ -3355,8 +3552,8 @@ class AutoTradeEngine:
 
             # Balance check (CNC needs cash) -> notify on insufficiency and save for retry
             # Phase 3.1: Use OrderValidationService
-            has_sufficient_balance, avail_cash, affordable = self.order_validation_service.check_balance(
-                close, qty
+            has_sufficient_balance, avail_cash, affordable = (
+                self.order_validation_service.check_balance(close, qty)
             )
             if not has_sufficient_balance:
                 required_cash = qty * close

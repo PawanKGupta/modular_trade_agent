@@ -75,6 +75,7 @@ class PaperTradingServiceAdapter:
             "buy_orders": False,
             "eod_cleanup": False,
             "premarket_retry": False,
+            "premarket_amo_adjustment": False,
             "sell_monitor_started": False,
             "position_monitor": {},
         }
@@ -330,6 +331,34 @@ class PaperTradingServiceAdapter:
             self.tasks_completed["premarket_retry"] = True
             self.logger.info("Pre-market retry completed", action="run_premarket_retry")
 
+    def adjust_amo_quantities_premarket(self) -> dict[str, int]:
+        """
+        9:05 AM - Pre-market AMO quantity adjustment (NO-OP for paper trading)
+
+        In paper trading, orders are simulated internally and executed immediately
+        or at the next market open. There's no real broker to communicate with,
+        so pre-market price adjustments don't apply.
+
+        This method exists only for interface compatibility with real trading.
+
+        Returns:
+            Summary dict (empty for paper trading)
+        """
+        self.logger.info(
+            "Pre-market AMO adjustment skipped - not applicable to paper trading",
+            action="adjust_amo_quantities_premarket",
+        )
+
+        return {
+            "total_orders": 0,
+            "adjusted": 0,
+            "no_adjustment_needed": 0,
+            "price_unavailable": 0,
+            "modification_failed": 0,
+            "skipped_not_enabled": 0,
+            "skipped_paper_trading": 1,  # Indicates this was skipped because it's paper trading
+        }
+
     def run_sell_monitor(self):
         """
         9:15 AM - Place sell orders and start monitoring (paper trading)
@@ -491,6 +520,7 @@ class PaperTradingServiceAdapter:
                 "buy_orders": False,
                 "eod_cleanup": False,
                 "premarket_retry": False,
+                "premarket_amo_adjustment": False,
                 "sell_monitor_started": False,
                 "position_monitor": {},
             }
