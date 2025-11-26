@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { getServiceStatus, getTaskHistory, getServiceLogs, startService, stopService, getIndividualServicesStatus, type ServiceStatus, type TaskExecution, type ServiceLog, type IndividualServicesStatus } from '@/api/service';
 import { formatTimeAgo } from '@/utils/time';
+import { formatErrorMessage } from '@/utils/formatError';
 import { ServiceControls } from './ServiceControls';
 import { ServiceTasksTable } from './ServiceTasksTable';
 import { ServiceLogsViewer } from './ServiceLogsViewer';
@@ -144,8 +145,10 @@ export function ServiceStatusPage() {
 
 				{status?.last_error && (
 					<div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded">
-						<div className="text-sm font-medium text-red-400 mb-1">Last Error</div>
-						<div className="text-sm text-red-300">{status.last_error}</div>
+						<div className="text-sm font-medium text-red-400 mb-2">Last Error</div>
+						<div className="text-xs text-red-300 font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+							{formatErrorMessage(status.last_error)}
+						</div>
 					</div>
 				)}
 

@@ -1727,28 +1727,44 @@ Sun, Jan 14, 2024  (1 signal)
 
 ---
 
-## Bug #73: Question Mark Symbol in Service Status Badge (LOW)
+## Bug #73: Service Status Page UI Issues (MEDIUM)
 
 **Date Fixed**: November 26, 2025
 **Status**: ✅ Fixed
 
 ### Description
-The Service Status page displayed literal "?" characters in the service status badge, showing "? Running" or "? Stopped" instead of proper status indicators.
+The Service Status page had multiple UI issues:
+1. **Status badge**: Displayed literal "?" characters, showing "? Running" or "? Stopped"
+2. **Error messages**: Unformatted error messages were hard to read, with long file paths and stack traces displayed in a single line without proper wrapping or formatting
 
 ### Root Cause
-- Placeholder "?" characters were hardcoded in the JSX template
-- No proper unicode symbols or icons were implemented for the status badge
+1. **Status badge**: Placeholder "?" characters were hardcoded in the JSX template
+2. **Error messages**:
+   - Used regular text styling instead of monospace font
+   - No line break preservation or word wrapping
+   - No scroll handling for very long errors
+   - Small font size made stack traces hard to read
 
 ### Expected Behavior
-- Display a checkmark (✓) for "Running" status
-- Display an X mark (✗) for "Stopped" status
-- Clear visual distinction between running and stopped states
+1. **Status badge**:
+   - Display a checkmark (✓) for "Running" status
+   - Display an X mark (✗) for "Stopped" status
+   - Clear visual distinction between running and stopped states
+
+2. **Error messages**:
+   - Use monospace font for better readability of code/paths
+   - Preserve line breaks and wrap long lines
+   - Break very long words (e.g., file paths)
+   - Add scroll for very long error messages
+   - Maintain readability of stack traces
 
 ### Fix Applied
 **Files Updated:**
 - `web/src/routes/dashboard/ServiceStatusPage.tsx`
 
 **Changes:**
+
+1. **Status badge symbols**:
 ```typescript
 // Before:
 {isRunning ? '? Running' : '? Stopped'}
@@ -1757,14 +1773,78 @@ The Service Status page displayed literal "?" characters in the service status b
 {isRunning ? '✓ Running' : '✗ Stopped'}
 ```
 
+2. **Error message formatting**:
+```typescript
+// Before:
+<div className="text-sm text-red-300">{status.last_error}</div>
+
+// After:
+<div className="text-xs text-red-300 font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+    {formatErrorMessage(status.last_error)}
+</div>
+```
+
+**New utility function** (`web/src/utils/formatError.ts`):
+- Extracts main error message (before STDERR/STDOUT)
+- Identifies error type and message (e.g., "ValueError: Invalid input")
+- Extracts last 3 stack trace entries for concise debugging
+- Shortens file paths to last 2 parts (e.g., `scipy/_array_api.py`)
+- Removes verbose separators and redundant information
+- Presents information in clean, structured format
+
+**Styling improvements**:
+- `text-xs` - Compact text for readability
+- `font-mono` - Monospace font for code/paths
+- `whitespace-pre-wrap` - Preserves formatting from utility
+- `break-words` - Breaks very long words (file paths)
+- `max-h-48 overflow-y-auto` - Limits height, adds scroll for long errors
+
 ### Test Coverage
-- Manual visual verification of service status page
-- Status badge displays correctly for both running and stopped states
+- **Unit tests**: `web/src/utils/__tests__/formatError.test.ts` - 10 tests covering:
+  - Main error extraction
+  - Error type identification
+  - Stack trace parsing and shortening
+  - File path shortening
+  - Function name inclusion
+  - Empty/null handling
+  - Single-line errors
+  - Multiple stack entries (showing last 3)
+- **Manual verification**:
+  - Service status page displays correctly
+  - Status badge shows proper symbols
+  - Error messages are clean and readable
 
 ### Impact
 - ✅ Clear visual indicators for service status
-- ✅ Better UX with proper status symbols
+- ✅ Readable error messages with proper formatting
+- ✅ Better handling of long stack traces and file paths
+- ✅ Improved UX for debugging and monitoring
 - ✅ More professional appearance
+
+### Example
+
+**Before (Raw):**
+```
+Last Error
+Analysis failed with return code 1 STDERR (tail): ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\scipy\_lib\_array_api.py", line 677, in __str__ cpu = self._render(self.cpu) ^^^^^^^^^^^^^^^^^^^^^^ File "C:\Personal\Projects\TradingView\modular_trade_agent\.venv\Lib\site-packages\scipy\_lib\_array_api.py", line 672, in _render assert len(res) <= 20, "Warnings too long" ^^^^^^^^^^^
+```
+
+**After (Formatted):**
+```
+Last Error
+Analysis failed with return code 1
+
+Stack trace:
+  • scipy/_array_api.py:677 in __str__()
+  • scipy/_array_api.py:672 in _render()
+```
+
+**Key improvements:**
+- ✅ Removed verbose separators (^^^)
+- ✅ Shortened file paths to essential parts
+- ✅ Concise stack trace (only relevant entries)
+- ✅ Clean, structured presentation
+- ✅ Easy to scan and understand
 
 ---
 
