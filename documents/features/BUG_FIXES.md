@@ -1727,4 +1727,45 @@ Sun, Jan 14, 2024  (1 signal)
 
 ---
 
+## Bug #73: Question Mark Symbol in Service Status Badge (LOW)
+
+**Date Fixed**: November 26, 2025
+**Status**: ✅ Fixed
+
+### Description
+The Service Status page displayed literal "?" characters in the service status badge, showing "? Running" or "? Stopped" instead of proper status indicators.
+
+### Root Cause
+- Placeholder "?" characters were hardcoded in the JSX template
+- No proper unicode symbols or icons were implemented for the status badge
+
+### Expected Behavior
+- Display a checkmark (✓) for "Running" status
+- Display an X mark (✗) for "Stopped" status
+- Clear visual distinction between running and stopped states
+
+### Fix Applied
+**Files Updated:**
+- `web/src/routes/dashboard/ServiceStatusPage.tsx`
+
+**Changes:**
+```typescript
+// Before:
+{isRunning ? '? Running' : '? Stopped'}
+
+// After:
+{isRunning ? '✓ Running' : '✗ Stopped'}
+```
+
+### Test Coverage
+- Manual visual verification of service status page
+- Status badge displays correctly for both running and stopped states
+
+### Impact
+- ✅ Clear visual indicators for service status
+- ✅ Better UX with proper status symbols
+- ✅ More professional appearance
+
+---
+
 *Last Updated: November 26, 2025*

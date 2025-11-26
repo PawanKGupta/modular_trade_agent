@@ -99,7 +99,7 @@ export function ServiceStatusPage() {
 				<div className="flex items-center justify-between mb-4">
 					<h2 className="text-lg font-semibold text-[var(--text)]">Service Health</h2>
 					<div className={`px-3 py-1 rounded-full text-sm font-medium ${isRunning ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-						{isRunning ? '? Running' : '? Stopped'}
+						{isRunning ? '✓ Running' : '✗ Stopped'}
 					</div>
 				</div>
 
