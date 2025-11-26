@@ -22,6 +22,14 @@ check_market_timing.pydata_backups/
 data_backups/
 paper_trading/test
 
+# Paper trading runtime data (user-specific files)
+paper_trading/user_*/account.json
+paper_trading/user_*/holdings.json
+paper_trading/user_*/orders.json
+paper_trading/user_*/transactions.json
+paper_trading/user_*/active_sell_orders.json
+paper_trading/user_*/reports/*.json
+
 # Build artifacts (PyInstaller)
 build/
 dist/
