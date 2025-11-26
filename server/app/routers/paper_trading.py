@@ -300,8 +300,8 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                     quantity=order.get("quantity", 0),
                     order_type=order.get("order_type", ""),
                     status=order.get("status", ""),
-                    execution_price=order.get("execution_price")
-                    or order.get("limit_price")
+                    execution_price=order.get("executed_price")  # Fixed: was "execution_price"
+                    or order.get("price")  # For LIMIT orders
                     or None,
                     created_at=order.get("created_at", ""),
                     executed_at=order.get("executed_at"),
