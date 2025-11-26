@@ -1985,4 +1985,163 @@ Showing 1-10 of 50 tasks    [Per page: 10 ▼]  « ‹ Page 1 of 5 › »
 
 ---
 
+## Bug #76: Task Details View Breaking UI with Unformatted Messages (MEDIUM)
+
+**Date Fixed**: November 26, 2025
+**Status**: ✅ Fixed
+
+### Description
+When clicking "View" in the Task Execution History section to see task details, the raw JSON display broke the UI layout. Long strings (especially `stdout_tail` and `stderr_tail`) were displayed unformatted with escaped newlines, causing horizontal overflow and making the content unreadable.
+
+### Root Cause
+- Task details were displayed using raw `JSON.stringify()` output
+- Long log strings showed escaped `\n` instead of actual line breaks
+- Limited height (`max-h-32`) was insufficient for full content
+- No word wrapping for very long lines
+- No special formatting for different field types
+
+### Expected Behavior
+1. Display key metrics (success, return code, results count) prominently
+2. Format log output with actual line breaks (not escaped `\n`)
+3. Truncate very long logs (show last 20 lines)
+4. Proper overflow handling with scrolling
+5. Syntax highlighting for different content types (stdout vs stderr)
+6. Collapsible sections for less important fields
+
+### Fix Applied
+**Files Created:**
+- `web/src/routes/dashboard/TaskDetailsView.tsx` (new component)
+
+**Files Updated:**
+- `web/src/routes/dashboard/ServiceTasksTable.tsx`
+
+**Changes:**
+
+1. **Created TaskDetailsView component** with structured display:
+   - **Key Metrics Grid**: success, return_code, timeout_seconds, max_retries
+   - **Task Metrics (Auto-Extracted)**: Automatically detects and displays any numeric fields ending with:
+     - `_count`, `_placed`, `_modified`, `_closed`, `_updated`, `_deleted`, `_processed`, `_inserted`, `_skipped`, `_failed`, `_retried`
+     - Color-coded by type: red (sell/closed/deleted/failed), green (buy/inserted/processed), yellow (modified/updated/retried), gray (skipped)
+     - Supports ANY service (analysis, buy_monitor, sell_monitor, paper_trading, etc.)
+     - Examples: sell_orders_placed, buy_orders_placed, results_count, orders_modified, positions_closed
+   - **Analysis Summary**: processed, inserted, updated, skipped counts (if provided as nested object)
+   - **Error Details**: Formatted main error field using `formatErrorMessage` utility
+   - **Error Details Extended**: Dedicated section for error_type, error_message, exception fields (prevents these from appearing as raw JSON in "Additional Fields")
+   - **Formatted Output**: stdout_tail with actual line breaks, last 10 lines
+   - **Error Output**: stderr_tail with red styling for visibility
+   - **Other Fields**: Collapsible section for additional data (now much cleaner with error and metric fields automatically extracted)
+
+2. **Log formatting improvements**:
+```typescript
+const formatLogTail = (logTail: string) => {
+    const lines = logTail.split('\n');
+    const displayLines = lines.slice(-20);
+    if (lines.length > 20) {
+        return `... (${lines.length - 20} more lines)\n` + displayLines.join('\n');
+    }
+    return logTail;
+};
+```
+
+3. **Styling improvements**:
+   - Monospace font for logs (`font-mono`)
+   - Proper word wrapping (`whitespace-pre-wrap break-words`)
+   - Scrollable containers (`overflow-y-auto`)
+   - Color coding (green for success, red for errors, yellow for warnings)
+   - Smaller font size for dense log content (`text-[10px]`)
+
+### Test Coverage
+- Manual verification with sample task details
+- Tested with long stdout_tail messages (200+ lines)
+- Verified layout stability with various content types
+- Tested horizontal overflow handling
+
+### UI Improvements Applied
+
+**Layout Redesign:**
+- **Card-Based Layout**: Changed from table to card-based design
+  - Each task is a separate card with rounded borders
+  - Compact collapsed view with no wasted space
+  - Details expand within the same card
+  - Responsive grid layout (Task Name | Executed At | Status | Duration | View)
+  - Animated arrow rotates when expanded
+
+**Visual Design:**
+- **Pills/Badges for Metrics**: Color-coded rounded pills instead of plain grid
+  - Green for success/exit code 0
+  - Red for failures
+  - Blue for results count
+  - Gray for timeout/retries
+- **Analysis Summary Card**: Visual card with large numbers and 4-column grid
+- **Section Icons**: Emojis for visual hierarchy (📊 Analysis, 📝 Output, ⚠️ Errors)
+- **Darker Background**: Better contrast with `#0a0f16` background
+
+**Log Syntax Highlighting:**
+- 🔴 **ERROR** logs in red (`text-red-400`)
+- 🟡 **WARNING** logs in yellow (`text-yellow-400`)
+- 🔵 **INFO** logs in blue (`text-blue-300`)
+- 🟢 **SUCCESS** logs in green (`text-green-400`)
+- ⚪ **Other** logs in muted gray
+
+**Interaction Improvements:**
+- **Optimized Display**:
+  - Lines truncated to 200 characters with expandable details
+  - Font size increased to 11px (from 10px) for better readability
+  - Shows only last 10 lines (reduced from 20) for conciseness
+  - Click truncated lines to expand and see full content
+  - Shows `... [+N chars - click to expand]` for long lines
+  - No horizontal scroll needed for typical content
+- **Smart View Button**:
+  - Always visible in top right corner of each task card
+  - Shows "View" when collapsed, "Close" when expanded
+  - Animated arrow rotates 90° when expanding
+- **Card-Based Layout**: No wasted space in collapsed state
+- Better scrolling with increased max height (`max-h-64`)
+- Cleaner line spacing (`leading-relaxed`)
+- Filtered empty lines for cleaner display
+
+### Impact
+- ✅ Professional, polished UI design
+- ✅ Easy scanning with color-coded log levels
+- ✅ Proper line breaks and formatting
+- ✅ No UI layout breaking
+- ✅ Better debugging experience
+- ✅ Visual hierarchy with icons and badges
+- ✅ Efficient space usage with collapsible sections
+
+### Example
+
+**Before:**
+```
+View
+{
+  "stdout_tail": "line1\nline2\nline3\n...",
+  "success": true,
+  ...
+}
+```
+(Shows escaped `\n`, horizontal overflow, no structure)
+
+**After:**
+```
+View
+Success: Yes    Return Code: 0
+Results: 5      Timeout: 1800s
+
+Analysis Summary:
+  processed: 0    inserted: 0
+  updated: 0      skipped: 5
+
+Output (last 20 lines):
+line1
+line2
+line3
+...
+
+▼ Other Fields (3)
+```
+(Structured, readable, proper line breaks, no overflow)
+
+---
+
 *Last Updated: November 26, 2025*

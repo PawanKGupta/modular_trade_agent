@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { type TaskExecution } from '@/api/service';
+import { TaskDetailsView } from './TaskDetailsView';
 
 interface ServiceTasksTableProps {
 	tasks: TaskExecution[];
@@ -137,9 +138,7 @@ export function ServiceTasksTable({ tasks, isLoading }: ServiceTasksTableProps) 
 									{task.details ? (
 										<details className="cursor-pointer">
 											<summary className="text-blue-400 hover:text-blue-300">View</summary>
-											<pre className="mt-2 p-2 bg-[#0f1720] rounded text-xs overflow-auto max-h-32 text-[var(--text)]">
-												{JSON.stringify(task.details, null, 2)}
-											</pre>
+											<TaskDetailsView details={task.details} />
 										</details>
 									) : (
 										<span className="text-[var(--muted)]">-</span>
