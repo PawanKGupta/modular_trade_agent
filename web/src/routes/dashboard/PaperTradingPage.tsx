@@ -286,6 +286,12 @@ export function PaperTradingPage() {
 							{order_statistics.rejected_orders}
 						</div>
 					</div>
+					<div>
+						<div className="text-sm text-[var(--muted)]">Re-entries</div>
+						<div className="text-lg font-semibold text-yellow-400">
+							{order_statistics.reentry_orders}
+						</div>
+					</div>
 				</div>
 			</div>
 
@@ -320,15 +326,25 @@ export function PaperTradingPage() {
 										</td>
 										<td className="p-2 text-[var(--text)] font-medium">{order.symbol}</td>
 										<td className="p-2">
-											<span
-												className={`px-2 py-0.5 rounded text-xs font-medium ${
-													order.transaction_type === 'BUY'
-														? 'bg-green-500/20 text-green-400'
-														: 'bg-red-500/20 text-red-400'
-												}`}
-											>
-												{order.transaction_type}
-											</span>
+											<div className="flex items-center gap-2">
+												<span
+													className={`px-2 py-0.5 rounded text-xs font-medium ${
+														order.transaction_type === 'BUY'
+															? 'bg-green-500/20 text-green-400'
+															: 'bg-red-500/20 text-red-400'
+													}`}
+												>
+													{order.transaction_type}
+												</span>
+												{order.metadata?.entry_type === 'REENTRY' && (
+													<span
+														className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-500/20 text-yellow-400 cursor-help"
+														title={`Re-entry at RSI ${order.metadata.rsi_value} (Level ${order.metadata.rsi_level})`}
+													>
+														Re-entry
+													</span>
+												)}
+											</div>
 										</td>
 										<td className="p-2">
 											<span className="px-2 py-0.5 rounded text-xs bg-blue-500/20 text-blue-400">

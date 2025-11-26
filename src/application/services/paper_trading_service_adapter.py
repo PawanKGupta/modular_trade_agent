@@ -1309,6 +1309,14 @@ class PaperTradingEngineAdapter:
                             transaction_type=TransactionType.BUY,
                         )
 
+                        # Tag as re-entry with metadata for tracking
+                        reentry_order._metadata = {
+                            "original_ticker": ticker,
+                            "entry_type": "REENTRY",
+                            "rsi_level": next_level,
+                            "rsi_value": round(rsi, 2),
+                        }
+
                         order_id = self.broker.place_order(reentry_order)
 
                         if order_id:

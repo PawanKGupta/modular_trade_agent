@@ -56,6 +56,7 @@ class PaperTradingOrder(BaseModel):
     execution_price: float | None = None
     created_at: str
     executed_at: str | None = None
+    metadata: dict[str, Any] | None = None  # Order metadata (entry_type, rsi_level, etc.)
 
 
 class PaperTradingTransaction(BaseModel):
@@ -304,6 +305,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                     or None,
                     created_at=order.get("created_at", ""),
                     executed_at=order.get("executed_at"),
+                    metadata=order.get("metadata"),  # Include order metadata
                 )
             )
 
@@ -312,6 +314,13 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
         total_orders = stats.get("total_orders", 0)
         success_rate = (
             (stats.get("completed_orders", 0) / total_orders * 100) if total_orders > 0 else 0.0
+        )
+
+        # Count re-entry orders (orders with entry_type="REENTRY" in metadata)
+        reentry_count = sum(
+            1
+            for order in orders_data
+            if order.get("metadata", {}).get("entry_type") == "REENTRY"
         )
 
         order_statistics = {
@@ -323,6 +332,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             "cancelled_orders": stats.get("cancelled_orders", 0),
             "rejected_orders": stats.get("rejected_orders", 0),
             "success_rate": success_rate,
+            "reentry_orders": reentry_count,
         }
 
         return PaperTradingPortfolio(

@@ -34,6 +34,13 @@ export interface PaperTradingOrder {
 	execution_price: number | null;
 	created_at: string;
 	executed_at: string | null;
+	metadata?: {
+		entry_type?: string;
+		rsi_level?: number;
+		rsi_value?: number;
+		original_ticker?: string;
+		exit_reason?: string;
+	};
 }
 
 export interface PaperTradingPortfolio {
@@ -49,6 +56,7 @@ export interface PaperTradingPortfolio {
 		cancelled_orders: number;
 		rejected_orders: number;
 		success_rate: number;
+		reentry_orders: number;
 	};
 }
 
