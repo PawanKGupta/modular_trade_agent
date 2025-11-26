@@ -196,8 +196,13 @@ def test_pnl_calculations_logic():
 
 def test_trade_history_endpoint(tmp_path, monkeypatch, auth_client):
     """Test the trade history endpoint returns transactions and closed positions"""
-    # Create paper trading data files
-    storage_path = tmp_path / "paper_trading" / "user_1"
+    # Get the current user's ID
+    user_resp = auth_client.get("/api/v1/auth/me")
+    assert user_resp.status_code == 200
+    user_id = user_resp.json()["id"]
+
+    # Create paper trading data files for the correct user
+    storage_path = tmp_path / "paper_trading" / f"user_{user_id}"
     storage_path.mkdir(parents=True, exist_ok=True)
 
     # Mock transactions (BUY then SELL of INFY)
