@@ -366,3 +366,377 @@ class TestPaperTradingEngineAdapter:
             call_kwargs = mock_config_class.call_args[1]
             assert call_kwargs["max_position_size"] == 100000.0
 
+    def test_place_new_entries_skips_pending_orders(self, db_session, test_user, mock_paper_broker):
+        """Test that duplicate check includes pending buy orders (not just holdings)"""
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
+        from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType, OrderStatus
+        from config.strategy_config import StrategyConfig
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        # Mock no holdings but has pending order
+        mock_paper_broker.get_holdings.return_value = []
+        
+        # Create a pending buy order for RELIANCE
+        pending_order = MagicMock()
+        pending_order.symbol = "RELIANCE"
+        pending_order.status = OrderStatus.OPEN
+        pending_order.transaction_type = TransactionType.BUY
+        pending_order.is_buy_order.return_value = True
+        pending_order.is_active.return_value = True
+        
+        mock_paper_broker.get_all_orders.return_value = [pending_order]
+        mock_paper_broker.config = MagicMock()
+        mock_paper_broker.config.max_position_size = 100000.0
+
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+
+        recommendations = [
+            Recommendation(
+                ticker="RELIANCE.NS", verdict="buy", last_close=2500.0, execution_capital=100000.0
+            )
+        ]
+
+        summary = adapter.place_new_entries(recommendations)
+
+        # Should skip because of pending order
+        assert summary["attempted"] == 1
+        assert summary["placed"] == 0
+        assert summary["skipped_duplicates"] == 1
+        assert not mock_paper_broker.place_order.called
+
+    def test_place_new_entries_multiple_pending_orders(self, db_session, test_user, mock_paper_broker):
+        """Test duplicate prevention with multiple pending orders"""
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
+        from modules.kotak_neo_auto_trader.domain import OrderStatus, TransactionType
+        from config.strategy_config import StrategyConfig
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        # Mock holdings with one stock
+        mock_holding = MagicMock()
+        mock_holding.symbol = "TCS"
+        mock_paper_broker.get_holdings.return_value = [mock_holding]
+        
+        # Create pending orders
+        pending_reliance = MagicMock()
+        pending_reliance.symbol = "RELIANCE"
+        pending_reliance.status = OrderStatus.OPEN
+        pending_reliance.transaction_type = TransactionType.BUY
+        pending_reliance.is_buy_order.return_value = True
+        pending_reliance.is_active.return_value = True
+        
+        pending_infy = MagicMock()
+        pending_infy.symbol = "INFY"
+        pending_infy.status = OrderStatus.OPEN
+        pending_infy.transaction_type = TransactionType.BUY
+        pending_infy.is_buy_order.return_value = True
+        pending_infy.is_active.return_value = True
+        
+        # Add a completed order (should not block)
+        completed_order = MagicMock()
+        completed_order.symbol = "HDFC"
+        completed_order.status = OrderStatus.EXECUTED
+        completed_order.is_buy_order.return_value = True
+        completed_order.is_active.return_value = False
+        
+        mock_paper_broker.get_all_orders.return_value = [
+            pending_reliance, pending_infy, completed_order
+        ]
+        mock_paper_broker.config = MagicMock()
+        mock_paper_broker.config.max_position_size = 100000.0
+
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+
+        recommendations = [
+            Recommendation(ticker="RELIANCE.NS", verdict="buy", last_close=2500.0),
+            Recommendation(ticker="INFY.NS", verdict="buy", last_close=1450.0),
+            Recommendation(ticker="TCS.NS", verdict="buy", last_close=3500.0),
+            Recommendation(ticker="HDFC.NS", verdict="buy", last_close=1600.0),  # completed order
+        ]
+
+        summary = adapter.place_new_entries(recommendations)
+
+        # All should be skipped (holdings + pending orders + completed but still valid)
+        assert summary["attempted"] == 4
+        assert summary["placed"] == 1  # Only HDFC should be placed (completed order doesn't block)
+        assert summary["skipped_duplicates"] == 3
+
+
+class TestPaperTradingSellMonitoring:
+    """Test frozen EMA9 sell monitoring strategy"""
+
+    @pytest.fixture
+    def adapter_with_holdings(self, db_session, test_user):
+        """Create adapter with mock holdings for sell monitoring tests"""
+        from config.strategy_config import StrategyConfig
+        
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+        
+        mock_broker = MagicMock()
+        mock_broker.is_connected.return_value = True
+        mock_broker.config = MagicMock()
+        mock_broker.config.max_position_size = 100000.0
+        
+        # Mock holdings
+        mock_holding1 = MagicMock()
+        mock_holding1.symbol = "RELIANCE"
+        mock_holding1.quantity = 40
+        mock_holding1.average_price = MagicMock(amount=2500.0)
+        
+        mock_holding2 = MagicMock()
+        mock_holding2.symbol = "TCS"
+        mock_holding2.quantity = 30
+        mock_holding2.average_price = MagicMock(amount=3500.0)
+        
+        mock_broker.get_holdings.return_value = [mock_holding1, mock_holding2]
+        mock_broker.place_order.return_value = "SELL_ORDER_123"
+        
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+        )
+        adapter.broker = mock_broker
+        adapter.engine = PaperTradingEngineAdapter(
+            broker=mock_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=adapter.logger,
+        )
+        
+        return adapter
+
+    def test_place_sell_orders_frozen_ema9(self, db_session, test_user, adapter_with_holdings):
+        """Test that sell orders are placed at frozen EMA9 target"""
+        import pandas as pd
+        from unittest.mock import patch
+        
+        # Mock EMA9 calculation
+        def mock_calculate_ema9(ticker):
+            if "RELIANCE" in ticker:
+                return 2600.0  # EMA9 for RELIANCE
+            elif "TCS" in ticker:
+                return 3600.0  # EMA9 for TCS
+            return None
+        
+        with patch.object(
+            adapter_with_holdings, '_calculate_ema9', side_effect=mock_calculate_ema9
+        ):
+            adapter_with_holdings._place_sell_orders()
+        
+        # Verify sell orders were placed at frozen targets
+        assert len(adapter_with_holdings.active_sell_orders) == 2
+        
+        # Check RELIANCE sell order
+        assert "RELIANCE" in adapter_with_holdings.active_sell_orders
+        reliance_order = adapter_with_holdings.active_sell_orders["RELIANCE"]
+        assert reliance_order["target_price"] == 2600.0
+        assert reliance_order["qty"] == 40
+        
+        # Check TCS sell order
+        assert "TCS" in adapter_with_holdings.active_sell_orders
+        tcs_order = adapter_with_holdings.active_sell_orders["TCS"]
+        assert tcs_order["target_price"] == 3600.0
+        assert tcs_order["qty"] == 30
+
+    def test_sell_orders_not_duplicated(self, db_session, test_user, adapter_with_holdings):
+        """Test that sell orders are not duplicated if already active"""
+        from unittest.mock import patch
+        
+        # Pre-populate active sell orders
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "EXISTING_ORDER",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+        
+        def mock_calculate_ema9(ticker):
+            if "RELIANCE" in ticker:
+                return 2650.0  # Different EMA9 (should NOT update)
+            elif "TCS" in ticker:
+                return 3600.0
+            return None
+        
+        with patch.object(
+            adapter_with_holdings, '_calculate_ema9', side_effect=mock_calculate_ema9
+        ):
+            adapter_with_holdings._place_sell_orders()
+        
+        # RELIANCE should still have original frozen target
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == 2600.0
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["order_id"] == "EXISTING_ORDER"
+        
+        # TCS should have new order
+        assert "TCS" in adapter_with_holdings.active_sell_orders
+        assert adapter_with_holdings.active_sell_orders["TCS"]["target_price"] == 3600.0
+
+    def test_monitor_sell_orders_target_reached(self, db_session, test_user, adapter_with_holdings):
+        """Test exit condition: High >= Frozen Target"""
+        import pandas as pd
+        from unittest.mock import patch
+        
+        # Set up active sell order with frozen target
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_123",
+                "target_price": 2600.0,  # Frozen target
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+                "entry_price": 2500.0,
+            }
+        }
+        
+        # Mock OHLCV data where High >= Target
+        mock_data = pd.DataFrame({
+            "High": [2650.0],  # High >= 2600.0 (target reached!)
+            "Close": [2620.0],
+            "RSI10": [45.0],  # RSI < 50 (not triggered)
+        })
+        
+        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
+            with patch("pandas_ta.rsi") as mock_rsi:
+                mock_data["RSI10"] = 45.0
+                mock_rsi.return_value = pd.Series([45.0])
+                
+                adapter_with_holdings._monitor_sell_orders()
+        
+        # Order should be removed (target reached)
+        assert "RELIANCE" not in adapter_with_holdings.active_sell_orders
+
+    def test_monitor_sell_orders_rsi_exit(self, db_session, test_user, adapter_with_holdings):
+        """Test exit condition: RSI > 50 (falling knife)"""
+        import pandas as pd
+        from unittest.mock import patch
+        
+        # Set up active sell order
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_123",
+                "target_price": 2600.0,  # Target not reached
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+        
+        # Mock OHLCV data where RSI > 50 but High < Target
+        mock_data = pd.DataFrame({
+            "High": [2550.0],  # High < Target (not reached)
+            "Close": [2520.0],
+            "RSI10": [52.0],  # RSI > 50 (falling knife exit!)
+        })
+        
+        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
+            with patch("pandas_ta.rsi") as mock_rsi:
+                mock_data["RSI10"] = 52.0
+                mock_rsi.return_value = pd.Series([52.0])
+                
+                adapter_with_holdings._monitor_sell_orders()
+        
+        # Order should be removed (RSI exit triggered)
+        assert "RELIANCE" not in adapter_with_holdings.active_sell_orders
+        
+        # Verify market order was placed
+        assert adapter_with_holdings.broker.place_order.called
+        call_args = adapter_with_holdings.broker.place_order.call_args
+        market_order = call_args[0][0]
+        assert market_order.transaction_type.name == "SELL"
+        assert market_order.order_type.name == "MARKET"
+
+    def test_monitor_sell_orders_no_exit(self, db_session, test_user, adapter_with_holdings):
+        """Test that order remains active when neither exit condition is met"""
+        import pandas as pd
+        from unittest.mock import patch
+        
+        # Set up active sell order
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_123",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+        
+        # Mock OHLCV data where neither exit condition is met
+        mock_data = pd.DataFrame({
+            "High": [2580.0],  # High < Target
+            "Close": [2560.0],
+            "RSI10": [45.0],  # RSI < 50
+        })
+        
+        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
+            with patch("pandas_ta.rsi") as mock_rsi:
+                mock_data["RSI10"] = 45.0
+                mock_rsi.return_value = pd.Series([45.0])
+                
+                adapter_with_holdings._monitor_sell_orders()
+        
+        # Order should still be active
+        assert "RELIANCE" in adapter_with_holdings.active_sell_orders
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == 2600.0
+
+    def test_frozen_target_never_updates(self, db_session, test_user, adapter_with_holdings):
+        """Test that frozen target price NEVER updates after initial placement"""
+        import pandas as pd
+        from unittest.mock import patch
+        
+        initial_target = 2600.0
+        
+        # Set up active sell order
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_123",
+                "target_price": initial_target,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+        
+        # Mock data where EMA9 has changed significantly
+        mock_data = pd.DataFrame({
+            "High": [2580.0],
+            "Close": [2560.0],
+            "RSI10": [45.0],
+        })
+        
+        # Mock EMA9 calculation returning different value
+        def mock_calculate_ema9(ticker):
+            return 2700.0  # EMA9 has moved up significantly!
+        
+        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
+            with patch("pandas_ta.rsi") as mock_rsi:
+                mock_data["RSI10"] = 45.0
+                mock_rsi.return_value = pd.Series([45.0])
+                
+                with patch.object(
+                    adapter_with_holdings, '_calculate_ema9', side_effect=mock_calculate_ema9
+                ):
+                    adapter_with_holdings._monitor_sell_orders()
+        
+        # Target should STILL be frozen at original value
+        assert "RELIANCE" in adapter_with_holdings.active_sell_orders
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == initial_target
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] != 2700.0
+
