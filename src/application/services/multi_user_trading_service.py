@@ -147,10 +147,9 @@ class MultiUserTradingService:
                     if sell_schedule and sell_schedule.enabled and sell_schedule.is_continuous:
                         start_time = sell_schedule.schedule_time
                         end_time = sell_schedule.end_time or dt_time(15, 30)
-                        if (
-                            current_time >= dt_time(start_time.hour, start_time.minute)
-                            and current_time <= dt_time(end_time.hour, end_time.minute)
-                        ):
+                        if current_time >= dt_time(
+                            start_time.hour, start_time.minute
+                        ) and current_time <= dt_time(end_time.hour, end_time.minute):
                             try:
                                 service.run_sell_monitor()
                             except Exception as e:
@@ -162,12 +161,21 @@ class MultiUserTradingService:
 
                     # Position monitoring (hourly, uses DB schedule)
                     position_schedule = self._schedule_manager.get_schedule("position_monitor")
-                    if position_schedule and position_schedule.enabled and position_schedule.is_hourly:
+                    if (
+                        position_schedule
+                        and position_schedule.enabled
+                        and position_schedule.is_hourly
+                    ):
                         start_time = position_schedule.schedule_time
                         # Run hourly at the scheduled minute (e.g., every hour at :30)
-                        if current_time.minute == start_time.minute and start_time.hour <= now.hour <= 15:  # noqa: PLR2004
+                        if (
+                            current_time.minute == start_time.minute
+                            and start_time.hour <= now.hour <= 15
+                        ):  # noqa: PLR2004
                             hour_key = now.strftime("%Y-%m-%d %H")
-                            if not service.tasks_completed.get("position_monitor", {}).get(hour_key):
+                            if not service.tasks_completed.get("position_monitor", {}).get(
+                                hour_key
+                            ):
                                 try:
                                     service.run_position_monitor()
                                 except Exception as e:
@@ -193,7 +201,9 @@ class MultiUserTradingService:
                                     from src.application.services.individual_service_manager import (  # noqa: PLC0415
                                         IndividualServiceManager,
                                     )
-                                    from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
+                                    from src.infrastructure.db.session import (
+                                        SessionLocal,  # noqa: PLC0415
+                                    )
 
                                     user_logger.info(
                                         f"Starting analysis task (scheduled at {analysis_time})",
@@ -212,11 +222,13 @@ class MultiUserTradingService:
                                         if success:
                                             service.tasks_completed["analysis"] = True
                                             user_logger.info(
-                                                f"Analysis task triggered: {message}", action="scheduler"
+                                                f"Analysis task triggered: {message}",
+                                                action="scheduler",
                                             )
                                         else:
                                             user_logger.warning(
-                                                f"Failed to trigger analysis: {message}", action="scheduler"
+                                                f"Failed to trigger analysis: {message}",
+                                                action="scheduler",
                                             )
                                     finally:
                                         analysis_db.close()
@@ -272,7 +284,9 @@ class MultiUserTradingService:
 
                         # Log heartbeat every 5 minutes
                         heartbeat_counter += 1
-                        if heartbeat_counter == 1 or heartbeat_counter % 300 == 0:  # First update, then every 5 minutes
+                        if (
+                            heartbeat_counter == 1 or heartbeat_counter % 300 == 0
+                        ):  # First update, then every 5 minutes
                             user_logger.info(
                                 f"💓 Scheduler heartbeat (running for {heartbeat_counter // 60} minutes)",
                                 action="scheduler",

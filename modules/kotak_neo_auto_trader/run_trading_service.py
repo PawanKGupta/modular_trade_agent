@@ -114,6 +114,7 @@ class TradingService:
 
         # Initialize schedule manager for dynamic task scheduling
         from src.application.services.schedule_manager import ScheduleManager  # noqa: PLC0415
+
         self._schedule_manager = ScheduleManager(db_session)
         self.shutdown_requested = False
 
@@ -1063,7 +1064,10 @@ class TradingService:
                         premarket_schedule = self._schedule_manager.get_schedule("premarket_retry")
                         if premarket_schedule and premarket_schedule.enabled:
                             premarket_time = premarket_schedule.schedule_time
-                            if self.should_run_task("premarket_retry", dt_time(premarket_time.hour, premarket_time.minute)):
+                            if self.should_run_task(
+                                "premarket_retry",
+                                dt_time(premarket_time.hour, premarket_time.minute),
+                            ):
                                 self.run_premarket_retry()
 
                         # Pre-market AMO quantity adjustment (hardcoded 9:05 AM - 5 mins after premarket retry)
@@ -1075,36 +1079,50 @@ class TradingService:
                         if sell_schedule and sell_schedule.enabled and sell_schedule.is_continuous:
                             start_time = sell_schedule.schedule_time
                             end_time = sell_schedule.end_time or dt_time(15, 30)
-                            if (current_time >= dt_time(start_time.hour, start_time.minute)
-                                and current_time <= dt_time(end_time.hour, end_time.minute)):
+                            if current_time >= dt_time(
+                                start_time.hour, start_time.minute
+                            ) and current_time <= dt_time(end_time.hour, end_time.minute):
                                 self.run_sell_monitor()
 
                         # Position monitoring (hourly, uses DB schedule)
                         position_schedule = self._schedule_manager.get_schedule("position_monitor")
-                        if position_schedule and position_schedule.enabled and position_schedule.is_hourly:
+                        if (
+                            position_schedule
+                            and position_schedule.enabled
+                            and position_schedule.is_hourly
+                        ):
                             start_time = position_schedule.schedule_time
-                            if current_time.minute == start_time.minute and start_time.hour <= current_time.hour <= 15:
+                            if (
+                                current_time.minute == start_time.minute
+                                and start_time.hour <= current_time.hour <= 15
+                            ):
                                 self.run_position_monitor()
 
                         # Analysis (uses DB schedule)
                         analysis_schedule = self._schedule_manager.get_schedule("analysis")
                         if analysis_schedule and analysis_schedule.enabled:
                             analysis_time = analysis_schedule.schedule_time
-                            if self.should_run_task("analysis", dt_time(analysis_time.hour, analysis_time.minute)):
+                            if self.should_run_task(
+                                "analysis", dt_time(analysis_time.hour, analysis_time.minute)
+                            ):
                                 self.run_analysis()
 
                         # Buy orders (uses DB schedule)
                         buy_schedule = self._schedule_manager.get_schedule("buy_orders")
                         if buy_schedule and buy_schedule.enabled:
                             buy_time = buy_schedule.schedule_time
-                            if self.should_run_task("buy_orders", dt_time(buy_time.hour, buy_time.minute)):
+                            if self.should_run_task(
+                                "buy_orders", dt_time(buy_time.hour, buy_time.minute)
+                            ):
                                 self.run_buy_orders()
 
                         # EOD cleanup (uses DB schedule)
                         eod_schedule = self._schedule_manager.get_schedule("eod_cleanup")
                         if eod_schedule and eod_schedule.enabled:
                             eod_time = eod_schedule.schedule_time
-                            if self.should_run_task("eod_cleanup", dt_time(eod_time.hour, eod_time.minute)):
+                            if self.should_run_task(
+                                "eod_cleanup", dt_time(eod_time.hour, eod_time.minute)
+                            ):
                                 self.run_eod_cleanup()
 
                 # Periodic heartbeat log (every 5 minutes to show service is alive)
