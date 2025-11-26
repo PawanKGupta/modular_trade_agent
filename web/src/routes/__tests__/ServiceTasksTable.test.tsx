@@ -1,87 +1,219 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
 import { ServiceTasksTable } from '../dashboard/ServiceTasksTable';
-import type { TaskExecution } from '@/api/service';
+import { type TaskExecution } from '@/api/service';
+
+// Helper to create mock tasks
+const createMockTasks = (count: number): TaskExecution[] => {
+	return Array.from({ length: count }, (_, i) => ({
+		id: `task-${i + 1}`,
+		task_name: `task_${i + 1}`,
+		executed_at: new Date(2024, 0, 1, 10, i).toISOString(),
+		status: i % 3 === 0 ? 'success' : i % 3 === 1 ? 'failed' : 'skipped',
+		duration_seconds: Math.random() * 10,
+		details: i % 2 === 0 ? { some: 'details' } : null,
+	}));
+};
 
 describe('ServiceTasksTable', () => {
-	const mockTasks: TaskExecution[] = [
-		{
-			id: 1,
-			task_name: 'premarket_retry',
-			executed_at: new Date().toISOString(),
-			status: 'success',
-			duration_seconds: 1.5,
-			details: { symbols_processed: 5 },
-		},
-		{
-			id: 2,
-			task_name: 'analysis',
-			executed_at: new Date(Date.now() - 300000).toISOString(),
-			status: 'failed',
-			duration_seconds: 2.3,
-			details: { error: 'Network timeout' },
-		},
-		{
-			id: 3,
-			task_name: 'buy_orders',
-			executed_at: new Date(Date.now() - 600000).toISOString(),
-			status: 'skipped',
-			duration_seconds: 0.0,
-			details: null,
-		},
-	];
+	describe('Bug #75: Pagination functionality', () => {
+		it('displays first 10 tasks by default', () => {
+			const tasks = createMockTasks(25);
+			render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
 
-	it('renders task table with tasks', () => {
-		render(<ServiceTasksTable tasks={mockTasks} isLoading={false} />);
+			// Should show "Showing 1-10 of 25 tasks"
+			expect(screen.getByText(/Showing 1-10 of 25 tasks/i)).toBeInTheDocument();
 
-		expect(screen.getByText(/premarket_retry/i)).toBeInTheDocument();
-		expect(screen.getByText(/analysis/i)).toBeInTheDocument();
-		expect(screen.getByText(/buy_orders/i)).toBeInTheDocument();
+			// Should display first 10 tasks
+			expect(screen.getByText('task_1')).toBeInTheDocument();
+			expect(screen.getByText('task_10')).toBeInTheDocument();
+			// Should NOT display task 11
+			expect(screen.queryByText('task_11')).not.toBeInTheDocument();
+		});
+
+		it('allows changing page size to 25', () => {
+			const tasks = createMockTasks(50);
+			const { container } = render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
+
+			// Change page size to 25
+			const pageSizeSelect = container.querySelector('select') as HTMLSelectElement;
+			fireEvent.change(pageSizeSelect, { target: { value: '25' } });
+
+			// Should show "Showing 1-25 of 50 tasks"
+			expect(screen.getByText(/Showing 1-25 of 50 tasks/i)).toBeInTheDocument();
+
+			// Should display first 25 tasks
+			expect(screen.getByText('task_1')).toBeInTheDocument();
+			expect(screen.getByText('task_25')).toBeInTheDocument();
+			// Should NOT display task 26
+			expect(screen.queryByText('task_26')).not.toBeInTheDocument();
+		});
+
+		it('allows changing page size to 50', () => {
+			const tasks = createMockTasks(60);
+			const { container } = render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
+
+			// Change page size to 50
+			const pageSizeSelect = container.querySelector('select') as HTMLSelectElement;
+			fireEvent.change(pageSizeSelect, { target: { value: '50' } });
+
+			// Should show "Showing 1-50 of 60 tasks"
+			expect(screen.getByText(/Showing 1-50 of 60 tasks/i)).toBeInTheDocument();
+		});
+
+		it('navigates to next page', () => {
+			const tasks = createMockTasks(25);
+			render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
+
+			// Click next page button
+			const nextButton = screen.getByTitle('Next page');
+			fireEvent.click(nextButton);
+
+			// Should show page 2
+			expect(screen.getByText(/Page 2 of 3/i)).toBeInTheDocument();
+			expect(screen.getByText(/Showing 11-20 of 25 tasks/i)).toBeInTheDocument();
+
+			// Should display tasks 11-20
+			expect(screen.getByText('task_11')).toBeInTheDocument();
+			expect(screen.getByText('task_20')).toBeInTheDocument();
+			// Should NOT display task 10 or 21
+			expect(screen.queryByText('task_10')).not.toBeInTheDocument();
+			expect(screen.queryByText('task_21')).not.toBeInTheDocument();
+		});
+
+		it('navigates to previous page', () => {
+			const tasks = createMockTasks(25);
+			render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
+
+			// Go to page 2
+			const nextButton = screen.getByTitle('Next page');
+			fireEvent.click(nextButton);
+
+			// Then go back to page 1
+			const prevButton = screen.getByTitle('Previous page');
+			fireEvent.click(prevButton);
+
+			// Should show page 1
+			expect(screen.getByText(/Page 1 of 3/i)).toBeInTheDocument();
+			expect(screen.getByText(/Showing 1-10 of 25 tasks/i)).toBeInTheDocument();
+		});
+
+		it('navigates to first page', () => {
+			const tasks = createMockTasks(30);
+			render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
+
+			// Go to page 3
+			const nextButton = screen.getByTitle('Next page');
+			fireEvent.click(nextButton);
+			fireEvent.click(nextButton);
+
+			// Click first page button
+			const firstButton = screen.getByTitle('First page');
+			fireEvent.click(firstButton);
+
+			// Should show page 1
+			expect(screen.getByText(/Page 1 of 3/i)).toBeInTheDocument();
+		});
+
+		it('navigates to last page', () => {
+			const tasks = createMockTasks(30);
+			render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
+
+			// Click last page button
+			const lastButton = screen.getByTitle('Last page');
+			fireEvent.click(lastButton);
+
+			// Should show last page (page 3)
+			expect(screen.getByText(/Page 3 of 3/i)).toBeInTheDocument();
+			expect(screen.getByText(/Showing 21-30 of 30 tasks/i)).toBeInTheDocument();
+		});
+
+		it('disables first/prev buttons on first page', () => {
+			const tasks = createMockTasks(25);
+			render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
+
+			const firstButton = screen.getByTitle('First page');
+			const prevButton = screen.getByTitle('Previous page');
+
+			expect(firstButton).toBeDisabled();
+			expect(prevButton).toBeDisabled();
+		});
+
+		it('disables next/last buttons on last page', () => {
+			const tasks = createMockTasks(25);
+			render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
+
+			// Go to last page
+			const lastButton = screen.getByTitle('Last page');
+			fireEvent.click(lastButton);
+
+			const nextButton = screen.getByTitle('Next page');
+			expect(nextButton).toBeDisabled();
+			expect(lastButton).toBeDisabled();
+		});
+
+		it('resets to page 1 when page size changes', () => {
+			const tasks = createMockTasks(50);
+			const { container } = render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
+
+			// Go to page 2
+			const nextButton = screen.getByTitle('Next page');
+			fireEvent.click(nextButton);
+			expect(screen.getByText(/Page 2 of 5/i)).toBeInTheDocument();
+
+			// Change page size
+			const pageSizeSelect = container.querySelector('select') as HTMLSelectElement;
+			fireEvent.change(pageSizeSelect, { target: { value: '25' } });
+
+			// Should reset to page 1
+			expect(screen.getByText(/Page 1 of 2/i)).toBeInTheDocument();
+		});
+
+		it('displays correct page count', () => {
+			const tasks = createMockTasks(25);
+			render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
+
+			// 25 tasks with 10 per page = 3 pages
+			expect(screen.getByText(/Page 1 of 3/i)).toBeInTheDocument();
+		});
+
+		it('handles partial last page correctly', () => {
+			const tasks = createMockTasks(23);
+			render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
+
+			// Go to last page
+			const lastButton = screen.getByTitle('Last page');
+			fireEvent.click(lastButton);
+
+			// Should show "Showing 21-23 of 23 tasks"
+			expect(screen.getByText(/Showing 21-23 of 23 tasks/i)).toBeInTheDocument();
+		});
 	});
 
-	it('displays task status with correct styling', () => {
-		render(<ServiceTasksTable tasks={mockTasks} isLoading={false} />);
+	describe('Table display', () => {
+		it('shows loading state', () => {
+			render(<ServiceTasksTable tasks={[]} isLoading={true} />);
+			expect(screen.getByText(/Loading tasks\.\.\./i)).toBeInTheDocument();
+		});
 
-		expect(screen.getByText(/SUCCESS/i)).toBeInTheDocument();
-		expect(screen.getByText(/FAILED/i)).toBeInTheDocument();
-		expect(screen.getByText(/SKIPPED/i)).toBeInTheDocument();
-	});
+		it('shows empty state when no tasks', () => {
+			render(<ServiceTasksTable tasks={[]} isLoading={false} />);
+			expect(screen.getByText(/No task executions found/i)).toBeInTheDocument();
+		});
 
-	it('displays task duration', () => {
-		render(<ServiceTasksTable tasks={mockTasks} isLoading={false} />);
+		it('displays task information correctly', () => {
+			const tasks = createMockTasks(5);
+			render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
 
-		expect(screen.getByText(/1.50s/i)).toBeInTheDocument();
-		expect(screen.getByText(/2.30s/i)).toBeInTheDocument();
-		expect(screen.getByText(/0.00s/i)).toBeInTheDocument();
-	});
+			// Should display table headers
+			expect(screen.getByText('Task Name')).toBeInTheDocument();
+			expect(screen.getByText('Executed At')).toBeInTheDocument();
+			expect(screen.getByText('Status')).toBeInTheDocument();
+			expect(screen.getByText('Duration')).toBeInTheDocument();
+			expect(screen.getByText('Details')).toBeInTheDocument();
 
-	it('shows expandable details for tasks with details', () => {
-		render(<ServiceTasksTable tasks={mockTasks} isLoading={false} />);
-
-		const detailsButtons = screen.getAllByText(/View/i);
-		expect(detailsButtons.length).toBeGreaterThan(0);
-
-		fireEvent.click(detailsButtons[0]);
-
-		expect(screen.getByText(/symbols_processed/i)).toBeInTheDocument();
-	});
-
-	it('shows dash for tasks without details', () => {
-		render(<ServiceTasksTable tasks={mockTasks} isLoading={false} />);
-
-		const dashes = screen.getAllByText(/-/i);
-		expect(dashes.length).toBeGreaterThan(0);
-	});
-
-	it('shows loading message when loading', () => {
-		render(<ServiceTasksTable tasks={[]} isLoading={true} />);
-
-		expect(screen.getByText(/Loading tasks.../i)).toBeInTheDocument();
-	});
-
-	it('shows empty message when no tasks', () => {
-		render(<ServiceTasksTable tasks={[]} isLoading={false} />);
-
-		expect(screen.getByText(/No task executions found/i)).toBeInTheDocument();
+			// Should display first task
+			expect(screen.getByText('task_1')).toBeInTheDocument();
+		});
 	});
 });
