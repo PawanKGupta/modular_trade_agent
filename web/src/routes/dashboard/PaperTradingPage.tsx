@@ -12,7 +12,7 @@ function formatPercent(value: number): string {
 }
 
 export function PaperTradingPage() {
-	const { data, isLoading, error, refetch } = useQuery<PaperTradingPortfolio>({
+	const { data, isLoading, error, refetch, dataUpdatedAt } = useQuery<PaperTradingPortfolio>({
 		queryKey: ['paper-trading-portfolio'],
 		queryFn: getPaperTradingPortfolio,
 		refetchInterval: 5000, // Refresh every 5 seconds for live P&L
@@ -21,6 +21,9 @@ export function PaperTradingPage() {
 	useEffect(() => {
 		document.title = 'Paper Trading Portfolio';
 	}, []);
+
+	// Format last update time
+	const lastUpdate = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : 'Never';
 
 	if (isLoading) {
 		return (
@@ -57,7 +60,15 @@ export function PaperTradingPage() {
 	return (
 		<div className="p-4 space-y-4">
 			<div className="flex items-center justify-between">
-				<h1 className="text-xl font-semibold text-[var(--text)]">Paper Trading Portfolio</h1>
+				<div className="flex items-center gap-3">
+					<h1 className="text-xl font-semibold text-[var(--text)]">Paper Trading Portfolio</h1>
+					<div className="flex items-center gap-2">
+						<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+						<span className="text-xs text-[var(--muted)]">
+							Live • Last update: {lastUpdate}
+						</span>
+					</div>
+				</div>
 				<button
 					onClick={() => refetch()}
 					className="px-3 py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90"
@@ -294,6 +305,7 @@ export function PaperTradingPage() {
 								<tr>
 									<th className="text-left p-2">Time</th>
 									<th className="text-left p-2">Symbol</th>
+									<th className="text-left p-2">Side</th>
 									<th className="text-left p-2">Type</th>
 									<th className="text-right p-2">Qty</th>
 									<th className="text-right p-2">Price</th>
@@ -307,7 +319,22 @@ export function PaperTradingPage() {
 											{new Date(order.created_at).toLocaleString()}
 										</td>
 										<td className="p-2 text-[var(--text)] font-medium">{order.symbol}</td>
-										<td className="p-2 text-[var(--text)]">{order.transaction_type}</td>
+										<td className="p-2">
+											<span
+												className={`px-2 py-0.5 rounded text-xs font-medium ${
+													order.transaction_type === 'BUY'
+														? 'bg-green-500/20 text-green-400'
+														: 'bg-red-500/20 text-red-400'
+												}`}
+											>
+												{order.transaction_type}
+											</span>
+										</td>
+										<td className="p-2">
+											<span className="px-2 py-0.5 rounded text-xs bg-blue-500/20 text-blue-400">
+												{order.order_type}
+											</span>
+										</td>
 										<td className="p-2 text-right text-[var(--text)]">{order.quantity}</td>
 										<td className="p-2 text-right text-[var(--text)]">
 											{order.execution_price
