@@ -86,6 +86,11 @@ class PaperTradingServiceAdapter:
         # Format: {symbol: {'order_id': str, 'target_price': float,
         #                   'qty': int, 'entry_date': str, 'ticker': str}}
         self.active_sell_orders = {}
+        self._sell_orders_file = Path(self.storage_path) / "active_sell_orders.json"
+
+        # Service state (for scheduler control)
+        self.running = False
+        self.shutdown_requested = False
 
     def initialize(self) -> bool:
         """
@@ -140,6 +145,29 @@ class PaperTradingServiceAdapter:
                 return False
 
             self.logger.info("? Paper trading broker connected", action="initialize")
+
+            # Execute any pending MARKET orders from previous sessions
+            try:
+                pending_orders = self.broker.get_pending_orders()
+                market_orders = [o for o in pending_orders if o.order_type.value == "MARKET"]
+                if market_orders:
+                    self.logger.info(
+                        f"Found {len(market_orders)} pending MARKET orders from previous session",
+                        action="initialize",
+                    )
+                    for order in market_orders:
+                        self.logger.info(
+                            f"Executing pending order: {order.symbol} x{order.quantity}",
+                            action="initialize",
+                        )
+                        self.broker._execute_order(order)
+                    self.logger.info(
+                        f"Executed {len(market_orders)} pending orders", action="initialize"
+                    )
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to execute pending orders: {e}", action="initialize"
+                )
 
             # Initialize reporter
             self.reporter = PaperTradeReporter(self.broker.store)
@@ -566,6 +594,9 @@ class PaperTradingServiceAdapter:
             action="_place_sell_orders",
         )
 
+        # Save active sell orders to JSON for UI display
+        self._save_sell_orders_to_file()
+
     def _monitor_sell_orders(self):
         """
         Monitor sell orders for exit conditions (matches backtest strategy).
@@ -590,20 +621,20 @@ class PaperTradingServiceAdapter:
                 ticker = order_info["ticker"]
                 target_price = order_info["target_price"]  # FROZEN - never changes!
 
-                # Fetch recent data for exit condition checks
-                data = fetch_ohlcv_yf(ticker, days=30, interval="1d")
+                # Fetch recent data for exit condition checks (60 days for stable indicators)
+                data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
 
                 if data is None or data.empty:
                     continue
 
                 # Get today's data
                 latest = data.iloc[-1]
-                high = latest["High"]
-                close = latest["Close"]
+                high = latest["high"]
+                close = latest["close"]
 
                 # Calculate RSI for exit condition 2
-                data["RSI10"] = ta.rsi(data["Close"], length=10)
-                rsi = data.iloc[-1]["RSI10"]
+                data["rsi10"] = ta.rsi(data["close"], length=10)
+                rsi = data.iloc[-1]["rsi10"]
 
                 # Exit Condition 1: High >= Frozen Target (primary exit)
                 if high >= target_price:
@@ -687,6 +718,24 @@ class PaperTradingServiceAdapter:
                 f"Active orders: {len(self.active_sell_orders)}",
                 action="_monitor_sell_orders",
             )
+            # Update saved file after removing executed orders
+            self._save_sell_orders_to_file()
+
+    def _save_sell_orders_to_file(self):
+        """Save active sell orders to JSON file for UI display"""
+        try:
+            import json
+
+            self._sell_orders_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._sell_orders_file, 'w') as f:
+                json.dump(self.active_sell_orders, f, indent=2)
+
+            self.logger.debug(
+                f"Saved {len(self.active_sell_orders)} sell orders to {self._sell_orders_file}",
+                action="_save_sell_orders_to_file",
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to save sell orders to file: {e}")
 
     def _calculate_ema9(self, ticker: str) -> float | None:
         """
@@ -710,8 +759,8 @@ class PaperTradingServiceAdapter:
                 return None
 
             # Calculate EMA9
-            data["EMA9"] = ta.ema(data["Close"], length=9)
-            ema9 = data.iloc[-1]["EMA9"]
+            data["ema9"] = ta.ema(data["close"], length=9)
+            ema9 = data.iloc[-1]["ema9"]
 
             return float(ema9) if not pd.isna(ema9) else None
 

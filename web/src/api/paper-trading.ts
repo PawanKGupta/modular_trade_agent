@@ -20,6 +20,8 @@ export interface PaperTradingHolding {
 	market_value: number;
 	pnl: number;
 	pnl_percentage: number;
+	target_price: number | null;  // Frozen EMA9 target
+	distance_to_target: number | null;  // % to reach target
 }
 
 export interface PaperTradingOrder {

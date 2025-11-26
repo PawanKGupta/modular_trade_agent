@@ -4,15 +4,14 @@ Paper Trading API endpoints
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Users
 from modules.kotak_neo_auto_trader.infrastructure.persistence import PaperTradeStore
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
+from src.infrastructure.db.models import Users
 
 from ..core.deps import get_current_user, get_db
 
@@ -41,6 +40,8 @@ class PaperTradingHolding(BaseModel):
     market_value: float
     pnl: float
     pnl_percentage: float
+    target_price: float | None = None  # Frozen EMA9 target
+    distance_to_target: float | None = None  # % to reach target
 
 
 class PaperTradingOrder(BaseModel):
@@ -50,9 +51,9 @@ class PaperTradingOrder(BaseModel):
     quantity: int
     order_type: str
     status: str
-    execution_price: Optional[float] = None
+    execution_price: float | None = None
     created_at: str
-    executed_at: Optional[str] = None
+    executed_at: str | None = None
 
 
 class PaperTradingPortfolio(BaseModel):
@@ -63,8 +64,8 @@ class PaperTradingPortfolio(BaseModel):
 
 
 @router.get("/portfolio", response_model=PaperTradingPortfolio)
-def get_paper_trading_portfolio(
-    db: Session = Depends(get_db), current: Users = Depends(get_current_user)
+def get_paper_trading_portfolio(  # noqa: PLR0915
+    db: Session = Depends(get_db), current: Users = Depends(get_current_user)  # noqa: B008
 ):
     """Get paper trading portfolio for the current user"""
     try:
@@ -109,8 +110,7 @@ def get_paper_trading_portfolio(
         # Calculate portfolio value
         holdings_data = store.get_all_holdings()
         portfolio_value = sum(
-            h.get("quantity", 0) * float(h.get("current_price", 0))
-            for h in holdings_data.values()
+            h.get("quantity", 0) * float(h.get("current_price", 0)) for h in holdings_data.values()
         )
         total_value = account_data["available_cash"] + portfolio_value
         return_pct = (
@@ -131,6 +131,46 @@ def get_paper_trading_portfolio(
             return_percentage=return_pct,
         )
 
+        # Load target prices from service adapter's active_sell_orders
+        target_prices = {}
+        try:
+            # Try to load active sell orders from service adapter storage
+            import json
+
+            sell_orders_file = store_path / "active_sell_orders.json"
+            if sell_orders_file.exists():
+                with open(sell_orders_file) as f:
+                    active_sell_orders = json.load(f)
+                    for symbol, order_info in active_sell_orders.items():
+                        target_prices[symbol] = float(order_info.get("target_price", 0))
+                        logger.debug(f"Loaded target for {symbol}: {target_prices[symbol]}")
+        except Exception as e:
+            logger.debug(f"Could not load target prices: {e}")
+
+        # Calculate target prices on-the-fly if not available
+        def calculate_ema9_target(symbol: str) -> float | None:
+            """Calculate EMA9 target for a holding"""
+            try:
+                import pandas_ta as ta
+
+                from core.data_fetcher import fetch_ohlcv_yf
+
+                ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+                data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
+
+                if data is None or data.empty:
+                    return None
+
+                data["EMA9"] = ta.ema(data["Close"], length=9)
+                ema9 = data.iloc[-1]["EMA9"]
+
+                return (
+                    float(ema9) if not data.iloc[-1]["EMA9"] != data.iloc[-1]["EMA9"] else None
+                )  # Check for NaN
+            except Exception as e:
+                logger.debug(f"Failed to calculate EMA9 for {symbol}: {e}")
+                return None
+
         # Holdings
         holdings = []
         for symbol, holding in sorted(holdings_data.items()):
@@ -142,6 +182,16 @@ def get_paper_trading_portfolio(
             pnl = market_value - cost_basis
             pnl_pct = ((current_price - avg_price) / avg_price * 100) if avg_price > 0 else 0.0
 
+            # Get target price (frozen EMA9) if available, or calculate it
+            target_price = target_prices.get(symbol)
+            if target_price is None:
+                # Calculate on-the-fly if no sell order placed yet
+                target_price = calculate_ema9_target(symbol)
+
+            distance_to_target = None
+            if target_price and current_price > 0:
+                distance_to_target = (target_price - current_price) / current_price * 100
+
             holdings.append(
                 PaperTradingHolding(
                     symbol=symbol,
@@ -152,6 +202,8 @@ def get_paper_trading_portfolio(
                     market_value=market_value,
                     pnl=pnl,
                     pnl_percentage=pnl_pct,
+                    target_price=target_price,
+                    distance_to_target=distance_to_target,
                 )
             )
 
@@ -205,4 +257,3 @@ def get_paper_trading_portfolio(
     except Exception as e:
         logger.exception(f"Error fetching paper trading portfolio for user {current.id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch portfolio: {str(e)}")
-

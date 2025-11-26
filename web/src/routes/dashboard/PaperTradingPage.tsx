@@ -15,7 +15,7 @@ export function PaperTradingPage() {
 	const { data, isLoading, error, refetch } = useQuery<PaperTradingPortfolio>({
 		queryKey: ['paper-trading-portfolio'],
 		queryFn: getPaperTradingPortfolio,
-		refetchInterval: 30000, // Refresh every 30 seconds
+		refetchInterval: 5000, // Refresh every 5 seconds for live P&L
 	});
 
 	useEffect(() => {
@@ -157,7 +157,8 @@ export function PaperTradingPage() {
 									<th className="text-right p-2">Quantity</th>
 									<th className="text-right p-2">Avg Price</th>
 									<th className="text-right p-2">Current</th>
-									<th className="text-right p-2">Cost Basis</th>
+									<th className="text-right p-2">Target</th>
+									<th className="text-right p-2">To Target</th>
 									<th className="text-right p-2">Market Value</th>
 									<th className="text-right p-2">P&L</th>
 									<th className="text-right p-2">P&L %</th>
@@ -175,7 +176,25 @@ export function PaperTradingPage() {
 											{formatMoney(h.current_price)}
 										</td>
 										<td className="p-2 text-right text-[var(--text)]">
-											{formatMoney(h.cost_basis)}
+											{h.target_price ? formatMoney(h.target_price) : (
+												<span className="text-[var(--muted)]">-</span>
+											)}
+										</td>
+										<td className={`p-2 text-right ${
+											h.distance_to_target !== null
+												? h.distance_to_target >= 0
+													? 'text-yellow-400'
+													: 'text-blue-400'
+												: 'text-[var(--muted)]'
+										}`}>
+											{h.distance_to_target !== null ? (
+												<span title={h.distance_to_target >= 0 ? 'Below target' : 'Above target'}>
+													{formatPercent(Math.abs(h.distance_to_target))}
+													{h.distance_to_target >= 0 ? ' ↑' : ' ✓'}
+												</span>
+											) : (
+												<span>-</span>
+											)}
 										</td>
 										<td className="p-2 text-right text-[var(--text)]">
 											{formatMoney(h.market_value)}

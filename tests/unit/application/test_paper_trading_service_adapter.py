@@ -772,3 +772,149 @@ class TestPaperTradingSellMonitoring:
             adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == initial_target
         )
         assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] != 2700.0
+
+    def test_calculate_ema9_with_lowercase_columns(self, db_session, test_user):
+        """Test that _calculate_ema9 works with lowercase column names from fetch_ohlcv_yf"""
+        from unittest.mock import patch
+
+        import pandas as pd
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+        )
+
+        # Mock data with lowercase columns (as returned by fetch_ohlcv_yf)
+        mock_data = pd.DataFrame(
+            {
+                "date": pd.date_range(start="2024-01-01", periods=50),
+                "open": [2500.0] * 50,
+                "high": [2550.0] * 50,
+                "low": [2480.0] * 50,
+                "close": [2520.0 + i for i in range(50)],  # Trending up
+                "volume": [1000000] * 50,
+            }
+        )
+
+        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
+            with patch("pandas_ta.ema") as mock_ema:
+                # Mock EMA calculation
+                mock_ema.return_value = pd.Series([2565.0] * 50)
+
+                result = adapter._calculate_ema9("RELIANCE.NS")
+
+                # Verify it was called with lowercase "close"
+                mock_ema.assert_called_once()
+                call_args = mock_ema.call_args
+                assert "close" in str(call_args) or call_args[0][0].name == "close"
+                assert result == 2565.0
+
+    def test_monitor_sell_orders_with_lowercase_columns(self, db_session, test_user):
+        """Test that _monitor_sell_orders works with lowercase column names"""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+        )
+        adapter.broker = MagicMock()
+        adapter.logger = MagicMock()
+
+        # Set up active sell order
+        adapter.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_123",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+
+        # Mock OHLCV data with lowercase columns (as returned by fetch_ohlcv_yf)
+        mock_data = pd.DataFrame(
+            {
+                "date": pd.date_range(start="2024-01-01", periods=50),
+                "open": [2500.0] * 50,
+                "high": [2650.0] * 50,  # High exceeds target
+                "low": [2480.0] * 50,
+                "close": [2620.0] * 50,
+                "volume": [1000000] * 50,
+            }
+        )
+
+        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
+            with patch("pandas_ta.rsi") as mock_rsi:
+                # Mock RSI calculation
+                mock_rsi.return_value = pd.Series([45.0] * 50)
+
+                adapter._monitor_sell_orders()
+
+                # Verify RSI was called with lowercase "close"
+                mock_rsi.assert_called_once()
+                call_args = mock_rsi.call_args
+                assert "close" in str(call_args) or call_args[0][0].name == "close"
+
+        # Order should be removed (target reached)
+        assert "RELIANCE" not in adapter.active_sell_orders
+
+    def test_monitor_sell_orders_fetches_60_days(self, db_session, test_user):
+        """Test that _monitor_sell_orders fetches 60 days of data for stable indicators"""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+        )
+        adapter.broker = MagicMock()
+        adapter.logger = MagicMock()
+
+        adapter.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_123",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+
+        mock_data = pd.DataFrame(
+            {
+                "high": [2580.0],
+                "close": [2560.0],
+            }
+        )
+
+        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data) as mock_fetch:
+            with patch("pandas_ta.rsi", return_value=pd.Series([45.0])):
+                adapter._monitor_sell_orders()
+
+                # Verify fetch_ohlcv_yf was called with days=60
+                mock_fetch.assert_called_with("RELIANCE.NS", days=60, interval="1d")
+
+    def test_service_state_attributes(self, db_session, test_user):
+        """Test that service has running and shutdown_requested attributes for scheduler control"""
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+        )
+
+        # Verify state attributes exist
+        assert hasattr(adapter, "running")
+        assert hasattr(adapter, "shutdown_requested")
+
+        # Verify initial state
+        assert adapter.running is False
+        assert adapter.shutdown_requested is False
+
+        # Test state changes
+        adapter.running = True
+        assert adapter.running is True
+
+        adapter.shutdown_requested = True
+        assert adapter.shutdown_requested is True

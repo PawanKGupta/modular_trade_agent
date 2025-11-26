@@ -373,3 +373,130 @@ class TestMultiUserTradingService:
         # get_service_status returns ServiceStatus object, not dict
         assert status1.user_id == user1.id
         assert status2.user_id == user2.id
+
+    def test_paper_mode_creates_paper_adapter(self, db_session, sample_user):
+        """Test that paper mode creates PaperTradingServiceAdapter instead of TradingService"""
+        settings = UserSettings(
+            user_id=sample_user.id,
+            trade_mode=TradeMode.PAPER,
+            broker_creds_encrypted=None,
+        )
+        db_session.add(settings)
+        db_session.commit()
+
+        service = MultiUserTradingService(db=db_session)
+
+        with patch(
+            "src.application.services.multi_user_trading_service.PaperTradingServiceAdapter"
+        ) as mock_paper_adapter:
+            mock_adapter = MagicMock()
+            mock_adapter.initialize.return_value = True
+            mock_paper_adapter.return_value = mock_adapter
+
+            result = service.start_service(sample_user.id)
+
+            assert result is True
+            # Verify PaperTradingServiceAdapter was created
+            mock_paper_adapter.assert_called_once()
+            # Verify initialize was called
+            mock_adapter.initialize.assert_called_once()
+
+    def test_paper_mode_starts_scheduler_thread(self, db_session, sample_user):
+        """Test that paper mode starts the scheduler in a background thread"""
+        settings = UserSettings(
+            user_id=sample_user.id,
+            trade_mode=TradeMode.PAPER,
+            broker_creds_encrypted=None,
+        )
+        db_session.add(settings)
+        db_session.commit()
+
+        service = MultiUserTradingService(db=db_session)
+
+        with patch(
+            "src.application.services.multi_user_trading_service.PaperTradingServiceAdapter"
+        ) as mock_paper_adapter:
+            with patch("threading.Thread") as mock_thread:
+                mock_adapter = MagicMock()
+                mock_adapter.initialize.return_value = True
+                mock_paper_adapter.return_value = mock_adapter
+
+                mock_thread_instance = MagicMock()
+                mock_thread.return_value = mock_thread_instance
+
+                result = service.start_service(sample_user.id)
+
+                assert result is True
+                # Verify thread was created
+                mock_thread.assert_called_once()
+                call_args = mock_thread.call_args
+                assert call_args[1]["daemon"] is True
+                assert call_args[1]["name"] == f"PaperTradingScheduler-{sample_user.id}"
+                # Verify thread was started
+                mock_thread_instance.start.assert_called_once()
+
+    def test_broker_mode_creates_trading_service(self, db_session, sample_user_with_settings):
+        """Test that broker mode creates real TradingService"""
+        service = MultiUserTradingService(db=db_session)
+
+        with patch(
+            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+        ) as mock_trading_service:
+            with patch("threading.Thread") as mock_thread:
+                mock_service = MagicMock()
+                mock_trading_service.return_value = mock_service
+
+                mock_thread_instance = MagicMock()
+                mock_thread.return_value = mock_thread_instance
+
+                result = service.start_service(sample_user_with_settings.id)
+
+                assert result is True
+                # Verify TradingService was created
+                mock_trading_service.assert_called_once()
+                # Verify thread was created for service.run()
+                mock_thread.assert_called_once()
+                call_args = mock_thread.call_args
+                assert call_args[1]["target"] == mock_service.run
+                assert call_args[1]["daemon"] is True
+                assert call_args[1]["name"] == f"TradingService-{sample_user_with_settings.id}"
+                # Verify thread was started
+                mock_thread_instance.start.assert_called_once()
+
+    def test_stop_service_waits_for_thread(self, db_session, sample_user):
+        """Test that stop_service waits for scheduler thread to stop"""
+        settings = UserSettings(
+            user_id=sample_user.id,
+            trade_mode=TradeMode.PAPER,
+            broker_creds_encrypted=None,
+        )
+        db_session.add(settings)
+        db_session.commit()
+
+        service = MultiUserTradingService(db=db_session)
+
+        with patch(
+            "src.application.services.multi_user_trading_service.PaperTradingServiceAdapter"
+        ) as mock_paper_adapter:
+            mock_adapter = MagicMock()
+            mock_adapter.initialize.return_value = True
+            mock_adapter.running = True
+            mock_paper_adapter.return_value = mock_adapter
+
+            # Start service
+            service.start_service(sample_user.id)
+
+            # Mock the thread
+            mock_thread = MagicMock()
+            mock_thread.is_alive.return_value = True
+            service._service_threads[sample_user.id] = mock_thread
+
+            # Stop service
+            result = service.stop_service(sample_user.id)
+
+            assert result is True
+            # Verify thread.join was called with timeout
+            mock_thread.join.assert_called_once_with(timeout=10.0)
+            # Verify service flags were set
+            assert mock_adapter.shutdown_requested is True
+            assert mock_adapter.running is False
