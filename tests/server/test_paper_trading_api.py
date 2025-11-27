@@ -93,6 +93,7 @@ def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
     client.put("/api/v1/user/settings", json={"trade_mode": "paper"}, headers=headers)
 
     # Mock yfinance to return a DIFFERENT price than stored
+    # Patch yfinance.Ticker where it's defined, which will affect all imports
     with patch("yfinance.Ticker") as mock_ticker_class:
         mock_ticker = MagicMock()
         mock_ticker.info = {"currentPrice": 165.0}  # LIVE PRICE (different from 155.0)
@@ -101,8 +102,10 @@ def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
         # Call API
         response = client.get("/api/v1/user/paper-trading/portfolio", headers=headers)
 
-        # Verify yfinance was called
-        assert mock_ticker_class.called, "yfinance.Ticker should be called for live prices"
+        # Verify yfinance was called (check call_count as .called may not work with some mock versions)
+        assert (
+            mock_ticker_class.call_count > 0
+        ), f"yfinance.Ticker should be called for live prices (call_count={mock_ticker_class.call_count})"
 
         # Verify response uses LIVE price, not stored price
         assert response.status_code == 200

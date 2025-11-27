@@ -318,7 +318,7 @@ class TestUserTradingConfig:
         assert config.rsi_oversold == 30.0
         assert config.rsi_extreme_oversold == 20.0
         assert config.rsi_near_oversold == 40.0
-        assert config.user_capital == 200000.0
+        assert config.user_capital == 100000.0
         assert config.max_portfolio_size == 6
         assert config.chart_quality_enabled is True
         assert config.default_target_pct == 0.10

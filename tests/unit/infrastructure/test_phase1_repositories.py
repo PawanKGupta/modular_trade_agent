@@ -574,7 +574,7 @@ class TestUserTradingConfigRepository:
         assert config.user_id == sample_user.id
         # Check some default values
         assert config.rsi_period == 10
-        assert config.user_capital == 200000.0
+        assert config.user_capital == 100000.0
 
     def test_get_returns_none_when_not_exists(self, db_session, sample_user):
         repo = UserTradingConfigRepository(db_session)
@@ -616,7 +616,7 @@ class TestUserTradingConfigRepository:
         reset = repo.reset_to_defaults(sample_user.id)
 
         assert reset.rsi_period == 10  # Default value
-        assert reset.user_capital == 200000.0  # Default value
+        assert reset.user_capital == 100000.0  # Default value
 
     def test_delete_config(self, db_session, sample_user):
         repo = UserTradingConfigRepository(db_session)

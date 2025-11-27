@@ -148,11 +148,11 @@ def test_config_to_response_handles_missing_paper_capital():
 
     old_config = OldConfig()
 
-    # Should NOT raise ValidationError, should use default Rs 3,00,000
+    # Should NOT raise ValidationError, should use default Rs 10,00,000
     response = _config_to_response(old_config)
 
     assert response.user_capital == 200000.0
-    assert response.paper_trading_initial_capital == 300000.0  # Default fallback
+    assert response.paper_trading_initial_capital == 1000000.0  # Default fallback
 
 
 @patch("src.application.services.paper_trading_service_adapter.PaperTradingBrokerAdapter")

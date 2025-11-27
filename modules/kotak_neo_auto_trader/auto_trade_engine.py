@@ -1963,13 +1963,13 @@ class AutoTradeEngine:
         )
 
         # Mark signal as TRADED (Phase 2.3: Database integration)
-        if self.db_session:
+        if self.db:
             try:
                 from src.infrastructure.persistence.signals_repository import (  # noqa: PLC0415
                     SignalsRepository,
                 )
 
-                signals_repo = SignalsRepository(self.db_session)
+                signals_repo = SignalsRepository(self.db)
                 # Use the base symbol (without series suffix like -EQ)
                 base_symbol = broker_symbol.split("-")[0] if "-" in broker_symbol else broker_symbol
                 if signals_repo.mark_as_traded(base_symbol):

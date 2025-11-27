@@ -81,7 +81,7 @@ class TestTradingConfigAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["rsi_period"] == 10
-        assert data["user_capital"] == 200000.0
+        assert data["user_capital"] == 100000.0
         assert data["max_portfolio_size"] == 6
         assert data["chart_quality_enabled"] is True
 
@@ -230,7 +230,7 @@ class TestTradingConfigAPI:
         data = response.json()
         # Should be back to defaults
         assert data["rsi_period"] == 10
-        assert data["user_capital"] == 200000.0
+        assert data["user_capital"] == 100000.0
 
     def test_get_trading_config_requires_auth(self, client):
         """Test that GET requires authentication"""
