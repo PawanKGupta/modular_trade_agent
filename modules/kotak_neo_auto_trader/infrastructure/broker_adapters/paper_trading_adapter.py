@@ -258,11 +258,11 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             # Mark as executed
             order.execute(execution_price, order.quantity)
 
-            # Update portfolio
-            self._update_portfolio_after_execution(order, execution_price)
+            # Update portfolio and get P&L for sell orders
+            trade_info = self._update_portfolio_after_execution(order, execution_price)
 
-            # Record transaction
-            self._record_transaction(order, execution_price)
+            # Record transaction with P&L info
+            self._record_transaction(order, execution_price, trade_info)
 
             logger.info(
                 f"? Order executed: {order.symbol} "
@@ -278,9 +278,17 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         # Save updated order
         self._save_order(order)
 
-    def _update_portfolio_after_execution(self, order: Order, execution_price: Money) -> None:
-        """Update portfolio and balance after order execution"""
+    def _update_portfolio_after_execution(
+        self, order: Order, execution_price: Money
+    ) -> dict | None:
+        """
+        Update portfolio and balance after order execution
+
+        Returns:
+            Trade info dict for sell orders (entry_price, realized_pnl, etc.), None for buy orders
+        """
         account = self.store.get_account()
+        trade_info = None
 
         if order.is_buy_order():
             # Add holding
@@ -302,6 +310,10 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             )
 
         else:  # SELL
+            # Get entry price before reducing holding
+            holding = self.portfolio.get_holding(order.symbol)
+            entry_price = holding.average_price.amount if holding else 0.0
+
             # Reduce holding
             remaining_holding, realized_pnl = self.portfolio.reduce_holding(
                 order.symbol, order.quantity, execution_price
@@ -315,6 +327,14 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             new_balance = account["available_cash"] + net_proceeds
             self.store.update_balance(new_balance)
 
+            # Prepare trade info for transaction recording
+            trade_info = {
+                "entry_price": entry_price,
+                "exit_price": execution_price.amount,
+                "realized_pnl": realized_pnl.amount,
+                "charges": charges,
+            }
+
             logger.info(
                 f"? Added Rs {net_proceeds:.2f} (Value: Rs {order_value:.2f}, "
                 f"Charges: Rs {charges:.2f}, P&L: Rs {realized_pnl.amount:.2f})"
@@ -325,6 +345,8 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         # Persist holdings
         self._persist_holdings()
+
+        return trade_info
 
     def cancel_order(self, order_id: str) -> bool:
         """
@@ -384,6 +406,51 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         orders_data = self.store.get_pending_orders()
         return [self._dict_to_order(o) for o in orders_data]
+
+    def check_and_execute_pending_orders(self) -> dict:
+        """
+        Check all pending limit orders and execute if price conditions are met
+
+        Returns:
+            Summary dict with counts of checked and executed orders
+        """
+        if not self.is_connected():
+            raise ConnectionError("Not connected")
+
+        summary = {"checked": 0, "executed": 0, "still_pending": 0}
+
+        pending_orders = self.get_pending_orders()
+        summary["checked"] = len(pending_orders)
+
+        for order in pending_orders:
+            # Only check limit orders (market orders execute immediately)
+            if order.order_type != OrderType.LIMIT:
+                continue
+
+            # Try to execute the order
+            try:
+                self._execute_order(order)
+
+                # Check if order executed (status changed from OPEN/PENDING)
+                if order.is_executed():
+                    summary["executed"] += 1
+                    logger.info(
+                        f"Pending limit order executed: {order.symbol} "
+                        f"{order.transaction_type.value} @ Rs {order.execution_price.amount:.2f}"
+                    )
+                else:
+                    summary["still_pending"] += 1
+            except Exception as e:
+                logger.error(f"Error checking/executing pending order {order.order_id}: {e}")
+                summary["still_pending"] += 1
+
+        if summary["executed"] > 0:
+            logger.info(
+                f"Pending orders check: {summary['executed']} executed, "
+                f"{summary['still_pending']} still pending"
+            )
+
+        return summary
 
     # ===== PORTFOLIO MANAGEMENT =====
 
@@ -503,20 +570,53 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             # Add new order
             self.store.add_order(order_dict)
 
-    def _record_transaction(self, order: Order, execution_price: Money) -> None:
-        """Record a transaction"""
+    def _record_transaction(
+        self, order: Order, execution_price: Money, trade_info: dict | None = None
+    ) -> None:
+        """
+        Record a transaction with P&L for sell orders
+
+        Args:
+            order: The executed order
+            execution_price: Execution price
+            trade_info: Optional dict with entry_price, realized_pnl, etc. for sell orders
+        """
+        order_value = float(execution_price.amount) * order.quantity
+        charges = self.order_simulator.calculate_charges(order_value, order.is_buy_order())
+
         transaction = {
             "order_id": order.order_id,
             "symbol": order.symbol,
             "transaction_type": order.transaction_type.value,
             "quantity": order.quantity,
             "price": float(execution_price.amount),
-            "order_value": float(execution_price.amount) * order.quantity,
-            "charges": self.order_simulator.calculate_charges(
-                float(execution_price.amount) * order.quantity, order.is_buy_order()
-            ),
+            "order_value": order_value,
+            "charges": charges,
             "timestamp": datetime.now().isoformat(),
         }
+
+        # For sell orders, include P&L information from trade_info
+        if order.is_sell_order() and trade_info:
+            entry_price = trade_info["entry_price"]
+            exit_price = trade_info["exit_price"]
+            realized_pnl = trade_info["realized_pnl"]
+            pnl_pct = ((exit_price - entry_price) / entry_price) * 100 if entry_price > 0 else 0
+
+            transaction["entry_price"] = float(entry_price)
+            transaction["exit_price"] = float(exit_price)
+            transaction["realized_pnl"] = float(realized_pnl)
+            transaction["pnl_percentage"] = float(pnl_pct)
+            transaction["exit_reason"] = (
+                order._metadata.get("exit_reason", "Target Hit")
+                if hasattr(order, "_metadata") and order._metadata
+                else "Manual"
+            )
+
+            logger.info(
+                f"? Trade completed: {order.symbol} - "
+                f"Entry: Rs {entry_price:.2f}, Exit: Rs {exit_price:.2f}, "
+                f"P&L: Rs {realized_pnl:+.2f} ({pnl_pct:+.2f}%)"
+            )
 
         self.store.add_transaction(transaction)
 

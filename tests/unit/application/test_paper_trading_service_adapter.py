@@ -609,7 +609,7 @@ class TestPaperTradingSellMonitoring:
 
     def test_monitor_sell_orders_target_reached(self, db_session, test_user, adapter_with_holdings):
         """Test exit condition: High >= Frozen Target"""
-        from unittest.mock import patch
+        from unittest.mock import MagicMock, patch
 
         import pandas as pd
 
@@ -624,6 +624,15 @@ class TestPaperTradingSellMonitoring:
                 "entry_price": 2500.0,
             }
         }
+
+        # Mock check_and_execute_pending_orders to simulate order execution
+        mock_execution_summary = {"checked": 1, "executed": 1, "still_pending": 0}
+        adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
+            return_value=mock_execution_summary
+        )
+
+        # Mock get_holding to return None (position closed after execution)
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=None)
 
         # Mock OHLCV data where High >= Target (use lowercase columns like fetch_ohlcv_yf returns)
         mock_data = pd.DataFrame(
@@ -641,8 +650,11 @@ class TestPaperTradingSellMonitoring:
 
                 adapter_with_holdings._monitor_sell_orders()
 
-        # Order should be removed (target reached)
+        # Order should be removed from tracking (position closed)
         assert "RELIANCE" not in adapter_with_holdings.active_sell_orders
+
+        # Verify check_and_execute_pending_orders was called
+        assert adapter_with_holdings.broker.check_and_execute_pending_orders.called
 
     def test_monitor_sell_orders_rsi_exit(self, db_session, test_user, adapter_with_holdings):
         """Test exit condition: RSI > 50 (falling knife)"""

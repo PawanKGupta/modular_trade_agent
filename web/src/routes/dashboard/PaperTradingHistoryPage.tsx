@@ -215,8 +215,9 @@ export function PaperTradingHistoryPage() {
 											<th className="text-right p-2">Qty</th>
 											<th className="text-right p-2">Price</th>
 											<th className="text-right p-2">Value</th>
+											<th className="text-right p-2">P&L</th>
 											<th className="text-right p-2">Charges</th>
-											<th className="text-left p-2">Order ID</th>
+											<th className="text-left p-2">Reason</th>
 										</tr>
 									</thead>
 									<tbody>
@@ -249,10 +250,46 @@ export function PaperTradingHistoryPage() {
 													<td className="p-2 text-right text-[var(--text)]">
 														{formatMoney(txn.order_value)}
 													</td>
+													<td className="p-2 text-right">
+														{txn.transaction_type === 'SELL' && txn.realized_pnl !== undefined ? (
+															<div>
+																<div
+																	className={`font-medium ${txn.realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}
+																>
+																	{formatMoney(txn.realized_pnl)}
+																</div>
+																{txn.pnl_percentage !== undefined && (
+																	<div
+																		className={`text-xs ${txn.realized_pnl >= 0 ? 'text-green-400/70' : 'text-red-400/70'}`}
+																	>
+																		({formatPercent(txn.pnl_percentage)})
+																	</div>
+																)}
+															</div>
+														) : (
+															<span className="text-[var(--muted)]">-</span>
+														)}
+													</td>
 													<td className="p-2 text-right text-[var(--muted)]">
 														{formatMoney(txn.charges)}
 													</td>
-													<td className="p-2 text-[var(--muted)] text-xs">{txn.order_id}</td>
+													<td className="p-2">
+														{txn.exit_reason ? (
+															<span
+																className={`px-2 py-0.5 rounded text-xs ${
+																	txn.exit_reason === 'Target Hit'
+																		? 'bg-green-500/20 text-green-400'
+																		: txn.exit_reason === 'RSI > 50'
+																			? 'bg-yellow-500/20 text-yellow-400'
+																			: 'bg-blue-500/20 text-blue-400'
+																}`}
+															>
+																{txn.exit_reason}
+															</span>
+														) : (
+															<span className="text-[var(--muted)] text-xs">-</span>
+														)}
+													</td>
 												</tr>
 											))}
 									</tbody>

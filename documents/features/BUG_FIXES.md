@@ -1,3 +1,148 @@
+## Bug Fix #79: Paper Trading Target Exit - Pending Orders Never Execute
+
+**Date Fixed**: November 27, 2025
+**Status**: ✅ Fixed
+**Severity**: 🔴 Critical
+
+### Problem
+Even though sell orders were placed at target price (EMA9), positions weren't being squared off when the target was reached. The pending limit sell orders were never checked to see if they should execute.
+
+**What Was Happening**:
+1. ✅ Sell limit orders placed at target price (by `_place_sell_orders()`)
+2. ✅ Orders stored as PENDING/OPEN
+3. ❌ **Orders never checked for execution** when price reaches target
+4. ❌ **No trade history** with P&L when position closes
+
+This caused:
+- Positions to remain open even after target hit
+- Unrealized P&L to keep fluctuating
+- No completed trade records in history
+- Inaccurate paper trading performance tracking
+
+### Root Cause
+
+**Missing Mechanism**: The paper trading broker had no periodic check to execute pending limit orders when price conditions are met.
+
+**Flow Issue**:
+```
+1. Place limit sell order at Rs 2600 → Order status: OPEN
+2. Price reaches Rs 2650 (>= target) → Order STILL OPEN (no execution check!)
+3. Monitor detects target hit → Only logs, doesn't trigger execution
+4. Position remains open indefinitely
+```
+
+### Solution
+
+Implemented a complete order execution and trade tracking system:
+
+#### 1. Added `check_and_execute_pending_orders()` to Paper Trading Broker
+
+**File**: `modules/kotak_neo_auto_trader/infrastructure/broker_adapters/paper_trading_adapter.py`
+
+```python
+def check_and_execute_pending_orders(self) -> dict:
+    """Check all pending limit orders and execute if price conditions are met"""
+    summary = {"checked": 0, "executed": 0, "still_pending": 0}
+
+    pending_orders = self.get_pending_orders()
+    for order in pending_orders:
+        if order.order_type == OrderType.LIMIT:
+            self._execute_order(order)  # Checks price & executes if conditions met
+            if order.is_executed():
+                summary["executed"] += 1
+
+    return summary
+```
+
+#### 2. Enhanced Transaction Recording with P&L
+
+**File**: `modules/kotak_neo_auto_trader/infrastructure/broker_adapters/paper_trading_adapter.py`
+
+Modified `_record_transaction()` to include trade completion details:
+
+```python
+# For sell orders, capture entry price BEFORE reducing holding
+trade_info = {
+    "entry_price": holding.average_price.amount,
+    "exit_price": execution_price.amount,
+    "realized_pnl": realized_pnl.amount,
+    "charges": charges,
+}
+
+# Store in transaction with P&L
+transaction["entry_price"] = entry_price
+transaction["exit_price"] = exit_price
+transaction["realized_pnl"] = pnl
+transaction["pnl_percentage"] = pnl_pct
+transaction["exit_reason"] = "Target Hit" | "RSI > 50" | "Manual"
+```
+
+#### 3. Integrated Execution Check in Sell Monitor
+
+**File**: `src/application/services/paper_trading_service_adapter.py`
+
+Added execution check at start of `_monitor_sell_orders()`:
+
+```python
+def _monitor_sell_orders(self):
+    # Check and execute any pending limit orders first
+    execution_summary = self.broker.check_and_execute_pending_orders()
+    if execution_summary["executed"] > 0:
+        self.logger.info(f"Executed {execution_summary['executed']} pending sell orders")
+
+    # Then check exit conditions and clean up tracking
+    ...
+```
+
+### Files Modified
+
+1. **`modules/kotak_neo_auto_trader/infrastructure/broker_adapters/paper_trading_adapter.py`**
+   - Added `check_and_execute_pending_orders()` method
+   - Enhanced `_record_transaction()` to capture P&L for sell orders
+   - Modified `_update_portfolio_after_execution()` to return trade info
+
+2. **`src/application/services/paper_trading_service_adapter.py`**
+   - Added call to `check_and_execute_pending_orders()` in `_monitor_sell_orders()`
+   - Updated exit condition logic to check holdings before removing from tracking
+
+3. **`tests/unit/application/test_paper_trading_service_adapter.py`**
+   - Updated `test_monitor_sell_orders_target_reached` to verify execution check
+   - Mocked `check_and_execute_pending_orders()` and `get_holding()`
+
+### Testing
+
+**Unit Test**: `test_monitor_sell_orders_target_reached` ✅ Passed
+- Verifies `check_and_execute_pending_orders()` is called
+- Confirms order removed from tracking when position closes
+- All 10 sell monitoring tests pass
+
+### Complete Flow (After Fix)
+
+```
+1. _place_sell_orders() → Limit order at Rs 2600 (OPEN)
+2. Price reaches Rs 2650
+3. _monitor_sell_orders() calls check_and_execute_pending_orders()
+4. OrderSimulator checks: Rs 2650 >= Rs 2600 ✓
+5. Order executes → Holding reduced/removed
+6. Transaction recorded with:
+   - Entry: Rs 2500
+   - Exit: Rs 2600
+   - P&L: Rs +4000 (+4.0%)
+   - Exit reason: "Target Hit"
+7. Position closed, trade history updated
+```
+
+### Impact
+
+- ✅ Pending limit orders now execute automatically when price conditions are met
+- ✅ Positions correctly square off at target price
+- ✅ Completed trades stored with full P&L details (entry, exit, realized P&L, %)
+- ✅ Trade history shows accurate performance metrics
+- ✅ Exit reason tracked ("Target Hit", "RSI > 50", "Manual")
+- ✅ Paper trading results now match real trading behavior
+
+---
+
 ## Feature #78: Signal Status & Soft Delete - Buying Zone Expiry Management
 
 **Date Implemented**: November 27, 2025

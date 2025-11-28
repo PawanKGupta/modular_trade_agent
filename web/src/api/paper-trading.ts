@@ -69,6 +69,12 @@ export interface PaperTradingTransaction {
 	order_value: number;
 	charges: number;
 	timestamp: string;
+	// Optional fields for sell transactions
+	entry_price?: number;
+	exit_price?: number;
+	realized_pnl?: number;
+	pnl_percentage?: number;
+	exit_reason?: string;
 }
 
 export interface ClosedPosition {

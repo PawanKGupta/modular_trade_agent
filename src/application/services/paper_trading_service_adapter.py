@@ -636,6 +636,20 @@ class PaperTradingServiceAdapter:
 
         NOTE: Target price is NEVER updated (frozen at entry)
         """
+        # First, check and execute any pending limit orders
+        try:
+            execution_summary = self.broker.check_and_execute_pending_orders()
+            if execution_summary["executed"] > 0:
+                self.logger.info(
+                    f"Executed {execution_summary['executed']} pending sell orders",
+                    action="_monitor_sell_orders",
+                )
+        except Exception as e:
+            self.logger.error(
+                f"Error checking pending orders: {e}",
+                action="_monitor_sell_orders",
+            )
+
         if not self.active_sell_orders:
             return
 
@@ -666,16 +680,14 @@ class PaperTradingServiceAdapter:
                 rsi = data.iloc[-1]["rsi10"]
 
                 # Exit Condition 1: High >= Frozen Target (primary exit)
+                # Note: Sell order is already placed by _place_sell_orders()
+                # This just logs and removes from tracking once executed
                 if high >= target_price:
                     self.logger.info(
-                        f"? EXIT TRIGGERED: {symbol} - "
+                        f"? EXIT CONDITION MET: {symbol} - "
                         f"High {high:.2f} >= Target {target_price:.2f}",
                         action="_monitor_sell_orders",
                     )
-
-                    # Check if order executed in paper trading
-                    # (In paper trading, orders execute when conditions are met)
-                    symbols_to_remove.append(symbol)
 
                     entry_price = order_info.get("entry_price", target_price)
                     pnl_pct = (
@@ -687,6 +699,15 @@ class PaperTradingServiceAdapter:
                         f"(Est. P&L: {pnl_pct:+.2f}%)",
                         action="_monitor_sell_orders",
                     )
+                    # Note: Actual order execution happens via check_and_execute_pending_orders()
+                    # Remove from tracking if no longer in holdings
+                    holding = self.broker.get_holding(symbol)
+                    if not holding or holding.quantity == 0:
+                        symbols_to_remove.append(symbol)
+                        self.logger.info(
+                            f"Position closed for {symbol}, removing from tracking",
+                            action="_monitor_sell_orders",
+                        )
                     continue
 
                 # Exit Condition 2: RSI > 50 (secondary exit for failing stocks)
