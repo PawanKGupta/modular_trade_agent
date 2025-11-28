@@ -2,8 +2,6 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from server.app.routers import broker
 from server.app.routers.broker import KotakNeoCreds, _extract_error_message
 from server.app.schemas.user import BrokerCredsRequest
@@ -848,4 +846,3 @@ def test_save_broker_creds_with_totp_secret(monkeypatch):
     assert result == {"status": "ok"}
     creds_dict = json.loads(encrypted_data.decode("utf-8"))
     assert creds_dict["totp_secret"] == "totp123"
-

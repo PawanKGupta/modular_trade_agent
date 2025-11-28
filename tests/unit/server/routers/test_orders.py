@@ -135,15 +135,9 @@ def test_list_orders_filter_by_reason(orders_repo, current_user):
 
 
 def test_list_orders_filter_by_date_range(orders_repo, current_user):
-    order1 = DummyOrder(
-        id=1, user_id=42, placed_at=datetime(2025, 1, 15, 10, 0, 0)
-    )  # Within range
-    order2 = DummyOrder(
-        id=2, user_id=42, placed_at=datetime(2025, 1, 10, 10, 0, 0)
-    )  # Before range
-    order3 = DummyOrder(
-        id=3, user_id=42, placed_at=datetime(2025, 1, 20, 10, 0, 0)
-    )  # After range
+    order1 = DummyOrder(id=1, user_id=42, placed_at=datetime(2025, 1, 15, 10, 0, 0))  # Within range
+    order2 = DummyOrder(id=2, user_id=42, placed_at=datetime(2025, 1, 10, 10, 0, 0))  # Before range
+    order3 = DummyOrder(id=3, user_id=42, placed_at=datetime(2025, 1, 20, 10, 0, 0))  # After range
     orders_repo.orders_by_user[42] = [order1, order2, order3]
 
     result = orders.list_orders(
@@ -290,9 +284,7 @@ def test_list_orders_format_datetime_fields(orders_repo, current_user):
 
 # POST /{order_id}/retry - retry_order tests
 def test_retry_order_success(orders_repo, current_user, mock_ist_now):
-    order = DummyOrder(
-        id=1, user_id=42, status=OrderStatus.FAILED, retry_count=0, reason="Error"
-    )
+    order = DummyOrder(id=1, user_id=42, status=OrderStatus.FAILED, retry_count=0, reason="Error")
     orders_repo.orders_by_id[1] = order
 
     result = orders.retry_order(order_id=1, db=None, current=current_user)
@@ -338,9 +330,7 @@ def test_retry_order_invalid_status(orders_repo, current_user):
 
 
 def test_retry_order_sets_first_failed_at(orders_repo, current_user, mock_ist_now):
-    order = DummyOrder(
-        id=1, user_id=42, status=OrderStatus.FAILED, first_failed_at=None
-    )
+    order = DummyOrder(id=1, user_id=42, status=OrderStatus.FAILED, first_failed_at=None)
     orders_repo.orders_by_id[1] = order
 
     orders.retry_order(order_id=1, db=None, current=current_user)
@@ -350,9 +340,7 @@ def test_retry_order_sets_first_failed_at(orders_repo, current_user, mock_ist_no
 
 def test_retry_order_preserves_existing_first_failed_at(orders_repo, current_user):
     existing_time = datetime(2025, 1, 10, 10, 0, 0)
-    order = DummyOrder(
-        id=1, user_id=42, status=OrderStatus.FAILED, first_failed_at=existing_time
-    )
+    order = DummyOrder(id=1, user_id=42, status=OrderStatus.FAILED, first_failed_at=existing_time)
     orders_repo.orders_by_id[1] = order
 
     orders.retry_order(order_id=1, db=None, current=current_user)
@@ -547,4 +535,3 @@ def test_list_orders_handles_non_standard_side(orders_repo, current_user):
 
     assert len(result) == 1
     assert result[0].side == "buy"  # Should default to "buy"
-

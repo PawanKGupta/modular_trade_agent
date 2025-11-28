@@ -37,11 +37,7 @@ class DummyPnlRepo:
         self.range_calls.append((user_id, start, end))
         user_records = self.records_by_user.get(user_id, [])
         # Filter records in date range
-        return [
-            r
-            for r in user_records
-            if start <= r.date <= end
-        ]
+        return [r for r in user_records if start <= r.date <= end]
 
 
 @pytest.fixture
@@ -92,7 +88,9 @@ def test_daily_pnl_custom_date_range(pnl_repo, current_user):
 
     pnl_repo.records_by_user[42] = [
         DummyPnlRecord(date=date(2025, 1, 5), realized_pnl=100.0, unrealized_pnl=50.0, fees=10.0),
-        DummyPnlRecord(date=date(2025, 1, 15), realized_pnl=200.0, unrealized_pnl=0.0, fees=20.0),  # Outside range
+        DummyPnlRecord(
+            date=date(2025, 1, 15), realized_pnl=200.0, unrealized_pnl=0.0, fees=20.0
+        ),  # Outside range
     ]
 
     result = pnl.daily_pnl(start=start_date, end=end_date, db=None, current=current_user)
@@ -166,9 +164,7 @@ def test_daily_pnl_calculates_pnl_correctly(pnl_repo, current_user):
         ),
     ]
 
-    result = pnl.daily_pnl(
-        start=test_date, end=test_date, db=None, current=current_user
-    )
+    result = pnl.daily_pnl(start=test_date, end=test_date, db=None, current=current_user)
 
     assert len(result) == 1
     assert result[0].pnl == 1450.0  # 1000 + 500 - 50
@@ -187,9 +183,7 @@ def test_daily_pnl_negative_pnl(pnl_repo, current_user):
         ),
     ]
 
-    result = pnl.daily_pnl(
-        start=test_date, end=test_date, db=None, current=current_user
-    )
+    result = pnl.daily_pnl(start=test_date, end=test_date, db=None, current=current_user)
 
     assert len(result) == 1
     assert result[0].pnl == -350.0  # -200 - 100 - 50
@@ -208,9 +202,7 @@ def test_daily_pnl_zero_values(pnl_repo, current_user):
         ),
     ]
 
-    result = pnl.daily_pnl(
-        start=test_date, end=test_date, db=None, current=current_user
-    )
+    result = pnl.daily_pnl(start=test_date, end=test_date, db=None, current=current_user)
 
     assert len(result) == 1
     assert result[0].pnl == 0.0
@@ -244,7 +236,9 @@ def test_pnl_summary_custom_date_range(pnl_repo, current_user):
     pnl_repo.records_by_user[42] = [
         DummyPnlRecord(date=date(2025, 1, 5), realized_pnl=100.0, unrealized_pnl=50.0, fees=10.0),
         DummyPnlRecord(date=date(2025, 1, 6), realized_pnl=-50.0, unrealized_pnl=0.0, fees=10.0),
-        DummyPnlRecord(date=date(2025, 1, 15), realized_pnl=200.0, unrealized_pnl=0.0, fees=20.0),  # Outside range
+        DummyPnlRecord(
+            date=date(2025, 1, 15), realized_pnl=200.0, unrealized_pnl=0.0, fees=20.0
+        ),  # Outside range
     ]
 
     result = pnl.pnl_summary(start=start_date, end=end_date, db=None, current=current_user)
@@ -309,12 +303,12 @@ def test_pnl_summary_all_green_days(pnl_repo, current_user):
     pnl_repo.records_by_user[42] = [
         DummyPnlRecord(date=day1, realized_pnl=100.0, unrealized_pnl=0.0, fees=10.0),  # +90
         DummyPnlRecord(date=day2, realized_pnl=200.0, unrealized_pnl=50.0, fees=20.0),  # +230
-        DummyPnlRecord(date=day3, realized_pnl=0.0, unrealized_pnl=50.0, fees=0.0),  # +50 (breakeven counts as green)
+        DummyPnlRecord(
+            date=day3, realized_pnl=0.0, unrealized_pnl=50.0, fees=0.0
+        ),  # +50 (breakeven counts as green)
     ]
 
-    result = pnl.pnl_summary(
-        start=day1, end=day3, db=None, current=current_user
-    )
+    result = pnl.pnl_summary(start=day1, end=day3, db=None, current=current_user)
 
     assert result.totalPnl == 370.0  # 90 + 230 + 50
     assert result.daysGreen == 3
@@ -331,9 +325,7 @@ def test_pnl_summary_all_red_days(pnl_repo, current_user):
         DummyPnlRecord(date=day2, realized_pnl=-200.0, unrealized_pnl=0.0, fees=20.0),  # -220
     ]
 
-    result = pnl.pnl_summary(
-        start=day1, end=day2, db=None, current=current_user
-    )
+    result = pnl.pnl_summary(start=day1, end=day2, db=None, current=current_user)
 
     assert result.totalPnl == -380.0  # -160 - 220
     assert result.daysGreen == 0
@@ -353,9 +345,7 @@ def test_pnl_summary_breakeven_counted_as_green(pnl_repo, current_user):
         ),  # 0.0 PnL
     ]
 
-    result = pnl.pnl_summary(
-        start=test_date, end=test_date, db=None, current=current_user
-    )
+    result = pnl.pnl_summary(start=test_date, end=test_date, db=None, current=current_user)
 
     assert result.totalPnl == 0.0
     assert result.daysGreen == 1  # Zero counts as green
@@ -375,9 +365,7 @@ def test_pnl_summary_rounds_total_pnl(pnl_repo, current_user):
         ),
     ]
 
-    result = pnl.pnl_summary(
-        start=test_date, end=test_date, db=None, current=current_user
-    )
+    result = pnl.pnl_summary(start=test_date, end=test_date, db=None, current=current_user)
 
     # Should be rounded to 2 decimal places
     assert result.totalPnl == round(140.912468, 2)
@@ -396,10 +384,7 @@ def test_pnl_summary_multiple_users(pnl_repo, current_user):
         DummyPnlRecord(date=test_date, realized_pnl=1000.0, unrealized_pnl=500.0, fees=100.0),
     ]
 
-    result = pnl.pnl_summary(
-        start=test_date, end=test_date, db=None, current=current_user
-    )
+    result = pnl.pnl_summary(start=test_date, end=test_date, db=None, current=current_user)
 
     assert result.totalPnl == 140.0  # Only user 42's record
     assert pnl_repo.range_calls[0][0] == 42  # Only queried for user 42
-

@@ -36,4 +36,3 @@ def test_list_targets_handles_different_users():
 
     assert result1 == []
     assert result2 == []
-

@@ -373,7 +373,9 @@ def test_refresh_exception_handling(user_repo, mock_settings, monkeypatch):
 # Additional edge case tests for better coverage
 
 
-def test_signup_exception_from_settings_repo(user_repo, settings_repo, mock_jwt_creation, mock_settings):
+def test_signup_exception_from_settings_repo(
+    user_repo, settings_repo, mock_jwt_creation, mock_settings
+):
     user_repo.by_email = None
 
     def boom(user_id):
@@ -419,7 +421,9 @@ def test_signup_exception_from_get_by_email(user_repo, settings_repo, mock_setti
     assert "Signup failed" in exc.value.detail
 
 
-def test_login_bcrypt_hash_prefix_2a(user_repo, mock_jwt_creation, mock_verify_password, mock_settings):
+def test_login_bcrypt_hash_prefix_2a(
+    user_repo, mock_jwt_creation, mock_verify_password, mock_settings
+):
     user = DummyUser(id=1, password_hash="$2a$12$hashed.password")  # Different bcrypt prefix
     user_repo.by_email = user
 
@@ -429,7 +433,9 @@ def test_login_bcrypt_hash_prefix_2a(user_repo, mock_jwt_creation, mock_verify_p
     assert result.access_token == "access_token_123"
 
 
-def test_login_bcrypt_hash_prefix_2y(user_repo, mock_jwt_creation, mock_verify_password, mock_settings):
+def test_login_bcrypt_hash_prefix_2y(
+    user_repo, mock_jwt_creation, mock_verify_password, mock_settings
+):
     user = DummyUser(id=1, password_hash="$2y$12$hashed.password")  # Different bcrypt prefix
     user_repo.by_email = user
 
@@ -452,7 +458,9 @@ def test_login_none_password_hash(user_repo, mock_settings):
     assert "Invalid credentials" in exc.value.detail
 
 
-def test_login_exception_from_jwt_creation(user_repo, mock_verify_password, mock_settings, monkeypatch):
+def test_login_exception_from_jwt_creation(
+    user_repo, mock_verify_password, mock_settings, monkeypatch
+):
     user = DummyUser(id=1, password_hash="$2b$12$hashed.password")
     user_repo.by_email = user
 
@@ -511,7 +519,9 @@ def test_refresh_exception_from_get_by_id(user_repo, mock_jwt_decode, mock_setti
     assert "Refresh failed" in exc.value.detail
 
 
-def test_refresh_exception_from_jwt_creation(user_repo, mock_jwt_decode, mock_settings, monkeypatch):
+def test_refresh_exception_from_jwt_creation(
+    user_repo, mock_jwt_decode, mock_settings, monkeypatch
+):
     user = DummyUser(id=1, is_active=True)
     user_repo.by_id = user
 
@@ -570,4 +580,3 @@ def test_signup_http_exception_propagation(user_repo, settings_repo):
 
     assert exc.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
     assert "Service down" in exc.value.detail
-

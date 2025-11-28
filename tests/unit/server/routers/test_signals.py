@@ -203,9 +203,7 @@ def test_buying_zone_status_filter_active(signals_repo, current_user):
     expired_signal = DummySignal(id=2, symbol="TCS.NS", status=SignalStatus.EXPIRED)
     signals_repo.recent_items = [active_signal, expired_signal]
 
-    result = signals.buying_zone(
-        limit=100, status_filter="active", db=None, user=current_user
-    )
+    result = signals.buying_zone(limit=100, status_filter="active", db=None, user=current_user)
 
     assert len(result) == 1
     assert result[0]["status"] == "active"
@@ -217,9 +215,7 @@ def test_buying_zone_status_filter_expired(signals_repo, current_user):
     expired_signal = DummySignal(id=2, symbol="TCS.NS", status=SignalStatus.EXPIRED)
     signals_repo.recent_items = [active_signal, expired_signal]
 
-    result = signals.buying_zone(
-        limit=100, status_filter="expired", db=None, user=current_user
-    )
+    result = signals.buying_zone(limit=100, status_filter="expired", db=None, user=current_user)
 
     assert len(result) == 1
     assert result[0]["status"] == "expired"
@@ -364,9 +360,7 @@ def test_buying_zone_status_filter_traded(signals_repo, current_user):
     traded_signal = DummySignal(id=2, symbol="TCS.NS", status=SignalStatus.TRADED)
     signals_repo.recent_items = [active_signal, traded_signal]
 
-    result = signals.buying_zone(
-        limit=100, status_filter="traded", db=None, user=current_user
-    )
+    result = signals.buying_zone(limit=100, status_filter="traded", db=None, user=current_user)
 
     assert len(result) == 1
     assert result[0]["status"] == "traded"
@@ -377,9 +371,7 @@ def test_buying_zone_status_filter_rejected(signals_repo, current_user):
     rejected_signal = DummySignal(id=2, symbol="TCS.NS", status=SignalStatus.REJECTED)
     signals_repo.recent_items = [active_signal, rejected_signal]
 
-    result = signals.buying_zone(
-        limit=100, status_filter="rejected", db=None, user=current_user
-    )
+    result = signals.buying_zone(limit=100, status_filter="rejected", db=None, user=current_user)
 
     assert len(result) == 1
     assert result[0]["status"] == "rejected"
@@ -403,4 +395,3 @@ def test_buying_zone_none_status_filter(signals_repo, current_user):
 
     # None status filter means no filtering - all items returned
     assert len(result) == 1
-

@@ -47,7 +47,9 @@ class DummySettingsRepo:
         self.settings_by_user_id[user_id] = settings
         return settings
 
-    def update(self, settings, *, trade_mode=None, broker=None, broker_status=None, ui_preferences=None):
+    def update(
+        self, settings, *, trade_mode=None, broker=None, broker_status=None, ui_preferences=None
+    ):
         self.update_called.append((settings, trade_mode, broker, broker_status, ui_preferences))
         if trade_mode is not None:
             settings.trade_mode = trade_mode
@@ -275,11 +277,15 @@ def test_update_buying_zone_columns_success(settings_repo, current_user):
     assert result.columns == ["symbol", "price", "rsi", "volume"]
     assert len(settings_repo.update_ui_prefs_called) == 1
     assert settings_repo.update_ui_prefs_called[0][0] == 42
-    assert settings_repo.update_ui_prefs_called[0][1] == {"buying_zone_columns": ["symbol", "price", "rsi", "volume"]}
+    assert settings_repo.update_ui_prefs_called[0][1] == {
+        "buying_zone_columns": ["symbol", "price", "rsi", "volume"]
+    }
 
 
 def test_update_buying_zone_columns_merges_existing(settings_repo, current_user):
-    settings = DummySettings(ui_preferences={"buying_zone_columns": ["symbol"], "other_pref": "value"})
+    settings = DummySettings(
+        ui_preferences={"buying_zone_columns": ["symbol"], "other_pref": "value"}
+    )
     settings_repo.settings_by_user_id[42] = settings
 
     payload = user.BuyingZoneColumnsRequest(columns=["symbol", "price"])
@@ -342,4 +348,3 @@ def test_update_buying_zone_columns_overwrites_existing(settings_repo, current_u
     assert result.columns == ["new1", "new2", "new3"]
     # Verify old columns are replaced, not merged
     assert "old1" not in result.columns
-
