@@ -634,13 +634,13 @@ Implemented automatic sell order quantity synchronization with holdings:
 def _update_sell_order_quantity(self, symbol: str, new_quantity: int) -> bool:
     """
     Update sell order quantity to match holdings (after re-entry).
-    
+
     Strategy: Cancel old order and place new one with updated quantity.
     Target price remains FROZEN (never changes).
     """
     # Cancel old sell order
     self.broker.cancel_order(old_order_id)
-    
+
     # Place new sell order with updated quantity (same frozen target)
     new_order = Order(
         symbol=symbol,
@@ -648,7 +648,7 @@ def _update_sell_order_quantity(self, symbol: str, new_quantity: int) -> bool:
         price=Money(target_price),  # FROZEN - same price!
         ...
     )
-    
+
     # Update tracking
     self.active_sell_orders[symbol]["qty"] = new_quantity
 ```
@@ -668,23 +668,23 @@ def _update_sell_order_quantity(self, symbol: str, new_quantity: int) -> bool:
 def _sync_sell_order_quantities_with_holdings(self) -> int:
     """
     Sync sell order quantities with current holdings (after re-entry).
-    
+
     Returns: Number of sell orders updated
     """
     holdings = self.broker.get_holdings()
     holdings_map = {h.symbol: h.quantity for h in holdings}
-    
+
     updated_count = 0
     for symbol, order_info in self.active_sell_orders.items():
         if symbol in holdings_map:
             current_qty = order_info.get("qty", 0)
             holdings_qty = holdings_map[symbol]
-            
+
             # If holdings increased, update sell order
             if holdings_qty > current_qty:
                 if self._update_sell_order_quantity(symbol, holdings_qty):
                     updated_count += 1
-    
+
     return updated_count
 ```
 
@@ -696,7 +696,7 @@ def _sync_sell_order_quantities_with_holdings(self) -> int:
 def run_position_monitor(self):
     # Monitor positions for re-entry signals
     summary = self.engine.monitor_positions()
-    
+
     # If re-entries happened, sync sell order quantities
     if summary.get("reentries", 0) > 0:
         updated_count = self._sync_sell_order_quantities_with_holdings()
@@ -713,7 +713,7 @@ def _place_sell_orders(self):
     for holding in holdings:
         symbol = holding.symbol
         quantity = holding.quantity
-        
+
         # Skip if already have active sell order
         if symbol in self.active_sell_orders:
             # Check if holdings quantity has increased (re-entry happened)
@@ -762,13 +762,13 @@ def _place_sell_orders(self):
 
 **After**:
 - ✅ Sell order quantity automatically syncs with holdings after re-entry
+- ✅ Target price recalculated as EMA9 on re-entry (matches backtest)
 - ✅ Full position exits when target hits
-- ✅ Target price remains frozen (never recalculated)
 - ✅ Complete trade execution
 
 ### Key Design Decisions
 
-1. **Frozen Target Price**: Target price is never recalculated when quantity updates. This matches the backtest strategy where EMA9 target is frozen at entry.
+1. **Recalculated Target Price**: Target price is recalculated as EMA9 when re-entry happens (matches backtest behavior). This ensures the target reflects current market conditions.
 
 2. **Cancel + Replace**: Uses cancel old order + place new order approach (paper trading doesn't support order modification). This is safe because:
    - Paper trading orders execute immediately if price conditions are met
@@ -777,25 +777,26 @@ def _place_sell_orders(self):
 
 3. **Automatic Sync**: Sync happens automatically after position monitor detects re-entries. No manual intervention needed.
 
-4. **Quantity-Only Updates**: Only updates quantity, never price. Price remains frozen at original EMA9 target.
+4. **Quantity and Target Updates**: Updates both quantity and target price on re-entry. Target is recalculated as current EMA9 value (matches backtest).
 
 ### Example Flow
 
 ```
 1. Initial Entry:
    - Buy: 40 shares @ Rs 2500
-   - Sell order: 40 shares @ Rs 2600 (frozen EMA9)
+   - Sell order: 40 shares @ Rs 2600 (EMA9 at entry)
 
 2. Re-Entry (RSI drops):
    - Buy: 20 shares @ Rs 2400
    - Holdings: 60 shares total
    - System detects: holdings (60) > sell order (40)
-   - Action: Cancel old order, place new order
-   - New sell order: 60 shares @ Rs 2600 (same frozen target!)
+   - Action: Cancel old order, recalculate EMA9, place new order
+   - New EMA9 target: Rs 2650 (recalculated)
+   - New sell order: 60 shares @ Rs 2650 (updated target!)
 
 3. Target Hit:
-   - Price reaches Rs 2600
-   - Full 60 shares sell @ Rs 2600 ✅
+   - Price reaches Rs 2650
+   - Full 60 shares sell @ Rs 2650 ✅
    - Position fully closed ✅
 ```
 

@@ -474,16 +474,32 @@ class PaperTradingServiceAdapter:
             task_context["hour"] = current_hour
             task_context["summary"] = summary
 
-            # If re-entries happened, sync sell order quantities with updated holdings
+            # If re-entries happened, sync sell order quantities and targets with updated holdings
             if summary.get("reentries", 0) > 0:
                 self.logger.info(
-                    f"Re-entries detected ({summary['reentries']}), syncing sell order quantities...",
+                    f"Re-entries detected ({summary['reentries']}), syncing sell order quantities and targets...",
                     action="run_position_monitor",
                 )
-                updated_count = self._sync_sell_order_quantities_with_holdings()
+
+                # Calculate new EMA9 targets for symbols with re-entries (matches backtest)
+                symbol_targets = {}
+                holdings = self.broker.get_holdings() if self.broker else []
+                for holding in holdings:
+                    symbol = holding.symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
+                    if symbol in self.active_sell_orders:
+                        ticker = f"{symbol}.NS"
+                        new_target = self._calculate_ema9(ticker)
+                        if new_target:
+                            symbol_targets[symbol] = new_target
+                            self.logger.debug(
+                                f"Calculated new EMA9 target for {symbol}: Rs {new_target:.2f}",
+                                action="run_position_monitor",
+                            )
+
+                updated_count = self._sync_sell_order_quantities_with_holdings(symbol_targets)
                 if updated_count > 0:
                     self.logger.info(
-                        f"Updated {updated_count} sell order quantities after re-entry",
+                        f"Updated {updated_count} sell order quantities and targets after re-entry",
                         action="run_position_monitor",
                     )
                     task_context["sell_orders_updated"] = updated_count
@@ -622,19 +638,21 @@ class PaperTradingServiceAdapter:
                                         action="_place_sell_orders",
                                     )
                     # Check if holdings quantity has increased (re-entry happened)
-                    # and update sell order quantity to match
+                    # and update sell order quantity and target to match
                     if symbol in self.active_sell_orders:
                         current_order_qty = self.active_sell_orders[symbol].get("qty", 0)
                         if quantity > current_order_qty:
                             self.logger.info(
-                                f"Holdings increased for {symbol} ({current_order_qty} → {quantity}), "
-                                f"updating sell order quantity",
+                                f"Holdings increased for {symbol} ({current_order_qty} -> {quantity}), "
+                                f"updating sell order quantity and target",
                                 action="_place_sell_orders",
                             )
-                            self._update_sell_order_quantity(symbol, quantity)
+                            # Recalculate EMA9 target (matches backtest behavior)
+                            new_target = self._calculate_ema9(ticker)
+                            self._update_sell_order_quantity(symbol, quantity, new_target)
                     continue
 
-                # Calculate EMA9 target (frozen at this value)
+                # Calculate EMA9 target (initial entry - will be updated on re-entry)
                 ema9_target = self._calculate_ema9(ticker)
 
                 if ema9_target is None or ema9_target <= 0:
@@ -644,7 +662,7 @@ class PaperTradingServiceAdapter:
                     )
                     continue
 
-                # Create and place sell order at frozen EMA9 target
+                # Create and place sell order at EMA9 target
                 from modules.kotak_neo_auto_trader.domain import Money
 
                 order = Order(
@@ -659,10 +677,10 @@ class PaperTradingServiceAdapter:
                 order_id = self.broker.place_order(order)
 
                 if order_id:
-                    # Track this sell order with FROZEN target
+                    # Track this sell order (target will be updated on re-entry)
                     self.active_sell_orders[symbol] = {
                         "order_id": order_id,
-                        "target_price": ema9_target,  # FROZEN - never updated!
+                        "target_price": ema9_target,  # Updated on re-entry (EMA9)
                         "qty": quantity,
                         "ticker": ticker,
                         "entry_date": datetime.now().strftime("%Y-%m-%d"),
@@ -670,7 +688,7 @@ class PaperTradingServiceAdapter:
 
                     self.logger.info(
                         f"? Placed SELL order: {symbol} x{quantity} @ Rs {ema9_target:.2f} "
-                        f"(Frozen EMA9 target) | Order ID: {order_id}",
+                        f"(EMA9 target) | Order ID: {order_id}",
                         action="_place_sell_orders",
                     )
                 else:
@@ -698,10 +716,10 @@ class PaperTradingServiceAdapter:
         Monitor sell orders for exit conditions (matches backtest strategy).
 
         Exit conditions (from 10-year backtest):
-        1. High >= Target (frozen EMA9) - 90% of exits, 76% profitable
+        1. High >= Target (EMA9) - 90% of exits, 76% profitable
         2. RSI > 50 - 10% of exits, 37% profitable (falling knives)
 
-        NOTE: Target price is NEVER updated (frozen at entry)
+        NOTE: Target price is recalculated as EMA9 when re-entry happens (matches backtest).
         """
         # First, check and execute any pending limit orders
         try:
@@ -729,7 +747,7 @@ class PaperTradingServiceAdapter:
         for symbol, order_info in list(self.active_sell_orders.items()):
             try:
                 ticker = order_info["ticker"]
-                target_price = order_info["target_price"]  # FROZEN - never changes!
+                target_price = order_info["target_price"]  # Updated on re-entry (EMA9)
 
                 # Fetch recent data for exit condition checks (60 days for stable indicators)
                 data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
@@ -897,12 +915,19 @@ class PaperTradingServiceAdapter:
             # On error, start with empty dict (safe default)
             self.active_sell_orders = {}
 
-    def _sync_sell_order_quantities_with_holdings(self) -> int:
+    def _sync_sell_order_quantities_with_holdings(
+        self, symbol_targets: dict[str, float] | None = None
+    ) -> int:
         """
         Sync sell order quantities with current holdings (after re-entry).
 
         This ensures that when re-entry happens and holdings increase,
-        the sell order quantity is updated to match total holdings.
+        the sell order quantity and target price are updated to match total holdings
+        and recalculated EMA9 target (matches backtest behavior).
+
+        Args:
+            symbol_targets: Optional dict mapping symbol to new EMA9 target price.
+                          If provided, uses these targets; otherwise calculates them.
 
         Returns:
             Number of sell orders updated
@@ -921,21 +946,33 @@ class PaperTradingServiceAdapter:
 
                 # If holdings quantity is greater than sell order quantity, update it
                 if holdings_qty > current_qty:
-                    if self._update_sell_order_quantity(symbol, holdings_qty):
+                    # Get new target from provided dict, or calculate it
+                    new_target = None
+                    if symbol_targets and symbol in symbol_targets:
+                        new_target = symbol_targets[symbol]
+                    elif symbol_targets is None:
+                        # Calculate EMA9 target (matches backtest behavior)
+                        ticker = order_info.get("ticker", f"{symbol}.NS")
+                        new_target = self._calculate_ema9(ticker)
+
+                    if self._update_sell_order_quantity(symbol, holdings_qty, new_target):
                         updated_count += 1
 
         return updated_count
 
-    def _update_sell_order_quantity(self, symbol: str, new_quantity: int) -> bool:
+    def _update_sell_order_quantity(
+        self, symbol: str, new_quantity: int, new_target: float | None = None
+    ) -> bool:
         """
-        Update sell order quantity to match holdings (after re-entry).
+        Update sell order quantity and target price (after re-entry).
 
-        Strategy: Cancel old order and place new one with updated quantity.
-        Target price remains FROZEN (never changes).
+        Strategy: Cancel old order and place new one with updated quantity and target.
+        Target price is recalculated as EMA9 (matches backtest behavior).
 
         Args:
             symbol: Trading symbol
             new_quantity: New quantity to match holdings
+            new_target: New target price (EMA9). If None, will be calculated.
 
         Returns:
             True if successfully updated, False otherwise
@@ -945,17 +982,32 @@ class PaperTradingServiceAdapter:
 
         order_info = self.active_sell_orders[symbol]
         old_qty = order_info.get("qty", 0)
-        target_price = order_info.get("target_price")
+        old_target = order_info.get("target_price")
         order_id = order_info.get("order_id")
         ticker = order_info.get("ticker", f"{symbol}.NS")
 
-        if not target_price or new_quantity <= old_qty:
+        if not old_target or new_quantity <= old_qty:
             return False
 
         try:
             from datetime import datetime
 
-            from modules.kotak_neo_auto_trader.domain import Money, Order, OrderType, TransactionType
+            from modules.kotak_neo_auto_trader.domain import (
+                Money,
+                Order,
+                OrderType,
+                TransactionType,
+            )
+
+            # Calculate new target if not provided (recalculate EMA9)
+            if new_target is None:
+                new_target = self._calculate_ema9(ticker)
+                if new_target is None or new_target <= 0:
+                    self.logger.warning(
+                        f"Failed to calculate new EMA9 target for {symbol}, keeping old target",
+                        action="_update_sell_order_quantity",
+                    )
+                    new_target = old_target  # Fallback to old target
 
             # Cancel old sell order if it exists
             if order_id and order_id != "unknown":
@@ -972,31 +1024,32 @@ class PaperTradingServiceAdapter:
                     )
                     # Continue anyway - may have already been executed
 
-            # Place new sell order with updated quantity (same frozen target price)
+            # Place new sell order with updated quantity and recalculated target
             new_order = Order(
                 symbol=symbol,
                 quantity=new_quantity,
                 order_type=OrderType.LIMIT,
                 transaction_type=TransactionType.SELL,
-                price=Money(target_price),  # FROZEN - same price!
+                price=Money(new_target),  # Updated target (EMA9 recalculated)
             )
             new_order._metadata = {"original_ticker": ticker}
 
             new_order_id = self.broker.place_order(new_order)
 
             if new_order_id:
-                # Update tracking with new order ID and quantity
+                # Update tracking with new order ID, quantity, and target
                 self.active_sell_orders[symbol] = {
                     "order_id": new_order_id,
-                    "target_price": target_price,  # Still frozen!
+                    "target_price": new_target,  # Updated target (EMA9)
                     "qty": new_quantity,  # Updated quantity
                     "ticker": ticker,
                     "entry_date": order_info.get("entry_date", datetime.now().strftime("%Y-%m-%d")),
                 }
 
+                target_change = f"{old_target:.2f} -> {new_target:.2f}"
                 self.logger.info(
                     f"? Updated sell order for {symbol}: {old_qty} -> {new_quantity} shares "
-                    f"@ Rs {target_price:.2f} (frozen target) | New Order ID: {new_order_id}",
+                    f"@ Rs {new_target:.2f} (target: {target_change}) | New Order ID: {new_order_id}",
                     action="_update_sell_order_quantity",
                 )
 

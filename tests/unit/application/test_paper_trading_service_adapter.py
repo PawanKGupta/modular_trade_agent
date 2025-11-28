@@ -1246,26 +1246,35 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.cancel_order.return_value = True
         adapter_with_holdings.broker.place_order.return_value = "NEW_SELL_ORDER_456"
 
-        # Update sell order quantity
-        result = adapter_with_holdings._update_sell_order_quantity("RELIANCE", 60)
+        # Mock EMA9 calculation to return new target
+        from unittest.mock import patch
+
+        new_target = 2650.0  # New EMA9 target after re-entry
+        with patch.object(
+            adapter_with_holdings, "_calculate_ema9", return_value=new_target
+        ):
+            # Update sell order quantity (target will be recalculated)
+            result = adapter_with_holdings._update_sell_order_quantity("RELIANCE", 60)
 
         # Verify update succeeded
         assert result is True
         assert adapter_with_holdings.active_sell_orders["RELIANCE"]["qty"] == 60
         assert (
-            adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == 2600.0
-        )  # Still frozen!
-        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["order_id"] == "NEW_SELL_ORDER_456"
+            adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == new_target
+        )  # Recalculated!
+        assert (
+            adapter_with_holdings.active_sell_orders["RELIANCE"]["order_id"] == "NEW_SELL_ORDER_456"
+        )
 
         # Verify old order was cancelled
         adapter_with_holdings.broker.cancel_order.assert_called_with("OLD_SELL_ORDER_123")
 
-        # Verify new order was placed with correct quantity and frozen price
+        # Verify new order was placed with correct quantity and recalculated target
         adapter_with_holdings.broker.place_order.assert_called_once()
         new_order = adapter_with_holdings.broker.place_order.call_args[0][0]
         assert new_order.quantity == 60
         assert new_order.transaction_type.value == "SELL"
-        assert float(new_order.price.amount) == 2600.0  # Frozen target
+        assert float(new_order.price.amount) == new_target  # Recalculated target
 
     def test_sync_sell_order_quantities_with_holdings(
         self, db_session, test_user, adapter_with_holdings
@@ -1312,26 +1321,35 @@ class TestPaperTradingSellMonitoring:
             "NEW_SELL_ORDER_2",
         ]
 
-        # Sync quantities
-        updated_count = adapter_with_holdings._sync_sell_order_quantities_with_holdings()
+        # Mock EMA9 calculation to return new targets
+        from unittest.mock import patch
+
+        new_target_reliance = 2650.0
+        with patch.object(
+            adapter_with_holdings, "_calculate_ema9", return_value=new_target_reliance
+        ):
+            # Sync quantities (targets will be recalculated)
+            updated_count = adapter_with_holdings._sync_sell_order_quantities_with_holdings()
 
         # Verify only RELIANCE was updated (TCS quantity didn't change)
         assert updated_count == 1
         assert adapter_with_holdings.active_sell_orders["RELIANCE"]["qty"] == 60
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == new_target_reliance
         assert adapter_with_holdings.active_sell_orders["TCS"]["qty"] == 30  # Unchanged
 
-    def test_update_sell_order_quantity_preserves_frozen_target(
+    def test_update_sell_order_quantity_recalculates_target(
         self, db_session, test_user, adapter_with_holdings
     ):
-        """Test that target price remains frozen when quantity is updated"""
-        from unittest.mock import MagicMock
+        """Test that target price is recalculated as EMA9 when quantity is updated (matches backtest)"""
+        from unittest.mock import patch
 
-        frozen_target = 2600.0
+        old_target = 2600.0
+        new_target = 2650.0  # New EMA9 target
 
         adapter_with_holdings.active_sell_orders = {
             "RELIANCE": {
                 "order_id": "OLD_ORDER",
-                "target_price": frozen_target,
+                "target_price": old_target,
                 "qty": 40,
                 "ticker": "RELIANCE.NS",
                 "entry_date": "2024-01-01",
@@ -1341,21 +1359,25 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.cancel_order.return_value = True
         adapter_with_holdings.broker.place_order.return_value = "NEW_ORDER"
 
-        # Update quantity
-        adapter_with_holdings._update_sell_order_quantity("RELIANCE", 60)
+        # Mock EMA9 calculation to return new target
+        with patch.object(
+            adapter_with_holdings, "_calculate_ema9", return_value=new_target
+        ):
+            # Update quantity (target will be recalculated)
+            adapter_with_holdings._update_sell_order_quantity("RELIANCE", 60)
 
-        # Verify target price is still frozen (not recalculated)
-        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == frozen_target
+        # Verify target price was recalculated (not frozen)
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == new_target
 
-        # Verify new order was placed with frozen target
+        # Verify new order was placed with recalculated target
         new_order = adapter_with_holdings.broker.place_order.call_args[0][0]
-        assert float(new_order.price.amount) == frozen_target
+        assert float(new_order.price.amount) == new_target
 
     def test_place_sell_orders_updates_quantity_on_reentry(
         self, db_session, test_user, adapter_with_holdings
     ):
         """Test that _place_sell_orders detects and updates quantity when holdings increased"""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         # Set up existing sell order with old quantity
         adapter_with_holdings.active_sell_orders = {
@@ -1385,16 +1407,27 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.cancel_order.return_value = True
         adapter_with_holdings.broker.place_order.return_value = "UPDATED_ORDER"
 
-        # Call _place_sell_orders (should detect quantity mismatch and update)
-        adapter_with_holdings._place_sell_orders()
+        # Mock EMA9 calculation to return new target
+        from unittest.mock import patch
 
-        # Verify quantity was updated
+        new_target = 2650.0  # New EMA9 target after re-entry
+        with patch.object(
+            adapter_with_holdings, "_calculate_ema9", return_value=new_target
+        ):
+            # Call _place_sell_orders (should detect quantity mismatch and update)
+            adapter_with_holdings._place_sell_orders()
+
+        # Verify quantity and target were updated
         assert adapter_with_holdings.active_sell_orders["RELIANCE"]["qty"] == 60
-        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == 2600.0
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == new_target
 
         # Verify order was cancelled and new one placed
         adapter_with_holdings.broker.cancel_order.assert_called_with("EXISTING_ORDER")
         adapter_with_holdings.broker.place_order.assert_called_once()
+
+        # Verify new order was placed with recalculated target
+        new_order = adapter_with_holdings.broker.place_order.call_args[0][0]
+        assert float(new_order.price.amount) == new_target
 
     def test_update_sell_order_quantity_no_update_if_quantity_same(
         self, db_session, test_user, adapter_with_holdings
