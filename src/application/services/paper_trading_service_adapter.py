@@ -474,6 +474,20 @@ class PaperTradingServiceAdapter:
             task_context["hour"] = current_hour
             task_context["summary"] = summary
 
+            # If re-entries happened, sync sell order quantities with updated holdings
+            if summary.get("reentries", 0) > 0:
+                self.logger.info(
+                    f"Re-entries detected ({summary['reentries']}), syncing sell order quantities...",
+                    action="run_position_monitor",
+                )
+                updated_count = self._sync_sell_order_quantities_with_holdings()
+                if updated_count > 0:
+                    self.logger.info(
+                        f"Updated {updated_count} sell order quantities after re-entry",
+                        action="run_position_monitor",
+                    )
+                    task_context["sell_orders_updated"] = updated_count
+
             self.tasks_completed["position_monitor"][current_hour] = True
             self.logger.info("Position monitoring completed", action="run_position_monitor")
 
@@ -607,6 +621,17 @@ class PaperTradingServiceAdapter:
                                         f"Restored sell order tracking for {symbol} from broker",
                                         action="_place_sell_orders",
                                     )
+                    # Check if holdings quantity has increased (re-entry happened)
+                    # and update sell order quantity to match
+                    if symbol in self.active_sell_orders:
+                        current_order_qty = self.active_sell_orders[symbol].get("qty", 0)
+                        if quantity > current_order_qty:
+                            self.logger.info(
+                                f"Holdings increased for {symbol} ({current_order_qty} → {quantity}), "
+                                f"updating sell order quantity",
+                                action="_place_sell_orders",
+                            )
+                            self._update_sell_order_quantity(symbol, quantity)
                     continue
 
                 # Calculate EMA9 target (frozen at this value)
@@ -871,6 +896,127 @@ class PaperTradingServiceAdapter:
             )
             # On error, start with empty dict (safe default)
             self.active_sell_orders = {}
+
+    def _sync_sell_order_quantities_with_holdings(self) -> int:
+        """
+        Sync sell order quantities with current holdings (after re-entry).
+
+        This ensures that when re-entry happens and holdings increase,
+        the sell order quantity is updated to match total holdings.
+
+        Returns:
+            Number of sell orders updated
+        """
+        if not self.broker:
+            return 0
+
+        holdings = self.broker.get_holdings()
+        holdings_map = {h.symbol: h.quantity for h in holdings}
+
+        updated_count = 0
+        for symbol, order_info in list(self.active_sell_orders.items()):
+            if symbol in holdings_map:
+                current_qty = order_info.get("qty", 0)
+                holdings_qty = holdings_map[symbol]
+
+                # If holdings quantity is greater than sell order quantity, update it
+                if holdings_qty > current_qty:
+                    if self._update_sell_order_quantity(symbol, holdings_qty):
+                        updated_count += 1
+
+        return updated_count
+
+    def _update_sell_order_quantity(self, symbol: str, new_quantity: int) -> bool:
+        """
+        Update sell order quantity to match holdings (after re-entry).
+
+        Strategy: Cancel old order and place new one with updated quantity.
+        Target price remains FROZEN (never changes).
+
+        Args:
+            symbol: Trading symbol
+            new_quantity: New quantity to match holdings
+
+        Returns:
+            True if successfully updated, False otherwise
+        """
+        if symbol not in self.active_sell_orders:
+            return False
+
+        order_info = self.active_sell_orders[symbol]
+        old_qty = order_info.get("qty", 0)
+        target_price = order_info.get("target_price")
+        order_id = order_info.get("order_id")
+        ticker = order_info.get("ticker", f"{symbol}.NS")
+
+        if not target_price or new_quantity <= old_qty:
+            return False
+
+        try:
+            from datetime import datetime
+
+            from modules.kotak_neo_auto_trader.domain import Money, Order, OrderType, TransactionType
+
+            # Cancel old sell order if it exists
+            if order_id and order_id != "unknown":
+                try:
+                    self.broker.cancel_order(order_id)
+                    self.logger.debug(
+                        f"Cancelled old sell order {order_id} for {symbol}",
+                        action="_update_sell_order_quantity",
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to cancel old order {order_id}: {e}",
+                        action="_update_sell_order_quantity",
+                    )
+                    # Continue anyway - may have already been executed
+
+            # Place new sell order with updated quantity (same frozen target price)
+            new_order = Order(
+                symbol=symbol,
+                quantity=new_quantity,
+                order_type=OrderType.LIMIT,
+                transaction_type=TransactionType.SELL,
+                price=Money(target_price),  # FROZEN - same price!
+            )
+            new_order._metadata = {"original_ticker": ticker}
+
+            new_order_id = self.broker.place_order(new_order)
+
+            if new_order_id:
+                # Update tracking with new order ID and quantity
+                self.active_sell_orders[symbol] = {
+                    "order_id": new_order_id,
+                    "target_price": target_price,  # Still frozen!
+                    "qty": new_quantity,  # Updated quantity
+                    "ticker": ticker,
+                    "entry_date": order_info.get("entry_date", datetime.now().strftime("%Y-%m-%d")),
+                }
+
+                self.logger.info(
+                    f"? Updated sell order for {symbol}: {old_qty} -> {new_quantity} shares "
+                    f"@ Rs {target_price:.2f} (frozen target) | New Order ID: {new_order_id}",
+                    action="_update_sell_order_quantity",
+                )
+
+                # Save updated state
+                self._save_sell_orders_to_file()
+                return True
+            else:
+                self.logger.warning(
+                    f"Failed to place updated sell order for {symbol}",
+                    action="_update_sell_order_quantity",
+                )
+                return False
+
+        except Exception as e:
+            self.logger.error(
+                f"Error updating sell order quantity for {symbol}: {e}",
+                exc_info=True,
+                action="_update_sell_order_quantity",
+            )
+            return False
 
     def _save_sell_orders_to_file(self):
         """Save active sell orders to JSON file for UI display"""

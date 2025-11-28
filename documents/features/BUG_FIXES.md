@@ -588,3 +588,215 @@ No duplicates placed ✅
 ✅ **Enhanced**: Better duplicate prevention (checks both memory and broker)
 
 ---
+
+## Bug Fix #81: Sell Order Quantity Not Updated After Re-Entry
+
+**Date Fixed**: November 28, 2025
+**Status**: ✅ Fixed
+**Severity**: 🟡 Medium
+
+### Problem
+When a re-entry buy order executed (averaging down), the holdings quantity increased, but the existing sell order quantity remained unchanged. This meant the sell order would only sell part of the position, leaving some shares unsold.
+
+**What Was Happening**:
+1. ✅ Initial buy: 40 shares @ Rs 2500 → Sell order placed: 40 shares @ Rs 2600 (frozen EMA9 target)
+2. ✅ Re-entry buy: 20 shares @ Rs 2400 → Total holdings: 60 shares
+3. ❌ **Sell order still shows 40 shares** (not updated!)
+4. ❌ When target hits, only 40 shares sell → 20 shares remain unsold
+
+This caused:
+- Partial position exits (not selling all shares)
+- Remaining shares not tracked for exit
+- Incomplete trade execution
+- Confusion about position sizes
+
+### Root Cause
+
+**Missing Update Logic**: When re-entry happened and holdings increased, there was no mechanism to update the existing sell order quantity to match the new total holdings.
+
+**Flow Issue**:
+```
+1. Initial entry: 40 shares → Sell order: 40 shares @ Rs 2600 ✅
+2. Re-entry: +20 shares → Holdings: 60 shares ✅
+3. Sell order: Still 40 shares ❌ (should be 60!)
+4. Target hit → Only 40 shares sell → 20 shares left ❌
+```
+
+### Solution
+
+Implemented automatic sell order quantity synchronization with holdings:
+
+#### 1. Added `_update_sell_order_quantity()` Method
+
+**File**: `src/application/services/paper_trading_service_adapter.py`
+
+```python
+def _update_sell_order_quantity(self, symbol: str, new_quantity: int) -> bool:
+    """
+    Update sell order quantity to match holdings (after re-entry).
+    
+    Strategy: Cancel old order and place new one with updated quantity.
+    Target price remains FROZEN (never changes).
+    """
+    # Cancel old sell order
+    self.broker.cancel_order(old_order_id)
+    
+    # Place new sell order with updated quantity (same frozen target)
+    new_order = Order(
+        symbol=symbol,
+        quantity=new_quantity,  # Updated quantity
+        price=Money(target_price),  # FROZEN - same price!
+        ...
+    )
+    
+    # Update tracking
+    self.active_sell_orders[symbol]["qty"] = new_quantity
+```
+
+**Key Features**:
+- Cancels old sell order
+- Places new order with updated quantity
+- **Target price stays frozen** (never recalculated)
+- Updates in-memory tracking
+- Saves to file for persistence
+
+#### 2. Added `_sync_sell_order_quantities_with_holdings()` Method
+
+**File**: `src/application/services/paper_trading_service_adapter.py`
+
+```python
+def _sync_sell_order_quantities_with_holdings(self) -> int:
+    """
+    Sync sell order quantities with current holdings (after re-entry).
+    
+    Returns: Number of sell orders updated
+    """
+    holdings = self.broker.get_holdings()
+    holdings_map = {h.symbol: h.quantity for h in holdings}
+    
+    updated_count = 0
+    for symbol, order_info in self.active_sell_orders.items():
+        if symbol in holdings_map:
+            current_qty = order_info.get("qty", 0)
+            holdings_qty = holdings_map[symbol]
+            
+            # If holdings increased, update sell order
+            if holdings_qty > current_qty:
+                if self._update_sell_order_quantity(symbol, holdings_qty):
+                    updated_count += 1
+    
+    return updated_count
+```
+
+#### 3. Integrated Sync After Position Monitor
+
+**File**: `src/application/services/paper_trading_service_adapter.py`
+
+```python
+def run_position_monitor(self):
+    # Monitor positions for re-entry signals
+    summary = self.engine.monitor_positions()
+    
+    # If re-entries happened, sync sell order quantities
+    if summary.get("reentries", 0) > 0:
+        updated_count = self._sync_sell_order_quantities_with_holdings()
+        if updated_count > 0:
+            self.logger.info(f"Updated {updated_count} sell order quantities after re-entry")
+```
+
+#### 4. Enhanced `_place_sell_orders()` to Detect Quantity Mismatches
+
+**File**: `src/application/services/paper_trading_service_adapter.py`
+
+```python
+def _place_sell_orders(self):
+    for holding in holdings:
+        symbol = holding.symbol
+        quantity = holding.quantity
+        
+        # Skip if already have active sell order
+        if symbol in self.active_sell_orders:
+            # Check if holdings quantity has increased (re-entry happened)
+            current_order_qty = self.active_sell_orders[symbol].get("qty", 0)
+            if quantity > current_order_qty:
+                # Update sell order quantity to match holdings
+                self._update_sell_order_quantity(symbol, quantity)
+            continue
+        # ... place new order ...
+```
+
+### Files Modified
+
+1. **`src/application/services/paper_trading_service_adapter.py`**
+   - Added `_update_sell_order_quantity()` method
+   - Added `_sync_sell_order_quantities_with_holdings()` method
+   - Integrated sync after `run_position_monitor()`
+   - Enhanced `_place_sell_orders()` to detect and update quantity mismatches
+
+2. **`tests/unit/application/test_paper_trading_service_adapter.py`**
+   - Added 6 new tests:
+     - `test_update_sell_order_quantity_after_reentry`
+     - `test_sync_sell_order_quantities_with_holdings`
+     - `test_update_sell_order_quantity_preserves_frozen_target`
+     - `test_place_sell_orders_updates_quantity_on_reentry`
+     - `test_update_sell_order_quantity_no_update_if_quantity_same`
+     - `test_update_sell_order_quantity_no_update_if_quantity_decreased`
+
+### Testing
+
+**Unit Tests** (`tests/unit/application/test_paper_trading_service_adapter.py`):
+- ✅ 6 tests covering quantity update scenarios
+- ✅ Frozen target price preservation
+- ✅ Sync with multiple holdings
+- ✅ Edge cases (no update if quantity same/decreased)
+
+**All tests passing ✅**
+
+### User Impact
+
+**Before**:
+- ❌ Re-entry increased holdings but sell order quantity unchanged
+- ❌ Partial position exits (only original quantity sold)
+- ❌ Remaining shares not tracked for exit
+- ❌ Incomplete trade execution
+
+**After**:
+- ✅ Sell order quantity automatically syncs with holdings after re-entry
+- ✅ Full position exits when target hits
+- ✅ Target price remains frozen (never recalculated)
+- ✅ Complete trade execution
+
+### Key Design Decisions
+
+1. **Frozen Target Price**: Target price is never recalculated when quantity updates. This matches the backtest strategy where EMA9 target is frozen at entry.
+
+2. **Cancel + Replace**: Uses cancel old order + place new order approach (paper trading doesn't support order modification). This is safe because:
+   - Paper trading orders execute immediately if price conditions are met
+   - No risk of missing execution window
+   - Simpler than implementing order modification
+
+3. **Automatic Sync**: Sync happens automatically after position monitor detects re-entries. No manual intervention needed.
+
+4. **Quantity-Only Updates**: Only updates quantity, never price. Price remains frozen at original EMA9 target.
+
+### Example Flow
+
+```
+1. Initial Entry:
+   - Buy: 40 shares @ Rs 2500
+   - Sell order: 40 shares @ Rs 2600 (frozen EMA9)
+
+2. Re-Entry (RSI drops):
+   - Buy: 20 shares @ Rs 2400
+   - Holdings: 60 shares total
+   - System detects: holdings (60) > sell order (40)
+   - Action: Cancel old order, place new order
+   - New sell order: 60 shares @ Rs 2600 (same frozen target!)
+
+3. Target Hit:
+   - Price reaches Rs 2600
+   - Full 60 shares sell @ Rs 2600 ✅
+   - Position fully closed ✅
+```
+
+---

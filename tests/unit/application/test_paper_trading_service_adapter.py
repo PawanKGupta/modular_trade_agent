@@ -1218,3 +1218,234 @@ class TestPaperTradingSellMonitoring:
             # Note: In real scenario, orders would be filtered if no holdings AND no pending orders
             # But we're just testing that _load_sell_orders_from_file was called
             assert hasattr(adapter, "active_sell_orders")
+
+    def test_update_sell_order_quantity_after_reentry(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """Test that sell order quantity is updated when re-entry increases holdings"""
+        from unittest.mock import MagicMock
+
+        # Set up existing sell order
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "OLD_SELL_ORDER_123",
+                "target_price": 2600.0,  # Frozen target
+                "qty": 40,  # Old quantity
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+
+        # Mock broker to simulate holdings increase (re-entry happened)
+        mock_holding = MagicMock()
+        mock_holding.symbol = "RELIANCE"
+        mock_holding.quantity = 60  # Increased from 40 to 60 (re-entry added 20)
+        adapter_with_holdings.broker.get_holdings.return_value = [mock_holding]
+
+        # Mock cancel and place order
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.broker.place_order.return_value = "NEW_SELL_ORDER_456"
+
+        # Update sell order quantity
+        result = adapter_with_holdings._update_sell_order_quantity("RELIANCE", 60)
+
+        # Verify update succeeded
+        assert result is True
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["qty"] == 60
+        assert (
+            adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == 2600.0
+        )  # Still frozen!
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["order_id"] == "NEW_SELL_ORDER_456"
+
+        # Verify old order was cancelled
+        adapter_with_holdings.broker.cancel_order.assert_called_with("OLD_SELL_ORDER_123")
+
+        # Verify new order was placed with correct quantity and frozen price
+        adapter_with_holdings.broker.place_order.assert_called_once()
+        new_order = adapter_with_holdings.broker.place_order.call_args[0][0]
+        assert new_order.quantity == 60
+        assert new_order.transaction_type.value == "SELL"
+        assert float(new_order.price.amount) == 2600.0  # Frozen target
+
+    def test_sync_sell_order_quantities_with_holdings(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """Test that _sync_sell_order_quantities_with_holdings updates multiple orders"""
+        from unittest.mock import MagicMock
+
+        # Set up multiple sell orders with outdated quantities
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_1",
+                "target_price": 2600.0,
+                "qty": 40,  # Old quantity
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            },
+            "TCS": {
+                "order_id": "SELL_ORDER_2",
+                "target_price": 3600.0,
+                "qty": 30,  # Old quantity
+                "ticker": "TCS.NS",
+                "entry_date": "2024-01-01",
+            },
+        }
+
+        # Mock holdings with increased quantities (re-entries happened)
+        mock_holding1 = MagicMock()
+        mock_holding1.symbol = "RELIANCE"
+        mock_holding1.quantity = 60  # Increased from 40
+
+        mock_holding2 = MagicMock()
+        mock_holding2.symbol = "TCS"
+        mock_holding2.quantity = 30  # Same (no re-entry)
+
+        adapter_with_holdings.broker.get_holdings.return_value = [
+            mock_holding1,
+            mock_holding2,
+        ]
+
+        # Mock cancel and place order
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.broker.place_order.side_effect = [
+            "NEW_SELL_ORDER_1",
+            "NEW_SELL_ORDER_2",
+        ]
+
+        # Sync quantities
+        updated_count = adapter_with_holdings._sync_sell_order_quantities_with_holdings()
+
+        # Verify only RELIANCE was updated (TCS quantity didn't change)
+        assert updated_count == 1
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["qty"] == 60
+        assert adapter_with_holdings.active_sell_orders["TCS"]["qty"] == 30  # Unchanged
+
+    def test_update_sell_order_quantity_preserves_frozen_target(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """Test that target price remains frozen when quantity is updated"""
+        from unittest.mock import MagicMock
+
+        frozen_target = 2600.0
+
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "OLD_ORDER",
+                "target_price": frozen_target,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.broker.place_order.return_value = "NEW_ORDER"
+
+        # Update quantity
+        adapter_with_holdings._update_sell_order_quantity("RELIANCE", 60)
+
+        # Verify target price is still frozen (not recalculated)
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == frozen_target
+
+        # Verify new order was placed with frozen target
+        new_order = adapter_with_holdings.broker.place_order.call_args[0][0]
+        assert float(new_order.price.amount) == frozen_target
+
+    def test_place_sell_orders_updates_quantity_on_reentry(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """Test that _place_sell_orders detects and updates quantity when holdings increased"""
+        from unittest.mock import MagicMock, patch
+
+        # Set up existing sell order with old quantity
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "EXISTING_ORDER",
+                "target_price": 2600.0,
+                "qty": 40,  # Old quantity
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+
+        # Mock holdings with increased quantity (re-entry happened)
+        mock_holding = MagicMock()
+        mock_holding.symbol = "RELIANCE"
+        mock_holding.quantity = 60  # Increased from 40
+        adapter_with_holdings.broker.get_holdings.return_value = [mock_holding]
+
+        # Mock pending orders (existing sell order)
+        mock_pending_order = MagicMock()
+        mock_pending_order.symbol = "RELIANCE"
+        mock_pending_order.is_sell_order.return_value = True
+        mock_pending_order.is_active.return_value = True
+        adapter_with_holdings.broker.get_pending_orders.return_value = [mock_pending_order]
+
+        # Mock cancel and place order
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.broker.place_order.return_value = "UPDATED_ORDER"
+
+        # Call _place_sell_orders (should detect quantity mismatch and update)
+        adapter_with_holdings._place_sell_orders()
+
+        # Verify quantity was updated
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["qty"] == 60
+        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == 2600.0
+
+        # Verify order was cancelled and new one placed
+        adapter_with_holdings.broker.cancel_order.assert_called_with("EXISTING_ORDER")
+        adapter_with_holdings.broker.place_order.assert_called_once()
+
+    def test_update_sell_order_quantity_no_update_if_quantity_same(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """Test that quantity is not updated if holdings quantity hasn't increased"""
+        from unittest.mock import MagicMock
+
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+
+        adapter_with_holdings.broker.cancel_order = MagicMock()
+        adapter_with_holdings.broker.place_order = MagicMock()
+
+        # Try to update with same quantity (should return False)
+        result = adapter_with_holdings._update_sell_order_quantity("RELIANCE", 40)
+
+        # Verify no update happened
+        assert result is False
+        adapter_with_holdings.broker.cancel_order.assert_not_called()
+        adapter_with_holdings.broker.place_order.assert_not_called()
+
+    def test_update_sell_order_quantity_no_update_if_quantity_decreased(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """Test that quantity is not updated if new quantity is less than current"""
+        from unittest.mock import MagicMock
+
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+
+        adapter_with_holdings.broker.cancel_order = MagicMock()
+        adapter_with_holdings.broker.place_order = MagicMock()
+
+        # Try to update with lower quantity (should return False)
+        result = adapter_with_holdings._update_sell_order_quantity("RELIANCE", 30)
+
+        # Verify no update happened
+        assert result is False
+        adapter_with_holdings.broker.cancel_order.assert_not_called()
+        adapter_with_holdings.broker.place_order.assert_not_called()
