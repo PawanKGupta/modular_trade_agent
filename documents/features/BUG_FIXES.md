@@ -456,3 +456,135 @@ Admin creates user → User logs in → Start service → Success ✅
 ```
 
 ---
+
+## Bug Fix #80: Duplicate Sell Orders on Service Restart
+
+**Date Fixed**: November 27, 2025
+**Status**: ✅ Fixed
+**Severity**: 🟡 Medium
+
+### Problem
+When the unified service was restarted, it placed duplicate sell orders for all existing holdings. This happened because the service didn't load existing sell orders from the saved file on startup.
+
+**What Was Happening**:
+1. ✅ Service places sell orders for holdings → Saved to `active_sell_orders.json`
+2. ❌ Service restarts → `active_sell_orders` dict is empty (not loaded from file)
+3. ❌ `run_sell_monitor()` called → Sees holdings but no active orders in memory
+4. ❌ Places NEW sell orders for all holdings → **DUPLICATES!**
+
+This caused:
+- Multiple sell orders for the same symbol
+- Confusion in order tracking
+- Potential execution issues
+
+### Root Cause
+
+**Missing Load Mechanism**: The service initialized `active_sell_orders` as an empty dict and never loaded existing orders from the JSON file on startup.
+
+**Flow Issue**:
+```
+1. Service running → Places sell orders → Saves to file ✅
+2. Service restarts → active_sell_orders = {} (empty!) ❌
+3. run_sell_monitor() → Checks if symbol in active_sell_orders → False ❌
+4. Places new sell order → DUPLICATE! ❌
+```
+
+### Solution
+
+Implemented a complete sell order persistence and duplicate prevention system:
+
+#### 1. Added `_load_sell_orders_from_file()` Method
+
+**File**: `src/application/services/paper_trading_service_adapter.py`
+
+```python
+def _load_sell_orders_from_file(self):
+    """Load active sell orders from JSON file on service startup"""
+    # Loads from active_sell_orders.json
+    # Validates against current holdings and pending broker orders
+    # Filters out stale orders (no holdings, no pending order)
+```
+
+**Features**:
+- Loads sell orders from JSON file on startup
+- Validates orders against current holdings
+- Cross-checks with pending orders from broker
+- Filters out stale orders (symbols with no holdings)
+
+#### 2. Call Load Method During Initialization
+
+**File**: `src/application/services/paper_trading_service_adapter.py`
+
+```python
+def initialize(self) -> bool:
+    # ... broker connection ...
+    self.logger.info("? Paper trading broker connected")
+
+    # Load existing sell orders from file to avoid duplicates on restart
+    self._load_sell_orders_from_file()  # ✅ NEW
+
+    # ... rest of initialization ...
+```
+
+#### 3. Enhanced Duplicate Prevention in `_place_sell_orders()`
+
+**File**: `src/application/services/paper_trading_service_adapter.py`
+
+**Before**:
+```python
+# Skip if already have active sell order
+if symbol in self.active_sell_orders:
+    continue
+```
+
+**After**:
+```python
+# Get pending sell orders from broker to avoid duplicates
+pending_orders = self.broker.get_pending_orders()
+pending_sell_symbols = {
+    o.symbol for o in pending_orders
+    if o.is_sell_order() and o.is_active()
+}
+
+# Skip if already have active sell order (in memory or broker)
+if symbol in self.active_sell_orders or symbol in pending_sell_symbols:
+    # If in broker but not in memory, restore tracking
+    if symbol in pending_sell_symbols and symbol not in self.active_sell_orders:
+        # Restore order details from broker
+    continue
+```
+
+**Features**:
+- Checks both in-memory `active_sell_orders` AND pending broker orders
+- Restores tracking for orders found in broker but not in memory
+- Prevents duplicates even if file loading fails
+
+### Testing
+
+**Manual Test**:
+1. Start service → Place sell orders for holdings ✅
+2. Stop service → Verify `active_sell_orders.json` exists ✅
+3. Restart service → Check logs for "Loaded X active sell orders from file" ✅
+4. Run sell monitor → Verify NO duplicate orders placed ✅
+
+**Expected Behavior**:
+```
+Service restart → Loads 3 sell orders from file →
+run_sell_monitor() → Skips all 3 (already have orders) →
+No duplicates placed ✅
+```
+
+### Files Changed
+
+1. `src/application/services/paper_trading_service_adapter.py`:
+   - Added `_load_sell_orders_from_file()` method
+   - Call load method in `initialize()`
+   - Enhanced `_place_sell_orders()` duplicate prevention
+
+### Impact
+
+✅ **Fixed**: No more duplicate sell orders on service restart
+✅ **Improved**: Sell order tracking persists across restarts
+✅ **Enhanced**: Better duplicate prevention (checks both memory and broker)
+
+---

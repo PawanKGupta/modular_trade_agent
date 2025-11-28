@@ -37,6 +37,7 @@ paper_trading/user_*/config.json
 paper_trading/user_*/holdings.json
 paper_trading/user_*/orders.json
 paper_trading/user_*/transactions.json
+paper_trading/user_*/position_metadata.json
 paper_trading/user_*/active_sell_orders.json
 paper_trading/user_*/reports/*.json
 

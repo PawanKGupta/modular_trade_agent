@@ -147,6 +147,9 @@ class PaperTradingServiceAdapter:
 
             self.logger.info("? Paper trading broker connected", action="initialize")
 
+            # Load existing sell orders from file to avoid duplicates on restart
+            self._load_sell_orders_from_file()
+
             # Execute any pending MARKET orders from previous sessions
             try:
                 pending_orders = self.broker.get_pending_orders()
@@ -553,18 +556,57 @@ class PaperTradingServiceAdapter:
             f"Placing sell orders for {len(holdings)} holdings...", action="_place_sell_orders"
         )
 
+        # Get pending sell orders from broker to avoid duplicates
+        pending_orders = self.broker.get_pending_orders() if self.broker else []
+        pending_sell_symbols = {
+            o.symbol for o in pending_orders if o.is_sell_order() and o.is_active()
+        }
+
         for holding in holdings:
             try:
                 symbol = holding.symbol
                 ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
                 quantity = holding.quantity
 
-                # Skip if already have active sell order
-                if symbol in self.active_sell_orders:
+                # Skip if already have active sell order (in memory or broker)
+                if symbol in self.active_sell_orders or symbol in pending_sell_symbols:
                     self.logger.debug(
-                        f"Skipping {symbol} - already has active sell order",
+                        f"Skipping {symbol} - already has active sell order "
+                        f"(in memory: {symbol in self.active_sell_orders}, "
+                        f"in broker: {symbol in pending_sell_symbols})",
                         action="_place_sell_orders",
                     )
+                    # If it's in broker but not in memory, add it to memory for tracking
+                    if symbol in pending_sell_symbols and symbol not in self.active_sell_orders:
+                        # Try to find the order details from broker
+                        for order in pending_orders:
+                            if (
+                                order.symbol == symbol
+                                and order.is_sell_order()
+                                and order.is_active()
+                            ):
+                                # Estimate target price from order price if available
+                                target_price = (
+                                    float(order.price.amount)
+                                    if hasattr(order, "price") and hasattr(order.price, "amount")
+                                    else None
+                                )
+                                if target_price:
+                                    self.active_sell_orders[symbol] = {
+                                        "order_id": (
+                                            order.order_id
+                                            if hasattr(order, "order_id")
+                                            else "unknown"
+                                        ),
+                                        "target_price": target_price,
+                                        "qty": quantity,
+                                        "ticker": ticker,
+                                        "entry_date": datetime.now().strftime("%Y-%m-%d"),
+                                    }
+                                    self.logger.info(
+                                        f"Restored sell order tracking for {symbol} from broker",
+                                        action="_place_sell_orders",
+                                    )
                     continue
 
                 # Calculate EMA9 target (frozen at this value)
@@ -770,6 +812,65 @@ class PaperTradingServiceAdapter:
             )
             # Update saved file after removing executed orders
             self._save_sell_orders_to_file()
+
+    def _load_sell_orders_from_file(self):
+        """Load active sell orders from JSON file on service startup"""
+        try:
+            import json
+
+            if not self._sell_orders_file.exists():
+                self.logger.debug(
+                    f"No existing sell orders file found at {self._sell_orders_file}",
+                    action="_load_sell_orders_from_file",
+                )
+                return
+
+            with open(self._sell_orders_file) as f:
+                loaded_orders = json.load(f)
+
+            # Validate and filter out orders for symbols that no longer have holdings
+            holdings = self.broker.get_holdings() if self.broker else []
+            holding_symbols = {h.symbol for h in holdings}
+
+            # Also check pending orders from broker to avoid duplicates
+            pending_orders = self.broker.get_pending_orders() if self.broker else []
+            pending_sell_symbols = {
+                o.symbol for o in pending_orders if o.is_sell_order() and o.is_active()
+            }
+
+            valid_orders = {}
+            for symbol, order_info in loaded_orders.items():
+                # Keep order if:
+                # 1. Symbol still has holdings, OR
+                # 2. Symbol has a pending sell order in broker
+                if symbol in holding_symbols or symbol in pending_sell_symbols:
+                    valid_orders[symbol] = order_info
+                else:
+                    self.logger.debug(
+                        f"Removed stale sell order for {symbol} (no holdings or pending order)",
+                        action="_load_sell_orders_from_file",
+                    )
+
+            self.active_sell_orders = valid_orders
+
+            if valid_orders:
+                self.logger.info(
+                    f"Loaded {len(valid_orders)} active sell orders from file",
+                    action="_load_sell_orders_from_file",
+                )
+            else:
+                self.logger.debug(
+                    "No valid sell orders found in file",
+                    action="_load_sell_orders_from_file",
+                )
+
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to load sell orders from file: {e}",
+                action="_load_sell_orders_from_file",
+            )
+            # On error, start with empty dict (safe default)
+            self.active_sell_orders = {}
 
     def _save_sell_orders_to_file(self):
         """Save active sell orders to JSON file for UI display"""
