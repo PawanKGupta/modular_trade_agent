@@ -340,7 +340,7 @@ def test_stop_service_failure(trading_service, mock_db, current_user):
 
 def test_stop_service_exception(trading_service, mock_db, current_user):
     """Test stop_service with exception"""
-    trading_service.stop_service = lambda user_id: (_ for _ in ()).throw(Exception("Stop error"))
+    trading_service.stop_service = lambda user_id: (_ for _ in ()).throw(Exception("Stop error"))  # noqa: E501
 
     with pytest.raises(HTTPException) as exc:
         service.stop_service(
@@ -707,7 +707,9 @@ def test_get_task_history_empty_result(task_repo, current_user, mock_db):
 
 
 # GET /service/logs tests
-def test_get_service_logs_no_filters(service_log_repo, current_user, mock_db, monkeypatch):
+def test_get_service_logs_no_filters(  # noqa: E501
+    service_log_repo, current_user, mock_db, monkeypatch
+):
     """Test get_service_logs with no filters"""
     mock_now = datetime(2024, 1, 15, 12, 0, 0)
     monkeypatch.setattr(service, "ist_now", lambda: mock_now)
@@ -731,7 +733,9 @@ def test_get_service_logs_no_filters(service_log_repo, current_user, mock_db, mo
     assert call_args["module"] is None
 
 
-def test_get_service_logs_with_filters(service_log_repo, current_user, mock_db, monkeypatch):
+def test_get_service_logs_with_filters(  # noqa: E501
+    service_log_repo, current_user, mock_db, monkeypatch
+):
     """Test get_service_logs with all filters"""
     mock_now = datetime(2024, 1, 15, 12, 0, 0)
     monkeypatch.setattr(service, "ist_now", lambda: mock_now)
@@ -752,7 +756,9 @@ def test_get_service_logs_with_filters(service_log_repo, current_user, mock_db, 
     assert call_args["start_time"] is not None
 
 
-def test_get_service_logs_empty_result(service_log_repo, current_user, mock_db, monkeypatch):
+def test_get_service_logs_empty_result(  # noqa: E501
+    service_log_repo, current_user, mock_db, monkeypatch
+):
     """Test get_service_logs with empty result"""
     mock_now = datetime(2024, 1, 15, 12, 0, 0)
     monkeypatch.setattr(service, "ist_now", lambda: mock_now)
@@ -771,7 +777,9 @@ def test_get_service_logs_empty_result(service_log_repo, current_user, mock_db, 
     assert result.total == 0
 
 
-def test_get_service_logs_exception(service_log_repo, current_user, mock_db, monkeypatch):
+def test_get_service_logs_exception(  # noqa: E501
+    service_log_repo, current_user, mock_db, monkeypatch
+):
     """Test get_service_logs with exception"""
     mock_now = datetime(2024, 1, 15, 12, 0, 0)
     monkeypatch.setattr(service, "ist_now", lambda: mock_now)
