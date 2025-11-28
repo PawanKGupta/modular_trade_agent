@@ -862,6 +862,9 @@ class TestPaperTradingSellMonitoring:
                 # Mock RSI calculation
                 mock_rsi.return_value = pd.Series([45.0] * 50)
 
+                # Ensure broker reports no remaining holding so order is removed
+                adapter.broker.get_holding.return_value = None
+
                 adapter._monitor_sell_orders()
 
                 # Verify RSI was called with lowercase "close"
@@ -1250,9 +1253,7 @@ class TestPaperTradingSellMonitoring:
         from unittest.mock import patch
 
         new_target = 2650.0  # New EMA9 target after re-entry
-        with patch.object(
-            adapter_with_holdings, "_calculate_ema9", return_value=new_target
-        ):
+        with patch.object(adapter_with_holdings, "_calculate_ema9", return_value=new_target):
             # Update sell order quantity (target will be recalculated)
             result = adapter_with_holdings._update_sell_order_quantity("RELIANCE", 60)
 
@@ -1334,7 +1335,10 @@ class TestPaperTradingSellMonitoring:
         # Verify only RELIANCE was updated (TCS quantity didn't change)
         assert updated_count == 1
         assert adapter_with_holdings.active_sell_orders["RELIANCE"]["qty"] == 60
-        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == new_target_reliance
+        assert (
+            adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"]
+            == new_target_reliance
+        )
         assert adapter_with_holdings.active_sell_orders["TCS"]["qty"] == 30  # Unchanged
 
     def test_update_sell_order_quantity_recalculates_target(
@@ -1360,9 +1364,7 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.place_order.return_value = "NEW_ORDER"
 
         # Mock EMA9 calculation to return new target
-        with patch.object(
-            adapter_with_holdings, "_calculate_ema9", return_value=new_target
-        ):
+        with patch.object(adapter_with_holdings, "_calculate_ema9", return_value=new_target):
             # Update quantity (target will be recalculated)
             adapter_with_holdings._update_sell_order_quantity("RELIANCE", 60)
 
@@ -1411,9 +1413,7 @@ class TestPaperTradingSellMonitoring:
         from unittest.mock import patch
 
         new_target = 2650.0  # New EMA9 target after re-entry
-        with patch.object(
-            adapter_with_holdings, "_calculate_ema9", return_value=new_target
-        ):
+        with patch.object(adapter_with_holdings, "_calculate_ema9", return_value=new_target):
             # Call _place_sell_orders (should detect quantity mismatch and update)
             adapter_with_holdings._place_sell_orders()
 

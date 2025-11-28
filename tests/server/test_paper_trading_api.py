@@ -45,8 +45,26 @@ def auth_client():
 
 def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
     """Test that portfolio fetches live prices from yfinance instead of using stored prices"""
-    # Create paper trading data files
-    storage_path = tmp_path / "paper_trading" / "user_1"
+    # Create test client and auth
+    client = TestClient(app)
+    signup = client.post(
+        "/api/v1/auth/signup",
+        json={"email": "test_live_price@example.com", "password": "testpass"},
+    )
+    assert signup.status_code == 200
+    token = signup.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Fetch current user to determine ID (not always 1 when whole suite runs)
+    me_resp = client.get("/api/v1/auth/me", headers=headers)
+    assert me_resp.status_code == 200
+    user_id = me_resp.json()["id"]
+
+    # Set to paper mode
+    client.put("/api/v1/user/settings", json={"trade_mode": "paper"}, headers=headers)
+
+    # Create paper trading data files for this user
+    storage_path = tmp_path / "paper_trading" / f"user_{user_id}"
     storage_path.mkdir(parents=True, exist_ok=True)
 
     # Account data
@@ -76,21 +94,21 @@ def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
     # Orders
     (storage_path / "orders.json").write_text(json.dumps([]))
 
-    # Monkey patch to use our temp storage path
-    monkeypatch.setattr("server.app.routers.paper_trading.Path", lambda _: tmp_path)
+    # Monkey patch Path used inside router so all storage reads/writes go to tmp_path
+    from pathlib import Path as RealPath
 
-    # Create test client and auth
-    client = TestClient(app)
-    signup = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "test_live_price@example.com", "password": "testpass"},
+    def patched_path(*args, **kwargs):
+        if args and isinstance(args[0], str):
+            first = args[0]
+            if first.startswith("paper_trading"):
+                return RealPath(tmp_path / first)
+        return RealPath(*args, **kwargs)
+
+    monkeypatch.setattr("server.app.routers.paper_trading.Path", patched_path)
+    monkeypatch.setattr(
+        "modules.kotak_neo_auto_trader.infrastructure.persistence.paper_trade_store.Path",
+        patched_path,
     )
-    assert signup.status_code == 200
-    token = signup.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # Set to paper mode
-    client.put("/api/v1/user/settings", json={"trade_mode": "paper"}, headers=headers)
 
     # Mock yfinance to return a DIFFERENT price than stored
     # Patch yfinance.Ticker where it's defined, which will affect all imports

@@ -96,6 +96,16 @@ class TestRetryServiceIndicatorServiceIntegration:
         engine.orders_repo = mock_orders_repo
         engine.user_id = 1
 
+        # Stub OrderValidationService interactions
+        engine.order_validation_service = Mock()
+        engine.order_validation_service.check_portfolio_capacity.return_value = (
+            True,
+            0,
+            engine.strategy_config.max_portfolio_size,
+        )
+        engine.order_validation_service.check_duplicate_order.return_value = (False, "")
+        engine.order_validation_service.check_volume_ratio.return_value = (True, 0.1, {})
+
         # Mock other dependencies
         engine.current_symbols_in_portfolio = Mock(return_value=[])
         engine.portfolio_size = Mock(return_value=0)
@@ -150,6 +160,16 @@ class TestRetryServiceIndicatorServiceIntegration:
         engine.orders_repo = mock_orders_repo
         engine.user_id = 1
 
+        # Stub OrderValidationService interactions
+        engine.order_validation_service = Mock()
+        engine.order_validation_service.check_portfolio_capacity.return_value = (
+            True,
+            0,
+            engine.strategy_config.max_portfolio_size,
+        )
+        engine.order_validation_service.check_duplicate_order.return_value = (False, "")
+        engine.order_validation_service.check_volume_ratio.return_value = (True, 0.1, {})
+
         # Mock other dependencies
         engine.current_symbols_in_portfolio = Mock(return_value=[])
         engine.portfolio_size = Mock(return_value=0)
@@ -193,6 +213,26 @@ class TestRetryServiceIndicatorServiceIntegration:
         engine.indicator_service = mock_indicator_service
         engine.orders_repo = mock_orders_repo
         engine.user_id = 1
+
+        # Stub OrderValidationService interactions
+        engine.order_validation_service = Mock()
+        engine.order_validation_service.check_portfolio_capacity.return_value = (
+            True,
+            0,
+            engine.strategy_config.max_portfolio_size,
+        )
+        engine.order_validation_service.check_duplicate_order.return_value = (False, "")
+        engine.order_validation_service.check_volume_ratio.return_value = (True, 0.1, {})
+
+        # Stub OrderValidationService interactions
+        engine.order_validation_service = Mock()
+        engine.order_validation_service.check_portfolio_capacity.return_value = (
+            True,
+            0,
+            engine.strategy_config.max_portfolio_size,
+        )
+        engine.order_validation_service.check_duplicate_order.return_value = (False, "")
+        engine.order_validation_service.check_volume_ratio.return_value = (True, 0.1, {})
 
         # Mock other dependencies
         engine.current_symbols_in_portfolio = Mock(return_value=[])
@@ -251,6 +291,16 @@ class TestRetryServiceIndicatorServiceIntegration:
         engine.orders_repo = mock_orders_repo
         engine.user_id = 1
         engine.strategy_config = mock_strategy_config
+
+        # Stub OrderValidationService interactions
+        engine.order_validation_service = Mock()
+        engine.order_validation_service.check_portfolio_capacity.return_value = (
+            True,
+            0,
+            mock_strategy_config.max_portfolio_size,
+        )
+        engine.order_validation_service.check_duplicate_order.return_value = (False, "")
+        engine.order_validation_service.check_volume_ratio.return_value = (True, 0.1, {})
 
         # Mock other dependencies
         engine.current_symbols_in_portfolio = Mock(return_value=[])
