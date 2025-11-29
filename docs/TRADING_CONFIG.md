@@ -459,4 +459,3 @@ Configuration can also be managed via API:
 - `POST /api/v1/user/trading-config/reset` - Reset to defaults
 
 See [API Documentation](API.md) for details.
-

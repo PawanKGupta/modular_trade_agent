@@ -61,7 +61,7 @@ Implemented the user's expected behavior for three critical edge cases in the re
   - Skips retry placement
   - Sends notification
 
-**Location**: 
+**Location**:
 - `modules/kotak_neo_auto_trader/auto_trade_engine.py` - `place_new_entries()`
 - `modules/kotak_neo_auto_trader/auto_trade_engine.py` - `retry_pending_orders_from_db()`
 
@@ -173,4 +173,3 @@ Implemented the user's expected behavior for three critical edge cases in the re
 - Case 1: Capital per trade modification - ✅ Implemented
 - Case 2: Manual AMO order detection - ✅ Implemented (for both new and retry)
 - Case 3: Manual order with different qty - ✅ Implemented (same as Case 2)
-

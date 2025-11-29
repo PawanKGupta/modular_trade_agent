@@ -1,9 +1,9 @@
 # Phase 3: Exit Strategy & Risk Management
 
-**Project:** Kotak Neo Auto Trader  
-**Phase:** 3  
-**Status:** Planning  
-**Target Completion:** TBD  
+**Project:** Kotak Neo Auto Trader
+**Phase:** 3
+**Status:** Planning
+**Target Completion:** TBD
 
 ---
 
@@ -59,7 +59,7 @@ Phase 3 focuses on implementing intelligent exit strategies, dynamic position si
 class ExitStrategyManager:
     """
     Manages exit strategy execution for tracked positions.
-    
+
     Features:
     - Multiple exit condition checks
     - Priority-based exit execution
@@ -67,7 +67,7 @@ class ExitStrategyManager:
     - Telegram notifications on exits
     - Exit reason tracking
     """
-    
+
     def __init__(
         self,
         portfolio_client,
@@ -79,26 +79,26 @@ class ExitStrategyManager:
         self.orders = orders_client
         self.tracking = tracking_scope
         self.telegram = telegram_notifier
-        
+
         # Exit parameters (configurable)
         self.enable_ema9_exit = True
         self.enable_rsi50_exit = True
         self.enable_stop_loss = True
         self.enable_profit_target = True
         self.enable_time_based = True
-        
+
         self.stop_loss_pct = -5.0  # -5%
         self.profit_target_pct = 10.0  # +10%
         self.max_holding_days = 30
-    
+
     def evaluate_exits_for_all_positions(self) -> Dict[str, Any]:
         """Check all active positions for exit conditions."""
         pass
-    
+
     def check_exit_conditions(self, symbol: str) -> Optional[ExitSignal]:
         """Check if symbol meets any exit condition."""
         pass
-    
+
     def execute_exit(self, symbol: str, exit_reason: str) -> bool:
         """Execute exit order for symbol."""
         pass
@@ -148,7 +148,7 @@ class ExitStrategyManager:
 class PositionSizer:
     """
     Calculates optimal position size based on risk parameters.
-    
+
     Supports multiple sizing strategies:
     - Fixed capital
     - Fixed risk percentage
@@ -156,7 +156,7 @@ class PositionSizer:
     - Kelly Criterion
     - Portfolio heat management
     """
-    
+
     def __init__(
         self,
         portfolio_client,
@@ -166,12 +166,12 @@ class PositionSizer:
         self.portfolio = portfolio_client
         self.tracking = tracking_scope
         self.strategy = default_strategy
-        
+
         # Risk parameters
         self.risk_per_trade_pct = 2.0  # 2% per trade
         self.max_portfolio_heat = 10.0  # 10% total
         self.max_position_size_pct = 20.0  # 20% of capital
-    
+
     def calculate_position_size(
         self,
         symbol: str,
@@ -181,11 +181,11 @@ class PositionSizer:
     ) -> int:
         """Calculate optimal quantity for position."""
         pass
-    
+
     def get_available_capital(self) -> float:
         """Get available capital for new positions."""
         pass
-    
+
     def get_portfolio_heat(self) -> float:
         """Calculate current portfolio heat (total risk)."""
         pass
@@ -236,7 +236,7 @@ class PositionSizer:
 class RiskManager:
     """
     Portfolio-level risk management and circuit breakers.
-    
+
     Features:
     - Daily loss limits
     - Maximum drawdown protection
@@ -244,7 +244,7 @@ class RiskManager:
     - Margin monitoring
     - Circuit breaker events
     """
-    
+
     def __init__(
         self,
         portfolio_client,
@@ -254,34 +254,34 @@ class RiskManager:
         self.portfolio = portfolio_client
         self.tracking = tracking_scope
         self.telegram = telegram_notifier
-        
+
         # Risk limits
         self.daily_loss_limit_pct = -3.0  # -3% per day
         self.max_drawdown_pct = -10.0  # -10% from peak
         self.max_margin_usage_pct = 70.0  # 70% margin
         self.max_correlated_positions = 2  # Max 2 from same sector
-        
+
         # State tracking
         self.peak_equity = 0.0
         self.today_start_equity = 0.0
         self.circuit_breaker_triggered = False
-    
+
     def check_risk_limits(self) -> Dict[str, Any]:
         """Check all risk limits and return status."""
         pass
-    
+
     def is_daily_loss_exceeded(self) -> bool:
         """Check if daily loss limit exceeded."""
         pass
-    
+
     def is_max_drawdown_exceeded(self) -> bool:
         """Check if max drawdown exceeded."""
         pass
-    
+
     def get_position_correlation(self, symbol1: str, symbol2: str) -> float:
         """Calculate correlation between two positions."""
         pass
-    
+
     def trigger_circuit_breaker(self, reason: str) -> None:
         """Trigger emergency circuit breaker."""
         pass
@@ -337,7 +337,7 @@ class RiskManager:
 class PerformanceAnalytics:
     """
     Comprehensive performance tracking and analytics.
-    
+
     Features:
     - Win rate calculation
     - Return metrics
@@ -345,30 +345,30 @@ class PerformanceAnalytics:
     - Equity curve generation
     - Report generation
     """
-    
+
     def __init__(self, trades_history_path: str):
         self.history_path = trades_history_path
-    
+
     def calculate_metrics(self) -> Dict[str, Any]:
         """Calculate all performance metrics."""
         pass
-    
+
     def get_win_rate(self) -> float:
         """Calculate win rate percentage."""
         pass
-    
+
     def get_sharpe_ratio(self, risk_free_rate: float = 0.05) -> float:
         """Calculate Sharpe ratio."""
         pass
-    
+
     def generate_equity_curve(self) -> List[Dict[str, Any]]:
         """Generate equity curve data."""
         pass
-    
+
     def generate_performance_report(self) -> str:
         """Generate detailed performance report."""
         pass
-    
+
     def send_weekly_report(self) -> None:
         """Send weekly performance report via Telegram."""
         pass
@@ -424,7 +424,7 @@ class PerformanceAnalytics:
 class AlertManager:
     """
     Advanced monitoring and alert system.
-    
+
     Features:
     - Real-time price monitoring
     - Technical indicator alerts
@@ -432,7 +432,7 @@ class AlertManager:
     - Market condition monitoring
     - System health checks
     """
-    
+
     def __init__(
         self,
         portfolio_client,
@@ -442,34 +442,34 @@ class AlertManager:
         self.portfolio = portfolio_client
         self.tracking = tracking_scope
         self.telegram = telegram_notifier
-        
+
         # Alert configuration
         self.enable_price_alerts = True
         self.enable_technical_alerts = True
         self.enable_risk_alerts = True
         self.enable_market_alerts = True
         self.enable_system_alerts = True
-        
+
         # Thresholds
         self.price_movement_threshold = 3.0  # 3%
         self.volume_spike_threshold = 2.0  # 2x average
-    
+
     def monitor_positions(self) -> None:
         """Continuously monitor all positions."""
         pass
-    
+
     def check_price_alerts(self, symbol: str) -> List[Alert]:
         """Check for price-based alerts."""
         pass
-    
+
     def check_technical_alerts(self, symbol: str) -> List[Alert]:
         """Check for technical indicator alerts."""
         pass
-    
+
     def check_system_health(self) -> List[Alert]:
         """Check system health and connectivity."""
         pass
-    
+
     def send_alert(self, alert: Alert) -> None:
         """Send alert via Telegram."""
         pass
@@ -487,8 +487,8 @@ class AlertManager:
 ## Phase 3 Implementation Plan
 
 ### Stage 1: Exit Strategy (Week 1-2)
-**Priority:** High  
-**Dependencies:** None  
+**Priority:** High
+**Dependencies:** None
 
 **Tasks:**
 1. Create `exit_strategy.py` module
@@ -509,8 +509,8 @@ class AlertManager:
 ---
 
 ### Stage 2: Position Sizing (Week 2-3)
-**Priority:** High  
-**Dependencies:** Risk Manager (basic)  
+**Priority:** High
+**Dependencies:** Risk Manager (basic)
 
 **Tasks:**
 1. Create `position_sizer.py` module
@@ -531,8 +531,8 @@ class AlertManager:
 ---
 
 ### Stage 3: Risk Management (Week 3-4)
-**Priority:** Critical  
-**Dependencies:** Position Sizer  
+**Priority:** Critical
+**Dependencies:** Position Sizer
 
 **Tasks:**
 1. Create `risk_manager.py` module
@@ -555,8 +555,8 @@ class AlertManager:
 ---
 
 ### Stage 4: Analytics (Week 4-5)
-**Priority:** Medium  
-**Dependencies:** Completed trades data  
+**Priority:** Medium
+**Dependencies:** Completed trades data
 
 **Tasks:**
 1. Create `analytics.py` module
@@ -579,8 +579,8 @@ class AlertManager:
 ---
 
 ### Stage 5: Advanced Monitoring (Week 5-6)
-**Priority:** Medium  
-**Dependencies:** Risk Manager, Analytics  
+**Priority:** Medium
+**Dependencies:** Risk Manager, Analytics
 
 **Tasks:**
 1. Create `alert_manager.py` module
@@ -877,10 +877,10 @@ Before starting implementation:
 
 ---
 
-**Status:** Planning Complete  
-**Next Step:** Prioritize features and begin Stage 1 (Exit Strategy)  
-**Estimated Total Duration:** 6-7 weeks  
-**Complexity:** High  
-**Risk Level:** Medium  
+**Status:** Planning Complete
+**Next Step:** Prioritize features and begin Stage 1 (Exit Strategy)
+**Estimated Total Duration:** 6-7 weeks
+**Complexity:** High
+**Risk Level:** Medium
 
 Ready to start implementation? 🚀

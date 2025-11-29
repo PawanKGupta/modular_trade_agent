@@ -57,4 +57,3 @@ This document lists outdated documentation that should be archived or removed.
 ### Architecture (Current)
 - documents/architecture/SERVICE_ARCHITECTURE.md (if current)
 - documents/architecture/ARCHITECTURE_GUIDE.md (if current)
-

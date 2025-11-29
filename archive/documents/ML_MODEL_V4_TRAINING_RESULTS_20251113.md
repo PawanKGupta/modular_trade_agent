@@ -412,7 +412,7 @@ GENUSPAPER.NS:
 
 **Root Cause**: Parameter calculation only checked rule-based verdict, not ML verdict. Also lacked price fallbacks.
 
-**Fix**: 
+**Fix**:
 - Added ML verdict check in `core/backtest_scoring.py` and `services/backtest_service.py`
 - Implemented price fallbacks: `last_close` → `pre_fetched_df` → `stock_info`
 - Filter invalid parameters from Telegram display
@@ -434,9 +434,9 @@ GENUSPAPER.NS:
 
 ### Verification
 
-✅ All "ONLY ML" stocks have valid parameters  
-✅ Complete messages delivered (multiple parts if needed)  
-✅ No Telegram API errors  
+✅ All "ONLY ML" stocks have valid parameters
+✅ Complete messages delivered (multiple parts if needed)
+✅ No Telegram API errors
 ✅ 13 new unit tests added
 
 **See**: [Detailed fix documentation](bug_fixes/ML_PARAMETER_CALCULATION_AND_TELEGRAM_SPLITTING_FIX.md)
@@ -454,8 +454,7 @@ For questions or issues with ML model v4:
 
 **Model Status: ✅ READY FOR DEPLOYMENT**
 
-**Date**: November 13, 2025  
-**Version**: v4  
-**Training time**: ~8 hours (6h backtest + 2h feature extraction)  
+**Date**: November 13, 2025
+**Version**: v4
+**Training time**: ~8 hours (6h backtest + 2h feature extraction)
 **Performance**: 68.7% accuracy, 75% recall on key classes
-

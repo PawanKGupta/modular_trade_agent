@@ -4,7 +4,7 @@
 
 **Issue**: Most stocks get "insufficient data for 1wk" warnings because the system requires 50 rows of weekly data, which many newer stocks don't have.
 
-**Impact**: 
+**Impact**:
 - Analysis fails or degrades for stocks with limited trading history
 - Many valid dip-buying opportunities are missed
 - Unnecessary errors and warnings in logs
@@ -22,7 +22,7 @@ For a **dip-buying strategy**:
 
 #### 1. Reduced Minimum Weekly Data Requirement
 
-**Before**: 50 rows (1 year) - strict requirement  
+**Before**: 50 rows (1 year) - strict requirement
 **After**: 20 rows (5 months) - recommended, but flexible
 
 **File**: `core/data_fetcher.py`
@@ -220,5 +220,5 @@ weekly_data_reduced_lookback_ratio = 0.5  # Reduced lookback when limited
 
 ---
 
-**Last Updated**: 2025-11-09  
+**Last Updated**: 2025-11-09
 **Status**: ✅ Solution Implemented

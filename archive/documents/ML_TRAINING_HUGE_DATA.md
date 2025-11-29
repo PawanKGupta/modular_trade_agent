@@ -1,6 +1,6 @@
 # ML Training with Huge Data - Quick Guide
 
-**Last Updated:** 2025-11-08  
+**Last Updated:** 2025-11-08
 **Status:** Ready for Production
 
 ---
@@ -311,5 +311,5 @@ python scripts/train_ml_model_huge.py \
 
 ---
 
-**Document Version:** 1.0  
+**Document Version:** 1.0
 **Last Updated:** 2025-11-08

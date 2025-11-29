@@ -25,7 +25,7 @@ The easiest and most reliable deployment method.
    ```bash
    # Create .env file
    cp .env.example .env
-   
+
    # Edit .env with production values
    DB_URL=postgresql://user:password@db:5432/tradeagent
    ADMIN_EMAIL=admin@yourdomain.com
@@ -45,10 +45,10 @@ The easiest and most reliable deployment method.
    ```bash
    # Check services
    docker-compose ps
-   
+
    # View logs
    docker-compose logs -f
-   
+
    # Test health
    curl http://localhost:8000/health
    ```
@@ -74,7 +74,7 @@ For custom deployments or specific requirements.
    # Install Python 3.12+
    sudo apt update
    sudo apt install python3.12 python3.12-venv
-   
+
    # Create application directory
    mkdir -p /opt/tradeagent
    cd /opt/tradeagent
@@ -84,11 +84,11 @@ For custom deployments or specific requirements.
    ```bash
    # Clone repository
    git clone <repository-url> .
-   
+
    # Create virtual environment
    python3.12 -m venv .venv
    source .venv/bin/activate
-   
+
    # Install dependencies
    pip install -r requirements.txt
    pip install -r server/requirements.txt
@@ -98,7 +98,7 @@ For custom deployments or specific requirements.
    ```bash
    # Install PostgreSQL (recommended)
    sudo apt install postgresql postgresql-contrib
-   
+
    # Create database
    sudo -u postgres psql
    CREATE DATABASE tradeagent;
@@ -165,7 +165,7 @@ For custom deployments or specific requirements.
    ```bash
    # Install Nginx
    sudo apt install nginx
-   
+
    # Create Nginx config
    sudo nano /etc/nginx/sites-available/tradeagent
    ```
@@ -393,4 +393,3 @@ docker-compose restart
 # or
 sudo systemctl restart tradeagent-api
 ```
-

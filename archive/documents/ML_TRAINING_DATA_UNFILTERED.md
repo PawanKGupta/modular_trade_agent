@@ -1,7 +1,7 @@
 # ML Training Data Collection (Unfiltered/Minimal Filters)
 
-**Version**: 1.0  
-**Last Updated**: 2025-11-12  
+**Version**: 1.0
+**Last Updated**: 2025-11-12
 **Status**: ✅ Complete
 
 ---
@@ -232,4 +232,3 @@ The `collect_training_data_unfiltered.py` script collects ML training data with 
 - ❌ No gap/extreme candle analysis
 
 This allows ML to learn bounce patterns from a wider variety of stocks, improving its ability to predict which dips will bounce to EMA9.
-

@@ -13,9 +13,9 @@ This document analyzes all warnings encountered during the backtest run and cate
 WARNING — ml_verdict_service — Feature columns file not found. Will extract features dynamically.
 ```
 
-**Status**: ✅ Expected  
-**Frequency**: Once per run  
-**Impact**: None - Features are extracted dynamically  
+**Status**: ✅ Expected
+**Frequency**: Once per run
+**Impact**: None - Features are extracted dynamically
 **Action**: None required - This is normal behavior when feature columns file is not present
 
 #### 1.2 Circuit Breaker Opened
@@ -24,9 +24,9 @@ WARNING — circuit_breaker — Circuit breaker 'YFinance_API' opened after 3 fa
 WARNING — circuit_breaker — Circuit breaker 'YFinance_API' is OPEN, failing fast
 ```
 
-**Status**: ✅ Expected  
-**Frequency**: When API rate limits are hit  
-**Impact**: Low - Falls back to simple backtest  
+**Status**: ✅ Expected
+**Frequency**: When API rate limits are hit
+**Impact**: Low - Falls back to simple backtest
 **Action**: None required - This is expected behavior for rate limiting protection
 
 **Note**: The circuit breaker prevents excessive API calls and provides graceful degradation. This is a feature, not a bug.
@@ -42,10 +42,10 @@ WARNING — data_fetcher — Insufficient data for TRANSRAILL.NS [1wk]: only 46 
 WARNING — data_fetcher — Insufficient data for STALLION.NS [1wk]: only 42 rows (need 50)
 ```
 
-**Status**: ⚠️ Monitor  
-**Frequency**: For stocks with limited trading history  
-**Impact**: Medium - Weekly timeframe analysis may be degraded  
-**Root Cause**: 
+**Status**: ⚠️ Monitor
+**Frequency**: For stocks with limited trading history
+**Impact**: Medium - Weekly timeframe analysis may be degraded
+**Root Cause**:
 - Newly listed stocks or stocks with limited trading history
 - Stocks with trading suspensions
 - Data source limitations
@@ -66,10 +66,10 @@ WARNING — data_fetcher — Insufficient data for STALLION.NS [1wk]: only 42 ro
 WARNING — analysis_service — HGM.NS: Limited data for chart quality (52 days < 60 days) - assessing with available data
 ```
 
-**Status**: ⚠️ Monitor  
-**Frequency**: For stocks with limited trading history  
-**Impact**: Low - Chart quality assessment uses available data with adjusted thresholds  
-**Root Cause**: 
+**Status**: ⚠️ Monitor
+**Frequency**: For stocks with limited trading history
+**Impact**: Low - Chart quality assessment uses available data with adjusted thresholds
+**Root Cause**:
 - Newly listed stocks
 - Early signals in backtest period
 - Data source limitations
@@ -91,10 +91,10 @@ WARNING — verdict_service — Could not fetch fundamental data for AIIL.NS: ar
 WARNING — verdict_service — Could not fetch fundamental data for ROHLTD.NS: argument of type 'NoneType' is not iterable
 ```
 
-**Status**: ⚠️ Monitor  
-**Frequency**: For stocks where fundamental data is unavailable  
-**Impact**: Low - Analysis continues with None values for PE/PB  
-**Root Cause**: 
+**Status**: ⚠️ Monitor
+**Frequency**: For stocks where fundamental data is unavailable
+**Impact**: Low - Analysis continues with None values for PE/PB
+**Root Cause**:
 - YFinance API limitations
 - Stocks with missing fundamental data
 - API rate limiting
@@ -119,10 +119,10 @@ INFO — verdict_service — Filtered out - Low liquidity: avg_volume=11525 < 20
 INFO — verdict_service — Filtered out - Low liquidity: avg_volume=9370 < 20000
 ```
 
-**Status**: ✅ Expected (INFO level)  
-**Frequency**: For stocks with low trading volume  
-**Impact**: None - This is intentional filtering  
-**Root Cause**: 
+**Status**: ✅ Expected (INFO level)
+**Frequency**: For stocks with low trading volume
+**Impact**: None - This is intentional filtering
+**Root Cause**:
 - Stocks with low trading volume
 - Illiquid stocks
 - Small-cap stocks
@@ -147,10 +147,10 @@ ERROR — backtest_service — Error adding backtest score for STALLION.NS: '<' 
 ERROR — scoring_service — Error computing priority score: '<=' not supported between instances of 'NoneType' and 'int'
 ```
 
-**Status**: ✅ Fixed  
-**Frequency**: Was occurring for stocks with missing data  
-**Impact**: High - Caused backtest scoring to fail  
-**Root Cause**: 
+**Status**: ✅ Fixed
+**Frequency**: Was occurring for stocks with missing data
+**Impact**: High - Caused backtest scoring to fail
+**Root Cause**:
 - `current_rsi` could be `None`
 - `pe` could be `None`
 - `backtest_score` could be `None`
@@ -176,10 +176,10 @@ HTTP Error 401: {"finance":{"result":null,"error":{"code":"Unauthorized","descri
 HTTP Error 401: {"finance":{"result":null,"error":{"code":"Unauthorized","description":"Invalid Crumb"}}}
 ```
 
-**Status**: ⚠️ Monitor  
-**Frequency**: When YFinance API is rate-limited or having issues  
-**Impact**: Medium - Data fetching may fail  
-**Root Cause**: 
+**Status**: ⚠️ Monitor
+**Frequency**: When YFinance API is rate-limited or having issues
+**Impact**: Medium - Data fetching may fail
+**Root Cause**:
 - YFinance API rate limiting
 - API authentication issues
 - API service disruptions
@@ -280,5 +280,5 @@ Most warnings are expected behavior or handled gracefully:
 
 ---
 
-**Last Updated**: 2025-11-09  
+**Last Updated**: 2025-11-09
 **Status**: ✅ Analysis Complete

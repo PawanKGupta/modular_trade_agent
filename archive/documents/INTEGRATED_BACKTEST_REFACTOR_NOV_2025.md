@@ -174,7 +174,7 @@ Aug 10: Initial Signal
   Close: 561.65 > EMA200: 505.13 ✅  ← Confirms uptrend
   → ENTER
 
-Sept 5: Re-entry Signal (Reset Cycle)  
+Sept 5: Re-entry Signal (Reset Cycle)
   RSI: 29.1 < 30 ✅ (after going > 30)
   Close: 500.45 < EMA200: ~506 ❌  ← Now below, but still RE-ENTER
   → Averaging down on reset cycle (no EMA200 check)
@@ -218,7 +218,7 @@ No shared state between calls.
 
 - **`integrated_backtest.py`**: New fixed implementation
 - **`integrated_backtest_old_buggy.py`**: Old buggy implementation (backup)
-- **Test Command**: 
+- **Test Command**:
   ```bash
   python scripts/run_single_stock_backtest.py RELIANCE.NS --mode scoring --years 5
   ```
@@ -238,11 +238,11 @@ No shared state between calls.
    ✅ INITIAL ENTRY on 2023-08-11: Buy at 575.54
       Target: 682.01
       (RSI 19.8 marks levels: 30=True, 20=True, 10=False)
-   
+
    ➕ RE-ENTRY on 2023-09-05: RSI 29.1 < 30 | Add at 499.80
       New Avg: 534.93 | New Target: 506.63
       (Reset cycle: RSI went >30 then <30 again)
-   
+
    🎯 TARGET HIT on 2023-09-05: Exit at 506.63
       Entry: 2023-08-11 | Exit: 2023-09-05 | Days: 25
       P&L: $-10,556 (-5.3%)

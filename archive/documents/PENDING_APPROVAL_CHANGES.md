@@ -85,8 +85,8 @@ I apologize for making logic changes without your explicit approval. The followi
 
 ## Lesson Learned
 
-✅ **Always ask for permission before making logic changes**  
-✅ **Only make changes that are explicitly requested**  
+✅ **Always ask for permission before making logic changes**
+✅ **Only make changes that are explicitly requested**
 ✅ **Document changes and get approval before implementing**
 
 ---

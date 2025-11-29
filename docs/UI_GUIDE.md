@@ -23,7 +23,7 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 **Filters:**
 - **Date Filter:** Filter signals by date (today, yesterday, custom range)
-- **Status Filter:** 
+- **Status Filter:**
   - `active` - Active signals
   - `rejected` - Rejected signals
   - `null` - All signals
@@ -608,4 +608,3 @@ After logging in, you'll see the main dashboard with navigation to all features.
 - Review [API Documentation](API.md) for programmatic access
 - Check logs for error details
 - Review service status for issues
-

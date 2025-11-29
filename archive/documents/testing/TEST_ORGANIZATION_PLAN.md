@@ -41,7 +41,7 @@ tests/
 │       └── test_continuous_service_v2_1.py      # Continuous service tests
 ```
 
-**Pros**: 
+**Pros**:
 - Uses existing structure
 - Kotak-specific tests grouped together
 - Clear separation from unit tests
@@ -66,7 +66,7 @@ tests/
 └── security/
 ```
 
-**Pros**: 
+**Pros**:
 - Clear purpose: regression tests for stability
 - Easy to run all regression tests: `pytest tests/regression/ -v`
 - Separates regression from feature tests
@@ -228,7 +228,7 @@ tests/
 ├── test_02_continuous_service_v2_1.py   # Prefix with number
 ```
 
-**Cons**: 
+**Cons**:
 - Root directory gets cluttered over time
 - Harder to run test categories
 - Less organized

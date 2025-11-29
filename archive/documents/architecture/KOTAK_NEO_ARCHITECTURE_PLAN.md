@@ -52,7 +52,7 @@ def place_equity_order(self, symbol, quantity, price, ...):
             resp = call_method(method_name)
 ```
 
-**Impact**: 
+**Impact**:
 - Hard to test business logic independently
 - SDK changes require modifying business logic
 - Cannot easily swap brokers
@@ -261,7 +261,7 @@ class Order:
     status: OrderStatus = OrderStatus.PENDING
     placed_at: Optional[datetime] = None
     executed_at: Optional[datetime] = None
-    
+
     def execute(self, execution_price: Money, execution_time: datetime) -> None:
         """Execute the order"""
         if self.status != OrderStatus.PENDING:
@@ -269,17 +269,17 @@ class Order:
         self.status = OrderStatus.EXECUTED
         self.executed_at = execution_time
         self.price = execution_price
-    
+
     def cancel(self) -> None:
         """Cancel the order"""
         if self.status not in [OrderStatus.PENDING, OrderStatus.OPEN]:
             raise ValueError(f"Cannot cancel order in {self.status} status")
         self.status = OrderStatus.CANCELLED
-    
+
     def is_buyable(self) -> bool:
         """Check if this is a buy order"""
         return self.transaction_type == TransactionType.BUY
-    
+
     def calculate_value(self) -> Money:
         """Calculate total order value"""
         if not self.price:
@@ -297,25 +297,25 @@ class Holding:
     average_price: Money
     current_price: Money
     last_updated: datetime
-    
+
     def calculate_value(self) -> Money:
         """Calculate current market value"""
         return Money(
             self.current_price.amount * self.quantity,
             self.current_price.currency
         )
-    
+
     def calculate_pnl(self) -> Money:
         """Calculate profit and loss"""
         cost = Money(self.average_price.amount * self.quantity, self.average_price.currency)
         value = self.calculate_value()
         return Money(value.amount - cost.amount, value.currency)
-    
+
     def calculate_pnl_percentage(self) -> float:
         """Calculate P&L percentage"""
         if self.average_price.amount == 0:
             return 0.0
-        return ((self.current_price.amount - self.average_price.amount) / 
+        return ((self.current_price.amount - self.average_price.amount) /
                 self.average_price.amount * 100)
 ```
 
@@ -330,7 +330,7 @@ class OrderType(Enum):
     LIMIT = "LIMIT"
     STOP_LOSS = "SL"
     STOP_LOSS_MARKET = "SL-M"
-    
+
     @classmethod
     def from_string(cls, value: str) -> 'OrderType':
         """Convert string to OrderType"""
@@ -355,18 +355,18 @@ class Money:
     """Value object for money amounts"""
     amount: Decimal
     currency: str = "INR"
-    
+
     def __post_init__(self):
         if self.amount < 0:
             raise ValueError("Money amount cannot be negative")
         if not isinstance(self.amount, Decimal):
             object.__setattr__(self, 'amount', Decimal(str(self.amount)))
-    
+
     def __add__(self, other: 'Money') -> 'Money':
         if self.currency != other.currency:
             raise ValueError("Cannot add money with different currencies")
         return Money(self.amount + other.amount, self.currency)
-    
+
     def __str__(self) -> str:
         return f"₹{self.amount:,.2f}" if self.currency == "INR" else f"{self.amount:,.2f} {self.currency}"
 ```
@@ -381,37 +381,37 @@ from ..entities import Order, Holding, Position, Account
 
 class IBrokerGateway(ABC):
     """Interface for broker API interactions"""
-    
+
     @abstractmethod
     def place_order(self, order: Order) -> str:
         """Place an order and return order ID"""
         pass
-    
+
     @abstractmethod
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an order"""
         pass
-    
+
     @abstractmethod
     def get_order(self, order_id: str) -> Optional[Order]:
         """Get order details"""
         pass
-    
+
     @abstractmethod
     def get_all_orders(self) -> List[Order]:
         """Get all orders"""
         pass
-    
+
     @abstractmethod
     def get_holdings(self) -> List[Holding]:
         """Get portfolio holdings"""
         pass
-    
+
     @abstractmethod
     def get_positions(self) -> List[Position]:
         """Get current positions"""
         pass
-    
+
     @abstractmethod
     def get_account_limits(self) -> Account:
         """Get account limits and margins"""
@@ -437,12 +437,12 @@ class PlaceOrderUseCase:
     broker_gateway: IBrokerGateway
     order_validator: OrderValidator
     risk_manager: RiskManager
-    
+
     def execute(self, request: OrderRequest) -> OrderResponse:
         """Execute the use case"""
         # 1. Convert DTO to domain entity
         order = self._create_order_from_request(request)
-        
+
         # 2. Validate order
         validation_result = self.order_validator.validate(order)
         if not validation_result.is_valid:
@@ -450,7 +450,7 @@ class PlaceOrderUseCase:
                 success=False,
                 errors=validation_result.errors
             )
-        
+
         # 3. Check risk limits
         risk_check = self.risk_manager.check_order_risk(order)
         if not risk_check.is_acceptable:
@@ -458,12 +458,12 @@ class PlaceOrderUseCase:
                 success=False,
                 errors=[f"Risk check failed: {risk_check.reason}"]
             )
-        
+
         # 4. Place order via broker gateway
         try:
             order_id = self.broker_gateway.place_order(order)
             order.order_id = order_id
-            
+
             return OrderResponse(
                 success=True,
                 order_id=order_id,
@@ -474,7 +474,7 @@ class PlaceOrderUseCase:
                 success=False,
                 errors=[f"Order placement failed: {str(e)}"]
             )
-    
+
     def _create_order_from_request(self, request: OrderRequest) -> Order:
         """Convert DTO to domain entity"""
         return Order(
@@ -503,11 +503,11 @@ class ExecuteTradeStrategyUseCase:
     portfolio_checker: PortfolioChecker
     notification_service: NotificationService
     place_order_use_case: PlaceOrderUseCase
-    
+
     def execute(self, recommendations: List[TradeRecommendation]) -> StrategyExecutionResult:
         """Execute trading strategy"""
         results = []
-        
+
         # 1. Check portfolio capacity
         if not self.portfolio_checker.has_capacity():
             return StrategyExecutionResult(
@@ -515,11 +515,11 @@ class ExecuteTradeStrategyUseCase:
                 message="Portfolio capacity reached",
                 orders_placed=[]
             )
-        
+
         # 2. Get current holdings to avoid duplicates
         existing_holdings = self.broker_gateway.get_holdings()
         existing_symbols = {h.symbol for h in existing_holdings}
-        
+
         # 3. Process each recommendation
         for rec in recommendations:
             # Skip if already in portfolio
@@ -530,13 +530,13 @@ class ExecuteTradeStrategyUseCase:
                     "reason": "Already in portfolio"
                 })
                 continue
-            
+
             # Calculate order size
             quantity = self.order_sizing.calculate_quantity(
                 symbol=rec.symbol,
                 price=rec.current_price
             )
-            
+
             if quantity == 0:
                 results.append({
                     "symbol": rec.symbol,
@@ -545,11 +545,11 @@ class ExecuteTradeStrategyUseCase:
                 })
                 # Send notification about insufficient funds
                 self.notification_service.notify_insufficient_funds(
-                    rec.symbol, 
+                    rec.symbol,
                     rec.current_price
                 )
                 continue
-            
+
             # Place order
             order_request = OrderRequest(
                 symbol=rec.symbol,
@@ -557,16 +557,16 @@ class ExecuteTradeStrategyUseCase:
                 order_type=OrderType.MARKET,
                 transaction_type=TransactionType.BUY
             )
-            
+
             order_response = self.place_order_use_case.execute(order_request)
-            
+
             results.append({
                 "symbol": rec.symbol,
                 "status": "placed" if order_response.success else "failed",
                 "order_id": order_response.order_id,
                 "errors": order_response.errors
             })
-        
+
         return StrategyExecutionResult(
             success=True,
             orders_placed=results
@@ -593,20 +593,20 @@ class OrderRequest:
     variety: str = "AMO"
     validity: str = "DAY"
     exchange: str = "NSE"
-    
+
     def validate(self) -> tuple[bool, list[str]]:
         """Validate request data"""
         errors = []
-        
+
         if not self.symbol or len(self.symbol.strip()) == 0:
             errors.append("Symbol is required")
-        
+
         if self.quantity <= 0:
             errors.append("Quantity must be positive")
-        
+
         if self.order_type == OrderType.LIMIT and self.price is None:
             errors.append("Price required for LIMIT orders")
-        
+
         return len(errors) == 0, errors
 ```
 
@@ -625,70 +625,70 @@ from ..session import SessionCacheManager, AuthHandler
 
 class KotakNeoBrokerAdapter(IBrokerGateway):
     """Adapter for Kotak Neo API"""
-    
+
     def __init__(self, auth_handler: AuthHandler):
         self.auth_handler = auth_handler
         self.client = None
-    
+
     def connect(self) -> bool:
         """Initialize connection"""
         return self.auth_handler.login()
-    
+
     def place_order(self, order: Order) -> str:
         """Place order and return order ID"""
         client = self._get_client()
-        
+
         # Transform domain order to API payload
         payload = self._build_order_payload(order)
-        
+
         # Try multiple SDK method names (existing resilience)
         for method_name in ["place_order", "order_place", "placeorder"]:
             try:
                 if not hasattr(client, method_name):
                     continue
-                
+
                 method = getattr(client, method_name)
                 params = self._adapt_payload_to_method(method, payload)
-                
+
                 response = method(**params)
-                
+
                 if self._is_error_response(response):
                     continue
-                
+
                 # Extract order ID from response
                 order_id = self._extract_order_id(response)
                 if order_id:
                     return order_id
-                    
+
             except Exception as e:
                 # Log and continue to next method
                 continue
-        
+
         raise Exception("Failed to place order with all available methods")
-    
+
     def get_holdings(self) -> List[Holding]:
         """Get portfolio holdings"""
         client = self._get_client()
-        
+
         # Try multiple method names
         for method_name in ["holdings", "get_holdings", "portfolio_holdings"]:
             try:
                 if not hasattr(client, method_name):
                     continue
-                
+
                 response = getattr(client, method_name)()
-                
+
                 if self._is_error_response(response):
                     continue
-                
+
                 # Transform API response to domain entities
                 return self._parse_holdings_response(response)
-                
+
             except Exception:
                 continue
-        
+
         return []
-    
+
     def _build_order_payload(self, order: Order) -> dict:
         """Build API payload from domain order"""
         return {
@@ -702,12 +702,12 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
             "validity": "DAY",
             "variety": "AMO",
         }
-    
+
     def _parse_holdings_response(self, response: dict) -> List[Holding]:
         """Parse API response to domain entities"""
         holdings = []
         data = response.get('data', [])
-        
+
         for item in data:
             holding = Holding(
                 symbol=self._extract_symbol(item),
@@ -717,9 +717,9 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 last_updated=datetime.now()
             )
             holdings.append(holding)
-        
+
         return holdings
-    
+
     def _get_client(self):
         """Get authenticated client"""
         if not self.client:
@@ -756,25 +756,25 @@ from .infrastructure.config import BrokerConfig, TradingConfig
 @dataclass
 class KotakNeoContainer:
     """Dependency injection container for Kotak Neo module"""
-    
+
     def __init__(self, env_file: str = "kotak_neo.env"):
         self.env_file = env_file
         self._broker_config: Optional[BrokerConfig] = None
         self._trading_config: Optional[TradingConfig] = None
         self._broker_gateway: Optional[IBrokerGateway] = None
         self._auth_handler: Optional[AuthHandler] = None
-    
+
     # Configuration
     def get_broker_config(self) -> BrokerConfig:
         if not self._broker_config:
             self._broker_config = BrokerConfig.from_env_file(self.env_file)
         return self._broker_config
-    
+
     def get_trading_config(self) -> TradingConfig:
         if not self._trading_config:
             self._trading_config = TradingConfig()
         return self._trading_config
-    
+
     # Infrastructure
     def get_auth_handler(self) -> AuthHandler:
         if not self._auth_handler:
@@ -784,35 +784,35 @@ class KotakNeoContainer:
                 session_manager=session_manager
             )
         return self._auth_handler
-    
+
     def get_broker_gateway(self) -> IBrokerGateway:
         if not self._broker_gateway:
             self._broker_gateway = KotakNeoBrokerAdapter(
                 auth_handler=self.get_auth_handler()
             )
         return self._broker_gateway
-    
+
     # Domain Services
     def get_order_validator(self) -> OrderValidator:
         return OrderValidator()
-    
+
     def get_risk_manager(self) -> RiskManager:
         return RiskManager(
             trading_config=self.get_trading_config()
         )
-    
+
     # Application Services
     def get_order_sizing(self) -> OrderSizing:
         return OrderSizing(
             trading_config=self.get_trading_config()
         )
-    
+
     def get_portfolio_checker(self) -> PortfolioChecker:
         return PortfolioChecker(
             broker_gateway=self.get_broker_gateway(),
             trading_config=self.get_trading_config()
         )
-    
+
     # Use Cases
     def get_place_order_use_case(self) -> PlaceOrderUseCase:
         return PlaceOrderUseCase(
@@ -820,7 +820,7 @@ class KotakNeoContainer:
             order_validator=self.get_order_validator(),
             risk_manager=self.get_risk_manager()
         )
-    
+
     def get_execute_trade_strategy_use_case(self) -> ExecuteTradeStrategyUseCase:
         return ExecuteTradeStrategyUseCase(
             broker_gateway=self.get_broker_gateway(),
@@ -953,7 +953,7 @@ To maintain backward compatibility during migration:
 # trader.py (backward compatible facade)
 class KotakNeoTrader:
     """Legacy facade over new architecture"""
-    
+
     def __init__(self, config_file: str = "kotak_neo.env"):
         self.container = KotakNeoContainer(config_file)
         # Add deprecation warning
@@ -961,12 +961,12 @@ class KotakNeoTrader:
             "KotakNeoTrader is deprecated. Use KotakNeoContainer directly.",
             DeprecationWarning
         )
-    
+
     def login(self) -> bool:
         """Legacy login method"""
         auth = self.container.get_auth_handler()
         return auth.login()
-    
+
     # Delegate to new use cases
     def get_portfolio_stocks(self):
         use_case = self.container.get_get_holdings_use_case()

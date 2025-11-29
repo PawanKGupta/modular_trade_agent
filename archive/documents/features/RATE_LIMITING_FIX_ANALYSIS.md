@@ -2,8 +2,8 @@
 
 ## Executive Summary
 
-**Issue**: API rate limiting causing HTTP 401 errors during backtest runs  
-**Solution**: Implemented rate limiting/throttling to space out API calls  
+**Issue**: API rate limiting causing HTTP 401 errors during backtest runs
+**Solution**: Implemented rate limiting/throttling to space out API calls
 **Result**: ✅ **80% reduction in HTTP 401 errors** (20 → 4 errors)
 
 ---
@@ -62,7 +62,7 @@ def _enforce_rate_limit(api_type: str = "OHLCV"):
 API_RATE_LIMIT_DELAY = float(os.getenv("API_RATE_LIMIT_DELAY", "0.5"))  # seconds
 ```
 
-**Default**: 0.5 seconds between API calls  
+**Default**: 0.5 seconds between API calls
 **Can be increased** if still hitting rate limits:
 - `API_RATE_LIMIT_DELAY=1.0` (more conservative)
 - `API_RATE_LIMIT_DELAY=2.0` (very conservative)
@@ -91,8 +91,8 @@ API_RATE_LIMIT_DELAY = float(os.getenv("API_RATE_LIMIT_DELAY", "0.5"))  # second
 ## Remaining Issues
 
 ### Concurrent Requests
-**Problem**: `AsyncAnalysisService` runs up to 10 concurrent analyses  
-**Impact**: Multiple API calls can still happen simultaneously  
+**Problem**: `AsyncAnalysisService` runs up to 10 concurrent analyses
+**Impact**: Multiple API calls can still happen simultaneously
 **Solution Options**:
 1. ✅ **Current**: Rate limiting works, but concurrent requests can still cause spikes
 2. **Option 1**: Reduce `max_concurrent` from 10 to 5 (slower but more reliable)
@@ -100,8 +100,8 @@ API_RATE_LIMIT_DELAY = float(os.getenv("API_RATE_LIMIT_DELAY", "0.5"))  # second
 4. **Option 3**: Implement request queue with single-threaded API caller
 
 ### Rate Limiting Not Visible in Logs
-**Issue**: Rate limiting messages are at DEBUG level  
-**Solution**: Messages only appear in log files, not console output  
+**Issue**: Rate limiting messages are at DEBUG level
+**Solution**: Messages only appear in log files, not console output
 **Impact**: No impact on functionality, just visibility
 
 ---

@@ -1,6 +1,6 @@
 # Regression Test Fix - November 9, 2025
 
-**Date**: 2025-11-09  
+**Date**: 2025-11-09
 **Status**: ✅ Fixed
 
 ## Issue
@@ -135,5 +135,5 @@ After implementing RSI30 requirement enforcement and other changes, the integrat
 
 ---
 
-**Last Updated**: 2025-11-09  
+**Last Updated**: 2025-11-09
 **Status**: ✅ Fixed

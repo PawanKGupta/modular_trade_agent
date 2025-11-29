@@ -58,7 +58,7 @@ See [docker/README.md](docker/README.md) for detailed Docker setup.
    # Backend
    pip install -r requirements.txt
    pip install -r server/requirements.txt
-   
+
    # Frontend
    cd web
    npm install
@@ -79,7 +79,7 @@ See [docker/README.md](docker/README.md) for detailed Docker setup.
    ```bash
    # Run migrations (if using Alembic)
    alembic upgrade head
-   
+
    # Or let the app auto-create tables on first run
    ```
 
@@ -87,7 +87,7 @@ See [docker/README.md](docker/README.md) for detailed Docker setup.
    ```bash
    # Backend (from project root)
    uvicorn server.app.main:app --reload --port 8000
-   
+
    # Frontend (from web/)
    cd web
    npm run dev

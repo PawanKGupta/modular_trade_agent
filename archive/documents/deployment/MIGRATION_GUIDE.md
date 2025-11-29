@@ -52,21 +52,21 @@ def add_backtest_scores_to_results(results, backtest_scores):
     - Trade Count
     - RSI Level
     """
-    
+
     # Downgrade if combined score is too low
     if combined_score < 5.0:
         final_verdict = "avoid"
     elif combined_score < 6.0:
         final_verdict = "watch"
-    
+
     # Downgrade if insufficient backtest data
     if trade_count < 3:
         final_verdict = downgrade(final_verdict)
-    
+
     # Downgrade if backtest score is poor
     if backtest_score < 4.0:
         final_verdict = downgrade(final_verdict)
-    
+
     # Upgrade if severely oversold (RSI < 20) with decent scores
     if rsi < 20 and combined_score >= 6.5:
         final_verdict = upgrade(final_verdict)
@@ -78,7 +78,7 @@ def add_backtest_scores_to_results(results, backtest_scores):
 ```python
 # In trade_agent.py (legacy)
 buyable_stocks = [
-    s for s in all_stocks 
+    s for s in all_stocks
     if s.get('combined_score', 0) >= min_score_filter
 ]
 ```
@@ -90,10 +90,10 @@ def is_buyable(stock_dto):
     # When backtest enabled: use final_verdict
     if backtest_enabled:
         return stock_dto.final_verdict in ['strong_buy', 'buy']
-    
+
     # When backtest disabled: use original verdict + score filter
     return (
-        stock_dto.verdict in ['strong_buy', 'buy'] 
+        stock_dto.verdict in ['strong_buy', 'buy']
         and stock_dto.combined_score >= min_score_filter
     )
 ```
@@ -134,7 +134,7 @@ result = use_case.execute(symbol)
 
 **Issue**: Initial CLI implementation didn't use `final_verdict` for buyable determination.
 
-**Impact**: 
+**Impact**:
 - Different buyable counts compared to legacy
 - Stocks with low combined scores were incorrectly included
 - Telegram alerts showed wrong stock counts
@@ -143,8 +143,8 @@ result = use_case.execute(symbol)
 ```python
 # cli/use_cases/analyze_stock.py
 result_dict['final_verdict'] = self._compute_final_verdict(
-    result_dict, 
-    backtest_score, 
+    result_dict,
+    backtest_score,
     trade_count
 )
 
@@ -154,7 +154,7 @@ def is_buyable(stock_dto):
         return stock_dto.final_verdict in ['strong_buy', 'buy']
     else:
         return (
-            stock_dto.verdict in ['strong_buy', 'buy'] 
+            stock_dto.verdict in ['strong_buy', 'buy']
             and stock_dto.combined_score >= config.min_score_filter
         )
 ```
@@ -163,7 +163,7 @@ def is_buyable(stock_dto):
 
 **Issue**: CSV exports use `final_verdict` but initial alerting logic used `verdict`.
 
-**Impact**: 
+**Impact**:
 - Mismatch between CSV recommendations and Telegram alerts
 - Confusion when cross-referencing data sources
 
@@ -173,8 +173,8 @@ def is_buyable(stock_dto):
 for stock_dto in buyable_stocks:
     # Use final_verdict consistently when backtest enabled
     display_verdict = (
-        stock_dto.final_verdict 
-        if config.enable_backtest_scoring 
+        stock_dto.final_verdict
+        if config.enable_backtest_scoring
         else stock_dto.verdict
     )
 ```
@@ -188,7 +188,7 @@ for stock_dto in buyable_stocks:
 # Apply score filter only when backtest disabled
 if not config.enable_backtest_scoring:
     buyable_stocks = [
-        s for s in buyable_stocks 
+        s for s in buyable_stocks
         if s.combined_score >= config.min_score_filter
     ]
 ```
@@ -299,7 +299,7 @@ buyable_count = len([s for s in stocks if s['combined_score'] >= min_score])
 ```python
 # Consistent everywhere using final_verdict
 buyable_count = len([
-    s for s in stock_dtos 
+    s for s in stock_dtos
     if is_buyable_stock(s, config)
 ])
 ```
@@ -341,7 +341,7 @@ Ensure CLI uses `final_verdict` when backtest enabled:
 # In analyze_stocks.py
 if config.enable_backtest_scoring:
     buyable_stocks = [
-        s for s in stock_dtos 
+        s for s in stock_dtos
         if s.final_verdict in ['strong_buy', 'buy']
     ]
 ```
@@ -359,8 +359,8 @@ Alert logic not using `final_verdict`
 Update alert logic to use `final_verdict`:
 ```python
 display_verdict = (
-    stock_dto.final_verdict 
-    if config.enable_backtest_scoring 
+    stock_dto.final_verdict
+    if config.enable_backtest_scoring
     else stock_dto.verdict
 )
 ```
@@ -398,8 +398,8 @@ Ensure use case computes final verdict:
 # In use_cases/analyze_stock.py
 if self.config.enable_backtest_scoring:
     result_dict['final_verdict'] = self._compute_final_verdict(
-        result_dict, 
-        backtest_score, 
+        result_dict,
+        backtest_score,
         trade_count
     )
 else:

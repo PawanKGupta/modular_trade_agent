@@ -1,7 +1,7 @@
 # YFinance Stale Data Fix - Real-Time WebSocket Prices
 
-**Date**: October 31, 2025  
-**Issue**: Sell order monitoring using 15-20 minute delayed yfinance prices instead of real-time data  
+**Date**: October 31, 2025
+**Issue**: Sell order monitoring using 15-20 minute delayed yfinance prices instead of real-time data
 **Status**: ✅ **FIXED**
 
 ## Problem
@@ -43,7 +43,7 @@ class SellOrderManager:
 ```python
 def get_current_ltp(self, ticker: str, broker_symbol: str = None):
     base_symbol = ticker.replace('.NS', '').upper()
-    
+
     # Try LivePriceManager first (real-time WebSocket prices)
     if self.price_manager:
         try:
@@ -53,7 +53,7 @@ def get_current_ltp(self, ticker: str, broker_symbol: str = None):
                 return ltp
         except Exception as e:
             logger.debug(f"WebSocket LTP failed for {base_symbol}: {e}")
-    
+
     # Fallback to yfinance (delayed ~15-20 min)
     df = fetch_ohlcv_yf(ticker, days=1, interval='1m', add_current_day=True)
     ltp = float(df['close'].iloc[-1])
@@ -70,12 +70,12 @@ Initialize `LivePriceManager` and pass it to `SellOrderManager`:
 price_manager = None
 try:
     logger.info("Initializing LivePriceManager for real-time prices...")
-    
+
     # Get open orders to extract symbols
     from .orders import KotakNeoOrders
     orders_api = KotakNeoOrders(auth)
     orders_response = orders_api.get_orders()
-    
+
     # Extract symbols from open sell orders
     symbols = []
     if orders_response and 'data' in orders_response:
@@ -83,26 +83,26 @@ try:
             status = (order.get('orderStatus') or order.get('ordSt') or '').lower()
             txn_type = (order.get('transactionType') or order.get('trnsTp') or '').upper()
             broker_symbol = (order.get('tradingSymbol') or order.get('trdSym') or '').replace('-EQ', '')
-            
+
             if status == 'open' and txn_type == 'S' and broker_symbol:
                 if broker_symbol not in symbols:
                     symbols.append(broker_symbol)
-    
+
     if symbols:
         # Initialize scrip_master and load data
         scrip_master = KotakNeoScripMaster(exchanges=['NSE'], auth_client=auth.get_client())
         scrip_master.load_scrip_master()
-        
+
         # Initialize LivePriceCache
         price_cache = LivePriceCache(auth_client=auth, scrip_master=scrip_master)
-        
+
         # Initialize and start LivePriceManager
         price_manager = LivePriceManager(price_cache, symbols)
         price_manager.start()
-        
+
         logger.info(f"✅ LivePriceManager started for {len(symbols)} symbols: {', '.join(symbols)}")
         time.sleep(2)  # Give it time to connect
-        
+
 except Exception as e:
     logger.warning(f"Failed to initialize LivePriceManager: {e}")
     logger.info("Will fallback to yfinance for price data")
@@ -127,7 +127,7 @@ sell_manager = SellOrderManager(auth, price_manager=price_manager)
 📊 DALBHARAT: Current EMA9=₹2131.55, Target=₹2131.10, Lowest=₹2131.10
 ```
 
-**Price Difference**: 
+**Price Difference**:
 - Old (yfinance): ₹2096.90
 - New (WebSocket): ₹2102.00
 - **Improvement**: ₹5.10 more accurate (closer to actual ₹2103.50)

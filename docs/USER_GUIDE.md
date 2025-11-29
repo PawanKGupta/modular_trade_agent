@@ -299,4 +299,3 @@ Complete guide to using the Modular Trade Agent web interface.
 - Review **Service Status** for service issues
 - Check documentation for detailed guides
 - Review API documentation for programmatic access
-

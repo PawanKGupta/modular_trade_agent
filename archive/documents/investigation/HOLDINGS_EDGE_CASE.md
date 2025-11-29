@@ -22,7 +22,7 @@ if already_in_holdings:
     continue
 ```
 
-**Issue**: 
+**Issue**:
 - Order is marked as **CANCELLED**, but user already owns the stock
 - Status should probably be **ONGOING** (position exists) or **CLOSED** (order fulfilled)
 - "Cancelled" suggests the order was never executed, which is misleading
@@ -151,4 +151,3 @@ Based on previous edge cases, user expects:
 **Implementation**:
 - For Retry: Update status to **ONGOING** instead of **CANCELLED**
 - For New Orders: Skip placing (keep current behavior, optionally create ONGOING record)
-

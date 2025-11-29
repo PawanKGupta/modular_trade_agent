@@ -304,7 +304,7 @@ This document details the complete data flow when running `python trade_agent.py
 ```python
 {
     # ... all fields from above, plus:
-    
+
     'backtest': {
         'score': 58.5,              # Backtest score (0-100)
         'total_return_pct': 6.5,    # Historical return

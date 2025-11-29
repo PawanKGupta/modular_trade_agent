@@ -140,7 +140,7 @@
   * Backward compatibility maintained
   * Can be refactored later without breaking changes
 
-**Config** (`infrastructure/config/`) - 1 file, 36 lines  
+**Config** (`infrastructure/config/`) - 1 file, 36 lines
 - [x] `__init__.py` - Configuration management (uses existing config.py)
   * Bridges to existing config module
   * Re-exports common configuration values
@@ -269,14 +269,14 @@ class Order:
     status: OrderStatus = OrderStatus.PENDING
     placed_at: Optional[datetime] = None
     executed_at: Optional[datetime] = None
-    
+
     def execute(self, execution_price: Money, execution_time: datetime) -> None:
         if self.status != OrderStatus.PENDING:
             raise ValueError(f"Cannot execute order in {self.status} status")
         self.status = OrderStatus.EXECUTED
         self.executed_at = execution_time
         self.price = execution_price
-    
+
     def cancel(self) -> None:
         if self.status not in [OrderStatus.PENDING, OrderStatus.OPEN]:
             raise ValueError(f"Cannot cancel order in {self.status} status")

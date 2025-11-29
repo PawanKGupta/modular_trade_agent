@@ -1,8 +1,8 @@
 # Integrated Backtest-Trade Agent Workflow
 
-> **⚠️ STATUS: PARTIALLY OUTDATED**  
-> This document describes the OLD architecture (signal-based approach with BacktestEngine).  
-> **Current implementation** uses a **single-pass daily iteration** approach.  
+> **⚠️ STATUS: PARTIALLY OUTDATED**
+> This document describes the OLD architecture (signal-based approach with BacktestEngine).
+> **Current implementation** uses a **single-pass daily iteration** approach.
 > See: `../INTEGRATED_BACKTEST_REFACTOR_NOV_2025.md` for the latest architecture.
 
 ---
@@ -71,7 +71,7 @@ Key changes:
 
 #### 3. `run_integrated_backtest(stock_name, date_range)`
 - **Coordination**: Main integration method that orchestrates the workflow
-- **Logic**: 
+- **Logic**:
   1. Get potential signals from backtest
   2. Validate each signal through trade agent
   3. Execute trades only on "BUY" signals
@@ -230,7 +230,7 @@ modular_trade_agent/
 
 ### Separation from Main Logic
 - Completely independent execution
-- No interference with existing workflows  
+- No interference with existing workflows
 - Separate result structures
 - Independent configuration
 

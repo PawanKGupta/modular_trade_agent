@@ -1,7 +1,7 @@
 # Timeframe Analysis Indexer Error Fix
 
-**Date**: 2025-11-07  
-**Status**: Fixed  
+**Date**: 2025-11-07
+**Status**: Fixed
 **Severity**: Medium (Non-blocking but causes error logs)
 
 ---
@@ -39,7 +39,7 @@ When this float value is passed to `df.tail()`, pandas may have issues with type
 
 ### Code Location
 - **File**: `core/timeframe_analysis.py`
-- **Methods**: 
+- **Methods**:
   - `_get_adaptive_lookback()` (lines 46-73)
   - `_analyze_support_levels()` (lines 135-185)
   - `_analyze_resistance_levels()` (lines 187-231)
@@ -61,7 +61,7 @@ The error message shows `[-30.0]`, which is confusing because:
    ```python
    # Before
    return min(base_lookback * 2.5, 50)  # Could return 50.0 (float)
-   
+
    # After
    return int(min(base_lookback * 2.5, 50))  # Always returns 50 (int)
    ```
@@ -141,6 +141,6 @@ After fix, the test should run without the timeframe_analysis errors.
 
 ---
 
-**Fixed By**: Auto (AI Assistant)  
-**Reviewed By**: Pending  
+**Fixed By**: Auto (AI Assistant)
+**Reviewed By**: Pending
 **Merged**: Pending

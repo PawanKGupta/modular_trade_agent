@@ -392,4 +392,3 @@ All responses are JSON. Dates are in ISO 8601 format (UTC).
 ## WebSocket (Future)
 
 WebSocket support for real-time updates is planned but not yet implemented.
-

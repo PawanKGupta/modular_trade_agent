@@ -2,8 +2,8 @@
 
 ## Executive Summary
 
-**Issue**: 31+ HTTP 401 errors during backtest run  
-**Root Cause**: Excessive API calls due to unprotected API calls and duplicate data fetching  
+**Issue**: 31+ HTTP 401 errors during backtest run
+**Root Cause**: Excessive API calls due to unprotected API calls and duplicate data fetching
 **Impact**: ⚠️ **MEDIUM** - API rate limiting, but system handles gracefully with circuit breaker
 
 ---
@@ -25,12 +25,12 @@ Total: 20 stocks × 3 calls = 60 API calls
 #### Phase 2: Backtest Scoring (20 stocks)
 ```
 For each stock:
-  
+
   Step 1: BacktestEngine._load_data()
     └─ fetch_multi_timeframe_data()
        ├─ fetch_ohlcv_yf() [daily]  ← API Call #1 (protected)
        └─ fetch_ohlcv_yf() [weekly] ← API Call #2 (protected, but data discarded!)
-  
+
   Step 2: For each signal (average 8-15 signals per stock):
     └─ trade_agent()
        └─ analyze_ticker()
@@ -334,14 +334,14 @@ def _fetch_fundamental_data_protected(ticker: str) -> Dict:
         if ticker in _fundamental_cache:
             logger.debug(f"Using cached fundamental data for {ticker}")
             return _fundamental_cache[ticker].copy()
-    
+
     # Fetch data
     data = _fetch_fundamental_data_impl(ticker)
-    
+
     # Store in cache
     with _cache_lock:
         _fundamental_cache[ticker] = data.copy()
-    
+
     return data
 ```
 
@@ -441,5 +441,5 @@ if multi_data.get('weekly') is not None:
 
 ---
 
-**Last Updated**: 2025-11-09  
+**Last Updated**: 2025-11-09
 **Status**: ⚠️ Analysis Complete - Fixes Recommended

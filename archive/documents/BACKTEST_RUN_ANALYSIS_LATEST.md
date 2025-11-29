@@ -2,8 +2,8 @@
 
 ## Test Execution
 
-**Command**: `python trade_agent.py --backtest`  
-**Date**: 2025-11-09  
+**Command**: `python trade_agent.py --backtest`
+**Date**: 2025-11-09
 **Status**: ✅ Completed (with expected errors for limited data stocks)
 
 ## Errors Found
@@ -16,8 +16,8 @@ Error loading data: No data available for HGM.NS after indicator calculation (al
 Error loading data: No data available for STALLION.NS after indicator calculation (all data dropped as NaN)
 ```
 
-**Status**: ⚠️ **Expected** (Original behavior after reverting changes)  
-**Frequency**: 2 stocks (HGM.NS, STALLION.NS)  
+**Status**: ⚠️ **Expected** (Original behavior after reverting changes)
+**Frequency**: 2 stocks (HGM.NS, STALLION.NS)
 **Impact**: Medium - Backtest fails for these stocks, falls back to simple backtest
 
 **Root Cause**:
@@ -48,8 +48,8 @@ Error loading data: No data available for STALLION.NS after indicator calculatio
 Error loading data: Insufficient backtest period data: 17 days (need at least 20 days)
 ```
 
-**Status**: ⚠️ **Expected** (Original behavior)  
-**Frequency**: 1 stock (TRANSRAILL.NS)  
+**Status**: ⚠️ **Expected** (Original behavior)
+**Frequency**: 1 stock (TRANSRAILL.NS)
 **Impact**: Low - Backtest fails for this stock, falls back to simple backtest
 
 **Root Cause**:
@@ -79,9 +79,9 @@ Error loading data: Insufficient backtest period data: 17 days (need at least 20
 WARNING — ml_verdict_service — Feature columns file not found. Will extract features dynamically.
 ```
 
-**Status**: ✅ **Expected** (Informational)  
-**Frequency**: Once per run  
-**Impact**: None - Features are extracted dynamically  
+**Status**: ✅ **Expected** (Informational)
+**Frequency**: Once per run
+**Impact**: None - Features are extracted dynamically
 **Action**: None required - This is normal behavior
 
 ---
@@ -93,9 +93,9 @@ WARNING — ml_verdict_service — Feature columns file not found. Will extract 
 WARNING — verdict_service — Could not fetch fundamental data for [TICKER]: API returned None (data may be unavailable for this ticker)
 ```
 
-**Status**: ⚠️ **Expected** (Handled gracefully)  
-**Frequency**: Multiple stocks  
-**Impact**: Low - Analysis continues without fundamental data  
+**Status**: ⚠️ **Expected** (Handled gracefully)
+**Frequency**: Multiple stocks
+**Impact**: Low - Analysis continues without fundamental data
 **Action**: None required - Already handled gracefully
 
 **Affected Stocks**:
@@ -121,9 +121,9 @@ WARNING — verdict_service — Could not fetch fundamental data for [TICKER]: A
 WARNING — analysis_service — HGM.NS: Limited data for chart quality (52 days < 60 days) - assessing with available data
 ```
 
-**Status**: ⚠️ **Expected** (Handled gracefully)  
-**Frequency**: 1 stock (HGM.NS)  
-**Impact**: Low - Chart quality assessed with available data  
+**Status**: ⚠️ **Expected** (Handled gracefully)
+**Frequency**: 1 stock (HGM.NS)
+**Impact**: Low - Chart quality assessed with available data
 **Action**: None required - Already handled gracefully
 
 **Analysis**:
@@ -141,9 +141,9 @@ INFO — data_fetcher — Weekly data for HGM.NS: 11 rows (minimum recommended: 
 INFO — data_fetcher — Weekly data for HGM.NS: 11 rows (below ideal 20, but usable for dip-buying strategy)
 ```
 
-**Status**: ✅ **Expected** (Informational - New flexible solution working)  
-**Frequency**: Stocks with limited weekly data  
-**Impact**: None - System continues with available data  
+**Status**: ✅ **Expected** (Informational - New flexible solution working)
+**Frequency**: Stocks with limited weekly data
+**Impact**: None - System continues with available data
 **Action**: None required - This is the new flexible weekly data solution working correctly
 
 **Analysis**:
@@ -163,9 +163,9 @@ INFO — analysis_service — STALLION.NS: Chart quality FAILED (hard filter) - 
 INFO — analysis_service — STALLION.NS: Returning 'avoid' verdict immediately (chart quality filter)
 ```
 
-**Status**: ✅ **Expected** (Working correctly)  
-**Frequency**: 1 stock (STALLION.NS)  
-**Impact**: None - Chart quality filter working as expected  
+**Status**: ✅ **Expected** (Working correctly)
+**Frequency**: 1 stock (STALLION.NS)
+**Impact**: None - Chart quality filter working as expected
 **Action**: None required - This is correct behavior
 
 **Analysis**:
@@ -185,9 +185,9 @@ INFO — verdict_service — Filtered out - Low liquidity: avg_volume=11525 < 20
 INFO — verdict_service — Filtered out - Low liquidity: avg_volume=10893 < 20000
 ```
 
-**Status**: ✅ **Expected** (Intentional filtering)  
-**Frequency**: Multiple stocks  
-**Impact**: None - This is intentional filtering  
+**Status**: ✅ **Expected** (Intentional filtering)
+**Frequency**: Multiple stocks
+**Impact**: None - This is intentional filtering
 **Action**: None required - This is expected behavior
 
 ---
@@ -200,9 +200,9 @@ HTTP Error 401: {"finance":{"result":null,"error":{"code":"Unauthorized","descri
 HTTP Error 401: {"finance":{"result":null,"error":{"code":"Unauthorized","description":"Invalid Crumb"}}}
 ```
 
-**Status**: ⚠️ **Expected** (API rate limiting)  
-**Frequency**: Multiple occurrences  
-**Impact**: Low - Circuit breaker handles this gracefully  
+**Status**: ⚠️ **Expected** (API rate limiting)
+**Frequency**: Multiple occurrences
+**Impact**: Low - Circuit breaker handles this gracefully
 **Action**: None required - This is expected behavior for API rate limiting
 
 **Analysis**:
@@ -311,5 +311,5 @@ HTTP Error 401: {"finance":{"result":null,"error":{"code":"Unauthorized","descri
 
 ---
 
-**Last Updated**: 2025-11-09  
+**Last Updated**: 2025-11-09
 **Status**: ✅ Analysis Complete - System Working Correctly

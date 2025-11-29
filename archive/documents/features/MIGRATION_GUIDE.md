@@ -208,21 +208,21 @@ rm data/pending_orders.json
 
 1. **Check order statuses**:
    ```sql
-   SELECT status, COUNT(*) 
-   FROM orders 
+   SELECT status, COUNT(*)
+   FROM orders
    GROUP BY status;
    ```
 
 2. **Check indexes**:
    ```sql
-   SELECT name FROM sqlite_master 
+   SELECT name FROM sqlite_master
    WHERE type='index' AND tbl_name='orders';
    ```
 
 3. **Check order tracking fields**:
    ```sql
-   SELECT COUNT(*) 
-   FROM orders 
+   SELECT COUNT(*)
+   FROM orders
    WHERE broker_order_id IS NOT NULL OR order_id IS NOT NULL;
    ```
 
@@ -340,4 +340,3 @@ For issues or questions:
 
 **Migration Guide Version**: 1.0
 **Last Updated**: January 2025
-

@@ -16,7 +16,7 @@ The documentation has been reorganized for better accessibility and easier navig
 ### 2. **Getting Started Guide** (New!)
 - **Location:** `documents/getting-started/GETTING_STARTED.md`
 - **Purpose:** Beginner-friendly walkthrough
-- **Covers:** 
+- **Covers:**
   - Complete setup from scratch
   - First run tutorial
   - Understanding outputs
@@ -235,8 +235,8 @@ Old paths still work (files were moved, not renamed), but update your bookmarks 
 
 ---
 
-**Reorganization Date:** 2025-10-29  
-**Version:** 1.0.0  
+**Reorganization Date:** 2025-10-29
+**Version:** 1.0.0
 **Status:** ✅ Complete
 
 ---

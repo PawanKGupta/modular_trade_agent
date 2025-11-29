@@ -1,7 +1,7 @@
 # Phase 4: Cleanup & Consolidation - Progress Report
 
-**Date:** 2025-11-02  
-**Status:** In Progress  
+**Date:** 2025-11-02
+**Status:** In Progress
 **Progress:** Phase 4.1 - Phase 4.3 Complete
 
 ---
@@ -18,7 +18,7 @@
   - Maintains backward compatibility with `compute_strength_score()` function
   - Provides `compute_trading_priority_score()` for ranking
   - Provides `compute_combined_score()` for combining current + historical scores
-  
+
 - ✅ **BacktestService** (`services/backtest_service.py`)
   - Wraps `core/backtest_scoring.py` functionality
   - Provides `calculate_backtest_score()`, `run_stock_backtest()`, `add_backtest_scores_to_results()`
@@ -34,12 +34,12 @@
   - `from services import ScoringService, BacktestService, compute_strength_score`
   - Removed `from core.scoring import compute_strength_score`
   - Removed `from core.backtest_scoring import add_backtest_scores_to_results`
-  
+
 - ✅ Refactored `compute_trading_priority_score()` function:
   - Now delegates to `ScoringService.compute_trading_priority_score()`
   - Eliminates duplicate logic
   - Maintains same function signature (backward compatible)
-  
+
 - ✅ Updated `_process_results()` function:
   - Now uses `BacktestService.add_backtest_scores_to_results()`
   - Replaces direct call to `add_backtest_scores_to_results()`

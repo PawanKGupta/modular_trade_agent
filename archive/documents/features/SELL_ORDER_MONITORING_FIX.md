@@ -1,9 +1,9 @@
 # Sell Order Monitoring Not Running - Issue Analysis & Fix
 
-**Note**: This document describes a historical fix for v1.0 (separate task architecture).  
+**Note**: This document describes a historical fix for v1.0 (separate task architecture).
 v2.1+ uses the unified continuous service (run_trading_service.py).
 
-**Date**: October 31, 2024  
+**Date**: October 31, 2024
 **Issue**: EMA9 target updates not happening - sell orders not being modified with lower prices
 
 ---
@@ -83,8 +83,8 @@ Get-ScheduledTask -TaskName "TradingBot-SellMonitor" | Select-Object -ExpandProp
 
 **Expected output** (should NOT have `--run-once`):
 ```
-Arguments: -m modules.kotak_neo_auto_trader.run_sell_orders 
-           --env modules\kotak_neo_auto_trader\kotak_neo.env 
+Arguments: -m modules.kotak_neo_auto_trader.run_sell_orders
+           --env modules\kotak_neo_auto_trader\kotak_neo.env
            --monitor-interval 60
 ```
 
@@ -212,7 +212,7 @@ print(orders.get_pending_orders())
 
 ### What's Working ✅
 1. LTP fetching via Kotak Neo API
-2. EMA9 calculation with real-time data  
+2. EMA9 calculation with real-time data
 3. Order placement at market open
 4. modify_order API (tested successfully)
 
@@ -277,5 +277,5 @@ After fix, you should see in logs:
 
 ---
 
-*Last Updated: October 31, 2024*  
+*Last Updated: October 31, 2024*
 *Status: ISSUE IDENTIFIED - FIX PENDING*

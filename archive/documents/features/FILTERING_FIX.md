@@ -10,8 +10,8 @@ The new `BulkAnalyzeUseCase` was counting all stocks with `verdict in ['buy', 's
 ```python
 # Line 343-354 in trade_agent.py
 if enable_backtest_scoring:
-    buys = [r for r in results if 
-            r.get('final_verdict') in ['buy', 'strong_buy'] and 
+    buys = [r for r in results if
+            r.get('final_verdict') in ['buy', 'strong_buy'] and
             r.get('status') == 'success' and
             r.get('combined_score', 0) >= 25]  # <-- Score threshold applied
 ```
@@ -36,9 +36,9 @@ Added conditional logic to apply combined_score filtering when backtest is enabl
 # When backtest is enabled, apply combined_score filter
 if request.enable_backtest:
     buyable_count = sum(
-        1 for r in results 
-        if r.is_buyable() and 
-           r.is_success() and 
+        1 for r in results
+        if r.is_buyable() and
+           r.is_success() and
            r.combined_score >= request.min_combined_score
     )
 else:
@@ -54,11 +54,11 @@ Updated `get_buy_candidates()` and `get_strong_buy_candidates()` to accept optio
 def get_buy_candidates(self, min_combined_score: float = 0.0) -> List[AnalysisResponse]:
     """Get all buyable stocks with optional score filtering"""
     candidates = [r for r in self.results if r.is_buyable() and r.is_success()]
-    
+
     # Apply score filter if specified
     if min_combined_score > 0:
         candidates = [r for r in candidates if r.combined_score >= min_combined_score]
-    
+
     return candidates
 ```
 

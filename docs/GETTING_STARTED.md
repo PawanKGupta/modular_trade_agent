@@ -221,4 +221,3 @@ npm install
 - Check [Troubleshooting](TROUBLESHOOTING.md) for common issues
 - Review log files in `logs/` directory
 - Check application logs in the web UI (Admin → Logs)
-

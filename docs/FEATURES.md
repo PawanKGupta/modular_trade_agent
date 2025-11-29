@@ -549,4 +549,3 @@ Complete documentation of all features in the Modular Trade Agent system.
 - Mobile app (future)
 - Advanced charting
 - Strategy backtesting UI
-

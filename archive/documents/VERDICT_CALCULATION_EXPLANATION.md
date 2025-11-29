@@ -110,10 +110,10 @@ chart_quality_max_extreme_candle_frequency = 20.0  # Max 20% extreme candles - R
 
 **Conditions**: `RSI < 30` AND `vol_ok` AND `fundamental_ok`
 
-- **`strong_buy`**: 
+- **`strong_buy`**:
   - `alignment_score >= mtf_alignment_excellent` (default: 80) OR
   - Signal: `"excellent_uptrend_dip"`
-  
+
 - **`buy`**:
   - `alignment_score >= mtf_alignment_fair` (default: 60) OR
   - Signals: `"good_uptrend_dip"`, `"fair_uptrend_dip"`, `"hammer"`, `"bullish_engulfing"` OR
@@ -128,7 +128,7 @@ chart_quality_max_extreme_candle_frequency = 20.0  # Max 20% extreme candles - R
   - `alignment_score >= mtf_alignment_good` (default: 70) OR
   - Signals: `"hammer"`, `"bullish_engulfing"`, `"bullish_divergence"` OR
   - `vol_strong`
-  
+
 - **`watch`**: Default for below-trend stocks (requires stronger signals)
 
 ##### Partial Signals

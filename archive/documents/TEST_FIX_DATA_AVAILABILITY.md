@@ -8,7 +8,7 @@
 
 After calculating indicators and dropping NaN values, the backtest engine might not have any data in the requested backtest period. This can happen when:
 
-1. **Indicator Calculation Drops Too Many Rows**: 
+1. **Indicator Calculation Drops Too Many Rows**:
    - EMA200 requires 200 days of data
    - After dropping NaN, the first ~200 rows are removed
    - If the backtest start date is before the first valid data point, filtering returns empty
@@ -37,11 +37,11 @@ if backtest_period_data.empty:
     # Check what data we actually have
     if self.data.empty:
         raise ValueError(f"No data available for {self.symbol} after indicator calculation (all data dropped as NaN)")
-    
+
     # Find the actual date range we have data for
     actual_start = self.data.index.min()
     actual_end = self.data.index.max()
-    
+
     # Check if the requested period overlaps with available data
     if actual_end < self.start_date:
         raise ValueError(
@@ -60,14 +60,14 @@ if backtest_period_data.empty:
         adjusted_start = max(self.start_date, actual_start)
         adjusted_end = min(self.end_date, actual_end)
         backtest_period_data = self.data.loc[adjusted_start:adjusted_end]
-        
+
         if backtest_period_data.empty:
             raise ValueError(
                 f"No data available for requested backtest period: {self.start_date.date()} to {self.end_date.date()}\n"
                 f"Available data period: {actual_start.date()} to {actual_end.date()}\n"
                 f"Adjusted period: {adjusted_start.date()} to {adjusted_end.date()}"
             )
-        
+
         print(f"⚠️ Adjusted backtest period: {adjusted_start.date()} to {adjusted_end.date()} (requested: {self.start_date.date()} to {self.end_date.date()})")
 ```
 
@@ -194,5 +194,5 @@ The fix ensures:
 
 ---
 
-**Last Updated**: 2025-11-09  
+**Last Updated**: 2025-11-09
 **Status**: ✅ Test Fix Complete

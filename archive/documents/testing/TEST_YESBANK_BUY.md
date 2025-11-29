@@ -85,7 +85,7 @@ KOTAK NEO AUTO TRADER
 🔍 Pre-flight checks...
   Current portfolio size: 0/6
   Available margin: ₹500,000.00
-  
+
 📋 Processing recommendation: YESBANK.NS
   Resolving symbol: YESBANK → YESBANK-EQ
   Price: ₹22.83

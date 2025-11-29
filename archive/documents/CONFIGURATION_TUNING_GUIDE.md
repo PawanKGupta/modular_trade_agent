@@ -1,7 +1,7 @@
 # Configuration Tuning Guide
 
-**Version:** 1.0  
-**Date:** 2025-11-07  
+**Version:** 1.0
+**Date:** 2025-11-07
 **Status:** Complete
 
 ---
@@ -44,8 +44,8 @@ config = StrategyConfig.default()
 
 ### 1. RSI Period (`rsi_period`)
 
-**Default:** `10`  
-**Range:** `5-30`  
+**Default:** `10`
+**Range:** `5-30`
 **Recommended:** `10-14`
 
 **What it does:**
@@ -79,8 +79,8 @@ config = StrategyConfig(rsi_period=14)
 
 ### 2. Support/Resistance Lookback (Daily) (`support_resistance_lookback_daily`)
 
-**Default:** `20`  
-**Range:** `10-100`  
+**Default:** `20`
+**Range:** `10-100`
 **Recommended:** `20-50`
 
 **What it does:**
@@ -114,8 +114,8 @@ config = StrategyConfig(support_resistance_lookback_daily=50)
 
 ### 3. Support/Resistance Lookback (Weekly) (`support_resistance_lookback_weekly`)
 
-**Default:** `50`  
-**Range:** `20-200`  
+**Default:** `50`
+**Range:** `20-200`
 **Recommended:** `50-100`
 
 **What it does:**
@@ -149,8 +149,8 @@ config = StrategyConfig(support_resistance_lookback_weekly=100)
 
 ### 4. Volume Exhaustion Lookback (Daily) (`volume_exhaustion_lookback_daily`)
 
-**Default:** `10`  
-**Range:** `5-30`  
+**Default:** `10`
+**Range:** `5-30`
 **Recommended:** `10-20`
 
 **What it does:**
@@ -184,8 +184,8 @@ config = StrategyConfig(volume_exhaustion_lookback_daily=20)
 
 ### 5. Volume Exhaustion Lookback (Weekly) (`volume_exhaustion_lookback_weekly`)
 
-**Default:** `20`  
-**Range:** `10-50`  
+**Default:** `20`
+**Range:** `10-50`
 **Recommended:** `20-30`
 
 **What it does:**
@@ -219,8 +219,8 @@ config = StrategyConfig(volume_exhaustion_lookback_weekly=30)
 
 ### 6. Data Fetch Daily Max Years (`data_fetch_daily_max_years`)
 
-**Default:** `5`  
-**Range:** `1-10`  
+**Default:** `5`
+**Range:** `1-10`
 **Recommended:** `3-5`
 
 **What it does:**
@@ -256,8 +256,8 @@ config = StrategyConfig(data_fetch_daily_max_years=7)
 
 ### 7. Data Fetch Weekly Max Years (`data_fetch_weekly_max_years`)
 
-**Default:** `3`  
-**Range:** `1-5`  
+**Default:** `3`
+**Range:** `1-5`
 **Recommended:** `3-5`
 
 **What it does:**
@@ -291,8 +291,8 @@ config = StrategyConfig(data_fetch_weekly_max_years=5)
 
 ### 8. Enable Adaptive Lookback (`enable_adaptive_lookback`)
 
-**Default:** `True`  
-**Range:** `True/False`  
+**Default:** `True`
+**Range:** `True/False`
 **Recommended:** `True`
 
 **What it does:**
@@ -580,34 +580,34 @@ from config.strategy_config import StrategyConfig
 def validate_config(config: StrategyConfig) -> bool:
     """Validate configuration parameters"""
     errors = []
-    
+
     if not (5 <= config.rsi_period <= 30):
         errors.append(f"RSI period must be 5-30, got {config.rsi_period}")
-    
+
     if not (10 <= config.support_resistance_lookback_daily <= 100):
         errors.append(f"Support/Resistance lookback daily must be 10-100, got {config.support_resistance_lookback_daily}")
-    
+
     if not (20 <= config.support_resistance_lookback_weekly <= 200):
         errors.append(f"Support/Resistance lookback weekly must be 20-200, got {config.support_resistance_lookback_weekly}")
-    
+
     if not (5 <= config.volume_exhaustion_lookback_daily <= 30):
         errors.append(f"Volume exhaustion lookback daily must be 5-30, got {config.volume_exhaustion_lookback_daily}")
-    
+
     if not (10 <= config.volume_exhaustion_lookback_weekly <= 50):
         errors.append(f"Volume exhaustion lookback weekly must be 10-50, got {config.volume_exhaustion_lookback_weekly}")
-    
+
     if not (2 <= config.data_fetch_daily_max_years <= 10):
         errors.append(f"Data fetch daily max years must be 2-10 (minimum 2 for EMA200), got {config.data_fetch_daily_max_years}")
-    
+
     if not (1 <= config.data_fetch_weekly_max_years <= 5):
         errors.append(f"Data fetch weekly max years must be 1-5, got {config.data_fetch_weekly_max_years}")
-    
+
     if errors:
         print("Configuration validation errors:")
         for error in errors:
             print(f"  - {error}")
         return False
-    
+
     return True
 
 # Example usage
@@ -662,5 +662,5 @@ For more information, see:
 
 ---
 
-**Document Version:** 1.0  
+**Document Version:** 1.0
 **Last Updated:** 2025-11-07

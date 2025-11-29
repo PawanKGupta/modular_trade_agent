@@ -1,7 +1,7 @@
 # Verdict "Watch" Analysis - Root Cause Investigation
 
-**Date**: 2025-11-09  
-**CSV File**: `bulk_analysis_final_20251109_133452.csv`  
+**Date**: 2025-11-09
+**CSV File**: `bulk_analysis_final_20251109_133452.csv`
 **Total Stocks**: 20 (19 watch, 1 avoid)
 
 ## Executive Summary

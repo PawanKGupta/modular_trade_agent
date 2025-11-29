@@ -91,7 +91,7 @@ if existing_order and existing_order.get('order_id') == order_id:
         return True  # Return True since order is already tracked
 ```
 
-**Benefit**: 
+**Benefit**:
 - Prevents duplicate registration in memory
 - Allows price updates if needed
 - Avoids unnecessary calls to `add_pending_order()`

@@ -2,8 +2,8 @@
 
 ## Problem Statement
 
-**Issue**: Getting 31+ HTTP 401 errors during backtest run  
-**Error Type**: `HTTP Error 401: Unauthorized` / `Invalid Crumb`  
+**Issue**: Getting 31+ HTTP 401 errors during backtest run
+**Error Type**: `HTTP Error 401: Unauthorized` / `Invalid Crumb`
 **Impact**: ⚠️ Medium - API rate limiting, but system handles gracefully
 
 ## Root Cause Analysis
@@ -16,7 +16,7 @@ For each stock:
   1. fetch_ohlcv_yf() [daily]     ← API Call #1
   2. fetch_ohlcv_yf() [weekly]    ← API Call #2
   3. yf.Ticker().info [fundamental] ← API Call #3 (not protected by circuit breaker)
-  
+
 Total: 20 stocks × 3 calls = 60 API calls
 ```
 
@@ -25,7 +25,7 @@ Total: 20 stocks × 3 calls = 60 API calls
 For each stock:
   1. BacktestEngine._load_data()
      └─ fetch_ohlcv_yf() [daily] ← API Call #1 (with retries)
-  
+
   2. For each signal (average 8-15 signals per stock):
      └─ trade_agent()
         └─ analyze_ticker()
@@ -246,20 +246,20 @@ _cache_lock = threading.Lock()
 def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None, add_current_day=True):
     # Create cache key
     cache_key = (ticker, days, interval, end_date, add_current_day)
-    
+
     # Check cache
     with _cache_lock:
         if cache_key in _data_cache:
             logger.debug(f"Using cached data for {ticker}")
             return _data_cache[cache_key].copy()
-    
+
     # Fetch data
     df = _fetch_ohlcv_yf_impl(ticker, days, interval, end_date, add_current_day)
-    
+
     # Store in cache
     with _cache_lock:
         _data_cache[cache_key] = df.copy()
-    
+
     return df
 ```
 
@@ -319,5 +319,5 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None, add_current_d
 
 ---
 
-**Last Updated**: 2025-11-09  
+**Last Updated**: 2025-11-09
 **Status**: ⚠️ Analysis Complete - Fixes Recommended

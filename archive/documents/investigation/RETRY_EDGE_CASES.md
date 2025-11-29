@@ -74,7 +74,7 @@ This document analyzes three critical edge cases for the retry mechanism:
 def _check_for_manual_orders(self, symbol: str) -> dict[str, Any]:
     """
     Check for manual orders (orders not in our database).
-    
+
     Returns:
         {
             'has_manual_order': bool,
@@ -86,15 +86,15 @@ def _check_for_manual_orders(self, symbol: str) -> dict[str, Any]:
     """
     # 1. Get active orders from broker
     active_orders = self.orders.get_pending_orders() or []
-    
+
     # 2. Check each order for this symbol
     for order in active_orders:
         if order matches symbol:
             order_id = extract_order_id(order)
-            
+
             # 3. Check if order exists in our database
             db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
-            
+
             if not db_order:
                 # This is a manual order (not in our DB)
                 return {
@@ -113,7 +113,7 @@ def _check_for_manual_orders(self, symbol: str) -> dict[str, Any]:
                     'price': extract_price(order),
                     'is_system_order': True
                 }
-    
+
     return {'has_manual_order': False}
 ```
 
@@ -125,24 +125,24 @@ def _should_skip_retry_due_to_manual_order(
 ) -> tuple[bool, str]:
     """
     Determine if retry should be skipped due to existing manual order.
-    
+
     Returns:
         (should_skip: bool, reason: str)
     """
     manual_qty = manual_order_info.get('quantity', 0)
-    
+
     # If manual order quantity is >= retry quantity, skip retry
     if manual_qty >= retry_qty:
         return (True, f"Manual order exists with {manual_qty} shares (>= retry qty {retry_qty})")
-    
+
     # If manual order quantity is significantly larger, skip retry
     if manual_qty > retry_qty * 1.5:  # 50% more
         return (True, f"Manual order exists with {manual_qty} shares (much larger than retry qty {retry_qty})")
-    
+
     # If manual order quantity is close to retry quantity, skip retry
     if abs(manual_qty - retry_qty) <= 2:  # Within 2 shares
         return (True, f"Manual order exists with {manual_qty} shares (similar to retry qty {retry_qty})")
-    
+
     # Otherwise, proceed with retry (will cancel and replace)
     return (False, f"Manual order has {manual_qty} shares, retry wants {retry_qty} shares")
 ```
@@ -210,4 +210,3 @@ else:
 - Place order → RETRY_PENDING
 - Manually place AMO order (just now)
 - Run retry immediately → Should have retry mechanism to wait for order to appear
-

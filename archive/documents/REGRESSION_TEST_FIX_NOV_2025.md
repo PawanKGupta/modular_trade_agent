@@ -63,7 +63,7 @@ def run_backtest(*args, **kwargs):
 # Before
 from integrated_backtest import run_backtest, run_integrated_backtest
 
-# After  
+# After
 import pytest
 from integrated_backtest import run_integrated_backtest
 

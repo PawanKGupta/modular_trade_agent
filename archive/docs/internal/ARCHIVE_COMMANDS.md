@@ -154,4 +154,3 @@ Move-Item -Path "documents\BACKTEST_WARNINGS_ANALYSIS.md" -Destination "archive\
 ```powershell
 Get-ChildItem -Path "archive\documents" -Recurse -File | Measure-Object | Select-Object Count
 ```
-

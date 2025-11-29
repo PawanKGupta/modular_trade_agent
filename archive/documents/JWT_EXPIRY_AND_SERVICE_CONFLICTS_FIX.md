@@ -1,7 +1,7 @@
 # JWT Expiry and Service Conflict Fixes - Complete Documentation
 
-**Date**: November 6, 2025  
-**Status**: ✅ Fixed and Tested  
+**Date**: November 6, 2025
+**Status**: ✅ Fixed and Tested
 **Version**: 2.2
 
 ---
@@ -108,15 +108,15 @@ def force_relogin(self) -> bool:
                 old_client.logout()  # Clean up SDK state
             except Exception:
                 pass  # Non-critical
-        
+
         # Reset state
         self.client = None
         self.is_logged_in = False
         self.session_token = None
-        
+
         # ALWAYS create new client
         self.client = self._initialize_client()
-        
+
         # Perform login + 2FA with retry
         # ...
 ```
@@ -169,14 +169,14 @@ def prevent_service_conflict(script_name: str, is_unified: bool = False, auto_st
 class KotakNeoAuth:
     def __init__(self, ...):
         self._client_lock = threading.Lock()  # Thread lock
-    
+
     def get_client(self):
         """Get client (thread-safe)."""
         with self._client_lock:
             if not self.is_logged_in:
                 return None
             return self.client
-    
+
     def force_relogin(self):
         """Re-authenticate (thread-safe)."""
         with self._client_lock:

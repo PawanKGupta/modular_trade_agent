@@ -321,7 +321,7 @@ Support multiple trading accounts:
 
 **File**: `dist\ModularTradeAgent_Setup.exe` (~250-300 MB)
 
-**User Steps**: 
+**User Steps**:
 1. Run installer
 2. Enter credentials
 3. Click Install

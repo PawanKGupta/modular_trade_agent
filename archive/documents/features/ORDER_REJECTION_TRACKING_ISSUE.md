@@ -16,11 +16,11 @@ The system assumes orders are successfully executed based on the initial placeme
 4:05 PM  → System places AMO order for RELIANCE
          → Broker API returns "success" (order accepted for placement)
          → System logs: "Order placed successfully"
-         
+
 9:15 AM  → Market opens
          → Broker rejects order (symbol not tradable, circuit limit, etc.)
          → System still thinks order is active
-         
+
 9:30 AM  → Reconciliation runs
          → Order not in holdings (because it was rejected)
          → But system never checks rejection status
@@ -132,10 +132,10 @@ def verify_pending_orders():
     - Every 15 minutes after 9:15 AM market open
     """
     pending = get_pending_orders_from_storage()
-    
+
     for order in pending:
         status = check_order_status(order['order_id'])
-        
+
         if status == 'REJECTED':
             handle_rejection(order)
         elif status == 'CANCELLED':
@@ -160,7 +160,7 @@ def handle_rejection(order, reason):
     """
     symbol = order['symbol']
     reason_text = extract_rejection_reason(reason)
-    
+
     # Telegram notification
     send_telegram(
         f"❌ Order REJECTED by broker\\n"
@@ -169,13 +169,13 @@ def handle_rejection(order, reason):
         f"Reason: {reason_text}\\n"
         f"Order ID: {order['order_id']}"
     )
-    
+
     # Log
     logger.error(f"Order rejected: {symbol} - {reason_text}")
-    
+
     # Remove from pending
     remove_pending_order(order['order_id'])
-    
+
     # Track in history for audit
     add_rejected_order_to_history(order, reason_text)
 ```
@@ -187,13 +187,13 @@ Update `reconcile_holdings_to_history()`:
 def reconcile_holdings_to_history():
     # BEFORE: Only check holdings
     # AFTER: Also verify pending orders
-    
+
     # 1. Check holdings (existing logic)
     reconcile_from_holdings()
-    
+
     # 2. Check pending orders status
     verify_pending_orders()
-    
+
     # 3. Cleanup old pending orders (>24 hours without status)
     cleanup_stale_pending_orders()
 ```
@@ -233,7 +233,7 @@ def extract_order_id(response: Dict) -> Optional[str]:
     """
     if not isinstance(response, dict):
         return None
-    
+
     # Try common field names
     data = response.get('data', response)
     return (
@@ -255,12 +255,12 @@ def check_order_status(order_id: str) -> OrderStatus:
     orders = self.orders.get_orders()
     if not orders or 'data' not in orders:
         return OrderStatus.UNKNOWN
-    
+
     for order in orders['data']:
         if order.get('neoOrdNo') == order_id:
             status_str = order.get('orderStatus', 'PENDING')
             return OrderStatus.from_string(status_str)
-    
+
     return OrderStatus.NOT_FOUND
 ```
 

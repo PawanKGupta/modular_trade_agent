@@ -1,8 +1,8 @@
 # Fix: Conservative Bias and Missing Target/Stop Parameters
 
-**Date:** 2025-11-02  
-**Status:** ✅ FIXED  
-**Priority:** High  
+**Date:** 2025-11-02
+**Status:** ✅ FIXED
+**Priority:** High
 
 ## Issues Identified
 
@@ -84,21 +84,21 @@ if stock_result['final_verdict'] in ['buy', 'strong_buy']:
     if not stock_result.get('buy_range') or not stock_result.get('target') or not stock_result.get('stop'):
         # Import calculation functions
         from core.analysis import calculate_smart_buy_range, calculate_smart_stop_loss, calculate_smart_target
-        
+
         current_price = stock_result.get('last_close')
         if current_price and current_price > 0:
             timeframe_confirmation = stock_result.get('timeframe_analysis')
-            
+
             # Estimate recent low/high
             recent_low = current_price * 0.92
             recent_high = current_price * 1.15
-            
+
             # Calculate parameters
             buy_range = calculate_smart_buy_range(current_price, timeframe_confirmation)
             stop = calculate_smart_stop_loss(current_price, recent_low, timeframe_confirmation, None)
-            target = calculate_smart_target(current_price, stop, stock_result['final_verdict'], 
+            target = calculate_smart_target(current_price, stop, stock_result['final_verdict'],
                                            timeframe_confirmation, recent_high)
-            
+
             # Update result
             stock_result['buy_range'] = buy_range
             stock_result['target'] = target

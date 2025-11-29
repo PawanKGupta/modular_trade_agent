@@ -298,7 +298,7 @@ rm modules/kotak_neo_auto_trader/session_cache.json
 
 **The system has been battle-tested with real account orders and is ready for automated trading!**
 
-**Remember**: 
+**Remember**:
 - Always monitor the first few production runs
 - Keep backups of trade history
 - Cancel test orders before going live
@@ -308,7 +308,7 @@ Good luck with your automated trading! 🚀📈
 
 ---
 
-**System Version**: 1.0  
-**Last Updated**: 2025-01-27  
-**Status**: ✅ Production Ready  
+**System Version**: 1.0
+**Last Updated**: 2025-01-27
+**Status**: ✅ Production Ready
 **Test Coverage**: Buy ✅ | Sell ✅ | Monitoring ⚠️ (minor fix pending)

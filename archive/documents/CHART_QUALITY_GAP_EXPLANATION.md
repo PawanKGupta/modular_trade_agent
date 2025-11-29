@@ -193,7 +193,7 @@ Result: 28.3% > 20% = FAILED ❌
 - **Impact**: Stock should be filtered out (avoid verdict)
 - **Issue**: ML model is not respecting this filter (needs fix)
 
-**Key Takeaway**: 
+**Key Takeaway**:
 - Gaps indicate unreliable price action
 - High gap frequency (> 20%) makes trading risky
 - System correctly identifies this as a problem

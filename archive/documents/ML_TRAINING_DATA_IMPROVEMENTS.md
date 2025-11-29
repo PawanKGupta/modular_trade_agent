@@ -1,7 +1,7 @@
 # ML Training Data - Assessment & Improvements
 
-**Date:** 2025-11-12  
-**Your Current Accuracy:** 72.5%  
+**Date:** 2025-11-12
+**Your Current Accuracy:** 72.5%
 **Training Examples:** 8,490 (5,540 unique positions)
 
 ---
@@ -59,7 +59,7 @@ last = df.iloc[-1]  # ← Using data FROM entry_date
 - Today's volume
 - Today's high/low
 
-**Impact on Accuracy:**  
+**Impact on Accuracy:**
 - Your 72.5% accuracy is **overstated**
 - Real-world accuracy will be **lower** (maybe 65-68%)
 - Model has seen "future" information during training
@@ -119,44 +119,44 @@ python scripts/collect_training_data.py --backtest-file backtest_results.csv
 ```python
 def add_market_regime_features(df, entry_date):
     """Add features about overall market condition"""
-    
+
     # Fetch Nifty 50 data up to entry_date
     nifty_df = fetch_index_data('NIFTY50', end_date=entry_date)
-    
+
     features = {}
-    
+
     # 1. Nifty trend (most important!)
     nifty_sma_20 = nifty_df['close'].tail(20).mean()
     nifty_sma_50 = nifty_df['close'].tail(50).mean()
     nifty_last = nifty_df['close'].iloc[-1]
-    
+
     features['nifty_above_sma20'] = bool(nifty_last > nifty_sma_20)
     features['nifty_above_sma50'] = bool(nifty_last > nifty_sma_50)
     features['nifty_trend'] = 'bullish' if (nifty_last > nifty_sma_20 > nifty_sma_50) else \
                              'bearish' if (nifty_last < nifty_sma_20 < nifty_sma_50) else 'neutral'
-    
+
     # 2. India VIX (fear gauge)
     # High VIX = high volatility/fear
     vix_df = fetch_index_data('INDIAVIX', end_date=entry_date)
     current_vix = vix_df['close'].iloc[-1]
     avg_vix_20 = vix_df['close'].tail(20).mean()
-    
+
     features['vix_level'] = float(current_vix)
     features['vix_above_average'] = bool(current_vix > avg_vix_20)
     features['vix_elevated'] = bool(current_vix > 20)  # High fear
-    
+
     # 3. Sector relative strength
     # (If stock is TECHM.NS, compare to NIFTY IT)
     sector_index = get_sector_index(ticker)  # Map stock to sector
     sector_df = fetch_index_data(sector_index, end_date=entry_date)
-    
+
     # Sector vs Nifty relative strength
     sector_return_5d = (sector_df['close'].iloc[-1] / sector_df['close'].iloc[-5] - 1) * 100
     nifty_return_5d = (nifty_df['close'].iloc[-1] / nifty_df['close'].iloc[-5] - 1) * 100
-    
+
     features['sector_outperforming'] = bool(sector_return_5d > nifty_return_5d)
     features['sector_relative_strength'] = float(sector_return_5d - nifty_return_5d)
-    
+
     return features
 ```
 
@@ -173,7 +173,7 @@ def add_market_regime_features(df, entry_date):
 def add_time_features(entry_date_str):
     """Add temporal features"""
     entry_date = datetime.strptime(entry_date_str, '%Y-%m-%d')
-    
+
     return {
         'day_of_week': entry_date.weekday(),  # 0=Monday, 4=Friday
         'is_monday': entry_date.weekday() == 0,  # Monday effect
@@ -186,7 +186,7 @@ def add_time_features(entry_date_str):
     }
 ```
 
-**Why:** 
+**Why:**
 - Mondays often see follow-through from weekend sentiment
 - Quarter-end sees institutional rebalancing
 - Earnings season creates more volatility
@@ -199,7 +199,7 @@ def add_time_features(entry_date_str):
 
 ### **4. Feature Interactions**
 
-**Current:** Features are independent.  
+**Current:** Features are independent.
 **Better:** Some combinations are powerful:
 
 ```python
@@ -394,4 +394,3 @@ This ensures training always happens on older data, testing on newer data.
 ---
 
 **Your current approach is solid! Fix the look-ahead bias first, then add market context. You're on the right track!** 🚀
-

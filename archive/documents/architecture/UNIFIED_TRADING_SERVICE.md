@@ -1,7 +1,7 @@
 # Unified Trading Service
 
-**Last Updated**: October 31, 2025  
-**Version**: 2.1  
+**Last Updated**: October 31, 2025
+**Version**: 2.1
 **Status**: Production Ready ✅
 
 ## Overview
@@ -101,15 +101,15 @@ Total: 1 login/day → No JWT errors → Runs forever → No restarts
    ```powershell
    $projectPath = "C:\Personal\Projects\TradingView\modular_trade_agent"
    $pythonExe = "$projectPath\.venv\Scripts\python.exe"
-   
+
    $action = New-ScheduledTaskAction `
        -Execute $pythonExe `
        -Argument "-m modules.kotak_neo_auto_trader.run_trading_service --env modules/kotak_neo_auto_trader/kotak_neo.env" `
        -WorkingDirectory $projectPath
-   
+
    # Trigger: At system startup (runs continuously)
    $trigger = New-ScheduledTaskTrigger -AtStartup
-   
+
    $settings = New-ScheduledTaskSettingsSet `
        -AllowStartIfOnBatteries `
        -DontStopIfGoingOnBatteries `
@@ -119,12 +119,12 @@ Total: 1 login/day → No JWT errors → Runs forever → No restarts
        -RestartCount 3 `
        -RestartInterval (New-TimeSpan -Minutes 5) `
        -Priority 4
-   
+
    $principal = New-ScheduledTaskPrincipal `
        -UserId $env:USERNAME `
        -LogonType Interactive `
        -RunLevel Highest
-   
+
    Register-ScheduledTask `
        -TaskName "TradingService-Unified" `
        -Action $action `
@@ -134,7 +134,7 @@ Total: 1 login/day → No JWT errors → Runs forever → No restarts
        -Description "Unified Trading Service - Runs continuously 24/7. Tasks execute automatically on trading days (Mon-Fri)." `
        -Force
    ```
-   
+
    **Alternative**: Use the provided script:
    ```powershell
 .\scripts\build\configure_continuous_service.ps1
@@ -543,17 +543,17 @@ Before deploying to production:
 
 The unified service is working correctly when:
 
-✅ **Runs continuously 24/7** (check service is always running)  
-✅ **Single login per day** (check logs for login timestamp)  
-✅ **Zero JWT expiry errors** (no "Invalid JWT token" messages)  
-✅ **All tasks execute at scheduled times** (7 tasks on Mon-Fri only)  
-✅ **Auto-resets at 6:00 PM** (task flags reset for next day)  
-✅ **Continues after EOD** (doesn't shutdown at 6:00 PM)  
-✅ **Python process count = 1** (not 100+)  
-✅ **Memory usage ~100-150 MB** (not 5+ GB)  
+✅ **Runs continuously 24/7** (check service is always running)
+✅ **Single login per day** (check logs for login timestamp)
+✅ **Zero JWT expiry errors** (no "Invalid JWT token" messages)
+✅ **All tasks execute at scheduled times** (7 tasks on Mon-Fri only)
+✅ **Auto-resets at 6:00 PM** (task flags reset for next day)
+✅ **Continues after EOD** (doesn't shutdown at 6:00 PM)
+✅ **Python process count = 1** (not 100+)
+✅ **Memory usage ~100-150 MB** (not 5+ GB)
 ✅ **No execution on weekends** (idles Sat-Sun)
 
 ---
 
-**Status**: ✅ Production Ready  
+**Status**: ✅ Production Ready
 **Next Review**: After 1 week of production operation

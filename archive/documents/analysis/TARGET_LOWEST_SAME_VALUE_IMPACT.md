@@ -56,7 +56,7 @@ After: Target=₹2100.00 (display), Lowest=₹2095.30 (unchanged)
 #### Scenario 4: After Service Restart
 ```
 Before restart: Order at ₹2090.00, lowest_ema9['DALBHARAT'] = 2090.00
-After restart: 
+After restart:
   - OrderStateManager has target_price: 0.0 (from duplicate bug)
   - Fix initializes lowest_ema9 from current EMA9: 2095.30
   - Target shows: 2095.30 (from lowest_ema9)
@@ -104,11 +104,11 @@ Cycle 4: EMA9=2085.00, Target=2090.00, Lowest=2090.00 → Update to 2085.00
 ### Case 2: Service Restart Mid-Day
 ```
 Before restart: Order at ₹2085.00, lowest_ema9=2085.00
-After restart: 
+After restart:
   - target_price corrupted to 0.0
   - Fix initializes lowest_ema9 from current EMA9: 2090.00
   - Order still at ₹2085.00 (from broker)
-  
+
 Check: rounded_ema9 (2090.00) < lowest_so_far (2090.00) = False
 Result: No update (correct - order already at lower price)
 ```

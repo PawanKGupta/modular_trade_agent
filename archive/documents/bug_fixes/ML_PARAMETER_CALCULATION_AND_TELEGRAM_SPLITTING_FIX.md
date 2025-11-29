@@ -1,8 +1,8 @@
 # ML Parameter Calculation & Telegram Message Splitting Fix
 
-**Date:** November 13, 2025  
-**Priority:** Critical  
-**Status:** ✅ Fixed & Tested  
+**Date:** November 13, 2025
+**Priority:** Critical
+**Status:** ✅ Fixed & Tested
 
 ---
 
@@ -50,12 +50,12 @@ Stocks where the **ML model approved** (`buy` or `strong_buy`) but **rule-based 
 ml_verdict = stock_result.get('ml_verdict')
 if ml_verdict and ml_verdict in ['buy', 'strong_buy']:
     needs_params = True
-    
+
 if needs_params:
     if not stock_result.get('buy_range') or not stock_result.get('target') or not stock_result.get('stop'):
         # Get current price (try multiple sources)
         current_price = stock_result.get('last_close')
-        
+
         # Fallback 1: Try to get from pre_fetched_df if available
         if (not current_price or current_price <= 0) and 'pre_fetched_df' in stock_result:
             try:
@@ -64,7 +64,7 @@ if needs_params:
                     current_price = float(pre_df['close'].iloc[-1])
             except Exception as e:
                 logger.debug(f"Failed to get price from pre_fetched_df: {e}")
-        
+
         # Fallback 2: Try to get from stock_info if available
         if (not current_price or current_price <= 0) and 'stock_info' in stock_result:
             try:
@@ -73,7 +73,7 @@ if needs_params:
                     current_price = info.get('currentPrice') or info.get('regularMarketPrice')
             except Exception as e:
                 logger.debug(f"Failed to get price from stock_info: {e}")
-        
+
         if current_price and current_price > 0:
             # Calculate parameters...
         else:
@@ -91,12 +91,12 @@ def get_enhanced_stock_info(stock_data, index, is_strong_buy=True):
     if buy_range is None or target is None or stop is None:
         logger.warning(f"{ticker}: Skipping display - missing trading parameters")
         return None
-    
+
     # Additional validation - skip if parameters are zero
     if buy_low <= 0 or buy_high <= 0 or target <= 0 or stop <= 0:
         logger.warning(f"{ticker}: Skipping display - invalid trading parameters")
         return None
-    
+
     # ... rest of formatting
 ```
 
@@ -106,9 +106,9 @@ Applied same fallback logic in `services/backtest_service.py` for consistency.
 
 ### Results
 
-✅ **GENUSPAPER.NS**: Buy (14.79, 15.01), Target: 17.53, Stop: 13.64  
-✅ **DJML.NS**: Buy (73.55, 74.66), Target: 89.55, Stop: 67.67  
-✅ **SNOWMAN.NS**: Buy (46.54, 47.24), Target: 54.09, Stop: 44.55  
+✅ **GENUSPAPER.NS**: Buy (14.79, 15.01), Target: 17.53, Stop: 13.64
+✅ **DJML.NS**: Buy (73.55, 74.66), Target: 89.55, Stop: 67.67
+✅ **SNOWMAN.NS**: Buy (46.54, 47.24), Target: 54.09, Stop: 44.55
 
 ### Testing
 
@@ -174,30 +174,30 @@ Implemented smart splitting that:
 def send_telegram(msg):
     """
     Send telegram message with intelligent splitting at logical boundaries.
-    
+
     Splits at stock boundaries (lines starting with numbers like "1. TICKER:")
     to avoid cutting stock information in half.
     """
     max_length = 4096
-    
+
     # If message is short enough, send as-is
     if len(msg) <= max_length:
         send_long_message(msg)
         return
-    
+
     # Extract header (everything before first stock entry)
     header = extract_header(lines)
-    
+
     # Process stocks, building chunks that respect boundaries
     for each stock:
         if adding_stock_would_exceed_limit():
             # Save current chunk and start new one with header
             chunks.append(current_chunk)
             current_chunk = [header]
-        
+
         # Add complete stock to current chunk
         current_chunk.extend(stock_lines)
-    
+
     # Send all chunks with logging
     for i, chunk in enumerate(chunks):
         logger.info(f"Sending Telegram message part {i+1}/{len(chunks)}")
@@ -214,7 +214,7 @@ Users now receive **complete messages in multiple parts**:
 
 1. ALLCARGO.NS:
    ...
-   
+
 5. ASTEC.NS:
    ...
 
@@ -225,7 +225,7 @@ Users now receive **complete messages in multiple parts**:
 
 6. GENUSPAPER.NS:
    ...
-   
+
 14. BLKASHYAP.NS:
    ...
 
@@ -290,7 +290,7 @@ python trade_agent.py --backtest 2>&1 | Select-String -Pattern "ONLY ML" -Contex
 python trade_agent.py --backtest 2>&1 | Select-String -Pattern "Sending Telegram message part"
 ```
 
-**Expected**: 
+**Expected**:
 - If message >4096 chars: See "Sending part 1/2", "Sending part 2/2"
 - If message <4096 chars: See single send
 - No Telegram API errors
@@ -354,10 +354,9 @@ Check your Telegram app - you should receive multiple messages with all stocks (
 
 Both critical issues are now **fixed and tested**:
 
-✅ ML-only signals have valid trading parameters  
-✅ Complete Telegram messages delivered in multiple parts  
-✅ Comprehensive unit tests ensure regression prevention  
-✅ Production-ready with minimal performance impact  
+✅ ML-only signals have valid trading parameters
+✅ Complete Telegram messages delivered in multiple parts
+✅ Comprehensive unit tests ensure regression prevention
+✅ Production-ready with minimal performance impact
 
 **Status**: Ready for production use 🚀
-

@@ -9,7 +9,7 @@ The analysis system has become overly complex with 4-5 quality assessments that 
 if (alignment_score >= 9) and (fundamental_quality >= 2) and (support_proximity_quality >= 2):
     verdict = "strong_buy"
 elif (alignment_score >= 8) and (fundamental_quality >= 1 OR volume_quality >= 2) and (support_proximity_quality >= 1):
-    verdict = "strong_buy"  
+    verdict = "strong_buy"
 elif (alignment_score >= 7) and (fundamental_quality >= 1) and (setup_quality >= 2) and (support_proximity_quality >= 1):
     verdict = "buy"
 # ... more complex conditions
@@ -24,25 +24,25 @@ elif (alignment_score >= 7) and (fundamental_quality >= 1) and (setup_quality >=
 ```python
 # Core reversal conditions
 rsi_oversold = last['rsi10'] < 30
-above_trend = last['close'] > last['ema200'] 
+above_trend = last['close'] > last['ema200']
 decent_volume = last['volume'] >= avg_vol * 0.8  # Minimum volume threshold
 
 if rsi_oversold and above_trend and decent_volume:
     # Simple quality-based classification
     alignment_score = timeframe_confirmation.get('alignment_score', 0) if timeframe_confirmation else 0
-    
+
     # Strong Buy: High MTF alignment OR strong patterns
     if alignment_score >= 8 or "excellent_uptrend_dip" in signals:
         verdict = "strong_buy"
-    
-    # Buy: Decent MTF alignment OR good patterns  
+
+    # Buy: Decent MTF alignment OR good patterns
     elif alignment_score >= 5 or any(s in signals for s in ["good_uptrend_dip", "hammer", "bullish_engulfing"]):
         verdict = "buy"
-    
+
     # Buy: Basic reversal setup (RSI + trend + volume)
     else:
         verdict = "buy"  # Default for valid reversal conditions
-        
+
 else:
     verdict = "watch"  # Doesn't meet core reversal criteria
 ```
@@ -70,7 +70,7 @@ else:
 ### **Option 1: Immediate Simplification**
 Replace the complex logic (lines 451-464) with the simplified version above.
 
-### **Option 2: Gradual Adjustment** 
+### **Option 2: Gradual Adjustment**
 Reduce the quality thresholds:
 - Lower alignment_score requirements from 7-9 to 4-6
 - Make fundamental_quality optional (OR condition instead of AND)
@@ -87,7 +87,7 @@ Run both systems in parallel and compare results over time.
 3. **Strategy mismatch**: Analysis criteria don't match backtest criteria
 
 ### **Simplified System Benefits:**
-1. **Higher recall**: Catches more reversal opportunities  
+1. **Higher recall**: Catches more reversal opportunities
 2. **Consistent logic**: Analysis matches backtest conditions
 3. **Quality differentiation**: Uses strong_buy vs buy for quality levels
 4. **Trust the backtest**: Let historical validation do the heavy lifting

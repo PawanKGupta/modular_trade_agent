@@ -181,7 +181,7 @@ Test with:
 ## Notes
 
 - This feature works **only for EXIT orders** (not for buy/re-entry)
-- Retry happens **immediately** (no delay) 
+- Retry happens **immediately** (no delay)
 - Logs warnings for failed retries but doesn't stop execution
 - Trade history is updated with actual sold quantity
 

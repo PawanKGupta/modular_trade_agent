@@ -356,7 +356,7 @@ Total: 0 + 0 + 0 + 0 + 0 + 0 = 0
 
 ## Key Files
 
-1. **`core/timeframe_analysis.py`**: 
+1. **`core/timeframe_analysis.py`**:
    - `get_dip_buying_alignment_score()`: Main calculation method
    - `get_dip_buying_confirmation()`: Maps score to confirmation level
    - `analyze_dip_conditions()`: Analyzes daily/weekly conditions
@@ -366,11 +366,11 @@ Total: 0 + 0 + 0 + 0 + 0 + 0 = 0
    - `_analyze_selling_pressure()`: Analyzes selling pressure
    - `_analyze_reversion_setup()`: Analyzes reversion setup quality
 
-2. **`services/verdict_service.py`**: 
+2. **`services/verdict_service.py`**:
    - Uses alignment score in verdict determination
    - Applies thresholds: `mtf_alignment_excellent`, `mtf_alignment_good`, `mtf_alignment_fair`
 
-3. **`config/strategy_config.py`**: 
+3. **`config/strategy_config.py`**:
    - Configuration parameters for alignment score thresholds
    - Support/resistance lookback periods
    - Volume exhaustion lookback periods

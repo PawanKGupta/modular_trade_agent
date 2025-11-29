@@ -58,7 +58,7 @@ warnings.filterwarnings('error', category=DeprecationWarning)
 
 # This will raise DeprecationWarning:
 engine.has_holding('RELIANCE')
-# DeprecationWarning: has_holding() is deprecated. 
+# DeprecationWarning: has_holding() is deprecated.
 # Use portfolio_service.has_position('RELIANCE') instead.
 ```
 
@@ -270,4 +270,3 @@ Phase 5.2 is **COMPLETE**. All objectives have been achieved:
 - **2025-11-25**: Phase 5.2 - Added deprecation warnings and documentation
 - **2025-11-25**: Created SERVICES_USAGE_GUIDE.md
 - **2025-11-25**: Updated ARCHITECTURE_GUIDE.md
-

@@ -52,4 +52,3 @@ After cleanup, `docs/` should contain only:
 - USER_GUIDE.md
 - DEPLOYMENT.md
 - engineering-standards-and-ci.md (if kept)
-

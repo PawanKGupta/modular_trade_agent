@@ -1,7 +1,7 @@
 # ML Model Training Results - November 12, 2025
 
-**Date:** 2025-11-12  
-**Model Version:** v3 (Balanced)  
+**Date:** 2025-11-12
+**Model Version:** v3 (Balanced)
 **Status:** ✅ **DEPLOYED**
 
 **Update:** Retrained with `class_weight='balanced'` to fix conservative prediction bias
@@ -234,7 +234,7 @@ Context: None
 
 **After:**
 ```
-Model: "RSI < 30 + Deep dip near support + Nifty below SMA20 + Monday" 
+Model: "RSI < 30 + Deep dip near support + Nifty below SMA20 + Monday"
 Accuracy: 74.32%
 Context: FULL awareness of market, timing, and feature combinations
 ```
@@ -276,8 +276,7 @@ class_weight='balanced'
 
 ---
 
-**Last Updated:** 2025-11-12 (v3)  
-**Status:** Production Ready  
-**Confidence:** High (validated on 2022-2024 unseen data)  
+**Last Updated:** 2025-11-12 (v3)
+**Status:** Production Ready
+**Confidence:** High (validated on 2022-2024 unseen data)
 **Recommendation:** Use v3 (balanced) for all predictions
-

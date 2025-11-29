@@ -12,4 +12,3 @@ Remove-Item -Path "docs\migration" -Recurse -Force
 ```
 
 This will remove the duplicate files since they're already safely archived.
-

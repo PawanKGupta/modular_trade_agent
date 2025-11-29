@@ -1,7 +1,7 @@
 # Verdict Calculation Analysis and Improvement Suggestions
 
-**Date**: 2025-11-09  
-**Issue**: >80% of stocks getting "watch" or "avoid" verdicts  
+**Date**: 2025-11-09
+**Issue**: >80% of stocks getting "watch" or "avoid" verdicts
 **Goal**: Increase "buy" and "strong_buy" verdicts while maintaining quality
 
 ---
@@ -57,10 +57,10 @@
 **Verdict Classification**:
 
 ###### Above EMA200 (Uptrend Dip Buying):
-- **`strong_buy`**: 
+- **`strong_buy`**:
   - `alignment_score >= 8.0` (excellent) OR
   - Signal: `"excellent_uptrend_dip"`
-  
+
 - **`buy`**:
   - `alignment_score >= 4.0` (fair) OR
   - Signals: `"good_uptrend_dip"`, `"fair_uptrend_dip"`, `"hammer"`, `"bullish_engulfing"` OR
@@ -72,7 +72,7 @@
   - `alignment_score >= 6.0` (good) OR
   - Signals: `"hammer"`, `"bullish_engulfing"`, `"bullish_divergence"` OR
   - `vol_strong` (volume >= 1.2x)
-  
+
 - **`watch`**: Default for below-trend stocks (requires stronger signals)
 
 ###### Partial Signals:
@@ -97,7 +97,7 @@
 - Daily range: **1.5%** minimum (many stocks have 1.0-1.5% range)
 - Extreme candles: **15%** max (many stocks have 10-20% extreme candles)
 
-**Impact**: 
+**Impact**:
 - **High**: Many stocks with decent charts are filtered out
 - **Example**: RELIANCE.NS has 28.3% gaps → FAILED → "avoid"
 - **Estimate**: 30-40% of stocks fail chart quality
@@ -120,7 +120,7 @@
 - Time adjustment: Reduces threshold during market hours (30-85% of daily volume expected)
 - Absolute volume check: Filters out stocks with <20,000 average volume
 
-**Impact**: 
+**Impact**:
 - **Medium-High**: Many stocks don't meet 1.0x volume requirement
 - **Estimate**: 20-30% of stocks fail volume check
 - **Issue**: During dip-buying, volume is often lower (selling pressure)
@@ -135,7 +135,7 @@
 - Above EMA200: RSI < **30.0**
 - Below EMA200: RSI < **20.0**
 
-**Impact**: 
+**Impact**:
 - **Medium**: Many stocks have RSI 30-35 (above EMA200) or RSI 20-25 (below EMA200)
 - **Estimate**: 15-25% of stocks don't meet RSI threshold
 - **Issue**: RSI 30-35 can still be good entry points in strong uptrends
@@ -150,7 +150,7 @@
 - `fundamental_ok = True` if PE >= 0 (not negative)
 - Negative PE = loss-making company → `fundamental_ok = False`
 
-**Impact**: 
+**Impact**:
 - **Low-Medium**: Most stocks have positive PE, but some growth stocks have negative PE
 - **Estimate**: 5-10% of stocks fail fundamental check
 - **Issue**: Growth stocks (negative PE) are completely filtered out
@@ -166,7 +166,7 @@
 - `mtf_alignment_good`: **6.0**
 - `mtf_alignment_fair`: **4.0**
 
-**Impact**: 
+**Impact**:
 - **Medium**: Many stocks have alignment scores 3-5 (below fair threshold)
 - **Estimate**: 20-30% of stocks don't meet alignment score requirements
 - **Issue**: Alignment score is required for `strong_buy` and influences `buy` verdicts
@@ -181,7 +181,7 @@
 - ML confidence: **50%** minimum
 - Falls back to rule-based if confidence < 50%
 
-**Impact**: 
+**Impact**:
 - **Medium**: ML model predictions with 40-50% confidence fall back to rule-based
 - **Estimate**: 10-20% of stocks have ML predictions rejected due to low confidence
 - **Issue**: 50% confidence threshold might be too high for multi-class classification
@@ -192,11 +192,11 @@
 
 ### Bottleneck 7: Multiple Conditions Required
 
-**Current Logic**: 
+**Current Logic**:
 - Requires **ALL** of: RSI oversold + `vol_ok` + `fundamental_ok`
 - Then requires **ANY** of: Alignment score OR signals OR `vol_strong`
 
-**Impact**: 
+**Impact**:
 - **High**: Stocks that meet most conditions but fail one get "watch" or "avoid"
 - **Example**: RSI < 30, volume OK, but alignment score < 4.0 → "watch"
 - **Example**: RSI < 30, alignment score >= 4.0, but volume < 1.0x → "watch"
@@ -221,7 +221,7 @@
 - Daily range: **1.0%** minimum (allow lower volatility stocks)
 - Extreme candles: **20%** max (allow more extreme candles)
 
-**Rationale**: 
+**Rationale**:
 - Real-world stocks have imperfections
 - Current thresholds are too strict for dip-buying strategy
 - Relaxing thresholds by 20-25% should increase pass rate by 15-20%
@@ -252,7 +252,7 @@ chart_quality_max_extreme_candle_frequency: float = 20.0  # Increased from 15.0
 - For dip-buying (RSI < 30): Further reduce to **0.5x** (allow lower volume during oversold conditions)
 - Keep `vol_strong` threshold at 1.2x (for bonus points)
 
-**Rationale**: 
+**Rationale**:
 - Dip-buying strategy: Oversold conditions often have lower volume (selling pressure)
 - Volume requirement of 1.0x is too strict for oversold conditions
 - Reducing to 0.7x (or 0.5x for oversold) should increase pass rate by 20-30%
@@ -289,11 +289,11 @@ volume_data = self.verdict_service.assess_volume(df, last, rsi_value=rsi_value)
 **Suggested**:
 - Above EMA200: RSI < **35.0** (allow slightly higher RSI in strong uptrends)
 - Below EMA200: RSI < **25.0** (allow slightly higher RSI for reversal plays)
-- Add RSI bands: 
+- Add RSI bands:
   - RSI 30-35 (above EMA200): "watch" → "buy" if other conditions are strong
   - RSI 20-25 (below EMA200): "watch" → "buy" if other conditions are strong
 
-**Rationale**: 
+**Rationale**:
 - RSI 30-35 can still be good entry points in strong uptrends
 - RSI 20-25 can be good reversal points even if not "extreme" oversold
 - Adding RSI bands allows flexibility while maintaining quality
@@ -338,7 +338,7 @@ else:
 - But allow "watch" verdict for growth stocks (negative PE) if other conditions are strong
 - Add PB ratio check: Allow negative PE if PB ratio is reasonable (< 5.0)
 
-**Rationale**: 
+**Rationale**:
 - Growth stocks often have negative PE (investing in growth)
 - Completely filtering out growth stocks might miss opportunities
 - Allow "watch" for growth stocks, "buy" only if other conditions are very strong
@@ -377,7 +377,7 @@ pb_max_for_growth_stock: float = 5.0  # Max PB ratio for growth stocks
 - `mtf_alignment_fair`: **3.0** (decreased from 4.0)
 - Add `mtf_alignment_minimal`: **2.0** (for basic confirmation)
 
-**Rationale**: 
+**Rationale**:
 - Alignment scores are calculated based on multiple timeframes
 - Current thresholds are high, requiring strong multi-timeframe confirmation
 - Lowering thresholds by 1.0-1.5 points should increase pass rate by 15-20%
@@ -408,7 +408,7 @@ mtf_alignment_minimal: float = 2.0  # New: minimal confirmation
   - Confidence 40-60%: Use ML prediction but mark as "lower confidence"
   - Confidence < 40%: Fall back to rule-based
 
-**Rationale**: 
+**Rationale**:
 - 50% confidence threshold is conservative for multi-class classification
 - Lowering to 40% allows more ML predictions to be used
 - Confidence bands provide flexibility while maintaining quality
@@ -434,11 +434,11 @@ else:  # Low confidence
 
 ### Suggestion 7: Add Flexible Entry Conditions (High Impact)
 
-**Current**: 
+**Current**:
 - Requires **ALL** of: RSI oversold + `vol_ok` + `fundamental_ok`
 - Then requires **ANY** of: Alignment score OR signals OR `vol_strong`
 
-**Suggested**: 
+**Suggested**:
 - Add **scoring system** instead of binary conditions
 - Score points for each condition met:
   - RSI oversold: +3 points
@@ -456,7 +456,7 @@ else:  # Low confidence
   - Score >= 4: `watch`
   - Score < 4: `avoid`
 
-**Rationale**: 
+**Rationale**:
 - Binary conditions are too strict (all or nothing)
 - Scoring system allows flexibility (some conditions can be weak if others are strong)
 - Should increase "buy" verdicts by 25-35%
@@ -525,17 +525,17 @@ else:
 
 ### Suggestion 8: Add RSI-Based Volume Adjustment (Medium Impact)
 
-**Current**: 
+**Current**:
 - Volume requirement: 1.0x average (same for all RSI levels)
 
-**Suggested**: 
+**Suggested**:
 - RSI-based volume adjustment:
   - RSI < 20: Volume requirement = 0.5x (extreme oversold, allow very low volume)
   - RSI 20-25: Volume requirement = 0.6x (oversold, allow low volume)
   - RSI 25-30: Volume requirement = 0.7x (near oversold, allow moderate volume)
   - RSI >= 30: Volume requirement = 1.0x (normal, require average volume)
 
-**Rationale**: 
+**Rationale**:
 - Oversold conditions often have lower volume (selling pressure)
 - Adjusting volume requirements based on RSI level matches market behavior
 - Should increase pass rate by 15-20% for oversold stocks
@@ -548,7 +548,7 @@ def get_volume_threshold_for_rsi(rsi_value: Optional[float], is_above_ema200: bo
     """Get volume threshold based on RSI level"""
     if rsi_value is None:
         return MIN_VOLUME_MULTIPLIER  # Default: 1.0x
-    
+
     if rsi_value < 20:
         return 0.5  # Extreme oversold: 50% of average volume
     elif rsi_value < 25:
@@ -569,18 +569,18 @@ vol_ok_adjusted = volume_ratio >= volume_threshold
 
 ### Suggestion 9: Add Signal Strength Weighting (Medium Impact)
 
-**Current**: 
+**Current**:
 - All signals treated equally
 - Pattern signals: `"hammer"`, `"bullish_engulfing"`, etc.
 
-**Suggested**: 
+**Suggested**:
 - Add signal strength weighting:
   - Strong signals: `"hammer"`, `"bullish_engulfing"`, `"bullish_divergence"` → +2 points
   - Medium signals: `"good_uptrend_dip"`, `"fair_uptrend_dip"` → +1 point
   - Weak signals: Other patterns → +0.5 points
 - Combine signal strength with other factors for verdict
 
-**Rationale**: 
+**Rationale**:
 - Not all signals are equally strong
 - Weighting signals allows better verdict classification
 - Should improve accuracy of "buy" vs "watch" verdicts
@@ -592,7 +592,7 @@ vol_ok_adjusted = volume_ratio >= volume_threshold
 def get_signal_strength_score(signals: List[str]) -> float:
     """Calculate signal strength score"""
     score = 0.0
-    
+
     # Strong signals
     strong_signals = ["hammer", "bullish_engulfing", "bullish_divergence", "excellent_uptrend_dip"]
     for signal in signals:
@@ -602,7 +602,7 @@ def get_signal_strength_score(signals: List[str]) -> float:
             score += 1.0
         else:
             score += 0.5
-    
+
     return score
 
 # Use in determine_verdict
@@ -615,17 +615,17 @@ signal_strength_score = get_signal_strength_score(signals)
 
 ### Suggestion 10: Add Adaptive Thresholds Based on Market Conditions (Low-Medium Impact)
 
-**Current**: 
+**Current**:
 - Fixed thresholds for all market conditions
 
-**Suggested**: 
+**Suggested**:
 - Adaptive thresholds based on market conditions:
   - Bull market: Slightly relaxed thresholds (more "buy" verdicts)
   - Bear market: Slightly stricter thresholds (fewer "buy" verdicts)
   - Sideways market: Standard thresholds
 - Use market indicators (Nifty 50 trend, volatility index) to adjust thresholds
 
-**Rationale**: 
+**Rationale**:
 - Market conditions affect stock behavior
 - Adapting thresholds to market conditions should improve accuracy
 - Should increase "buy" verdicts in bull markets, decrease in bear markets
@@ -739,5 +739,5 @@ The current verdict calculation logic is **too conservative**, requiring all con
 
 ---
 
-**Last Updated**: 2025-11-09  
+**Last Updated**: 2025-11-09
 **Status**: Recommendations Ready for Implementation
