@@ -151,6 +151,8 @@ export function IndividualServiceControls({
 
 	// "Run Once" is disabled if service is running OR if there's a "running" execution
 	const isRunOnceRunning = service.last_execution_status === 'running';
+	// Service is considered "running" if either the scheduled service is running OR a run-once execution is in progress
+	const isServiceActive = service.is_running || isRunOnceRunning;
 	// Disable individual service start button if unified service is running, service is already running, or run-once is running
 	const canStartIndividual = !unifiedServiceRunning && !service.is_running && !isRunOnceRunning;
 
@@ -179,12 +181,12 @@ export function IndividualServiceControls({
 						<h3 className="text-base font-semibold text-[var(--text)]">{taskDisplayName}</h3>
 						<div
 							className={`px-2 py-0.5 rounded text-xs font-medium ${
-								service.is_running
+								isServiceActive
 									? 'bg-green-500/20 text-green-400'
 									: 'bg-gray-500/20 text-gray-400'
 							}`}
 						>
-							{service.is_running ? 'Running' : 'Stopped'}
+							{isServiceActive ? 'Running' : 'Stopped'}
 						</div>
 						{!service.schedule_enabled && (
 							<div className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-500/20 text-yellow-400">
