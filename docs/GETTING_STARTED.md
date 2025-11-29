@@ -200,6 +200,47 @@ pip install -r requirements.txt
 pip install -r server/requirements.txt
 ```
 
+## Service Layer Usage (Phase 4)
+
+The system uses a **service layer architecture** for analysis functionality. Legacy `core.*` functions are deprecated.
+
+### Quick Example
+
+```python
+from services import AnalysisService, AsyncAnalysisService
+import asyncio
+
+# Single ticker analysis
+service = AnalysisService()
+result = service.analyze_ticker("RELIANCE.NS", enable_multi_timeframe=True)
+print(f"Verdict: {result['verdict']}")
+
+# Batch analysis (80% faster)
+async def analyze_batch():
+    async_service = AsyncAnalysisService(max_concurrent=10)
+    results = await async_service.analyze_batch_async(
+        tickers=["RELIANCE.NS", "TCS.NS", "INFY.NS"],
+        enable_multi_timeframe=True
+    )
+    return results
+
+results = asyncio.run(analyze_batch())
+```
+
+### Migration from Legacy Code
+
+If you're using deprecated `core.*` functions, see:
+- **[Migration Guide](MIGRATION_GUIDE_PHASE4.md)** - Complete migration instructions
+- **[Architecture Documentation](ARCHITECTURE.md)** - Service layer details
+
+**Key Services:**
+- `AnalysisService` - Main analysis orchestration
+- `AsyncAnalysisService` - Fast batch processing
+- `ScoringService` - Signal scoring
+- `BacktestService` - Historical backtesting
+pip install -r server/requirements.txt
+```
+
 ### Frontend Build Errors
 
 ```bash

@@ -4,7 +4,6 @@ Tests service layer, caching, async processing, and typed models
 """
 
 import sys
-import asyncio
 from pathlib import Path
 
 # Add project root to path
@@ -20,10 +19,6 @@ def test_phase1_service_layer():
 
     try:
         from services.analysis_service import AnalysisService
-        from services.data_service import DataService
-        from services.indicator_service import IndicatorService
-        from services.signal_service import SignalService
-        from services.verdict_service import VerdictService
 
         print("? All Phase 1 services imported successfully")
 
@@ -53,7 +48,7 @@ def test_phase2_typed_models():
     print("=" * 60)
 
     try:
-        from services.models import AnalysisResult, Verdict, TradingParameters
+        from services.models import AnalysisResult, Verdict
 
         print("? Models imported successfully")
 
@@ -94,8 +89,9 @@ def test_phase2_caching():
     print("=" * 60)
 
     try:
-        from services.cache_service import CacheService
         import tempfile
+
+        from services.cache_service import CacheService
 
         print("? CacheService imported successfully")
 
@@ -132,7 +128,6 @@ def test_phase2_async():
 
     try:
         from services.async_analysis_service import AsyncAnalysisService
-        from services.async_data_service import AsyncDataService
 
         print("? Async services imported successfully")
 
@@ -156,9 +151,21 @@ def test_backward_compatibility():
     print("=" * 60)
 
     try:
-        from core.analysis import analyze_ticker
+        # Phase 4.8: Test backward compatibility - deprecated function still works
+        import warnings
 
-        print("? Legacy analyze_ticker function still accessible")
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            from core.analysis import analyze_ticker
+
+            # Function should still be accessible (backward compatibility)
+            assert callable(analyze_ticker)
+
+            # Should issue deprecation warning
+            if w:
+                print(f"? Deprecation warning issued (expected): {w[0].message}")
+
+            print("? Legacy analyze_ticker function still accessible (backward compatible)")
 
         return True
     except Exception as e:

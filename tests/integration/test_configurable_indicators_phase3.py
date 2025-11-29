@@ -12,33 +12,37 @@ Tests for:
 8. Indicator calculation consistency tests
 9. Performance benchmarking
 """
+
 import sys
-import os
-from pathlib import Path
-import pytest
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
 import warnings
-warnings.filterwarnings('ignore')
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+warnings.filterwarnings("ignore")
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from config.strategy_config import StrategyConfig
 from backtest.backtest_config import BacktestConfig
+from backtest.backtest_engine import BacktestEngine
+from config.strategy_config import StrategyConfig
+
+# Phase 4.8: core.backtest_scoring functions are deprecated
+# Keep imports for backward compatibility, but prefer BacktestService
+from core.backtest_scoring import run_simple_backtest  # Deprecated
+from core.data_fetcher import fetch_multi_timeframe_data, yfinance_circuit_breaker
 from core.indicators import compute_indicators
 from core.timeframe_analysis import TimeframeAnalysis
-from core.data_fetcher import fetch_multi_timeframe_data, yfinance_circuit_breaker
-from core.backtest_scoring import run_simple_backtest, calculate_wilder_rsi
-from backtest.backtest_engine import BacktestEngine
-import pytest
 
 # NOTE: This test uses old architecture functions (run_backtest, trade_agent)
 # The new implementation (Nov 2025) uses single-pass daily iteration
 # Mark tests that use old functions to skip
 from integrated_backtest import run_integrated_backtest
+
 
 # Dummy function to prevent import errors
 def run_backtest(*args, **kwargs):
@@ -48,6 +52,7 @@ def run_backtest(*args, **kwargs):
 # ============================================================================
 # Test Fixtures
 # ============================================================================
+
 
 @pytest.fixture(autouse=True)
 def reset_circuit_breaker():
@@ -69,6 +74,7 @@ def reset_circuit_breaker():
 # 1. Unit Tests for Configurable Parameters
 # ============================================================================
 
+
 class TestConfigurableParameters:
     """Test configurable parameters in StrategyConfig"""
 
@@ -76,28 +82,28 @@ class TestConfigurableParameters:
         """Test StrategyConfig has all required fields with correct defaults"""
         config = StrategyConfig.default()
 
-        assert hasattr(config, 'rsi_period')
+        assert hasattr(config, "rsi_period")
         assert config.rsi_period == 10
 
-        assert hasattr(config, 'support_resistance_lookback_daily')
+        assert hasattr(config, "support_resistance_lookback_daily")
         assert config.support_resistance_lookback_daily == 20
 
-        assert hasattr(config, 'support_resistance_lookback_weekly')
+        assert hasattr(config, "support_resistance_lookback_weekly")
         assert config.support_resistance_lookback_weekly == 50
 
-        assert hasattr(config, 'volume_exhaustion_lookback_daily')
+        assert hasattr(config, "volume_exhaustion_lookback_daily")
         assert config.volume_exhaustion_lookback_daily == 10
 
-        assert hasattr(config, 'volume_exhaustion_lookback_weekly')
+        assert hasattr(config, "volume_exhaustion_lookback_weekly")
         assert config.volume_exhaustion_lookback_weekly == 20
 
-        assert hasattr(config, 'data_fetch_daily_max_years')
+        assert hasattr(config, "data_fetch_daily_max_years")
         assert config.data_fetch_daily_max_years == 5
 
-        assert hasattr(config, 'data_fetch_weekly_max_years')
+        assert hasattr(config, "data_fetch_weekly_max_years")
         assert config.data_fetch_weekly_max_years == 3
 
-        assert hasattr(config, 'enable_adaptive_lookback')
+        assert hasattr(config, "enable_adaptive_lookback")
         assert config.enable_adaptive_lookback == True
 
     def test_strategy_config_custom_values(self):
@@ -110,7 +116,7 @@ class TestConfigurableParameters:
             volume_exhaustion_lookback_weekly=25,
             data_fetch_daily_max_years=3,
             data_fetch_weekly_max_years=2,
-            enable_adaptive_lookback=False
+            enable_adaptive_lookback=False,
         )
 
         assert config.rsi_period == 14
@@ -139,6 +145,7 @@ class TestConfigurableParameters:
 # 2. Integration Tests with Current Data
 # ============================================================================
 
+
 class TestIntegrationWithData:
     """Test integration with real data"""
 
@@ -146,30 +153,33 @@ class TestIntegrationWithData:
     def test_compute_indicators_with_config(self):
         """Test compute_indicators uses configurable RSI period"""
         # Create sample data
-        dates = pd.date_range('2023-01-01', periods=100, freq='D')
-        df = pd.DataFrame({
-            'close': np.linspace(100, 120, 100),
-            'open': np.linspace(99, 119, 100),
-            'high': np.linspace(102, 122, 100),
-            'low': np.linspace(98, 118, 100),
-            'volume': [1000000] * 100
-        }, index=dates)
+        dates = pd.date_range("2023-01-01", periods=100, freq="D")
+        df = pd.DataFrame(
+            {
+                "close": np.linspace(100, 120, 100),
+                "open": np.linspace(99, 119, 100),
+                "high": np.linspace(102, 122, 100),
+                "low": np.linspace(98, 118, 100),
+                "volume": [1000000] * 100,
+            },
+            index=dates,
+        )
 
         # Test with default config
         config = StrategyConfig.default()
         result = compute_indicators(df, config=config)
 
         assert result is not None
-        assert f'rsi{config.rsi_period}' in result.columns
-        assert 'rsi10' in result.columns  # Backward compatibility
-        assert 'ema200' in result.columns
+        assert f"rsi{config.rsi_period}" in result.columns
+        assert "rsi10" in result.columns  # Backward compatibility
+        assert "ema200" in result.columns
 
         # Test with custom RSI period
         custom_config = StrategyConfig(rsi_period=14)
         result_custom = compute_indicators(df, rsi_period=14, config=custom_config)
 
-        assert 'rsi14' in result_custom.columns
-        assert 'rsi10' not in result_custom.columns  # Only if period=10
+        assert "rsi14" in result_custom.columns
+        assert "rsi10" not in result_custom.columns  # Only if period=10
 
     @pytest.mark.integration
     def test_timeframe_analysis_with_config(self):
@@ -188,6 +198,7 @@ class TestIntegrationWithData:
 # 3. Backtest Comparison (Old vs New) - CRITICAL
 # ============================================================================
 
+
 class TestBacktestComparison:
     """Test backtest results comparison (old vs new)"""
 
@@ -203,10 +214,7 @@ class TestBacktestComparison:
             # Run with default synced config
             config = BacktestConfig.default_synced()
             engine = BacktestEngine(
-                symbol=symbol,
-                start_date=start_date,
-                end_date=end_date,
-                config=config
+                symbol=symbol, start_date=start_date, end_date=end_date, config=config
             )
 
             # Verify RSI period is correct
@@ -217,22 +225,28 @@ class TestBacktestComparison:
                 pytest.skip(f"No data available for {symbol} (network issue or symbol not found)")
 
             # Verify RSI column exists before running
-            assert 'RSI10' in engine.data.columns or f'RSI{config.RSI_PERIOD}' in engine.data.columns
+            assert (
+                "RSI10" in engine.data.columns or f"RSI{config.RSI_PERIOD}" in engine.data.columns
+            )
 
             # Run backtest
             results = engine.run_backtest()
 
             # Verify results structure
-            assert 'total_return_pct' in results
-            assert 'win_rate' in results
-            assert 'total_trades' in results
-            assert 'closed_positions' in results or 'open_positions' in results
-            assert 'symbol' in results
-            assert 'period' in results
+            assert "total_return_pct" in results
+            assert "win_rate" in results
+            assert "total_trades" in results
+            assert "closed_positions" in results or "open_positions" in results
+            assert "symbol" in results
+            assert "period" in results
         except (ValueError, Exception) as e:
             # Catch any exception during BacktestEngine initialization or data loading
             error_msg = str(e)
-            if "No data available" in error_msg or "network" in error_msg.lower() or "data" in error_msg.lower():
+            if (
+                "No data available" in error_msg
+                or "network" in error_msg.lower()
+                or "data" in error_msg.lower()
+            ):
                 pytest.skip(f"Data fetching failed for {symbol}: {error_msg}")
             else:
                 raise
@@ -246,25 +260,23 @@ class TestBacktestComparison:
 
         # Run simple backtest
         result = run_simple_backtest(
-            stock_symbol=symbol,
-            years_back=2,
-            dip_mode=False,
-            config=config
+            stock_symbol=symbol, years_back=2, dip_mode=False, config=config
         )
 
         # Verify results structure
-        assert 'backtest_score' in result
-        assert 'total_return_pct' in result
-        assert 'win_rate' in result
-        assert 'total_trades' in result
+        assert "backtest_score" in result
+        assert "total_return_pct" in result
+        assert "win_rate" in result
+        assert "total_trades" in result
 
         # Verify score is reasonable
-        assert 0 <= result['backtest_score'] <= 100
+        assert 0 <= result["backtest_score"] <= 100
 
 
 # ============================================================================
 # 4. Data Fetching Optimization Tests
 # ============================================================================
+
 
 class TestDataFetchingOptimization:
     """Test data fetching optimization in integrated backtest"""
@@ -291,12 +303,19 @@ class TestDataFetchingOptimization:
             assert isinstance(signals, list)
 
             # Verify data has indicators
-            assert 'RSI10' in engine.data.columns or f'RSI{engine.config.RSI_PERIOD}' in engine.data.columns
-            assert 'EMA200' in engine.data.columns
+            assert (
+                "RSI10" in engine.data.columns
+                or f"RSI{engine.config.RSI_PERIOD}" in engine.data.columns
+            )
+            assert "EMA200" in engine.data.columns
         except (ValueError, Exception) as e:
             # Catch any exception during backtest execution
             error_msg = str(e)
-            if "No data available" in error_msg or "network" in error_msg.lower() or "data" in error_msg.lower():
+            if (
+                "No data available" in error_msg
+                or "network" in error_msg.lower()
+                or "data" in error_msg.lower()
+            ):
                 pytest.skip(f"Data fetching failed for {symbol}: {error_msg}")
             else:
                 raise
@@ -310,20 +329,18 @@ class TestDataFetchingOptimization:
 
         try:
             # Fetch data
-            multi_data = fetch_multi_timeframe_data(
-                ticker=symbol,
-                days=800,
-                config=config
-            )
+            multi_data = fetch_multi_timeframe_data(ticker=symbol, days=800, config=config)
 
             if multi_data is None:
-                pytest.skip(f"Data fetching failed for {symbol} (network issue or symbol not found)")
+                pytest.skip(
+                    f"Data fetching failed for {symbol} (network issue or symbol not found)"
+                )
 
-            assert 'daily' in multi_data
-            assert 'weekly' in multi_data
+            assert "daily" in multi_data
+            assert "weekly" in multi_data
 
-            daily_data = multi_data['daily']
-            weekly_data = multi_data['weekly']
+            daily_data = multi_data["daily"]
+            weekly_data = multi_data["weekly"]
 
             if daily_data is None or daily_data.empty:
                 pytest.skip(f"No daily data available for {symbol}")
@@ -352,28 +369,30 @@ class TestDataFetchingOptimization:
 
         # Verify trade_agent accepts pre-fetched data parameters
         sig = inspect.signature(trade_agent)
-        assert 'pre_fetched_data' in sig.parameters
-        assert 'pre_calculated_indicators' in sig.parameters
+        assert "pre_fetched_data" in sig.parameters
+        assert "pre_calculated_indicators" in sig.parameters
 
     @pytest.mark.integration
     @pytest.mark.slow
     def test_analysis_service_accepts_pre_fetched_data(self):
         """Test AnalysisService accepts pre-fetched data (Phase 2 optimization)"""
-        from services.analysis_service import AnalysisService
         import inspect
+
+        from services.analysis_service import AnalysisService
 
         service = AnalysisService()
         sig = inspect.signature(service.analyze_ticker)
 
         # Verify AnalysisService accepts pre-fetched data parameters
-        assert 'pre_fetched_daily' in sig.parameters
-        assert 'pre_fetched_weekly' in sig.parameters
-        assert 'pre_calculated_indicators' in sig.parameters
+        assert "pre_fetched_daily" in sig.parameters
+        assert "pre_fetched_weekly" in sig.parameters
+        assert "pre_calculated_indicators" in sig.parameters
 
 
 # ============================================================================
 # 5. Indicator Calculation Consistency Tests
 # ============================================================================
+
 
 class TestIndicatorConsistency:
     """Test indicator calculation consistency across components"""
@@ -381,40 +400,42 @@ class TestIndicatorConsistency:
     @pytest.mark.integration
     def test_pandas_ta_consistency(self):
         """Test that all components use pandas_ta consistently"""
-        import pandas_ta as ta
 
         # Create sample data
-        dates = pd.date_range('2023-01-01', periods=250, freq='D')
+        dates = pd.date_range("2023-01-01", periods=250, freq="D")
         close_prices = pd.Series(np.linspace(100, 120, 250), index=dates)
 
         # Test compute_indicators uses pandas_ta
-        df = pd.DataFrame({
-            'close': close_prices,
-            'open': close_prices - 1,
-            'high': close_prices + 1,
-            'low': close_prices - 1,
-            'volume': [1000000] * 250
-        })
+        df = pd.DataFrame(
+            {
+                "close": close_prices,
+                "open": close_prices - 1,
+                "high": close_prices + 1,
+                "low": close_prices - 1,
+                "volume": [1000000] * 250,
+            }
+        )
 
         result = compute_indicators(df)
 
         # Verify pandas_ta was used (check for pandas_ta-style column names)
-        assert 'rsi10' in result.columns or 'rsi10' in [c.lower() for c in result.columns]
-        assert 'ema200' in result.columns or 'ema200' in [c.lower() for c in result.columns]
+        assert "rsi10" in result.columns or "rsi10" in [c.lower() for c in result.columns]
+        assert "ema200" in result.columns or "ema200" in [c.lower() for c in result.columns]
 
     @pytest.mark.integration
     def test_backtest_engine_indicators(self):
         """Test BacktestEngine uses pandas_ta for indicators"""
         # Check BacktestEngine source code uses pandas_ta
-        with open('backtest/backtest_engine.py', 'r', encoding='utf-8', errors='ignore') as f:
+        with open("backtest/backtest_engine.py", encoding="utf-8", errors="ignore") as f:
             content = f.read()
-            assert 'ta.rsi' in content or 'pandas_ta' in content
-            assert 'ta.ema' in content or 'pandas_ta' in content
+            assert "ta.rsi" in content or "pandas_ta" in content
+            assert "ta.ema" in content or "pandas_ta" in content
 
 
 # ============================================================================
 # 6. Integrated Backtest Validation Tests
 # ============================================================================
+
 
 class TestIntegratedBacktestValidation:
     """Test integrated backtest validation"""
@@ -431,17 +452,21 @@ class TestIntegratedBacktestValidation:
             results = run_integrated_backtest(symbol, date_range, capital_per_position=50000)
 
             # Verify results structure
-            assert 'stock_name' in results
-            assert 'total_signals' in results
-            assert 'executed_trades' in results
-            assert 'skipped_signals' in results
+            assert "stock_name" in results
+            assert "total_signals" in results
+            assert "executed_trades" in results
+            assert "skipped_signals" in results
 
             # Verify it uses configurable parameters (indirectly via BacktestEngine)
-            assert results['stock_name'] == symbol
+            assert results["stock_name"] == symbol
         except (ValueError, Exception) as e:
             # Catch any exception during integrated backtest execution
             error_msg = str(e)
-            if "No data available" in error_msg or "network" in error_msg.lower() or "data" in error_msg.lower():
+            if (
+                "No data available" in error_msg
+                or "network" in error_msg.lower()
+                or "data" in error_msg.lower()
+            ):
                 pytest.skip(f"Data fetching failed for {symbol}: {error_msg}")
             else:
                 raise
@@ -451,8 +476,8 @@ class TestIntegratedBacktestValidation:
     @pytest.mark.skip(reason="Tests old run_backtest function - replaced in Nov 2025 refactor")
     def test_integrated_backtest_uses_pre_fetched_data(self):
         """Test integrated backtest uses pre-fetched data optimization (Phase 2)"""
-        from services.analysis_service import AnalysisService
         from config.strategy_config import StrategyConfig
+        from services.analysis_service import AnalysisService
 
         symbol = "RELIANCE.NS"
         date_range = ("2023-01-01", "2023-12-31")
@@ -469,15 +494,16 @@ class TestIntegratedBacktestValidation:
             # Verify trade_agent can accept pre-fetched data
             # This is verified by the function signature accepting pre_fetched_data
             import inspect
+
             sig = inspect.signature(trade_agent)
-            assert 'pre_fetched_data' in sig.parameters
-            assert 'pre_calculated_indicators' in sig.parameters
+            assert "pre_fetched_data" in sig.parameters
+            assert "pre_calculated_indicators" in sig.parameters
 
             # Verify AnalysisService accepts pre-fetched data
             service = AnalysisService(config=StrategyConfig.default())
             service_sig = inspect.signature(service.analyze_ticker)
-            assert 'pre_fetched_daily' in service_sig.parameters
-            assert 'pre_calculated_indicators' in service_sig.parameters
+            assert "pre_fetched_daily" in service_sig.parameters
+            assert "pre_calculated_indicators" in service_sig.parameters
         except ValueError as e:
             if "No data available" in str(e):
                 pytest.skip(f"Data fetching failed for {symbol}: {e}")
@@ -489,6 +515,7 @@ class TestIntegratedBacktestValidation:
 # 7. ML Compatibility Tests
 # ============================================================================
 
+
 class TestMLCompatibility:
     """Test ML compatibility with configurable parameters"""
 
@@ -496,19 +523,23 @@ class TestMLCompatibility:
     def test_ml_feature_extraction_default_config(self):
         """Test ML feature extraction produces same features with default config"""
         try:
-            from services.ml_verdict_service import MLVerdictService
-            from config.strategy_config import StrategyConfig
-            import pandas as pd
             import numpy as np
+            import pandas as pd
+
+            from config.strategy_config import StrategyConfig
+            from services.ml_verdict_service import MLVerdictService
 
             # Create sample data
-            dates = pd.date_range('2023-01-01', periods=100, freq='D')
-            df = pd.DataFrame({
-                'close': np.linspace(100, 120, 100),
-                'high': np.linspace(102, 122, 100),
-                'low': np.linspace(98, 118, 100),
-                'volume': [1000000] * 100
-            }, index=dates)
+            dates = pd.date_range("2023-01-01", periods=100, freq="D")
+            df = pd.DataFrame(
+                {
+                    "close": np.linspace(100, 120, 100),
+                    "high": np.linspace(102, 122, 100),
+                    "low": np.linspace(98, 118, 100),
+                    "volume": [1000000] * 100,
+                },
+                index=dates,
+            )
 
             # Test with default config (should produce same features as before)
             config = StrategyConfig.default()
@@ -517,26 +548,26 @@ class TestMLCompatibility:
             # Extract features
             features = ml_service._extract_features(
                 rsi_value=25.0,
-                indicators={'ema200': 110.0, 'close': 115.0},
+                indicators={"ema200": 110.0, "close": 115.0},
                 is_above_ema200=True,
                 df=df,
                 vol_ok=True,
                 vol_strong=True,
                 fundamental_ok=True,
-                signals=['hammer'],
+                signals=["hammer"],
                 timeframe_confirmation={},
-                news_sentiment=None
+                news_sentiment=None,
             )
 
             # Verify default config produces expected feature names
-            assert 'rsi_10' in features  # Default RSI period = 10
+            assert "rsi_10" in features  # Default RSI period = 10
             # Default volume_exhaustion_lookback_daily = 10 (not 20)
-            assert 'avg_volume_10' in features  # Default volume lookback = 10
+            assert "avg_volume_10" in features  # Default volume lookback = 10
             # Also check for backward compatibility if lookback == 20
             if config.volume_exhaustion_lookback_daily == 20:
-                assert 'avg_volume_20' in features
-            assert 'recent_high_20' in features  # Default support lookback = 20
-            assert 'recent_low_20' in features  # Default support lookback = 20
+                assert "avg_volume_20" in features
+            assert "recent_high_20" in features  # Default support lookback = 20
+            assert "recent_low_20" in features  # Default support lookback = 20
 
         except ImportError:
             pytest.skip("ML verdict service not available")
@@ -545,8 +576,8 @@ class TestMLCompatibility:
     def test_ml_backward_compatibility(self):
         """Test ML service maintains backward compatibility with existing models"""
         try:
-            from services.ml_verdict_service import MLVerdictService
             from config.strategy_config import StrategyConfig
+            from services.ml_verdict_service import MLVerdictService
 
             # Test with default config (should work with existing models)
             config = StrategyConfig.default()
@@ -564,14 +595,15 @@ class TestMLCompatibility:
 # 8. Scoring/Verdict Tests
 # ============================================================================
 
+
 class TestScoringVerdict:
     """Test scoring/verdict system uses configurable RSI thresholds"""
 
     @pytest.mark.integration
     def test_scoring_service_rsi_thresholds(self):
         """Test ScoringService uses configurable RSI thresholds"""
-        from services.scoring_service import ScoringService
         from config.strategy_config import StrategyConfig
+        from services.scoring_service import ScoringService
 
         # Test with default config
         default_config = StrategyConfig.default()
@@ -579,9 +611,9 @@ class TestScoringVerdict:
 
         # Test scoring with RSI value between thresholds
         analysis_data = {
-            'verdict': 'buy',
-            'justification': ['rsi:25'],  # Between 20 and 30
-            'timeframe_analysis': {}
+            "verdict": "buy",
+            "justification": ["rsi:25"],  # Between 20 and 30
+            "timeframe_analysis": {},
         }
 
         score_default = default_service.compute_strength_score(analysis_data)
@@ -590,10 +622,7 @@ class TestScoringVerdict:
         assert score_default >= 6  # Base 5 + 1 = 6
 
         # Test with custom config
-        custom_config = StrategyConfig(
-            rsi_oversold=35.0,
-            rsi_extreme_oversold=25.0
-        )
+        custom_config = StrategyConfig(rsi_oversold=35.0, rsi_extreme_oversold=25.0)
         custom_service = ScoringService(config=custom_config)
 
         # RSI 25 should now trigger oversold threshold (25 < 35)
@@ -610,15 +639,14 @@ class TestScoringVerdict:
     def test_scoring_service_extreme_oversold(self):
         """Test ScoringService uses configurable extreme oversold threshold"""
         from services.scoring_service import ScoringService
-        from config.strategy_config import StrategyConfig
 
         service = ScoringService()
 
         # Test with RSI below extreme oversold
         analysis_data = {
-            'verdict': 'buy',
-            'justification': ['rsi:15'],  # Below extreme oversold (20)
-            'timeframe_analysis': {}
+            "verdict": "buy",
+            "justification": ["rsi:15"],  # Below extreme oversold (20)
+            "timeframe_analysis": {},
         }
 
         score = service.compute_strength_score(analysis_data)
@@ -630,28 +658,19 @@ class TestScoringVerdict:
     def test_scoring_service_timeframe_analysis_thresholds(self):
         """Test ScoringService uses configurable thresholds in timeframe analysis"""
         from services.scoring_service import ScoringService
-        from config.strategy_config import StrategyConfig
 
         service = ScoringService()
 
         analysis_data = {
-            'verdict': 'buy',
-            'justification': [],
-            'timeframe_analysis': {
-                'daily_analysis': {
-                    'oversold_analysis': {
-                        'severity': 'high'  # RSI < 30
-                    },
-                    'support_analysis': {
-                        'quality': 'strong'
-                    }
+            "verdict": "buy",
+            "justification": [],
+            "timeframe_analysis": {
+                "daily_analysis": {
+                    "oversold_analysis": {"severity": "high"},  # RSI < 30
+                    "support_analysis": {"quality": "strong"},
                 },
-                'weekly_analysis': {
-                    'oversold_analysis': {
-                        'severity': 'high'
-                    }
-                }
-            }
+                "weekly_analysis": {"oversold_analysis": {"severity": "high"}},
+            },
         }
 
         score = service.compute_strength_score(analysis_data)
@@ -665,13 +684,12 @@ class TestScoringVerdict:
     def test_backtest_scoring_entry_conditions(self):
         """Test backtest scoring entry conditions use configurable RSI"""
         from config.strategy_config import StrategyConfig
-        from core.backtest_scoring import run_simple_backtest
 
         config = StrategyConfig.default()
 
         # Verify config has RSI thresholds
-        assert hasattr(config, 'rsi_oversold')
-        assert hasattr(config, 'rsi_extreme_oversold')
+        assert hasattr(config, "rsi_oversold")
+        assert hasattr(config, "rsi_extreme_oversold")
         assert config.rsi_oversold == 30.0
         assert config.rsi_extreme_oversold == 20.0
 
@@ -684,15 +702,16 @@ class TestScoringVerdict:
 # 9. Legacy Migration Tests
 # ============================================================================
 
+
 class TestLegacyMigration:
     """Test legacy code migration to StrategyConfig"""
 
     @pytest.mark.integration
     def test_core_analysis_uses_strategy_config(self):
         """Test core/analysis.py uses StrategyConfig (updated in Phase 2)"""
-        from core.analysis import analyze_ticker
+        from config.settings import RSI_NEAR_OVERSOLD, RSI_OVERSOLD
         from config.strategy_config import StrategyConfig
-        from config.settings import RSI_OVERSOLD, RSI_NEAR_OVERSOLD
+        from core.analysis import analyze_ticker
 
         # Verify legacy constants still exist for backward compatibility
         assert RSI_OVERSOLD == 30
@@ -705,31 +724,36 @@ class TestLegacyMigration:
 
         # Verify analyze_ticker accepts config parameter (Phase 2 update)
         import inspect
+
         sig = inspect.signature(analyze_ticker)
-        assert 'config' in sig.parameters
+        assert "config" in sig.parameters
 
         # Verify config parameter defaults to StrategyConfig.default()
-        config_param = sig.parameters['config']
+        config_param = sig.parameters["config"]
         assert config_param.default is None  # Uses default internally
 
     @pytest.mark.integration
     def test_pattern_detection_rsi_period(self):
         """Test pattern detection works with configurable RSI period (updated in Phase 2)"""
-        from core.patterns import bullish_divergence
-        import pandas as pd
         import numpy as np
+        import pandas as pd
+
+        from core.patterns import bullish_divergence
 
         # Create sample data with RSI
-        dates = pd.date_range('2023-01-01', periods=30, freq='D')
-        df = pd.DataFrame({
-            'open': np.linspace(100, 90, 30),
-            'high': np.linspace(102, 92, 30),
-            'low': np.linspace(98, 88, 30),
-            'close': np.linspace(100, 90, 30),
-            'volume': [1000000] * 30,
-            'rsi10': np.linspace(20, 30, 30),  # Increasing RSI (divergence)
-            'rsi14': np.linspace(22, 32, 30)   # Custom RSI period
-        }, index=dates)
+        dates = pd.date_range("2023-01-01", periods=30, freq="D")
+        df = pd.DataFrame(
+            {
+                "open": np.linspace(100, 90, 30),
+                "high": np.linspace(102, 92, 30),
+                "low": np.linspace(98, 88, 30),
+                "close": np.linspace(100, 90, 30),
+                "volume": [1000000] * 30,
+                "rsi10": np.linspace(20, 30, 30),  # Increasing RSI (divergence)
+                "rsi14": np.linspace(22, 32, 30),  # Custom RSI period
+            },
+            index=dates,
+        )
 
         # Test with default RSI period (10)
         result_default = bullish_divergence(df, rsi_period=10, lookback_period=10)
@@ -747,8 +771,8 @@ class TestLegacyMigration:
     def test_auto_trader_config_sync(self):
         """Test auto-trader config is synced with StrategyConfig (updated in Phase 2)"""
         try:
-            from modules.kotak_neo_auto_trader.config import RSI_PERIOD
             from config.strategy_config import StrategyConfig
+            from modules.kotak_neo_auto_trader.config import RSI_PERIOD
 
             # Verify RSI_PERIOD exists
             assert RSI_PERIOD is not None
@@ -766,7 +790,7 @@ class TestLegacyMigration:
     @pytest.mark.integration
     def test_deprecated_constants_still_work(self):
         """Test deprecated constants still work and are synced with StrategyConfig (updated in Phase 2)"""
-        from config.settings import RSI_OVERSOLD, RSI_NEAR_OVERSOLD
+        from config.settings import RSI_NEAR_OVERSOLD, RSI_OVERSOLD
         from config.strategy_config import StrategyConfig
 
         # Verify constants still work
@@ -780,12 +804,14 @@ class TestLegacyMigration:
 
         # Verify constants can still be imported (backward compatibility)
         from config.settings import RSI_OVERSOLD as RSI_OVERSOLD_IMPORTED
+
         assert RSI_OVERSOLD_IMPORTED == 30
 
 
 # ============================================================================
 # 10. Performance Benchmarking
 # ============================================================================
+
 
 class TestPerformance:
     """Test performance improvements"""
@@ -815,7 +841,11 @@ class TestPerformance:
         except (ValueError, Exception) as e:
             # Catch any exception during backtest execution
             error_msg = str(e)
-            if "No data available" in error_msg or "network" in error_msg.lower() or "data" in error_msg.lower():
+            if (
+                "No data available" in error_msg
+                or "network" in error_msg.lower()
+                or "data" in error_msg.lower()
+            ):
                 pytest.skip(f"Data fetching failed for {symbol}: {error_msg}")
             else:
                 raise
@@ -825,20 +855,15 @@ class TestPerformance:
 # Main Test Runner
 # ============================================================================
 
+
 def main():
     """Run all Phase 3 tests"""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Phase 3: Testing & Validation for Configurable Indicators")
-    print("="*80)
+    print("=" * 80)
 
     # Run pytest
-    pytest.main([
-        __file__,
-        '-v',
-        '--tb=short',
-        '-m', 'integration or slow',
-        '--durations=10'
-    ])
+    pytest.main([__file__, "-v", "--tb=short", "-m", "integration or slow", "--durations=10"])
 
 
 if __name__ == "__main__":

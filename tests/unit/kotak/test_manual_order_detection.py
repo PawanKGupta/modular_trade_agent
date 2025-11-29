@@ -7,8 +7,7 @@ are detected and linked to database records.
 
 import sys
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
-from datetime import datetime
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -16,7 +15,6 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
-from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
 
@@ -64,7 +62,9 @@ class TestManualOrderDetection:
         auto_trade_engine.orders.get_pending_orders.return_value = [manual_order]
 
         # Mock OrderFieldExtractor to extract fields from order
-        with patch("modules.kotak_neo_auto_trader.auto_trade_engine.OrderFieldExtractor") as MockExtractor:
+        with patch(
+            "modules.kotak_neo_auto_trader.auto_trade_engine.OrderFieldExtractor"
+        ) as MockExtractor:
             MockExtractor.get_symbol.return_value = symbol
             MockExtractor.get_transaction_type.return_value = "BUY"
             MockExtractor.get_order_id.return_value = "MANUAL123"
@@ -118,7 +118,9 @@ class TestManualOrderDetection:
         auto_trade_engine.orders.get_pending_orders.return_value = [broker_order]
 
         # Mock OrderFieldExtractor to extract fields from order
-        with patch("modules.kotak_neo_auto_trader.auto_trade_engine.OrderFieldExtractor") as MockExtractor:
+        with patch(
+            "modules.kotak_neo_auto_trader.auto_trade_engine.OrderFieldExtractor"
+        ) as MockExtractor:
             MockExtractor.get_symbol.return_value = symbol
             MockExtractor.get_transaction_type.return_value = "BUY"
             MockExtractor.get_order_id.return_value = "SYSTEM123"
@@ -160,26 +162,44 @@ class TestManualOrderDetection:
         auto_trade_engine.orders_repo.update = Mock()
 
         # Mock manual order detection
-        auto_trade_engine._check_for_manual_orders = Mock(return_value={
-            "has_manual_order": True,
-            "manual_orders": [{
-                "order_id": "MANUAL123",
-                "quantity": 10,
-                "price": 2450.0,
-            }]
-        })
+        auto_trade_engine._check_for_manual_orders = Mock(
+            return_value={
+                "has_manual_order": True,
+                "manual_orders": [
+                    {
+                        "order_id": "MANUAL123",
+                        "quantity": 10,
+                        "price": 2450.0,
+                    }
+                ],
+            }
+        )
 
         # Mock other dependencies
         auto_trade_engine.has_holding = Mock(return_value=False)
         auto_trade_engine.current_symbols_in_portfolio = Mock(return_value=[])
-        auto_trade_engine.get_daily_indicators = Mock(return_value={
-            "close": 2450.0,
-            "rsi10": 25.0,
-            "ema9": 2500.0,
-            "ema200": 2400.0,
-            "avg_volume": 1000000,
-        })
+
+        # Mock indicator_service (Phase 4: code uses indicator_service.get_daily_indicators_dict)
+        auto_trade_engine.indicator_service = Mock()
+        auto_trade_engine.indicator_service.get_daily_indicators_dict = Mock(
+            return_value={
+                "close": 2450.0,
+                "rsi10": 25.0,
+                "ema9": 2500.0,
+                "ema200": 2400.0,
+                "avg_volume": 1000000,
+            }
+        )
         auto_trade_engine._calculate_execution_capital = Mock(return_value=50000.0)
+
+        # Mock order_validation_service (Phase 3.1: code uses OrderValidationService)
+        auto_trade_engine.order_validation_service = Mock()
+        auto_trade_engine.order_validation_service.check_portfolio_capacity = Mock(
+            return_value=(True, 5, 10)
+        )
+        auto_trade_engine.order_validation_service.check_duplicate_order = Mock(
+            return_value=(False, None)
+        )
 
         # Call retry
         result = auto_trade_engine.retry_pending_orders_from_db()
@@ -208,11 +228,13 @@ class TestManualOrderDetection:
 
         manual_order_info = {
             "has_manual_order": True,
-            "manual_orders": [{
-                "order_id": "MANUAL123",
-                "quantity": 11,  # Within 2 shares of retry qty (abs(11-10)=1 <= 2)
-                "price": 2450.0,
-            }]
+            "manual_orders": [
+                {
+                    "order_id": "MANUAL123",
+                    "quantity": 11,  # Within 2 shares of retry qty (abs(11-10)=1 <= 2)
+                    "price": 2450.0,
+                }
+            ],
         }
 
         should_skip, reason = auto_trade_engine._should_skip_retry_due_to_manual_order(
@@ -230,11 +252,13 @@ class TestManualOrderDetection:
 
         manual_order_info = {
             "has_manual_order": True,
-            "manual_orders": [{
-                "order_id": "MANUAL123",
-                "quantity": 15,  # 50% larger (15 > 10 * 1.5 = 15 is NOT > 15, so will match >= condition first)
-                "price": 2450.0,
-            }]
+            "manual_orders": [
+                {
+                    "order_id": "MANUAL123",
+                    "quantity": 15,  # 50% larger (15 > 10 * 1.5 = 15 is NOT > 15, so will match >= condition first)
+                    "price": 2450.0,
+                }
+            ],
         }
 
         should_skip, reason = auto_trade_engine._should_skip_retry_due_to_manual_order(
@@ -244,4 +268,3 @@ class TestManualOrderDetection:
         assert should_skip is True
         # Since 15 >= 10, it matches the first condition (>= retry qty), not the "much larger" condition
         assert ">= retry qty" in reason.lower() or "larger" in reason.lower()
-

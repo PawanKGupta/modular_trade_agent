@@ -6,29 +6,28 @@ Provides deprecation warnings and migration guidance for legacy code.
 Phase 4: Deprecation utilities to help migrate from core.* to services/infrastructure.
 """
 
-import warnings
 import functools
-from typing import Callable, Optional
-from datetime import datetime
+import warnings
+from collections.abc import Callable
 
 from utils.logger import logger
 
 
 def deprecated(
     reason: str,
-    replacement: Optional[str] = None,
+    replacement: str | None = None,
     version: str = "Phase 4",
-    removal_date: Optional[str] = None
+    removal_date: str | None = None,
 ):
     """
     Decorator to mark functions as deprecated.
-    
+
     Args:
         reason: Reason for deprecation
         replacement: Suggested replacement (e.g., "services.AnalysisService.analyze_ticker()")
         version: Version when deprecated
         removal_date: Expected removal date (optional)
-    
+
     Example:
         @deprecated(
             reason="This function is deprecated. Use AnalysisService instead.",
@@ -38,57 +37,47 @@ def deprecated(
         def analyze_ticker(ticker):
             ...
     """
+
     def decorator(func: Callable):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             # Build deprecation message
-            message_parts = [
-                f"DEPRECATED: {func.__name__}() is deprecated.",
-                f"Reason: {reason}"
-            ]
-            
+            message_parts = [f"DEPRECATED: {func.__name__}() is deprecated.", f"Reason: {reason}"]
+
             if replacement:
                 message_parts.append(f"Replacement: {replacement}")
-            
+
             if removal_date:
                 message_parts.append(f"Scheduled for removal: {removal_date}")
             else:
                 message_parts.append("Will be removed in a future version.")
-            
+
             message = " ".join(message_parts)
-            
+
             # Issue warning
-            warnings.warn(
-                message,
-                DeprecationWarning,
-                stacklevel=2
-            )
-            
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
+
             # Log for debugging
             logger.warning(f"Deprecated function called: {func.__name__}() - {reason}")
-            
+
             # Call original function
             return func(*args, **kwargs)
-        
+
         # Add deprecation metadata
         wrapper.__deprecated__ = True
         wrapper.__deprecation_reason__ = reason
         wrapper.__deprecation_replacement__ = replacement
         wrapper.__deprecation_version__ = version
-        
+
         return wrapper
+
     return decorator
 
 
-def deprecation_notice(
-    module: str,
-    function: str,
-    replacement: str,
-    version: str = "Phase 4"
-):
+def deprecation_notice(module: str, function: str, replacement: str, version: str = "Phase 4"):
     """
     Issue a deprecation notice for a module/function.
-    
+
     Args:
         module: Module name (e.g., "core.analysis")
         function: Function name (e.g., "analyze_ticker")
@@ -100,7 +89,7 @@ def deprecation_notice(
         f"Use {replacement} instead. "
         f"This will be removed in a future version."
     )
-    
+
     warnings.warn(message, DeprecationWarning, stacklevel=3)
     logger.warning(message)
 
@@ -108,10 +97,10 @@ def deprecation_notice(
 def get_migration_guide(function_name: str) -> str:
     """
     Get migration guide for a deprecated function.
-    
+
     Args:
         function_name: Name of deprecated function
-        
+
     Returns:
         Migration guide text
     """
@@ -134,7 +123,6 @@ Benefits:
     - Async support available
     - Type safety with typed models
         """,
-        
         "analyze_multiple_tickers": """
 Migration Guide: analyze_multiple_tickers()
 
@@ -145,7 +133,7 @@ OLD (deprecated):
 NEW (recommended):
     from services import AsyncAnalysisService
     import asyncio
-    
+
     async def analyze():
         service = AsyncAnalysisService(max_concurrent=10)
         results = await service.analyze_batch_async(
@@ -153,7 +141,7 @@ NEW (recommended):
             enable_multi_timeframe=True
         )
         return results
-    
+
     results = asyncio.run(analyze())
 
 Benefits:
@@ -161,7 +149,6 @@ Benefits:
     - Better error handling
     - Async/await support
         """,
-        
         "compute_strength_score": """
 Migration Guide: compute_strength_score()
 
@@ -179,7 +166,6 @@ Benefits:
     - Dependency injection
     - Better testability
         """,
-        
         "add_backtest_scores_to_results": """
 Migration Guide: add_backtest_scores_to_results()
 
@@ -197,6 +183,24 @@ Benefits:
     - Configurable defaults
     - Better error handling
         """,
+        "run_stock_backtest": """
+Migration Guide: run_stock_backtest()
+
+OLD (deprecated):
+    from core.backtest_scoring import run_stock_backtest
+    results = run_stock_backtest("RELIANCE.NS", years_back=2, dip_mode=False)
+
+NEW (recommended):
+    from services import BacktestService
+    service = BacktestService(default_years_back=2, dip_mode=False)
+    results = service.run_stock_backtest("RELIANCE.NS")
+
+Benefits:
+    - Service layer benefits
+    - Configurable defaults
+    - Better error handling
+    - Consistent interface
+        """,
     }
-    
+
     return guides.get(function_name, f"No migration guide available for {function_name}")

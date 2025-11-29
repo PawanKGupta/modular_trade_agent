@@ -8,28 +8,33 @@ Tests for:
 4. Legacy analysis.py with StrategyConfig
 5. Pattern detection in real scenarios
 """
+
 import sys
-from pathlib import Path
-import pytest
-import pandas as pd
-import numpy as np
 import warnings
-warnings.filterwarnings('ignore')
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+warnings.filterwarnings("ignore")
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.strategy_config import StrategyConfig
+
+# Phase 4.8: core.analysis is deprecated, but keep import for backward compatibility tests
+from core.analysis import analyze_ticker  # Deprecated - use AnalysisService
+from core.patterns import bullish_divergence
 from services.analysis_service import AnalysisService
 from services.scoring_service import ScoringService
 from services.signal_service import SignalService
-from core.analysis import analyze_ticker
-from core.patterns import bullish_divergence
-import pytest
 
 # NOTE: Tests using old trade_agent function are now obsolete
 # The new implementation (Nov 2025) integrates trade agent inline
+
 
 # Dummy function to prevent import errors
 def trade_agent(*args, **kwargs):
@@ -43,11 +48,7 @@ class TestPhase2CompleteIntegration:
     @pytest.mark.slow
     def test_analysis_service_with_custom_config(self):
         """Test AnalysisService works with custom StrategyConfig"""
-        custom_config = StrategyConfig(
-            rsi_period=14,
-            rsi_oversold=35.0,
-            rsi_extreme_oversold=25.0
-        )
+        custom_config = StrategyConfig(rsi_period=14, rsi_oversold=35.0, rsi_extreme_oversold=25.0)
 
         service = AnalysisService(config=custom_config)
 
@@ -61,17 +62,14 @@ class TestPhase2CompleteIntegration:
     @pytest.mark.slow
     def test_scoring_service_with_custom_thresholds(self):
         """Test ScoringService uses custom RSI thresholds"""
-        custom_config = StrategyConfig(
-            rsi_oversold=35.0,
-            rsi_extreme_oversold=25.0
-        )
+        custom_config = StrategyConfig(rsi_oversold=35.0, rsi_extreme_oversold=25.0)
 
         service = ScoringService(config=custom_config)
 
         analysis_data = {
-            'verdict': 'buy',
-            'justification': ['rsi:30'],  # Between 25 and 35
-            'timeframe_analysis': {}
+            "verdict": "buy",
+            "justification": ["rsi:30"],  # Between 25 and 35
+            "timeframe_analysis": {},
         }
 
         score = service.compute_strength_score(analysis_data)
@@ -99,15 +97,13 @@ class TestPhase2CompleteIntegration:
         # We're just testing the function signature accepts config
         try:
             result = analyze_ticker(
-                ticker='RELIANCE.NS',
-                enable_multi_timeframe=False,
-                config=config
+                ticker="RELIANCE.NS", enable_multi_timeframe=False, config=config
             )
             # If it runs, config was accepted
             assert result is not None or isinstance(result, dict)
         except Exception as e:
             # If it fails due to data fetching, that's okay - we're testing config acceptance
-            if 'data' in str(e).lower() or 'fetch' in str(e).lower():
+            if "data" in str(e).lower() or "fetch" in str(e).lower():
                 pass  # Expected for unit test without network
             else:
                 raise
@@ -117,7 +113,7 @@ class TestPhase2CompleteIntegration:
     def test_pattern_detection_with_config(self):
         """Test pattern detection works with configurable RSI period"""
         # Create test data that creates valid divergence
-        dates = pd.date_range(start='2024-01-01', periods=30, freq='D')
+        dates = pd.date_range(start="2024-01-01", periods=30, freq="D")
 
         # Create price data with lower low in recent period
         prices = []
@@ -139,14 +135,17 @@ class TestPhase2CompleteIntegration:
                 # Last 15 days: higher RSI (divergence - price down, RSI up)
                 rsi_values.append(30 + (i - 15) * 0.3)
 
-        df = pd.DataFrame({
-            'open': prices,
-            'high': [p + 1 for p in prices],
-            'low': [p - 1 for p in prices],
-            'close': prices,
-            'volume': [1000000] * 30,
-            'rsi14': rsi_values  # Custom RSI period
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "open": prices,
+                "high": [p + 1 for p in prices],
+                "low": [p - 1 for p in prices],
+                "close": prices,
+                "volume": [1000000] * 30,
+                "rsi14": rsi_values,  # Custom RSI period
+            },
+            index=dates,
+        )
 
         # Test with custom RSI period
         result = bullish_divergence(df, rsi_period=14, lookback_period=10)
@@ -163,37 +162,34 @@ class TestPhase2CompleteIntegration:
         # We'll create mock data to test the optimization
 
         # Create test data
-        dates = pd.date_range(start='2024-01-01', periods=100, freq='D')
-        df = pd.DataFrame({
-            'Open': range(100, 200),
-            'High': range(101, 201),
-            'Low': range(99, 199),
-            'Close': range(100, 200),
-            'Volume': [1000000] * 100
-        }, index=dates)
+        dates = pd.date_range(start="2024-01-01", periods=100, freq="D")
+        df = pd.DataFrame(
+            {
+                "Open": range(100, 200),
+                "High": range(101, 201),
+                "Low": range(99, 199),
+                "Close": range(100, 200),
+                "Volume": [1000000] * 100,
+            },
+            index=dates,
+        )
 
-        pre_calculated = {
-            'rsi': 25.0,
-            'ema200': 150.0
-        }
+        pre_calculated = {"rsi": 25.0, "ema200": 150.0}
 
         # Test that trade_agent accepts pre-fetched data
         # This is a structural test - we're verifying the function signature
         import inspect
+
         sig = inspect.signature(trade_agent)
 
-        assert 'pre_fetched_data' in sig.parameters
-        assert 'pre_calculated_indicators' in sig.parameters
+        assert "pre_fetched_data" in sig.parameters
+        assert "pre_calculated_indicators" in sig.parameters
 
     @pytest.mark.integration
     @pytest.mark.slow
     def test_all_services_use_config(self):
         """Test all services properly use StrategyConfig"""
-        config = StrategyConfig(
-            rsi_period=14,
-            rsi_oversold=35.0,
-            rsi_extreme_oversold=25.0
-        )
+        config = StrategyConfig(rsi_period=14, rsi_oversold=35.0, rsi_extreme_oversold=25.0)
 
         # Test AnalysisService
         analysis_service = AnalysisService(config=config)
@@ -229,7 +225,7 @@ class TestPhase2CompleteIntegration:
     @pytest.mark.slow
     def test_legacy_config_backward_compatibility(self):
         """Test legacy config constants work for backward compatibility"""
-        from config.settings import RSI_OVERSOLD, RSI_NEAR_OVERSOLD
+        from config.settings import RSI_NEAR_OVERSOLD, RSI_OVERSOLD
         from config.strategy_config import StrategyConfig
 
         config = StrategyConfig.default()
@@ -250,11 +246,12 @@ class TestPhase2DataOptimization:
 
         # Verify function signature
         import inspect
+
         sig = inspect.signature(service.analyze_ticker)
 
-        assert 'pre_fetched_daily' in sig.parameters
-        assert 'pre_fetched_weekly' in sig.parameters
-        assert 'pre_calculated_indicators' in sig.parameters
+        assert "pre_fetched_daily" in sig.parameters
+        assert "pre_fetched_weekly" in sig.parameters
+        assert "pre_calculated_indicators" in sig.parameters
 
     @pytest.mark.integration
     @pytest.mark.slow
@@ -262,11 +259,12 @@ class TestPhase2DataOptimization:
     def test_trade_agent_pre_fetched_data_parameter(self):
         """Test trade_agent accepts pre-fetched data parameters"""
         import inspect
+
         sig = inspect.signature(trade_agent)
 
-        assert 'pre_fetched_data' in sig.parameters
-        assert 'pre_calculated_indicators' in sig.parameters
+        assert "pre_fetched_data" in sig.parameters
+        assert "pre_calculated_indicators" in sig.parameters
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, '-v', '-m', 'integration'])
+    pytest.main([__file__, "-v", "-m", "integration"])

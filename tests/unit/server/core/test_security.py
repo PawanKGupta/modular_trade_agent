@@ -18,19 +18,9 @@ def dummy_settings(monkeypatch):
     monkeypatch.setattr(security, "settings", DummySettings())
 
 
-def test_truncate_for_bcrypt_limits_utf8():
-    payload = "😀" * 40  # 4 bytes each, >72 bytes when encoded
-    truncated = security._truncate_for_bcrypt(payload)
-    assert len(truncated.encode("utf-8")) <= 72
-
-
-def test_truncate_for_bcrypt_fallback_branch():
-    class BadString(str):
-        def encode(self, *_, **__):
-            raise UnicodeError("boom")
-
-    s = BadString("x" * 100)
-    assert security._truncate_for_bcrypt(s) == s[:72]
+# Phase 4: Removed _truncate_for_bcrypt tests - function no longer exists
+# We migrated from bcrypt to pbkdf2_sha256 which doesn't have the 72-byte limit
+# These tests are no longer relevant
 
 
 def test_hash_and_verify_password():

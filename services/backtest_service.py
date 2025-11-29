@@ -8,8 +8,6 @@ This service provides backtest scoring based on historical performance
 of the trading strategy.
 """
 
-from typing import Dict, List, Optional
-import logging
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -27,7 +25,8 @@ except ImportError as e:
     BACKTEST_MODE = "simple"
 
 # Import helper functions from core (temporary, will be migrated)
-from core.backtest_scoring import calculate_backtest_score, run_simple_backtest, run_stock_backtest
+# Phase 4.8: calculate_backtest_score moved to BacktestService method
+from core.backtest_scoring import run_stock_backtest
 
 
 class BacktestService:
@@ -55,13 +54,23 @@ class BacktestService:
         self.dip_mode = dip_mode
 
     def calculate_backtest_score(
-        self, backtest_results: Dict, dip_mode: Optional[bool] = None
+        self, backtest_results: dict, dip_mode: bool | None = None
     ) -> float:
         """
         Calculate a backtest score based on performance metrics.
 
-        This method delegates to core.backtest_scoring.calculate_backtest_score()
-        while providing a service interface.
+        Phase 4.8: Migrated from core.backtest_scoring.calculate_backtest_score()
+        to service layer for better testability and dependency injection.
+
+        Score components:
+        - Annualized return percentage (40%)
+        - Win rate (40%)
+        - Strategy vs buy-and-hold performance (20%)
+        - No trade frequency penalty (quality over quantity for reversals)
+
+        Enhanced with:
+        - Mild confidence adjustment for very low sample sizes
+        - Pure focus on reversal quality over entire backtest period
 
         Args:
             backtest_results: Backtest results dictionary
@@ -73,11 +82,88 @@ class BacktestService:
         if dip_mode is None:
             dip_mode = self.dip_mode
 
-        return calculate_backtest_score(backtest_results, dip_mode)
+        if not backtest_results or backtest_results.get("total_positions", 0) == 0:
+            return 0.0
+
+        try:
+            # Calculate annualized return based on actual trading days
+            total_return = backtest_results.get("total_return_pct", 0)
+            total_trades = backtest_results.get("total_trades", 0)
+
+            # Estimate average holding period (assume 15 days if no position data available)
+            avg_holding_days = 15  # Default assumption
+            if "full_results" in backtest_results and backtest_results["full_results"].get(
+                "positions"
+            ):
+                positions = backtest_results["full_results"]["positions"]
+                if positions:
+                    total_days = 0
+                    valid_positions = 0
+                    for pos in positions:
+                        if pos.get("entry_date") and pos.get("exit_date"):
+                            from datetime import datetime
+
+                            entry = datetime.strptime(pos["entry_date"], "%Y-%m-%d")
+                            exit = datetime.strptime(pos["exit_date"], "%Y-%m-%d")
+                            days = (exit - entry).days
+                            total_days += days
+                            valid_positions += 1
+                    if valid_positions > 0:
+                        avg_holding_days = total_days / valid_positions
+
+            # For reversal strategy, use total return directly (avoid extreme annualization)
+            # Reversals are about absolute performance over the backtest period
+            effective_return = total_return
+
+            # Component 1: Total Return (40% weight) - Focus on reversal performance quality
+            # Scale: 0-10% -> 0-50 points, 10%+ -> 50-100 points (more appropriate for reversals)
+            if effective_return <= 10:
+                return_score = (effective_return / 10) * 50 * 0.4
+            else:
+                return_score = (50 + min((effective_return - 10) * 2.5, 50)) * 0.4
+
+            # Component 2: Win Rate (40% weight) - High importance for reversal consistency
+            win_rate = backtest_results.get("win_rate", 0)
+            win_score = win_rate * 0.4
+
+            # Component 3: Strategy vs Buy & Hold (20% weight)
+            vs_buyhold = backtest_results.get("strategy_vs_buy_hold", 0)
+            alpha_score = min(max(vs_buyhold + 50, 0), 100) * 0.2
+
+            # No trade frequency component - quality over quantity for reversal strategy
+
+            # Calculate base score (no trade frequency penalty)
+            base_score = return_score + win_score + alpha_score
+
+            # Enhancement 1: Mild confidence adjustment for reversal strategy
+            confidence_factor = 1.0
+            if total_trades < 3:  # Only penalize very low sample sizes
+                confidence_factor = 0.8 + (total_trades / 10)  # 80-100% confidence (mild penalty)
+                logger.debug(
+                    f"Applied confidence adjustment: {confidence_factor:.2f} for {total_trades} trades"
+                )
+
+            # No recent performance boost - reversal quality is consistent over time
+            recent_boost = 1.0
+
+            # Apply enhancements (confidence adjustment only)
+            total_score = base_score * confidence_factor
+
+            logger.debug(
+                f"Backtest score breakdown: Total Return={effective_return:.1f}% ({return_score:.1f}), "
+                f"Win={win_rate:.1f}% ({win_score:.1f}), Alpha={alpha_score:.1f}, "
+                f"Trades={total_trades}, Total={total_score:.1f}"
+            )
+
+            return min(total_score, 100.0)  # Cap at 100
+
+        except Exception as e:
+            logger.error(f"Error calculating backtest score: {e}")
+            return 0.0
 
     def run_stock_backtest(
-        self, stock_symbol: str, years_back: Optional[int] = None, dip_mode: Optional[bool] = None
-    ) -> Dict:
+        self, stock_symbol: str, years_back: int | None = None, dip_mode: bool | None = None
+    ) -> dict:
         """
         Run backtest for a stock using available method (integrated or simple).
 
@@ -101,10 +187,10 @@ class BacktestService:
 
     def add_backtest_scores_to_results(
         self,
-        stock_results: List[Dict],
-        years_back: Optional[int] = None,
-        dip_mode: Optional[bool] = None,
-    ) -> List[Dict]:
+        stock_results: list[dict],
+        years_back: int | None = None,
+        dip_mode: bool | None = None,
+    ) -> list[dict]:
         """
         Add backtest scores to existing stock analysis results.
 
@@ -163,8 +249,8 @@ class BacktestService:
                 backtest_score = backtest_data.get("backtest_score", 0)
 
                 # Use ScoringService for combined score calculation
-                from services.scoring_service import ScoringService
                 from config.strategy_config import StrategyConfig
+                from services.scoring_service import ScoringService
 
                 scoring_service = ScoringService(config=StrategyConfig.default())
                 combined_score = scoring_service.compute_combined_score(
@@ -314,7 +400,7 @@ class BacktestService:
         return enhanced_results
 
     def _reclassify_with_backtest(
-        self, stock_result: Dict, backtest_score: float, combined_score: float
+        self, stock_result: dict, backtest_score: float, combined_score: float
     ) -> None:
         """
         Re-classify stock verdict based on backtest results.
@@ -390,7 +476,7 @@ class BacktestService:
         # Log RSI adjustment if applied
         if rsi_factor < 1.0:
             logger.debug(
-                f"{stock_result.get('ticker', 'Unknown')}: RSI={current_rsi:.1f}, applied {(1-rsi_factor)*100:.0f}% threshold reduction"
+                f"{stock_result.get('ticker', 'Unknown')}: RSI={current_rsi:.1f}, applied {(1 - rsi_factor) * 100:.0f}% threshold reduction"
             )
 
         # Add confidence indicator to result
@@ -399,7 +485,7 @@ class BacktestService:
 
 
 # Backward compatibility functions
-def calculate_backtest_score_compat(backtest_results: Dict, dip_mode: bool = False) -> float:
+def calculate_backtest_score_compat(backtest_results: dict, dip_mode: bool = False) -> float:
     """
     Backward compatibility wrapper for core.backtest_scoring.calculate_backtest_score()
     """
@@ -409,7 +495,7 @@ def calculate_backtest_score_compat(backtest_results: Dict, dip_mode: bool = Fal
 
 def run_stock_backtest_compat(
     stock_symbol: str, years_back: int = 2, dip_mode: bool = False
-) -> Dict:
+) -> dict:
     """
     Backward compatibility wrapper for core.backtest_scoring.run_stock_backtest()
     """
@@ -418,8 +504,8 @@ def run_stock_backtest_compat(
 
 
 def add_backtest_scores_to_results_compat(
-    stock_results: List[Dict], years_back: int = 2, dip_mode: bool = False
-) -> List[Dict]:
+    stock_results: list[dict], years_back: int = 2, dip_mode: bool = False
+) -> list[dict]:
     """
     Backward compatibility wrapper for core.backtest_scoring.add_backtest_scores_to_results()
     """

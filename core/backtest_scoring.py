@@ -6,11 +6,10 @@ This module integrates historical backtesting into the trading agent workflow
 to provide additional scoring based on past performance of the trading strategy.
 """
 
-import sys
 import os
-from datetime import datetime, timedelta
-from typing import Dict, Optional
+import sys
 import warnings
+from datetime import datetime, timedelta
 
 warnings.filterwarnings("ignore")
 
@@ -30,13 +29,12 @@ except ImportError as e:
     BACKTEST_MODE = "simple"
 
 # Always import these for simple backtest fallback
-import yfinance as yf
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
+import yfinance as yf
 
 
-def calculate_backtest_score(backtest_results: Dict, dip_mode: bool = False) -> float:
+def calculate_backtest_score(backtest_results: dict, dip_mode: bool = False) -> float:
     """
     Calculate a backtest score based on performance metrics.
 
@@ -166,7 +164,7 @@ def calculate_wilder_rsi(prices, period=None, config=None):
 
 def run_simple_backtest(
     stock_symbol: str, years_back: int = 2, dip_mode: bool = False, config=None
-) -> Dict:
+) -> dict:
     """
     Run a simple backtest using configurable RSI oversold strategy.
 
@@ -275,7 +273,6 @@ def run_simple_backtest(
                 and not pd.isna(row["Volume_Ratio"])
                 and row["Volume_Ratio"] > volume_threshold
             ):
-
                 # Phase 9: Calculate execution capital based on liquidity at entry
                 avg_volume = row.get("Volume_SMA20", row["Volume"])
                 stock_price = row["Close"]
@@ -423,17 +420,37 @@ def run_simple_backtest(
 
 def run_stock_backtest(
     stock_symbol: str, years_back: int = 2, dip_mode: bool = False, config=None
-) -> Dict:
+) -> dict:
     """
     Run backtest for a stock using available method (integrated or simple).
+
+    [WARN]? DEPRECATED in Phase 4: This function is deprecated and will be removed in a future version.
+
+    For new code, prefer using BacktestService:
+        from services import BacktestService
+        service = BacktestService(default_years_back=years_back, dip_mode=dip_mode)
+        results = service.run_stock_backtest(stock_symbol)
+
+    Migration guide: See utils.deprecation.get_migration_guide("run_stock_backtest")
 
     Args:
         stock_symbol: Stock symbol (e.g., "RELIANCE.NS")
         years_back: Number of years to backtest (default: 2)
+        dip_mode: Enable dip-buying mode
+        config: Strategy configuration
 
     Returns:
         Dict with backtest results and score
     """
+    # Phase 4.5: Issue deprecation warning
+    from utils.deprecation import deprecation_notice
+
+    deprecation_notice(
+        module="core.backtest_scoring",
+        function="run_stock_backtest",
+        replacement="services.BacktestService.run_stock_backtest()",
+        version="Phase 4",
+    )
 
     if BACKTEST_MODE == "simple":
         # Use simple backtest
@@ -511,7 +528,6 @@ def add_backtest_scores_to_results(
         Enhanced stock results with backtest scores
     """
     # Phase 4: Issue deprecation warning
-    import warnings
     from utils.deprecation import deprecation_notice
 
     deprecation_notice(
@@ -627,7 +643,7 @@ def add_backtest_scores_to_results(
             # Log RSI adjustment if applied
             if rsi_factor < 1.0:
                 logger.debug(
-                    f"{ticker}: RSI={current_rsi:.1f}, applied {(1-rsi_factor)*100:.0f}% threshold reduction"
+                    f"{ticker}: RSI={current_rsi:.1f}, applied {(1 - rsi_factor) * 100:.0f}% threshold reduction"
                 )
 
             # Add confidence indicator to result
@@ -662,7 +678,6 @@ def add_backtest_scores_to_results(
                             calculate_smart_stop_loss,
                             calculate_smart_target,
                         )
-                        import pandas as pd
 
                         # Get current price (try multiple sources)
                         current_price = stock_result.get("last_close")
@@ -716,7 +731,10 @@ def add_backtest_scores_to_results(
 
                             # Calculate stop loss
                             stop = calculate_smart_stop_loss(
-                                current_price, recent_low, timeframe_confirmation, None  # df
+                                current_price,
+                                recent_low,
+                                timeframe_confirmation,
+                                None,  # df
                             )
 
                             # Calculate target

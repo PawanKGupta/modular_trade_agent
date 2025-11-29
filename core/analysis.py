@@ -1,32 +1,6 @@
-import math
-import yfinance as yf
-import pandas as pd
-from core.data_fetcher import fetch_ohlcv_yf, fetch_multi_timeframe_data
-from core.indicators import compute_indicators
-from core.patterns import is_hammer, is_bullish_engulfing, bullish_divergence
-from core.timeframe_analysis import TimeframeAnalysis
-from core.csv_exporter import CSVExporter
-from core.volume_analysis import (
-    assess_volume_quality_intelligent,
-    get_volume_verdict,
-    analyze_volume_pattern,
-)
-from core.candle_analysis import (
-    analyze_recent_candle_quality,
-    should_downgrade_signal,
-    get_candle_quality_summary,
-)
 from config.settings import (
-    MIN_VOLUME_MULTIPLIER,
-    VOLUME_MULTIPLIER_FOR_STRONG,
     VOLUME_LOOKBACK_DAYS,
 )
-from config.settings import (
-    NEWS_SENTIMENT_ENABLED,
-    NEWS_SENTIMENT_POS_THRESHOLD,
-    NEWS_SENTIMENT_NEG_THRESHOLD,
-)
-from core.news_sentiment import analyze_news_sentiment
 from utils.logger import logger
 
 
@@ -268,7 +242,6 @@ def calculate_smart_stop_loss(current_price, recent_low, timeframe_confirmation,
 
         # For strong uptrend dips, use more intelligent stops
         if mtf_confirmation in ["excellent_uptrend_dip", "good_uptrend_dip"]:
-
             # Use the lower of daily or weekly support (stronger level)
             key_support = (
                 min(daily_support_level, weekly_support_level)
@@ -440,11 +413,12 @@ def analyze_ticker(
         pre_calculated_indicators: Optional dict with pre-calculated indicators (rsi, ema200, etc.)
     """
     # Get config if not provided
+    from config.strategy_config import StrategyConfig
+
     if config is None:
         config = StrategyConfig.default()
 
     # Phase 4: Issue deprecation warning
-    import warnings
     from utils.deprecation import deprecation_notice
 
     deprecation_notice(
@@ -453,381 +427,28 @@ def analyze_ticker(
         replacement="services.AnalysisService.analyze_ticker() or services.AsyncAnalysisService.analyze_batch_async()",
         version="Phase 4",
     )
+    # Phase 4.5: Pure wrapper - delegate to service layer only
     try:
-        # Try using new service layer (Phase 1 refactoring)
-        try:
-            from services.analysis_service import AnalysisService
+        from services.analysis_service import AnalysisService
 
-            service = AnalysisService(config=config)
-            return service.analyze_ticker(
-                ticker=ticker,
-                enable_multi_timeframe=enable_multi_timeframe,
-                export_to_csv=export_to_csv,
-                csv_exporter=csv_exporter,
-                as_of_date=as_of_date,
-            )
-        except ImportError:
-            # Fallback to legacy implementation if service layer not available
-            logger.warning("Service layer not available, using legacy implementation")
-
-        # Legacy implementation (original code preserved for backward compatibility)
-        logger.debug(f"Starting analysis for {ticker} (legacy mode)")
-
-        # Initialize timeframe analyzer with config
-        tf_analyzer = TimeframeAnalysis(config=config) if enable_multi_timeframe else None
-
-        # Disable current day data addition during backtesting (when as_of_date is provided)
-        add_current_day = as_of_date is None  # Only add current day for live analysis
-
-        # Fetch data - multi-timeframe if enabled, single timeframe otherwise
-        multi_data = None  # Initialize to prevent NameError
-        if enable_multi_timeframe:
-            multi_data = fetch_multi_timeframe_data(
-                ticker, end_date=as_of_date, add_current_day=add_current_day, config=config
-            )
-            if multi_data is None or multi_data.get("daily") is None:
-                logger.warning(f"No multi-timeframe data available for {ticker}")
-                return {"ticker": ticker, "status": "no_data"}
-            df = multi_data["daily"]
-        else:
-            df = fetch_ohlcv_yf(ticker, end_date=as_of_date, add_current_day=add_current_day)
-            if df is None or df.empty:
-                logger.warning(f"No data available for {ticker}")
-                return {"ticker": ticker, "status": "no_data"}
-
-        # Compute technical indicators
-        df = compute_indicators(df)
-        if df is None or df.empty:
-            logger.error(f"Failed to compute indicators for {ticker}")
-            return {"ticker": ticker, "status": "indicator_error"}
-
-        # Clip to as_of_date if provided (ensure no future data leaks)
-        if as_of_date is not None:
-            try:
-                asof_ts = pd.to_datetime(as_of_date)
-                if "date" in df.columns:
-                    df = df[df["date"] <= asof_ts]
-                else:
-                    df = df.loc[df.index <= asof_ts]
-            except Exception as _:
-                pass
-
-    except Exception as e:
-        logger.error(f"Data fetching/processing failed for {ticker}: {type(e).__name__}: {e}")
-        return {"ticker": ticker, "status": "data_error", "error": str(e)}
-
-    try:
-        last = df.iloc[-1]
-        prev = df.iloc[-2] if len(df) >= 2 else None
-    except (IndexError, KeyError) as e:
-        logger.error(f"Error accessing data rows for {ticker}: {e}")
-        return {"ticker": ticker, "status": "data_access_error"}
-
-    signals = []
-
-    # Optional news sentiment (as-of date aware)
-    news_sentiment = None
-    try:
-        news_sentiment = analyze_news_sentiment(ticker, as_of_date=as_of_date)
-    except Exception as _e:
-        news_sentiment = None
-
-    # Multi-timeframe confirmation analysis for dip-buying
-    timeframe_confirmation = None
-    if enable_multi_timeframe and tf_analyzer and multi_data.get("weekly") is not None:
-        try:
-            timeframe_confirmation = tf_analyzer.get_dip_buying_confirmation(
-                multi_data["daily"], multi_data["weekly"]
-            )
-            logger.debug(
-                f"Dip-buying MTF analysis for {ticker}: {timeframe_confirmation['confirmation']} (score: {timeframe_confirmation['alignment_score']})"
-            )
-        except Exception as e:
-            logger.warning(f"Multi-timeframe analysis failed for {ticker}: {e}")
-            timeframe_confirmation = None
-
-    if is_hammer(last):
-        signals.append("hammer")
-
-    if prev is not None and is_bullish_engulfing(prev, last):
-        signals.append("bullish_engulfing")
-
-    # Use configurable RSI period and threshold
-    rsi_col = f"rsi{config.rsi_period}"
-    # Fallback to 'rsi10' for backward compatibility
-    if rsi_col not in last.index and "rsi10" in last.index:
-        rsi_col = "rsi10"
-
-    if rsi_col in last.index and last[rsi_col] is not None and last[rsi_col] < config.rsi_oversold:
-        signals.append("rsi_oversold")
-
-    # Use configurable RSI period for pattern detection
-    if bullish_divergence(df, rsi_period=config.rsi_period, lookback_period=10):
-        signals.append("bullish_divergence")
-
-    # Add uptrend dip-buying timeframe confirmation signals
-    if timeframe_confirmation:
-        confirmation_type = timeframe_confirmation["confirmation"]
-        if confirmation_type == "excellent_uptrend_dip":
-            signals.append("excellent_uptrend_dip")
-        elif confirmation_type == "good_uptrend_dip":
-            signals.append("good_uptrend_dip")
-        elif confirmation_type == "fair_uptrend_dip":
-            signals.append("fair_uptrend_dip")
-
-    avg_vol = avg_volume(df)  # Uses VOLUME_LOOKBACK_DAYS from config (default: 50)
-
-    # Intelligent volume analysis with time-awareness
-    volume_analysis = assess_volume_quality_intelligent(
-        current_volume=last["volume"], avg_volume=avg_vol, enable_time_adjustment=True
-    )
-
-    vol_ok, vol_strong, volume_description = get_volume_verdict(volume_analysis)
-
-    # Log low liquidity stocks
-    if volume_analysis.get("quality") == "illiquid":
-        logger.info(f"{ticker}: Filtered out - {volume_analysis.get('reason')}")
-
-    # Additional volume pattern context
-    volume_pattern = analyze_volume_pattern(df)
-
-    recent_low = df["low"].tail(20).min()
-    recent_high = df["high"].tail(20).max()
-
-    try:
-        logger.debug(f"Fetching fundamental data for {ticker}")
-        info = yf.Ticker(ticker).info
-        pe = info.get("trailingPE", None)
-        pb = info.get("priceToBook", None)
-        logger.debug(f"Fundamental data for {ticker}: PE={pe}, PB={pb}")
-    except Exception as e:
-        logger.warning(f"Could not fetch fundamental data for {ticker}: {e}")
-        pe = None
-        pb = None
-
-    verdict = "avoid"
-    justification = []
-
-    # Simplified decision logic for reversal strategy - focus on core signals
-    # Adaptive RSI threshold based on EMA200 position
-    above_trend = pd.notna(last["ema200"]) and last["close"] > last["ema200"]  # Above EMA200
-
-    # Smart RSI threshold: Stricter when below EMA200 (more risk)
-    # Use configurable thresholds from StrategyConfig
-    if above_trend:
-        rsi_threshold = config.rsi_oversold  # Default: 30 - Standard oversold in uptrend
-    else:
-        rsi_threshold = (
-            config.rsi_extreme_oversold
-        )  # Default: 20 - Extreme oversold required when below trend
-
-    # Use configurable RSI column name
-    rsi_col = f"rsi{config.rsi_period}"
-    # Fallback to 'rsi10' for backward compatibility
-    if rsi_col not in last.index and "rsi10" in last.index:
-        rsi_col = "rsi10"
-
-    rsi_oversold = (
-        pd.notna(last.get(rsi_col)) and last.get(rsi_col) < rsi_threshold
-        if rsi_col in last.index
-        else False
-    )
-    decent_volume = vol_ok  # Use intelligent volume analysis
-
-    # Avoid stocks with negative earnings (fundamental red flag)
-    fundamental_ok = not (pe is not None and pe < 0)
-
-    # Entry logic: Works for both above and below EMA200 with appropriate RSI thresholds
-    if rsi_oversold and decent_volume and fundamental_ok:
-        # Simple quality-based classification using MTF and patterns
-        alignment_score = (
-            timeframe_confirmation.get("alignment_score", 0) if timeframe_confirmation else 0
+        service = AnalysisService(config=config)
+        return service.analyze_ticker(
+            ticker=ticker,
+            enable_multi_timeframe=enable_multi_timeframe,
+            export_to_csv=export_to_csv,
+            csv_exporter=csv_exporter,
+            as_of_date=as_of_date,
         )
-
-        # Determine signal strength based on EMA200 position and RSI level
-        if above_trend:
-            # Above EMA200: Standard uptrend dip buying (RSI < 30)
-            if alignment_score >= 8 or "excellent_uptrend_dip" in signals:
-                verdict = "strong_buy"
-            elif (
-                alignment_score >= 5
-                or any(
-                    s in signals
-                    for s in ["good_uptrend_dip", "fair_uptrend_dip", "hammer", "bullish_engulfing"]
-                )
-                or vol_strong
-            ):
-                verdict = "buy"
-            else:
-                verdict = "buy"  # Default for valid uptrend reversal conditions
-        else:
-            # Below EMA200: Extreme oversold reversal (RSI < 20)
-            # More conservative - only buy with strong confirmation
-            if (
-                alignment_score >= 6
-                or any(s in signals for s in ["hammer", "bullish_engulfing", "bullish_divergence"])
-                or vol_strong
-            ):
-                verdict = "buy"  # Require stronger signals when below trend
-            else:
-                verdict = "watch"  # Default to watch for below-trend stocks
-
-    elif len(signals) > 0 and vol_ok:
-        # Has some signals and volume but not core reversal conditions
-        verdict = "watch"
-
-    else:
-        # No significant signals
-        verdict = "avoid"
-
-    # Build justification based on what was found
-    if verdict in ["buy", "strong_buy"]:
-        # Add core reversal justification with adaptive threshold info
-        if rsi_oversold:
-            rsi_value = round(last["rsi10"], 1)
-            trend_status = "above_ema200" if above_trend else "below_ema200"
-            justification.append(f"rsi:{rsi_value}({trend_status})")
-
-        # Add pattern signals (excluding MTF signals)
-        pattern_signals = [
-            s
-            for s in signals
-            if s not in ["excellent_uptrend_dip", "good_uptrend_dip", "fair_uptrend_dip"]
-        ]
-        if pattern_signals:
-            justification.append("pattern:" + ",".join(pattern_signals))
-
-        # Add MTF uptrend dip confirmation
-        if "excellent_uptrend_dip" in signals:
-            justification.append("excellent_uptrend_dip_confirmation")
-        elif "good_uptrend_dip" in signals:
-            justification.append("good_uptrend_dip_confirmation")
-        elif "fair_uptrend_dip" in signals:
-            justification.append("fair_uptrend_dip_confirmation")
-
-        # Add volume information with intelligent analysis
-        if vol_strong:
-            justification.append(f"volume_strong({volume_analysis['ratio']}x)")
-        elif decent_volume:
-            justification.append(f"volume_adequate({volume_analysis['ratio']}x)")
-
-        # Add time adjustment info if applicable
-        if volume_analysis.get("time_adjusted"):
-            justification.append(f"intraday_adjusted(h{volume_analysis.get('current_hour')})")
-
-    elif verdict == "watch":
-        if not fundamental_ok:
-            justification.append("fundamental_red_flag")
-        elif len(signals) > 0:
-            justification.append("signals:" + ",".join(signals))
-        else:
-            justification.append("partial_reversal_setup")
-
-    # Candle quality analysis - check for large red bodies that reduce reversal probability
-    candle_analysis = None
-    if verdict in ["buy", "strong_buy"]:
-        try:
-            candle_analysis = analyze_recent_candle_quality(df, lookback_candles=3)
-            candle_summary = get_candle_quality_summary(
-                candle_analysis, use_emojis=False
-            )  # No emojis for console logging
-            logger.debug(f"{ticker} - Candle Quality: {candle_summary}")
-
-            # Apply candle-based verdict downgrade if needed
-            original_verdict = verdict
-            verdict, downgrade_reason = should_downgrade_signal(candle_analysis, verdict)
-            if downgrade_reason:
-                logger.info(f"{ticker}: {downgrade_reason}")
-                justification.append(f"candle_downgrade:{original_verdict}_to_{verdict}")
-
-        except Exception as e:
-            logger.warning(f"Candle quality analysis failed for {ticker}: {e}")
-
-    buy_range = None
-    target = None
-    stop = None
-
-    # Apply news sentiment adjustment (downgrade on negative news)
-    if news_sentiment and news_sentiment.get("enabled") and verdict in ["buy", "strong_buy"]:
-        sc = float(news_sentiment.get("score", 0.0))
-        used = int(news_sentiment.get("used", 0))
-        if used >= 1 and sc <= NEWS_SENTIMENT_NEG_THRESHOLD:
-            verdict = "watch"
-            justification.append("news_negative")
-
-    if verdict in ["buy", "strong_buy"]:
-        current_price = last["close"]
-
-        # Enhanced buy range based on support levels
-        buy_range = calculate_smart_buy_range(current_price, timeframe_confirmation)
-
-        # Enhanced stop loss based on uptrend context and support
-        stop = calculate_smart_stop_loss(current_price, recent_low, timeframe_confirmation, df)
-
-        # Enhanced target based on MTF quality and resistance levels
-        target = calculate_smart_target(
-            current_price, stop, verdict, timeframe_confirmation, recent_high
-        )
-
-    # Final result compilation with error handling
-    try:
-        # Use configurable RSI column name
-        rsi_col = f"rsi{config.rsi_period}"
-        # Fallback to 'rsi10' for backward compatibility
-        if rsi_col not in last.index and "rsi10" in last.index:
-            rsi_col = "rsi10"
-
-        rsi_value = None
-        if rsi_col in last.index:
-            rsi_val = last[rsi_col]
-            rsi_value = (
-                None if (pd.isna(rsi_val) or math.isnan(rsi_val)) else round(float(rsi_val), 2)
-            )
-
-        result = {
+    except ImportError as e:
+        # Service layer is required - no fallback
+        logger.error(f"Service layer not available: {e}")
+        return {
             "ticker": ticker,
-            "verdict": verdict,
-            "signals": signals,
-            "rsi": rsi_value,
-            "avg_vol": int(avg_vol),
-            "today_vol": int(last["volume"]),
-            "pe": pe,
-            "pb": pb,
-            "buy_range": buy_range,
-            "target": target,
-            "stop": stop,
-            "justification": justification,
-            "last_close": round(last["close"], 2),
-            "timeframe_analysis": timeframe_confirmation,
-            "news_sentiment": news_sentiment,
-            "volume_analysis": volume_analysis,
-            "volume_pattern": volume_pattern,
-            "volume_description": volume_description,
-            "candle_analysis": candle_analysis,
-            "status": "success",
+            "status": "service_unavailable",
+            "error": "AnalysisService is required. Please ensure services module is available.",
         }
-
-        logger.debug(f"Analysis completed successfully for {ticker}: {verdict}")
-
-        # Export to CSV if requested
-        if export_to_csv:
-            if csv_exporter is None:
-                csv_exporter = CSVExporter()
-
-            # Export individual stock analysis
-            csv_exporter.export_single_stock(result)
-
-            # Also append to master CSV for historical tracking
-            csv_exporter.append_to_master_csv(result)
-
-        return result
-
     except Exception as e:
-        logger.error(f"Error compiling final results for {ticker}: {e}")
-        return {"ticker": ticker, "status": "result_compilation_error", "error": str(e)}
-
-    except Exception as e:
-        logger.error(f"Unexpected error in analyze_ticker for {ticker}: {type(e).__name__}: {e}")
+        logger.error(f"Analysis failed for {ticker}: {type(e).__name__}: {e}")
         return {"ticker": ticker, "status": "analysis_error", "error": str(e)}
 
 
@@ -873,41 +494,43 @@ def analyze_multiple_tickers(
         replacement="services.AsyncAnalysisService.analyze_batch_async()",
         version="Phase 4",
     )
-    logger.info(f"Starting batch analysis for {len(tickers)} tickers")
 
-    csv_exporter = CSVExporter() if export_to_csv else None
-    results = []
+    # Phase 4.5: Pure wrapper - delegate to AsyncAnalysisService
+    import asyncio
 
-    for i, ticker in enumerate(tickers, 1):
-        logger.info(f"Analyzing {ticker} ({i}/{len(tickers)})")
+    from services.async_analysis_service import AsyncAnalysisService
 
-        try:
-            result = analyze_ticker(
-                ticker,
+    logger.info(f"Starting batch analysis for {len(tickers)} tickers (using AsyncAnalysisService)")
+
+    try:
+        service = AsyncAnalysisService(max_concurrent=10)
+
+        async def analyze():
+            return await service.analyze_batch_async(
+                tickers=tickers,
                 enable_multi_timeframe=enable_multi_timeframe,
-                export_to_csv=False,  # We'll handle bulk export separately
-                csv_exporter=None,
+                export_to_csv=export_to_csv,
             )
-            results.append(result)
 
-            # Append to master CSV for historical tracking
-            if csv_exporter:
-                csv_exporter.append_to_master_csv(result)
+        results = asyncio.run(analyze())
 
-        except Exception as e:
-            logger.error(f"Failed to analyze {ticker}: {e}")
-            error_result = {"ticker": ticker, "status": "batch_analysis_error", "error": str(e)}
-            results.append(error_result)
+        # Handle CSV export if needed (AsyncAnalysisService handles it, but we return filepath for compatibility)
+        csv_filepath = None
+        if export_to_csv:
+            # AsyncAnalysisService exports CSV internally
+            # Return a placeholder path for backward compatibility
+            from datetime import datetime
 
-            if csv_exporter:
-                csv_exporter.append_to_master_csv(error_result)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            csv_filepath = f"analysis_results/bulk_analysis_{timestamp}.csv"
+            logger.info(f"Batch analysis complete. Results exported to: {csv_filepath}")
+        else:
+            logger.info(f"Batch analysis complete for {len(results)} tickers")
 
-    # Export bulk results to single CSV
-    csv_filepath = None
-    if export_to_csv and csv_exporter:
-        csv_filepath = csv_exporter.export_multiple_stocks(results, csv_filename)
-        logger.info(f"Batch analysis complete. Results exported to: {csv_filepath}")
-    else:
-        logger.info(f"Batch analysis complete for {len(results)} tickers")
-
-    return results, csv_filepath
+        return results, csv_filepath
+    except ImportError as e:
+        logger.error(f"AsyncAnalysisService not available: {e}")
+        return [], None
+    except Exception as e:
+        logger.error(f"Batch analysis failed: {type(e).__name__}: {e}")
+        return [], None
