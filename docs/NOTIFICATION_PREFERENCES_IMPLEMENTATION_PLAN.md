@@ -1,8 +1,8 @@
 # Notification Preferences Implementation Plan
 
 **Date:** 2025-01-15
-**Status:** 📋 Planning
-**Related:** Phase 9 of Unified Order Monitoring (pending items)
+**Status:** ✅ Complete (2025-11-30)
+**Related:** Phase 9 of Unified Order Monitoring (completed)
 
 ---
 
@@ -56,14 +56,17 @@ This plan implements granular notification preferences for users, allowing them 
 
 ## Implementation Plan
 
-### Phase 1: Database Schema Enhancement
+### Phase 1: Database Schema Enhancement ✅ COMPLETE
 
 **Goal:** Add granular notification event preferences to the database.
+
+**Status:** ✅ Complete (2025-11-30)
 
 #### Tasks:
 
 1. **Create Alembic Migration**:
-   - Add columns to `user_notification_preferences` table:
+   - ✅ Created migration `53c66ed1105b_add_granular_notification_preferences.py`
+   - ✅ Added 13 columns to `user_notification_preferences` table:
      ```sql
      -- Order event preferences
      notify_order_placed: BOOLEAN DEFAULT TRUE
@@ -82,21 +85,30 @@ This plan implements granular notification preferences for users, allowing them 
      notify_system_warnings: BOOLEAN DEFAULT FALSE
      notify_system_info: BOOLEAN DEFAULT FALSE
      ```
+   - ✅ Created second migration `1f2671ff2c90_add_granular_service_event_preferences.py` for service events:
+     ```sql
+     -- Service event preferences
+     notify_service_started: BOOLEAN DEFAULT TRUE
+     notify_service_stopped: BOOLEAN DEFAULT TRUE
+     notify_service_execution_completed: BOOLEAN DEFAULT TRUE
+     ```
 
 2. **Update Model** (`src/infrastructure/db/models.py`):
-   - Add new columns to `UserNotificationPreferences` class
-   - Add default values matching current behavior (all enabled by default)
+   - ✅ Added 16 new columns to `UserNotificationPreferences` class (13 granular + 3 service events)
+   - ✅ Added default values matching current behavior (all enabled by default, except order_modified and system warnings/info)
 
 3. **Migration Script**:
-   - Set all new columns to `TRUE` for existing users (maintain current behavior)
-   - Ensure backward compatibility
+   - ✅ Set all new columns to `TRUE` for existing users (maintain current behavior)
+   - ✅ Ensured backward compatibility
+   - ✅ Used raw SQL for SQLite compatibility
 
 **Deliverables:**
-- ✅ Alembic migration file
-- ✅ Updated model class
+- ✅ Alembic migration files (2 migrations)
+- ✅ Updated model class (16 new columns)
 - ✅ Migration tested on dev database
+- ✅ Migration tested in Docker environment
 
-**Estimated Time:** 2-3 hours
+**Details:** See implementation plan above for complete details.
 
 ---
 
@@ -660,7 +672,66 @@ ADD COLUMN notify_system_info BOOLEAN DEFAULT FALSE NOT NULL;
 
 ---
 
-**Next Steps:**
-1. Review and approve this plan
-2. Create Phase 1 migration
-3. Begin implementation
+## Additional Implementation: Service Event Notifications
+
+**Status:** ✅ Complete (2025-11-30)
+
+### Service Event Notifications
+
+After completing Phase 8, additional work was done to add notifications for service lifecycle events:
+
+1. **Database Schema**:
+   - ✅ Added 3 new granular service event preferences:
+     - `notify_service_started` (default: TRUE)
+     - `notify_service_stopped` (default: TRUE)
+     - `notify_service_execution_completed` (default: TRUE)
+   - ✅ Migration: `1f2671ff2c90_add_granular_service_event_preferences.py`
+
+2. **Service Integration**:
+   - ✅ `IndividualServiceManager`: Added notifications for individual service start/stop/execution
+   - ✅ `MultiUserTradingService`: Added notifications for unified service start/stop
+   - ✅ All notifications respect user preferences (Telegram, Email, In-App)
+   - ✅ Notifications sent via all enabled channels
+
+3. **Email Notifications**:
+   - ✅ Created `EmailNotifier` service (`services/email_notifier.py`)
+   - ✅ Integrated with SMTP configuration from environment variables
+   - ✅ Sends formatted emails for service events
+
+4. **In-App Notifications**:
+   - ✅ Created notifications API (`/api/v1/user/notifications`)
+   - ✅ Created notifications UI page (`/dashboard/notifications`)
+   - ✅ Supports filtering, marking as read, unread count
+
+5. **Testing**:
+   - ✅ Unit tests for `IndividualServiceManager` notifications (6 tests)
+   - ✅ Unit tests for `MultiUserTradingService` notifications (11 tests)
+   - ✅ Integration tests for unified service notifications (4 tests)
+   - ✅ All 21 tests passing
+
+**Deliverables:**
+- ✅ Service event preferences in database
+- ✅ Service notifications for individual and unified services
+- ✅ Email notification support
+- ✅ In-app notifications API and UI
+- ✅ Comprehensive test coverage
+
+---
+
+## Summary
+
+**All Phases Complete:** ✅
+
+- ✅ Phase 1: Database Schema Enhancement
+- ✅ Phase 2: Notification Preference Service
+- ✅ Phase 3: Integrate Preferences into Notification System
+- ✅ Phase 4: Order Modification Detection
+- ✅ Phase 5: API Endpoints
+- ✅ Phase 6: Frontend UI
+- ✅ Phase 7: Testing & Validation
+- ✅ Phase 8: Documentation & Migration
+- ✅ Additional: Service Event Notifications
+
+**Total Implementation Time:** ~40-50 hours
+
+**Test Coverage:** 21 tests for service notifications, 54+ tests for notification preferences, all passing ✅

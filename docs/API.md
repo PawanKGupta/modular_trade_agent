@@ -278,6 +278,142 @@ Content-Type: application/json
 
 **Note:** Credentials are encrypted before storage.
 
+### Notification Preferences
+
+#### Get Notification Preferences
+```http
+GET /api/v1/user/notification-preferences
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "id": 1,
+  "user_id": 1,
+  "telegram_enabled": true,
+  "telegram_chat_id": "123456789",
+  "email_enabled": false,
+  "email_address": null,
+  "in_app_enabled": true,
+  "notify_order_placed": true,
+  "notify_order_rejected": true,
+  "notify_order_executed": true,
+  "notify_order_cancelled": true,
+  "notify_order_modified": false,
+  "notify_retry_queue_added": true,
+  "notify_retry_queue_updated": true,
+  "notify_retry_queue_removed": true,
+  "notify_retry_queue_retried": true,
+  "notify_partial_fill": true,
+  "notify_system_errors": true,
+  "notify_system_warnings": false,
+  "notify_system_info": false,
+  "notify_service_started": true,
+  "notify_service_stopped": true,
+  "notify_service_execution_completed": true,
+  "quiet_hours_start": "22:00:00",
+  "quiet_hours_end": "08:00:00",
+  "created_at": "2025-01-15T10:00:00Z",
+  "updated_at": "2025-01-15T10:00:00Z"
+}
+```
+
+#### Update Notification Preferences
+```http
+PUT /api/v1/user/notification-preferences
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "telegram_enabled": true,
+  "telegram_chat_id": "123456789",
+  "email_enabled": false,
+  "in_app_enabled": true,
+  "notify_order_placed": true,
+  "notify_order_rejected": false,
+  "notify_order_modified": true,
+  "notify_service_started": true,
+  "quiet_hours_start": "22:00:00",
+  "quiet_hours_end": "08:00:00"
+}
+```
+
+**Note:** All fields are optional. Only provided fields will be updated. Set fields to `null` to clear them (e.g., `quiet_hours_start: null` to disable quiet hours).
+
+### Notifications (In-App)
+
+#### Get Notifications
+```http
+GET /api/v1/user/notifications?type=service&level=info&read=false&limit=50
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+- `type` (optional): Filter by type (`service`, `trading`, `system`, `error`)
+- `level` (optional): Filter by level (`info`, `warning`, `error`, `critical`)
+- `read` (optional): Filter by read status (`true`/`false`)
+- `limit` (optional): Maximum number of notifications (default: 100, max: 500)
+
+**Response:**
+```json
+[
+  {
+    "id": 1,
+    "user_id": 1,
+    "type": "service",
+    "level": "info",
+    "title": "Service Started",
+    "message": "Service: Analysis\nStatus: Running\nProcess ID: 12345",
+    "read": false,
+    "telegram_sent": true,
+    "email_sent": false,
+    "created_at": "2025-01-15T10:00:00Z"
+  }
+]
+```
+
+#### Mark Notification as Read
+```http
+PUT /api/v1/user/notifications/{notification_id}/read
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "id": 1,
+  "read": true,
+  "read_at": "2025-01-15T10:05:00Z"
+}
+```
+
+#### Mark All Notifications as Read
+```http
+PUT /api/v1/user/notifications/read-all
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "updated_count": 5
+}
+```
+
+#### Get Unread Count
+```http
+GET /api/v1/user/notifications/unread-count
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "count": 3
+}
+```
+
 ### Service Management
 
 #### Get Service Status

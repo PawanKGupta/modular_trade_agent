@@ -275,6 +275,14 @@ results = asyncio.run(analyze())
 - `notify_partial_fill()` → `PARTIAL_FILL`
 - `notify_retry_queue_updated()` → `RETRY_QUEUE_*` events
 - `notify_system_alert()` → `SYSTEM_ERROR/WARNING/INFO`
+- `notify_daily_summary()` → `TRADING_EVENT` (legacy)
+- `notify_tracking_stopped()` → `TRADING_EVENT` (legacy)
+
+**Service Event Notifications:**
+Service lifecycle events are handled by `IndividualServiceManager` and `MultiUserTradingService`:
+- `_notify_service_started()` → `SERVICE_STARTED` (Telegram, Email, In-App)
+- `_notify_service_stopped()` → `SERVICE_STOPPED` (Telegram, Email, In-App)
+- `_notify_service_execution_completed()` → `SERVICE_EXECUTION_COMPLETED` (Telegram, Email, In-App)
 
 **Event Types:**
 See [Notification Event Types](#notification-event-types) section below.
@@ -287,6 +295,7 @@ See [Notification Event Types](#notification-event-types) section below.
 - **Order Events:** `notify_order_placed`, `notify_order_rejected`, `notify_order_executed`, `notify_order_cancelled`, `notify_order_modified`, `notify_partial_fill`
 - **Retry Queue Events:** `notify_retry_queue_added`, `notify_retry_queue_updated`, `notify_retry_queue_removed`, `notify_retry_queue_retried`
 - **System Events:** `notify_system_errors`, `notify_system_warnings`, `notify_system_info`
+- **Service Events:** `notify_service_started`, `notify_service_stopped`, `notify_service_execution_completed`
 - **Quiet Hours:** `quiet_hours_start`, `quiet_hours_end`
 - **Legacy:** `notify_service_events`, `notify_trading_events`, `notify_system_events`, `notify_errors`
 
@@ -598,6 +607,10 @@ alembic downgrade -1
 **New Endpoints:**
 - `GET /api/v1/user/notification-preferences` - Get user preferences
 - `PUT /api/v1/user/notification-preferences` - Update user preferences
+- `GET /api/v1/user/notifications` - Get in-app notifications (with filters)
+- `PUT /api/v1/user/notifications/{id}/read` - Mark notification as read
+- `PUT /api/v1/user/notifications/read-all` - Mark all notifications as read
+- `GET /api/v1/user/notifications/unread-count` - Get unread notification count
 
 **Request/Response Schemas:**
 - `NotificationPreferencesResponse` - Response model with all preference fields
@@ -615,6 +628,10 @@ alembic downgrade -1
 - `AutoTradeEngine` - Passes `user_id` to notification methods
 - `UnifiedOrderMonitor` - Passes `user_id` to notification methods
 - `OrderStateManager` - Passes `user_id` and detects order modifications
+- `IndividualServiceManager` - Sends service event notifications (started, stopped, execution completed)
+- `MultiUserTradingService` - Sends unified service notifications (started, stopped)
+- `EmailNotifier` - New service for sending email notifications
+- `NotificationRepository` - Repository for managing in-app notifications
 
 **Backward Compatibility:**
 - All notification methods accept optional `user_id` parameter
@@ -623,11 +640,13 @@ alembic downgrade -1
 
 ### Frontend Changes
 
-**New Page:**
+**New Pages:**
 - `/dashboard/notification-preferences` - Notification preferences settings page
+- `/dashboard/notifications` - In-app notifications viewer page
 
-**New API Client:**
+**New API Clients:**
 - `web/src/api/notification-preferences.ts` - API client for preferences
+- `web/src/api/notifications.ts` - API client for in-app notifications
 
 **Navigation:**
-- Added "Notifications" link to sidebar navigation
+- Added "Notifications" link to sidebar navigation (with sub-link "Preferences")

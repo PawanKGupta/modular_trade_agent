@@ -248,6 +248,54 @@ Set a time range when notifications will be suppressed:
 - Disable notifications you don't need to reduce noise
 - Enable "Order Modified" only if you manually modify orders and want to track changes
 
+### Viewing Notifications
+
+**Purpose:** View and manage in-app notifications
+
+**Location:** Dashboard → Notifications (or `/dashboard/notifications`)
+
+**Features:**
+
+#### Notification List
+View all your in-app notifications with:
+- **Type Filter**: Filter by `service`, `trading`, `system`, or `error`
+- **Level Filter**: Filter by `info`, `warning`, `error`, or `critical`
+- **Read Status**: Filter by read/unread notifications
+- **Pagination**: View up to 500 notifications at a time
+
+#### Notification Details
+Each notification shows:
+- **Title**: Brief summary of the event
+- **Message**: Detailed information about the event
+- **Type**: Category of the notification
+- **Level**: Severity level (info, warning, error, critical)
+- **Read Status**: Whether you've read the notification
+- **Delivery Status**: Whether notification was sent via Telegram/Email
+- **Timestamp**: When the notification was created
+
+#### Actions
+- **Mark as Read**: Click on a notification to mark it as read
+- **Mark All as Read**: Use the "Mark All as Read" button to clear all unread notifications
+- **Filter**: Use the dropdown filters to find specific notifications
+- **Unread Count**: See the number of unread notifications in the header
+
+#### Service Event Notifications
+Service events include:
+- **Service Started**: When a trading service (analysis, order placement, etc.) starts
+- **Service Stopped**: When a trading service stops
+- **Service Execution Completed**: When a service task completes (success or failure)
+
+**Usage:**
+1. Navigate to **Notifications** page
+2. Use filters to find specific notifications
+3. Click on a notification to mark it as read
+4. Use "Mark All as Read" to clear all unread notifications
+
+**Tips:**
+- Check notifications regularly to stay informed about system events
+- Use filters to focus on specific types of notifications
+- Service execution notifications help track task completion and failures
+
 ### Admin Pages (Admin Only)
 
 #### Users
