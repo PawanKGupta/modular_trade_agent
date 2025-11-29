@@ -282,7 +282,7 @@ This plan implements granular notification preferences for users, allowing them 
 - ✅ Service integration (uses Phase 2 service)
 - ✅ API tests (10 test cases, all passing, 84% coverage)
 
-**See:** `docs/PHASE5_NOTIFICATION_PREFERENCES_COMPLETE.md` for details.
+**Details:** See implementation plan above for complete details.
 
 ---
 
