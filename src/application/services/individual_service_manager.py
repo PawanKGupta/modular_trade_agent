@@ -27,6 +27,14 @@ from src.application.services.conflict_detection_service import ConflictDetectio
 from src.application.services.schedule_manager import ScheduleManager
 from src.application.services.task_execution_wrapper import execute_task
 from src.infrastructure.logging import get_user_logger
+
+# Import for service notifications
+try:
+    from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
+
+    TELEGRAM_NOTIFIER_AVAILABLE = True
+except ImportError:
+    TELEGRAM_NOTIFIER_AVAILABLE = False
 from src.infrastructure.persistence.individual_service_status_repository import (
     IndividualServiceStatusRepository,
 )
@@ -131,6 +139,9 @@ class IndividualServiceManager:
                 action="start_individual_service",
             )
 
+            # Send notification for service start
+            self._notify_service_started(user_id, task_name, process_id)
+
             return True, f"Service '{task_name}' started successfully"
 
         except Exception as e:
@@ -195,6 +206,9 @@ class IndividualServiceManager:
             logger.info(
                 f"Stopped individual service: {task_name}", action="stop_individual_service"
             )
+
+            # Send notification for service stop
+            self._notify_service_stopped(user_id, task_name)
 
             return True, f"Service '{task_name}' stopped successfully"
 
@@ -427,6 +441,9 @@ class IndividualServiceManager:
                 action="run_once",
             )
 
+            # Send notification for successful execution
+            self._notify_service_execution_completed(user_id, task_name, "success", duration)
+
         except Exception as e:
             duration = time.time() - start_time
             error_details = {"error": str(e), "error_type": type(e).__name__}
@@ -449,6 +466,9 @@ class IndividualServiceManager:
                 details=error_details,
                 task_name=task_name,
             )
+
+            # Send notification for failed execution
+            self._notify_service_execution_completed(user_id, task_name, "failed", duration, str(e))
 
         finally:
             # Small delay to ensure database commit is fully written and visible
@@ -1547,6 +1567,122 @@ class IndividualServiceManager:
             result[task_name] = result_data
 
         return result
+
+    def _get_telegram_notifier(self):
+        """Get Telegram notifier instance with database session for preference checking"""
+        if not TELEGRAM_NOTIFIER_AVAILABLE:
+            return None
+        try:
+            return get_telegram_notifier(db_session=self.db)
+        except Exception as e:
+            # Use module-level logger if available, otherwise skip logging
+            try:
+                from utils.logger import logger as utils_logger
+
+                utils_logger.warning(f"Failed to get Telegram notifier: {e}")
+            except ImportError:
+                pass  # Logger not available
+            return None
+
+    def _notify_service_started(
+        self, user_id: int, task_name: str, process_id: int | None = None
+    ) -> None:
+        """Send notification when a service is started"""
+        notifier = self._get_telegram_notifier()
+        if not notifier or not notifier.enabled:
+            return
+
+        try:
+            task_display_name = task_name.replace("_", " ").title()
+            message = f"Service Started\n\nService: {task_display_name}\n"
+            if process_id:
+                message += f"Process ID: {process_id}\n"
+            message += "Status: Running"
+
+            notifier.notify_system_alert(
+                alert_type="SERVICE_STARTED",
+                message_text=message,
+                severity="INFO",
+                user_id=user_id,
+            )
+        except Exception as e:
+            try:
+                from utils.logger import logger as utils_logger
+
+                utils_logger.warning(f"Failed to send service started notification: {e}")
+            except ImportError:
+                pass
+
+    def _notify_service_stopped(self, user_id: int, task_name: str) -> None:
+        """Send notification when a service is stopped"""
+        notifier = self._get_telegram_notifier()
+        if not notifier or not notifier.enabled:
+            return
+
+        try:
+            task_display_name = task_name.replace("_", " ").title()
+            message = f"Service Stopped\n\nService: {task_display_name}\nStatus: Stopped"
+
+            notifier.notify_system_alert(
+                alert_type="SERVICE_STOPPED",
+                message_text=message,
+                severity="INFO",
+                user_id=user_id,
+            )
+        except Exception as e:
+            try:
+                from utils.logger import logger as utils_logger
+
+                utils_logger.warning(f"Failed to send service stopped notification: {e}")
+            except ImportError:
+                pass
+
+    def _notify_service_execution_completed(
+        self, user_id: int, task_name: str, status: str, duration: float, error: str | None = None
+    ) -> None:
+        """Send notification when a service execution completes (success or failure)"""
+        notifier = self._get_telegram_notifier()
+        if not notifier or not notifier.enabled:
+            return
+
+        try:
+            task_display_name = task_name.replace("_", " ").title()
+            duration_str = f"{duration:.2f}s" if duration < 60 else f"{duration / 60:.1f}m"
+
+            if status == "success":
+                message = (
+                    f"Service Execution Completed\n\n"
+                    f"Service: {task_display_name}\n"
+                    f"Status: Success\n"
+                    f"Duration: {duration_str}"
+                )
+                severity = "SUCCESS"
+            else:
+                message = (
+                    f"Service Execution Failed\n\n"
+                    f"Service: {task_display_name}\n"
+                    f"Status: Failed\n"
+                    f"Duration: {duration_str}"
+                )
+                if error:
+                    # Truncate error message if too long
+                    error_msg = error[:200] + "..." if len(error) > 200 else error
+                    message += f"\nError: {error_msg}"
+                severity = "ERROR"
+
+            notifier.notify_system_alert(
+                alert_type="SERVICE_EXECUTION",
+                message_text=message,
+                severity=severity,
+                user_id=user_id,
+            )
+        except Exception as e:
+            try:
+                from utils.logger import logger as utils_logger
+
+                utils_logger.warning(f"Failed to send service execution notification: {e}")
+            except ImportError:
+                pass
 
     def cleanup_stopped_processes(self) -> int:
         """Clean up processes that have stopped (for crash detection)"""

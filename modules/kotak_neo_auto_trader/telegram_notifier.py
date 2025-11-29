@@ -417,12 +417,16 @@ class TelegramNotifier:
             True if sent successfully
         """
         # Phase 3: Map severity to event type and check preferences
-        event_type_map = {
-            "ERROR": NotificationEventType.SYSTEM_ERROR,
-            "WARNING": NotificationEventType.SYSTEM_WARNING,
-            "INFO": NotificationEventType.SYSTEM_INFO,
-        }
-        event_type = event_type_map.get(severity.upper(), NotificationEventType.SYSTEM_INFO)
+        # Check if this is a service event (SERVICE_STARTED, SERVICE_STOPPED, SERVICE_EXECUTION)
+        if alert_type in ("SERVICE_STARTED", "SERVICE_STOPPED", "SERVICE_EXECUTION"):
+            event_type = NotificationEventType.SERVICE_EVENT
+        else:
+            event_type_map = {
+                "ERROR": NotificationEventType.SYSTEM_ERROR,
+                "WARNING": NotificationEventType.SYSTEM_WARNING,
+                "INFO": NotificationEventType.SYSTEM_INFO,
+            }
+            event_type = event_type_map.get(severity.upper(), NotificationEventType.SYSTEM_INFO)
 
         if not self._should_send_notification(user_id, event_type):
             return False
