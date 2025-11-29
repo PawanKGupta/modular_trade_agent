@@ -42,13 +42,13 @@ USER trader
 EXPOSE 8000
 
 # Create startup script that runs migrations then starts the server
-RUN echo '#!/bin/bash\n\
-set -e\n\
-echo "Running database migrations..."\n\
-python -m alembic upgrade head\n\
-echo "Starting API server..."\n\
-exec uvicorn server.app.main:app --host 0.0.0.0 --port 8000\n\
-' > /app/start.sh && chmod +x /app/start.sh
+RUN echo '#!/bin/bash' > /app/start.sh && \
+    echo 'set -e' >> /app/start.sh && \
+    echo 'echo "Running database migrations..."' >> /app/start.sh && \
+    echo 'python -m alembic upgrade head' >> /app/start.sh && \
+    echo 'echo "Starting API server..."' >> /app/start.sh && \
+    echo 'exec uvicorn server.app.main:app --host 0.0.0.0 --port 8000' >> /app/start.sh && \
+    chmod +x /app/start.sh
 
 # Run migrations then start the API server
 CMD ["/app/start.sh"]
