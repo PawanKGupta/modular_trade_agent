@@ -1,14 +1,14 @@
 # Service Architecture Guide
 
-**Date:** 2025-11-02  
-**Status:** Phase 1-4 Complete  
-**Architecture:** Service-based with backward compatibility
+**Date:** 2025-01-15 (Updated)  
+**Status:** Phase 1-4 Complete + Multi-User System  
+**Architecture:** Service-based with multi-user support
 
 ---
 
 ## Overview
 
-The system uses a **service-based architecture** introduced in Phase 1-4, providing:
+The system uses a **service-based architecture** introduced in Phase 1-4, with **multi-user support** added later, providing:
 - ✅ **Modular design** - Single responsibility services
 - ✅ **Dependency injection** - Swappable implementations
 - ✅ **Async support** - 80% faster batch analysis (Phase 2)
@@ -16,7 +16,38 @@ The system uses a **service-based architecture** introduced in Phase 1-4, provid
 - ✅ **Event-driven** - Pluggable event bus (Phase 3)
 - ✅ **Pipeline pattern** - Flexible, composable workflow (Phase 3)
 - ✅ **Type safety** - Typed data classes (Phase 2)
+- ✅ **Multi-user architecture** - Per-user services, configs, and data
+- ✅ **Web-based management** - Service control via web UI
 - ✅ **Backward compatibility** - Legacy `core.*` still works
+
+---
+
+## Multi-User Architecture
+
+### Per-User Services
+
+Each user has their own:
+- **Trading Service**: Per-user unified trading service instance
+- **Trading Configuration**: User-specific strategy parameters
+- **Paper Trading Portfolio**: Separate virtual portfolio per user
+- **Order History**: User-scoped order tracking
+- **P&L Tracking**: Individual performance metrics
+- **Credentials**: Encrypted broker credentials per user
+
+### Service Management
+
+- **Unified Service**: One service per user, runs all trading tasks
+- **Individual Services**: Can run specific tasks independently
+- **Web UI Control**: Start/stop services via `/dashboard/service`
+- **Conflict Detection**: Prevents conflicts between unified and individual services
+
+### Database Schema
+
+- **Users Table**: User accounts with roles (admin/user)
+- **UserSettings Table**: Per-user settings and encrypted credentials
+- **UserTradingConfig Table**: Per-user trading configuration
+- **ServiceStatus Table**: Per-user service status tracking
+- **IndividualServiceStatus Table**: Per-user individual service status
 
 ---
 

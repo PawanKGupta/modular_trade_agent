@@ -66,6 +66,40 @@ This capital allocation ensures you can:
 
 ## 🚀 Quick Start Deployment
 
+**⭐ RECOMMENDED: Docker Deployment**
+
+Docker is now the **recommended deployment method** for Oracle Cloud. It provides:
+- ✅ Simplified setup (one command)
+- ✅ Consistent environment
+- ✅ Easy updates
+- ✅ Better isolation
+- ✅ Multi-service orchestration
+
+### Option 1: Docker Deployment (Recommended)
+
+1. **Create Oracle Cloud VM** (see Step 2 below)
+2. **SSH into VM** and run:
+   ```bash
+   # Clone repository
+   git clone https://github.com/your-repo/modular_trade_agent.git
+   cd modular_trade_agent
+   
+   # Run deployment script
+   bash docker/deploy-oracle.sh
+   ```
+3. **Access Web UI**: `http://YOUR_VM_IP:5173`
+4. **Configure credentials** via web UI (Settings → Broker Credentials)
+
+**See**: [`docker/README.md`](../../../docker/README.md) for detailed Docker deployment guide.
+
+### Option 2: Manual Deployment (Alternative)
+
+If you prefer manual setup or need custom configuration, follow the steps below.
+
+---
+
+## Manual Deployment Steps
+
 ### Step 1: Create Oracle Cloud Account
 
 1. Go to [cloud.oracle.com](https://cloud.oracle.com)
@@ -381,34 +415,18 @@ mkdir -p data analysis_results logs modules/kotak_neo_auto_trader
 # Setup credentials
 echo "📝 Setting up credentials..."
 echo ""
-echo "DEFAULT: Paper Trading (Recommended)"
-echo "  - Only cred.env is needed (Telegram alerts)"
-echo "  - No broker login required"
-echo "  - Safe for testing without real money"
+echo "⚠️  IMPORTANT: Credentials are now configured via Web UI (not env files)"
 echo ""
-echo "OPTIONAL: Live Trading (Production Only)"
-echo "  - Requires kotak_neo.env (Kotak Neo credentials)"
-echo "  - WARNING: Executes real trades with real money!"
-echo "  - Only use when ready for production deployment"
+echo "After deployment:"
+echo "1. Access Web UI: http://YOUR_VM_IP:5173"
+echo "2. Login with admin credentials"
+echo "3. Go to Settings → Configure Broker Credentials"
+echo "4. Enter credentials (encrypted and stored in database)"
 echo ""
-echo "Create cred.env with your Telegram credentials:"
+echo "For Telegram alerts (optional):"
+echo "  - Configure via Web UI → Settings → Telegram"
+echo ""
 read -p "Press Enter to continue..."
-nano cred.env
-
-echo ""
-read -p "Do you want to set up live trading (requires Kotak Neo credentials)? [y/N] " setup_live
-if [[ $setup_live =~ ^[Yy]$ ]]; then
-    echo "⚠️  WARNING: Live trading will execute real trades with real money!"
-    read -p "Are you sure you want to continue? [y/N] " confirm
-    if [[ $confirm =~ ^[Yy]$ ]]; then
-        nano modules/kotak_neo_auto_trader/kotak_neo.env
-        echo "✅ Live trading credentials configured"
-    else
-        echo "Skipping live trading setup"
-    fi
-else
-    echo "Using paper trading (default) - no broker credentials needed"
-fi
 
 # Setup cron jobs
 (crontab -l 2>/dev/null; cat << 'EOF'

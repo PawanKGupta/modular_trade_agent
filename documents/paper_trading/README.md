@@ -58,6 +58,29 @@ reporter = PaperTradeReporter(broker.store)
 reporter.print_summary()
 ```
 
+## 🌐 Web UI Integration
+
+**Paper trading is now accessible via the web interface!**
+
+### Access Paper Trading
+
+1. **Navigate to**: `/dashboard/paper-trading` in the web UI
+2. **View Portfolio**: See your virtual holdings, balance, and P&L
+3. **View History**: Check all paper trading transactions
+4. **Monitor Performance**: Track your paper trading performance
+
+### API Endpoints
+
+- `GET /api/v1/user/paper-trading/portfolio` - Get portfolio
+- `GET /api/v1/user/paper-trading/history` - Get trade history
+- `POST /api/v1/user/paper-trading/execute` - Execute paper trade (if implemented)
+
+### Per-User Paper Trading
+
+- Each user has their **own separate paper trading portfolio**
+- Data stored in: `paper_trading/user_{user_id}/`
+- Isolated from other users' paper trading accounts
+
 ## 📚 Documentation
 
 - **[SETUP.md](./SETUP.md)** - Installation and configuration

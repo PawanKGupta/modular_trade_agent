@@ -24,9 +24,9 @@ This writes `analysis_results/bulk_analysis_final_<timestamp>.csv` (includes `fi
 2) Place AMO orders from the final CSV:
 ```
 .venv\\Scripts\\python.exe -m modules.kotak_neo_auto_trader.run_place_amo \\
-  --env modules\\kotak_neo_auto_trader\\kotak_neo.env \\
   --csv analysis_results\\bulk_analysis_final_*.csv
 ```
+- **Note**: Credentials are loaded from database (configured via web UI)
 - Sessions are kept by default; add `--logout` if you want to end the session.
 - Omit `--csv` to auto-pick the newest file in `analysis_results/`.
 
@@ -40,18 +40,36 @@ Edit `modules/kotak_neo_auto_trader/config.py`:
 - `ANALYSIS_DIR` (default `analysis_results`)
 
 ## Credentials
-Create `modules/kotak_neo_auto_trader/kotak_neo.env` (do not commit):
-```
-KOTAK_CONSUMER_KEY=
-KOTAK_CONSUMER_SECRET=
-KOTAK_MOBILE_NUMBER=
-KOTAK_PASSWORD=
-# use one of the following for 2FA
-KOTAK_TOTP_SECRET=
-# or
-KOTAK_MPIN=
-KOTAK_ENVIRONMENT=prod
-```
+
+**⚠️ IMPORTANT: Credentials are now stored in the database via web UI (not in env files)**
+
+### Setting Up Credentials
+
+1. **Access Web UI**: Navigate to `http://localhost:5173` (or your deployment URL)
+2. **Login**: Use your account credentials
+3. **Go to Settings**: Click "Settings" in the sidebar
+4. **Configure Broker Credentials**:
+   - Enter your Kotak Neo credentials:
+     - Consumer Key
+     - Consumer Secret
+     - Access Token
+     - User ID
+   - Click "Save"
+   - Credentials are **encrypted** using Fernet (AES-128) before storage
+
+### Security
+
+- ✅ Credentials are **encrypted** before storage in database
+- ✅ No plain text credentials in files
+- ✅ Per-user credential storage (multi-user system)
+- ✅ Encryption key managed via `ENCRYPTION_KEY` environment variable
+
+### Legacy Note
+
+If you're using the standalone CLI scripts (not recommended), you may still need `kotak_neo.env` file, but the **recommended approach** is to use the web UI for credential management.
+
+### Session Cache
+
 - A daily session token is cached at `modules/kotak_neo_auto_trader/session_cache.json` and reused automatically until EOD.
 
 ## Notes

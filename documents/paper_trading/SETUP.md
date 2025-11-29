@@ -16,7 +16,23 @@ The paper trading system allows you to test your trading strategies without risk
 
 ## 🚀 Quick Start
 
-### 1. Basic Usage
+### 0. Web UI Setup (Recommended)
+
+**Paper trading is now accessible via the web interface!**
+
+1. **Start the application** (Docker or manual setup)
+2. **Access Web UI**: `http://localhost:5173`
+3. **Login** with your account
+4. **Navigate to Paper Trading**: `/dashboard/paper-trading`
+5. **View Portfolio**: See your virtual holdings, balance, and P&L
+6. **View History**: Check all paper trading transactions
+
+**Configuration**:
+- Paper trading capital is configured via Trading Config (`/dashboard/config`)
+- Default: ₹1,00,000 (can be customized per user)
+- Each user has their own separate paper trading portfolio
+
+### 1. Python API Usage (Advanced)
 
 ```python
 from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTradingBrokerAdapter

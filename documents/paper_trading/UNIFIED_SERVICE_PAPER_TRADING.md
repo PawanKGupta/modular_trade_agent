@@ -25,7 +25,24 @@ You have **TWO options** to run the unified trading service:
 
 ## 🚀 Quick Start
 
-### Option 1: Paper Trading Service (RECOMMENDED FOR TESTING)
+**⭐ RECOMMENDED: Use Web UI for Service Management**
+
+The web UI provides the easiest way to manage paper trading:
+1. **Access**: `http://localhost:5173/dashboard/service`
+2. **Start Service**: Click "Start Service" button
+3. **Monitor**: View service status, logs, and task history
+4. **Paper Trading**: Access via `/dashboard/paper-trading`
+
+### Option 1: Web UI (Recommended)
+
+1. **Start the application** (Docker or manual)
+2. **Access Web UI**: `http://localhost:5173`
+3. **Login** with your account
+4. **Go to Service Status**: `/dashboard/service`
+5. **Start Service**: Click "Start Service" button
+6. **View Paper Trading**: `/dashboard/paper-trading`
+
+### Option 2: CLI (Advanced Users)
 
 Test your strategy without risk:
 
@@ -40,12 +57,12 @@ Test your strategy without risk:
 .venv\Scripts\python.exe modules\kotak_neo_auto_trader\run_trading_service_paper.py --storage paper_trading/my_test
 ```
 
-### Option 2: Live Trading Service (PRODUCTION)
+### Option 3: Live Trading Service (PRODUCTION)
 
 Real trading with real money:
 
 ```bash
-# Requires Kotak Neo credentials in kotak_neo.env
+# Credentials configured via web UI (not env files)
 .venv\Scripts\python.exe modules\kotak_neo_auto_trader\run_trading_service.py
 ```
 
@@ -79,17 +96,23 @@ The paper trading service runs the **same workflows** as live trading:
 
 ### Paper Trading Data Location
 
+**Multi-User System**: Each user has their own paper trading data
+
 ```
-paper_trading/unified_service/
-├── account.json          # Balance, capital, P&L
-├── orders.json           # All paper trade orders
-├── holdings.json         # Virtual portfolio
-├── transactions.json     # Trade history
-└── reports/              # Daily reports
-    ├── report_20251113.json
-    ├── report_20251114.json
+paper_trading/
+├── user_1/               # User 1's paper trading data
+│   ├── account.json      # Balance, capital, P&L
+│   ├── orders.json      # All paper trade orders
+│   ├── holdings.json     # Virtual portfolio
+│   ├── transactions.json # Trade history
+│   └── reports/          # Daily reports
+├── user_2/               # User 2's paper trading data
+│   └── ...
+└── unified_service/       # Legacy location (if using unified service)
     └── ...
 ```
+
+**Note**: In the web-based system, paper trading is per-user. Each user's data is stored in `paper_trading/user_{user_id}/`.
 
 ### Live Trading Data Location
 
