@@ -16,6 +16,10 @@ from datetime import time as dt_time
 from sqlalchemy.orm import Session
 
 import modules.kotak_neo_auto_trader.run_trading_service as trading_service_module
+from services.notification_preference_service import (
+    NotificationEventType,
+    NotificationPreferenceService,
+)
 from src.application.services.broker_credentials import (
     create_temp_env_file,
     decrypt_broker_credentials,
@@ -24,6 +28,7 @@ from src.application.services.config_converter import user_config_to_strategy_co
 from src.application.services.paper_trading_service_adapter import PaperTradingServiceAdapter
 from src.application.services.schedule_manager import ScheduleManager
 from src.infrastructure.logging import get_user_logger
+from src.infrastructure.persistence.notification_repository import NotificationRepository
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.user_trading_config_repository import (
@@ -58,6 +63,7 @@ class MultiUserTradingService:
         self._settings_repo = SettingsRepository(db)
         self._config_repo = UserTradingConfigRepository(db)
         self._schedule_manager = ScheduleManager(db)
+        self._notification_repo = NotificationRepository(db)
         self._logger = get_user_logger(
             user_id=0, db=db, module="MultiUserTradingService"
         )  # System-level logger
@@ -475,6 +481,9 @@ class MultiUserTradingService:
                 self._service_status_repo.update_running(user_id, running=True)
                 self._service_status_repo.update_heartbeat(user_id)
 
+                # Send notification for service start
+                self._notify_service_started(user_id)
+
                 return True
 
             except Exception as e:
@@ -555,6 +564,9 @@ class MultiUserTradingService:
                 self._service_status_repo.update_running(user_id, running=False)
                 self._service_status_repo.update_heartbeat(user_id)
 
+                # Send notification for service stop
+                self._notify_service_stopped(user_id)
+
                 user_logger.info(
                     "Trading service stopped successfully",
                     action="stop_service",
@@ -615,3 +627,159 @@ class MultiUserTradingService:
             for user_id, service in self._services.items()
             if hasattr(service, "running") and service.running
         ]
+
+    def _notify_service_started(self, user_id: int) -> None:
+        """Send notification when unified service starts"""
+        try:
+            pref_service = NotificationPreferenceService(self.db)
+
+            # Check if in-app notifications are enabled
+            if pref_service.should_notify(
+                user_id, NotificationEventType.SERVICE_STARTED, channel="in_app"
+            ):
+                message = "Unified Trading Service\nStatus: Running\nAll scheduled tasks will execute automatically."
+                notification = self._notification_repo.create(
+                    user_id=user_id,
+                    type="service",
+                    level="info",
+                    title="Unified Service Started",
+                    message=message,
+                )
+                user_logger = get_user_logger(
+                    user_id=user_id, db=self.db, module="MultiUserTradingService"
+                )
+                user_logger.info(
+                    "Created in-app notification for unified service start",
+                    action="notify_service_started",
+                    notification_id=notification.id,
+                )
+
+            # Send Telegram notification if enabled
+            if pref_service.should_notify(
+                user_id, NotificationEventType.SERVICE_STARTED, channel="telegram"
+            ):
+                try:
+                    from modules.kotak_neo_auto_trader.telegram_notifier import (
+                        get_telegram_notifier,
+                    )
+
+                    notifier = get_telegram_notifier(db_session=self.db, user_id=user_id)
+                    if notifier and notifier.enabled:
+                        message = "🚀 *Unified Trading Service Started*\n\nAll scheduled tasks will execute automatically."
+                        notifier.notify_system_alert(message, user_id=user_id)
+                except Exception as e:
+                    user_logger = get_user_logger(
+                        user_id=user_id, db=self.db, module="MultiUserTradingService"
+                    )
+                    user_logger.warning(f"Failed to send Telegram notification: {e}")
+
+            # Send Email notification if enabled
+            if pref_service.should_notify(
+                user_id, NotificationEventType.SERVICE_STARTED, channel="email"
+            ):
+                try:
+                    from services.email_notifier import EmailNotifier
+
+                    email_notifier = EmailNotifier()
+                    if email_notifier.is_available():
+                        preferences = pref_service.get_preferences(user_id)
+                        if preferences and preferences.email_address:
+                            email_notifier.send_service_notification(
+                                email=preferences.email_address,
+                                title="Unified Trading Service Started",
+                                message="Unified Trading Service has started. All scheduled tasks will execute automatically.",
+                                level="info",
+                            )
+                except Exception as e:
+                    user_logger = get_user_logger(
+                        user_id=user_id, db=self.db, module="MultiUserTradingService"
+                    )
+                    user_logger.warning(f"Failed to send email notification: {e}")
+
+        except Exception as e:
+            user_logger = get_user_logger(
+                user_id=user_id, db=self.db, module="MultiUserTradingService"
+            )
+            user_logger.error(
+                f"Failed to send service started notification: {e}",
+                exc_info=e,
+                action="notify_service_started",
+            )
+
+    def _notify_service_stopped(self, user_id: int) -> None:
+        """Send notification when unified service stops"""
+        try:
+            pref_service = NotificationPreferenceService(self.db)
+
+            # Check if in-app notifications are enabled
+            if pref_service.should_notify(
+                user_id, NotificationEventType.SERVICE_STOPPED, channel="in_app"
+            ):
+                message = "Unified Trading Service\nStatus: Stopped\nAll scheduled tasks have been halted."
+                notification = self._notification_repo.create(
+                    user_id=user_id,
+                    type="service",
+                    level="info",
+                    title="Unified Service Stopped",
+                    message=message,
+                )
+                user_logger = get_user_logger(
+                    user_id=user_id, db=self.db, module="MultiUserTradingService"
+                )
+                user_logger.info(
+                    "Created in-app notification for unified service stop",
+                    action="notify_service_stopped",
+                    notification_id=notification.id,
+                )
+
+            # Send Telegram notification if enabled
+            if pref_service.should_notify(
+                user_id, NotificationEventType.SERVICE_STOPPED, channel="telegram"
+            ):
+                try:
+                    from modules.kotak_neo_auto_trader.telegram_notifier import (
+                        get_telegram_notifier,
+                    )
+
+                    notifier = get_telegram_notifier(db_session=self.db, user_id=user_id)
+                    if notifier and notifier.enabled:
+                        message = "🛑 *Unified Trading Service Stopped*\n\nAll scheduled tasks have been halted."
+                        notifier.notify_system_alert(message, user_id=user_id)
+                except Exception as e:
+                    user_logger = get_user_logger(
+                        user_id=user_id, db=self.db, module="MultiUserTradingService"
+                    )
+                    user_logger.warning(f"Failed to send Telegram notification: {e}")
+
+            # Send Email notification if enabled
+            if pref_service.should_notify(
+                user_id, NotificationEventType.SERVICE_STOPPED, channel="email"
+            ):
+                try:
+                    from services.email_notifier import EmailNotifier
+
+                    email_notifier = EmailNotifier()
+                    if email_notifier.is_available():
+                        preferences = pref_service.get_preferences(user_id)
+                        if preferences and preferences.email_address:
+                            email_notifier.send_service_notification(
+                                email=preferences.email_address,
+                                title="Unified Trading Service Stopped",
+                                message="Unified Trading Service has been stopped. All scheduled tasks have been halted.",
+                                level="info",
+                            )
+                except Exception as e:
+                    user_logger = get_user_logger(
+                        user_id=user_id, db=self.db, module="MultiUserTradingService"
+                    )
+                    user_logger.warning(f"Failed to send email notification: {e}")
+
+        except Exception as e:
+            user_logger = get_user_logger(
+                user_id=user_id, db=self.db, module="MultiUserTradingService"
+            )
+            user_logger.error(
+                f"Failed to send service stopped notification: {e}",
+                exc_info=e,
+                action="notify_service_stopped",
+            )

@@ -126,6 +126,11 @@ npm run dev
 3. Go to **Settings**:
    - Configure **Broker Credentials** (Kotak Neo API)
    - Configure **Telegram Settings** (optional)
+     - Enter your Telegram Chat ID
+     - Telegram Bot Token must be set in `.env` file (`TELEGRAM_BOT_TOKEN`)
+   - Configure **Email Settings** (optional)
+     - Enter your email address
+     - SMTP configuration must be set in `.env` file (see SMTP settings above)
 4. Go to **Trading Config** to adjust trading parameters
 
 ## First Steps After Setup

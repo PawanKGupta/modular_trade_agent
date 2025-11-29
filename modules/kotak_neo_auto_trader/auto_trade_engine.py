@@ -1172,7 +1172,9 @@ class AutoTradeEngine:
                         if closed_positions and self.telegram_notifier:
                             for symbol in closed_positions:
                                 self.telegram_notifier.notify_tracking_stopped(
-                                    symbol, "Position fully closed (manual sell detected)"
+                                    symbol,
+                                    "Position fully closed (manual sell detected)",
+                                    user_id=self.user_id,
                                 )
                 except Exception as e:
                     logger.error(f"Manual trade reconciliation error: {e}")
@@ -1384,6 +1386,7 @@ class AutoTradeEngine:
                     order_verifier=self.order_verifier,
                     manual_matcher=self.manual_matcher,
                     telegram_notifier=self.telegram_notifier,
+                    user_id=self.user_id,
                 )
                 logger.info("EOD cleanup initialized")
 

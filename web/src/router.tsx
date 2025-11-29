@@ -12,6 +12,7 @@ import { TargetsPage } from './routes/dashboard/TargetsPage';
 import { ActivityPage } from './routes/dashboard/ActivityPage';
 import { SettingsPage } from './routes/dashboard/SettingsPage';
 import { NotificationPreferencesPage } from './routes/dashboard/NotificationPreferencesPage';
+import { NotificationsPage } from './routes/dashboard/NotificationsPage';
 import { ServiceStatusPage } from './routes/dashboard/ServiceStatusPage';
 import { TradingConfigPage } from './routes/dashboard/TradingConfigPage';
 import { AdminUsersPage } from './routes/dashboard/AdminUsersPage';
@@ -46,6 +47,7 @@ export function createAppRouter() {
 				{ path: 'logs', element: <LogViewerPage /> },
 				{ path: 'settings', element: <SettingsPage /> },
 				{ path: 'notification-preferences', element: <NotificationPreferencesPage /> },
+				{ path: 'notifications', element: <NotificationsPage /> },
 				{ path: 'admin/users', element: <AdminUsersPage /> },
 				{ path: 'admin/ml', element: <MLTrainingPage /> },
 				{ path: 'admin/schedules', element: <ServiceSchedulePage /> },

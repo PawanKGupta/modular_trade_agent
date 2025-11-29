@@ -57,6 +57,18 @@ ADMIN_NAME=Admin User
 # Optional: Encryption key for credential encryption
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 # ENCRYPTION_KEY=your_base64_encoded_key
+
+# Optional: Telegram Bot Token (for notifications)
+# Get from @BotFather on Telegram
+# TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+
+# Optional: Email Notifications (SMTP Configuration)
+# SMTP_HOST=smtp.gmail.com
+# SMTP_PORT=587
+# SMTP_USER=your-email@gmail.com
+# SMTP_PASSWORD=your-app-password-here
+# SMTP_FROM_EMAIL=your-email@gmail.com
+# SMTP_USE_TLS=true
 ```
 
 **Important:** Admin user is only created automatically when:

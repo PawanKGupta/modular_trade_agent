@@ -72,7 +72,7 @@ export function NotificationPreferencesPage() {
 		}
 	};
 
-	const handleEnableAll = (category: 'order' | 'system' | 'retry') => {
+	const handleEnableAll = (category: 'order' | 'system' | 'retry' | 'service') => {
 		if (!localPrefs) return;
 		const updates: Partial<NotificationPreferences> = {};
 
@@ -92,13 +92,17 @@ export function NotificationPreferencesPage() {
 			updates.notify_retry_queue_updated = true;
 			updates.notify_retry_queue_removed = true;
 			updates.notify_retry_queue_retried = true;
+		} else if (category === 'service') {
+			updates.notify_service_started = true;
+			updates.notify_service_stopped = true;
+			updates.notify_service_execution_completed = true;
 		}
 
 		setLocalPrefs({ ...localPrefs, ...updates });
 		setHasChanges(true);
 	};
 
-	const handleDisableAll = (category: 'order' | 'system' | 'retry') => {
+	const handleDisableAll = (category: 'order' | 'system' | 'retry' | 'service') => {
 		if (!localPrefs) return;
 		const updates: Partial<NotificationPreferences> = {};
 
@@ -118,6 +122,10 @@ export function NotificationPreferencesPage() {
 			updates.notify_retry_queue_updated = false;
 			updates.notify_retry_queue_removed = false;
 			updates.notify_retry_queue_retried = false;
+		} else if (category === 'service') {
+			updates.notify_service_started = false;
+			updates.notify_service_stopped = false;
+			updates.notify_service_execution_completed = false;
 		}
 
 		setLocalPrefs({ ...localPrefs, ...updates });
@@ -440,6 +448,64 @@ export function NotificationPreferencesPage() {
 						/>
 						<span>System Info</span>
 						<span className="text-xs text-[var(--muted)]">(Opt-in)</span>
+					</label>
+				</div>
+			</section>
+
+			{/* Service Events */}
+			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
+				<div className="flex items-center justify-between">
+					<div>
+						<h2 className="text-lg font-semibold">Service Events</h2>
+						<p className="text-sm text-[var(--muted)]">
+							Control notifications for service lifecycle events
+						</p>
+					</div>
+					<div className="flex gap-2">
+						<button
+							type="button"
+							onClick={() => handleEnableAll('service')}
+							className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white"
+						>
+							Enable All
+						</button>
+						<button
+							type="button"
+							onClick={() => handleDisableAll('service')}
+							className="text-xs px-2 py-1 rounded bg-gray-600 hover:bg-gray-700 text-white"
+						>
+							Disable All
+						</button>
+					</div>
+				</div>
+
+				<div className="space-y-2">
+					<label className="flex items-center gap-3">
+						<input
+							type="checkbox"
+							checked={localPrefs.notify_service_started}
+							onChange={(e) => handleChange('notify_service_started', e.target.checked)}
+							className="w-4 h-4"
+						/>
+						<span>Service Started</span>
+					</label>
+					<label className="flex items-center gap-3">
+						<input
+							type="checkbox"
+							checked={localPrefs.notify_service_stopped}
+							onChange={(e) => handleChange('notify_service_stopped', e.target.checked)}
+							className="w-4 h-4"
+						/>
+						<span>Service Stopped</span>
+					</label>
+					<label className="flex items-center gap-3">
+						<input
+							type="checkbox"
+							checked={localPrefs.notify_service_execution_completed}
+							onChange={(e) => handleChange('notify_service_execution_completed', e.target.checked)}
+							className="w-4 h-4"
+						/>
+						<span>Service Execution Completed</span>
 					</label>
 				</div>
 			</section>

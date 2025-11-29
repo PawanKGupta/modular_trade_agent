@@ -27,6 +27,10 @@ export type NotificationPreferences = {
 	notify_system_errors: boolean;
 	notify_system_warnings: boolean;
 	notify_system_info: boolean;
+	// Granular service event preferences
+	notify_service_started: boolean;
+	notify_service_stopped: boolean;
+	notify_service_execution_completed: boolean;
 	// Quiet hours
 	quiet_hours_start: string | null; // Time in HH:MM:SS format
 	quiet_hours_end: string | null; // Time in HH:MM:SS format

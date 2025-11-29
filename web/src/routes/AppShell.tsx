@@ -1,11 +1,19 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useSessionStore } from '@/state/sessionStore';
+import { getNotificationCount } from '@/api/notifications';
 
 export function AppShell() {
 	const location = useLocation();
 	const navigate = useNavigate();
 	const { user, isAdmin, logout, refresh } = useSessionStore();
+
+	const { data: notificationCount } = useQuery({
+		queryKey: ['notificationCount'],
+		queryFn: getNotificationCount,
+		refetchInterval: 30000, // Refetch every 30 seconds
+	});
 
 	useEffect(() => {
 		// Ensure we load profile on first mount
@@ -29,7 +37,8 @@ export function AppShell() {
 					<Link to="/dashboard/logs" className="text-[var(--text)] hover:text-[var(--accent)]">Logs</Link>
 					<Link to="/dashboard/trading-config" className="text-[var(--text)] hover:text-[var(--accent)]">Trading Config</Link>
 					<Link to="/dashboard/settings" className="text-[var(--text)] hover:text-[var(--accent)]">Settings</Link>
-					<Link to="/dashboard/notification-preferences" className="text-[var(--text)] hover:text-[var(--accent)]">Notifications</Link>
+					<Link to="/dashboard/notifications" className="text-[var(--text)] hover:text-[var(--accent)]">Notifications</Link>
+					<Link to="/dashboard/notification-preferences" className="text-[var(--text)] hover:text-[var(--accent)] pl-4 text-sm">↳ Preferences</Link>
 					{isAdmin && (
 						<>
 							<Link to="/dashboard/admin/users" className="text-[var(--text)] hover:text-[var(--accent)]">Admin - Users</Link>
@@ -42,7 +51,20 @@ export function AppShell() {
 			<main className="p-6">
 				<div className="flex items-center justify-between mb-6">
 					<div className="text-sm text-[var(--muted)]">{user?.email}</div>
-					<button onClick={() => { logout(); navigate('/login'); }} className="text-sm text-[var(--accent)]">Logout</button>
+					<div className="flex items-center gap-4">
+						<Link
+							to="/dashboard/notifications"
+							className="relative text-[var(--text)] hover:text-[var(--accent)]"
+						>
+							🔔
+							{notificationCount && notificationCount.unread_count > 0 && (
+								<span className="absolute -top-1 -right-1 px-1.5 py-0.5 text-xs rounded-full bg-red-600 text-white">
+									{notificationCount.unread_count > 99 ? '99+' : notificationCount.unread_count}
+								</span>
+							)}
+						</Link>
+						<button onClick={() => { logout(); navigate('/login'); }} className="text-sm text-[var(--accent)]">Logout</button>
+					</div>
 				</div>
 				<Outlet />
 			</main>

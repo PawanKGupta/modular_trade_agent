@@ -28,6 +28,7 @@ from .routers import (
     logs,
     ml,
     notification_preferences,
+    notifications,
     orders,
     paper_trading,
     pnl,
@@ -142,6 +143,7 @@ app.include_router(
 app.include_router(
     notification_preferences.router, prefix="/api/v1/user", tags=["notification-preferences"]
 )
+app.include_router(notifications.router, prefix="/api/v1/user", tags=["notifications"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(ml.router, prefix="/api/v1", tags=["admin-ml"])
 app.include_router(logs.router, prefix="/api/v1", tags=["logs"])

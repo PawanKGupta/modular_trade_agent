@@ -44,6 +44,9 @@ def test_get_notification_preferences_defaults(client):
     assert data["notify_order_modified"] is False  # Opt-in
     assert data["notify_system_warnings"] is False  # Opt-in
     assert data["notify_system_info"] is False  # Opt-in
+    assert data["notify_service_started"] is True
+    assert data["notify_service_stopped"] is True
+    assert data["notify_service_execution_completed"] is True
 
 
 def test_update_notification_preferences_requires_auth():
@@ -111,6 +114,9 @@ def test_update_notification_preferences_all_fields(client):
         "notify_system_errors": True,
         "notify_system_warnings": True,  # Opt-in
         "notify_system_info": False,
+        "notify_service_started": True,
+        "notify_service_stopped": False,
+        "notify_service_execution_completed": True,
         "quiet_hours_start": "22:00:00",
         "quiet_hours_end": "08:00:00",
     }
@@ -141,6 +147,9 @@ def test_update_notification_preferences_all_fields(client):
     assert data["notify_system_errors"] is True
     assert data["notify_system_warnings"] is True
     assert data["notify_system_info"] is False
+    assert data["notify_service_started"] is True
+    assert data["notify_service_stopped"] is False
+    assert data["notify_service_execution_completed"] is True
     assert data["quiet_hours_start"] == "22:00:00"
     assert data["quiet_hours_end"] == "08:00:00"
 
@@ -312,3 +321,19 @@ def test_update_notification_preferences_granular_events(client):
     assert data["notify_order_rejected"] is False
     assert data["notify_order_cancelled"] is True
     assert data["notify_order_modified"] is True
+
+    # Test service event preferences
+    resp = client.put(
+        "/api/v1/user/notification-preferences",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "notify_service_started": False,
+            "notify_service_stopped": True,
+            "notify_service_execution_completed": False,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["notify_service_started"] is False
+    assert data["notify_service_stopped"] is True
+    assert data["notify_service_execution_completed"] is False

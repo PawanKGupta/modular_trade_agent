@@ -70,6 +70,9 @@ class TestNotificationPreferenceService:
             notify_system_errors=True,
             notify_system_warnings=False,
             notify_system_info=False,
+            notify_service_started=True,
+            notify_service_stopped=True,
+            notify_service_execution_completed=True,
             quiet_hours_start=None,
             quiet_hours_end=None,
         )
@@ -147,6 +150,9 @@ class TestNotificationPreferenceService:
         assert result.notify_order_placed is True
         assert result.notify_order_modified is False
         assert result.notify_system_warnings is False
+        assert result.notify_service_started is True
+        assert result.notify_service_stopped is True
+        assert result.notify_service_execution_completed is True
         service.db.add.assert_called_once()
         service.db.commit.assert_called_once()
 
@@ -399,9 +405,15 @@ class TestNotificationPreferenceService:
         """Test that all_event_types returns all event types"""
         event_types = NotificationEventType.all_event_types()
 
-        assert len(event_types) == 13
+        assert (
+            len(event_types) == 17
+        )  # 10 order/retry + 3 system + 3 service + 1 legacy SERVICE_EVENT
         assert NotificationEventType.ORDER_PLACED in event_types
         assert NotificationEventType.SYSTEM_INFO in event_types
+        assert NotificationEventType.SERVICE_STARTED in event_types
+        assert NotificationEventType.SERVICE_STOPPED in event_types
+        assert NotificationEventType.SERVICE_EXECUTION_COMPLETED in event_types
+        assert NotificationEventType.SERVICE_EVENT in event_types  # Legacy event type
 
     def test_should_notify_all_event_types(self, service, sample_preferences):
         """Test should_notify for all event types"""
@@ -422,6 +434,9 @@ class TestNotificationPreferenceService:
             NotificationEventType.SYSTEM_ERROR,
             NotificationEventType.SYSTEM_WARNING,
             NotificationEventType.SYSTEM_INFO,
+            NotificationEventType.SERVICE_STARTED,
+            NotificationEventType.SERVICE_STOPPED,
+            NotificationEventType.SERVICE_EXECUTION_COMPLETED,
         ]
 
         for event_type in event_types:

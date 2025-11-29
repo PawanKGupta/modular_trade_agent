@@ -541,6 +541,12 @@ class UserNotificationPreferences(Base):
     notify_system_errors: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_system_warnings: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     notify_system_info: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Granular service event preferences (Service Notifications)
+    notify_service_started: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_service_stopped: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_service_execution_completed: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
     # Quiet hours (optional)
     quiet_hours_start: Mapped[time | None] = mapped_column(Time, nullable=True)
     quiet_hours_end: Mapped[time | None] = mapped_column(Time, nullable=True)

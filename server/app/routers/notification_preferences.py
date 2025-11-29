@@ -50,6 +50,9 @@ def _preferences_to_response(prefs: UserNotificationPreferences) -> Notification
         notify_system_errors=prefs.notify_system_errors,
         notify_system_warnings=prefs.notify_system_warnings,
         notify_system_info=prefs.notify_system_info,
+        notify_service_started=prefs.notify_service_started,
+        notify_service_stopped=prefs.notify_service_stopped,
+        notify_service_execution_completed=prefs.notify_service_execution_completed,
         quiet_hours_start=prefs.quiet_hours_start,
         quiet_hours_end=prefs.quiet_hours_end,
     )

@@ -255,6 +255,30 @@ results = asyncio.run(analyze())
 - Granular event type filtering
 - Channel enablement checking
 
+#### EmailNotifier
+**Location:** `services/email_notifier.py`
+
+**Purpose:** Send email notifications via SMTP.
+
+**Configuration:**
+- Reads SMTP settings from environment variables:
+  - `SMTP_HOST`: SMTP server hostname (e.g., smtp.gmail.com)
+  - `SMTP_PORT`: SMTP server port (default: 587)
+  - `SMTP_USER`: SMTP username/email
+  - `SMTP_PASSWORD`: SMTP password or app password
+  - `SMTP_FROM_EMAIL`: From email address (defaults to SMTP_USER)
+  - `SMTP_USE_TLS`: Use TLS encryption (default: True)
+
+**Methods:**
+- `is_available()` - Check if SMTP is configured
+- `send_service_notification(to_email, title, message, level)` - Send service event notification
+- `send_email(to_email, subject, body, html_body=None)` - Send generic email
+
+**Integration:**
+- Used by `IndividualServiceManager` and `MultiUserTradingService` for service event notifications
+- Respects user email preferences and notification preferences
+- Only sends if email is enabled in user preferences and SMTP is configured
+
 #### TelegramNotifier
 **Location:** `modules/kotak_neo_auto_trader/telegram_notifier.py`
 

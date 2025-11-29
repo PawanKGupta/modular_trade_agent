@@ -54,6 +54,17 @@ class NotificationPreferencesResponse(BaseModel):
     )
     notify_system_info: bool = Field(default=False, description="Notify on system info (opt-in)")
 
+    # Granular service event preferences
+    notify_service_started: bool = Field(
+        default=True, description="Notify when a service is started"
+    )
+    notify_service_stopped: bool = Field(
+        default=True, description="Notify when a service is stopped"
+    )
+    notify_service_execution_completed: bool = Field(
+        default=True, description="Notify when a service execution completes"
+    )
+
     # Quiet hours
     quiet_hours_start: time | None = Field(
         default=None, description="Start time for quiet hours (HH:MM format)"
@@ -142,6 +153,17 @@ class NotificationPreferencesUpdate(BaseModel):
         default=None, description="Notify on system warnings"
     )
     notify_system_info: bool | None = Field(default=None, description="Notify on system info")
+
+    # Granular service event preferences
+    notify_service_started: bool | None = Field(
+        default=None, description="Notify when a service is started"
+    )
+    notify_service_stopped: bool | None = Field(
+        default=None, description="Notify when a service is stopped"
+    )
+    notify_service_execution_completed: bool | None = Field(
+        default=None, description="Notify when a service execution completes"
+    )
 
     # Quiet hours
     quiet_hours_start: time | None = Field(

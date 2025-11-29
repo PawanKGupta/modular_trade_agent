@@ -40,6 +40,11 @@ class NotificationEventType:
     SYSTEM_WARNING = "system_warning"
     SYSTEM_INFO = "system_info"
 
+    # Service events (granular)
+    SERVICE_STARTED = "service_started"
+    SERVICE_STOPPED = "service_stopped"
+    SERVICE_EXECUTION_COMPLETED = "service_execution_completed"
+
     # Legacy event types (for backward compatibility)
     SERVICE_EVENT = "service_event"
     TRADING_EVENT = "trading_event"
@@ -63,6 +68,10 @@ class NotificationEventType:
             cls.SYSTEM_ERROR,
             cls.SYSTEM_WARNING,
             cls.SYSTEM_INFO,
+            cls.SERVICE_STARTED,
+            cls.SERVICE_STOPPED,
+            cls.SERVICE_EXECUTION_COMPLETED,
+            cls.SERVICE_EVENT,  # Legacy
         ]
 
 
@@ -157,6 +166,10 @@ class NotificationPreferenceService:
                 notify_system_errors=True,
                 notify_system_warnings=False,  # Reduce noise
                 notify_system_info=False,  # Reduce noise
+                # Granular service event preferences
+                notify_service_started=True,
+                notify_service_stopped=True,
+                notify_service_execution_completed=True,
             )
             self.db.add(preferences)
             try:
@@ -287,6 +300,10 @@ class NotificationPreferenceService:
             NotificationEventType.SYSTEM_ERROR: preferences.notify_system_errors,
             NotificationEventType.SYSTEM_WARNING: preferences.notify_system_warnings,
             NotificationEventType.SYSTEM_INFO: preferences.notify_system_info,
+            # Granular service event types
+            NotificationEventType.SERVICE_STARTED: preferences.notify_service_started,
+            NotificationEventType.SERVICE_STOPPED: preferences.notify_service_stopped,
+            NotificationEventType.SERVICE_EXECUTION_COMPLETED: preferences.notify_service_execution_completed,
             # Legacy event types (for backward compatibility)
             NotificationEventType.SERVICE_EVENT: preferences.notify_service_events,
             NotificationEventType.TRADING_EVENT: preferences.notify_trading_events,

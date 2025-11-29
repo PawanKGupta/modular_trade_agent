@@ -11,24 +11,24 @@ SOLID Principles:
 Phase 2 Feature: End-of-day cleanup and summary
 """
 
-import os
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List, Callable
-from pathlib import Path
-
 # Use existing project logger
 import sys
+from collections.abc import Callable
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger
 
+from .manual_order_matcher import ManualOrderMatcher, get_manual_order_matcher
+from .order_status_verifier import OrderStatusVerifier
+from .order_tracker import OrderTracker, get_order_tracker
+from .telegram_notifier import TelegramNotifier, get_telegram_notifier
+
 # Import Phase 1 and Phase 2 modules
 from .tracking_scope import TrackingScope, get_tracking_scope
-from .order_tracker import OrderTracker, get_order_tracker
-from .order_status_verifier import OrderStatusVerifier
-from .manual_order_matcher import ManualOrderMatcher, get_manual_order_matcher
-from .telegram_notifier import TelegramNotifier, get_telegram_notifier
 
 
 class EODCleanup:
@@ -40,11 +40,12 @@ class EODCleanup:
     def __init__(
         self,
         broker_client,
-        tracking_scope: Optional[TrackingScope] = None,
-        order_tracker: Optional[OrderTracker] = None,
-        order_verifier: Optional[OrderStatusVerifier] = None,
-        manual_matcher: Optional[ManualOrderMatcher] = None,
-        telegram_notifier: Optional[TelegramNotifier] = None,
+        tracking_scope: TrackingScope | None = None,
+        order_tracker: OrderTracker | None = None,
+        order_verifier: OrderStatusVerifier | None = None,
+        manual_matcher: ManualOrderMatcher | None = None,
+        telegram_notifier: TelegramNotifier | None = None,
+        user_id: int | None = None,
     ):
         """
         Initialize EOD cleanup manager.
@@ -56,6 +57,7 @@ class EODCleanup:
             order_verifier: OrderStatusVerifier instance
             manual_matcher: ManualOrderMatcher instance
             telegram_notifier: TelegramNotifier instance
+            user_id: Optional user ID for notification preferences
         """
         self.broker_client = broker_client
         self.tracking_scope = tracking_scope or get_tracking_scope()
@@ -63,8 +65,9 @@ class EODCleanup:
         self.order_verifier = order_verifier
         self.manual_matcher = manual_matcher or get_manual_order_matcher()
         self.telegram_notifier = telegram_notifier or get_telegram_notifier()
+        self.user_id = user_id
 
-    def run_eod_cleanup(self) -> Dict[str, Any]:
+    def run_eod_cleanup(self) -> dict[str, Any]:
         """
         Execute complete end-of-day cleanup workflow.
 
@@ -173,7 +176,7 @@ class EODCleanup:
 
         return results
 
-    def _verify_all_pending_orders(self) -> Dict[str, Any]:
+    def _verify_all_pending_orders(self) -> dict[str, Any]:
         """
         Final verification of all pending orders.
 
@@ -207,7 +210,9 @@ class EODCleanup:
                 )
                 return {**counts, "skipped": True, "source": "OrderStatusVerifier"}
             else:
-                logger.warning("OrderStatusVerifier has no last check time, proceeding with verification")
+                logger.warning(
+                    "OrderStatusVerifier has no last check time, proceeding with verification"
+                )
 
         # OrderStatusVerifier hasn't run recently or doesn't have last check time
         # Perform verification now
@@ -223,7 +228,7 @@ class EODCleanup:
 
         return counts
 
-    def _reconcile_manual_trades(self) -> Dict[str, Any]:
+    def _reconcile_manual_trades(self) -> dict[str, Any]:
         """Reconcile manual trades with tracked symbols."""
         try:
             # Fetch current holdings from broker
@@ -254,7 +259,7 @@ class EODCleanup:
             logger.error(f"Manual trade reconciliation error: {e}", exc_info=True)
             return {"error": str(e)}
 
-    def _cleanup_stale_orders(self, max_age_hours: int = 24) -> Dict[str, Any]:
+    def _cleanup_stale_orders(self, max_age_hours: int = 24) -> dict[str, Any]:
         """
         Remove stale pending orders older than max_age_hours.
 
@@ -309,7 +314,7 @@ class EODCleanup:
             "cutoff_time": cutoff_time.isoformat(),
         }
 
-    def _generate_daily_statistics(self) -> Dict[str, Any]:
+    def _generate_daily_statistics(self) -> dict[str, Any]:
         """Generate comprehensive daily statistics."""
         stats = {}
 
@@ -347,7 +352,7 @@ class EODCleanup:
 
         return stats
 
-    def _send_telegram_summary(self, statistics: Dict[str, Any]) -> bool:
+    def _send_telegram_summary(self, statistics: dict[str, Any]) -> bool:
         """Send daily summary via Telegram."""
         if not self.telegram_notifier or not self.telegram_notifier.enabled:
             logger.info("Telegram notifier disabled, skipping summary")
@@ -371,9 +376,10 @@ class EODCleanup:
                 "Manual Sells": reconciliation.get("manual_sells_detected", 0),
                 "Positions Closed": len(reconciliation.get("closed_positions", [])),
             },
+            user_id=self.user_id,
         )
 
-    def _archive_completed_entries(self) -> Dict[str, Any]:
+    def _archive_completed_entries(self) -> dict[str, Any]:
         """
         Archive completed tracking entries (optional future enhancement).
         For now, just counts them.
@@ -396,7 +402,7 @@ class EODCleanup:
 
 
 # Singleton instance
-_eod_cleanup_instance: Optional[EODCleanup] = None
+_eod_cleanup_instance: EODCleanup | None = None
 
 
 def get_eod_cleanup(broker_client, **kwargs) -> EODCleanup:
@@ -419,7 +425,7 @@ def get_eod_cleanup(broker_client, **kwargs) -> EODCleanup:
 
 
 def schedule_eod_cleanup(
-    broker_client, target_time: str = "18:00", callback: Optional[Callable] = None
+    broker_client, target_time: str = "18:00", callback: Callable | None = None
 ) -> None:
     """
     Schedule EOD cleanup to run at specific time daily.
@@ -433,8 +439,8 @@ def schedule_eod_cleanup(
         This is a simple implementation. For production, consider using
         a proper scheduler like APScheduler or system cron.
     """
-    import time
     import threading
+    import time
 
     def wait_and_run():
         while True:

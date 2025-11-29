@@ -450,9 +450,12 @@ class TelegramNotifier:
         orders_pending: int,
         tracked_symbols: int,
         additional_stats: dict[str, Any] | None = None,
+        user_id: int | None = None,
     ) -> bool:
         """
         Send end-of-day summary notification.
+
+        Phase 3: Added user_id parameter for preference checking.
 
         Args:
             orders_placed: Total orders placed today
@@ -461,10 +464,15 @@ class TelegramNotifier:
             orders_pending: Still pending orders
             tracked_symbols: Number of symbols being tracked
             additional_stats: Optional additional statistics
+            user_id: Optional user ID for preference checking
 
         Returns:
             True if sent successfully
         """
+        # Phase 3: Check preferences
+        if not self._should_send_notification(user_id, NotificationEventType.SYSTEM_INFO):
+            return False
+
         date = datetime.now().strftime("%Y-%m-%d")
 
         message = (
@@ -488,22 +496,33 @@ class TelegramNotifier:
         message += f"\nSuccess Rate: {success_rate:.1f}%"
 
         logger.info("Sending daily summary notification")
-        return self.send_message(message)
+        return self.send_message(message, user_id=user_id)
 
     def notify_tracking_stopped(
-        self, symbol: str, reason: str, tracking_duration: str | None = None
+        self,
+        symbol: str,
+        reason: str,
+        tracking_duration: str | None = None,
+        user_id: int | None = None,
     ) -> bool:
         """
         Send notification when symbol tracking stops.
+
+        Phase 3: Added user_id parameter for preference checking.
 
         Args:
             symbol: Trading symbol
             reason: Reason for stopping tracking
             tracking_duration: How long symbol was tracked
+            user_id: Optional user ID for preference checking
 
         Returns:
             True if sent successfully
         """
+        # Phase 3: Check preferences (use SYSTEM_INFO as tracking stopped is informational)
+        if not self._should_send_notification(user_id, NotificationEventType.SYSTEM_INFO):
+            return False
+
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = f"TRACKING STOPPED\n\nSymbol: `{symbol}`\nReason: {reason}\n"
@@ -514,7 +533,7 @@ class TelegramNotifier:
         message += f"Time: {timestamp}\n"
 
         logger.info(f"Sending tracking stopped notification for {symbol}")
-        return self.send_message(message)
+        return self.send_message(message, user_id=user_id)
 
     def notify_order_placed(
         self,

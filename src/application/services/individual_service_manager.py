@@ -35,12 +35,20 @@ try:
     TELEGRAM_NOTIFIER_AVAILABLE = True
 except ImportError:
     TELEGRAM_NOTIFIER_AVAILABLE = False
+
+try:
+    from services.email_notifier import EmailNotifier
+
+    EMAIL_NOTIFIER_AVAILABLE = True
+except ImportError:
+    EMAIL_NOTIFIER_AVAILABLE = False
 from src.infrastructure.persistence.individual_service_status_repository import (
     IndividualServiceStatusRepository,
 )
 from src.infrastructure.persistence.individual_service_task_execution_repository import (
     IndividualServiceTaskExecutionRepository,
 )
+from src.infrastructure.persistence.notification_repository import NotificationRepository
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.signals_repository import SignalsRepository
@@ -64,6 +72,7 @@ class IndividualServiceManager:
         self._config_repo = UserTradingConfigRepository(db)
         self._conflict_service = ConflictDetectionService(db)
         self._schedule_manager = ScheduleManager(db)
+        self._notification_repo = NotificationRepository(db)
         self._processes: dict[tuple[int, str], subprocess.Popen] = (
             {}
         )  # (user_id, task_name) -> process
@@ -1568,12 +1577,43 @@ class IndividualServiceManager:
 
         return result
 
-    def _get_telegram_notifier(self):
-        """Get Telegram notifier instance with database session for preference checking"""
+    def _get_telegram_notifier(self, user_id: int):
+        """Get Telegram notifier instance with database session and user-specific chat ID"""
         if not TELEGRAM_NOTIFIER_AVAILABLE:
             return None
         try:
-            return get_telegram_notifier(db_session=self.db)
+            # Get user's notification preferences to get Telegram chat ID
+            from services.notification_preference_service import NotificationPreferenceService
+
+            pref_service = NotificationPreferenceService(self.db)
+            preferences = pref_service.get_preferences(user_id)
+
+            # Check if Telegram is enabled for this user
+            if not preferences or not preferences.telegram_enabled:
+                return None
+
+            # Get bot token from environment (global) and chat ID from user preferences
+            import os
+
+            bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+            chat_id = preferences.telegram_chat_id if preferences else None
+
+            # Only create notifier if both bot token and chat ID are available
+            if not bot_token:
+                return None
+            if not chat_id:
+                return None
+
+            # Create a new TelegramNotifier instance (not singleton) for this user
+            # This is necessary because each user has a different chat_id
+            from modules.kotak_neo_auto_trader.telegram_notifier import TelegramNotifier
+
+            return TelegramNotifier(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                enabled=True,
+                db_session=self.db,
+            )
         except Exception as e:
             # Use module-level logger if available, otherwise skip logging
             try:
@@ -1588,101 +1628,287 @@ class IndividualServiceManager:
         self, user_id: int, task_name: str, process_id: int | None = None
     ) -> None:
         """Send notification when a service is started"""
-        notifier = self._get_telegram_notifier()
-        if not notifier or not notifier.enabled:
-            return
+        task_display_name = task_name.replace("_", " ").title()
+        message_text = f"Service: {task_display_name}"
+        if process_id:
+            message_text += f"\nProcess ID: {process_id}"
+        message_text += "\nStatus: Running"
 
-        try:
-            task_display_name = task_name.replace("_", " ").title()
-            message = f"Service Started\n\nService: {task_display_name}\n"
-            if process_id:
-                message += f"Process ID: {process_id}\n"
-            message += "Status: Running"
+        # Check user preferences
+        from services.notification_preference_service import (
+            NotificationEventType,
+            NotificationPreferenceService,
+        )
 
-            notifier.notify_system_alert(
-                alert_type="SERVICE_STARTED",
-                message_text=message,
-                severity="INFO",
-                user_id=user_id,
-            )
-        except Exception as e:
+        pref_service = NotificationPreferenceService(self.db)
+
+        # Send Telegram notification if enabled and preference allows
+        if pref_service.should_notify(
+            user_id, NotificationEventType.SERVICE_STARTED, channel="telegram"
+        ):
+            notifier = self._get_telegram_notifier(user_id)
+            if notifier and notifier.enabled:
+                try:
+                    notifier.notify_system_alert(
+                        alert_type="SERVICE_STARTED",
+                        message_text=f"Service Started\n\n{message_text}",
+                        severity="INFO",
+                        user_id=user_id,
+                    )
+                except Exception as e:
+                    try:
+                        from utils.logger import logger as utils_logger
+
+                        utils_logger.warning(f"Failed to send Telegram notification: {e}")
+                    except ImportError:
+                        pass
+
+        # Create in-app notification first (so we can track email delivery status)
+        notification = None
+        if pref_service.should_notify(
+            user_id, NotificationEventType.SERVICE_STARTED, channel="in_app"
+        ):
             try:
-                from utils.logger import logger as utils_logger
+                notification = self._notification_repo.create(
+                    user_id=user_id,
+                    type="service",
+                    level="info",
+                    title="Service Started",
+                    message=message_text,
+                )
+                logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+                logger.info(
+                    f"Created in-app notification for service start: {task_name}",
+                    action="notify_service_started",
+                    notification_id=notification.id,
+                )
+            except Exception as e:
+                logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+                logger.error(
+                    f"Failed to create in-app notification for service start: {e}",
+                    exc_info=e,
+                    action="notify_service_started",
+                )
 
-                utils_logger.warning(f"Failed to send service started notification: {e}")
-            except ImportError:
-                pass
+        # Send Email notification if enabled and preference allows
+        email_sent = False
+        if pref_service.should_notify(
+            user_id, NotificationEventType.SERVICE_STARTED, channel="email"
+        ):
+            preferences = pref_service.get_preferences(user_id)
+            if preferences and preferences.email_address:
+                if EMAIL_NOTIFIER_AVAILABLE:
+                    try:
+                        email_notifier = EmailNotifier()
+                        if email_notifier.is_available():
+                            email_sent = email_notifier.send_service_notification(
+                                to_email=preferences.email_address,
+                                title="Service Started",
+                                message=message_text,
+                                level="info",
+                            )
+                            # Update notification delivery status if notification was created
+                            if notification and email_sent:
+                                self._notification_repo.update_delivery_status(
+                                    notification_id=notification.id, email_sent=True
+                                )
+                    except Exception as e:
+                        try:
+                            from utils.logger import logger as utils_logger
+
+                            utils_logger.warning(f"Failed to send email notification: {e}")
+                        except ImportError:
+                            pass
 
     def _notify_service_stopped(self, user_id: int, task_name: str) -> None:
         """Send notification when a service is stopped"""
-        notifier = self._get_telegram_notifier()
-        if not notifier or not notifier.enabled:
-            return
+        task_display_name = task_name.replace("_", " ").title()
+        message_text = f"Service: {task_display_name}\nStatus: Stopped"
 
-        try:
-            task_display_name = task_name.replace("_", " ").title()
-            message = f"Service Stopped\n\nService: {task_display_name}\nStatus: Stopped"
+        # Check user preferences
+        from services.notification_preference_service import (
+            NotificationEventType,
+            NotificationPreferenceService,
+        )
 
-            notifier.notify_system_alert(
-                alert_type="SERVICE_STOPPED",
-                message_text=message,
-                severity="INFO",
-                user_id=user_id,
-            )
-        except Exception as e:
+        pref_service = NotificationPreferenceService(self.db)
+
+        # Send Telegram notification if enabled and preference allows
+        if pref_service.should_notify(
+            user_id, NotificationEventType.SERVICE_STOPPED, channel="telegram"
+        ):
+            notifier = self._get_telegram_notifier(user_id)
+            if notifier and notifier.enabled:
+                try:
+                    notifier.notify_system_alert(
+                        alert_type="SERVICE_STOPPED",
+                        message_text=f"Service Stopped\n\n{message_text}",
+                        severity="INFO",
+                        user_id=user_id,
+                    )
+                except Exception as e:
+                    try:
+                        from utils.logger import logger as utils_logger
+
+                        utils_logger.warning(f"Failed to send Telegram notification: {e}")
+                    except ImportError:
+                        pass
+
+        # Create in-app notification first (so we can track email delivery status)
+        notification = None
+        if pref_service.should_notify(
+            user_id, NotificationEventType.SERVICE_STOPPED, channel="in_app"
+        ):
             try:
-                from utils.logger import logger as utils_logger
+                notification = self._notification_repo.create(
+                    user_id=user_id,
+                    type="service",
+                    level="info",
+                    title="Service Stopped",
+                    message=message_text,
+                )
+            except Exception as e:
+                try:
+                    from utils.logger import logger as utils_logger
 
-                utils_logger.warning(f"Failed to send service stopped notification: {e}")
-            except ImportError:
-                pass
+                    utils_logger.warning(f"Failed to create in-app notification: {e}")
+                except ImportError:
+                    pass
+
+        # Send Email notification if enabled and preference allows
+        email_sent = False
+        if pref_service.should_notify(
+            user_id, NotificationEventType.SERVICE_STOPPED, channel="email"
+        ):
+            preferences = pref_service.get_preferences(user_id)
+            if preferences and preferences.email_address:
+                if EMAIL_NOTIFIER_AVAILABLE:
+                    try:
+                        email_notifier = EmailNotifier()
+                        if email_notifier.is_available():
+                            email_sent = email_notifier.send_service_notification(
+                                to_email=preferences.email_address,
+                                title="Service Stopped",
+                                message=message_text,
+                                level="info",
+                            )
+                            # Update notification delivery status if notification was created
+                            if notification and email_sent:
+                                self._notification_repo.update_delivery_status(
+                                    notification_id=notification.id, email_sent=True
+                                )
+                    except Exception as e:
+                        try:
+                            from utils.logger import logger as utils_logger
+
+                            utils_logger.warning(f"Failed to send email notification: {e}")
+                        except ImportError:
+                            pass
 
     def _notify_service_execution_completed(
         self, user_id: int, task_name: str, status: str, duration: float, error: str | None = None
     ) -> None:
         """Send notification when a service execution completes (success or failure)"""
-        notifier = self._get_telegram_notifier()
-        if not notifier or not notifier.enabled:
-            return
+        task_display_name = task_name.replace("_", " ").title()
+        duration_str = f"{duration:.2f}s" if duration < 60 else f"{duration / 60:.1f}m"
 
-        try:
-            task_display_name = task_name.replace("_", " ").title()
-            duration_str = f"{duration:.2f}s" if duration < 60 else f"{duration / 60:.1f}m"
+        # Check user preferences
+        from services.notification_preference_service import (
+            NotificationEventType,
+            NotificationPreferenceService,
+        )
 
-            if status == "success":
-                message = (
-                    f"Service Execution Completed\n\n"
-                    f"Service: {task_display_name}\n"
-                    f"Status: Success\n"
-                    f"Duration: {duration_str}"
-                )
-                severity = "SUCCESS"
-            else:
-                message = (
-                    f"Service Execution Failed\n\n"
-                    f"Service: {task_display_name}\n"
-                    f"Status: Failed\n"
-                    f"Duration: {duration_str}"
-                )
-                if error:
-                    # Truncate error message if too long
-                    error_msg = error[:200] + "..." if len(error) > 200 else error
-                    message += f"\nError: {error_msg}"
-                severity = "ERROR"
+        pref_service = NotificationPreferenceService(self.db)
+        preferences = pref_service.get_preferences(user_id)
 
-            notifier.notify_system_alert(
-                alert_type="SERVICE_EXECUTION",
-                message_text=message,
-                severity=severity,
-                user_id=user_id,
+        if status == "success":
+            title = "Service Execution Completed"
+            message_text = (
+                f"Service: {task_display_name}\nStatus: Success\nDuration: {duration_str}"
             )
-        except Exception as e:
-            try:
-                from utils.logger import logger as utils_logger
+            level = "info"
+            severity = "SUCCESS"
+        else:
+            title = "Service Execution Failed"
+            message_text = f"Service: {task_display_name}\nStatus: Failed\nDuration: {duration_str}"
+            if error:
+                # Truncate error message if too long
+                error_msg = error[:200] + "..." if len(error) > 200 else error
+                message_text += f"\nError: {error_msg}"
+            level = "error"
+            severity = "ERROR"
 
-                utils_logger.warning(f"Failed to send service execution notification: {e}")
-            except ImportError:
-                pass
+        # Send Telegram notification if enabled and preference allows
+        if pref_service.should_notify(
+            user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="telegram"
+        ):
+            notifier = self._get_telegram_notifier(user_id)
+            if notifier and notifier.enabled:
+                try:
+                    notifier.notify_system_alert(
+                        alert_type="SERVICE_EXECUTION",
+                        message_text=f"{title}\n\n{message_text}",
+                        severity=severity,
+                        user_id=user_id,
+                    )
+                except Exception as e:
+                    try:
+                        from utils.logger import logger as utils_logger
+
+                        utils_logger.warning(f"Failed to send Telegram notification: {e}")
+                    except ImportError:
+                        pass
+
+        # Create in-app notification first (so we can track email delivery status)
+        notification = None
+        if pref_service.should_notify(
+            user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="in_app"
+        ):
+            try:
+                notification = self._notification_repo.create(
+                    user_id=user_id,
+                    type="service",
+                    level=level,
+                    title=title,
+                    message=message_text,
+                )
+            except Exception as e:
+                try:
+                    from utils.logger import logger as utils_logger
+
+                    utils_logger.warning(f"Failed to create in-app notification: {e}")
+                except ImportError:
+                    pass
+
+        # Send Email notification if enabled and preference allows
+        email_sent = False
+        if pref_service.should_notify(
+            user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="email"
+        ):
+            preferences = pref_service.get_preferences(user_id)
+            if preferences and preferences.email_address:
+                if EMAIL_NOTIFIER_AVAILABLE:
+                    try:
+                        email_notifier = EmailNotifier()
+                        if email_notifier.is_available():
+                            email_sent = email_notifier.send_service_notification(
+                                to_email=preferences.email_address,
+                                title=title,
+                                message=message_text,
+                                level=level,
+                            )
+                            # Update notification delivery status if notification was created
+                            if notification and email_sent:
+                                self._notification_repo.update_delivery_status(
+                                    notification_id=notification.id, email_sent=True
+                                )
+                    except Exception as e:
+                        try:
+                            from utils.logger import logger as utils_logger
+
+                            utils_logger.warning(f"Failed to send email notification: {e}")
+                        except ImportError:
+                            pass
 
     def cleanup_stopped_processes(self) -> int:
         """Clean up processes that have stopped (for crash detection)"""

@@ -27,6 +27,9 @@ const mockPreferences = {
 	notify_system_errors: true,
 	notify_system_warnings: false,
 	notify_system_info: false,
+	notify_service_started: true,
+	notify_service_stopped: true,
+	notify_service_execution_completed: true,
 	quiet_hours_start: null,
 	quiet_hours_end: null,
 };
@@ -69,6 +72,7 @@ describe('NotificationPreferencesPage', () => {
 		expect(screen.getByText(/Order Events/i)).toBeInTheDocument();
 		expect(screen.getByText(/Retry Queue Events/i)).toBeInTheDocument();
 		expect(screen.getByText(/System Events/i)).toBeInTheDocument();
+		expect(screen.getByText(/Service Events/i)).toBeInTheDocument();
 		expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
 	});
 
@@ -241,6 +245,59 @@ describe('NotificationPreferencesPage', () => {
 			const endTimeInput = screen.getByLabelText(/End Time/i) as HTMLInputElement;
 			expect(startTimeInput.value).toBe('');
 			expect(endTimeInput.value).toBe('');
+		});
+	});
+
+	it('allows toggling service event preferences', async () => {
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Service Events/i)).toBeInTheDocument();
+		});
+
+		// Toggle service started
+		const serviceStartedCheckbox = screen.getByLabelText(/Service Started/i) as HTMLInputElement;
+		expect(serviceStartedCheckbox.checked).toBe(true);
+		fireEvent.click(serviceStartedCheckbox);
+		expect(serviceStartedCheckbox.checked).toBe(false);
+
+		// Toggle service stopped
+		const serviceStoppedCheckbox = screen.getByLabelText(/Service Stopped/i) as HTMLInputElement;
+		expect(serviceStoppedCheckbox.checked).toBe(true);
+		fireEvent.click(serviceStoppedCheckbox);
+		expect(serviceStoppedCheckbox.checked).toBe(false);
+
+		// Toggle service execution completed
+		const serviceExecutionCheckbox = screen.getByLabelText(/Service Execution Completed/i) as HTMLInputElement;
+		expect(serviceExecutionCheckbox.checked).toBe(true);
+		fireEvent.click(serviceExecutionCheckbox);
+		expect(serviceExecutionCheckbox.checked).toBe(false);
+
+		// Should show unsaved changes
+		expect(screen.getByText(/Unsaved changes/i)).toBeInTheDocument();
+	});
+
+	it('allows enabling all service events', async () => {
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Service Events/i)).toBeInTheDocument();
+		});
+
+		// Find the Enable All button for Service Events section
+		const enableAllButtons = screen.getAllByRole('button', { name: /Enable All/i });
+		// Service Events section should have Enable All button (it's the 4th section)
+		const serviceEnableAllButton = enableAllButtons[3];
+		fireEvent.click(serviceEnableAllButton);
+
+		// All service event checkboxes should be checked
+		await waitFor(() => {
+			const serviceStarted = screen.getByLabelText(/Service Started/i) as HTMLInputElement;
+			const serviceStopped = screen.getByLabelText(/Service Stopped/i) as HTMLInputElement;
+			const serviceExecution = screen.getByLabelText(/Service Execution Completed/i) as HTMLInputElement;
+			expect(serviceStarted.checked).toBe(true);
+			expect(serviceStopped.checked).toBe(true);
+			expect(serviceExecution.checked).toBe(true);
 		});
 	});
 });
