@@ -41,5 +41,14 @@ USER trader
 # Expose API port
 EXPOSE 8000
 
-# Run the API server
-CMD ["uvicorn", "server.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Create startup script that runs migrations then starts the server
+RUN echo '#!/bin/bash\n\
+set -e\n\
+echo "Running database migrations..."\n\
+python -m alembic upgrade head\n\
+echo "Starting API server..."\n\
+exec uvicorn server.app.main:app --host 0.0.0.0 --port 8000\n\
+' > /app/start.sh && chmod +x /app/start.sh
+
+# Run migrations then start the API server
+CMD ["/app/start.sh"]

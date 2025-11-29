@@ -112,6 +112,12 @@ docker-compose -f docker-compose.yml build api-server
 docker-compose -f docker-compose.yml restart api-server
 ```
 
+### Run Database Migrations Manually
+```bash
+# If you need to run migrations manually (usually runs automatically on startup)
+docker-compose -f docker-compose.yml exec api-server python -m alembic upgrade head
+```
+
 ### Check Status
 ```bash
 docker-compose -f docker-compose.yml ps
