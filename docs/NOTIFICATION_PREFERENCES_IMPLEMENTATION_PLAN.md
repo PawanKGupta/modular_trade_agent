@@ -160,7 +160,7 @@ This plan implements granular notification preferences for users, allowing them 
 - ✅ Event type constants
 - ✅ Unit tests (28 test cases, all passing)
 
-**See:** `docs/PHASE2_NOTIFICATION_PREFERENCES_COMPLETE.md` for details.
+**Details:** See implementation plan above for complete details.
 
 ---
 
@@ -200,7 +200,7 @@ This plan implements granular notification preferences for users, allowing them 
 - ✅ Backward compatibility maintained
 - ✅ Integration tests (16 test cases, all passing)
 
-**See:** `docs/PHASE3_NOTIFICATION_PREFERENCES_COMPLETE.md` for details.
+**Details:** See implementation plan above for complete details.
 
 ---
 
@@ -246,7 +246,7 @@ This plan implements granular notification preferences for users, allowing them 
 - ✅ Integration with order monitoring (OrderStateManager)
 - ✅ Integration tests (5 test cases, all passing)
 
-**See:** `docs/PHASE4_NOTIFICATION_PREFERENCES_COMPLETE.md` for details.
+**Details:** See implementation plan above for complete details.
 
 ---
 
@@ -325,7 +325,7 @@ This plan implements granular notification preferences for users, allowing them 
 - ✅ Responsive design (Tailwind CSS)
 - ✅ TypeScript types and build verification
 
-**See:** `docs/PHASE6_NOTIFICATION_PREFERENCES_COMPLETE.md` for details.
+**Details:** See implementation plan above for complete details.
 
 ---
 
