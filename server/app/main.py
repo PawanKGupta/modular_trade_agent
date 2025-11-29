@@ -16,6 +16,7 @@ from src.application.services.log_retention_service import LogRetentionService
 from src.infrastructure.db.base import Base
 from src.infrastructure.db.models import UserRole, Users
 from src.infrastructure.db.session import SessionLocal, engine
+from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.user_repository import UserRepository
 
 from .core.config import settings
@@ -92,12 +93,16 @@ async def ensure_db_schema():
             if users_count == 0 and settings.admin_email and settings.admin_password:
                 try:
                     print(f"[Startup] No users found. Creating admin user {settings.admin_email}")
-                    UserRepository(db).create_user(
+                    user = UserRepository(db).create_user(
                         email=settings.admin_email,
                         password=settings.admin_password,
                         name=settings.admin_name,
                         role=UserRole.ADMIN,
                     )
+                    # Create default settings for admin user (required for services to work)
+                    print(f"[Startup] Creating default settings for admin user {user.id}")
+                    SettingsRepository(db).ensure_default(user.id)
+                    print("[Startup] Admin user and settings created successfully")
                 except Exception as e:
                     print(f"[Startup] Failed to create admin user: {e}")
     except Exception as e:
