@@ -70,6 +70,7 @@ The Modular Trade Agent is a **multi-user, web-based trading system** with the f
 - `admin.py` - Admin operations
 - `user.py` - User management
 - `activity.py` - Activity tracking
+- `notification_preferences.py` - Notification preferences management
 
 #### Core (`server/app/core/`)
 - `config.py` - Application configuration
@@ -190,6 +191,106 @@ results = asyncio.run(analyze())
 - Position tracking
 - Paper trading adapter
 - Scheduled service execution
+
+### 6. Notification System
+
+**Location:** `modules/kotak_neo_auto_trader/telegram_notifier.py` and `services/notification_preference_service.py`
+
+**Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│              Notification Sources                        │
+│  (AutoTradeEngine, UnifiedOrderMonitor, etc.)           │
+└────────────────────┬──────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│            TelegramNotifier                             │
+│  - Rate limiting (10/min, 100/hour)                    │
+│  - Message formatting                                    │
+│  - Preference checking                                   │
+└────────────────────┬──────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│      NotificationPreferenceService                      │
+│  - Get user preferences                                 │
+│  - Check if notification should be sent                 │
+│  - Check quiet hours                                    │
+│  - Get enabled channels                                 │
+│  - Cache management (5 min TTL)                         │
+└────────────────────┬──────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│         UserNotificationPreferences                      │
+│  (Database Table)                                       │
+│  - Channel preferences (Telegram, Email, In-App)        │
+│  - Event type preferences (26 granular events)        │
+│  - Quiet hours                                          │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Key Components:**
+
+#### NotificationPreferenceService
+**Location:** `services/notification_preference_service.py`
+
+**Purpose:** Centralized service for managing and checking user notification preferences.
+
+**Key Methods:**
+- `get_preferences(user_id)` - Get user preferences (with caching)
+- `get_or_create_default_preferences(user_id)` - Get or create default preferences
+- `update_preferences(user_id, preferences_dict)` - Update user preferences
+- `should_notify(user_id, event_type, channel)` - Check if notification should be sent
+- `is_quiet_hours(user_id)` - Check if current time is within quiet hours
+- `get_enabled_channels(user_id)` - Get list of enabled notification channels
+- `clear_cache(user_id)` - Clear preference cache
+
+**Features:**
+- In-memory caching (5-minute TTL) to reduce database queries
+- Automatic default preference creation for new users
+- Support for quiet hours (including spanning midnight)
+- Granular event type filtering
+- Channel enablement checking
+
+#### TelegramNotifier
+**Location:** `modules/kotak_neo_auto_trader/telegram_notifier.py`
+
+**Purpose:** Send notifications via Telegram with preference checking.
+
+**Integration:**
+- Automatically checks user preferences before sending
+- Respects quiet hours
+- Checks channel enablement
+- Maps notification methods to event types
+
+**Notification Methods:**
+- `notify_order_placed()` → `ORDER_PLACED`
+- `notify_order_rejection()` → `ORDER_REJECTED`
+- `notify_order_execution()` → `ORDER_EXECUTED`
+- `notify_order_cancelled()` → `ORDER_CANCELLED`
+- `notify_order_modified()` → `ORDER_MODIFIED` (new in Phase 4)
+- `notify_partial_fill()` → `PARTIAL_FILL`
+- `notify_retry_queue_updated()` → `RETRY_QUEUE_*` events
+- `notify_system_alert()` → `SYSTEM_ERROR/WARNING/INFO`
+
+**Event Types:**
+See [Notification Event Types](#notification-event-types) section below.
+
+#### Database Schema
+**Table:** `user_notification_preferences`
+
+**Columns:**
+- **Channels:** `telegram_enabled`, `telegram_chat_id`, `email_enabled`, `email_address`, `in_app_enabled`
+- **Order Events:** `notify_order_placed`, `notify_order_rejected`, `notify_order_executed`, `notify_order_cancelled`, `notify_order_modified`, `notify_partial_fill`
+- **Retry Queue Events:** `notify_retry_queue_added`, `notify_retry_queue_updated`, `notify_retry_queue_removed`, `notify_retry_queue_retried`
+- **System Events:** `notify_system_errors`, `notify_system_warnings`, `notify_system_info`
+- **Quiet Hours:** `quiet_hours_start`, `quiet_hours_end`
+- **Legacy:** `notify_service_events`, `notify_trading_events`, `notify_system_events`, `notify_errors`
+
+**Migration:** See [Migration Guide](#notification-preferences-migration) section below.
 
 ## Data Flow
 
@@ -418,3 +519,115 @@ results = asyncio.run(analyze())
 
 4. **Production Deployment**
    - `docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d`
+
+## Notification Event Types
+
+**Location:** `services/notification_preference_service.py` - `NotificationEventType` class
+
+### Order Events
+
+- **`ORDER_PLACED`**: Order placed successfully
+- **`ORDER_REJECTED`**: Order rejected by broker
+- **`ORDER_EXECUTED`**: Order executed/filled
+- **`ORDER_CANCELLED`**: Order cancelled
+- **`ORDER_MODIFIED`**: Order manually modified (opt-in)
+- **`PARTIAL_FILL`**: Order partially filled
+
+### Retry Queue Events
+
+- **`RETRY_QUEUE_ADDED`**: Order added to retry queue
+- **`RETRY_QUEUE_UPDATED`**: Retry queue updated
+- **`RETRY_QUEUE_REMOVED`**: Order removed from retry queue
+- **`RETRY_QUEUE_RETRIED`**: Order retried successfully
+
+### System Events
+
+- **`SYSTEM_ERROR`**: System errors (enabled by default)
+- **`SYSTEM_WARNING`**: System warnings (opt-in, disabled by default)
+- **`SYSTEM_INFO`**: System information messages (opt-in, disabled by default)
+
+### Legacy Event Types (Backward Compatibility)
+
+- **`SERVICE_EVENT`**: Maps to service-related events
+- **`TRADING_EVENT`**: Maps to trading-related events
+- **`SYSTEM_EVENT`**: Maps to system events
+- **`ERROR`**: Maps to error events
+
+**Usage:**
+```python
+from services.notification_preference_service import NotificationEventType
+
+# Check if notification should be sent
+service = NotificationPreferenceService(db_session)
+should_send = service.should_notify(
+    user_id=1,
+    event_type=NotificationEventType.ORDER_PLACED,
+    channel="telegram"
+)
+```
+
+## Notification Preferences Migration
+
+### Database Migration
+
+**Migration File:** `alembic/versions/53c66ed1105b_add_granular_notification_preferences.py`
+
+**Steps:**
+1. Run Alembic migration:
+   ```bash
+   alembic upgrade head
+   ```
+
+2. Verify migration:
+   ```bash
+   alembic current
+   ```
+
+**What Changed:**
+- Added 13 new boolean columns to `user_notification_preferences` table
+- All new columns default to `TRUE` (except opt-in events: `ORDER_MODIFIED`, `SYSTEM_WARNING`, `SYSTEM_INFO`)
+- Existing users automatically get default preferences (backward compatible)
+
+**Rollback:**
+```bash
+alembic downgrade -1
+```
+
+### API Changes
+
+**New Endpoints:**
+- `GET /api/v1/user/notification-preferences` - Get user preferences
+- `PUT /api/v1/user/notification-preferences` - Update user preferences
+
+**Request/Response Schemas:**
+- `NotificationPreferencesResponse` - Response model with all preference fields
+- `NotificationPreferencesUpdate` - Request model (all fields optional for partial updates)
+
+**Breaking Changes:** None - all changes are additive.
+
+### Code Changes
+
+**New Service:**
+- `NotificationPreferenceService` - Centralized preference management
+
+**Updated Components:**
+- `TelegramNotifier` - Now checks preferences before sending
+- `AutoTradeEngine` - Passes `user_id` to notification methods
+- `UnifiedOrderMonitor` - Passes `user_id` to notification methods
+- `OrderStateManager` - Passes `user_id` and detects order modifications
+
+**Backward Compatibility:**
+- All notification methods accept optional `user_id` parameter
+- If `user_id` is `None`, notifications are sent (legacy behavior)
+- Default preferences maintain current behavior (all events enabled)
+
+### Frontend Changes
+
+**New Page:**
+- `/dashboard/notification-preferences` - Notification preferences settings page
+
+**New API Client:**
+- `web/src/api/notification-preferences.ts` - API client for preferences
+
+**Navigation:**
+- Added "Notifications" link to sidebar navigation

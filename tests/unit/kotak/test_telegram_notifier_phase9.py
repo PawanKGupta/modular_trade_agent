@@ -44,6 +44,7 @@ class TestTelegramNotifierPhase9(unittest.TestCase):
             order_id="ORDER123",
             quantity=10,
             order_type="MARKET",
+            user_id=None,  # Phase 3: Test backward compatibility
         )
 
         self.assertTrue(result)

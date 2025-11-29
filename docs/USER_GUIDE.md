@@ -169,6 +169,85 @@ Complete guide to using the Modular Trade Agent web interface.
 - Chat ID
 - Enable/disable notifications
 
+### Notification Preferences
+
+**Purpose:** Control which notifications you receive and how
+
+**Location:** Dashboard → Notifications (or `/dashboard/notification-preferences`)
+
+**Features:**
+
+#### Notification Channels
+Choose how you want to receive notifications:
+
+- **In-App Notifications**: Show notifications in the web interface (enabled by default)
+- **Telegram**: Receive notifications via Telegram bot
+  - Enable the toggle
+  - Enter your Telegram Chat ID (required when enabled)
+- **Email**: Receive notifications via email
+  - Enable the toggle
+  - Enter your email address (required when enabled)
+
+#### Order Events
+Control notifications for order-related events:
+
+- **Order Placed**: Notify when an order is placed (enabled by default)
+- **Order Executed**: Notify when an order is executed (enabled by default)
+- **Order Rejected**: Notify when an order is rejected (enabled by default)
+- **Order Cancelled**: Notify when an order is cancelled (enabled by default)
+- **Order Modified (Manual)**: Notify when an order is manually modified (opt-in, disabled by default)
+- **Partial Fill**: Notify when an order is partially filled (enabled by default)
+
+**Quick Actions:**
+- Click **Enable All** to enable all order event notifications
+- Click **Disable All** to disable all order event notifications
+
+#### Retry Queue Events
+Control notifications for retry queue operations:
+
+- **Order Added to Retry Queue**: Notify when an order is added to retry queue (enabled by default)
+- **Retry Queue Updated**: Notify when retry queue is updated (enabled by default)
+- **Order Removed from Retry Queue**: Notify when an order is removed from retry queue (enabled by default)
+- **Order Retried Successfully**: Notify when an order is retried successfully (enabled by default)
+
+**Quick Actions:**
+- Click **Enable All** to enable all retry queue notifications
+- Click **Disable All** to disable all retry queue notifications
+
+#### System Events
+Control notifications for system-level events:
+
+- **System Errors**: Notify on system errors (enabled by default)
+- **System Warnings**: Notify on system warnings (opt-in, disabled by default)
+- **System Info**: Notify on system information messages (opt-in, disabled by default)
+
+**Quick Actions:**
+- Click **Enable All** to enable all system event notifications
+- Click **Disable All** to disable all system event notifications
+
+#### Quiet Hours
+Set a time range when notifications will be suppressed:
+
+1. **Set Start Time**: Choose when quiet hours begin (e.g., 22:00 for 10 PM)
+2. **Set End Time**: Choose when quiet hours end (e.g., 08:00 for 8 AM)
+3. **Clear**: Click "Clear" to disable quiet hours
+
+**Example:** Set quiet hours from 22:00 to 08:00 to suppress notifications during nighttime.
+
+**Note:** Quiet hours can span midnight (e.g., 22:00 - 08:00 means 10 PM to 8 AM).
+
+**Usage:**
+1. Navigate to **Notifications** page
+2. Configure your preferences
+3. Click **Save Preferences** to apply changes
+4. Changes take effect immediately
+
+**Tips:**
+- Start with default settings and adjust based on your needs
+- Use quiet hours to avoid notifications during sleep or meetings
+- Disable notifications you don't need to reduce noise
+- Enable "Order Modified" only if you manually modify orders and want to track changes
+
 ### Admin Pages (Admin Only)
 
 #### Users

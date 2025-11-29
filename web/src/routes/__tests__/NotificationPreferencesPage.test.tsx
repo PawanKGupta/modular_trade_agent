@@ -1,0 +1,246 @@
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { NotificationPreferencesPage } from '../dashboard/NotificationPreferencesPage';
+import { withProviders } from '@/test/utils';
+
+const mockPreferences = {
+	telegram_enabled: false,
+	telegram_chat_id: null,
+	email_enabled: false,
+	email_address: null,
+	in_app_enabled: true,
+	notify_service_events: true,
+	notify_trading_events: true,
+	notify_system_events: true,
+	notify_errors: true,
+	notify_order_placed: true,
+	notify_order_rejected: true,
+	notify_order_executed: true,
+	notify_order_cancelled: true,
+	notify_order_modified: false,
+	notify_retry_queue_added: true,
+	notify_retry_queue_updated: true,
+	notify_retry_queue_removed: true,
+	notify_retry_queue_retried: true,
+	notify_partial_fill: true,
+	notify_system_errors: true,
+	notify_system_warnings: false,
+	notify_system_info: false,
+	quiet_hours_start: null,
+	quiet_hours_end: null,
+};
+
+// Mock the API
+vi.mock('@/api/notification-preferences', () => ({
+	getNotificationPreferences: vi.fn(() => Promise.resolve(mockPreferences)),
+	updateNotificationPreferences: vi.fn(() => Promise.resolve(mockPreferences)),
+}));
+
+describe('NotificationPreferencesPage', () => {
+	const renderPage = () =>
+		render(
+			withProviders(
+				<MemoryRouter initialEntries={['/dashboard/notification-preferences']}>
+					<NotificationPreferencesPage />
+				</MemoryRouter>
+			)
+		);
+
+	beforeEach(async () => {
+		const notificationApi = await import('@/api/notification-preferences');
+		vi.mocked(notificationApi.getNotificationPreferences).mockResolvedValue(mockPreferences);
+		vi.mocked(notificationApi.updateNotificationPreferences).mockResolvedValue(mockPreferences);
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('loads and displays notification preferences', async () => {
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
+		});
+
+		// Check that sections are rendered
+		expect(screen.getByText(/Notification Channels/i)).toBeInTheDocument();
+		expect(screen.getByText(/Order Events/i)).toBeInTheDocument();
+		expect(screen.getByText(/Retry Queue Events/i)).toBeInTheDocument();
+		expect(screen.getByText(/System Events/i)).toBeInTheDocument();
+		expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
+	});
+
+	it('shows loading state initially', async () => {
+		const notificationApi = await import('@/api/notification-preferences');
+		vi.mocked(notificationApi.getNotificationPreferences).mockImplementation(
+			() => new Promise(() => {}) // Never resolves
+		);
+
+		renderPage();
+		expect(screen.getByText(/Loading notification preferences/i)).toBeInTheDocument();
+	});
+
+	it('allows toggling individual preferences', async () => {
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
+		});
+
+		// Toggle a preference
+		const orderPlacedCheckbox = screen.getByLabelText(/Order Placed/i) as HTMLInputElement;
+		expect(orderPlacedCheckbox.checked).toBe(true);
+
+		fireEvent.click(orderPlacedCheckbox);
+		expect(orderPlacedCheckbox.checked).toBe(false);
+
+		// Should show unsaved changes
+		expect(screen.getByText(/Unsaved changes/i)).toBeInTheDocument();
+	});
+
+	it('shows conditional fields when channels are enabled', async () => {
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
+		});
+
+		// Enable Telegram
+		const telegramCheckbox = screen.getByLabelText(/Telegram/i) as HTMLInputElement;
+		fireEvent.click(telegramCheckbox);
+
+		await waitFor(() => {
+			expect(screen.getByPlaceholderText(/Telegram Chat ID/i)).toBeInTheDocument();
+		});
+
+		// Enable Email
+		const emailCheckbox = screen.getByLabelText(/Email/i) as HTMLInputElement;
+		fireEvent.click(emailCheckbox);
+
+		await waitFor(() => {
+			expect(screen.getByPlaceholderText(/Email address/i)).toBeInTheDocument();
+		});
+	});
+
+	it('allows saving preferences', async () => {
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
+		});
+
+		// Make a change
+		const orderPlacedCheckbox = screen.getByLabelText(/Order Placed/i);
+		fireEvent.click(orderPlacedCheckbox);
+
+		// Save
+		const saveButton = screen.getByRole('button', { name: /Save Preferences/i });
+		fireEvent.click(saveButton);
+
+		await waitFor(async () => {
+			const notificationApi = await import('@/api/notification-preferences');
+			expect(notificationApi.updateNotificationPreferences).toHaveBeenCalled();
+			expect(screen.getByText(/saved successfully/i)).toBeInTheDocument();
+		});
+	});
+
+	it('disables save button when no changes', async () => {
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
+		});
+
+		const saveButton = screen.getByRole('button', { name: /Save Preferences/i });
+		expect(saveButton).toBeDisabled();
+	});
+
+	it('shows error message on save failure', async () => {
+		const notificationApi = await import('@/api/notification-preferences');
+		vi.mocked(notificationApi.updateNotificationPreferences).mockRejectedValue(
+			new Error('Failed to save')
+		);
+
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
+		});
+
+		// Make a change
+		const orderPlacedCheckbox = screen.getByLabelText(/Order Placed/i);
+		fireEvent.click(orderPlacedCheckbox);
+
+		// Save
+		const saveButton = screen.getByRole('button', { name: /Save Preferences/i });
+		fireEvent.click(saveButton);
+
+		await waitFor(() => {
+			expect(screen.getByText(/Failed to save/i)).toBeInTheDocument();
+		});
+	});
+
+	it('allows enabling all order events', async () => {
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Order Events/i)).toBeInTheDocument();
+		});
+
+		const enableAllButton = screen.getAllByRole('button', { name: /Enable All/i })[0];
+		fireEvent.click(enableAllButton);
+
+		// All order event checkboxes should be checked
+		await waitFor(() => {
+			const orderPlaced = screen.getByLabelText(/Order Placed/i) as HTMLInputElement;
+			const orderExecuted = screen.getByLabelText(/Order Executed/i) as HTMLInputElement;
+			expect(orderPlaced.checked).toBe(true);
+			expect(orderExecuted.checked).toBe(true);
+		});
+	});
+
+	it('allows setting quiet hours', async () => {
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
+		});
+
+		const startTimeInput = screen.getByLabelText(/Start Time/i) as HTMLInputElement;
+		const endTimeInput = screen.getByLabelText(/End Time/i) as HTMLInputElement;
+
+		fireEvent.change(startTimeInput, { target: { value: '22:00' } });
+		fireEvent.change(endTimeInput, { target: { value: '08:00' } });
+
+		expect(startTimeInput.value).toBe('22:00');
+		expect(endTimeInput.value).toBe('08:00');
+	});
+
+	it('allows clearing quiet hours', async () => {
+		const prefsWithQuietHours = {
+			...mockPreferences,
+			quiet_hours_start: '22:00:00',
+			quiet_hours_end: '08:00:00',
+		};
+		const notificationApi = await import('@/api/notification-preferences');
+		vi.mocked(notificationApi.getNotificationPreferences).mockResolvedValue(prefsWithQuietHours);
+
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
+		});
+
+		const clearButton = screen.getByRole('button', { name: /Clear/i });
+		fireEvent.click(clearButton);
+
+		await waitFor(() => {
+			const startTimeInput = screen.getByLabelText(/Start Time/i) as HTMLInputElement;
+			const endTimeInput = screen.getByLabelText(/End Time/i) as HTMLInputElement;
+			expect(startTimeInput.value).toBe('');
+			expect(endTimeInput.value).toBe('');
+		});
+	});
+});

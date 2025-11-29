@@ -709,6 +709,9 @@ class TestUnifiedOrderMonitor:
         mock_telegram = Mock()
         mock_telegram.enabled = True
         mock_telegram.notify_order_execution = Mock(return_value=True)
+        # Mock preference service to allow notifications
+        mock_telegram.preference_service = None  # No preference service = legacy behavior
+        mock_telegram._should_send_notification = Mock(return_value=True)  # Always allow
         unified_monitor.telegram_notifier = mock_telegram
 
         order_info = {"symbol": "RELIANCE", "quantity": 10.0}
@@ -721,6 +724,7 @@ class TestUnifiedOrderMonitor:
             order_id="ORDER1",
             quantity=10,
             executed_price=2455.50,
+            user_id=unified_monitor.user_id,
         )
 
     def test_handle_buy_order_execution_no_notification_when_disabled(self, unified_monitor):
@@ -742,6 +746,9 @@ class TestUnifiedOrderMonitor:
         mock_telegram = Mock()
         mock_telegram.enabled = True
         mock_telegram.notify_order_rejection = Mock(return_value=True)
+        # Mock preference service to allow notifications
+        mock_telegram.preference_service = None  # No preference service = legacy behavior
+        mock_telegram._should_send_notification = Mock(return_value=True)  # Always allow
         unified_monitor.telegram_notifier = mock_telegram
 
         order_info = {"symbol": "RELIANCE", "quantity": 10.0}
@@ -754,6 +761,7 @@ class TestUnifiedOrderMonitor:
             order_id="ORDER1",
             quantity=10,
             rejection_reason="Insufficient balance",
+            user_id=unified_monitor.user_id,
         )
 
     def test_handle_buy_order_rejection_sends_notification_unknown_reason(self, unified_monitor):
@@ -761,6 +769,9 @@ class TestUnifiedOrderMonitor:
         mock_telegram = Mock()
         mock_telegram.enabled = True
         mock_telegram.notify_order_rejection = Mock(return_value=True)
+        # Mock preference service to allow notifications
+        mock_telegram.preference_service = None  # No preference service = legacy behavior
+        mock_telegram._should_send_notification = Mock(return_value=True)  # Always allow
         unified_monitor.telegram_notifier = mock_telegram
 
         order_info = {"symbol": "RELIANCE", "quantity": 10.0}
@@ -773,6 +784,7 @@ class TestUnifiedOrderMonitor:
             order_id="ORDER1",
             quantity=10,
             rejection_reason="Unknown",
+            user_id=unified_monitor.user_id,
         )
 
     def test_handle_buy_order_cancellation_sends_notification(self, unified_monitor):
@@ -780,6 +792,9 @@ class TestUnifiedOrderMonitor:
         mock_telegram = Mock()
         mock_telegram.enabled = True
         mock_telegram.notify_order_cancelled = Mock(return_value=True)
+        # Mock preference service to allow notifications
+        mock_telegram.preference_service = None  # No preference service = legacy behavior
+        mock_telegram._should_send_notification = Mock(return_value=True)  # Always allow
         unified_monitor.telegram_notifier = mock_telegram
 
         order_info = {"symbol": "RELIANCE", "quantity": 10.0}
@@ -791,6 +806,7 @@ class TestUnifiedOrderMonitor:
             symbol="RELIANCE",
             order_id="ORDER1",
             cancellation_reason="User cancelled",
+            user_id=unified_monitor.user_id,
         )
 
     def test_handle_buy_order_cancellation_no_notification_when_disabled(self, unified_monitor):

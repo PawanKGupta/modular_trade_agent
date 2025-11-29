@@ -911,24 +911,58 @@ class OrderStateManager:
         Send notification for manual modification.
 
         Phase 10: Notifications for manual activity.
+        Phase 4: Updated to use notify_order_modified() with preference checking.
 
         Args:
             symbol: Trading symbol
             order_id: Order ID
-            modification_text: Description of modifications
+            modification_text: Description of modifications (e.g., "price: Rs 100.00 → Rs 105.00, quantity: 10 → 15")
         """
         if not self.telegram_notifier or not self.telegram_notifier.enabled:
             return
 
         try:
-            message = (
-                f"⚠️ MANUAL MODIFICATION DETECTED\n\n"
-                f"Symbol: `{symbol}`\n"
-                f"Order ID: `{order_id}`\n"
-                f"Changes: {modification_text}\n\n"
-                f"Order was modified manually in broker app."
+            # Phase 4: Parse modification_text into structured changes dict
+            changes = {}
+            # Parse format: "price: Rs 100.00 → Rs 105.00, quantity: 10 → 15"
+            parts = modification_text.split(", ")
+            for part in parts:
+                if ":" in part and "→" in part:
+                    # Extract field name and values
+                    field_part, values_part = part.split(":", 1)
+                    field = field_part.strip()
+                    values = values_part.split("→")
+                    if len(values) == 2:
+                        old_str = values[0].strip()
+                        new_str = values[1].strip()
+
+                        # Parse values based on field type
+                        if field == "price":
+                            # Remove "Rs" prefix and parse float
+                            old_value = float(old_str.replace("Rs", "").strip())
+                            new_value = float(new_str.replace("Rs", "").strip())
+                            changes["price"] = (old_value, new_value)
+                        elif field == "quantity":
+                            old_value = int(float(old_str))  # Handle float quantities
+                            new_value = int(float(new_str))
+                            changes["quantity"] = (old_value, new_value)
+                        else:
+                            # Generic: try to parse as number, fallback to string
+                            try:
+                                old_value = float(old_str) if "." in old_str else int(old_str)
+                                new_value = float(new_str) if "." in new_str else int(new_str)
+                            except ValueError:
+                                old_value = old_str
+                                new_value = new_str
+                            changes[field] = (old_value, new_value)
+
+            # Phase 4: Use notify_order_modified() with preference checking
+            self.telegram_notifier.notify_order_modified(
+                symbol=symbol,
+                order_id=order_id,
+                changes=changes,
+                user_id=self.user_id,
             )
-            self.telegram_notifier.send_message(message)
         except Exception as e:
             logger.warning(f"Failed to send manual modification notification: {e}")
 
@@ -953,6 +987,7 @@ class OrderStateManager:
                 symbol=symbol,
                 order_id=order_id,
                 cancellation_reason=f"Manual: {cancellation_reason}",
+                user_id=self.user_id,
             )
         except Exception as e:
             logger.warning(f"Failed to send manual cancellation notification: {e}")

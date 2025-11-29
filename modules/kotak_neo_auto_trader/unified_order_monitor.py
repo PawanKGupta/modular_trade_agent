@@ -337,6 +337,7 @@ class UnifiedOrderMonitor:
                     order_id=order_id,
                     quantity=int(execution_qty),
                     executed_price=execution_price,
+                    user_id=self.user_id,
                 )
             except Exception as e:
                 logger.warning(f"Failed to send execution notification: {e}")
@@ -389,6 +390,7 @@ class UnifiedOrderMonitor:
                     order_id=order_id,
                     quantity=int(quantity),
                     rejection_reason=rejection_reason,
+                    user_id=self.user_id,
                 )
             except Exception as e:
                 logger.warning(f"Failed to send rejection notification: {e}")
@@ -436,6 +438,7 @@ class UnifiedOrderMonitor:
                     symbol=symbol,
                     order_id=order_id,
                     cancellation_reason=cancelled_reason,
+                    user_id=self.user_id,
                 )
             except Exception as e:
                 logger.warning(f"Failed to send cancellation notification: {e}")

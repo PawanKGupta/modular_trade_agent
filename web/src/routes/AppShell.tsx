@@ -29,6 +29,7 @@ export function AppShell() {
 					<Link to="/dashboard/logs" className="text-[var(--text)] hover:text-[var(--accent)]">Logs</Link>
 					<Link to="/dashboard/trading-config" className="text-[var(--text)] hover:text-[var(--accent)]">Trading Config</Link>
 					<Link to="/dashboard/settings" className="text-[var(--text)] hover:text-[var(--accent)]">Settings</Link>
+					<Link to="/dashboard/notification-preferences" className="text-[var(--text)] hover:text-[var(--accent)]">Notifications</Link>
 					{isAdmin && (
 						<>
 							<Link to="/dashboard/admin/users" className="text-[var(--text)] hover:text-[var(--accent)]">Admin - Users</Link>

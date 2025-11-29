@@ -613,6 +613,7 @@ class AutoTradeEngine:
                                     action="updated",
                                     retry_count=retry_count + 1,
                                     additional_info={"reason": failure_reason_str},
+                                    user_id=self.user_id,
                                 )
                             except Exception as notify_error:
                                 logger.warning(
@@ -664,6 +665,7 @@ class AutoTradeEngine:
                                     action="added",
                                     retry_count=0,
                                     additional_info={"reason": failure_reason_str},
+                                    user_id=self.user_id,
                                 )
                             except Exception as notify_error:
                                 logger.warning(
@@ -728,6 +730,7 @@ class AutoTradeEngine:
                                         symbol=symbol,
                                         action="removed",
                                         retry_count=retry_count,
+                                        user_id=self.user_id,
                                     )
                                 except Exception as notify_error:
                                     logger.warning(
@@ -1324,7 +1327,8 @@ class AutoTradeEngine:
         try:
             # 1. Initialize Telegram Notifier
             if self._enable_telegram:
-                self.telegram_notifier = get_telegram_notifier()
+                # Phase 3: Pass db_session for preference checking
+                self.telegram_notifier = get_telegram_notifier(db_session=self.db)
                 logger.info(
                     f"Telegram notifier initialized (enabled: {self.telegram_notifier.enabled})"
                 )
@@ -1346,13 +1350,19 @@ class AutoTradeEngine:
                         tracker = get_order_tracker()
                         pending_order = tracker.get_order_by_id(order_id)
                         qty = pending_order.get("qty", 0) if pending_order else 0
-                        self.telegram_notifier.notify_order_rejection(symbol, order_id, qty, reason)
+                        # Phase 3: Pass user_id for preference checking
+                        self.telegram_notifier.notify_order_rejection(
+                            symbol, order_id, qty, reason, user_id=self.user_id
+                        )
 
                 def on_execution(symbol: str, order_id: str, qty: int):
                     """Callback when order is executed."""
                     logger.info(f"Order executed: {symbol} ({order_id}) - {qty} shares")
                     if self.telegram_notifier and self.telegram_notifier.enabled:
-                        self.telegram_notifier.notify_order_execution(symbol, order_id, qty)
+                        # Phase 3: Pass user_id for preference checking
+                        self.telegram_notifier.notify_order_execution(
+                            symbol, order_id, qty, user_id=self.user_id
+                        )
 
                 self.order_verifier = get_order_status_verifier(
                     broker_client=self.orders,
@@ -1990,6 +2000,7 @@ class AutoTradeEngine:
                     quantity=qty,
                     order_type=order_type,
                     price=limit_price,
+                    user_id=self.user_id,
                 )
             except Exception as e:
                 logger.warning(f"Failed to send order placed notification: {e}")
@@ -2544,6 +2555,7 @@ class AutoTradeEngine:
                                     symbol=symbol,
                                     action="linked_manual_order",
                                     retry_count=db_order.retry_count or 0,
+                                    user_id=self.user_id,
                                     additional_info={
                                         "manual_order_id": manual_order_id,
                                         "manual_qty": manual_qty,
@@ -2669,6 +2681,7 @@ class AutoTradeEngine:
                                 symbol=symbol,
                                 action="retried_successfully",
                                 retry_count=retry_count,
+                                user_id=self.user_id,
                                 additional_info={"order_id": order_id},
                             )
                         except Exception as notify_error:

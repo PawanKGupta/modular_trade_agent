@@ -6,8 +6,7 @@ Tests detection of manual cancellations and modifications for buy orders.
 
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime
+from unittest.mock import Mock
 
 import pytest
 
@@ -16,7 +15,6 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from modules.kotak_neo_auto_trader.order_state_manager import OrderStateManager
-from modules.kotak_neo_auto_trader.domain.value_objects.order_enums import OrderStatus
 
 
 @pytest.fixture
@@ -26,6 +24,10 @@ def mock_telegram_notifier():
     notifier.enabled = True
     notifier.send_message = Mock(return_value=True)
     notifier.notify_order_cancelled = Mock(return_value=True)
+    notifier.notify_order_modified = Mock(return_value=True)
+    # Mock preference service to allow notifications
+    notifier.preference_service = None  # No preference service = legacy behavior (always send)
+    notifier._should_send_notification = Mock(return_value=True)  # Always allow notifications
     return notifier
 
 
@@ -55,7 +57,9 @@ def order_state_manager(mock_telegram_notifier, mock_orders_repo):
 class TestManualActivityDetectionPhase10:
     """Test Phase 10 manual activity detection"""
 
-    def test_detect_manual_price_modification(self, order_state_manager, mock_telegram_notifier, mock_orders_repo):
+    def test_detect_manual_price_modification(
+        self, order_state_manager, mock_telegram_notifier, mock_orders_repo
+    ):
         """Test detection of manual price modification"""
         # Register buy order with original price
         order_id = "ORDER123"
@@ -84,13 +88,13 @@ class TestManualActivityDetectionPhase10:
         assert stats.get("buy_manual_modified", 0) == 1
         assert order_info["price"] == 2495.0  # Updated price
 
-        # Verify notification was sent
-        mock_telegram_notifier.send_message.assert_called_once()
-        message = mock_telegram_notifier.send_message.call_args[0][0]
-        assert "MANUAL MODIFICATION" in message
-        assert "ORDER123" in message
-        assert "2500" in message  # Original price
-        assert "2495" in message  # New price
+        # Verify notification was sent (now uses notify_order_modified)
+        mock_telegram_notifier.notify_order_modified.assert_called_once()
+        call_args = mock_telegram_notifier.notify_order_modified.call_args
+        assert call_args[1]["symbol"] == "RELIANCE"
+        assert call_args[1]["order_id"] == "ORDER123"
+        assert "price" in call_args[1]["changes"]
+        assert call_args[1]["changes"]["price"] == (2500.0, 2495.0)
 
     def test_detect_manual_quantity_modification(self, order_state_manager, mock_telegram_notifier):
         """Test detection of manual quantity modification"""
@@ -121,12 +125,17 @@ class TestManualActivityDetectionPhase10:
         assert stats.get("buy_manual_modified", 0) == 1
         assert order_info["quantity"] == 15  # Updated quantity
 
-        # Verify notification was sent
-        mock_telegram_notifier.send_message.assert_called_once()
-        message = mock_telegram_notifier.send_message.call_args[0][0]
-        assert "quantity: 10 → 15" in message
+        # Verify notification was sent (now uses notify_order_modified)
+        mock_telegram_notifier.notify_order_modified.assert_called_once()
+        call_args = mock_telegram_notifier.notify_order_modified.call_args
+        assert call_args[1]["symbol"] == "RELIANCE"
+        assert call_args[1]["order_id"] == "ORDER123"
+        assert "quantity" in call_args[1]["changes"]
+        assert call_args[1]["changes"]["quantity"] == (10, 15)
 
-    def test_detect_manual_price_and_quantity_modification(self, order_state_manager, mock_telegram_notifier):
+    def test_detect_manual_price_and_quantity_modification(
+        self, order_state_manager, mock_telegram_notifier
+    ):
         """Test detection of both price and quantity modifications"""
         # Register buy order
         order_id = "ORDER123"
@@ -156,11 +165,13 @@ class TestManualActivityDetectionPhase10:
         assert order_info["price"] == 2495.0
         assert order_info["quantity"] == 15
 
-        # Verify notification includes both changes
-        mock_telegram_notifier.send_message.assert_called_once()
-        message = mock_telegram_notifier.send_message.call_args[0][0]
-        assert "price" in message
-        assert "quantity" in message
+        # Verify notification includes both changes (now uses notify_order_modified)
+        mock_telegram_notifier.notify_order_modified.assert_called_once()
+        call_args = mock_telegram_notifier.notify_order_modified.call_args
+        assert "price" in call_args[1]["changes"]
+        assert "quantity" in call_args[1]["changes"]
+        assert call_args[1]["changes"]["price"] == (2500.0, 2495.0)
+        assert call_args[1]["changes"]["quantity"] == (10, 15)
 
     def test_no_modification_detected_when_values_match(self, order_state_manager):
         """Test that no modification is detected when values match"""
@@ -190,7 +201,9 @@ class TestManualActivityDetectionPhase10:
         # Verify no modification was detected
         assert stats.get("buy_manual_modified", 0) == 0
 
-    def test_handle_manual_cancellation(self, order_state_manager, mock_telegram_notifier, mock_orders_repo):
+    def test_handle_manual_cancellation(
+        self, order_state_manager, mock_telegram_notifier, mock_orders_repo
+    ):
         """Test handling of manual cancellation"""
         # Register buy order
         order_id = "ORDER123"
@@ -223,7 +236,9 @@ class TestManualActivityDetectionPhase10:
         assert call_args[1]["order_id"] == order_id
         assert "Manual" in call_args[1]["cancellation_reason"]
 
-    def test_sync_with_broker_detects_manual_cancellation(self, order_state_manager, mock_telegram_notifier):
+    def test_sync_with_broker_detects_manual_cancellation(
+        self, order_state_manager, mock_telegram_notifier
+    ):
         """Test that sync_with_broker detects manual cancellation"""
         # Register buy order
         order_id = "ORDER123"
@@ -253,7 +268,9 @@ class TestManualActivityDetectionPhase10:
         # Verify notification was sent
         mock_telegram_notifier.notify_order_cancelled.assert_called_once()
 
-    def test_sync_with_broker_detects_manual_modification(self, order_state_manager, mock_telegram_notifier):
+    def test_sync_with_broker_detects_manual_modification(
+        self, order_state_manager, mock_telegram_notifier
+    ):
         """Test that sync_with_broker detects manual modification"""
         # Register buy order
         order_id = "ORDER123"
@@ -281,8 +298,8 @@ class TestManualActivityDetectionPhase10:
         # Verify manual modification was detected
         assert stats.get("buy_manual_modified", 0) == 1
 
-        # Verify notification was sent
-        mock_telegram_notifier.send_message.assert_called_once()
+        # Verify notification was sent (now uses notify_order_modified)
+        mock_telegram_notifier.notify_order_modified.assert_called_once()
 
     def test_update_db_for_manual_modification(self, order_state_manager, mock_orders_repo):
         """Test database update for manual modification"""
@@ -430,4 +447,3 @@ class TestManualActivityDetectionPhase10:
 
         # Should not raise exception
         order_state_manager._handle_manual_cancellation(order_id, order_info, broker_order)
-
