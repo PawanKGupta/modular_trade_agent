@@ -1,0 +1,21 @@
+# Development Dockerfile for Web Frontend
+# For development with hot reloading
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY web/package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy web source (will be overridden by volume mount in dev)
+COPY web/ ./
+
+# Expose Vite dev server port
+EXPOSE 5173
+
+# Run dev server
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

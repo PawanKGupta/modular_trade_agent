@@ -131,6 +131,7 @@ export function BuyingZonePage() {
 		queryKey: ['buying-zone', dateFilter, statusFilter],
 		queryFn: () => getBuyingZone(100, dateFilter, statusFilter),
 	});
+	const totalSignals = data?.length ?? 0;
 
 	// Reject signal mutation
 	const rejectMutation = useMutation({
@@ -400,9 +401,9 @@ export function BuyingZonePage() {
 			</div>
 
 			{/* Results Count */}
-			{(data ?? []).length > 0 && (
+			{totalSignals > 0 && (
 				<div className="text-sm text-[var(--muted)]">
-					Showing {data.length} {statusFilter === 'active' ? 'active' : statusFilter} signal{data.length === 1 ? '' : 's'}
+					Showing {totalSignals} {statusFilter === 'active' ? 'active' : statusFilter} signal{totalSignals === 1 ? '' : 's'}
 					{dateFilter === 'today' && ' from today'}
 					{dateFilter === 'yesterday' && ' from yesterday'}
 					{dateFilter === 'last_10_days' && ' from last 10 days'}

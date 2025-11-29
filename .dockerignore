@@ -1,0 +1,73 @@
+# .dockerignore - Files to exclude from Docker build context
+# Similar to .gitignore, but for Docker builds
+# This makes builds faster and images smaller
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+# Logs
+logs/*.log
+*.log
+
+# Data files (we'll mount these as volumes)
+data/*.db
+data/*.db-journal
+analysis_results/
+paper_trading/
+
+# Environment files (sensitive - should be mounted, not copied)
+*.env
+cred.env
+kotak_neo.env
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+documents/
+*.md
+!README.md
+
+# Build artifacts
+dist/
+build/
+*.spec
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node modules (for web)
+web/node_modules/
+web/coverage/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

@@ -1,0 +1,65 @@
+# Production Docker Compose Overrides (Oracle Ubuntu)
+# Optimized for Oracle Cloud Free Tier Ubuntu deployment
+# Usage: cd docker && docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Or from project root: docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+#
+# Production-specific configurations:
+# - Resource limits (optimized for Oracle Free Tier)
+# - Logging configuration
+# - Security settings
+# - Health checks
+# - Named volumes for data persistence
+
+services:
+  api-server:
+    # Production: Don't mount source code
+    volumes:
+      - trading_data:/app/data
+      - trading_logs:/app/logs
+
+    # Production logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+        compress: "true"
+
+    # Production resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  web-frontend:
+    # Production: Use nginx with proper configuration
+    # No source code mount - uses built image only
+
+    # Production logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+        compress: "true"
+
+    # Minimal resources for static file serving
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+# Production volumes (named volumes for better management)
+volumes:
+  trading_data:
+    driver: local
+  trading_logs:
+    driver: local

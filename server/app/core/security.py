@@ -2,27 +2,29 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from jose import JWTError, jwt
-from passlib.hash import bcrypt
+from passlib.hash import pbkdf2_sha256
 
 from .config import settings
 
 
-def _truncate_for_bcrypt(password: str) -> str:
-    # bcrypt limits to 72 bytes; truncate to avoid backend errors
-    try:
-        b = password.encode("utf-8")[:72]
-        return b.decode("utf-8", errors="ignore")
-    except Exception:
-        # Fallback best-effort
-        return password[:72]
-
-
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.verify(plain, hashed)
+    """
+    Verify a password against a stored hash.
+
+    Uses PBKDF2-HMAC-SHA256 (via passlib.pbkdf2_sha256), which avoids
+    bcrypt's 72-byte limit and backend-specific issues.
+    """
+    return pbkdf2_sha256.verify(plain, hashed)
 
 
 def hash_password(plain: str) -> str:
-    return bcrypt.hash(_truncate_for_bcrypt(plain))
+    """
+    Hash a password using PBKDF2-HMAC-SHA256.
+
+    This avoids bcrypt-specific limitations while remaining secure for
+    application-level password storage.
+    """
+    return pbkdf2_sha256.hash(plain)
 
 
 def create_jwt_token(

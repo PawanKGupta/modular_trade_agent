@@ -67,11 +67,18 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
             )
-        # Handle legacy plain-text passwords (from initial fallback) by detecting non-bcrypt hashes
+        # Verify password using passlib (supports all passlib hash formats)
         pwh = user.password_hash or ""
-        is_bcrypt = pwh.startswith("$2a$") or pwh.startswith("$2b$") or pwh.startswith("$2y$")
-        if not is_bcrypt:
-            # If it matches exactly, rehash and save; otherwise invalid
+        # Check if it's a passlib hash (any format) or legacy plain-text
+        is_passlib_hash = (
+            pwh.startswith("$2a$")
+            or pwh.startswith("$2b$")
+            or pwh.startswith("$2y$")
+            or pwh.startswith("$bcrypt-sha256$")
+            or pwh.startswith("$pbkdf2-sha256$")
+        )
+        if not is_passlib_hash:
+            # Legacy plain-text password - upgrade it
             if payload.password == pwh:
                 user_repo.set_password(user, payload.password)
                 logger.info(f"Upgraded password hash for user id={user.id}")
@@ -79,6 +86,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
                 )
+        # Use verify_password for all passlib hash formats
         elif not verify_password(payload.password, user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
