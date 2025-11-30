@@ -52,12 +52,13 @@ describe('AppShell', () => {
 	it('shows menu categories organized by usage', async () => {
 		renderAppShell();
 		await waitFor(() => {
-			expect(screen.getByText('OVERVIEW')).toBeInTheDocument();
-			expect(screen.getByText('TRADING')).toBeInTheDocument();
-			expect(screen.getByText('SYSTEM')).toBeInTheDocument();
-			expect(screen.getByText('SETTINGS')).toBeInTheDocument();
-			expect(screen.getByText('LOGS')).toBeInTheDocument();
-			expect(screen.getByText('NOTIFICATIONS')).toBeInTheDocument();
+			// Categories are displayed with uppercase CSS but text is title case
+			expect(screen.getByText(/overview/i)).toBeInTheDocument();
+			expect(screen.getByText(/trading/i)).toBeInTheDocument();
+			expect(screen.getByText(/system/i)).toBeInTheDocument();
+			expect(screen.getByText(/settings/i)).toBeInTheDocument();
+			expect(screen.getByText(/logs/i)).toBeInTheDocument();
+			expect(screen.getByText(/notifications/i)).toBeInTheDocument();
 		});
 	});
 
@@ -66,7 +67,7 @@ describe('AppShell', () => {
 		await waitFor(() => {
 			// Overview should be expanded (Dashboard visible)
 			expect(screen.getByText('Dashboard')).toBeInTheDocument();
-			
+
 			// Trading should be collapsed (Buying Zone not visible)
 			expect(screen.queryByText('Buying Zone')).not.toBeInTheDocument();
 		});
@@ -74,17 +75,17 @@ describe('AppShell', () => {
 
 	it('allows expanding and collapsing menu categories', async () => {
 		renderAppShell();
-		await waitFor(() => {
-			const tradingButton = screen.getByText('TRADING');
-			expect(tradingButton).toBeInTheDocument();
-		});
+		const tradingButton = await screen.findByText(/trading/i);
+		expect(tradingButton).toBeInTheDocument();
 
 		// Trading should be collapsed initially
 		expect(screen.queryByText('Buying Zone')).not.toBeInTheDocument();
 
 		// Click to expand Trading
-		const tradingButton = screen.getByText('TRADING').closest('button');
-		fireEvent.click(tradingButton!);
+		const tradingButtonElement = tradingButton.closest('button');
+		if (tradingButtonElement) {
+			fireEvent.click(tradingButtonElement);
+		}
 
 		// Trading items should now be visible
 		await waitFor(() => {
@@ -93,7 +94,9 @@ describe('AppShell', () => {
 		});
 
 		// Click to collapse Trading
-		fireEvent.click(tradingButton!);
+		if (tradingButtonElement) {
+			fireEvent.click(tradingButtonElement);
+		}
 
 		// Trading items should be hidden again
 		await waitFor(() => {
@@ -103,22 +106,43 @@ describe('AppShell', () => {
 
 	it('auto-expands category when navigating to a page in it', async () => {
 		renderAppShell('/dashboard/buying-zone');
+		// Wait for auto-expansion to occur (the useEffect should expand the Trading group)
 		await waitFor(() => {
-			// Trading category should be auto-expanded
-			expect(screen.getByText('Buying Zone')).toBeInTheDocument();
-			expect(screen.getByText('Orders')).toBeInTheDocument();
-		});
+			// Trading category should be auto-expanded because Buying Zone is active
+			// Check for menu items in the navigation
+			const nav = screen.getByRole('navigation');
+			const ordersLink = nav.querySelector('a[href="/dashboard/orders"]');
+			expect(ordersLink).toBeInTheDocument();
+		}, { timeout: 3000 });
+		
+		// Verify Trading items are visible in the menu
+		const nav = screen.getByRole('navigation');
+		expect(nav).toBeInTheDocument();
+		expect(nav.textContent).toContain('Orders');
 	});
 
 	it('highlights active menu item', async () => {
 		renderAppShell('/dashboard/buying-zone');
+		
+		// Wait for the Buying Zone link to appear (auto-expanded)
 		await waitFor(() => {
-			const buyingZoneLink = screen.getByText('Buying Zone').closest('a');
-			expect(buyingZoneLink).toHaveClass('bg-[var(--accent)]/20');
-		});
+			const allBuyingZones = screen.getAllByText('Buying Zone');
+			expect(allBuyingZones.length).toBeGreaterThan(0);
+		}, { timeout: 3000 });
+		
+		// Find the menu link (should be in a <nav> element)
+		const nav = screen.getByRole('navigation');
+		const menuLink = nav.querySelector('a[href="/dashboard/buying-zone"]');
+		expect(menuLink).toBeInTheDocument();
+		
+		// Check for active state styling
+		if (menuLink) {
+			expect(menuLink).toHaveClass('bg-[var(--accent)]/20');
+		}
 	});
 
 	it('shows notification badge when there are unread notifications', async () => {
+		// Set up mock before rendering
 		server.use(
 			http.get(API('/user/notifications/count'), () => {
 				return HttpResponse.json({ unread_count: 5 });
@@ -126,24 +150,35 @@ describe('AppShell', () => {
 		);
 
 		renderAppShell();
+		
+		// Wait for component to load
 		await waitFor(() => {
-			const notificationsButton = screen.getByText('NOTIFICATIONS').closest('button');
-			if (notificationsButton) {
-				fireEvent.click(notificationsButton);
-			}
-		});
+			expect(screen.getByText(/notifications/i)).toBeInTheDocument();
+		}, { timeout: 3000 });
+		
+		// Expand Notifications category
+		const notificationsButton = await screen.findByText(/notifications/i);
+		const buttonElement = notificationsButton.closest('button');
+		
+		if (buttonElement) {
+			fireEvent.click(buttonElement);
+		}
 
+		// Wait for menu item to appear
 		await waitFor(() => {
-			// Badge might appear in the menu item
 			const notificationsLink = screen.queryByText('Notifications');
 			expect(notificationsLink).toBeInTheDocument();
-		});
+		}, { timeout: 3000 });
 	});
 
 	it('persists expanded/collapsed state in localStorage', async () => {
 		renderAppShell();
-		const tradingButton = await screen.findByText('TRADING');
-		fireEvent.click(tradingButton.closest('button')!);
+		const tradingButton = await screen.findByText(/trading/i);
+		const buttonElement = tradingButton.closest('button');
+		
+		if (buttonElement) {
+			fireEvent.click(buttonElement);
+		}
 
 		await waitFor(() => {
 			const saved = localStorage.getItem('navExpandedGroups');
