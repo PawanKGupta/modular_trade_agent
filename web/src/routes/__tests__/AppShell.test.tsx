@@ -114,7 +114,7 @@ describe('AppShell', () => {
 			const ordersLink = nav.querySelector('a[href="/dashboard/orders"]');
 			expect(ordersLink).toBeInTheDocument();
 		}, { timeout: 3000 });
-		
+
 		// Verify Trading items are visible in the menu
 		const nav = screen.getByRole('navigation');
 		expect(nav).toBeInTheDocument();
@@ -123,18 +123,18 @@ describe('AppShell', () => {
 
 	it('highlights active menu item', async () => {
 		renderAppShell('/dashboard/buying-zone');
-		
+
 		// Wait for the Buying Zone link to appear (auto-expanded)
 		await waitFor(() => {
 			const allBuyingZones = screen.getAllByText('Buying Zone');
 			expect(allBuyingZones.length).toBeGreaterThan(0);
 		}, { timeout: 3000 });
-		
+
 		// Find the menu link (should be in a <nav> element)
 		const nav = screen.getByRole('navigation');
 		const menuLink = nav.querySelector('a[href="/dashboard/buying-zone"]');
 		expect(menuLink).toBeInTheDocument();
-		
+
 		// Check for active state styling
 		if (menuLink) {
 			expect(menuLink).toHaveClass('bg-[var(--accent)]/20');
@@ -150,16 +150,16 @@ describe('AppShell', () => {
 		);
 
 		renderAppShell();
-		
+
 		// Wait for component to load
 		await waitFor(() => {
 			expect(screen.getByText(/notifications/i)).toBeInTheDocument();
 		}, { timeout: 3000 });
-		
+
 		// Expand Notifications category
 		const notificationsButton = await screen.findByText(/notifications/i);
 		const buttonElement = notificationsButton.closest('button');
-		
+
 		if (buttonElement) {
 			fireEvent.click(buttonElement);
 		}
@@ -175,7 +175,7 @@ describe('AppShell', () => {
 		renderAppShell();
 		const tradingButton = await screen.findByText(/trading/i);
 		const buttonElement = tradingButton.closest('button');
-		
+
 		if (buttonElement) {
 			fireEvent.click(buttonElement);
 		}
