@@ -1,4 +1,4 @@
-# Modular Trade Agent
+# Rebound — Modular Trade Agent
 
 A professional-grade **multi-user trading system** for Indian stock markets (NSE) specializing in **mean reversion to EMA9 strategy** with automated order execution, paper trading, and comprehensive web-based management.
 

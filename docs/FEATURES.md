@@ -1,6 +1,6 @@
 # Complete Features Documentation
 
-Complete documentation of all features in the Modular Trade Agent system.
+Complete documentation of all features in Rebound — Modular Trade Agent system.
 
 ## 📊 Core Features
 

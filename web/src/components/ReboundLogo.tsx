@@ -120,4 +120,3 @@ export function ReboundLogo({ size = 32, className = '', variant = 'full' }: Reb
 		</svg>
 	);
 }
-

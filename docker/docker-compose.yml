@@ -1,4 +1,4 @@
-# Docker Compose configuration for Trading Agent
+# Docker Compose configuration for Rebound — Modular Trade Agent
 # This file defines all services and how they work together
 # Note: version field removed (not needed in Docker Compose v2)
 

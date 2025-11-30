@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Health Check Script for Modular Trade Agent
+Health Check Script for Rebound — Modular Trade Agent
 Verifies all components are properly configured and functional
 
 Run this script to diagnose issues with your installation.
@@ -484,7 +484,7 @@ class HealthCheck:
     def run_all_checks(self):
         """Run all health checks"""
         print("=" * 60)
-        print("MODULAR TRADE AGENT - HEALTH CHECK")
+        print("REBOUND — MODULAR TRADE AGENT - HEALTH CHECK")
         print("=" * 60)
         print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 

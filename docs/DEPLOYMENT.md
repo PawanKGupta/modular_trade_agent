@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Complete guide for deploying the Modular Trade Agent to production.
+Complete guide for deploying Rebound — Modular Trade Agent to production.
 
 ## Deployment Options
 
@@ -130,7 +130,7 @@ For custom deployments or specific requirements.
 
    ```ini
    [Unit]
-   Description=Trade Agent API
+   Description=Rebound API
    After=network.target postgresql.service
 
    [Service]

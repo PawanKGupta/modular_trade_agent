@@ -148,7 +148,7 @@ class EmailNotifier:
             "critical": "🚨",
         }
         emoji = level_emoji.get(level, "ℹ️")
-        subject = f"{emoji} {title} - Trade Agent"
+        subject = f"{emoji} {title} - Rebound"
 
         # Format body
         body = f"""
@@ -157,7 +157,7 @@ class EmailNotifier:
 {message}
 
 ---
-Trade Agent Notification System
+Rebound — Modular Trade Agent
 This is an automated message. Please do not reply.
         """.strip()
 

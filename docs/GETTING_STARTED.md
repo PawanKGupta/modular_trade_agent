@@ -1,6 +1,6 @@
 # Getting Started Guide
 
-Complete guide to set up and run the Modular Trade Agent.
+Complete guide to set up and run Rebound — Modular Trade Agent.
 
 ## Prerequisites
 

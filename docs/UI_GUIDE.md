@@ -1,6 +1,6 @@
 # Complete UI Guide
 
-Comprehensive guide to all pages and features in the Modular Trade Agent web interface.
+Comprehensive guide to all pages and features in the Rebound — Modular Trade Agent web interface.
 
 ## 🏠 Dashboard Overview
 

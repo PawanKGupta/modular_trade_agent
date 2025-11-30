@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Modular Trade Agent - Automatic Setup Installer
+Rebound — Modular Trade Agent - Automatic Setup Installer
 This script handles the complete installation:
 1. Extracts Python and dependencies (already bundled)
 2. Guides user through .env configuration
@@ -109,7 +109,7 @@ class TradeAgentInstaller:
             agent_dst = self.install_dir / "TradingAgent"
             if agent_src.exists():
                 shutil.copytree(agent_src, agent_dst, dirs_exist_ok=True)
-                print(f"  [OK] Extracted Trading Agent application")
+                print(f"  [OK] Extracted Rebound application")
 
             # Copy launcher scripts
             for bat_file in bundle_dir.glob("*.bat"):
@@ -166,13 +166,13 @@ class TradeAgentInstaller:
     def _collect_env_gui(self):
         """GUI-based configuration collection"""
         root = tk.Tk()
-        root.title("Modular Trade Agent - Configuration")
+        root.title("Rebound — Modular Trade Agent - Configuration")
         root.geometry("500x450")
         root.resizable(False, False)
 
         # Header
         header = tk.Label(
-            root, text="Trading Agent Configuration", font=("Arial", 14, "bold"), pady=10
+            root, text="Rebound Configuration", font=("Arial", 14, "bold"), pady=10
         )
         header.pack()
 
@@ -268,7 +268,7 @@ class TradeAgentInstaller:
         print(f"\nSaving configuration to {env_path}...")
 
         with open(env_path, "w") as f:
-            f.write("# Modular Trade Agent Configuration\n")
+            f.write("# Rebound — Modular Trade Agent Configuration\n")
             f.write(f"# Generated: {Path(__file__).name}\n\n")
 
             for key, value in self.env_config.items():
@@ -428,7 +428,7 @@ class TradeAgentInstaller:
         run_bat = self.install_dir / "RUN_AGENT.bat"
         with open(run_bat, "w") as f:
             f.write("@echo off\n")
-            f.write("echo Starting Main Trading Agent...\n")
+            f.write("echo Starting Rebound...\n")
             f.write(f'cd /d "{self.install_dir}\\TradingAgent"\n')
             f.write(f'"{sys.executable}" modules\\kotak_neo_auto_trader\\run_auto_trade.py\n')
             f.write("pause\n")
@@ -439,7 +439,7 @@ class TradeAgentInstaller:
         with open(start_all_bat, "w") as f:
             f.write("@echo off\n")
             f.write("echo =====================================\n")
-            f.write("echo Starting All Trading Agent Services\n")
+            f.write("echo Starting All Rebound Services\n")
             f.write("echo =====================================\n")
             f.write("echo.\n")
             for service in self.services:
@@ -456,7 +456,7 @@ class TradeAgentInstaller:
         with open(stop_all_bat, "w") as f:
             f.write("@echo off\n")
             f.write("echo =====================================\n")
-            f.write("echo Stopping All Trading Agent Services\n")
+            f.write("echo Stopping All Rebound Services\n")
             f.write("echo =====================================\n")
             f.write("echo.\n")
             for service in self.services:
@@ -507,7 +507,7 @@ class TradeAgentInstaller:
 
             shell = win32com.client.Dispatch("WScript.Shell")
             desktop = shell.SpecialFolders("Desktop")
-            shortcut_path = os.path.join(desktop, "Trading Agent.lnk")
+            shortcut_path = os.path.join(desktop, "Rebound.lnk")
             shortcut = shell.CreateShortCut(shortcut_path)
             shortcut.Targetpath = str(self.install_dir / "RUN_AGENT.bat")
             shortcut.WorkingDirectory = str(self.install_dir)
@@ -520,7 +520,7 @@ class TradeAgentInstaller:
     def run_installation(self):
         """Main installation workflow"""
         print("=" * 60)
-        print("MODULAR TRADE AGENT - AUTOMATED INSTALLER")
+        print("REBOUND — MODULAR TRADE AGENT - AUTOMATED INSTALLER")
         print("=" * 60)
         print(f"Installer Version: {format_version_info(self.installer_version)}")
 

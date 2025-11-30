@@ -1,4 +1,4 @@
-# Project Rules - Modular Trade Agent
+# Project Rules - Rebound — Modular Trade Agent
 
 **Version:** 1.0  
 **Last Updated:** 2025-11-07  
@@ -24,7 +24,7 @@
 ## Project Overview
 
 ### Purpose
-Modular Trade Agent is a professional-grade **cloud-automated trading system** for Indian stock markets (NSE) specializing in **RSI10 < 30 reversal strategy** with multi-timeframe analysis and historical backtesting validation.
+Rebound — Modular Trade Agent is a professional-grade **cloud-automated trading system** for Indian stock markets (NSE) specializing in **RSI10 < 30 reversal strategy** with multi-timeframe analysis and historical backtesting validation.
 
 ### Core Strategy
 - **Entry Signal**: RSI10 < 30 (oversold) + Price > EMA200 (uptrend) + Volume ≥ 80% average

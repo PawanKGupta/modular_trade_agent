@@ -1,6 +1,6 @@
 # Trading Configuration Guide
 
-Complete guide to configuring trading parameters in the Modular Trade Agent.
+Complete guide to configuring trading parameters in Rebound — Modular Trade Agent.
 
 ## Overview
 

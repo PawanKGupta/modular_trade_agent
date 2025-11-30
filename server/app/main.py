@@ -44,7 +44,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
-app = FastAPI(title="Trade Agent API", version="1.0.0", debug=True)
+app = FastAPI(title="Rebound API", version="1.0.0", debug=True)
 
 # Configure file logging to capture errors for analysis
 LOG_DIR = os.path.abspath(os.path.join(ROOT_DIR, "logs"))

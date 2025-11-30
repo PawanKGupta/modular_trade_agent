@@ -1,6 +1,6 @@
 # User Guide
 
-Complete guide to using the Modular Trade Agent web interface.
+Complete guide to using the Rebound — Modular Trade Agent web interface.
 
 ## Getting Started
 

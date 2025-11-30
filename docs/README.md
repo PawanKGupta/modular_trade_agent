@@ -1,6 +1,6 @@
 # Documentation Index
 
-Complete documentation for the Modular Trade Agent.
+Complete documentation for Rebound — Modular Trade Agent.
 
 ## 📚 Getting Started
 

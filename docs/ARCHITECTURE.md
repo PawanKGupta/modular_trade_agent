@@ -1,10 +1,10 @@
 # Architecture Overview
 
-Complete architecture documentation for the Modular Trade Agent system.
+Complete architecture documentation for Rebound — Modular Trade Agent system.
 
 ## System Overview
 
-The Modular Trade Agent is a **multi-user, web-based trading system** with the following architecture:
+Rebound — Modular Trade Agent is a **multi-user, web-based trading system** with the following architecture:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐

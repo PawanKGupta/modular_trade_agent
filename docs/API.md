@@ -1,6 +1,6 @@
 # API Documentation
 
-Complete REST API reference for the Modular Trade Agent.
+Complete REST API reference for Rebound — Modular Trade Agent.
 
 ## Base URL
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Show version information for Modular Trade Agent
+Show version information for Rebound — Modular Trade Agent
 """
 
 from utils.version import get_package_version, get_installed_version, format_version_info
@@ -9,21 +9,21 @@ import os
 
 def main():
     print("="*60)
-    print("MODULAR TRADE AGENT - VERSION INFORMATION")
+    print("REBOUND — MODULAR TRADE AGENT - VERSION INFORMATION")
     print("="*60)
     print()
-    
+
     # Package version (from source)
     package_version = get_package_version()
     if package_version:
         print("Package Version (Source):")
         print(f"  {format_version_info(package_version)}")
         print()
-    
+
     # Installed version
     install_dir = Path(os.environ.get('PROGRAMDATA', 'C:\\ProgramData')) / 'ModularTradeAgent'
     installed_version = get_installed_version(install_dir)
-    
+
     if installed_version:
         print("Installed Version:")
         print(f"  {format_version_info(installed_version)}")
@@ -33,7 +33,7 @@ def main():
         print("No installation found")
         print(f"  Checked: {install_dir}")
         print()
-    
+
     # Version format explanation
     print("Version Format: YY.Q.PATCH")
     print("  YY    = Last 2 digits of year")
