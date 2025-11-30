@@ -149,17 +149,33 @@ class UserScopedLogger:
         # Emit to base logger (console/file if configured)
         # Use 'extra' parameter but exclude 'module' to avoid LogRecord conflict
         safe_extra = {k: v for k, v in log_context.items() if k != "module"}
-        self.logger.log(level, message, extra=safe_extra, exc_info=exc_info)
+        try:
+            self.logger.log(level, message, extra=safe_extra, exc_info=exc_info)
+        except (ValueError, OSError):
+            # Handler may be closed (e.g., during test teardown)
+            pass
 
         # Emit to database handler
-        self.db_handler.emit(record)
+        try:
+            self.db_handler.emit(record)
+        except (ValueError, OSError, AttributeError):
+            # Handler may be closed or DB session may be invalid
+            pass
 
         # Emit to file handler (all logs)
-        self.file_handler.emit(record)
+        try:
+            self.file_handler.emit(record)
+        except (ValueError, OSError):
+            # File handler may be closed (e.g., during test teardown or thread cleanup)
+            pass
 
         # Emit to error file handler (ERROR and CRITICAL only)
         if level >= logging.ERROR:
-            self.error_file_handler.emit(record)
+            try:
+                self.error_file_handler.emit(record)
+            except (ValueError, OSError):
+                # Error file handler may be closed
+                pass
 
     def _capture_exception(self, exception: Exception, context: dict[str, Any]) -> None:
         """
