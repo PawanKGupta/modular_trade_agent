@@ -768,4 +768,8 @@ http.post(API('/auth/refresh'), async () => {
 			model: { ...model, is_active: true },
 		});
 	}),
+	// notifications
+	http.get(API('/user/notifications/count'), async () => {
+		return HttpResponse.json({ unread_count: 0 });
+	}),
 ];

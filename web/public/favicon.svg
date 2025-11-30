@@ -1,0 +1,41 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+	<defs>
+		<linearGradient id="faviconGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+			<stop offset="0%" stopColor="#4fc3f7" />
+			<stop offset="50%" stopColor="#29b6f6" />
+			<stop offset="100%" stopColor="#0288d1" />
+		</linearGradient>
+	</defs>
+
+	<!-- Background -->
+	<rect width="32" height="32" rx="6" fill="#121923"/>
+
+	<!-- Rebound curve -->
+	<path
+		d="M 7 23 Q 11 13, 16 15 T 25 9"
+		stroke="url(#faviconGradient)"
+		strokeWidth="2.5"
+		fill="none"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+	/>
+
+	<!-- Arrow head -->
+	<path
+		d="M 23.5 10.5 L 25 9 L 23.5 7.5"
+		stroke="url(#faviconGradient)"
+		strokeWidth="2.5"
+		fill="none"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+	/>
+
+	<!-- Starting point -->
+	<circle
+		cx="7"
+		cy="23"
+		r="2.5"
+		fill="url(#faviconGradient)"
+	/>
+</svg>
+
