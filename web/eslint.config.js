@@ -31,7 +31,7 @@ export default [
 		settings: {
 			react: { version: 'detect' },
 		},
-		ignores: ['dist/**', 'coverage/**'],
+		ignores: ['dist/**', 'coverage/**', 'node_modules/**', '**/node_modules/**'],
 	},
 	{
 		files: ['eslint.config.js'],

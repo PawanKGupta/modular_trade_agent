@@ -38,12 +38,12 @@ test.describe('Notifications', () => {
 		const buttonCount = await markReadButtons.count();
 
 		if (buttonCount > 0) {
-			// Get initial unread count if displayed
+			// Get initial unread count if displayed (for future use if needed)
+			// eslint-disable-next-line @typescript-eslint/no-unused-vars
 			const unreadCountElement = authenticatedPage.getByText(/\d+/).first();
-			let initialUnreadCount = null;
 			if (await unreadCountElement.isVisible().catch(() => false)) {
-				const countText = await unreadCountElement.textContent();
-				initialUnreadCount = parseInt(countText || '0', 10);
+				// Unread count available if needed - captured for future assertions
+				void (await unreadCountElement.textContent());
 			}
 
 			// Click first mark read button

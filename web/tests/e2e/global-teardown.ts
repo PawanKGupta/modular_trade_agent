@@ -1,5 +1,4 @@
 import { FullConfig } from '@playwright/test';
-import { TestConfig } from './config/test-config';
 
 /**
  * Global Teardown
@@ -9,7 +8,8 @@ import { TestConfig } from './config/test-config';
  * - Reset database to initial state (optional)
  * - Generate test reports
  */
-async function globalTeardown(config: FullConfig) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function globalTeardown(_config: FullConfig) {
 	console.log('Running global teardown...');
 
 	// Optional: Clean up global test data

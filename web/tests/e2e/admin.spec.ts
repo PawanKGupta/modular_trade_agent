@@ -128,7 +128,7 @@ test.describe('Admin Features', () => {
 		expect(hasTable || hasEmptyState).toBe(true);
 	});
 
-	test('regular user cannot access admin pages', async ({ authenticatedPage, loginPage }) => {
+	test('regular user cannot access admin pages', async ({ authenticatedPage }) => {
 		// Logout first
 		const logoutButton = authenticatedPage.getByRole('button', { name: /logout|sign out/i });
 		if (await logoutButton.isVisible().catch(() => false)) {
