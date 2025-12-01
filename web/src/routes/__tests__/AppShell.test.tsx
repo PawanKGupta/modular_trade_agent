@@ -164,9 +164,11 @@ describe('AppShell', () => {
 			fireEvent.click(buttonElement);
 		}
 
-		// Wait for menu item to appear
+		// Wait for menu item to appear - there may be multiple "Notifications" texts, so find the link
 		await waitFor(() => {
-			const notificationsLink = screen.queryByText('Notifications');
+			// Find the link in the navigation menu
+			const nav = screen.getByRole('navigation');
+			const notificationsLink = nav.querySelector('a[href*="notifications"]');
 			expect(notificationsLink).toBeInTheDocument();
 		}, { timeout: 3000 });
 	});

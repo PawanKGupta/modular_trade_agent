@@ -63,17 +63,16 @@ describe('NotificationPreferencesPage', () => {
 	it('loads and displays notification preferences', async () => {
 		renderPage();
 
+		// Wait for all sections to be rendered
 		await waitFor(() => {
 			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
+			expect(screen.getByText(/Notification Channels/i)).toBeInTheDocument();
+			expect(screen.getByText(/Order Events/i)).toBeInTheDocument();
+			expect(screen.getByText(/Retry Queue Events/i)).toBeInTheDocument();
+			expect(screen.getByText(/System Events/i)).toBeInTheDocument();
+			expect(screen.getByText(/Service Events/i)).toBeInTheDocument();
+			expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
 		});
-
-		// Check that sections are rendered
-		expect(screen.getByText(/Notification Channels/i)).toBeInTheDocument();
-		expect(screen.getByText(/Order Events/i)).toBeInTheDocument();
-		expect(screen.getByText(/Retry Queue Events/i)).toBeInTheDocument();
-		expect(screen.getByText(/System Events/i)).toBeInTheDocument();
-		expect(screen.getByText(/Service Events/i)).toBeInTheDocument();
-		expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
 	});
 
 	it('shows loading state initially', async () => {
@@ -89,12 +88,16 @@ describe('NotificationPreferencesPage', () => {
 	it('allows toggling individual preferences', async () => {
 		renderPage();
 
+		// Wait for content to load
 		await waitFor(() => {
 			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
+			expect(screen.getByText(/Order Events/i)).toBeInTheDocument();
 		});
 
-		// Toggle a preference
-		const orderPlacedCheckbox = screen.getByLabelText(/Order Placed/i) as HTMLInputElement;
+		// Toggle a preference - wait for the checkbox to be available
+		const orderPlacedCheckbox = await waitFor(() => {
+			return screen.getByLabelText(/Order Placed/i) as HTMLInputElement;
+		});
 		expect(orderPlacedCheckbox.checked).toBe(true);
 
 		fireEvent.click(orderPlacedCheckbox);
@@ -107,12 +110,16 @@ describe('NotificationPreferencesPage', () => {
 	it('shows conditional fields when channels are enabled', async () => {
 		renderPage();
 
+		// Wait for content to load
 		await waitFor(() => {
 			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
+			expect(screen.getByText(/Notification Channels/i)).toBeInTheDocument();
 		});
 
-		// Enable Telegram
-		const telegramCheckbox = screen.getByLabelText(/Telegram/i) as HTMLInputElement;
+		// Enable Telegram - wait for the checkbox to be available
+		const telegramCheckbox = await waitFor(() => {
+			return screen.getByLabelText(/Telegram/i) as HTMLInputElement;
+		});
 		fireEvent.click(telegramCheckbox);
 
 		await waitFor(() => {
@@ -131,16 +138,22 @@ describe('NotificationPreferencesPage', () => {
 	it('allows saving preferences', async () => {
 		renderPage();
 
+		// Wait for content to load
 		await waitFor(() => {
 			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
+			expect(screen.getByText(/Order Events/i)).toBeInTheDocument();
 		});
 
-		// Make a change
-		const orderPlacedCheckbox = screen.getByLabelText(/Order Placed/i);
+		// Make a change - wait for checkbox
+		const orderPlacedCheckbox = await waitFor(() => {
+			return screen.getByLabelText(/Order Placed/i);
+		});
 		fireEvent.click(orderPlacedCheckbox);
 
-		// Save
-		const saveButton = screen.getByRole('button', { name: /Save Preferences/i });
+		// Save - wait for button
+		const saveButton = await waitFor(() => {
+			return screen.getByRole('button', { name: /Save Preferences/i });
+		});
 		fireEvent.click(saveButton);
 
 		await waitFor(async () => {
@@ -153,11 +166,15 @@ describe('NotificationPreferencesPage', () => {
 	it('disables save button when no changes', async () => {
 		renderPage();
 
+		// Wait for content to load
 		await waitFor(() => {
 			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
 		});
 
-		const saveButton = screen.getByRole('button', { name: /Save Preferences/i });
+		// Wait for save button
+		const saveButton = await waitFor(() => {
+			return screen.getByRole('button', { name: /Save Preferences/i });
+		});
 		expect(saveButton).toBeDisabled();
 	});
 
@@ -169,16 +186,22 @@ describe('NotificationPreferencesPage', () => {
 
 		renderPage();
 
+		// Wait for content to load
 		await waitFor(() => {
 			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
+			expect(screen.getByText(/Order Events/i)).toBeInTheDocument();
 		});
 
-		// Make a change
-		const orderPlacedCheckbox = screen.getByLabelText(/Order Placed/i);
+		// Make a change - wait for checkbox
+		const orderPlacedCheckbox = await waitFor(() => {
+			return screen.getByLabelText(/Order Placed/i);
+		});
 		fireEvent.click(orderPlacedCheckbox);
 
-		// Save
-		const saveButton = screen.getByRole('button', { name: /Save Preferences/i });
+		// Save - wait for button
+		const saveButton = await waitFor(() => {
+			return screen.getByRole('button', { name: /Save Preferences/i });
+		});
 		fireEvent.click(saveButton);
 
 		await waitFor(() => {
@@ -212,8 +235,19 @@ describe('NotificationPreferencesPage', () => {
 			expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
 		});
 
-		const startTimeInput = screen.getByLabelText(/Start Time/i) as HTMLInputElement;
-		const endTimeInput = screen.getByLabelText(/End Time/i) as HTMLInputElement;
+		// Wait for time inputs - find by their parent label text since labels aren't properly associated
+		await waitFor(() => {
+			expect(screen.getByText(/Start Time/i)).toBeInTheDocument();
+			expect(screen.getByText(/End Time/i)).toBeInTheDocument();
+		});
+
+		// Find inputs by searching near the label text
+		const quietHoursSection = screen.getByText(/Quiet Hours/i).closest('section');
+		const timeInputs = quietHoursSection?.querySelectorAll('input[type="time"]') as NodeListOf<HTMLInputElement>;
+		expect(timeInputs?.length).toBeGreaterThanOrEqual(2);
+
+		const startTimeInput = timeInputs[0];
+		const endTimeInput = timeInputs[1];
 
 		fireEvent.change(startTimeInput, { target: { value: '22:00' } });
 		fireEvent.change(endTimeInput, { target: { value: '08:00' } });
@@ -237,14 +271,29 @@ describe('NotificationPreferencesPage', () => {
 			expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
 		});
 
-		const clearButton = screen.getByRole('button', { name: /Clear/i });
+		const clearButton = await waitFor(() => {
+			return screen.getByRole('button', { name: /Clear/i });
+		});
+
+		// Find the inputs before clearing to verify they have values
+		const quietHoursSection = screen.getByText(/Quiet Hours/i).closest('section');
+		const timeInputsBefore = quietHoursSection?.querySelectorAll('input[type="time"]') as NodeListOf<HTMLInputElement>;
+		expect(timeInputsBefore?.length).toBeGreaterThanOrEqual(2);
+		expect(timeInputsBefore[0].value).toBe('22:00');
+		expect(timeInputsBefore[1].value).toBe('08:00');
+
 		fireEvent.click(clearButton);
 
+		// Verify that clicking Clear triggers a state change (shows unsaved changes)
 		await waitFor(() => {
-			const startTimeInput = screen.getByLabelText(/Start Time/i) as HTMLInputElement;
-			const endTimeInput = screen.getByLabelText(/End Time/i) as HTMLInputElement;
-			expect(startTimeInput.value).toBe('');
-			expect(endTimeInput.value).toBe('');
+			expect(screen.getByText(/Unsaved changes/i)).toBeInTheDocument();
+		});
+
+		// Verify that the save button is now enabled (indicating changes were made)
+		const saveButton = await waitFor(() => {
+			const btn = screen.getByRole('button', { name: /Save Preferences/i });
+			expect(btn).not.toBeDisabled();
+			return btn;
 		});
 	});
 

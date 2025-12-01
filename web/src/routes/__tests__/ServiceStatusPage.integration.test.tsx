@@ -13,6 +13,7 @@ vi.mock('@/api/service', () => ({
 	getServiceLogs: vi.fn(),
 	startService: vi.fn(),
 	stopService: vi.fn(),
+	getIndividualServicesStatus: vi.fn(),
 }));
 
 describe('ServiceStatusPage Integration Tests', () => {
@@ -55,6 +56,9 @@ describe('ServiceStatusPage Integration Tests', () => {
 			message: 'Trading service stopped successfully',
 			service_running: false,
 		});
+		vi.mocked(serviceApi.getIndividualServicesStatus).mockResolvedValue({
+			services: {},
+		});
 	});
 
 	it('completes full workflow: start service -> view status -> view tasks -> view logs -> stop service', async () => {
@@ -78,7 +82,7 @@ describe('ServiceStatusPage Integration Tests', () => {
 
 		// Step 1: Verify initial stopped state
 		await waitFor(() => {
-			expect(screen.getByText(/? Stopped/i)).toBeInTheDocument();
+			expect(screen.getByText(/✗ Stopped/i)).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: /Start Service/i })).not.toBeDisabled();
 			expect(screen.getByRole('button', { name: /Stop Service/i })).toBeDisabled();
 		});
@@ -128,7 +132,7 @@ describe('ServiceStatusPage Integration Tests', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText(/? Stopped/i)).toBeInTheDocument();
+			expect(screen.getByText(/✗ Stopped/i)).toBeInTheDocument();
 		});
 
 		const startButton = screen.getByRole('button', { name: /Start Service/i });
@@ -165,7 +169,7 @@ describe('ServiceStatusPage Integration Tests', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText(/? Running/i)).toBeInTheDocument();
+			expect(screen.getByText(/✓ Running/i)).toBeInTheDocument();
 		});
 
 		const stopButton = screen.getByRole('button', { name: /Stop Service/i });
@@ -199,7 +203,7 @@ describe('ServiceStatusPage Integration Tests', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText(/? Running/i)).toBeInTheDocument();
+			expect(screen.getByText(/✓ Running/i)).toBeInTheDocument();
 		});
 
 		// Verify initial status fetch

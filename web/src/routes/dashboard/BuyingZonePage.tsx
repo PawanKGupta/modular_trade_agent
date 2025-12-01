@@ -160,10 +160,15 @@ export function BuyingZonePage() {
 			const validColumns = savedColumns.filter((col) =>
 				ALL_COLUMNS.some((c) => c.key === col)
 			) as ColumnKey[];
-			// Ensure symbol is always included
+			// Ensure symbol and status are always included (status needed for badges/reject buttons)
 			if (validColumns.length >= MIN_COLUMNS && validColumns.length <= MAX_COLUMNS) {
 				if (!validColumns.includes('symbol')) {
 					validColumns.unshift('symbol');
+				}
+				// Ensure status is included after symbol (status column is needed for badges and reject buttons)
+				if (!validColumns.includes('status')) {
+					const symbolIndex = validColumns.indexOf('symbol');
+					validColumns.splice(symbolIndex + 1, 0, 'status');
 				}
 				setSelectedColumns(new Set(validColumns));
 			}
