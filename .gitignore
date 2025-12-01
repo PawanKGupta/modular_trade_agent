@@ -67,6 +67,7 @@ web/dist/
 web/coverage/
 web/.cache/
 web/tsconfig.tsbuildinfo
+web/test-results/
 
 # Model files (large binary files)
 # Ignore temporary/test model files, but allow production models tracked by Git LFS
