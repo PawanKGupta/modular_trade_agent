@@ -151,9 +151,9 @@ describe('PaperTradingPage', () => {
 			const tataElements = screen.getAllByText('TATASTEEL');
 			expect(tataElements.length).toBeGreaterThan(0);
 
-			// Check target prices are displayed
-			expect(screen.getByText('Rs 160.00')).toBeInTheDocument();
-			expect(screen.getByText('Rs 130.00')).toBeInTheDocument();
+			// Check target prices are displayed (formatted with toLocaleString without Rs prefix)
+			expect(screen.getByText('160.00')).toBeInTheDocument();
+			expect(screen.getByText('130.00')).toBeInTheDocument();
 		});
 	});
 
