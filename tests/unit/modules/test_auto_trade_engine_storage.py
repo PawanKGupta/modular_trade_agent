@@ -151,7 +151,7 @@ class TestLoadTradesHistory:
 
         # Create a position
         positions_repo = PositionsRepository(db_session)
-        position = positions_repo.upsert(
+        positions_repo.upsert(
             user_id=test_user.id,
             symbol="RELIANCE",
             quantity=20,
@@ -376,7 +376,8 @@ class TestSaveTradesHistory:
     def test_save_to_file_fallback(self, auto_trade_engine_file_mode, sample_trade):
         """Test saving trades to file when repository not available"""
 
-        temp_path = tempfile.mktemp(suffix=".json")
+        temp_fd, temp_path = tempfile.mkstemp(suffix=".json")
+        os.close(temp_fd)  # Close file descriptor immediately, we just need the path
         auto_trade_engine_file_mode.history_path = temp_path
 
         try:
@@ -418,7 +419,10 @@ class TestAppendTrade:
     def test_append_to_file_fallback(self, auto_trade_engine_file_mode, sample_trade):
         """Test appending trade to file when repository not available"""
 
-        temp_path = tempfile.mktemp(suffix=".json")
+        temp_fd, temp_path = tempfile.mkstemp(suffix=".json")
+        # Initialize with empty valid JSON structure
+        with os.fdopen(temp_fd, "w") as f:
+            json.dump({"trades": [], "failed_orders": []}, f)
         auto_trade_engine_file_mode.history_path = temp_path
 
         try:
@@ -475,7 +479,9 @@ class TestFailedOrders:
         orders_repo = OrdersRepository(db_session)
         orders = orders_repo.list(test_user.id)
         failed_orders = [
-            o for o in orders if o.status == DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
+            o
+            for o in orders
+            if o.status == DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         ]
         assert len(failed_orders) == 1
         assert failed_orders[0].symbol == "TATASTEEL"
@@ -535,7 +541,10 @@ class TestFailedOrders:
     ):
         """Test adding failed order to file when repository not available"""
 
-        temp_path = tempfile.mktemp(suffix=".json")
+        temp_fd, temp_path = tempfile.mkstemp(suffix=".json")
+        # Initialize with empty valid JSON structure
+        with os.fdopen(temp_fd, "w") as f:
+            json.dump({"trades": [], "failed_orders": []}, f)
         auto_trade_engine_file_mode.history_path = temp_path
 
         try:
@@ -583,7 +592,8 @@ class TestStorageIntegration:
     def test_backward_compatibility_file_mode(self, auto_trade_engine_file_mode, sample_trade):
         """Test that file mode still works for backward compatibility"""
 
-        temp_path = tempfile.mktemp(suffix=".json")
+        temp_fd, temp_path = tempfile.mkstemp(suffix=".json")
+        os.close(temp_fd)  # Close file descriptor immediately, we just need the path
         auto_trade_engine_file_mode.history_path = temp_path
 
         try:
