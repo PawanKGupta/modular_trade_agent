@@ -60,9 +60,8 @@ describe('CapitalConfigSection', () => {
 		const { container } = render(<CapitalConfigSection config={modifiedConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
 		// Capital change: 250000 - 100000 = 150000
+		// The number is formatted as "1,50,000" (Indian locale) in the component
 		// Check that the change indicator text exists in the rendered component
-		// The text might be split across elements, so check the container's text content
-		expect(container.textContent).toMatch(/150[\s,]*000/i);
-		expect(container.textContent).toMatch(/from default/i);
+		expect(container.textContent).toMatch(/Rs.*1,50,000.*from default/i);
 	});
 });
