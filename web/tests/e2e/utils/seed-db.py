@@ -132,7 +132,8 @@ def get_or_create_test_user(db) -> Users:
 
     # Also create default settings for the user (required for services)
     try:
-        from src.infrastructure.persistence.settings_repository import SettingsRepository  # noqa: PLC0415
+        # noqa: PLC0415
+        from src.infrastructure.persistence.settings_repository import SettingsRepository
 
         SettingsRepository(db).ensure_default(user.id)
         print(f"✓ Created default settings for admin user {user.id}")
@@ -292,7 +293,7 @@ def main():
 IMPORTANT: This script seeds the E2E test database (e2e.db), not the production database (app.db).
 The Docker app uses app.db, while E2E tests use e2e.db. These are separate databases.
 
-For more information, see: web/tests/e2e/DATABASE_SETUP.md
+For more information, see: web/tests/e2e/DATABASE.md
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

@@ -78,7 +78,7 @@ Currently, the database starts with:
 - **E2E Tests**: Uses `sqlite:///./data/e2e.db`
 - **Seeding Script**: Seeds into `e2e.db` (configured via `E2E_DB_URL`)
 
-See [DATABASE_SETUP.md](./DATABASE_SETUP.md) for detailed information about database configuration.
+See [DATABASE.md](./DATABASE.md) for detailed information about database configuration.
 
 ## What Tests Validate
 

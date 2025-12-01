@@ -20,7 +20,7 @@ async function globalSetup(config: FullConfig) {
 		console.warn('\n⚠️  WARNING: Detected app.db in database URL!');
 		console.warn('   E2E tests should use e2e.db, not app.db.');
 		console.warn('   Docker/production uses app.db, E2E tests use e2e.db.');
-		console.warn('   See: web/tests/e2e/DATABASE_SETUP.md\n');
+			console.warn('   See: web/tests/e2e/DATABASE.md\n');
 	}
 
 	// Verify API is accessible
