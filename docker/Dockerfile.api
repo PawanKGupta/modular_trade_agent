@@ -35,8 +35,7 @@ COPY server/requirements.txt ./server-requirements.txt
 # Install dependencies (main requirements first, then server-specific)
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir -r server-requirements.txt && \
-    pip install --no-cache-dir "pydantic[email]"  # Email validation support
+    pip install --no-cache-dir -r server-requirements.txt
 
 # Copy entire project (API needs access to src/, models/, etc.)
 COPY . .

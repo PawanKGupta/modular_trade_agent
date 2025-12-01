@@ -4,6 +4,7 @@ python-jose==3.3.0
 passlib[bcrypt]==1.7.4
 pydantic==2.9.2
 pydantic-settings==2.6.1
-SQLAlchemy==2.0.36
+email-validator>=2.0.0
+SQLAlchemy>=2.0.44
 alembic==1.14.0
 cryptography>=41.0.0
