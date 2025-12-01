@@ -141,7 +141,7 @@ describe('PaperTradingPage', () => {
 			expect(screen.getByText(/Holdings \(2\)/i)).toBeInTheDocument();
 
 			// Check table headers include new columns
-			expect(screen.getByText('Target')).toBeInTheDocument();
+			expect(screen.getByText('Target (Rs)')).toBeInTheDocument();
 			expect(screen.getByText('To Target')).toBeInTheDocument();
 
 			// Check holdings data (use getAllByText since symbols appear in both holdings and orders)
@@ -151,9 +151,9 @@ describe('PaperTradingPage', () => {
 			const tataElements = screen.getAllByText('TATASTEEL');
 			expect(tataElements.length).toBeGreaterThan(0);
 
-			// Check target prices are displayed
-			expect(screen.getByText('Rs 160.00')).toBeInTheDocument();
-			expect(screen.getByText('Rs 130.00')).toBeInTheDocument();
+			// Check target prices are displayed (formatted with toLocaleString without Rs prefix)
+			expect(screen.getByText('160.00')).toBeInTheDocument();
+			expect(screen.getByText('130.00')).toBeInTheDocument();
 		});
 	});
 
@@ -227,12 +227,15 @@ describe('PaperTradingPage', () => {
 		render(withProviders(<PaperTradingPage />));
 
 		await waitFor(() => {
+			// P&L values in holdings table use toLocaleString('en-IN') which formats with commas
 			// Check that positive P&L has green color class
-			const pnlElements = screen.getAllByText(/Rs 850.00|Rs 1,400.00/);
-			pnlElements.forEach((element) => {
-				// Should have green color for positive P&L
-				expect(element.className).toContain('green');
-			});
+			// Values are formatted as "850.00" and "1,400.00" (no Rs prefix)
+			const pnl850 = screen.getByText('850.00');
+			const pnl1400 = screen.getByText('1,400.00');
+
+			// Should have green color class for positive P&L
+			expect(pnl850.closest('td')?.className).toContain('green');
+			expect(pnl1400.closest('td')?.className).toContain('green');
 		});
 	});
 

@@ -205,15 +205,16 @@ describe('ServiceTasksTable', () => {
 			const tasks = createMockTasks(5);
 			render(<ServiceTasksTable tasks={tasks} isLoading={false} />);
 
-			// Should display table headers
-			expect(screen.getByText('Task Name')).toBeInTheDocument();
-			expect(screen.getByText('Executed At')).toBeInTheDocument();
-			expect(screen.getByText('Status')).toBeInTheDocument();
-			expect(screen.getByText('Duration')).toBeInTheDocument();
-			expect(screen.getByText('Details')).toBeInTheDocument();
-
-			// Should display first task
+			// The table now uses accordion-style details/summary, no visible headers
+			// Should display task names in the accordion summaries
 			expect(screen.getByText('task_1')).toBeInTheDocument();
+			expect(screen.getByText('task_2')).toBeInTheDocument();
+
+			// Should display statuses (multiple can exist, so use getAllByText and check at least one)
+			const successElements = screen.getAllByText('SUCCESS');
+			expect(successElements.length).toBeGreaterThan(0);
+			const failedElements = screen.getAllByText('FAILED');
+			expect(failedElements.length).toBeGreaterThan(0);
 		});
 	});
 });
