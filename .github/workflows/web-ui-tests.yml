@@ -7,7 +7,7 @@ on:
     branches: [ main, master ]
 
 jobs:
-  vitest:
+  web-ui-tests:
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -1,4 +1,4 @@
-name: API Tests
+name: Backend Tests
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ main, master ]
 
 jobs:
-  tests:
+  backend-tests:
     runs-on: windows-latest
     permissions:
       contents: read
@@ -26,14 +26,15 @@ jobs:
           pip install -r requirements.txt
           pip install -r server/requirements.txt
           pip install -r requirements-dev.txt
+
       - name: Lint & Typecheck (server)
         run: |
           ruff check .
           black --check .
           mypy server app || true
 
-      - name: Run focused tests with coverage
+      - name: Run backend unit and integration tests
         env:
           DB_URL: "sqlite:///:memory:"
         run: |
-          pytest tests/server tests/infrastructure tests/scripts -q
+          pytest tests/unit tests/server tests/infrastructure tests/scripts -q
