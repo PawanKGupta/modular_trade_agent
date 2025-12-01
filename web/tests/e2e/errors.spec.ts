@@ -150,7 +150,7 @@ test.describe('Error Handling & Edge Cases', () => {
 
 	test('handles network timeout gracefully', async ({ authenticatedPage }) => {
 		// Simulate network timeout (but exclude auth endpoints)
-		await authenticatedPage.route('**/api/v1/buying-zone**', route => {
+		await authenticatedPage.route('**/api/v1/buying-zone**', () => {
 			// Don't fulfill the request - simulate timeout
 			// Just abort it
 		});

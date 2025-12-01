@@ -4,7 +4,6 @@ import {
 	type IndividualServicesStatus,
 } from '@/api/service';
 import { IndividualServiceControls } from './IndividualServiceControls';
-import { getServiceStatus, type ServiceStatus } from '@/api/service';
 import { useSessionStore } from '@/state/sessionStore';
 
 interface IndividualServicesSectionProps {

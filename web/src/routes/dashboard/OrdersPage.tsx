@@ -61,7 +61,7 @@ export function OrdersPage() {
 		if (confirm('Retry this order?')) {
 			try {
 				await retryMutation.mutateAsync(orderId);
-			} catch (error) {
+			} catch {
 				alert('Failed to retry order');
 			}
 		}
@@ -71,7 +71,7 @@ export function OrdersPage() {
 		if (confirm('Drop this order from retry queue?')) {
 			try {
 				await dropMutation.mutateAsync(orderId);
-			} catch (error) {
+			} catch {
 				alert('Failed to drop order');
 			}
 		}

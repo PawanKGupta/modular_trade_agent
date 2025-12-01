@@ -64,7 +64,7 @@ export async function requestTokenRefresh(): Promise<string | null> {
 				}
 				setRefreshToken((data?.refresh_token as string | null | undefined) ?? refreshToken);
 				return access ?? null;
-			} catch (error) {
+			} catch {
 				clearAuthTokens();
 				return null;
 			} finally {

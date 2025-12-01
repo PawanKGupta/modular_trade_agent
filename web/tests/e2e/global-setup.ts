@@ -11,7 +11,8 @@ import { TestConfig } from './config/test-config';
  * - Create initial test data (if enabled)
  * - Verify API is accessible
  */
-async function globalSetup(config: FullConfig) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function globalSetup(_config: FullConfig) {
 	console.log('Running global setup...');
 
 	// Important note about database separation

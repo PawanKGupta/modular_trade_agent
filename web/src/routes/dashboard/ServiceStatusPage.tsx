@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { getServiceStatus, getTaskHistory, getServiceLogs, startService, stopService, getIndividualServicesStatus, type ServiceStatus, type TaskExecution, type ServiceLog, type IndividualServicesStatus } from '@/api/service';
+import { getServiceStatus, getTaskHistory, getServiceLogs, startService, stopService, getIndividualServicesStatus, type ServiceStatus, type IndividualServicesStatus } from '@/api/service';
 import { formatTimeAgo } from '@/utils/time';
 import { formatErrorMessage } from '@/utils/formatError';
 import { ServiceControls } from './ServiceControls';

@@ -1,7 +1,6 @@
 import { test as base, Page } from '@playwright/test';
 import { LoginPage, DashboardPage, SignupPage } from '../pages';
-import { TestConfig } from '../config/test-config';
-import { TestDataTracker, cleanupAllTestData } from '../utils/test-cleanup';
+import { TestDataTracker } from '../utils/test-cleanup';
 
 /**
  * Extended test fixtures
