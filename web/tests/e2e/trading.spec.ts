@@ -160,7 +160,8 @@ test.describe('Trading Features', () => {
 		await authenticatedPage.waitForLoadState('networkidle');
 
 		// Verify page loads - use heading to avoid strict mode violation
-		await expect(authenticatedPage.getByRole('heading', { name: /Paper Trading/i })).toBeVisible();
+		// Note: Actual heading is "Paper Trading Portfolio", not just "Paper Trading"
+		await expect(authenticatedPage.getByRole('heading', { name: /Paper Trading Portfolio/i })).toBeVisible();
 
 		// Verify account summary or portfolio section is displayed
 		const accountSummary = authenticatedPage.getByText(/Account Summary|Initial Capital|Portfolio Value/i);
