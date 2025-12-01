@@ -29,8 +29,10 @@ API_PID=""
 if [ "$API_RUNNING" = false ]; then
     echo "Starting API server..."
     export DB_URL="sqlite:///./data/e2e.db"
-    export ADMIN_EMAIL="admin@example.com"
-    export ADMIN_PASSWORD="Admin@123"
+    # IMPORTANT: Use test admin credentials that match test-config.ts
+    export ADMIN_EMAIL="${TEST_ADMIN_EMAIL:-testadmin@rebound.com}"
+    export ADMIN_PASSWORD="${TEST_ADMIN_PASSWORD:-testadmin@123}"
+    export ADMIN_NAME="${TEST_ADMIN_NAME:-Test Admin}"
 
     cd ..
     python -m uvicorn server.app.main:app --port 8000 > /dev/null 2>&1 &

@@ -16,6 +16,7 @@ export function isTestEmail(email: string): boolean {
 	const testPatterns = [
 		/^test.*@rebound\.com$/i,
 		/^signup\d+@rebound\.com$/i,
+		/^newuser\d+@rebound\.com$/i, // Admin-created users
 		/^testuser\d+@rebound\.com$/i,
 		/^test.*@example\.com$/i,
 		/^\d+@rebound\.com$/, // Timestamp-based emails
@@ -49,21 +50,46 @@ export async function cleanupTestUser(page: Page, email: string): Promise<void> 
 	}
 
 	try {
-		// Call API to delete user (if admin endpoint exists)
-		const response = await page.request.delete(`${TestConfig.apiURL}/api/v1/admin/users`, {
-			data: { email },
-			headers: {
-				'Content-Type': 'application/json',
-			},
-		});
+		// First, get the user by email to find user_id
+		const listResponse = await page.request.get(`${TestConfig.apiURL}/api/v1/admin/users`);
 
-		if (!response.ok() && response.status() !== 404) {
-			console.warn(`Failed to cleanup user ${email}: ${response.status()}`);
+		if (!listResponse.ok()) {
+			// If unauthorized (401), skip cleanup silently (page not authenticated, e.g., in signup tests)
+			if (listResponse.status() === 401) {
+				// Silent skip - not an error, just can't cleanup without authentication
+				return;
+			}
+			// For other errors, log a warning
+			console.warn(`Failed to get user list for cleanup: ${listResponse.status()}`);
+			return;
+		}
+
+		const users = await listResponse.json() as Array<{ id: number; email: string }>;
+		const user = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+
+		if (!user) {
+			// User doesn't exist, nothing to clean up
+			return;
+		}
+
+		// Delete user by user_id
+		const deleteResponse = await page.request.delete(`${TestConfig.apiURL}/api/v1/admin/users/${user.id}`);
+
+		if (!deleteResponse.ok() && deleteResponse.status() !== 404) {
+			// If unauthorized, skip silently (same reason as above)
+			if (deleteResponse.status() === 401) {
+				return;
+			}
+			console.warn(`Failed to cleanup user ${email} (ID: ${user.id}): ${deleteResponse.status()}`);
 		} else {
-			console.log(`✓ Cleaned up test user: ${email}`);
+			console.log(`✓ Cleaned up test user: ${email} (ID: ${user.id})`);
 		}
 	} catch (error) {
-		console.warn(`Error cleaning up user ${email}:`, error);
+		// Silent skip for network/auth errors - cleanup is best-effort
+		// Only log if it's not an authentication-related error
+		if (error instanceof Error && !error.message.includes('401')) {
+			console.warn(`Error cleaning up user ${email}:`, error);
+		}
 	}
 }
 
@@ -105,7 +131,11 @@ export async function resetTradingConfig(page: Page): Promise<void> {
 	const originalConfig = originalConfigs.get('trading-config');
 
 	if (!originalConfig) {
-		console.warn('No original trading config saved - skipping reset');
+		// This is expected - tests only reset if they modified config
+		// Only show warning in debug mode to reduce test output noise
+		if (process.env.DEBUG_CLEANUP === 'true') {
+			console.warn('No original trading config saved - skipping reset');
+		}
 		return;
 	}
 
@@ -197,7 +227,11 @@ export async function resetNotificationPreferences(page: Page): Promise<void> {
 	const originalPrefs = originalConfigs.get('notification-preferences');
 
 	if (!originalPrefs) {
-		console.warn('No original notification preferences saved - skipping reset');
+		// This is expected - tests only reset if they modified preferences
+		// Only show warning in debug mode to reduce test output noise
+		if (process.env.DEBUG_CLEANUP === 'true') {
+			console.warn('No original notification preferences saved - skipping reset');
+		}
 		return;
 	}
 
@@ -263,7 +297,11 @@ export class TestDataTracker {
 	 */
 	trackUser(email: string): void {
 		if (!isTestEmail(email)) {
-			console.warn(`Warning: Attempting to track non-test email: ${email}. Skipping.`);
+			// Only warn in debug mode or if explicitly enabled
+			// This prevents noise in test output when protecting admin/system emails
+			if (process.env.DEBUG_CLEANUP === 'true') {
+				console.warn(`Warning: Attempting to track non-test email: ${email}. Skipping.`);
+			}
 			return;
 		}
 		this.testUserEmails.push(email);

@@ -16,14 +16,14 @@ test.describe('Test Cleanup Safety', () => {
 		tracker.trackUser('signup456@rebound.com');
 		expect(tracker.getUserEmails()).toHaveLength(2);
 
-		// Should NOT track admin emails
+		// Should NOT track admin emails (silently skipped - safety feature)
 		tracker.trackUser(TestConfig.users.admin.email);
 		expect(tracker.getUserEmails()).toHaveLength(2); // Still 2, admin not added
 
-		// Should NOT track system emails
+		// Should NOT track system emails (silently skipped - safety feature)
 		tracker.trackUser('admin@rebound.com');
 		tracker.trackUser('system@rebound.com');
-		expect(tracker.getUserEmails()).toHaveLength(2); // Still 2
+		expect(tracker.getUserEmails()).toHaveLength(2); // Still 2, system emails not added
 	});
 
 	test('isTestEmail correctly identifies test emails', () => {

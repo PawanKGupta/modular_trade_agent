@@ -19,16 +19,22 @@ npx playwright install chromium
 
 ### 2. Start API Server
 
-In one terminal:
+**IMPORTANT**: Use the test admin credentials that match `test-config.ts`:
 
 ```bash
 # Set environment variables
 $env:DB_URL="sqlite:///./data/e2e.db"
-$env:ADMIN_EMAIL="admin@example.com"
-$env:ADMIN_PASSWORD="Admin@123"
+$env:ADMIN_EMAIL="testadmin@rebound.com"
+$env:ADMIN_PASSWORD="testadmin@123"
 
 # Start API server
 python -m uvicorn server.app.main:app --port 8000 --reload
+```
+
+**Note**: The API server will auto-create the admin user if the database is empty. If the database already has users, ensure the test admin exists using:
+
+```bash
+python web/tests/e2e/utils/ensure-test-admin.py
 ```
 
 Or using Docker:
@@ -85,6 +91,44 @@ cd web
 npx playwright test --project=chromium
 ```
 
+## Database Configuration
+
+⚠️ **IMPORTANT**: E2E tests use a **separate database** (`e2e.db`) from the Docker app (`app.db`).
+
+- **Docker/Production**: Uses `data/app.db`
+- **E2E Tests**: Uses `data/e2e.db`
+
+These are separate databases - test data doesn't affect production data.
+
+See [DATABASE_SETUP.md](./DATABASE_SETUP.md) for detailed database configuration guide.
+
+## Test Data Seeding (Optional)
+
+For comprehensive testing with real data, you can enable test data seeding:
+
+```bash
+# Enable seeding
+export E2E_SEED_DATA=true
+
+# Optional: Configure amounts
+export E2E_SEED_SIGNALS=10
+export E2E_SEED_ORDERS=5
+export E2E_SEED_NOTIFICATIONS=10
+
+# Optional: Clear existing data before seeding
+export E2E_CLEAR_BEFORE_SEED=true
+
+# Run tests
+npm run test:e2e
+```
+
+**What gets seeded:**
+- Test signals (various statuses, symbols, dates)
+- Test orders (different statuses and types)
+- Test notifications (various types and levels)
+
+See [DATA_MANAGEMENT.md](./DATA_MANAGEMENT.md) for details.
+
 ## Test Structure
 
 - `auth.spec.ts` - Authentication flows
@@ -119,4 +163,3 @@ npx playwright test --project=chromium
 ## CI/CD
 
 Tests run automatically in CI/CD pipeline (see `.github/workflows/web-e2e.yml`).
-

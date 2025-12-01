@@ -57,30 +57,65 @@ test.describe('Trading Features', () => {
 		await authenticatedPage.goto('/dashboard/buying-zone');
 		await authenticatedPage.waitForLoadState('networkidle');
 
+		// Wait for page to fully load
+		await authenticatedPage.waitForSelector('table, [role="table"]', { timeout: 10000 }).catch(() => {
+			// Table might not exist if no signals
+		});
+
 		// Find reject button on first signal (if available)
 		const rejectButtons = authenticatedPage.getByRole('button', { name: /reject|Reject/i });
 		const rejectCount = await rejectButtons.count();
 
 		if (rejectCount > 0) {
-			// Get first reject button
+			// Get the first reject button
 			const firstReject = rejectButtons.first();
+
+			// Click reject button
+			await firstReject.scrollIntoViewIfNeeded();
+			await firstReject.waitFor({ state: 'visible' });
 			await firstReject.click();
 
-			// Handle confirmation dialog if it appears
-			const dialog = authenticatedPage.getByRole('dialog');
-			if (await dialog.isVisible().catch(() => false)) {
-				await authenticatedPage.getByRole('button', { name: /confirm|yes|ok/i }).click();
+			// Wait for API call to complete and UI to update
+			await authenticatedPage.waitForLoadState('networkidle');
+			await authenticatedPage.waitForTimeout(1500);
+
+			// Verify rejection was processed
+			// The signal should either:
+			// 1. Be removed from the list (if filtering by active) - reject count decreases
+			// 2. Have the reject button disappear (status changed to rejected) - button no longer visible
+			// 3. Page should still be visible and functional
+
+			// Check that the page is still functional
+			await expect(authenticatedPage.getByRole('heading', { name: /Buying Zone/i })).toBeVisible();
+
+			// Verify the reject button count decreased (signal removed from active list)
+			// OR check if button is no longer visible (status changed, button removed)
+			const newRejectButtons = authenticatedPage.getByRole('button', { name: /reject|Reject/i });
+			const newRejectCount = await newRejectButtons.count();
+
+			// Check if the original button still exists (might be stale if signal was removed)
+			let buttonStillExists = false;
+			try {
+				buttonStillExists = await firstReject.isVisible({ timeout: 1000 });
+			} catch {
+				// Button is gone (stale element) - this is good, signal was removed
+				buttonStillExists = false;
 			}
 
-			// Wait for update
-			await authenticatedPage.waitForTimeout(1000);
+			// Success if: count decreased (signal removed) OR button is gone (status changed)
+			const success = newRejectCount < rejectCount || !buttonStillExists;
 
-			// Verify rejection was processed (signal removed or status changed)
-			// This is best-effort as we don't know exact UI behavior
-			await expect(authenticatedPage.getByText(/Buying Zone/i)).toBeVisible();
+			if (!success) {
+				// Log for debugging
+				console.log(`Reject count: ${rejectCount} -> ${newRejectCount}, Button still exists: ${buttonStillExists}`);
+			}
+
+			expect(success).toBe(true);
 		} else {
-			// If no signals, skip test
-			test.skip();
+			// If no signals available, skip this test
+			// This test requires active signals to test the reject functionality
+			// Note: Signals can be seeded using the test data seeding script
+			test.skip(true, 'No active signals available to test rejection - seed data with E2E_SEED_DATA=true to run this test');
 		}
 	});
 
