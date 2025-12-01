@@ -1,13 +1,13 @@
-name: API Tests
+name: Backend Tests
 
 on:
   push:
     branches: [ main, master ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ "**" ]
 
 jobs:
-  tests:
+  backend-tests:
     runs-on: windows-latest
     permissions:
       contents: read
@@ -26,14 +26,18 @@ jobs:
           pip install -r requirements.txt
           pip install -r server/requirements.txt
           pip install -r requirements-dev.txt
+          # Install neo_api_client for Python 3.12+ (install without dependencies to avoid numpy==1.24.2 conflict)
+          # The module itself works with Python 3.12, only the numpy dependency conflicts
+          pip install --no-deps git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client
+
       - name: Lint & Typecheck (server)
         run: |
           ruff check .
           black --check .
           mypy server app || true
 
-      - name: Run focused tests with coverage
+      - name: Run backend unit and integration tests
         env:
           DB_URL: "sqlite:///:memory:"
         run: |
-          pytest tests/server tests/infrastructure tests/scripts -q
+          pytest tests/unit tests/server tests/infrastructure tests/scripts -q -n=auto

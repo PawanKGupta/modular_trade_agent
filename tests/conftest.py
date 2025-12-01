@@ -440,11 +440,12 @@ def pytest_configure_node(node):
     """
     Called when a worker node is being set up for parallel execution.
     Ensures models are imported once per worker to avoid SQLAlchemy registry conflicts.
+
+    This hook is valid when pytest-xdist is installed for parallel test execution.
     """
-    # Force import models in each worker process to ensure proper registration
-    # This prevents "Multiple classes found for path" errors in parallel execution
     try:
-        # Clear any existing registry conflicts by ensuring fresh import
+        # Force import models in each worker process to ensure proper registration
+        # This prevents "Multiple classes found for path" errors in parallel execution
         from sqlalchemy.orm import configure_mappers
 
         import src.infrastructure.db.models  # noqa: F401

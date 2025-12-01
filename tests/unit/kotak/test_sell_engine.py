@@ -8,6 +8,7 @@ while maintaining backward compatibility.
 from unittest.mock import Mock, patch
 
 from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
+from modules.kotak_neo_auto_trader.services.price_service import PriceService
 
 
 class TestSellEngineInitialization:
@@ -15,8 +16,18 @@ class TestSellEngineInitialization:
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
-    def test_init_with_services(self, mock_scrip_master, mock_auth):
+    @patch("modules.kotak_neo_auto_trader.sell_engine.get_price_service")
+    def test_init_with_services(self, mock_get_price_service, mock_scrip_master, mock_auth):
         """Test that SellOrderManager initializes PriceService and IndicatorService"""
+
+        # Create a fresh PriceService instance based on the parameters passed
+        def create_price_service(live_price_manager=None, enable_caching=True, **kwargs):
+            return PriceService(
+                live_price_manager=live_price_manager, enable_caching=enable_caching, **kwargs
+            )
+
+        mock_get_price_service.side_effect = create_price_service
+
         mock_auth_instance = Mock()
         mock_auth_instance.client = None
         mock_auth.return_value = mock_auth_instance
@@ -25,6 +36,7 @@ class TestSellEngineInitialization:
 
         assert manager.price_service is not None
         assert manager.indicator_service is not None
+        assert manager.price_manager is None  # No price_manager passed
         assert manager.price_service.live_price_manager is None  # No price_manager passed
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")

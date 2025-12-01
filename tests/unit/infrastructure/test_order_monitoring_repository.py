@@ -9,11 +9,10 @@ Tests for:
 5. Query methods (get_pending_amo_orders, get_failed_orders)
 """
 
-from datetime import datetime
-
 import pytest
 
 from src.infrastructure.db.models import OrderStatus, UserRole, Users
+from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 
 
@@ -410,15 +409,23 @@ class TestOrderMonitoringRepository:
             price=None,
         )
 
-        execution_time_before = datetime.now()
+        execution_time_before = ist_now()
         updated = repo.mark_executed(
             order,
             execution_price=2450.50,
             execution_qty=10.0,
         )
-        execution_time_after = datetime.now()
+        execution_time_after = ist_now()
 
         assert updated.execution_price == 2450.50
         assert updated.execution_qty == 10.0
         assert updated.execution_time is not None
-        assert execution_time_before <= updated.execution_time <= execution_time_after
+        # Normalize to naive datetimes for comparison (SQLite returns naive datetimes)
+        execution_time_before_naive = execution_time_before.replace(tzinfo=None)
+        execution_time_after_naive = execution_time_after.replace(tzinfo=None)
+        execution_time_naive = (
+            updated.execution_time.replace(tzinfo=None)
+            if updated.execution_time.tzinfo
+            else updated.execution_time
+        )
+        assert execution_time_before_naive <= execution_time_naive <= execution_time_after_naive

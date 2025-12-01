@@ -33,11 +33,11 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
 					/>
 					<div className="text-xs text-[var(--muted)] mt-1">
-						Default: Rs {defaultConfig.user_capital.toLocaleString()}
+						Default: Rs {defaultConfig.user_capital.toLocaleString('en-IN')}
 					</div>
 					{capitalChange !== 0 && (
 						<div className={`text-xs mt-1 ${capitalChange > 0 ? 'text-green-400' : 'text-red-400'}`}>
-							{capitalChange > 0 ? '+' : ''}Rs {Math.abs(capitalChange).toLocaleString()} from default
+							{capitalChange > 0 ? '+' : ''}Rs {Math.abs(capitalChange).toLocaleString('en-IN')} from default
 						</div>
 					)}
 				</div>
@@ -56,11 +56,11 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
 					/>
 					<div className="text-xs text-[var(--muted)] mt-1">
-						Default: Rs {(defaultConfig.paper_trading_initial_capital ?? 300000).toLocaleString()}
+						Default: Rs {(defaultConfig.paper_trading_initial_capital ?? 300000).toLocaleString('en-IN')}
 					</div>
 					{paperCapitalChange !== 0 && (
 						<div className={`text-xs mt-1 ${paperCapitalChange > 0 ? 'text-green-400' : 'text-red-400'}`}>
-							{paperCapitalChange > 0 ? '+' : ''}Rs {Math.abs(paperCapitalChange).toLocaleString()} from default
+							{paperCapitalChange > 0 ? '+' : ''}Rs {Math.abs(paperCapitalChange).toLocaleString('en-IN')} from default
 						</div>
 					)}
 					<div className="text-xs text-blue-400 mt-1">
@@ -104,7 +104,7 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 					<div className="text-sm font-medium text-blue-400 mb-1">Configuration Impact</div>
 					<div className="text-xs text-blue-300">
 						With max portfolio size of {config.max_portfolio_size}, you can hold up to {config.max_portfolio_size} positions
-						concurrently. Total capital allocation: Rs {(config.user_capital * config.max_portfolio_size).toLocaleString()}
+						concurrently. Total capital allocation: Rs {(config.user_capital * config.max_portfolio_size).toLocaleString('en-IN')}
 					</div>
 				</div>
 			)}
