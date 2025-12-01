@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { getTradingConfig, updateTradingConfig, resetTradingConfig, type TradingConfig, DEFAULT_CONFIG } from '@/api/trading-config';
 import { StrategyConfigSection } from './StrategyConfigSection';
 import { RiskConfigSection } from './RiskConfigSection';
@@ -12,6 +12,7 @@ export function TradingConfigPage() {
 	const qc = useQueryClient();
 	const [hasChanges, setHasChanges] = useState(false);
 	const [localConfig, setLocalConfig] = useState<TradingConfig | null>(null);
+	const justSavedRef = useRef(false);
 
 	const { data: config, isLoading } = useQuery<TradingConfig>({
 		queryKey: ['tradingConfig'],
@@ -20,17 +21,26 @@ export function TradingConfigPage() {
 
 	const updateMutation = useMutation({
 		mutationFn: updateTradingConfig,
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ['tradingConfig'] });
+		onSuccess: (updatedConfig) => {
+			// Immediately update localConfig with the response to avoid stale comparisons
+			setLocalConfig(updatedConfig);
 			setHasChanges(false);
+			justSavedRef.current = true;
+			// Update query cache directly to avoid refetch race condition
+			qc.setQueryData(['tradingConfig'], updatedConfig);
+			// Still invalidate for background refresh
+			qc.invalidateQueries({ queryKey: ['tradingConfig'] });
 		},
 	});
 
 	const resetMutation = useMutation({
 		mutationFn: resetTradingConfig,
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ['tradingConfig'] });
+		onSuccess: (resetConfig) => {
+			// Update localConfig immediately with the server response
+			setLocalConfig(resetConfig);
 			setHasChanges(false);
+			// Invalidate query to refetch in background (for consistency check)
+			qc.invalidateQueries({ queryKey: ['tradingConfig'] });
 		},
 	});
 
@@ -40,7 +50,13 @@ export function TradingConfigPage() {
 
 	useEffect(() => {
 		if (config) {
+			// Skip updating localConfig if we just saved (to avoid overwriting with stale refetch)
+			if (justSavedRef.current) {
+				justSavedRef.current = false;
+				return;
+			}
 			setLocalConfig(config);
+			setHasChanges(false); // Config from server is always "saved"
 		}
 	}, [config]);
 

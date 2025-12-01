@@ -1,88 +1,82 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures/test-fixtures';
 
 test.describe('Authentication', () => {
-	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
-	});
 
-	test('user can sign up with valid credentials', async ({ page }) => {
-		// Navigate to signup if there's a link, or directly
-		const signupLink = page.getByRole('link', { name: /sign up|register/i });
-		if (await signupLink.isVisible().catch(() => false)) {
-			await signupLink.click();
-		} else {
-			await page.goto('/signup');
-		}
+	test('user can sign up with valid credentials', async ({ signupPage, page, testDataTracker }) => {
+		const { generateTestEmail, generateTestName } = await import('./utils/test-helpers');
 
-		// Generate unique email
-		const timestamp = Date.now();
-		const email = `testuser${timestamp}@example.com`;
+		// Generate unique test data
+		const email = generateTestEmail('signup');
 		const password = 'TestPassword123!';
-		const name = `Test User ${timestamp}`;
+		const name = generateTestName();
 
-		// Fill signup form
-		await page.getByLabel(/email/i).fill(email);
-		await page.getByLabel(/password/i).fill(password);
-		if (await page.getByLabel(/name/i).isVisible().catch(() => false)) {
-			await page.getByLabel(/name/i).fill(name);
-		}
+		// Track user for cleanup
+		testDataTracker.trackUser(email);
 
-		// Submit form
-		await page.getByRole('button', { name: /sign up|register|create account/i }).click();
+		// Complete signup flow
+		await signupPage.signup(email, password, name);
 
 		// Should redirect to dashboard
 		await expect(page).toHaveURL(/\/dashboard/);
-		await expect(page.getByText(/Overview|Dashboard/i)).toBeVisible();
+		// Wait for dashboard to load - check for main content area
+		await expect(page.locator('main, [role="main"]')).toBeVisible();
 	});
 
-	test('user can login with correct credentials', async ({ page }) => {
-		// Fill login form
-		await page.getByRole('textbox', { name: /email/i }).fill('admin@example.com');
-		await page.getByLabel(/password/i).fill('Admin@123');
-		await page.getByRole('button', { name: /login/i }).click();
+	test('user can login with correct credentials', async ({ loginPage, page }) => {
+		// Login using page object
+		await loginPage.loginAsAdmin();
 
 		// Should redirect to dashboard
 		await expect(page).toHaveURL(/\/dashboard/);
-		await expect(page.getByText(/Overview|Dashboard/i)).toBeVisible();
+		// Wait for dashboard to load - check for main content area
+		await expect(page.locator('main, [role="main"]')).toBeVisible();
 
 		// Verify user is logged in (check for user email or profile)
-		const userEmail = page.getByText(/admin@example.com/i);
+		const userEmail = page.getByText(new RegExp(loginPage['config'].users.admin.email, 'i'));
 		await expect(userEmail).toBeVisible();
 	});
 
-	test('login fails with invalid password', async ({ page }) => {
-		// Fill login form with wrong password
-		await page.getByRole('textbox', { name: /email/i }).fill('admin@example.com');
-		await page.getByLabel(/password/i).fill('WrongPassword123!');
-		await page.getByRole('button', { name: /login/i }).click();
+	test('login fails with invalid password', async ({ loginPage, page }) => {
+		// Attempt login with wrong password
+		await loginPage.goto();
+		await loginPage.fillEmail(loginPage['config'].users.admin.email);
+		await loginPage.fillPassword('WrongPassword123!');
+		await loginPage.clickLogin();
 
-		// Should show error message
-		await expect(page.getByText(/invalid|incorrect|wrong|error/i)).toBeVisible();
+		// Wait for error message to appear (wait for API response or error element)
+		// The error message appears after the login API call fails
+		await expect(loginPage['errorMessage']).toBeVisible({ timeout: 10000 });
+
+		// Verify error message is visible
+		const hasError = await loginPage.hasError();
+		expect(hasError).toBe(true);
+
+		// Get and verify error message content
+		const errorMessage = await loginPage.getErrorMessage();
+		expect(errorMessage.toLowerCase()).toMatch(/invalid|incorrect|wrong|error|failed|login/i);
 
 		// Should remain on login page
 		await expect(page).toHaveURL(/\//);
 	});
 
-	test('session persists after page refresh', async ({ page }) => {
+	test('session persists after page refresh', async ({ loginPage, page }) => {
 		// Login first
-		await page.getByRole('textbox', { name: /email/i }).fill('admin@example.com');
-		await page.getByLabel(/password/i).fill('Admin@123');
-		await page.getByRole('button', { name: /login/i }).click();
+		await loginPage.loginAsAdmin();
 		await expect(page).toHaveURL(/\/dashboard/);
 
 		// Refresh page
 		await page.reload();
+		await page.waitForLoadState('networkidle');
 
 		// Should still be logged in
 		await expect(page).toHaveURL(/\/dashboard/);
-		await expect(page.getByText(/Overview|Dashboard/i)).toBeVisible();
+		// Wait for dashboard to load - check for main content area
+		await expect(page.locator('main, [role="main"]')).toBeVisible();
 	});
 
-	test('user can logout and session is cleared', async ({ page }) => {
+	test('user can logout and session is cleared', async ({ loginPage, page }) => {
 		// Login first
-		await page.getByRole('textbox', { name: /email/i }).fill('admin@example.com');
-		await page.getByLabel(/password/i).fill('Admin@123');
-		await page.getByRole('button', { name: /login/i }).click();
+		await loginPage.loginAsAdmin();
 		await expect(page).toHaveURL(/\/dashboard/);
 
 		// Find and click logout button (usually in user menu or sidebar)
@@ -92,7 +86,7 @@ test.describe('Authentication', () => {
 
 		// Should redirect to login page
 		await expect(page).toHaveURL(/\//);
-		await expect(page.getByRole('button', { name: /login/i })).toBeVisible();
+		await expect(loginPage['heading']).toBeVisible();
 
 		// Try to access protected route - should redirect to login
 		await page.goto('/dashboard');

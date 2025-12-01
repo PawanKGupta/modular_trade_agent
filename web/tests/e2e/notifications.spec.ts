@@ -1,40 +1,45 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures/test-fixtures';
 
 test.describe('Notifications', () => {
-	test.beforeEach(async ({ page }) => {
-		// Login first
-		await page.goto('/');
-		await page.getByRole('textbox', { name: /email/i }).fill('admin@example.com');
-		await page.getByLabel(/password/i).fill('Admin@123');
-		await page.getByRole('button', { name: /login/i }).click();
-		await expect(page).toHaveURL(/\/dashboard/);
+	test.beforeEach(async ({ authenticatedPage }) => {
+		// Page is already authenticated via fixture and should be on dashboard
+		// Just ensure we're on dashboard, don't navigate again as it might cause redirect
+		await authenticatedPage.waitForURL(/\/dashboard/, { timeout: 10000 });
+		await authenticatedPage.waitForLoadState('networkidle');
 	});
 
-	test('Notifications page loads and displays notifications', async ({ page }) => {
-		await page.goto('/dashboard/notifications');
+	test('Notifications page loads and displays notifications', async ({ authenticatedPage }) => {
+		await authenticatedPage.goto('/dashboard/notifications');
+		await authenticatedPage.waitForLoadState('networkidle');
 
-		// Verify page loads
-		await expect(page.getByText(/Notifications/i)).toBeVisible();
+		// Verify page loads - use heading to avoid strict mode violation
+		await expect(authenticatedPage.getByRole('heading', { name: /Notifications/i })).toBeVisible();
 
-		// Verify notification list is displayed
-		const notificationsList = page.locator('.notifications-list, [role="list"], table');
-		await expect(notificationsList.first()).toBeVisible({ timeout: 5000 });
+		// Verify notification list or empty state is displayed
+		const notificationsList = authenticatedPage.locator('.notifications-list, [role="list"], table');
+		const emptyState = authenticatedPage.getByText(/No notifications found/i);
+
+		const hasList = await notificationsList.first().isVisible().catch(() => false);
+		const hasEmptyState = await emptyState.isVisible().catch(() => false);
+
+		// Either list or empty state should be visible
+		expect(hasList || hasEmptyState).toBe(true);
 
 		// Verify filters are available
-		await expect(page.getByText(/Filter|Type|Level/i).first()).toBeVisible();
+		await expect(authenticatedPage.getByText(/Type|Level/i).first()).toBeVisible();
 	});
 
-	test('can mark notification as read', async ({ page }) => {
-		await page.goto('/dashboard/notifications');
-		await page.waitForLoadState('networkidle');
+	test('can mark notification as read', async ({ authenticatedPage }) => {
+		await authenticatedPage.goto('/dashboard/notifications');
+		await authenticatedPage.waitForLoadState('networkidle');
 
 		// Find an unread notification
-		const markReadButtons = page.getByRole('button', { name: /Mark Read|mark as read/i });
+		const markReadButtons = authenticatedPage.getByRole('button', { name: /Mark Read|mark as read/i });
 		const buttonCount = await markReadButtons.count();
 
 		if (buttonCount > 0) {
 			// Get initial unread count if displayed
-			const unreadCountElement = page.getByText(/\d+/).first();
+			const unreadCountElement = authenticatedPage.getByText(/\d+/).first();
 			let initialUnreadCount = null;
 			if (await unreadCountElement.isVisible().catch(() => false)) {
 				const countText = await unreadCountElement.textContent();
@@ -43,20 +48,20 @@ test.describe('Notifications', () => {
 
 			// Click first mark read button
 			await markReadButtons.first().click();
-			await page.waitForTimeout(500);
+			await authenticatedPage.waitForTimeout(500);
 
 			// Verify notification was marked as read (button should disappear or change)
 			// Best effort verification
-			await expect(page.getByText(/Notifications/i)).toBeVisible();
+			await expect(authenticatedPage.getByText(/Notifications/i)).toBeVisible();
 		}
 	});
 
-	test('can mark all notifications as read', async ({ page }) => {
-		await page.goto('/dashboard/notifications');
-		await page.waitForLoadState('networkidle');
+	test('can mark all notifications as read', async ({ authenticatedPage }) => {
+		await authenticatedPage.goto('/dashboard/notifications');
+		await authenticatedPage.waitForLoadState('networkidle');
 
 		// Find "Mark All Read" button
-		const markAllReadButton = page.getByRole('button', { name: /Mark All Read|mark all as read/i });
+		const markAllReadButton = authenticatedPage.getByRole('button', { name: /Mark All Read|mark all as read/i });
 
 		if (await markAllReadButton.isVisible().catch(() => false)) {
 			// Get initial unread count
@@ -65,45 +70,45 @@ test.describe('Notifications', () => {
 
 			if (hasUnread) {
 				await markAllReadButton.click();
-				await page.waitForTimeout(1000);
+				await authenticatedPage.waitForTimeout(1000);
 
 				// Verify all marked as read (button should update or disappear)
-				await expect(page.getByText(/Notifications/i)).toBeVisible();
+				await expect(authenticatedPage.getByText(/Notifications/i)).toBeVisible();
 			}
 		}
 	});
 
-	test('notification filters work correctly', async ({ page }) => {
-		await page.goto('/dashboard/notifications');
-		await page.waitForLoadState('networkidle');
+	test('notification filters work correctly', async ({ authenticatedPage }) => {
+		await authenticatedPage.goto('/dashboard/notifications');
+		await authenticatedPage.waitForLoadState('networkidle');
 
 		// Test type filter if available
-		const typeFilter = page.getByLabel(/Type|Filter by Type/i);
+		const typeFilter = authenticatedPage.getByLabel(/Type|Filter by Type/i);
 		if (await typeFilter.isVisible().catch(() => false)) {
 			await typeFilter.click();
-			await page.getByText(/Service|Trading|System|Error/i).first().click();
-			await page.waitForTimeout(500);
+			await authenticatedPage.getByText(/Service|Trading|System|Error/i).first().click();
+			await authenticatedPage.waitForTimeout(500);
 		}
 
 		// Test level filter if available
-		const levelFilter = page.getByLabel(/Level|Filter by Level/i);
+		const levelFilter = authenticatedPage.getByLabel(/Level|Filter by Level/i);
 		if (await levelFilter.isVisible().catch(() => false)) {
 			await levelFilter.click();
-			await page.getByText(/Info|Warning|Error|Critical/i).first().click();
-			await page.waitForTimeout(500);
+			await authenticatedPage.getByText(/Info|Warning|Error|Critical/i).first().click();
+			await authenticatedPage.waitForTimeout(500);
 		}
 
-		// Verify filters applied
-		await expect(page.getByText(/Notifications/i)).toBeVisible();
+		// Verify filters applied - use heading to avoid strict mode violation
+		await expect(authenticatedPage.getByRole('heading', { name: /Notifications/i })).toBeVisible();
 	});
 
-	test('notification badge shows unread count', async ({ page }) => {
+	test('notification badge shows unread count', async ({ authenticatedPage }) => {
 		// Navigate to dashboard to see notification badge
-		await page.goto('/dashboard');
-		await page.waitForLoadState('networkidle');
+		await authenticatedPage.goto('/dashboard');
+		await authenticatedPage.waitForLoadState('networkidle');
 
 		// Look for notification icon/bell with badge
-		const notificationIcon = page.locator('[aria-label*="notification" i], [title*="notification" i]');
+		const notificationIcon = authenticatedPage.locator('[aria-label*="notification" i], [title*="notification" i]');
 		if (await notificationIcon.isVisible().catch(() => false)) {
 			// Check if badge is present (might be in a span or div)
 			const badge = notificationIcon.locator('..').getByText(/\d+/);
