@@ -15,10 +15,10 @@ describe('formatTimeAgo', () => {
 	});
 
 	it('formats hours correctly', () => {
-		expect(formatTimeAgo(3600)).toBe('1hr ago');
-		expect(formatTimeAgo(3678)).toBe('1hr ago');
-		expect(formatTimeAgo(7200)).toBe('2hr ago');
-		expect(formatTimeAgo(4238)).toBe('1hr ago');
+		expect(formatTimeAgo(3600)).toBe('1 hr ago');
+		expect(formatTimeAgo(3678)).toBe('1 hr ago');
+		expect(formatTimeAgo(7200)).toBe('2 hrs ago');
+		expect(formatTimeAgo(4238)).toBe('1 hr ago');
 	});
 
 	it('formats days correctly', () => {
@@ -29,7 +29,7 @@ describe('formatTimeAgo', () => {
 	it('handles future times with "in" prefix', () => {
 		expect(formatTimeAgo(-30)).toBe('in 30 sec');
 		expect(formatTimeAgo(-120)).toBe('in 2 min');
-		expect(formatTimeAgo(-3600)).toBe('in 1hr');
+		expect(formatTimeAgo(-3600)).toBe('in 1 hr');
 		expect(formatTimeAgo(-86400)).toBe('in 1 day');
 	});
 });
