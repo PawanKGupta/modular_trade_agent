@@ -21,6 +21,13 @@ from unittest.mock import Mock, patch
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# Create mock neo_api_client module before imports that use it
+if "neo_api_client" not in sys.modules:
+    from unittest.mock import MagicMock
+
+    mock_neo_module = MagicMock()
+    sys.modules["neo_api_client"] = mock_neo_module
+
 from modules.kotak_neo_auto_trader.auth import KotakNeoAuth  # noqa: E402
 from modules.kotak_neo_auto_trader.utils.service_conflict_detector import (  # noqa: E402
     check_old_services_running,
