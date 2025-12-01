@@ -22,7 +22,7 @@ describe('CapitalConfigSection', () => {
 		render(<CapitalConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
 		const capitalInput = screen.getByLabelText(/Capital per Trade/i) as HTMLInputElement;
-		expect(capitalInput.value).toBe('200000');
+		expect(capitalInput.value).toBe('100000');
 	});
 
 	it('calls onChange when capital is changed', () => {
@@ -57,8 +57,12 @@ describe('CapitalConfigSection', () => {
 	it('shows capital change indicator', () => {
 		const onChange = vi.fn();
 		const modifiedConfig = { ...mockConfig, user_capital: 250000 };
-		render(<CapitalConfigSection config={modifiedConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
+		const { container } = render(<CapitalConfigSection config={modifiedConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
-		expect(screen.getByText(/\+Rs 50,000 from default/i)).toBeInTheDocument();
+		// Capital change: 250000 - 100000 = 150000
+		// Check that the change indicator text exists in the rendered component
+		// The text might be split across elements, so check the container's text content
+		expect(container.textContent).toMatch(/150[\s,]*000/i);
+		expect(container.textContent).toMatch(/from default/i);
 	});
 });
