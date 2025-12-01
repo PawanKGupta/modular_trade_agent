@@ -31,14 +31,14 @@ if [ "$API_RUNNING" = false ]; then
     export DB_URL="sqlite:///./data/e2e.db"
     export ADMIN_EMAIL="admin@example.com"
     export ADMIN_PASSWORD="Admin@123"
-    
+
     cd ..
     python -m uvicorn server.app.main:app --port 8000 > /dev/null 2>&1 &
     API_PID=$!
     cd web
-    
+
     sleep 5
-    
+
     # Verify API is running
     if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
         echo "✓ API server started successfully"
@@ -56,12 +56,12 @@ WEB_PID=""
 if [ "$WEB_RUNNING" = false ]; then
     echo "Starting web frontend..."
     export VITE_API_URL="http://localhost:8000"
-    
+
     npm run dev > /dev/null 2>&1 &
     WEB_PID=$!
-    
+
     sleep 5
-    
+
     # Verify web is running
     if curl -sf http://localhost:5173 > /dev/null 2>&1; then
         echo "✓ Web frontend started successfully"
@@ -112,4 +112,3 @@ else
 fi
 
 exit $TEST_EXIT_CODE
-

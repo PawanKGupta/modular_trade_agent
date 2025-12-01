@@ -34,10 +34,10 @@ if (-not $apiRunning) {
     $env:DB_URL = "sqlite:///./data/e2e.db"
     $env:ADMIN_EMAIL = "admin@example.com"
     $env:ADMIN_PASSWORD = "Admin@123"
-    
+
     $apiProcess = Start-Process -FilePath "python" -ArgumentList "-m", "uvicorn", "server.app.main:app", "--port", "8000" -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 5
-    
+
     # Verify API is running
     try {
         $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -TimeoutSec 5
@@ -53,11 +53,11 @@ $webProcess = $null
 if (-not $webRunning) {
     Write-Host "Starting web frontend..." -ForegroundColor Yellow
     $env:VITE_API_URL = "http://localhost:8000"
-    
+
     Push-Location $PSScriptRoot
     $webProcess = Start-Process -FilePath "npm" -ArgumentList "run", "dev" -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 5
-    
+
     # Verify web is running
     try {
         $response = Invoke-WebRequest -Uri "http://localhost:5173" -TimeoutSec 5
@@ -105,4 +105,3 @@ if ($testExitCode -eq 0) {
 }
 
 exit $testExitCode
-

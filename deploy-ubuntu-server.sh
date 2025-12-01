@@ -2,7 +2,7 @@
 
 ################################################################################
 # Rebound — Modular Trade Agent - Ubuntu Server Deployment Script
-# 
+#
 # This script automates the deployment of the application to an Ubuntu server.
 # It handles:
 # - Docker installation
@@ -11,7 +11,7 @@
 # - Reverse proxy with Nginx
 # - SSL certificate with Let's Encrypt
 #
-# Usage: 
+# Usage:
 #   chmod +x deploy-ubuntu-server.sh
 #   sudo ./deploy-ubuntu-server.sh
 #
@@ -43,7 +43,7 @@ echo -e "${CYAN}═════════════════════�
 echo ""
 
 # Check if running as root
-if [ "$EUID" -ne 0 ]; then 
+if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}✗ Error: This script must be run as root (use sudo)${NC}"
     exit 1
 fi
@@ -123,31 +123,31 @@ if command -v docker &> /dev/null; then
     docker --version
 else
     echo -e "${YELLOW}Installing Docker...${NC}"
-    
+
     # Install prerequisites
     apt-get install -y \
         ca-certificates \
         curl \
         gnupg \
         lsb-release
-    
+
     # Add Docker's official GPG key
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
-    
+
     # Set up repository
     echo \
       "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
       $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-    
+
     # Install Docker Engine
     apt-get update
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    
+
     # Add user to docker group
     usermod -aG docker $ACTUAL_USER
-    
+
     echo -e "${GREEN}✓ Docker installed${NC}"
 fi
 
@@ -200,14 +200,14 @@ if [ -d "$PROJECT_DIR/.git" ]; then
         --exclude='data/app.db' \
         --exclude='data/app.dev.db' \
         "$PROJECT_DIR/" "$APP_DIR/"
-    
+
     chown -R $ACTUAL_USER:$ACTUAL_USER "$APP_DIR"
     echo -e "${GREEN}✓ Application files copied${NC}"
 else
     echo -e "${YELLOW}Git repository not found. Please clone the repository manually:${NC}"
     echo "  git clone <repository-url> $APP_DIR"
     echo ""
-    read -p "Press Enter when repository is cloned..." 
+    read -p "Press Enter when repository is cloned..."
 fi
 
 ################################################################################
@@ -314,7 +314,7 @@ upstream api_backend {
 server {
     listen 80;
     server_name ${DOMAIN:-_};
-    
+
     # Increase body size for file uploads
     client_max_body_size 10M;
 
@@ -370,26 +370,26 @@ echo -e "${GREEN}✓ Nginx configured${NC}"
 if [ -n "$DOMAIN" ]; then
     echo ""
     echo -e "${BLUE}[8/9] Setting up SSL with Let's Encrypt...${NC}"
-    
+
     # Install Certbot
     if ! command -v certbot &> /dev/null; then
         apt-get install -y certbot python3-certbot-nginx
     fi
-    
+
     # Obtain certificate
     echo -e "${YELLOW}Obtaining SSL certificate...${NC}"
     certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$EMAIL" --redirect
-    
+
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ SSL certificate installed${NC}"
-        
+
         # Update CORS in .env file
         sed -i "s|CORS_ALLOW_ORIGINS=.*|CORS_ALLOW_ORIGINS=https://${DOMAIN}|" "$APP_DIR/.env"
-        
+
         # Restart API server to pick up new CORS settings
         cd "$APP_DIR/docker"
         docker compose -f docker-compose.yml -f docker-compose.prod.yml restart api-server
-        
+
         echo -e "${GREEN}✓ CORS configuration updated${NC}"
     else
         echo -e "${YELLOW}⚠ Warning: SSL certificate installation failed${NC}"
@@ -413,19 +413,19 @@ if command -v ufw &> /dev/null; then
     # Allow HTTP
     ufw allow 80/tcp
     echo -e "${GREEN}✓ HTTP (port 80) allowed${NC}"
-    
+
     # Allow HTTPS if SSL was configured
     if [ -n "$DOMAIN" ]; then
         ufw allow 443/tcp
         echo -e "${GREEN}✓ HTTPS (port 443) allowed${NC}"
     fi
-    
+
     # Allow SSH (if not already allowed)
     ufw allow 22/tcp || true
-    
+
     # Enable firewall if not already enabled
     ufw --force enable 2>/dev/null || true
-    
+
     echo -e "${GREEN}✓ Firewall configured${NC}"
 else
     echo -e "${YELLOW}⚠ UFW not found. Please configure firewall manually${NC}"
@@ -490,4 +490,3 @@ echo ""
 
 echo -e "${GREEN}Happy Trading! 📈${NC}"
 echo ""
-
