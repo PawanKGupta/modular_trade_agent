@@ -32,6 +32,9 @@ jobs:
           pip install -r requirements.txt
           pip install -r server/requirements.txt
 
+      - name: Create data directory
+        run: mkdir -p data
+
       - name: Start API
         env:
           DB_URL: "sqlite:///./data/e2e.db"
