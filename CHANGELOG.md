@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Missing Dependency**: Added `email-validator>=2.0.0` to `server/requirements.txt` to support Pydantic's `EmailStr` validation
+- **Missing Test Dependency**: Added `httpx>=0.24.0` to `requirements-dev.txt` required by FastAPI's TestClient (used in conftest.py)
 - **Test Loading State Detection**: Improved loading state test to handle fast responses and cached data gracefully
 - **Test Cleanup Errors**: Fixed cleanup warnings for 401 Unauthorized errors during test teardown
 - **PowerShell Script Syntax**: Replaced Unicode characters with ASCII-safe alternatives for better compatibility
