@@ -36,33 +36,33 @@ def example_basic_usage():
     logger.info("=" * 70)
     logger.info("EXAMPLE 1: Basic Phase 2 Integration")
     logger.info("=" * 70)
-    
+
     # Initialize engine (Phase 2 enabled by default)
     engine = AutoTradeEngine(
         env_file="kotak_neo.env",
-        enable_verifier=True,       # Enable 30-min order checks
-        enable_telegram=True,        # Enable Telegram notifications
-        enable_eod_cleanup=True,     # Enable EOD cleanup
-        verifier_interval=1800       # Check every 30 minutes
+        enable_verifier=True,  # Enable 30-min order checks
+        enable_telegram=True,  # Enable Telegram notifications
+        enable_eod_cleanup=True,  # Enable EOD cleanup
+        verifier_interval=1800,  # Check every 30 minutes
     )
-    
+
     # Login (automatically initializes Phase 2 modules)
     if engine.login():
-        logger.info("✓ Logged in successfully")
-        logger.info("✓ Phase 2 modules initialized")
-        
+        logger.info("[OK] Logged in successfully")
+        logger.info("[OK] Phase 2 modules initialized")
+
         # Your trading logic here
         # - Place orders (automatically tracked)
         # - Order verifier monitors in background
         # - Telegram sends notifications
         # - Manual trades detected during reconciliation
-        
+
         # Run main trading loop
         engine.run(keep_session=True)
-        
+
         # Cleanup
         engine.logout()
-        logger.info("✓ Logged out successfully")
+        logger.info("[OK] Logged out successfully")
     else:
         logger.error("Login failed")
 
@@ -74,29 +74,27 @@ def example_telegram_test():
     logger.info("=" * 70)
     logger.info("EXAMPLE 2: Test Telegram Connection")
     logger.info("=" * 70)
-    
+
     from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
-    
+
     # Check if credentials are set
-    if not os.getenv('TELEGRAM_BOT_TOKEN') or not os.getenv('TELEGRAM_CHAT_ID'):
+    if not os.getenv("TELEGRAM_BOT_TOKEN") or not os.getenv("TELEGRAM_CHAT_ID"):
         logger.error("Telegram credentials not set!")
         logger.error("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables")
         return
-    
+
     # Test connection
     notifier = get_telegram_notifier()
-    
+
     if notifier.test_connection():
-        logger.info("✓ Telegram connection successful!")
-        
+        logger.info("[OK] Telegram connection successful!")
+
         # Send test notifications
         notifier.notify_system_alert(
-            "System Test",
-            "Phase 2 integration test successful!",
-            severity="SUCCESS"
+            "System Test", "Phase 2 integration test successful!", severity="SUCCESS"
         )
     else:
-        logger.error("✗ Telegram connection failed")
+        logger.error("[FAIL] Telegram connection failed")
         logger.error("Check your bot token and chat ID")
 
 
@@ -107,28 +105,28 @@ def example_manual_eod_cleanup():
     logger.info("=" * 70)
     logger.info("EXAMPLE 3: Manual EOD Cleanup")
     logger.info("=" * 70)
-    
+
     engine = AutoTradeEngine(env_file="kotak_neo.env")
-    
+
     if engine.login():
-        logger.info("✓ Logged in")
-        
+        logger.info("[OK] Logged in")
+
         # Manually run EOD cleanup
         if engine.eod_cleanup:
             logger.info("Running EOD cleanup manually...")
             results = engine.eod_cleanup.run_eod_cleanup()
-            
+
             logger.info(f"\n{'=' * 70}")
             logger.info(f"EOD Cleanup Results:")
             logger.info(f"  Success: {results['success']}")
             logger.info(f"  Duration: {results['duration_seconds']:.2f}s")
             logger.info(f"  Steps Completed: {len(results['steps_completed'])}/6")
-            if results['steps_failed']:
+            if results["steps_failed"]:
                 logger.warning(f"  Failed Steps: {', '.join(results['steps_failed'])}")
             logger.info(f"{'=' * 70}\n")
         else:
             logger.warning("EOD cleanup not initialized")
-        
+
         engine.logout()
     else:
         logger.error("Login failed")
@@ -141,14 +139,14 @@ def example_scheduled_eod_cleanup():
     logger.info("=" * 70)
     logger.info("EXAMPLE 4: Scheduled EOD Cleanup")
     logger.info("=" * 70)
-    
+
     from modules.kotak_neo_auto_trader.eod_cleanup import schedule_eod_cleanup
-    
+
     engine = AutoTradeEngine(env_file="kotak_neo.env")
-    
+
     if engine.login():
-        logger.info("✓ Logged in")
-        
+        logger.info("[OK] Logged in")
+
         # Schedule EOD cleanup for 6 PM IST daily
         def eod_callback(results):
             """Called after each EOD cleanup."""
@@ -157,21 +155,20 @@ def example_scheduled_eod_cleanup():
                 engine.telegram_notifier.notify_system_alert(
                     "EOD Cleanup",
                     f"Completed in {results['duration_seconds']:.1f}s",
-                    severity="SUCCESS" if results['success'] else "WARNING"
+                    severity="SUCCESS" if results["success"] else "WARNING",
                 )
-        
+
         schedule_eod_cleanup(
-            broker_client=engine.orders,
-            target_time="18:00",  # 6 PM IST
-            callback=eod_callback
+            broker_client=engine.orders, target_time="18:00", callback=eod_callback  # 6 PM IST
         )
-        
-        logger.info("✓ EOD cleanup scheduled for 18:00 IST daily")
+
+        logger.info("[OK] EOD cleanup scheduled for 18:00 IST daily")
         logger.info("  (runs in background thread)")
-        
+
         # Keep program running (or integrate with your main loop)
         try:
             import time
+
             logger.info("\nPress Ctrl+C to stop...")
             while True:
                 time.sleep(60)
@@ -187,25 +184,25 @@ def example_disable_phase2():
     logger.info("=" * 70)
     logger.info("EXAMPLE 5: Phase 1 Only (Disable Phase 2)")
     logger.info("=" * 70)
-    
+
     # Disable all Phase 2 features
     engine = AutoTradeEngine(
         env_file="kotak_neo.env",
-        enable_verifier=False,      # No automated checks
-        enable_telegram=False,       # No notifications
-        enable_eod_cleanup=False     # No EOD cleanup
+        enable_verifier=False,  # No automated checks
+        enable_telegram=False,  # No notifications
+        enable_eod_cleanup=False,  # No EOD cleanup
     )
-    
+
     if engine.login():
-        logger.info("✓ Logged in (Phase 2 disabled)")
-        logger.info("  - Order tracking: ✓ (Phase 1)")
-        logger.info("  - Order verifier: ✗ (disabled)")
-        logger.info("  - Telegram: ✗ (disabled)")
-        logger.info("  - EOD cleanup: ✗ (disabled)")
-        
+        logger.info("[OK] Logged in (Phase 2 disabled)")
+        logger.info("  - Order tracking: [OK] (Phase 1)")
+        logger.info("  - Order verifier: [FAIL] (disabled)")
+        logger.info("  - Telegram: [FAIL] (disabled)")
+        logger.info("  - EOD cleanup: [FAIL] (disabled)")
+
         # Your trading logic here
         engine.run(keep_session=True)
-        
+
         engine.logout()
     else:
         logger.error("Login failed")
@@ -214,18 +211,18 @@ def example_disable_phase2():
 def main():
     """Run examples."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Phase 2 Integration Examples")
     parser.add_argument(
         "example",
         nargs="?",
         default="1",
         choices=["1", "2", "3", "4", "5"],
-        help="Example to run (1-5)"
+        help="Example to run (1-5)",
     )
-    
+
     args = parser.parse_args()
-    
+
     examples = {
         "1": ("Basic Phase 2 Integration", example_basic_usage),
         "2": ("Test Telegram Connection", example_telegram_test),
@@ -233,13 +230,13 @@ def main():
         "4": ("Scheduled EOD Cleanup", example_scheduled_eod_cleanup),
         "5": ("Phase 1 Only (Disable Phase 2)", example_disable_phase2),
     }
-    
+
     title, func = examples[args.example]
-    
+
     logger.info("\n" + "=" * 70)
     logger.info(f"Running Example {args.example}: {title}")
     logger.info("=" * 70 + "\n")
-    
+
     try:
         func()
     except KeyboardInterrupt:

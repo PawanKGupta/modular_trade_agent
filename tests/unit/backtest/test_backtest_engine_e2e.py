@@ -24,10 +24,17 @@ def make_ohlcv(start='2023-01-01', days=800, base=100.0):
 def patch_yfinance(monkeypatch, df):
     class FakeYF:
         @staticmethod
-        def download(symbol, start=None, end=None, progress=False, auto_adjust=True):
+        def download(symbol, start=None, end=None, progress=False, auto_adjust=False):
             # Ignore start/end, return prebuilt df
+            # NOTE: Updated to match unadjusted prices (matches TradingView)
             return df
     monkeypatch.setattr(eng_mod, 'yf', FakeYF, raising=False)
+
+    # Also patch fetch_multi_timeframe_data if it's used
+    from core import data_fetcher
+    def fake_fetch_multi_timeframe_data(ticker, days=800, end_date=None, add_current_day=True, config=None):
+        return {'daily': df, 'weekly': df}
+    monkeypatch.setattr(data_fetcher, 'fetch_multi_timeframe_data', fake_fetch_multi_timeframe_data, raising=False)
 
 
 def patch_ta_for_signals(monkeypatch, mode='entries'):

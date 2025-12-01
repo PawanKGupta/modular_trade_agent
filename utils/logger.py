@@ -14,6 +14,7 @@ except Exception:
 logger = logging.getLogger("TradeAgent")
 logger.setLevel(logging.DEBUG)  # Set to DEBUG for full detail, change to INFO or WARNING in prod
 
+
 # Unicode-safe formatter (replaces unsupported chars for the active console encoding)
 class UnicodeSafeFormatter(logging.Formatter):
     def format(self, record):
@@ -24,10 +25,10 @@ class UnicodeSafeFormatter(logging.Formatter):
         except Exception:
             return s
 
+
 # Formatter for logs
 formatter = UnicodeSafeFormatter(
-    '%(asctime)s — %(levelname)s — %(module)s — %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    "%(asctime)s - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
 )
 
 # Console handler
@@ -40,20 +41,21 @@ from datetime import datetime
 import os
 
 # Create logs directory if it doesn't exist
-os.makedirs('logs', exist_ok=True)
+os.makedirs("logs", exist_ok=True)
 
 # Use date-based log filename
-today = datetime.now().strftime('%Y%m%d')
+today = datetime.now().strftime("%Y%m%d")
 log_filename = f"logs/trade_agent_{today}.log"
 
 # File handler keeps full Unicode (explicit utf-8)
 file_handler = logging.FileHandler(log_filename, encoding="utf-8")
 file_handler.setLevel(logging.DEBUG)
 # Use base formatter that preserves characters for file
-file_handler.setFormatter(logging.Formatter(
-    '%(asctime)s — %(levelname)s — %(module)s — %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-))
+file_handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
+)
 
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)

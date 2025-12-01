@@ -1,30 +1,66 @@
-# Archive Directory
+# Archived Documentation
 
-Historical and superseded files preserved for reference.
+This directory contains outdated documentation that has been superseded by the new documentation structure in `docs/`.
 
-**Created:** November 13, 2025 (v25.4.2 release)
+## Archive Date
+January 2025
 
----
+## What's Archived
 
-## 📁 Contents
+### Migration Documents
+- Migration completion reports
+- Migration guides
+- Comprehensive migration documents
 
-### `old_documentation/new_documentation/`
-Intermediate documentation structure that was superseded.
+### Phase Completion Reports
+- Phase 1-5 validation reports
+- Phase implementation progress
+- Phase integration reports
+- Phase benefits analysis
 
-**Contents:** 8 files
-- Brief guides and summaries
-- Release notes for 25.4.1
-- Configuration and deployment snippets
+### Implementation Plans
+- Coverage plans for phases
+- Order status simplification implementation
+- Phase-wise implementation plans
 
-**Status:** Archived - superseded by comprehensive `documents/` folder
+### Old Documentation Structure
+- Previous documentation organization
+- Superseded deployment guides
+- Old feature documentation
 
----
+## Why Archived
 
-## 📖 Current Documentation
+These documents were archived because:
+1. They document completed migrations and phases that are no longer relevant
+2. They describe historical implementation progress, not current state
+3. They have been superseded by new, consolidated documentation in `docs/`
+4. They create confusion about the current system architecture
 
-**Active documentation:** [`../documents/`](../documents/README.md)
+## Current Documentation
 
----
+For up-to-date documentation, see:
+- `docs/README.md` - Documentation index
+- `docs/GETTING_STARTED.md` - Setup guide
+- `docs/ARCHITECTURE.md` - Current architecture
+- `docs/API.md` - API reference
+- `docs/USER_GUIDE.md` - User guide
+- `docs/DEPLOYMENT.md` - Deployment guide
+- `docker/README.md` - Docker guide
 
-**Last Updated:** November 13, 2025
+## Archive Structure
 
+```
+archive/
+├── documents/
+│   ├── migration/          # Migration documents
+│   ├── refactoring/        # Phase validation reports
+│   ├── phases/             # Phase progress reports
+│   ├── implementation/    # Implementation plans
+│   └── features/          # Old feature docs
+├── docs/                   # Old docs structure
+└── old_documentation/      # Previous documentation
+```
+
+## Note
+
+These files are kept for historical reference only. Do not use them for current development or deployment.

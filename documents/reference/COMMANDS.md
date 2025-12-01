@@ -2,6 +2,18 @@
 
 Complete guide to all available commands and scripts for managing the automated trading system.
 
+**⚠️ IMPORTANT: Most operations are now available via Web UI**
+
+The system now provides a web-based interface for most operations. CLI commands are still available for advanced users and automation, but the **recommended approach** is to use the web UI for:
+- Service management (start/stop services)
+- Trading configuration
+- Credential management
+- Order monitoring
+- P&L tracking
+- Paper trading
+
+**Web UI Access**: `http://localhost:5173` (or your deployment URL)
+
 ---
 
 ## Table of Contents
@@ -27,18 +39,22 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment
-Create and configure the environment file:
-```powershell
-notepad modules\kotak_neo_auto_trader\kotak_neo.env
-```
+### 3. Configure Credentials
 
-Required variables:
-- `CONSUMER_KEY`
-- `CONSUMER_SECRET`
-- `MOBILE_NUMBER`
-- `PASSWORD`
-- `MPIN`
+**⚠️ IMPORTANT: Credentials are now configured via Web UI (not env files)**
+
+1. **Start the application** (see Docker or manual setup)
+2. **Access Web UI**: `http://localhost:5173`
+3. **Login** with your account
+4. **Go to Settings** → Configure Broker Credentials
+5. **Enter credentials**:
+   - Consumer Key
+   - Consumer Secret
+   - Access Token
+   - User ID
+6. **Save** - Credentials are encrypted and stored in database
+
+**Legacy Note**: If using standalone CLI scripts, you may still need `kotak_neo.env`, but web UI is recommended.
 
 ### 4. Setup Scheduled Tasks (Run as Administrator)
 ```powershell
@@ -280,7 +296,26 @@ Get-ScheduledTask -TaskName "TradingService-Unified" | Get-ScheduledTaskInfo
 
 ## Unified Trading Service Control
 
-### Service Management
+**⚠️ RECOMMENDED: Use Web UI for Service Management**
+
+The web UI provides a better experience for service management:
+- **Access**: `http://localhost:5173/dashboard/service`
+- **Features**:
+  - Start/Stop service with one click
+  - View real-time service status
+  - Monitor task execution history
+  - View service logs
+  - Individual service management
+
+### Web UI Service Management
+
+1. Navigate to `/dashboard/service`
+2. Click "Start Service" or "Stop Service"
+3. View status, logs, and task history in real-time
+
+### CLI Service Management (Alternative)
+
+For Windows Task Scheduler (if not using Docker):
 ```powershell
 # Start the unified service
 Start-ScheduledTask -TaskName "TradingService-Unified"
@@ -294,6 +329,8 @@ Get-ScheduledTask -TaskName "TradingService-Unified" | Select-Object State
 # View detailed service info
 Get-ScheduledTask -TaskName "TradingService-Unified" | Get-ScheduledTaskInfo | Format-List
 ```
+
+**Note**: If using Docker, services are managed via Docker Compose (see `docker/README.md`).
 
 ### Service Configuration
 ```powershell

@@ -5,6 +5,7 @@ Test volume filtering on real portfolio stocks
 
 import sys
 from pathlib import Path
+
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
@@ -17,9 +18,9 @@ print("=" * 80)
 print("\nTier Configuration:")
 for price_threshold, max_ratio in POSITION_VOLUME_RATIO_TIERS:
     if price_threshold > 0:
-        print(f"  ₹{price_threshold}+: {max_ratio:.1%} max")
+        print(f"  Rs {price_threshold}+: {max_ratio:.1%} max")
     else:
-        print(f"  <₹500: {max_ratio:.1%} max")
+        print(f"  <Rs 500: {max_ratio:.1%} max")
 print("\n" + "=" * 80)
 
 # Real stocks to test
@@ -33,10 +34,10 @@ stocks = [
     "NAVA.NS",
     "HYUNDAI.NS",
     "GOKULAGRO.NS",
-    "GALLANTT.NS"
+    "GALLANTT.NS",
 ]
 
-CAPITAL = 100000  # ₹1 lakh per trade
+CAPITAL = 100000  # Rs 1 lakh per trade
 
 print("\nFetching real data from market...")
 print("-" * 80)
@@ -46,68 +47,70 @@ results = []
 for ticker in stocks:
     try:
         stock = yf.Ticker(ticker)
-        
+
         # Get current price
         hist = stock.history(period="1d")
         if hist.empty:
-            print(f"\n❌ {ticker}: No data available")
+            print(f"\n? {ticker}: No data available")
             continue
-        
-        price = hist['Close'].iloc[-1]
-        
+
+        price = hist["Close"].iloc[-1]
+
         # Get 50-day average volume
         hist_50d = stock.history(period="60d")
-        avg_volume = hist_50d['Volume'].tail(50).mean()
-        
+        avg_volume = hist_50d["Volume"].tail(50).mean()
+
         # Calculate position size
         qty = int(CAPITAL / price)
-        
+
         # Check if it passes
-        symbol = ticker.replace('.NS', '')
+        symbol = ticker.replace(".NS", "")
         passes = AutoTradeEngine.check_position_volume_ratio(qty, avg_volume, symbol, price)
-        
+
         ratio = (qty / avg_volume) * 100 if avg_volume > 0 else 999
-        
-        results.append({
-            'symbol': symbol,
-            'price': price,
-            'qty': qty,
-            'avg_volume': int(avg_volume),
-            'ratio': ratio,
-            'passes': passes
-        })
-        
-        status = "✅ PASS" if passes else "❌ FAIL"
+
+        results.append(
+            {
+                "symbol": symbol,
+                "price": price,
+                "qty": qty,
+                "avg_volume": int(avg_volume),
+                "ratio": ratio,
+                "passes": passes,
+            }
+        )
+
+        status = "? PASS" if passes else "? FAIL"
         print(f"\n{symbol} ({ticker})")
-        print(f"  Price: ₹{price:.2f} | Qty: {qty} shares")
+        print(f"  Price: Rs {price:.2f} | Qty: {qty} shares")
         print(f"  50-day Avg Volume: {int(avg_volume):,} shares")
         print(f"  Position/Volume Ratio: {ratio:.2f}%")
         print(f"  Result: {status}")
-        
+
     except Exception as e:
-        print(f"\n❌ {ticker}: Error - {e}")
+        print(f"\n? {ticker}: Error - {e}")
 
 print("\n" + "=" * 80)
 print("Summary:")
 print("-" * 80)
 
 if results:
-    passed = sum(1 for r in results if r['passes'])
-    failed = sum(1 for r in results if not r['passes'])
-    
-    print(f"\n✅ Passed: {passed}/{len(results)}")
-    print(f"❌ Failed: {failed}/{len(results)}")
-    
+    passed = sum(1 for r in results if r["passes"])
+    failed = sum(1 for r in results if not r["passes"])
+
+    print(f"\n? Passed: {passed}/{len(results)}")
+    print(f"? Failed: {failed}/{len(results)}")
+
     if failed > 0:
-        print("\n⚠️  Filtered Stocks (Illiquid):")
+        print("\n[WARN]?  Filtered Stocks (Illiquid):")
         for r in results:
-            if not r['passes']:
+            if not r["passes"]:
                 print(f"  - {r['symbol']}: {r['ratio']:.1f}% of daily volume")
-    
+
     if passed > 0:
-        print(f"\n✅ Tradeable Stocks ({passed} stocks):")
+        print(f"\n? Tradeable Stocks ({passed} stocks):")
         for r in results:
-            if r['passes']:
+            if r["passes"]:
                 print(f"  - {r['symbol']}: {r['ratio']:.2f}% of daily volume")
 else:
     print("No results to display")

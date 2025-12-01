@@ -178,6 +178,10 @@ class AnalyzeStockUseCase:
             backtest_score=result.get('backtest_score', 0.0),
             combined_score=result.get('combined_score', 0.0),
             priority_score=result.get('priority_score', 0.0),
+            chart_quality=result.get('chart_quality'),
+            execution_capital=result.get('execution_capital', 0.0),
+            max_capital=result.get('max_capital', 0.0),
+            capital_adjusted=result.get('capital_adjusted', False),
             metadata=metadata
         )
     

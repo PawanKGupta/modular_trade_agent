@@ -1,0 +1,34 @@
+# Docker Compose for Development (Windows Local)
+# Overrides docker-compose.yml for local Windows development
+# Usage: cd docker && docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Or from project root: docker-compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up
+
+services:
+  # Development API server with hot reload
+  api-server:
+    volumes:
+      - ..:/app                 # Mount parent directory (project root)
+      - /app/.venv
+
+    # Enable auto-reload in uvicorn
+    command: ["uvicorn", "server.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+    # Mount source for live code changes
+    environment:
+      - DEBUG=true
+
+  # Development web frontend
+  web-frontend:
+    build:
+      context: ..                # Build from parent directory
+      dockerfile: docker/Dockerfile.web.dev
+
+    volumes:
+      - ../web:/app
+      - /app/node_modules       # Exclude node_modules from mount
+
+    # Run dev server instead of nginx
+    command: npm run dev
+
+    ports:
+      - "5173:5173"              # Vite dev server port

@@ -352,4 +352,3 @@ class CachedDataService:
                 self.cache_service.set(weekly_key, data['weekly'], ttl_seconds=ttl)
         
         return data
-

@@ -47,6 +47,15 @@ class FilteringService:
             if result is None:
                 continue
             
+            # Check status
+            if result.get('status') != 'success':
+                continue
+            
+            # Check chart quality (hard filter)
+            chart_quality = result.get('chart_quality', {})
+            if chart_quality and not chart_quality.get('passed', True):
+                continue  # Skip stocks with poor chart quality
+            
             # Use final_verdict if backtest scoring enabled
             if enable_backtest_scoring:
                 verdict = result.get('final_verdict', result.get('verdict'))
@@ -55,10 +64,6 @@ class FilteringService:
             
             # Check if buyable
             if verdict in ['buy', 'strong_buy']:
-                # Check status
-                if result.get('status') != 'success':
-                    continue
-                
                 # Apply score threshold if backtest scoring enabled
                 if enable_backtest_scoring:
                     combined_score = result.get('combined_score', 0)
@@ -90,6 +95,15 @@ class FilteringService:
             if result is None:
                 continue
             
+            # Check status
+            if result.get('status') != 'success':
+                continue
+            
+            # Check chart quality (hard filter)
+            chart_quality = result.get('chart_quality', {})
+            if chart_quality and not chart_quality.get('passed', True):
+                continue  # Skip stocks with poor chart quality
+            
             # Use final_verdict if backtest scoring enabled
             if enable_backtest_scoring:
                 verdict = result.get('final_verdict', result.get('verdict'))
@@ -98,10 +112,6 @@ class FilteringService:
             
             # Check if strong buy
             if verdict == 'strong_buy':
-                # Check status
-                if result.get('status') != 'success':
-                    continue
-                
                 # Apply score threshold if backtest scoring enabled
                 if enable_backtest_scoring:
                     combined_score = result.get('combined_score', 0)

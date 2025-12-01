@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="460" viewBox="0 0 760 460" font-family="Segoe UI, Arial, sans-serif">
+  <style>
+    .title { font-size: 22px; font-weight: bold; fill: #0f172a; }
+    .subtitle { font-size: 14px; font-weight: bold; fill: #0f172a; }
+    .body { font-size: 12px; fill: #1e293b; }
+    .panel { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.5; rx: 10; ry: 10; }
+    .badge { fill: #fbbf24; stroke: none; }
+    .badge-text { fill: #78350f; font-size: 11px; font-weight: bold; }
+    .footer { fill: #bfdbfe; stroke: #2563eb; stroke-width: 1.5; }
+    .footer-text { font-size: 12px; fill: #1d4ed8; font-weight: bold; }
+  </style>
+
+  <rect width="100%" height="100%" fill="#e0f2fe"/>
+  <text x="32" y="40" class="title">Trading Configuration Workspace – Phase 3.3</text>
+  <text x="32" y="62" class="body">Single page form grouped by strategy/risk/capital/order/behavior, with presets and sticky save controls.</text>
+
+  <!-- Presets -->
+  <rect class="panel" x="32" y="80" width="696" height="80"/>
+  <text x="48" y="110" class="subtitle">Configuration Presets</text>
+  <text x="48" y="130" class="body">Conservative • Moderate • Aggressive (applies curated overrides, marks form dirty)</text>
+
+  <!-- Strategy -->
+  <rect class="panel" x="32" y="170" width="330" height="110"/>
+  <text x="48" y="200" class="subtitle">Strategy Parameters</text>
+  <text x="48" y="220" class="body">• RSI sliders + validation hints</text>
+  <text x="48" y="240" class="body">• Chart quality toggle with nested thresholds</text>
+  <text x="48" y="260" class="body">• Volume + liquidity caps</text>
+
+  <!-- Risk -->
+  <rect class="panel" x="398" y="170" width="330" height="110"/>
+  <text x="414" y="200" class="subtitle">Risk Management</text>
+  <text x="414" y="220" class="body">• Optional stop-loss tiers (null-safe)</text>
+  <text x="414" y="240" class="body">• Target percentages with default labels</text>
+  <text x="414" y="260" class="body">• Risk-reward ratios + inline warnings</text>
+
+  <!-- Capital -->
+  <rect class="panel" x="32" y="290" width="330" height="110"/>
+  <text x="48" y="320" class="subtitle">Capital & Positions</text>
+  <text x="48" y="340" class="body">• Capital per trade (₹) with delta vs default</text>
+  <text x="48" y="360" class="body">• Max portfolio size impact banner</text>
+
+  <!-- Orders -->
+  <rect class="panel" x="398" y="290" width="330" height="110"/>
+  <text x="414" y="320" class="subtitle">Order Defaults</text>
+  <text x="414" y="340" class="body">• Exchange, product, order type, variety</text>
+  <text x="414" y="360" class="body">• Validity selector (DAY/IOC/GTC)</text>
+
+  <!-- Behavior -->
+  <rect class="panel" x="32" y="410" width="530" height="80"/>
+  <text x="48" y="440" class="subtitle">Behavior, News & ML</text>
+  <text x="48" y="460" class="body">• Duplicate recommendations, exit rules, min combined score, news sentiment, ML controls</text>
+
+  <!-- Sticky footer -->
+  <rect class="footer" x="580" y="410" width="148" height="80" rx="10" ry="10"/>
+  <text x="592" y="440" class="footer-text">Sticky CTA</text>
+  <text x="592" y="458" class="body">Cancel • Save Changes</text>
+  <text x="592" y="476" class="body">Appears when form is dirty</text>
+
+  <!-- Unsaved badge -->
+  <rect class="badge" x="520" y="92" width="180" height="26" rx="13" ry="13"/>
+  <text x="536" y="110" class="badge-text">UNSAVED CHANGES</text>
+</svg>

@@ -1,0 +1,100 @@
+name: Web E2E (Playwright)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ implemented-api-features-1, implemented-ui-features-2 ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  web-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    services:
+      xvfb:
+        image: selenium/standalone-chrome:latest
+        options: >-
+          --shm-size="2g"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r server/requirements.txt
+
+      - name: Create required directories
+        run: |
+          mkdir -p data
+          mkdir -p logs
+
+      - name: Start API
+        env:
+          DB_URL: "sqlite:///./data/e2e.db"
+          ADMIN_EMAIL: "testadmin@rebound.com"
+          ADMIN_PASSWORD: "testadmin@123"
+          ADMIN_NAME: "Test Admin"
+        run: |
+          # Start API server in background and capture output
+          python -m uvicorn server.app.main:app --port 8000 --log-level info > api.log 2>&1 &
+          API_PID=$!
+          echo "API server started with PID: $API_PID"
+
+          # Wait for server to start (with retries)
+          echo "Waiting for API server to start..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "✓ API server is healthy!"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "✗ API server failed to start after 30 attempts"
+              echo "=== API Server Logs ==="
+              cat api.log || true
+              echo "========================"
+              # Check if process is still running
+              if ! kill -0 $API_PID 2>/dev/null; then
+                echo "✗ API server process has died"
+                exit 1
+              fi
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      - name: Start Vite
+        working-directory: web
+        env:
+          VITE_API_URL: "http://localhost:8000"
+        run: |
+          nohup npx vite --port 5173 --strictPort &
+          sleep 3
+          curl -sf http://localhost:5173
+
+      - name: Run Playwright E2E
+        working-directory: web
+        env:
+          PLAYWRIGHT_BASE_URL: "http://localhost:5173"
+        run: npm run test:e2e

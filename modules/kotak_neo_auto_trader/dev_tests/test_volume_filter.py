@@ -17,9 +17,7 @@ print(f"Minimum required: {MIN_ABSOLUTE_AVG_VOLUME}")
 print()
 
 result = assess_volume_quality_intelligent(
-    current_volume=current_volume_curaa,
-    avg_volume=avg_volume_curaa,
-    enable_time_adjustment=True
+    current_volume=current_volume_curaa, avg_volume=avg_volume_curaa, enable_time_adjustment=True
 )
 
 print("Volume Analysis Result:")
@@ -30,7 +28,7 @@ print(f"  Avg Volume: {result.get('avg_volume', 'N/A')}")
 print(f"  Reason: {result['reason']}")
 print()
 
-if not result['passes']:
-    print("✅ CURAA would be filtered out due to low liquidity")
+if not result["passes"]:
+    print("? CURAA would be filtered out due to low liquidity")
 else:
-    print("❌ CURAA would NOT be filtered (volume check needs adjustment)")
+    print("? CURAA would NOT be filtered (volume check needs adjustment)")

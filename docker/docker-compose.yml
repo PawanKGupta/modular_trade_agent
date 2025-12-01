@@ -1,0 +1,92 @@
+# Docker Compose configuration for Rebound — Modular Trade Agent
+# This file defines all services and how they work together
+# Note: version field removed (not needed in Docker Compose v2)
+
+# Define services (containers) that make up the application
+services:
+  # ============================================
+  # API Server - FastAPI backend
+  # ============================================
+  api-server:
+    build:
+      context: ..                   # Build from parent directory (project root)
+      dockerfile: docker/Dockerfile.api
+    container_name: tradeagent-api
+    restart: unless-stopped
+
+    ports:
+      - "8000:8000"                 # Expose port 8000 to host
+
+    env_file:
+      - ../.env                     # Application configuration only (DB_URL, TZ, etc.)
+                                    # NOT for credentials - all credentials are in database via web UI
+
+    environment:
+      - DB_URL=sqlite:///./data/app.db
+      - TZ=Asia/Kolkata
+      # Admin user auto-creation (only on first deployment when DB is empty)
+      # Set ADMIN_EMAIL, ADMIN_PASSWORD, and ADMIN_NAME in .env file
+
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+
+    networks:
+      - tradeagent-network
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # Web Frontend - React app
+  # ============================================
+  web-frontend:
+    build:
+      context: ..                   # Build from parent directory (project root)
+      dockerfile: docker/Dockerfile.web
+    container_name: tradeagent-web
+    restart: unless-stopped
+
+    ports:
+      - "5173:80"                   # Map container port 80 to host 5173
+
+    networks:
+      - tradeagent-network
+
+    depends_on:
+      - api-server                  # Start after API server
+
+  # ============================================
+  # Optional: PostgreSQL Database
+  # ============================================
+  # Uncomment if you want to use PostgreSQL instead of SQLite
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: tradeagent-db
+  #   restart: unless-stopped
+  #   environment:
+  #     - POSTGRES_DB=tradeagent
+  #     - POSTGRES_USER=trader
+  #     - POSTGRES_PASSWORD=changeme
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - tradeagent-network
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U trader"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+# ============================================
+# Networks - Define how services communicate
+# ============================================
+networks:
+  tradeagent-network:
+    driver: bridge                 # Bridge network (default)
+
+# Note: Named volumes are defined in docker-compose.prod.yml
+# This file uses bind mounts (../data, ../logs, etc.) for development

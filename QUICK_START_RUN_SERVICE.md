@@ -146,5 +146,3 @@ Stop-Process -Name python -Force
 - Full documentation: `documents/architecture/UNIFIED_TRADING_SERVICE.md`
 - Windows deployment: `documents/deployment/windows/WINDOWS_UNIFIED_SERVICE.md`
 - Ubuntu deployment: `documents/deployment/ubuntu/INSTALL_UBUNTU.md`
-
-

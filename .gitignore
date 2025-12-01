@@ -6,7 +6,7 @@ __pycache__/
 *.sqlite3
 .DS_Store
 .idea/
-.vscode/
+# .vscode/ - Now tracked for workspace settings (line endings, formatter)
 cred.env
 analysis_results/
 logs/
@@ -14,12 +14,35 @@ temp/
 modules/kotak_neo_auto_trader/session_cache.json
 modules/kotak_neo_auto_trader/kotak_neo.env
 signals.csv
-scripts/
+/scripts/
 (dev)
 debug_*.py
 demo_candle_analysis.py
 check_market_timing.pydata_backups/
 data_backups/
+
+# Dev test outputs (may contain sensitive tokens/credentials)
+modules/kotak_neo_auto_trader/dev_tests/logs/
+modules/kotak_neo_auto_trader/dev_tests/output/
+modules/kotak_neo_auto_trader/dev_tests/*_output.txt
+modules/kotak_neo_auto_trader/dev_tests/*_tokens.txt
+
+# Paper trading test runtime data
+paper_trading/test/
+paper_trading/test/*.json
+
+# Paper trading runtime data (user-specific files)
+paper_trading/user_*/account.json
+paper_trading/user_*/config.json
+paper_trading/user_*/holdings.json
+paper_trading/user_*/orders.json
+paper_trading/user_*/transactions.json
+paper_trading/user_*/position_metadata.json
+paper_trading/user_*/active_sell_orders.json
+paper_trading/user_*/reports/*.json
+
+# Paper trading config files (all instances)
+paper_trading/**/config.json
 
 # Build artifacts (PyInstaller)
 build/
@@ -33,3 +56,44 @@ data/
 .coverage.*
 htmlcov/
 .pytest_cache/
+
+# IDE directories
+.cursor/
+
+# Web artifacts
+web/node_modules/
+web/.vite/
+web/dist/
+web/coverage/
+web/.cache/
+web/tsconfig.tsbuildinfo
+web/test-results/
+
+# Model files (large binary files)
+# Ignore temporary/test model files, but allow production models tracked by Git LFS
+*.pkl
+# Production models in models/ directory are tracked by Git LFS
+!models/*.pkl
+
+# Temporary analysis and report files
+*_ANALYSIS_REPORT.md
+*_INVESTIGATION_RESULTS.md
+*_IMPACT_ANALYSIS.md
+*_SUMMARY.md
+*_STATUS.md
+*_RESULTS.md
+NEXT_STEPS_*.md
+
+# Test output and temporary files
+test_output/
+pending_orders.json
+test_history.json
+
+# Backup files
+*_old_buggy.py
+*_v2.py
+test_output.csv
+
+# Model metadata
+models/model_versions.json
+models/verdict_model_features_*.txt

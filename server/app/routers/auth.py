@@ -1,0 +1,160 @@
+# ruff: noqa: B008
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from src.infrastructure.db.models import UserRole, Users
+from src.infrastructure.persistence.settings_repository import SettingsRepository
+from src.infrastructure.persistence.user_repository import UserRepository
+
+from ..core.config import settings
+from ..core.deps import get_current_user, get_db
+from ..core.security import create_jwt_token, decode_token, verify_password
+from ..schemas.auth import (
+    LoginRequest,
+    MeResponse,
+    RefreshRequest,
+    SignupRequest,
+    TokenResponse,
+)
+
+router = APIRouter()
+logger = logging.getLogger("uvicorn.error")
+
+
+@router.post("/signup", response_model=TokenResponse)
+def signup(payload: SignupRequest, db: Session = Depends(get_db)):
+    try:
+        logger.info(f"Signup request for {payload.email}")
+        user_repo = UserRepository(db)
+        existing = user_repo.get_by_email(payload.email)
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Email already registered"
+            )
+        logger.info("Creating user...")
+        user = user_repo.create_user(
+            email=payload.email, password=payload.password, name=payload.name, role=UserRole.USER
+        )
+        logger.info(f"User created id={user.id}, creating default settings...")
+        SettingsRepository(db).ensure_default(user.id)
+        logger.info("Default settings created, issuing token...")
+        access_token = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value]},
+        )
+        refresh_token = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value], "type": "refresh"},
+            expires_days=settings.jwt_refresh_days,
+        )
+        logger.info("Signup success")
+        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Signup failed: {e}")
+        raise HTTPException(status_code=500, detail="Signup failed") from e
+
+
+@router.post("/login", response_model=TokenResponse)
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    try:
+        user_repo = UserRepository(db)
+        user = user_repo.get_by_email(payload.email)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            )
+        # Verify password using passlib (supports all passlib hash formats)
+        pwh = user.password_hash or ""
+        # Check if it's a passlib hash (any format) or legacy plain-text
+        is_passlib_hash = (
+            pwh.startswith("$2a$")
+            or pwh.startswith("$2b$")
+            or pwh.startswith("$2y$")
+            or pwh.startswith("$bcrypt-sha256$")
+            or pwh.startswith("$pbkdf2-sha256$")
+        )
+        if not is_passlib_hash:
+            # Legacy plain-text password - upgrade it
+            if payload.password == pwh:
+                user_repo.set_password(user, payload.password)
+                logger.info(f"Upgraded password hash for user id={user.id}")
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+                )
+        # Use verify_password for all passlib hash formats
+        elif not verify_password(payload.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            )
+        access_token = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value]},
+        )
+        refresh_token = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value], "type": "refresh"},
+            expires_days=settings.jwt_refresh_days,
+        )
+        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Login failed")
+        raise HTTPException(status_code=500, detail="Login failed") from e
+
+
+@router.get("/me", response_model=MeResponse)
+def me(current: Users = Depends(get_current_user)):
+    return MeResponse(
+        id=current.id,
+        email=current.email,
+        name=current.name,
+        roles=[current.role.value],
+    )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)):
+    """
+    Exchange a valid refresh token for a new access token pair.
+    """
+    try:
+        if not payload.refresh_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Missing refresh token"
+            )
+        decoded = decode_token(payload.refresh_token)
+        if not decoded or decoded.get("type") != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token",
+            )
+        user_id = decoded.get("uid")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token",
+            )
+        user = UserRepository(db).get_by_id(int(user_id))
+        if not user or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
+        access_token = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value]},
+        )
+        new_refresh = create_jwt_token(
+            str(user.id),
+            extra={"uid": user.id, "roles": [user.role.value], "type": "refresh"},
+            expires_days=settings.jwt_refresh_days,
+        )
+        return TokenResponse(access_token=access_token, refresh_token=new_refresh)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Refresh token exchange failed")
+        raise HTTPException(status_code=500, detail="Refresh failed") from exc

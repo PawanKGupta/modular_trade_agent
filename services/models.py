@@ -246,4 +246,3 @@ class AnalysisResult:
     
     def __repr__(self) -> str:
         return f"AnalysisResult(ticker={self.ticker}, verdict={self.verdict.value}, status={self.status})"
-
