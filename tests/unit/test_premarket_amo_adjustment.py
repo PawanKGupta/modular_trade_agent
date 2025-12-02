@@ -12,7 +12,7 @@ import pytest
 
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 from src.application.services.paper_trading_service_adapter import PaperTradingServiceAdapter
-from src.infrastructure.db.models import UserTradingConfig, Users
+from src.infrastructure.db.models import Users, UserTradingConfig
 
 
 @pytest.fixture

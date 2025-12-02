@@ -15,7 +15,9 @@ sys.path.insert(0, str(project_root))
 import pytest  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
-from src.application.services.multi_user_trading_service import MultiUserTradingService  # noqa: E402
+from src.application.services.multi_user_trading_service import (
+    MultiUserTradingService,  # noqa: E402
+)
 from src.infrastructure.db.models import Notification, UserNotificationPreferences  # noqa: E402
 
 
