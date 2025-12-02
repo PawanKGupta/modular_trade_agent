@@ -277,7 +277,7 @@ export function SettingsPage() {
 			)}
 			<button
 				onClick={() => mutation.mutate({ trade_mode: form.trade_mode, broker: form.broker ?? undefined })}
-				className="bg-[var(--accent)] text-black px-4 py-2 rounded"
+				className="bg-[var(--accent)] text-black px-4 py-3 sm:py-2 rounded text-sm sm:text-base min-h-[44px] sm:min-h-0"
 				disabled={mutation.isPending}
 			>
 				{mutation.isPending ? 'Saving...' : 'Save settings'}

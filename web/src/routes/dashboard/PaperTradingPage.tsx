@@ -27,8 +27,8 @@ export function PaperTradingPage() {
 
 	if (isLoading) {
 		return (
-			<div className="p-4">
-				<div className="text-[var(--text)]">Loading portfolio...</div>
+			<div className="p-2 sm:p-4">
+				<div className="text-xs sm:text-sm text-[var(--text)]">Loading portfolio...</div>
 			</div>
 		);
 	}
@@ -39,7 +39,7 @@ export function PaperTradingPage() {
 				<div className="text-xs sm:text-sm text-red-400">Error loading portfolio: {String(error)}</div>
 				<button
 					onClick={() => refetch()}
-					className="mt-2 px-4 py-2 bg-[var(--accent)] text-white rounded hover:opacity-90"
+					className="mt-2 px-4 py-3 sm:py-2 bg-[var(--accent)] text-white rounded hover:opacity-90 text-sm sm:text-base min-h-[44px] sm:min-h-0"
 				>
 					Retry
 				</button>
