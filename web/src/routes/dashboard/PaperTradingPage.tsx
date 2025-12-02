@@ -49,8 +49,8 @@ export function PaperTradingPage() {
 
 	if (!data) {
 		return (
-			<div className="p-4">
-				<div className="text-[var(--muted)]">No portfolio data available</div>
+			<div className="p-2 sm:p-4">
+				<div className="text-xs sm:text-sm text-[var(--muted)]">No portfolio data available</div>
 			</div>
 		);
 	}
