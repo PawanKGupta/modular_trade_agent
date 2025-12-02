@@ -34,7 +34,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 						<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.rsi_period}</div>
 					</div>
 					<div>
-						<label htmlFor="rsi_oversold" className="block text-sm mb-1">
+						<label htmlFor="rsi_oversold" className="block text-xs sm:text-sm mb-1">
 							RSI Oversold Threshold
 							{!isDefault('rsi_oversold') && <span className="text-yellow-400 ml-1">*</span>}
 						</label>
@@ -46,12 +46,12 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 							max="50"
 							value={config.rsi_oversold}
 							onChange={(e) => onChange({ rsi_oversold: parseFloat(e.target.value) || 30 })}
-							className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+							className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 						/>
 						<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.rsi_oversold}</div>
 					</div>
 					<div>
-						<label htmlFor="rsi_extreme_oversold" className="block text-sm mb-1">
+						<label htmlFor="rsi_extreme_oversold" className="block text-xs sm:text-sm mb-1">
 							RSI Extreme Oversold
 							{!isDefault('rsi_extreme_oversold') && <span className="text-yellow-400 ml-1">*</span>}
 						</label>
@@ -63,7 +63,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 							max="30"
 							value={config.rsi_extreme_oversold}
 							onChange={(e) => onChange({ rsi_extreme_oversold: parseFloat(e.target.value) || 20 })}
-							className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+							className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 						/>
 						<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.rsi_extreme_oversold}</div>
 						<div className="text-xs text-red-400 mt-1">
@@ -71,7 +71,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 						</div>
 					</div>
 					<div>
-						<label htmlFor="rsi_near_oversold" className="block text-sm mb-1">
+						<label htmlFor="rsi_near_oversold" className="block text-xs sm:text-sm mb-1">
 							RSI Near Oversold
 							{!isDefault('rsi_near_oversold') && <span className="text-yellow-400 ml-1">*</span>}
 						</label>
@@ -83,7 +83,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 							max="50"
 							value={config.rsi_near_oversold}
 							onChange={(e) => onChange({ rsi_near_oversold: parseFloat(e.target.value) || 40 })}
-							className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+							className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 						/>
 						<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.rsi_near_oversold}</div>
 						<div className="text-xs text-red-400 mt-1">
@@ -97,15 +97,15 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 			<div className="mb-6">
 				<h3 className="text-sm font-medium mb-3 text-[var(--muted)]">Chart Quality Filters</h3>
 					<div className="mb-4">
-					<label htmlFor="chart_quality_enabled" className="flex items-center gap-2">
+					<label htmlFor="chart_quality_enabled" className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
 						<input
 							id="chart_quality_enabled"
 							type="checkbox"
 							checked={config.chart_quality_enabled}
 							onChange={(e) => onChange({ chart_quality_enabled: e.target.checked })}
-							className="rounded"
+							className="rounded w-4 h-4 sm:w-auto sm:h-auto"
 						/>
-						<span className="text-sm">
+						<span className="text-xs sm:text-sm">
 							Enable Chart Quality Filter
 							{!isDefault('chart_quality_enabled') && <span className="text-yellow-400 ml-1">*</span>}
 						</span>
@@ -117,10 +117,10 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 				{config.chart_quality_enabled && (
 					<div className="grid grid-cols-1 md:grid-cols-2 gap-4 ml-6">
 						<div>
-							<label htmlFor="chart_quality_min_score" className="block text-sm mb-1">
-								Min Quality Score
-								{!isDefault('chart_quality_min_score') && <span className="text-yellow-400 ml-1">*</span>}
-							</label>
+						<label htmlFor="chart_quality_min_score" className="block text-xs sm:text-sm mb-1">
+							Min Quality Score
+							{!isDefault('chart_quality_min_score') && <span className="text-yellow-400 ml-1">*</span>}
+						</label>
 							<input
 								id="chart_quality_min_score"
 								type="number"
@@ -129,7 +129,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 								max="100"
 								value={config.chart_quality_min_score}
 								onChange={(e) => onChange({ chart_quality_min_score: parseFloat(e.target.value) || 50 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+								className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 							/>
 							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.chart_quality_min_score}</div>
 						</div>
@@ -146,7 +146,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 								max="100"
 								value={config.chart_quality_max_gap_frequency}
 								onChange={(e) => onChange({ chart_quality_max_gap_frequency: parseFloat(e.target.value) || 25 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+								className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 							/>
 							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.chart_quality_max_gap_frequency}</div>
 						</div>
@@ -163,7 +163,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 								max="10"
 								value={config.chart_quality_min_daily_range_pct}
 								onChange={(e) => onChange({ chart_quality_min_daily_range_pct: parseFloat(e.target.value) || 1.0 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+								className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 							/>
 							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.chart_quality_min_daily_range_pct}</div>
 						</div>
@@ -180,7 +180,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 								max="100"
 								value={config.chart_quality_max_extreme_candle_frequency}
 								onChange={(e) => onChange({ chart_quality_max_extreme_candle_frequency: parseFloat(e.target.value) || 20 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+								className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 							/>
 							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.chart_quality_max_extreme_candle_frequency}</div>
 						</div>
@@ -190,8 +190,8 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 
 			{/* Volume Settings */}
 			<div>
-				<h3 className="text-sm font-medium mb-3 text-[var(--muted)]">Volume Settings</h3>
-				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+				<h3 className="text-xs sm:text-sm font-medium mb-2 sm:mb-3 text-[var(--muted)]">Volume Settings</h3>
+				<div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
 					<div>
 						<label htmlFor="min_absolute_avg_volume" className="block text-sm mb-1">
 							Min Absolute Avg Volume
@@ -203,7 +203,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 							min="0"
 							value={config.min_absolute_avg_volume}
 							onChange={(e) => onChange({ min_absolute_avg_volume: parseInt(e.target.value) || 10000 })}
-							className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+							className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 						/>
 						<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.min_absolute_avg_volume.toLocaleString()}</div>
 					</div>
@@ -220,7 +220,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 							max="1"
 							value={config.max_position_volume_ratio}
 							onChange={(e) => onChange({ max_position_volume_ratio: parseFloat(e.target.value) || 0.1 })}
-							className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+							className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 						/>
 						<div className="text-xs text-[var(--muted)] mt-1">Default: {(defaultConfig.max_position_volume_ratio * 100).toFixed(0)}%</div>
 						<div className="text-xs text-blue-400 mt-1">
