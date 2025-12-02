@@ -433,7 +433,7 @@ export function BuyingZonePage() {
 							<div key={date} className="space-y-2">
 								{/* Date Header */}
 								<div className="flex items-center gap-3">
-									<h2 className="text-lg font-semibold text-[var(--text)]">
+									<h2 className="text-base sm:text-lg font-semibold text-[var(--text)]">
 										{formattedDate}
 									</h2>
 									<span className="text-sm text-[var(--muted)]">

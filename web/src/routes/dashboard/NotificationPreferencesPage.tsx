@@ -381,7 +381,7 @@ export function NotificationPreferencesPage() {
 			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
-						<h2 className="text-lg font-semibold">Retry Queue Events</h2>
+						<h2 className="text-base sm:text-lg font-semibold">Retry Queue Events</h2>
 						<p className="text-xs sm:text-sm text-[var(--muted)]">
 							Control notifications for retry queue operations
 						</p>
@@ -448,7 +448,7 @@ export function NotificationPreferencesPage() {
 			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
-						<h2 className="text-lg font-semibold">System Events</h2>
+						<h2 className="text-base sm:text-lg font-semibold">System Events</h2>
 						<p className="text-xs sm:text-sm text-[var(--muted)]">
 							Control notifications for system-level events
 						</p>
@@ -508,7 +508,7 @@ export function NotificationPreferencesPage() {
 			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
-						<h2 className="text-lg font-semibold">Service Events</h2>
+						<h2 className="text-base sm:text-lg font-semibold">Service Events</h2>
 						<p className="text-xs sm:text-sm text-[var(--muted)]">
 							Control notifications for service lifecycle events
 						</p>

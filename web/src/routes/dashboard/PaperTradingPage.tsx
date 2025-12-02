@@ -266,56 +266,56 @@ export function PaperTradingPage() {
 				</div>
 				<div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
 					<div>
-						<div className="text-sm text-[var(--muted)]">Total Orders</div>
-						<div className="text-lg font-semibold text-[var(--text)]">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Total Orders</div>
+						<div className="text-base sm:text-lg font-semibold text-[var(--text)]">
 							{order_statistics.total_orders}
 						</div>
 					</div>
 					<div>
-						<div className="text-sm text-[var(--muted)]">Buy Orders</div>
-						<div className="text-lg font-semibold text-[var(--text)]">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Buy Orders</div>
+						<div className="text-base sm:text-lg font-semibold text-[var(--text)]">
 							{order_statistics.buy_orders}
 						</div>
 					</div>
 					<div>
-						<div className="text-sm text-[var(--muted)]">Sell Orders</div>
-						<div className="text-lg font-semibold text-[var(--text)]">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Sell Orders</div>
+						<div className="text-base sm:text-lg font-semibold text-[var(--text)]">
 							{order_statistics.sell_orders}
 						</div>
 					</div>
 					<div>
-						<div className="text-sm text-[var(--muted)]">Success Rate</div>
-						<div className="text-lg font-semibold text-[var(--text)]">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Success Rate</div>
+						<div className="text-base sm:text-lg font-semibold text-[var(--text)]">
 							{order_statistics.success_rate.toFixed(2)}%
 						</div>
 					</div>
 					<div>
-						<div className="text-sm text-[var(--muted)]">Completed</div>
-						<div className="text-lg font-semibold text-green-400">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Completed</div>
+						<div className="text-base sm:text-lg font-semibold text-green-400">
 							{order_statistics.completed_orders}
 						</div>
 					</div>
 					<div>
-						<div className="text-sm text-[var(--muted)]">Pending</div>
-						<div className="text-lg font-semibold text-yellow-400">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Pending</div>
+						<div className="text-base sm:text-lg font-semibold text-yellow-400">
 							{order_statistics.pending_orders}
 						</div>
 					</div>
 					<div>
-						<div className="text-sm text-[var(--muted)]">Cancelled</div>
-						<div className="text-lg font-semibold text-[var(--muted)]">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Cancelled</div>
+						<div className="text-base sm:text-lg font-semibold text-[var(--muted)]">
 							{order_statistics.cancelled_orders}
 						</div>
 					</div>
 					<div>
-						<div className="text-sm text-[var(--muted)]">Rejected</div>
-						<div className="text-lg font-semibold text-red-400">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Rejected</div>
+						<div className="text-base sm:text-lg font-semibold text-red-400">
 							{order_statistics.rejected_orders}
 						</div>
 					</div>
 					<div>
-						<div className="text-sm text-[var(--muted)]">Re-entries</div>
-						<div className="text-lg font-semibold text-yellow-400">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Re-entries</div>
+						<div className="text-base sm:text-lg font-semibold text-yellow-400">
 							{order_statistics.reentry_orders}
 						</div>
 					</div>

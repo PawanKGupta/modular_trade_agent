@@ -166,7 +166,7 @@ export function TradingConfigPage() {
 
 			{/* Save button at bottom */}
 			{hasChanges && (
-				<div className="sticky bottom-4 bg-[var(--panel)] border border-[#1e293b] rounded-lg p-4 shadow-lg">
+				<div className="sticky bottom-2 sm:bottom-4 bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4 shadow-lg">
 					<div className="flex items-center justify-between">
 						<span className="text-sm text-yellow-400">You have unsaved changes</span>
 						<div className="flex gap-3">
