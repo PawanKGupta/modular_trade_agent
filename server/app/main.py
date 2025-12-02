@@ -106,28 +106,28 @@ async def ensure_db_schema():
                     print("[Startup] Admin user and settings created successfully")
                 except Exception as e:
                     print(f"[Startup] Failed to create admin user: {e}")
-            
+
             # Clean up orphaned service status (services that were running when server stopped)
             try:
                 from src.infrastructure.db.models import IndividualServiceStatus, ServiceStatus
-                
+
                 # Mark all unified services as stopped
                 running_unified = db.query(ServiceStatus).filter(
                     ServiceStatus.service_running == True
                 ).all()
-                
+
                 if running_unified:
                     print(f"[Startup] Found {len(running_unified)} orphaned unified service(s)")
                     for status in running_unified:
                         status.service_running = False
                         print(f"[Startup] Marked unified service as stopped for user {status.user_id}")
                     db.commit()
-                
+
                 # Mark all individual services as stopped
                 running_individual = db.query(IndividualServiceStatus).filter(
                     IndividualServiceStatus.is_running == True
                 ).all()
-                
+
                 if running_individual:
                     print(f"[Startup] Found {len(running_individual)} orphaned individual service(s)")
                     for status in running_individual:
@@ -135,14 +135,14 @@ async def ensure_db_schema():
                         status.process_id = None
                         print(f"[Startup] Marked {status.task_name} as stopped for user {status.user_id}")
                     db.commit()
-                
+
                 if running_unified or running_individual:
                     print("[Startup] ✓ Cleaned up orphaned service status")
-                    
+
             except Exception as cleanup_error:
                 print(f"[Startup] Warning: Failed to cleanup orphaned services: {cleanup_error}")
                 traceback.print_exc()
-                
+
     except Exception as e:
         print(f"[Startup] Failed to ensure DB schema: {e}")
         raise

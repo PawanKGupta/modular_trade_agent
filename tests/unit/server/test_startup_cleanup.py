@@ -36,19 +36,19 @@ class TestStartupServiceCleanup:
         )
         db_session.add(orphaned_status)
         db_session.commit()
-        
+
         # Simulate startup cleanup
         running_services = db_session.query(ServiceStatus).filter(
             ServiceStatus.service_running == True
         ).all()
-        
+
         assert len(running_services) == 1
-        
+
         # Mark as stopped (simulating startup cleanup)
         for status in running_services:
             status.service_running = False
         db_session.commit()
-        
+
         # Verify cleanup
         db_session.refresh(orphaned_status)
         assert orphaned_status.service_running is False
@@ -72,20 +72,20 @@ class TestStartupServiceCleanup:
         ]
         db_session.add_all(orphaned_services)
         db_session.commit()
-        
+
         # Simulate startup cleanup
         running_services = db_session.query(IndividualServiceStatus).filter(
             IndividualServiceStatus.is_running == True
         ).all()
-        
+
         assert len(running_services) == 2
-        
+
         # Mark as stopped (simulating startup cleanup)
         for status in running_services:
             status.is_running = False
             status.process_id = None
         db_session.commit()
-        
+
         # Verify cleanup
         for service in orphaned_services:
             db_session.refresh(service)
@@ -101,12 +101,12 @@ class TestStartupServiceCleanup:
         )
         db_session.add(stopped_status)
         db_session.commit()
-        
+
         # Check for orphaned services
         running_services = db_session.query(ServiceStatus).filter(
             ServiceStatus.service_running == True
         ).all()
-        
+
         assert len(running_services) == 0  # No cleanup needed
 
     def test_cleanup_multiple_users_orphaned_services(self, db_session):
@@ -116,7 +116,7 @@ class TestStartupServiceCleanup:
         user2 = Users(email="user2@test.com", password_hash="hash2", role="user")
         db_session.add_all([user1, user2])
         db_session.commit()
-        
+
         # Create orphaned services for both users
         orphaned_services = [
             ServiceStatus(user_id=user1.id, service_running=True),
@@ -126,7 +126,7 @@ class TestStartupServiceCleanup:
         ]
         db_session.add_all(orphaned_services)
         db_session.commit()
-        
+
         # Simulate startup cleanup
         running_unified = db_session.query(ServiceStatus).filter(
             ServiceStatus.service_running == True
@@ -134,10 +134,10 @@ class TestStartupServiceCleanup:
         running_individual = db_session.query(IndividualServiceStatus).filter(
             IndividualServiceStatus.is_running == True
         ).all()
-        
+
         assert len(running_unified) == 2
         assert len(running_individual) == 2
-        
+
         # Cleanup
         for status in running_unified:
             status.service_running = False
@@ -145,7 +145,7 @@ class TestStartupServiceCleanup:
             status.is_running = False
             status.process_id = None
         db_session.commit()
-        
+
         # Verify all cleaned up
         running_unified_after = db_session.query(ServiceStatus).filter(
             ServiceStatus.service_running == True
@@ -153,7 +153,7 @@ class TestStartupServiceCleanup:
         running_individual_after = db_session.query(IndividualServiceStatus).filter(
             IndividualServiceStatus.is_running == True
         ).count()
-        
+
         assert running_unified_after == 0
         assert running_individual_after == 0
 
