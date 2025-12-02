@@ -31,7 +31,16 @@ def buying_zone(
     now = ist_now()
     today = now.date()
 
-    # Get base signals (without user status yet)
+    # Parse status filter
+    status_enum = None
+    if status_filter and status_filter != "all":
+        try:
+            status_enum = SignalStatus(status_filter.lower())
+        except ValueError:
+            # Invalid status filter, ignore
+            pass
+
+    # Get signals with per-user status applied
     if date_filter == "today":
         base_signals: list[Signals] = repo.by_date(today, limit=limit)
     elif date_filter == "yesterday":
@@ -43,35 +52,17 @@ def buying_zone(
         # Default: recent (no date filter)
         base_signals = repo.recent(limit=limit)
 
-    # Get user-specific status for each signal
-    from src.infrastructure.db.models import UserSignalStatus
-    
-    # Fetch all user statuses for these signals in one query (optimization)
-    signal_ids = [s.id for s in base_signals]
-    user_statuses_query = (
-        db.query(UserSignalStatus)
-        .filter(UserSignalStatus.user_id == user.id, UserSignalStatus.signal_id.in_(signal_ids))
-        .all()
+    # Apply per-user status using repository method
+    items_with_status = repo.get_signals_with_user_status(
+        user_id=user.id,
+        limit=limit,
+        status_filter=status_enum
     )
-    user_status_map = {us.signal_id: us.status for us in user_statuses_query}
     
-    # Build items with effective status (user status overrides base status)
-    items_with_status = []
-    for signal in base_signals:
-        # Get effective status: user status if exists, otherwise base signal status
-        effective_status = user_status_map.get(signal.id, signal.status)
-        
-        # Apply status filter
-        if status_filter and status_filter != "all":
-            try:
-                status_enum = SignalStatus(status_filter.lower())
-                if effective_status != status_enum:
-                    continue
-            except ValueError:
-                # Invalid status filter, include all
-                pass
-        
-        items_with_status.append((signal, effective_status))
+    # If we already filtered by date, filter the results
+    if date_filter:
+        base_signal_ids = {s.id for s in base_signals}
+        items_with_status = [(s, status) for s, status in items_with_status if s.id in base_signal_ids]
     # Map to client shape with all analysis result fields (use effective status)
     return [
         {

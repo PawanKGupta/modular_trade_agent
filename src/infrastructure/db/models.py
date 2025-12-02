@@ -281,12 +281,12 @@ class Signals(Base):
 class UserSignalStatus(Base):
     """
     Per-user signal status tracking.
-    
+
     Allows each user to have their own status for signals (TRADED, REJECTED)
     while keeping the base signal data shared across users.
     """
     __tablename__ = "user_signal_status"
-    
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), index=True, nullable=False)
@@ -295,7 +295,7 @@ class UserSignalStatus(Base):
         SAEnum(SignalStatus), index=True, nullable=False
     )  # TRADED, REJECTED (per user)
     marked_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
-    
+
     __table_args__ = (
         UniqueConstraint("user_id", "signal_id", name="uq_user_signal_status"),
         Index("ix_user_signal_status_user_symbol", "user_id", "symbol"),

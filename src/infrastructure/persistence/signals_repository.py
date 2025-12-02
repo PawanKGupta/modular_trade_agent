@@ -94,7 +94,7 @@ class SignalsRepository:
     def mark_as_traded(self, symbol: str, user_id: int | None = None) -> bool:
         """
         Mark a signal as TRADED for a specific user.
-        
+
         Creates a UserSignalStatus entry to track per-user status.
         The base signal remains ACTIVE for other users.
 
@@ -115,7 +115,7 @@ class SignalsRepository:
             )
             self.db.commit()
             return result.rowcount > 0
-        
+
         # Find the signal
         signal = self.db.execute(
             select(Signals)
@@ -124,16 +124,16 @@ class SignalsRepository:
             .order_by(Signals.ts.desc())
             .limit(1)
         ).scalar_one_or_none()
-        
+
         if not signal:
             return False
-        
+
         # Create or update user-specific status
         existing = self.db.execute(
             select(UserSignalStatus)
             .where(UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal.id)
         ).scalar_one_or_none()
-        
+
         if existing:
             existing.status = SignalStatus.TRADED
             existing.marked_at = ist_now()
@@ -146,14 +146,14 @@ class SignalsRepository:
                 marked_at=ist_now()
             )
             self.db.add(user_status)
-        
+
         self.db.commit()
         return True
 
     def mark_as_rejected(self, symbol: str, user_id: int | None = None) -> bool:
         """
         Mark a signal as REJECTED for a specific user.
-        
+
         Creates a UserSignalStatus entry to track per-user status.
         The base signal remains ACTIVE for other users.
 
@@ -174,7 +174,7 @@ class SignalsRepository:
             )
             self.db.commit()
             return result.rowcount > 0
-        
+
         # Find the signal
         signal = self.db.execute(
             select(Signals)
@@ -183,16 +183,16 @@ class SignalsRepository:
             .order_by(Signals.ts.desc())
             .limit(1)
         ).scalar_one_or_none()
-        
+
         if not signal:
             return False
-        
+
         # Create or update user-specific status
         existing = self.db.execute(
             select(UserSignalStatus)
             .where(UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal.id)
         ).scalar_one_or_none()
-        
+
         if existing:
             existing.status = SignalStatus.REJECTED
             existing.marked_at = ist_now()
@@ -205,7 +205,7 @@ class SignalsRepository:
                 marked_at=ist_now()
             )
             self.db.add(user_status)
-        
+
         self.db.commit()
         return True
 
@@ -218,11 +218,11 @@ class SignalsRepository:
             .limit(limit)
         )
         return list(self.db.execute(stmt).scalars().all())
-    
+
     def get_user_signal_status(self, signal_id: int, user_id: int) -> SignalStatus | None:
         """
         Get user-specific status for a signal.
-        
+
         Returns:
             User's status if they have one, otherwise None (uses base signal status)
         """
@@ -230,32 +230,32 @@ class SignalsRepository:
             select(UserSignalStatus)
             .where(UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal_id)
         ).scalar_one_or_none()
-        
+
         return user_status.status if user_status else None
-    
+
     def get_signals_with_user_status(
-        self, 
+        self,
         user_id: int,
         limit: int = 100,
         status_filter: SignalStatus | None = None
     ) -> list[tuple[Signals, SignalStatus]]:
         """
         Get signals with per-user status applied.
-        
+
         Returns list of (signal, effective_status) tuples where:
         - effective_status is user's custom status (TRADED/REJECTED) if they have one
         - otherwise it's the base signal status (ACTIVE/EXPIRED)
-        
+
         Args:
             user_id: User ID to get personalized status for
             limit: Maximum number of signals to return
             status_filter: Filter by effective status (after applying user overrides)
-        
+
         Returns:
             List of (Signals, SignalStatus) tuples
         """
         from sqlalchemy import outerjoin
-        
+
         # Join signals with user_signal_status
         stmt = (
             select(Signals, UserSignalStatus.status)
@@ -269,17 +269,17 @@ class SignalsRepository:
             .order_by(Signals.ts.desc())
             .limit(limit)
         )
-        
+
         results = self.db.execute(stmt).all()
-        
+
         # Build list with effective status
         signals_with_status = []
         for signal, user_status in results:
             # Use user status if exists, otherwise use base signal status
             effective_status = user_status if user_status else signal.status
-            
+
             # Apply status filter if provided
             if status_filter is None or effective_status == status_filter:
                 signals_with_status.append((signal, effective_status))
-        
+
         return signals_with_status
