@@ -12,6 +12,77 @@ After successful deployment, access your application:
 - Health check: `http://YOUR_SERVER_IP:8000/health`
 - API docs: `http://YOUR_SERVER_IP:8000/docs`
 
+## Finding Your Server IP
+
+### From the Server:
+```bash
+# Public IP
+curl ifconfig.me
+
+# OR all IPs
+hostname -I
+
+# OR from Oracle Cloud metadata
+curl -s http://169.254.169.254/opc/v1/instance/ | grep -i publicIp
+```
+
+### From Oracle Cloud Console:
+1. Go to **Compute** → **Instances**
+2. Click on your instance
+3. Find **Public IP address** in the details
+
+## IP Address Changes
+
+### What Happens if IP Changes?
+
+✅ **API Calls Continue Working** - The frontend uses relative URLs (`/api/v1`), so API calls will work regardless of IP changes.
+
+❌ **You Need to Update Browser URL** - You'll need to access the app using the new IP address.
+
+### Solutions for IP Stability:
+
+#### 1. **Static IP (Recommended for Production)**
+
+Reserve a static public IP in Oracle Cloud:
+
+1. Go to **Networking** → **IP Management** → **Reserved Public IPs**
+2. Click **Create Reserved Public IP**
+3. Choose **Regional** scope
+4. Assign it to your compute instance
+5. **Result:** IP never changes, even after restart
+
+#### 2. **Use a Domain Name**
+
+Point a domain to your server:
+
+1. Buy/use a domain (e.g., from Namecheap, Cloudflare, etc.)
+2. Create an **A Record** pointing to your server IP:
+   ```
+   yourdomain.com → YOUR_SERVER_IP
+   ```
+3. Access via: `http://yourdomain.com:5173`
+4. **Note:** Update DNS A record if IP changes
+
+#### 3. **Dynamic DNS (Auto-Update)**
+
+If IP changes frequently, use Dynamic DNS:
+
+- Services: No-IP, DuckDNS, Cloudflare Dynamic DNS
+- Script runs on server to update DNS when IP changes
+- Always access via same domain name
+
+### Quick Fix: Find New IP
+
+If your IP changed, find the new one:
+
+```bash
+# On the server
+curl ifconfig.me
+
+# Then update your browser bookmark/URL to:
+# http://NEW_IP:5173
+```
+
 ## Verify Containers Are Running
 
 ```bash
@@ -24,16 +95,6 @@ docker logs tradeagent-api
 
 # Check if ports are listening
 sudo netstat -tlnp | grep -E '5173|8000'
-```
-
-## Find Your Server IP
-
-```bash
-# Public IP
-curl ifconfig.me
-
-# OR all IPs
-hostname -I
 ```
 
 ## Oracle Cloud Firewall Configuration
