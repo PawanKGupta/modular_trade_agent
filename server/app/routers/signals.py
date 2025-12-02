@@ -27,35 +27,57 @@ def buying_zone(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    repo = SignalsRepository(db)
+    repo = SignalsRepository(db, user_id=user.id)
     now = ist_now()
     today = now.date()
 
+    # Get base signals (without user status yet)
     if date_filter == "today":
-        items: list[Signals] = repo.by_date(today, limit=limit)
+        base_signals: list[Signals] = repo.by_date(today, limit=limit)
     elif date_filter == "yesterday":
         yesterday = today - timedelta(days=1)
-        items = repo.by_date(yesterday, limit=limit)
+        base_signals = repo.by_date(yesterday, limit=limit)
     elif date_filter == "last_10_days":
-        items = repo.last_n_dates(n=10, limit=limit)
+        base_signals = repo.last_n_dates(n=10, limit=limit)
     else:
         # Default: recent (no date filter)
-        items = repo.recent(limit=limit)
+        base_signals = repo.recent(limit=limit)
 
-    # Apply status filter
-    if status_filter and status_filter != "all":
-        try:
-            status_enum = SignalStatus(status_filter.lower())
-            items = [s for s in items if s.status == status_enum]
-        except ValueError:
-            # Invalid status filter, ignore and return all
-            pass
-    # Map to client shape with all analysis result fields
+    # Get user-specific status for each signal
+    from src.infrastructure.db.models import UserSignalStatus
+    
+    # Fetch all user statuses for these signals in one query (optimization)
+    signal_ids = [s.id for s in base_signals]
+    user_statuses_query = (
+        db.query(UserSignalStatus)
+        .filter(UserSignalStatus.user_id == user.id, UserSignalStatus.signal_id.in_(signal_ids))
+        .all()
+    )
+    user_status_map = {us.signal_id: us.status for us in user_statuses_query}
+    
+    # Build items with effective status (user status overrides base status)
+    items_with_status = []
+    for signal in base_signals:
+        # Get effective status: user status if exists, otherwise base signal status
+        effective_status = user_status_map.get(signal.id, signal.status)
+        
+        # Apply status filter
+        if status_filter and status_filter != "all":
+            try:
+                status_enum = SignalStatus(status_filter.lower())
+                if effective_status != status_enum:
+                    continue
+            except ValueError:
+                # Invalid status filter, include all
+                pass
+        
+        items_with_status.append((signal, effective_status))
+    # Map to client shape with all analysis result fields (use effective status)
     return [
         {
             "id": s.id,
             "symbol": s.symbol,
-            "status": s.status.value,
+            "status": effective_status.value,  # Use per-user status
             # Technical indicators
             "rsi10": s.rsi10,
             "ema9": s.ema9,
@@ -119,7 +141,7 @@ def buying_zone(
             # Timestamp
             "ts": s.ts.isoformat(),
         }
-        for s in items
+        for s, effective_status in items_with_status
     ]
 
 
@@ -130,8 +152,8 @@ def reject_signal(
     user=Depends(get_current_user),
 ):
     """Mark a signal as REJECTED - user manually decided not to trade it"""
-    repo = SignalsRepository(db)
-    success = repo.mark_as_rejected(symbol)
+    repo = SignalsRepository(db, user_id=user.id)
+    success = repo.mark_as_rejected(symbol, user_id=user.id)
 
     if not success:
         from fastapi import HTTPException, status

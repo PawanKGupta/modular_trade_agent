@@ -1982,11 +1982,11 @@ class AutoTradeEngine:
                     SignalsRepository,
                 )
 
-                signals_repo = SignalsRepository(self.db)
+                signals_repo = SignalsRepository(self.db, user_id=self.user_id)
                 # Use the base symbol (without series suffix like -EQ)
                 base_symbol = broker_symbol.split("-")[0] if "-" in broker_symbol else broker_symbol
-                if signals_repo.mark_as_traded(base_symbol):
-                    logger.info(f"Marked signal for {base_symbol} as TRADED")
+                if signals_repo.mark_as_traded(base_symbol, user_id=self.user_id):
+                    logger.info(f"Marked signal for {base_symbol} as TRADED (user {self.user_id})")
             except Exception as mark_error:
                 # Don't fail order placement if marking fails
                 logger.warning(f"Failed to mark signal as traded for {broker_symbol}: {mark_error}")
