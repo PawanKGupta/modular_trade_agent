@@ -94,43 +94,44 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 				/>
 			</label>
 
-			<label className="text-sm flex flex-col gap-1">
+			<label className="text-xs sm:text-sm flex flex-col gap-1">
 				<span className="text-[var(--muted)]">Hyperparameters (JSON)</span>
 				<textarea
 					value={hyperparametersText}
 					onChange={(e) => setHyperparametersText(e.target.value)}
 					rows={4}
-					className="bg-transparent border border-[#1e293b] rounded p-2 text-sm font-mono"
+					className="bg-transparent border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm font-mono min-h-[100px] sm:min-h-0"
 				/>
 				<span className="text-[var(--muted)] text-xs">
 					Example: {"{ \"max_depth\": 6, \"learning_rate\": 0.1 }"}
 				</span>
 			</label>
 
-			<label className="text-sm flex flex-col gap-1">
+			<label className="text-xs sm:text-sm flex flex-col gap-1">
 				<span className="text-[var(--muted)]">Notes (optional)</span>
 				<textarea
 					value={notes}
 					onChange={(e) => setNotes(e.target.value)}
 					rows={2}
-					className="bg-transparent border border-[#1e293b] rounded p-2 text-sm"
+					className="bg-transparent border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm min-h-[80px] sm:min-h-0"
 				/>
 			</label>
 
-			<label className="text-sm flex items-center gap-2">
+			<label className="text-xs sm:text-sm flex items-center gap-2 min-h-[44px] sm:min-h-0">
 				<input
 					type="checkbox"
 					checked={autoActivate}
 					onChange={(e) => setAutoActivate(e.target.checked)}
+					className="w-4 h-4 sm:w-auto sm:h-auto"
 				/>
 				<span>Auto-activate new model version</span>
 			</label>
 
-			{error && <div className="text-sm text-red-400">{error}</div>}
+			{error && <div className="text-xs sm:text-sm text-red-400">{error}</div>}
 
 			<button
 				type="submit"
-				className="px-4 py-2 bg-[var(--accent)] text-[var(--background)] rounded text-sm font-medium disabled:opacity-50"
+				className="px-4 py-3 sm:py-2 bg-[var(--accent)] text-[var(--background)] rounded text-xs sm:text-sm font-medium disabled:opacity-50 min-h-[44px] sm:min-h-0 w-full sm:w-auto"
 				disabled={isSubmitting}
 			>
 				{isSubmitting ? 'Starting Training...' : 'Start Training'}
