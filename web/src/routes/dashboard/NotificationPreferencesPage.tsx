@@ -198,7 +198,7 @@ export function NotificationPreferencesPage() {
 			)}
 
 			{/* Notification Channels */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<h2 className="text-lg font-semibold">Notification Channels</h2>
 				<p className="text-sm text-[var(--muted)]">
 					Choose how you want to receive notifications
@@ -292,7 +292,7 @@ export function NotificationPreferencesPage() {
 			</section>
 
 			{/* Order Events */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
 						<h2 className="text-lg font-semibold">Order Events</h2>
@@ -378,7 +378,7 @@ export function NotificationPreferencesPage() {
 			</section>
 
 			{/* Retry Queue Events */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
 						<h2 className="text-lg font-semibold">Retry Queue Events</h2>
@@ -445,7 +445,7 @@ export function NotificationPreferencesPage() {
 			</section>
 
 			{/* System Events */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
 						<h2 className="text-lg font-semibold">System Events</h2>
@@ -505,7 +505,7 @@ export function NotificationPreferencesPage() {
 			</section>
 
 			{/* Service Events */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
 						<h2 className="text-lg font-semibold">Service Events</h2>
@@ -563,7 +563,7 @@ export function NotificationPreferencesPage() {
 			</section>
 
 			{/* Quiet Hours */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<h2 className="text-lg font-semibold">Quiet Hours</h2>
 				<p className="text-sm text-[var(--muted)]">
 					Set a time range when notifications will be suppressed (e.g., 22:00 - 08:00 for
