@@ -855,12 +855,13 @@ class AutoTradeEngine:
         # Priority 2: If database session is available, load from Signals table (unified source)
         if self.db and self.user_id:
             try:
+                from src.infrastructure.db.models import SignalStatus  # noqa: PLC0415
                 from src.infrastructure.db.timezone_utils import ist_now  # noqa: PLC0415
                 from src.infrastructure.persistence.signals_repository import (  # noqa: PLC0415
                     SignalsRepository,
                 )
 
-                signals_repo = SignalsRepository(self.db)
+                signals_repo = SignalsRepository(self.db, user_id=self.user_id)
 
                 # Get latest signals (today's or most recent)
                 today = ist_now().date()
@@ -876,58 +877,91 @@ class AutoTradeEngine:
                 else:
                     logger.info(f"Loaded {len(signals)} signals from database (Signals table)")
 
-                    # Convert Signals to Recommendation objects
-                    recommendations = []
+                    # Filter signals by effective status (considering per-user status)
+                    # Only include ACTIVE signals - skip TRADED, REJECTED, and EXPIRED
+                    active_signals = []
                     for signal in signals:
-                        # Determine verdict (prioritize final_verdict, then verdict, then ml_verdict)
-                        verdict = None
-                        if signal.final_verdict and signal.final_verdict.lower() in [
-                            "buy",
-                            "strong_buy",
-                        ]:
-                            verdict = signal.final_verdict.lower()
-                        elif signal.verdict and signal.verdict.lower() in ["buy", "strong_buy"]:
-                            verdict = signal.verdict.lower()
-                        elif signal.ml_verdict and signal.ml_verdict.lower() in [
-                            "buy",
-                            "strong_buy",
-                        ]:
-                            verdict = signal.ml_verdict.lower()
+                        # Get effective status (user-specific if exists, otherwise base status)
+                        user_status = signals_repo.get_user_signal_status(signal.id, self.user_id)
+                        effective_status = user_status if user_status is not None else signal.status
 
-                        # Only include buy/strong_buy signals
-                        if not verdict:
-                            continue
-
-                        # Convert symbol to ticker format (add .NS if not present)
-                        ticker = signal.symbol.upper()
-                        if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
-                            ticker = f"{ticker}.NS"
-
-                        # Get last_close price
-                        last_close = signal.last_close or 0.0
-                        if last_close <= 0:
-                            logger.warning(f"Skipping {ticker}: invalid last_close ({last_close})")
-                            continue
-
-                        # Extract execution_capital from liquidity_recommendation or trading_params
-                        execution_capital = None
-                        if signal.liquidity_recommendation and isinstance(
-                            signal.liquidity_recommendation, dict
-                        ):
-                            execution_capital = signal.liquidity_recommendation.get(
-                                "execution_capital"
+                        # Only include ACTIVE signals
+                        if effective_status != SignalStatus.ACTIVE:
+                            user_status_str = user_status.value if user_status else "none"
+                            logger.debug(
+                                f"Skipping signal {signal.symbol}: "
+                                f"status={effective_status.value} "
+                                f"(base={signal.status.value}, user={user_status_str})"
                             )
-                        elif signal.trading_params and isinstance(signal.trading_params, dict):
-                            execution_capital = signal.trading_params.get("execution_capital")
+                            continue
 
-                        # Create Recommendation object
-                        rec = Recommendation(
-                            ticker=ticker,
-                            verdict=verdict,
-                            last_close=last_close,
-                            execution_capital=execution_capital,
+                        active_signals.append(signal)
+
+                    logger.info(
+                        f"Filtered to {len(active_signals)} ACTIVE signals "
+                        f"(user {self.user_id}, skipped {len(signals) - len(active_signals)} non-ACTIVE)"
+                    )
+
+                    if not active_signals:
+                        logger.warning(
+                            "No ACTIVE signals found after filtering, falling back to CSV"
                         )
-                        recommendations.append(rec)
+                        # Fall through to CSV fallback
+                    else:
+                        # Convert Signals to Recommendation objects
+                        recommendations = []
+                        for signal in active_signals:
+                            # Determine verdict (prioritize final_verdict, then verdict, then ml_verdict)
+                            verdict = None
+                            if signal.final_verdict and signal.final_verdict.lower() in [
+                                "buy",
+                                "strong_buy",
+                            ]:
+                                verdict = signal.final_verdict.lower()
+                            elif signal.verdict and signal.verdict.lower() in ["buy", "strong_buy"]:
+                                verdict = signal.verdict.lower()
+                            elif signal.ml_verdict and signal.ml_verdict.lower() in [
+                                "buy",
+                                "strong_buy",
+                            ]:
+                                verdict = signal.ml_verdict.lower()
+
+                            # Only include buy/strong_buy signals
+                            if not verdict:
+                                continue
+
+                            # Convert symbol to ticker format (add .NS if not present)
+                            ticker = signal.symbol.upper()
+                            if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
+                                ticker = f"{ticker}.NS"
+
+                            # Get last_close price
+                            last_close = signal.last_close or 0.0
+                            if last_close <= 0:
+                                logger.warning(
+                                    f"Skipping {ticker}: invalid last_close ({last_close})"
+                                )
+                                continue
+
+                            # Extract execution_capital from liquidity_recommendation or trading_params
+                            execution_capital = None
+                            if signal.liquidity_recommendation and isinstance(
+                                signal.liquidity_recommendation, dict
+                            ):
+                                execution_capital = signal.liquidity_recommendation.get(
+                                    "execution_capital"
+                                )
+                            elif signal.trading_params and isinstance(signal.trading_params, dict):
+                                execution_capital = signal.trading_params.get("execution_capital")
+
+                            # Create Recommendation object
+                            rec = Recommendation(
+                                ticker=ticker,
+                                verdict=verdict,
+                                last_close=last_close,
+                                execution_capital=execution_capital,
+                            )
+                            recommendations.append(rec)
 
                     logger.info(
                         f"Converted {len(recommendations)} buy/strong_buy recommendations from database"
@@ -3163,13 +3197,9 @@ class AutoTradeEngine:
                         ind = AutoTradeEngine.get_daily_indicators(rec.ticker)
                         cached_indicators[rec.ticker] = ind
                     except Exception as e:
-                        logger.warning(
-                        f"Failed to pre-fetch indicators for {rec.ticker}: {e}"
-                    )
+                        logger.warning(f"Failed to pre-fetch indicators for {rec.ticker}: {e}")
                         cached_indicators[rec.ticker] = None
-                successful_prefetches = sum(
-                    1 for v in cached_indicators.values() if v is not None
-                )
+                successful_prefetches = sum(1 for v in cached_indicators.values() if v is not None)
                 logger.info(
                     f"Pre-fetched {successful_prefetches}/{len(recommendations)} "
                     f"indicators (sequential)"
@@ -3479,9 +3509,7 @@ class AutoTradeEngine:
                 logger.debug(f"Cache miss for {rec.ticker}, fetching fresh indicators")
                 ind = self.get_daily_indicators(rec.ticker)
             else:
-                logger.debug(
-                    f"Cache hit for {rec.ticker}, close={ind.get('close', 'N/A')}"
-                )
+                logger.debug(f"Cache hit for {rec.ticker}, close={ind.get('close', 'N/A')}")
 
             if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
                 logger.warning(f"Skipping {rec.ticker}: missing indicators")
@@ -3491,9 +3519,7 @@ class AutoTradeEngine:
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
             close = ind["close"]
-            logger.info(
-                f"{rec.ticker}: Using close price = Rs {close:.2f} from indicators"
-            )
+            logger.info(f"{rec.ticker}: Using close price = Rs {close:.2f} from indicators")
             if close <= 0:
                 logger.warning(f"Skipping {rec.ticker}: invalid close price {close}")
                 summary["skipped_invalid_qty"] += 1

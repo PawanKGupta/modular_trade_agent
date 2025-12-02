@@ -12,7 +12,13 @@ from src.application.services.paper_trading_service_adapter import (
     PaperTradingEngineAdapter,
     PaperTradingServiceAdapter,
 )
-from src.infrastructure.db.models import Users
+from src.infrastructure.db.models import (
+    Signals,
+    SignalStatus,
+    Users,
+    UserSignalStatus,
+)
+from src.infrastructure.db.timezone_utils import ist_now
 
 
 @pytest.fixture
@@ -244,7 +250,7 @@ class TestPaperTradingEngineAdapter:
     def test_place_new_entries_prevents_duplicate_symbols_with_different_formats(
         self, db_session, test_user, mock_paper_broker
     ):
-        """Test that duplicate orders are not placed for same symbol with different formats (XYZ vs XYZ.NS)"""
+        """Test that duplicate orders are not placed for same symbol with different formats"""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
 
@@ -1526,3 +1532,283 @@ class TestPaperTradingSellMonitoring:
         assert result is False
         adapter_with_holdings.broker.cancel_order.assert_not_called()
         adapter_with_holdings.broker.place_order.assert_not_called()
+
+
+class TestSignalStatusFiltering:
+    """Test that signal status filtering works correctly in load_latest_recommendations"""
+
+    def test_load_recommendations_includes_active_signals(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that ACTIVE signals are included in recommendations"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create ACTIVE signals
+        signal1 = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal2 = Signals(
+            symbol="TCS",
+            verdict="strong_buy",
+            final_verdict="strong_buy",
+            last_close=3500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should return both ACTIVE signals
+        assert len(recs) == 2
+        tickers = {r.ticker for r in recs}
+        assert "RELIANCE.NS" in tickers
+        assert "TCS.NS" in tickers
+
+    def test_load_recommendations_excludes_traded_signals(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that TRADED signals (per-user) are excluded from recommendations"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create ACTIVE signal
+        signal = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # Mark as TRADED for this user (per-user status)
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.TRADED,
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should exclude TRADED signal
+        assert len(recs) == 0
+
+    def test_load_recommendations_excludes_rejected_signals(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that REJECTED signals (per-user) are excluded from recommendations"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create ACTIVE signal
+        signal = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # Mark as REJECTED for this user (per-user status)
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.REJECTED,
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should exclude REJECTED signal
+        assert len(recs) == 0
+
+    def test_load_recommendations_excludes_expired_signals(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that EXPIRED signals (base status) are excluded from recommendations"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create EXPIRED signal
+        signal = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.EXPIRED,
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should exclude EXPIRED signal
+        assert len(recs) == 0
+
+    def test_load_recommendations_per_user_status_takes_precedence(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that per-user status takes precedence over base signal status"""
+        # Create another user
+        user2 = Users(
+            email="user2@test.com",
+            password_hash="hash2",
+            role="user",
+        )
+        db_session.add(user2)
+        db_session.commit()
+        db_session.refresh(user2)
+
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signal with EXPIRED base status
+        signal = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.EXPIRED,  # Base status is EXPIRED
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # But mark as ACTIVE for test_user (per-user status)
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.ACTIVE,  # Per-user status is ACTIVE
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should include signal because per-user status (ACTIVE) takes precedence
+        assert len(recs) == 1
+        assert recs[0].ticker == "RELIANCE.NS"
+
+    def test_load_recommendations_mixed_status_signals(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test filtering with mixed status signals"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create multiple signals with different statuses
+        signal1 = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal2 = Signals(
+            symbol="TCS",
+            verdict="strong_buy",
+            final_verdict="strong_buy",
+            last_close=3500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal3 = Signals(
+            symbol="INFY",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=1500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal4 = Signals(
+            symbol="HDFC",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2000.0,
+            status=SignalStatus.EXPIRED,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2, signal3, signal4])
+        db_session.commit()
+        db_session.refresh(signal2)
+        db_session.refresh(signal3)
+
+        # Mark signal2 as TRADED (per-user)
+        user_status_traded = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal2.id,
+            symbol="TCS",
+            status=SignalStatus.TRADED,
+        )
+        # Mark signal3 as REJECTED (per-user)
+        user_status_rejected = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal3.id,
+            symbol="INFY",
+            status=SignalStatus.REJECTED,
+        )
+        db_session.add_all([user_status_traded, user_status_rejected])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should only return signal1 (ACTIVE, no per-user status)
+        # signal2 is TRADED (per-user) - excluded
+        # signal3 is REJECTED (per-user) - excluded
+        # signal4 is EXPIRED (base) - excluded
+        assert len(recs) == 1
+        assert recs[0].ticker == "RELIANCE.NS"
