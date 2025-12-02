@@ -217,7 +217,9 @@ def test_test_broker_connection_no_sdk(monkeypatch):
     result = broker.test_broker_connection(payload=payload, db=None, current=user)
 
     assert result.ok is False
-    assert "not installed" in result.message.lower()
+    # Should return user-friendly message without installation instructions
+    assert "not available" in result.message.lower() or "system administrator" in result.message.lower()
+    assert "pip install" not in result.message.lower()  # No installation commands for users
 
 
 def test_test_broker_connection_sdk_available_basic(monkeypatch):
@@ -324,7 +326,9 @@ def test_test_kotak_neo_connection_no_sdk():
     with patch.object(broker, "_NEO_API_AVAILABLE", False):
         success, message = broker._test_kotak_neo_connection(creds)
         assert success is False
-        assert "not installed" in message.lower()
+        # Should return user-friendly message without installation instructions
+        assert "not available" in message.lower() or "system administrator" in message.lower()
+        assert "pip install" not in message.lower()  # No installation commands for users
 
 
 def test_test_kotak_neo_connection_empty_creds(monkeypatch):

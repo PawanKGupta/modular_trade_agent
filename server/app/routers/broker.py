@@ -1,6 +1,7 @@
 # ruff: noqa: B008, PLR0913, PLR0911, PLR0912, PLC0415
 import ast
 import json
+import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,7 @@ from ..core.crypto import decrypt_blob, encrypt_blob
 from ..core.deps import get_current_user, get_db
 from ..schemas.user import BrokerCredsInfo, BrokerCredsRequest, BrokerTestResponse
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Try to import NeoAPI at module level (may not be available in all environments)
@@ -53,10 +55,44 @@ def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
         tuple[bool, str]: (success, message)
     """
     if not _NEO_API_AVAILABLE:
-        return (
-            False,
-            "Kotak Neo SDK (neo_api_client) not installed. Install with: pip install neo-api",
+        # Log technical details server-side for administrators
+        import sys
+
+        python_version = sys.version_info
+        if python_version >= (3, 12):
+            install_cmd = (
+                "pip install --no-deps git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client"
+            )
+            technical_details = (
+                f"Kotak Neo SDK (neo_api_client) not installed on server.\n"
+                f"Python version: {python_version.major}.{python_version.minor}\n"
+                f"Install command: {install_cmd}\n"
+                f"Note: Using --no-deps to avoid numpy version conflicts.\n"
+                f"See docker/INSTALL_KOTAK_SDK.md for detailed instructions."
+            )
+        else:
+            install_cmd = (
+                "pip install git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client"
+            )
+            technical_details = (
+                f"Kotak Neo SDK (neo_api_client) not installed on server.\n"
+                f"Python version: {python_version.major}.{python_version.minor}\n"
+                f"Install command: {install_cmd}\n"
+                f"See docker/INSTALL_KOTAK_SDK.md for detailed instructions."
+            )
+
+        # Log technical details server-side (for administrators)
+        logger.error(
+            f"Kotak Neo SDK not available on server: {technical_details}",
+            extra={"action": "test_broker_connection"},
         )
+
+        # Return user-friendly error message (no installation instructions)
+        user_message = (
+            "Kotak Neo broker integration is not available on this server. "
+            "Please contact your system administrator to install the required dependencies."
+        )
+        return (False, user_message)
 
     try:
         # Step 1: Initialize client (validates consumer_key/consumer_secret format)
