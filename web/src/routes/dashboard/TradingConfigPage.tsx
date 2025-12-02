@@ -175,14 +175,14 @@ export function TradingConfigPage() {
 									setLocalConfig(config!);
 									setHasChanges(false);
 								}}
-								className="px-4 py-2 rounded bg-gray-600 hover:bg-gray-700 text-white"
+								className="px-4 py-3 sm:py-2 rounded bg-gray-600 hover:bg-gray-700 text-white text-sm sm:text-base min-h-[44px] sm:min-h-0"
 							>
 								Cancel
 							</button>
 							<button
 								onClick={handleSave}
 								disabled={updateMutation.isPending}
-								className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+								className="px-4 py-3 sm:py-2 rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 text-sm sm:text-base min-h-[44px] sm:min-h-0"
 							>
 								{updateMutation.isPending ? 'Saving...' : 'Save Changes'}
 							</button>

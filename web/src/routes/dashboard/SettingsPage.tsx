@@ -72,12 +72,12 @@ export function SettingsPage() {
 			{isBroker && (
 				<div className="space-y-3 mb-6">
 					<div>
-						<label className="block text-sm mb-1">Broker</label>
-						<input className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]" value={form.broker ?? ''} onChange={(e) => setForm({ ...form, broker: e.target.value })} placeholder="kotak-neo" />
+						<label className="block text-xs sm:text-sm mb-1">Broker</label>
+						<input className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0" value={form.broker ?? ''} onChange={(e) => setForm({ ...form, broker: e.target.value })} placeholder="kotak-neo" />
 					</div>
 					<div className="space-y-3">
 						<div className="flex items-center justify-between mt-4">
-							<h3 className="text-sm font-semibold">Basic Credentials</h3>
+							<h3 className="text-xs sm:text-sm font-semibold">Basic Credentials</h3>
 							{credsInfo?.has_creds && (
 								<button
 									type="button"
@@ -85,21 +85,21 @@ export function SettingsPage() {
 										setShowFullCreds(!showFullCreds);
 										qc.invalidateQueries({ queryKey: ['brokerCredsInfo'] });
 									}}
-									className="text-xs text-blue-400 hover:text-blue-300 underline"
+									className="text-xs sm:text-sm text-blue-400 hover:text-blue-300 underline min-h-[44px] sm:min-h-0"
 								>
 									{showFullCreds ? 'Hide' : 'Show'} Full Credentials
 								</button>
 							)}
 						</div>
 						{credsInfo?.has_creds && (
-							<div className="text-sm text-green-400 mb-2">
+							<div className="text-xs sm:text-sm text-green-400 mb-2">
 								[OK] Credentials stored {showFullCreds ? '(showing full values)' : '(click Show to view/edit)'}
 							</div>
 						)}
 						<div>
-							<label className="block text-sm mb-1">API Key (Consumer Key)</label>
+							<label className="block text-xs sm:text-sm mb-1">API Key (Consumer Key)</label>
 							<input
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+								className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 								value={apiKey}
 								onChange={(e) => setApiKey(e.target.value)}
 								placeholder={credsInfo?.has_creds && !showFullCreds ? `Stored: ${credsInfo.api_key_masked}` : "Enter API Key"}
@@ -111,9 +111,9 @@ export function SettingsPage() {
 							)}
 						</div>
 						<div>
-							<label className="block text-sm mb-1">API Secret (Consumer Secret)</label>
+							<label className="block text-xs sm:text-sm mb-1">API Secret (Consumer Secret)</label>
 							<input
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+								className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 								type="password"
 								value={apiSecret}
 								onChange={(e) => setApiSecret(e.target.value)}
@@ -127,15 +127,15 @@ export function SettingsPage() {
 						</div>
 
 						<div className="mt-4">
-							<label className="block text-sm font-semibold mb-2">Connection Test Mode</label>
-							<div className="flex items-center gap-4 mb-3">
-								<label className="flex items-center gap-2">
-									<input type="radio" checked={testMode === 'basic'} onChange={() => setTestMode('basic')} />
-									<span className="text-sm">Basic Test (API Key/Secret only)</span>
+							<label className="block text-xs sm:text-sm font-semibold mb-2">Connection Test Mode</label>
+							<div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 mb-3">
+								<label className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
+									<input type="radio" checked={testMode === 'basic'} onChange={() => setTestMode('basic')} className="w-4 h-4" />
+									<span className="text-xs sm:text-sm">Basic Test (API Key/Secret only)</span>
 								</label>
-								<label className="flex items-center gap-2">
-									<input type="radio" checked={testMode === 'full'} onChange={() => setTestMode('full')} />
-									<span className="text-sm">Full Test (with Login & 2FA)</span>
+								<label className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
+									<input type="radio" checked={testMode === 'full'} onChange={() => setTestMode('full')} className="w-4 h-4" />
+									<span className="text-xs sm:text-sm">Full Test (with Login & 2FA)</span>
 								</label>
 							</div>
 						</div>

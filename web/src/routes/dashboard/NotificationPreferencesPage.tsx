@@ -187,7 +187,7 @@ export function NotificationPreferencesPage() {
 
 			{saveMessage && (
 				<div
-					className={`p-3 rounded ${
+					className={`p-2 sm:p-3 rounded text-xs sm:text-sm ${
 						saveMessage.type === 'success'
 							? 'bg-green-900/50 text-green-400 border border-green-700'
 							: 'bg-red-900/50 text-red-400 border border-red-700'
@@ -251,12 +251,12 @@ export function NotificationPreferencesPage() {
 									<button
 										onClick={handleTestTelegram}
 										disabled={!localPrefs.telegram_bot_token || !localPrefs.telegram_chat_id || testingTelegram}
-										className="w-full px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+										className="w-full px-4 py-3 sm:py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] sm:min-h-0"
 									>
 										{testingTelegram ? 'Testing...' : 'Test Connection'}
 									</button>
 									{telegramTestResult && (
-										<div className={`text-xs p-2 rounded ${telegramTestResult.success ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+										<div className={`text-xs sm:text-sm p-2 sm:p-3 rounded ${telegramTestResult.success ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
 											{telegramTestResult.message}
 										</div>
 									)}
@@ -600,7 +600,7 @@ export function NotificationPreferencesPage() {
 								handleChange('quiet_hours_start', null);
 								handleChange('quiet_hours_end', null);
 							}}
-							className="px-3 py-2 rounded bg-gray-600 hover:bg-gray-700 text-white text-sm"
+							className="px-4 py-3 sm:py-2 rounded bg-gray-600 hover:bg-gray-700 text-white text-sm sm:text-base min-h-[44px] sm:min-h-0"
 						>
 							Clear
 						</button>
