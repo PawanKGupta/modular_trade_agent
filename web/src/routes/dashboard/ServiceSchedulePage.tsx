@@ -377,7 +377,7 @@ export function ServiceSchedulePage() {
 												<div className="flex flex-col sm:flex-row gap-2">
 													<button
 														onClick={() => handleEdit(schedule)}
-														className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium"
+														className="px-3 py-2 sm:py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs sm:text-sm font-medium min-h-[36px] sm:min-h-0"
 													>
 														Edit
 													</button>
@@ -386,7 +386,7 @@ export function ServiceSchedulePage() {
 														disabled={
 															enableMutation.isPending || disableMutation.isPending
 														}
-														className={`px-3 py-1 rounded text-sm font-medium disabled:opacity-50 ${
+														className={`px-3 py-2 sm:py-1 rounded text-xs sm:text-sm font-medium disabled:opacity-50 min-h-[36px] sm:min-h-0 ${
 															schedule.enabled
 																? 'bg-yellow-600 hover:bg-yellow-700 text-white'
 																: 'bg-green-600 hover:bg-green-700 text-white'
