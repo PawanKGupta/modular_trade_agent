@@ -151,16 +151,16 @@ export function NotificationPreferencesPage() {
 				}
 			);
 
-			const data = await response.json();
-			setTelegramTestResult(data);
-		} catch (error) {
-			setTelegramTestResult({
-				success: false,
-				message: 'Failed to test connection. Please try again.',
-			});
-		} finally {
-			setTestingTelegram(false);
-		}
+		const data = await response.json();
+		setTelegramTestResult(data);
+	} catch {
+		setTelegramTestResult({
+			success: false,
+			message: 'Failed to test connection. Please try again.',
+		});
+	} finally {
+		setTestingTelegram(false);
+	}
 	};
 
 	if (isLoading || !localPrefs) {
