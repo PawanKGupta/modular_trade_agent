@@ -2000,8 +2000,6 @@ class AutoTradeEngine:
                     f"No order ID and not found in order book"
                 )
                 # Send notification about uncertain order
-                from datetime import datetime
-
                 from core.telegram import send_telegram
 
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
