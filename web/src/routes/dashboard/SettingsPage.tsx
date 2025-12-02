@@ -52,21 +52,21 @@ export function SettingsPage() {
 		if (data) setForm(data);
 	}, [data]);
 
-	if (isLoading) return <div>Loading settings...</div>;
+	if (isLoading) return <div className="p-2 sm:p-4 text-sm sm:text-base">Loading settings...</div>;
 
 	const isBroker = form.trade_mode === 'broker';
 
 	return (
-		<div className="max-w-xl">
-			<h2 className="text-lg font-semibold mb-4">Trading mode</h2>
-			<div className="flex items-center gap-4 mb-6">
-				<label className="flex items-center gap-2">
-					<input type="radio" checked={form.trade_mode === 'paper'} onChange={() => setForm({ ...form, trade_mode: 'paper' })} />
-					<span>Paper Trade (default)</span>
+		<div className="p-2 sm:p-4 max-w-xl">
+			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Trading mode</h2>
+			<div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
+				<label className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
+					<input type="radio" checked={form.trade_mode === 'paper'} onChange={() => setForm({ ...form, trade_mode: 'paper' })} className="w-4 h-4" />
+					<span className="text-sm sm:text-base">Paper Trade (default)</span>
 				</label>
-				<label className="flex items-center gap-2">
-					<input type="radio" checked={form.trade_mode === 'broker'} onChange={() => setForm({ ...form, trade_mode: 'broker' })} />
-					<span>Kotak Neo</span>
+				<label className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
+					<input type="radio" checked={form.trade_mode === 'broker'} onChange={() => setForm({ ...form, trade_mode: 'broker' })} className="w-4 h-4" />
+					<span className="text-sm sm:text-base">Kotak Neo</span>
 				</label>
 			</div>
 			{isBroker && (
