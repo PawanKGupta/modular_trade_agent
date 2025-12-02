@@ -126,14 +126,14 @@ export function ServiceSchedulePage() {
 
 			{/* Restart Banner */}
 			{showRestartBanner && (
-				<div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
-					<div className="flex items-center justify-between">
-						<div className="text-yellow-400">
+				<div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 sm:p-4">
+					<div className="flex items-start sm:items-center justify-between gap-2">
+						<div className="text-xs sm:text-sm text-yellow-400">
 							[WARN]? Schedule changes require unified service restart to take effect.
 						</div>
 						<button
 							onClick={() => setShowRestartBanner(false)}
-							className="text-yellow-400 hover:text-yellow-300"
+							className="text-yellow-400 hover:text-yellow-300 min-h-[32px] sm:min-h-0 px-2"
 						>
 							x
 						</button>
@@ -143,26 +143,26 @@ export function ServiceSchedulePage() {
 
 			{/* Schedules Table */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg overflow-hidden">
-				<div className="overflow-x-auto">
-					<table className="w-full">
+				<div className="overflow-x-auto -mx-2 sm:mx-0">
+					<table className="w-full text-xs sm:text-sm">
 						<thead className="bg-[#1e293b]">
 							<tr>
-								<th className="px-4 py-3 text-left text-sm font-semibold text-[var(--text)]">
+								<th className="px-2 sm:px-4 py-2 sm:py-3 text-left font-semibold text-[var(--text)] whitespace-nowrap">
 									Task
 								</th>
-								<th className="px-4 py-3 text-left text-sm font-semibold text-[var(--text)]">
+								<th className="px-2 sm:px-4 py-2 sm:py-3 text-left font-semibold text-[var(--text)] whitespace-nowrap hidden sm:table-cell">
 									Schedule Time
 								</th>
-								<th className="px-4 py-3 text-left text-sm font-semibold text-[var(--text)]">
+								<th className="px-2 sm:px-4 py-2 sm:py-3 text-left font-semibold text-[var(--text)] whitespace-nowrap hidden md:table-cell">
 									Type
 								</th>
-								<th className="px-4 py-3 text-left text-sm font-semibold text-[var(--text)]">
+								<th className="px-2 sm:px-4 py-2 sm:py-3 text-left font-semibold text-[var(--text)] whitespace-nowrap">
 									Status
 								</th>
-								<th className="px-4 py-3 text-left text-sm font-semibold text-[var(--text)]">
+								<th className="px-2 sm:px-4 py-2 sm:py-3 text-left font-semibold text-[var(--text)] whitespace-nowrap hidden lg:table-cell">
 									Next Execution
 								</th>
-								<th className="px-4 py-3 text-left text-sm font-semibold text-[var(--text)]">
+								<th className="px-2 sm:px-4 py-2 sm:py-3 text-left font-semibold text-[var(--text)] whitespace-nowrap">
 									Actions
 								</th>
 							</tr>
@@ -175,8 +175,8 @@ export function ServiceSchedulePage() {
 
 								return (
 									<tr key={schedule.id} className="hover:bg-[#1e293b]/50">
-										<td className="px-4 py-3">
-											<div className="text-sm font-medium text-[var(--text)]">
+										<td className="px-2 sm:px-4 py-2 sm:py-3">
+											<div className="text-xs sm:text-sm font-medium text-[var(--text)]">
 												{taskDisplayName}
 											</div>
 											{schedule.description && (
@@ -185,7 +185,7 @@ export function ServiceSchedulePage() {
 												</div>
 											)}
 										</td>
-										<td className="px-4 py-3">
+										<td className="px-2 sm:px-4 py-2 sm:py-3 hidden sm:table-cell">
 											{isEditing ? (
 												<input
 													type="time"
@@ -193,15 +193,15 @@ export function ServiceSchedulePage() {
 													onChange={(e) =>
 														setEditForm({ ...editForm, schedule_time: e.target.value })
 													}
-													className="px-2 py-1 bg-[#1e293b] border border-[#334155] rounded text-sm text-[var(--text)]"
+													className="px-2 py-2 sm:py-1 bg-[#1e293b] border border-[#334155] rounded text-xs sm:text-sm text-[var(--text)] min-h-[44px] sm:min-h-0"
 												/>
 											) : (
-												<div className="text-sm text-[var(--text)]">
+												<div className="text-xs sm:text-sm text-[var(--text)]">
 													{schedule.schedule_time}
 												</div>
 											)}
 										</td>
-										<td className="px-4 py-3">
+										<td className="px-2 sm:px-4 py-2 sm:py-3 hidden md:table-cell">
 											<div className="flex flex-col gap-2">
 												{isEditing ? (
 													<>
@@ -317,16 +317,16 @@ export function ServiceSchedulePage() {
 												)}
 											</div>
 										</td>
-										<td className="px-4 py-3">
+										<td className="px-2 sm:px-4 py-2 sm:py-3">
 											{isEditing ? (
-												<label className="flex items-center gap-2 text-sm text-[var(--text)]">
+												<label className="flex items-center gap-2 text-xs sm:text-sm text-[var(--text)] min-h-[44px] sm:min-h-0">
 													<input
 														type="checkbox"
 														checked={editForm.enabled || false}
 														onChange={(e) =>
 															setEditForm({ ...editForm, enabled: e.target.checked })
 														}
-														className="accent-blue-600"
+														className="accent-blue-600 w-4 h-4"
 													/>
 													<span>Enabled</span>
 												</label>
@@ -342,9 +342,9 @@ export function ServiceSchedulePage() {
 												</div>
 											)}
 										</td>
-										<td className="px-4 py-3">
+										<td className="px-2 sm:px-4 py-2 sm:py-3 hidden lg:table-cell">
 											{schedule.next_execution_at ? (
-												<div className="text-sm text-[var(--text)]">
+												<div className="text-xs sm:text-sm text-[var(--text)]">
 													{formatTimeAgo(
 														Math.floor(
 															(Date.now() - new Date(schedule.next_execution_at).getTime()) /
@@ -353,28 +353,28 @@ export function ServiceSchedulePage() {
 													)}
 												</div>
 											) : (
-												<span className="text-sm text-[var(--muted)]">N/A</span>
+												<span className="text-xs sm:text-sm text-[var(--muted)]">N/A</span>
 											)}
 										</td>
-										<td className="px-4 py-3">
+										<td className="px-2 sm:px-4 py-2 sm:py-3">
 											{isEditing ? (
-												<div className="flex gap-2">
+												<div className="flex flex-col sm:flex-row gap-2">
 													<button
 														onClick={() => handleSave(schedule.task_name)}
 														disabled={updateMutation.isPending}
-														className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-sm font-medium disabled:opacity-50"
+														className="px-3 py-2 sm:py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs sm:text-sm font-medium disabled:opacity-50 min-h-[36px] sm:min-h-0"
 													>
 														{updateMutation.isPending ? 'Saving...' : 'Save'}
 													</button>
 													<button
 														onClick={handleCancel}
-														className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white rounded text-sm font-medium"
+														className="px-3 py-2 sm:py-1 bg-gray-600 hover:bg-gray-700 text-white rounded text-xs sm:text-sm font-medium min-h-[36px] sm:min-h-0"
 													>
 														Cancel
 													</button>
 												</div>
 											) : (
-												<div className="flex gap-2">
+												<div className="flex flex-col sm:flex-row gap-2">
 													<button
 														onClick={() => handleEdit(schedule)}
 														className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium"
