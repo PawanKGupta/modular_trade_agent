@@ -15,25 +15,25 @@ export function MLTrainingJobsTable({ jobs, isLoading }: Props) {
 	}
 
 	return (
-		<div className="overflow-x-auto">
-			<table className="w-full text-sm">
+		<div className="overflow-x-auto -mx-2 sm:mx-0">
+			<table className="w-full text-xs sm:text-sm">
 				<thead>
 					<tr className="text-left text-[var(--muted)]">
-						<th className="py-2 pr-4">Job</th>
-						<th className="py-2 pr-4">Model</th>
-						<th className="py-2 pr-4">Algorithm</th>
-						<th className="py-2 pr-4">Status</th>
-						<th className="py-2 pr-4">Accuracy</th>
-						<th className="py-2">Started</th>
+						<th className="py-2 pr-2 sm:pr-4 whitespace-nowrap">Job</th>
+						<th className="py-2 pr-2 sm:pr-4 whitespace-nowrap hidden sm:table-cell">Model</th>
+						<th className="py-2 pr-2 sm:pr-4 whitespace-nowrap hidden md:table-cell">Algorithm</th>
+						<th className="py-2 pr-2 sm:pr-4 whitespace-nowrap">Status</th>
+						<th className="py-2 pr-2 sm:pr-4 whitespace-nowrap">Accuracy</th>
+						<th className="py-2 whitespace-nowrap hidden lg:table-cell">Started</th>
 					</tr>
 				</thead>
 				<tbody>
 					{jobs.map((job) => (
 						<tr key={job.id} className="border-t border-[#1e293b]">
-							<td className="py-2 pr-4 font-mono text-xs">#{job.id}</td>
-							<td className="py-2 pr-4">{job.model_type}</td>
-							<td className="py-2 pr-4">{job.algorithm}</td>
-							<td className="py-2 pr-4">
+							<td className="py-2 pr-2 sm:pr-4 font-mono text-xs">#{job.id}</td>
+							<td className="py-2 pr-2 sm:pr-4 text-xs sm:text-sm hidden sm:table-cell">{job.model_type}</td>
+							<td className="py-2 pr-2 sm:pr-4 text-xs sm:text-sm hidden md:table-cell">{job.algorithm}</td>
+							<td className="py-2 pr-2 sm:pr-4">
 								<span
 									className={`px-2 py-1 rounded-full text-xs ${
 										job.status === 'completed'
@@ -46,10 +46,10 @@ export function MLTrainingJobsTable({ jobs, isLoading }: Props) {
 									{job.status}
 								</span>
 							</td>
-							<td className="py-2 pr-4">
+							<td className="py-2 pr-2 sm:pr-4 text-xs sm:text-sm">
 								{job.accuracy !== null ? `${(job.accuracy * 100).toFixed(2)}%` : '-'}
 							</td>
-							<td className="py-2 text-[var(--muted)]">
+							<td className="py-2 text-[var(--muted)] text-xs hidden lg:table-cell">
 								{new Date(job.started_at).toLocaleString()}
 							</td>
 						</tr>

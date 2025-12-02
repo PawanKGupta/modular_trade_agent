@@ -23,6 +23,9 @@ test.describe('Dashboard & Navigation', () => {
 	});
 
 	test('all menu items navigate correctly', async ({ authenticatedPage }) => {
+		// Scope queries to sidebar navigation to avoid matching dashboard quick action links
+		const sidebar = authenticatedPage.locator('aside nav, aside');
+
 		// Test each major menu item with their category
 		const menuItems = [
 			{ category: null, name: /Dashboard/i, url: /\/dashboard$/ },
@@ -43,10 +46,10 @@ test.describe('Dashboard & Navigation', () => {
 		for (const item of menuItems) {
 			// Expand category if needed
 			if (item.category) {
-				const categoryButton = authenticatedPage.getByRole('button', { name: item.category });
+				const categoryButton = sidebar.getByRole('button', { name: item.category });
 
 				// Check if category is expanded by checking if menu items are visible
-				const menuLink = authenticatedPage.getByRole('link', { name: item.name });
+				const menuLink = sidebar.getByRole('link', { name: item.name });
 				const isExpanded = await menuLink.isVisible().catch(() => false);
 
 				if (!isExpanded) {
@@ -56,8 +59,8 @@ test.describe('Dashboard & Navigation', () => {
 				}
 			}
 
-			// Find and click menu item
-			const menuLink = authenticatedPage.getByRole('link', { name: item.name });
+			// Find and click menu item (scoped to sidebar)
+			const menuLink = sidebar.getByRole('link', { name: item.name });
 			await menuLink.click();
 
 			// Verify navigation
@@ -71,12 +74,15 @@ test.describe('Dashboard & Navigation', () => {
 	});
 
 	test('menu categories can be expanded and collapsed', async ({ authenticatedPage }) => {
+		// Scope queries to sidebar navigation
+		const sidebar = authenticatedPage.locator('aside nav, aside');
+
 		// Find Trading category button
-		const categoryButton = authenticatedPage.getByRole('button', { name: /Trading/i });
+		const categoryButton = sidebar.getByRole('button', { name: /Trading/i });
 		await expect(categoryButton).toBeVisible();
 
 		// Check initial state - Trading is collapsed by default
-		const buyingZoneLink = authenticatedPage.getByRole('link', { name: /Buying Zone/i });
+		const buyingZoneLink = sidebar.getByRole('link', { name: /Buying Zone/i });
 		const isInitiallyVisible = await buyingZoneLink.isVisible().catch(() => false);
 
 		// Trading should be collapsed initially (items not visible)
@@ -98,19 +104,22 @@ test.describe('Dashboard & Navigation', () => {
 	});
 
 	test('active menu item is highlighted', async ({ authenticatedPage }) => {
+		// Scope queries to sidebar navigation
+		const sidebar = authenticatedPage.locator('aside nav, aside');
+
 		// Expand Trading category first (it's collapsed by default)
-		const tradingButton = authenticatedPage.getByRole('button', { name: /Trading/i });
+		const tradingButton = sidebar.getByRole('button', { name: /Trading/i });
 		await tradingButton.click();
 		await authenticatedPage.waitForTimeout(300);
 
 		// Now find and click Buying Zone link
-		const buyingZoneLink = authenticatedPage.getByRole('link', { name: /Buying Zone/i });
+		const buyingZoneLink = sidebar.getByRole('link', { name: /Buying Zone/i });
 		await buyingZoneLink.click();
 		await expect(authenticatedPage).toHaveURL(/\/dashboard\/buying-zone/);
 		await authenticatedPage.waitForLoadState('networkidle');
 
 		// Verify active state (check for active class or highlighted style)
-		const activeLink = authenticatedPage.getByRole('link', { name: /Buying Zone/i });
+		const activeLink = sidebar.getByRole('link', { name: /Buying Zone/i });
 		await expect(activeLink).toHaveClass(/active|bg-\[var\(--accent\)\]/);
 	});
 });

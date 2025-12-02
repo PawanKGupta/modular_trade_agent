@@ -100,11 +100,11 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 	};
 
 	return (
-		<div className="mt-2 p-4 bg-[#0a0f16] border border-[#1e293b] rounded-lg text-xs text-[var(--text)] space-y-4 max-w-full">
+		<div className="mt-2 p-3 sm:p-4 bg-[#0a0f16] border border-[#1e293b] rounded-lg text-xs text-[var(--text)] space-y-3 sm:space-y-4 max-w-full">
 			{/* Key Metrics - Compact Pills */}
 			<div className="flex flex-wrap gap-2">
 				{success !== undefined && (
-					<div className={`px-3 py-1.5 rounded-full ${success ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'}`}>
+					<div className={`px-2 sm:px-3 py-1.5 rounded-full ${success ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'}`}>
 						<span className="text-[var(--muted)]">Status: </span>
 						<span className={`font-semibold ${success ? 'text-green-400' : 'text-red-400'}`}>
 							{success ? 'Success' : 'Failed'}
@@ -120,13 +120,13 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 					</div>
 				)}
 				{timeout_seconds !== undefined && (
-					<div className="px-3 py-1.5 rounded-full bg-gray-500/10 border border-gray-500/30">
+					<div className="px-2 sm:px-3 py-1.5 rounded-full bg-gray-500/10 border border-gray-500/30">
 						<span className="text-[var(--muted)]">Timeout: </span>
 						<span className="text-[var(--text)]">{timeout_seconds}s</span>
 					</div>
 				)}
 				{max_retries !== undefined && (
-					<div className="px-3 py-1.5 rounded-full bg-gray-500/10 border border-gray-500/30">
+					<div className="px-2 sm:px-3 py-1.5 rounded-full bg-gray-500/10 border border-gray-500/30">
 						<span className="text-[var(--muted)]">Max Retries: </span>
 						<span className="text-[var(--text)]">{max_retries}</span>
 					</div>
@@ -135,11 +135,11 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 
 			{/* Task Metrics (automatically extracted from any service) */}
 			{Object.keys(taskMetrics).length > 0 && (
-				<div className="bg-[#0f1720] border border-blue-500/30 rounded p-3">
-					<div className="text-blue-400 font-semibold mb-3 flex items-center gap-2">
+				<div className="bg-[#0f1720] border border-blue-500/30 rounded p-2 sm:p-3">
+					<div className="text-blue-400 font-semibold mb-2 sm:mb-3 flex items-center gap-2">
 						<span>📊</span> Task Metrics
 					</div>
-					<div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+					<div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-3">
 						{Object.entries(taskMetrics).map(([key, value]) => {
 							// Determine color based on metric type
 							let colorClass = 'text-blue-400';
@@ -163,7 +163,7 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 
 							return (
 								<div key={key} className="text-center">
-									<div className={`text-2xl font-bold ${colorClass}`}>{value}</div>
+									<div className={`text-xl sm:text-2xl font-bold ${colorClass}`}>{value}</div>
 									<div className="text-[10px] text-[var(--muted)] uppercase tracking-wide mt-1">{label}</div>
 								</div>
 							);
@@ -174,14 +174,14 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 
 			{/* Analysis Summary - Compact Grid */}
 			{analysis_summary && (
-				<div className="bg-[#0f1720] border border-[#1e293b] rounded p-3">
+				<div className="bg-[#0f1720] border border-[#1e293b] rounded p-2 sm:p-3">
 					<div className="text-[var(--text)] font-semibold mb-2 flex items-center gap-2">
 						<span>📊</span> Analysis Summary
 					</div>
-					<div className="grid grid-cols-4 gap-3">
+					<div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
 						{Object.entries(analysis_summary).map(([key, value]) => (
 							<div key={key} className="text-center">
-								<div className="text-lg font-bold text-[var(--text)]">{String(value)}</div>
+								<div className="text-base sm:text-lg font-bold text-[var(--text)]">{String(value)}</div>
 								<div className="text-[10px] text-[var(--muted)] uppercase tracking-wide">{key}</div>
 							</div>
 						))}
@@ -192,11 +192,11 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 			{/* STDOUT Tail - Syntax Highlighted */}
 			{stdout_tail && (
 				<div>
-					<div className="text-[var(--text)] font-semibold mb-2 flex items-center gap-2">
+					<div className="text-[var(--text)] font-semibold mb-2 flex items-center gap-2 flex-wrap">
 						<span>📝</span> Output Log
 						<span className="text-[10px] text-[var(--muted)] font-normal">(last 10 lines, 200 char limit)</span>
 					</div>
-					<div className="font-mono bg-black/50 p-3 rounded border border-[#1e293b] max-h-64 overflow-y-auto text-[11px] leading-relaxed">
+					<div className="font-mono bg-black/50 p-2 sm:p-3 rounded border border-[#1e293b] max-h-64 overflow-y-auto text-[10px] sm:text-[11px] leading-relaxed">
 						{formatLogTail(stdout_tail)}
 					</div>
 				</div>
@@ -205,11 +205,11 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 			{/* STDERR Tail */}
 			{stderr_tail && (
 				<div>
-					<div className="text-red-400 font-semibold mb-2 flex items-center gap-2">
+					<div className="text-red-400 font-semibold mb-2 flex items-center gap-2 flex-wrap">
 						<span>⚠️</span> Error Log
 						<span className="text-[10px] text-[var(--muted)] font-normal">(last 10 lines, 200 char limit)</span>
 					</div>
-					<div className="font-mono bg-red-900/20 border border-red-500/30 p-3 rounded max-h-64 overflow-y-auto text-[11px] leading-relaxed text-red-300">
+					<div className="font-mono bg-red-900/20 border border-red-500/30 p-2 sm:p-3 rounded max-h-64 overflow-y-auto text-[10px] sm:text-[11px] leading-relaxed text-red-300">
 						{formatLogTail(stderr_tail)}
 					</div>
 				</div>
@@ -217,11 +217,11 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 
 			{/* Error Details (error_type, error_message, exception) */}
 			{(error_type || error_message || exception) && (
-				<div className="bg-red-900/10 border border-red-500/30 rounded p-3">
+				<div className="bg-red-900/10 border border-red-500/30 rounded p-2 sm:p-3">
 					<div className="text-red-400 font-semibold mb-2 flex items-center gap-2">
 						<span>❌</span> Error Details
 					</div>
-					<div className="space-y-2 text-[11px]">
+					<div className="space-y-2 text-[10px] sm:text-[11px]">
 						{error_type && (
 							<div>
 								<span className="text-[var(--muted)]">Type: </span>
@@ -251,11 +251,11 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 			{/* Other Fields */}
 			{Object.keys(otherFields).length > 0 && (
 				<details className="cursor-pointer group">
-					<summary className="text-[var(--muted)] hover:text-[var(--text)] font-semibold list-none flex items-center gap-2">
+					<summary className="text-[var(--muted)] hover:text-[var(--text)] font-semibold list-none flex items-center gap-2 min-h-[44px] sm:min-h-0">
 						<span className="group-open:rotate-90 transition-transform">▶</span>
 						Additional Fields ({Object.keys(otherFields).length})
 					</summary>
-					<pre className="mt-2 font-mono bg-black/50 p-3 rounded border border-[#1e293b] overflow-auto max-h-32 text-[11px]">
+					<pre className="mt-2 font-mono bg-black/50 p-2 sm:p-3 rounded border border-[#1e293b] overflow-auto max-h-32 text-[10px] sm:text-[11px]">
 						{JSON.stringify(otherFields, null, 2)}
 					</pre>
 				</details>

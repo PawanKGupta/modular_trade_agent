@@ -84,9 +84,9 @@ export function NotificationsPage() {
 
 	if (isLoading) {
 		return (
-			<div className="p-4">
-				<h1 className="text-2xl font-semibold mb-4">Notifications</h1>
-				<div className="text-[var(--muted)]">Loading notifications...</div>
+			<div className="p-2 sm:p-4">
+				<h1 className="text-lg sm:text-2xl font-semibold mb-3 sm:mb-4">Notifications</h1>
+				<div className="text-xs sm:text-sm text-[var(--muted)]">Loading notifications...</div>
 			</div>
 		);
 	}
@@ -94,14 +94,14 @@ export function NotificationsPage() {
 	const unreadCount = notifications?.filter((n) => !n.read).length || 0;
 
 	return (
-		<div className="p-4 space-y-4 max-w-6xl">
-			<div className="flex items-center justify-between">
-				<h1 className="text-2xl font-semibold">Notifications</h1>
+		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4 max-w-6xl">
+			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+				<h1 className="text-lg sm:text-2xl font-semibold">Notifications</h1>
 				{unreadCount > 0 && (
 					<button
 						onClick={handleMarkAllRead}
 						disabled={markAllReadMutation.isPending}
-						className="px-4 py-2 rounded bg-[var(--accent)] text-black hover:bg-[var(--accent-hover)] disabled:opacity-50"
+						className="px-4 py-3 sm:py-2 rounded bg-[var(--accent)] text-black hover:bg-[var(--accent-hover)] disabled:opacity-50 min-h-[44px] sm:min-h-0 text-sm sm:text-base w-full sm:w-auto"
 					>
 						{markAllReadMutation.isPending ? 'Marking...' : `Mark All Read (${unreadCount})`}
 					</button>
@@ -109,13 +109,13 @@ export function NotificationsPage() {
 			</div>
 
 			{/* Filters */}
-			<div className="flex gap-4 p-4 border border-[#1e293b] rounded">
+			<div className="flex flex-col sm:flex-row gap-3 sm:gap-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex-1">
-					<label className="block text-sm mb-1">Type</label>
+					<label className="block text-xs sm:text-sm mb-1">Type</label>
 					<select
 						value={filter}
 						onChange={(e) => setFilter(e.target.value as any)}
-						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm"
+						className="w-full p-3 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 					>
 						<option value="all">All</option>
 						<option value="unread">Unread</option>
@@ -126,11 +126,11 @@ export function NotificationsPage() {
 					</select>
 				</div>
 				<div className="flex-1">
-					<label className="block text-sm mb-1">Level</label>
+					<label className="block text-xs sm:text-sm mb-1">Level</label>
 					<select
 						value={levelFilter}
 						onChange={(e) => setLevelFilter(e.target.value as any)}
-						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm"
+						className="w-full p-3 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 					>
 						<option value="all">All</option>
 						<option value="info">Info</option>
@@ -147,27 +147,27 @@ export function NotificationsPage() {
 					notifications.map((notification) => (
 						<div
 							key={notification.id}
-							className={`p-4 border rounded ${
+							className={`p-3 sm:p-4 border rounded ${
 								notification.read
 									? 'border-[#1e293b] bg-[#0f1720] opacity-60'
 									: 'border-[#1e293b] bg-[#0f1720] border-l-4 border-l-blue-500'
 							}`}
 						>
-							<div className="flex items-start justify-between">
-								<div className="flex-1">
-									<div className="flex items-center gap-2 mb-1">
-										<span className="text-lg">{getLevelIcon(notification.level)}</span>
-										<h3 className={`font-semibold ${getLevelColor(notification.level)}`}>
+							<div className="flex flex-col sm:flex-row items-start sm:items-start justify-between gap-3 sm:gap-0">
+								<div className="flex-1 min-w-0">
+									<div className="flex flex-wrap items-center gap-2 mb-1">
+										<span className="text-base sm:text-lg">{getLevelIcon(notification.level)}</span>
+										<h3 className={`text-sm sm:text-base font-semibold ${getLevelColor(notification.level)}`}>
 											{notification.title}
 										</h3>
 										{!notification.read && (
 											<span className="px-2 py-0.5 text-xs rounded bg-blue-600 text-white">New</span>
 										)}
 									</div>
-									<p className="text-sm text-[var(--muted)] mb-2 whitespace-pre-wrap">
+									<p className="text-xs sm:text-sm text-[var(--muted)] mb-2 whitespace-pre-wrap break-words">
 										{notification.message}
 									</p>
-									<div className="flex items-center gap-4 text-xs text-[var(--muted)]">
+									<div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs text-[var(--muted)]">
 										<span>
 											{new Date(notification.created_at).toLocaleString()}
 										</span>
@@ -179,7 +179,7 @@ export function NotificationsPage() {
 									<button
 										onClick={() => handleMarkRead(notification.id)}
 										disabled={markReadMutation.isPending}
-										className="ml-4 px-3 py-1 text-xs rounded bg-gray-600 hover:bg-gray-700 text-white disabled:opacity-50"
+										className="sm:ml-4 px-3 py-2 sm:py-1 text-xs rounded bg-gray-600 hover:bg-gray-700 text-white disabled:opacity-50 min-h-[36px] sm:min-h-0 w-full sm:w-auto"
 									>
 										Mark Read
 									</button>

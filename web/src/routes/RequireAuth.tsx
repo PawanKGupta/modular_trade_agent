@@ -17,7 +17,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
 	if (!hasHydrated) {
 		return (
-			<div className="p-4 text-sm text-gray-500" role="status" aria-live="polite">
+			<div className="p-2 sm:p-4 text-xs sm:text-sm text-gray-500" role="status" aria-live="polite">
 				Restoring session...
 			</div>
 		);

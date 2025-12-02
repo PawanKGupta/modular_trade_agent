@@ -54,17 +54,17 @@ export function ServiceTasksTable({ tasks, isLoading }: ServiceTasksTableProps) 
 	return (
 		<div className="space-y-4">
 			{/* Pagination Controls - Top */}
-			<div className="flex items-center justify-between text-sm">
+			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0 text-xs sm:text-sm">
 				<div className="text-[var(--muted)]">
 					Showing {startIndex + 1}-{Math.min(endIndex, tasks.length)} of {tasks.length} tasks
 				</div>
-				<div className="flex items-center gap-4">
+				<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 w-full sm:w-auto">
 					<div className="flex items-center gap-2">
-						<label className="text-[var(--muted)]">Per page:</label>
+						<label className="text-[var(--muted)] whitespace-nowrap">Per page:</label>
 						<select
 							value={pageSize}
 							onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-							className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-blue-500"
+							className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2 sm:px-2 sm:py-1 text-xs sm:text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] sm:min-h-0"
 						>
 							<option value={10}>10</option>
 							<option value={25}>25</option>
@@ -75,7 +75,7 @@ export function ServiceTasksTable({ tasks, isLoading }: ServiceTasksTableProps) 
 						<button
 							onClick={() => setCurrentPage(1)}
 							disabled={currentPage === 1}
-							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b] text-[var(--text)] hover:bg-[#1e293b] disabled:opacity-50 disabled:cursor-not-allowed"
+							className="px-3 py-2 sm:px-2 sm:py-1 rounded bg-[#0f1720] border border-[#1e293b] text-xs sm:text-sm text-[var(--text)] hover:bg-[#1e293b] disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] sm:min-h-0"
 							title="First page"
 						>
 							«
@@ -83,18 +83,18 @@ export function ServiceTasksTable({ tasks, isLoading }: ServiceTasksTableProps) 
 						<button
 							onClick={() => setCurrentPage(currentPage - 1)}
 							disabled={currentPage === 1}
-							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b] text-[var(--text)] hover:bg-[#1e293b] disabled:opacity-50 disabled:cursor-not-allowed"
+							className="px-3 py-2 sm:px-2 sm:py-1 rounded bg-[#0f1720] border border-[#1e293b] text-xs sm:text-sm text-[var(--text)] hover:bg-[#1e293b] disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] sm:min-h-0"
 							title="Previous page"
 						>
 							‹
 						</button>
-						<span className="text-[var(--text)] px-2">
+						<span className="text-[var(--text)] px-2 text-xs sm:text-sm">
 							Page {currentPage} of {totalPages}
 						</span>
 						<button
 							onClick={() => setCurrentPage(currentPage + 1)}
 							disabled={currentPage === totalPages}
-							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b] text-[var(--text)] hover:bg-[#1e293b] disabled:opacity-50 disabled:cursor-not-allowed"
+							className="px-3 py-2 sm:px-2 sm:py-1 rounded bg-[#0f1720] border border-[#1e293b] text-xs sm:text-sm text-[var(--text)] hover:bg-[#1e293b] disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] sm:min-h-0"
 							title="Next page"
 						>
 							›

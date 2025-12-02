@@ -27,11 +27,11 @@ export function ServiceControls({
 	};
 
 	return (
-		<div className="flex gap-3">
+		<div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
 			<button
 				onClick={onStart}
 				disabled={isDisabled}
-				className={`px-4 py-2 rounded font-medium transition-colors ${
+				className={`px-4 py-3 sm:py-2 rounded text-xs sm:text-sm font-medium transition-colors min-h-[44px] sm:min-h-0 ${
 					isDisabled
 						? 'bg-gray-600 text-gray-400 cursor-not-allowed'
 						: 'bg-green-600 hover:bg-green-700 text-white'
@@ -43,7 +43,7 @@ export function ServiceControls({
 			<button
 				onClick={onStop}
 				disabled={!isRunning || isStarting || isStopping}
-				className={`px-4 py-2 rounded font-medium transition-colors ${
+				className={`px-4 py-3 sm:py-2 rounded text-xs sm:text-sm font-medium transition-colors min-h-[44px] sm:min-h-0 ${
 					!isRunning || isStarting || isStopping
 						? 'bg-gray-600 text-gray-400 cursor-not-allowed'
 						: 'bg-red-600 hover:bg-red-700 text-white'

@@ -141,8 +141,9 @@ describe('PaperTradingPage', () => {
 			expect(screen.getByText(/Holdings \(2\)/i)).toBeInTheDocument();
 
 			// Check table headers include new columns
-			expect(screen.getByText('Target (Rs)')).toBeInTheDocument();
-			expect(screen.getByText('To Target')).toBeInTheDocument();
+			// Note: "Target" column is hidden on mobile (md:table-cell), so use getByRole to find it even if hidden
+			expect(screen.getByRole('columnheader', { name: 'Target' })).toBeInTheDocument();
+			expect(screen.getByRole('columnheader', { name: 'To Target' })).toBeInTheDocument();
 
 			// Check holdings data (use getAllByText since symbols appear in both holdings and orders)
 			const apolloElements = screen.getAllByText('APOLLOHOSP');

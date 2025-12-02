@@ -151,17 +151,43 @@ export function AppShell() {
 		}
 	}, [location.pathname, isAdmin]);
 
+	const [sidebarOpen, setSidebarOpen] = useState(false);
+
 	return (
-		<div className="min-h-screen grid grid-cols-[260px_1fr]">
-			<aside className="bg-[var(--panel)] border-r border-[#1e293b]/50 flex flex-col h-screen sticky top-0">
+		<div className="min-h-screen flex flex-col sm:grid sm:grid-cols-[260px_1fr]">
+			{/* Mobile Menu Button */}
+			<button
+				onClick={() => setSidebarOpen(!sidebarOpen)}
+				className="sm:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-[var(--panel)] border border-[#1e293b]/50 text-[var(--text)] hover:bg-[#1e293b]/50 transition-colors"
+				aria-label="Toggle menu"
+			>
+				<span className="text-xl">{sidebarOpen ? '✕' : '☰'}</span>
+			</button>
+
+			{/* Mobile Overlay */}
+			{sidebarOpen && (
+				<div
+					className="sm:hidden fixed inset-0 bg-black/50 z-40"
+					onClick={() => setSidebarOpen(false)}
+				/>
+			)}
+
+			<aside
+				className={clsx(
+					'bg-[var(--panel)] border-r border-[#1e293b]/50 flex flex-col h-screen fixed sm:sticky top-0 z-40 transition-transform duration-300',
+					'sm:translate-x-0',
+					sidebarOpen ? 'translate-x-0' : '-translate-x-full sm:translate-x-0',
+					'w-[260px]'
+				)}
+			>
 				{/* Logo/Brand Section */}
-				<div className="p-6 border-b border-[#1e293b]/50">
+				<div className="p-4 sm:p-6 border-b border-[#1e293b]/50">
 					<div className="flex items-center gap-3">
 						<div className="w-9 h-9 rounded-lg bg-gradient-to-br from-[var(--accent)]/10 to-blue-600/10 flex items-center justify-center p-1.5 border border-[var(--accent)]/20 hover:border-[var(--accent)]/40 transition-colors">
 							<ReboundLogo size={28} variant="full" />
 						</div>
 						<div>
-							<div className="font-semibold text-base text-[var(--text)] leading-tight">Rebound</div>
+							<div className="font-semibold text-sm sm:text-base text-[var(--text)] leading-tight">Rebound</div>
 							<div className="text-xs text-[var(--muted)]">Modular Trade Agent</div>
 						</div>
 					</div>
@@ -180,8 +206,8 @@ export function AppShell() {
 										onClick={() => toggleGroup(group.title!)}
 										disabled={!hasItems}
 										className={clsx(
-											'w-full flex items-center justify-between px-2 py-1 rounded-md text-xs font-semibold text-[var(--muted)] uppercase tracking-wider',
-											'hover:bg-[#1e293b]/30 transition-colors duration-150',
+											'w-full flex items-center justify-between px-2 py-2 sm:py-1 rounded-md text-xs font-semibold text-[var(--muted)] uppercase tracking-wider',
+											'hover:bg-[#1e293b]/30 transition-colors duration-150 min-h-[44px] sm:min-h-0',
 											!hasItems && 'cursor-default'
 										)}
 									>
@@ -204,9 +230,11 @@ export function AppShell() {
 												<Link
 													key={item.path}
 													to={item.path}
+													onClick={() => setSidebarOpen(false)}
 													className={clsx(
-														'flex items-center gap-2 px-2 py-1.5 rounded-md text-sm font-medium transition-all duration-200',
+														'flex items-center gap-2 px-2 py-2.5 sm:py-1.5 rounded-md text-sm font-medium transition-all duration-200',
 														'relative group focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50 focus:ring-offset-2 focus:ring-offset-[var(--panel)]',
+														'min-h-[44px] sm:min-h-0',
 														item.isSubItem && 'ml-5',
 														active
 															? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm'
@@ -244,8 +272,8 @@ export function AppShell() {
 								<button
 									onClick={() => toggleGroup('Administration')}
 									className={clsx(
-										'w-full flex items-center justify-between px-2 py-1 rounded-md text-xs font-semibold text-[var(--muted)] uppercase tracking-wider',
-										'hover:bg-[#1e293b]/30 transition-colors duration-150'
+										'w-full flex items-center justify-between px-2 py-2 sm:py-1 rounded-md text-xs font-semibold text-[var(--muted)] uppercase tracking-wider',
+										'hover:bg-[#1e293b]/30 transition-colors duration-150 min-h-[44px] sm:min-h-0'
 									)}
 								>
 									<span>Administration</span>
@@ -264,9 +292,11 @@ export function AppShell() {
 												<Link
 													key={item.path}
 													to={item.path}
+													onClick={() => setSidebarOpen(false)}
 													className={clsx(
-														'flex items-center gap-2 px-2 py-1.5 rounded-md text-sm font-medium transition-all duration-200',
+														'flex items-center gap-2 px-2 py-2.5 sm:py-1.5 rounded-md text-sm font-medium transition-all duration-200',
 														'relative group focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50 focus:ring-offset-2 focus:ring-offset-[var(--panel)]',
+														'min-h-[44px] sm:min-h-0',
 														active
 															? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm'
 															: 'text-[var(--text)]/80 hover:bg-[#1e293b]/50 hover:text-[var(--text)]'
@@ -290,13 +320,13 @@ export function AppShell() {
 				</nav>
 
 				{/* User Section */}
-				<div className="p-4 border-t border-[#1e293b]/50">
+				<div className="p-3 sm:p-4 border-t border-[#1e293b]/50">
 					<div className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-[#1e293b]/30 hover:bg-[#1e293b]/50 transition-colors group">
 						<div className="w-9 h-9 rounded-full bg-gradient-to-br from-[var(--accent)] to-blue-600 flex items-center justify-center text-sm font-semibold text-white shadow-lg flex-shrink-0">
 							{user?.email?.charAt(0).toUpperCase() || 'U'}
 						</div>
 						<div className="flex-1 min-w-0">
-							<div className="text-sm font-medium text-[var(--text)] truncate">
+							<div className="text-xs sm:text-sm font-medium text-[var(--text)] truncate">
 								{user?.email || 'User'}
 							</div>
 							<div className="text-xs text-[var(--muted)] flex items-center gap-1">
@@ -309,7 +339,7 @@ export function AppShell() {
 								logout();
 								navigate('/login');
 							}}
-							className="opacity-0 group-hover:opacity-100 px-3 py-1.5 text-xs font-medium rounded-md bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500/50"
+							className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 px-3 py-2 sm:py-1.5 text-xs font-medium rounded-md bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500/50 min-h-[36px] sm:min-h-0"
 							title="Logout"
 						>
 							Logout
@@ -317,15 +347,15 @@ export function AppShell() {
 					</div>
 				</div>
 			</aside>
-			<main className="bg-[var(--bg)] min-h-screen">
-				<div className="sticky top-0 z-10 bg-[var(--bg)]/80 backdrop-blur-sm border-b border-[#1e293b]/50 px-6 py-4">
-					<div className="flex items-center justify-end gap-4">
+			<main className="bg-[var(--bg)] min-h-screen flex-1 sm:flex-none">
+				<div className="sticky top-0 z-10 bg-[var(--bg)]/80 backdrop-blur-sm border-b border-[#1e293b]/50 px-3 sm:px-6 py-3 sm:py-4">
+					<div className="flex items-center justify-end gap-2 sm:gap-4">
 						<Link
 							to="/dashboard/notifications"
-							className="relative p-2 rounded-lg hover:bg-[#1e293b]/50 transition-colors text-[var(--text)]/80 hover:text-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50 focus:ring-offset-2 focus:ring-offset-[var(--bg)]"
+							className="relative p-2.5 sm:p-2 rounded-lg hover:bg-[#1e293b]/50 transition-colors text-[var(--text)]/80 hover:text-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50 focus:ring-offset-2 focus:ring-offset-[var(--bg)] min-h-[44px] sm:min-h-0 flex items-center justify-center"
 							title="Notifications"
 						>
-							<span className="text-xl">🔔</span>
+							<span className="text-lg sm:text-xl">🔔</span>
 							{notificationCount && notificationCount.unread_count > 0 && (
 								<span className="absolute top-0 right-0 px-1.5 py-0.5 text-xs font-semibold rounded-full bg-red-500 text-white min-w-[18px] text-center animate-pulse">
 									{notificationCount.unread_count > 99 ? '99+' : notificationCount.unread_count}
@@ -334,7 +364,7 @@ export function AppShell() {
 						</Link>
 					</div>
 				</div>
-				<div className="p-6">
+				<div className="p-0 sm:p-6">
 					<Outlet />
 				</div>
 			</main>

@@ -68,7 +68,7 @@ export function ServiceStatusPage() {
 	}, []);
 
 	if (statusLoading) {
-		return <div className="p-4">Loading service status...</div>;
+		return <div className="p-2 sm:p-4 text-sm sm:text-base">Loading service status...</div>;
 	}
 
 	const isRunning = status?.service_running ?? false;
@@ -81,22 +81,22 @@ export function ServiceStatusPage() {
 	const anyRunOnceRunning = Object.values(services).some(service => service.last_execution_status === 'running');
 
 	return (
-		<div className="p-4 space-y-6">
-			<div className="flex items-center justify-between">
-				<h1 className="text-xl font-semibold text-[var(--text)]">Service Status</h1>
-				<label className="flex items-center gap-2 text-sm text-[var(--text)]">
+		<div className="p-2 sm:p-4 space-y-4 sm:space-y-6">
+			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+				<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Service Status</h1>
+				<label className="flex items-center gap-2 text-xs sm:text-sm text-[var(--text)] min-h-[44px] sm:min-h-0">
 					<input
 						type="checkbox"
 						checked={autoRefresh}
 						onChange={(e) => setAutoRefresh(e.target.checked)}
-						className="accent-blue-600"
+						className="accent-blue-600 w-4 h-4 sm:w-auto sm:h-auto"
 					/>
 					<span>Auto-refresh</span>
 				</label>
 			</div>
 
 			{/* Service Status Card */}
-			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
 				<div className="flex items-center justify-between mb-4">
 					<h2 className="text-lg font-semibold text-[var(--text)]">Service Health</h2>
 					<div className={`px-3 py-1 rounded-full text-sm font-medium ${isRunning ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>

@@ -42,39 +42,39 @@ export function AdminUsersPage() {
 	}, []);
 
 	if (!isAdmin) {
-		return <div className="p-4 text-sm text-red-600">You do not have permission to view this page.</div>;
+		return <div className="p-2 sm:p-4 text-xs sm:text-sm text-red-600">You do not have permission to view this page.</div>;
 	}
 
 	return (
-		<div className="p-4 space-y-6">
-			<h1 className="text-xl font-semibold text-[var(--text)]">Users</h1>
+		<div className="p-2 sm:p-4 space-y-4 sm:space-y-6">
+			<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Users</h1>
 
-			<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-4">
-				<h2 className="font-medium mb-2 text-[var(--text)]">Create user</h2>
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-3 sm:p-4">
+				<h2 className="text-sm sm:text-base font-medium mb-2 text-[var(--text)]">Create user</h2>
 				<div className="flex flex-col gap-2 max-w-xl">
 					<input
-						className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)] placeholder:text-[var(--muted)]"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2 sm:px-2 sm:py-1 text-sm text-[var(--text)] placeholder:text-[var(--muted)] min-h-[44px] sm:min-h-0"
 						type="email"
 						placeholder="Email"
 						value={newUser.email}
 						onChange={(e) => setNewUser((s) => ({ ...s, email: e.target.value }))}
 					/>
 					<input
-						className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)] placeholder:text-[var(--muted)]"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2 sm:px-2 sm:py-1 text-sm text-[var(--text)] placeholder:text-[var(--muted)] min-h-[44px] sm:min-h-0"
 						type="password"
 						placeholder="Password"
 						value={newUser.password}
 						onChange={(e) => setNewUser((s) => ({ ...s, password: e.target.value }))}
 					/>
 					<input
-						className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)] placeholder:text-[var(--muted)]"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2 sm:px-2 sm:py-1 text-sm text-[var(--text)] placeholder:text-[var(--muted)] min-h-[44px] sm:min-h-0"
 						type="text"
 						placeholder="Name (optional)"
 						value={newUser.name}
 						onChange={(e) => setNewUser((s) => ({ ...s, name: e.target.value }))}
 					/>
 					<select
-						className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 w-40 text-[var(--text)]"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2 sm:px-2 sm:py-1 w-full sm:w-40 text-sm text-[var(--text)] min-h-[44px] sm:min-h-0"
 						value={newUser.role ?? 'user'}
 						onChange={(e) => setNewUser((s) => ({ ...s, role: e.target.value as 'user' | 'admin' }))}
 					>
