@@ -168,17 +168,17 @@ export function NotificationPreferencesPage() {
 	}
 
 	return (
-		<div className="p-4 space-y-6 max-w-4xl">
-			<div className="flex items-center justify-between">
-				<h1 className="text-xl font-semibold">Notification Preferences</h1>
-				<div className="flex items-center gap-3">
+		<div className="p-2 sm:p-4 space-y-4 sm:space-y-6 max-w-4xl">
+			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+				<h1 className="text-lg sm:text-xl font-semibold">Notification Preferences</h1>
+				<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
 					{hasChanges && (
-						<span className="text-sm text-yellow-400">Unsaved changes</span>
+						<span className="text-xs sm:text-sm text-yellow-400 self-center">Unsaved changes</span>
 					)}
 					<button
 						onClick={handleSave}
 						disabled={updateMutation.isPending || !hasChanges}
-						className="px-4 py-2 rounded bg-[var(--accent)] text-black disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--accent-hover)]"
+						className="px-4 py-3 sm:py-2 rounded bg-[var(--accent)] text-black disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--accent-hover)] min-h-[44px] sm:min-h-0 text-sm sm:text-base"
 					>
 						{updateMutation.isPending ? 'Saving...' : 'Save Preferences'}
 					</button>
