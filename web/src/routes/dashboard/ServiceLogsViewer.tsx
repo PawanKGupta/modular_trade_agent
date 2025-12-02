@@ -46,16 +46,16 @@ export function ServiceLogsViewer({ logs, isLoading }: ServiceLogsViewerProps) {
 	}
 
 	return (
-		<div className="space-y-4">
+		<div className="space-y-3 sm:space-y-4">
 			{/* Filters */}
-			<div className="flex gap-4 items-center">
-				<div>
-					<label htmlFor="log-level-filter" className="text-sm text-[var(--muted)] mr-2">Level:</label>
+			<div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center">
+				<div className="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2">
+					<label htmlFor="log-level-filter" className="text-xs sm:text-sm text-[var(--muted)] whitespace-nowrap">Level:</label>
 					<select
 						id="log-level-filter"
 						value={filterLevel}
 						onChange={(e) => setFilterLevel(e.target.value)}
-						className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-sm"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2 sm:px-2 sm:py-1 text-xs sm:text-sm min-h-[44px] sm:min-h-0 w-full sm:w-auto"
 					>
 						<option value="all">All</option>
 						<option value="DEBUG">DEBUG</option>
@@ -65,13 +65,13 @@ export function ServiceLogsViewer({ logs, isLoading }: ServiceLogsViewerProps) {
 						<option value="CRITICAL">CRITICAL</option>
 					</select>
 				</div>
-				<div>
-					<label htmlFor="log-module-filter" className="text-sm text-[var(--muted)] mr-2">Module:</label>
+				<div className="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2">
+					<label htmlFor="log-module-filter" className="text-xs sm:text-sm text-[var(--muted)] whitespace-nowrap">Module:</label>
 					<select
 						id="log-module-filter"
 						value={filterModule}
 						onChange={(e) => setFilterModule(e.target.value)}
-						className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-sm"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2 sm:px-2 sm:py-1 text-xs sm:text-sm min-h-[44px] sm:min-h-0 w-full sm:w-auto"
 					>
 						<option value="all">All</option>
 						{modules.map((module) => (
@@ -81,7 +81,7 @@ export function ServiceLogsViewer({ logs, isLoading }: ServiceLogsViewerProps) {
 						))}
 					</select>
 				</div>
-				<div className="text-sm text-[var(--muted)]">
+				<div className="text-xs sm:text-sm text-[var(--muted)] self-center">
 					Showing {filteredLogs.length} of {logs.length} logs
 				</div>
 			</div>

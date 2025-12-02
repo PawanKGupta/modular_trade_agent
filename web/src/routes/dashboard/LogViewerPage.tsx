@@ -108,42 +108,42 @@ export function LogViewerPage() {
 	});
 
 	return (
-		<div className="p-4 space-y-6">
-			<div className="flex items-center justify-between">
+		<div className="p-2 sm:p-4 space-y-4 sm:space-y-6">
+			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
 				<div>
-					<h1 className="text-xl font-semibold">Log Management</h1>
-					<p className="text-sm text-[var(--muted)]">
+					<h1 className="text-lg sm:text-xl font-semibold">Log Management</h1>
+					<p className="text-xs sm:text-sm text-[var(--muted)]">
 						Search structured service logs and error reports. Admins can switch to a global view to
 						triage issues across users.
 					</p>
 				</div>
 			</div>
 
-			<div className="grid gap-6">
-				<section className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-4 space-y-4">
-					<div className="flex items-center justify-between flex-wrap gap-2">
-						<h2 className="text-lg font-semibold">Service Logs</h2>
+			<div className="grid gap-4 sm:gap-6">
+				<section className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4 space-y-3 sm:space-y-4">
+					<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-2">
+						<h2 className="text-base sm:text-lg font-semibold">Service Logs</h2>
 						{isAdmin && (
-							<div className="flex items-center gap-2 text-sm">
-								<label className="flex items-center gap-2">
-									<span>Scope</span>
+							<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 text-sm w-full sm:w-auto">
+								<label className="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2">
+									<span className="text-xs sm:text-sm whitespace-nowrap">Scope</span>
 									<select
 										value={scope}
 										onChange={(event) => setScope(event.target.value as 'self' | 'all')}
-										className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+										className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0 w-full sm:w-auto"
 									>
 										<option value="self">My Logs</option>
 										<option value="all">All Users</option>
 									</select>
 								</label>
 								{scope === 'all' && (
-									<label className="flex items-center gap-2">
-										<span>User ID</span>
+									<label className="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2">
+										<span className="text-xs sm:text-sm whitespace-nowrap">User ID</span>
 										<input
 											type="number"
 											value={adminUserFilter}
 											onChange={(event) => setAdminUserFilter(event.target.value)}
-											className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1 w-28"
+											className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 w-full sm:w-28 min-h-[44px] sm:min-h-0"
 											placeholder="Any"
 										/>
 									</label>
@@ -152,15 +152,15 @@ export function LogViewerPage() {
 						)}
 					</div>
 
-					<div className="grid md:grid-cols-4 gap-3 text-sm">
+					<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-sm">
 						<label className="flex flex-col gap-1">
-							<span>Level</span>
+							<span className="text-xs sm:text-sm">Level</span>
 							<select
 								value={logFilters.level}
 								onChange={(event) =>
 									setLogFilters((prev) => ({ ...prev, level: event.target.value }))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 							>
 								{LEVELS.map((level) => (
 									<option key={level || 'any'} value={level}>
@@ -170,29 +170,29 @@ export function LogViewerPage() {
 							</select>
 						</label>
 						<label className="flex flex-col gap-1">
-							<span>Module</span>
+							<span className="text-xs sm:text-sm">Module</span>
 							<input
 								value={logFilters.module}
 								onChange={(event) =>
 									setLogFilters((prev) => ({ ...prev, module: event.target.value }))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 								placeholder="scheduler"
 							/>
 						</label>
 						<label className="flex flex-col gap-1">
-							<span>Search</span>
+							<span className="text-xs sm:text-sm">Search</span>
 							<input
 								value={logFilters.search}
 								onChange={(event) =>
 									setLogFilters((prev) => ({ ...prev, search: event.target.value }))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 								placeholder="keyword"
 							/>
 						</label>
 						<label className="flex flex-col gap-1">
-							<span>Limit</span>
+							<span className="text-xs sm:text-sm">Limit</span>
 							<input
 								type="number"
 								min={1}
@@ -204,32 +204,32 @@ export function LogViewerPage() {
 										limit: Number(event.target.value),
 									}))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 							/>
 						</label>
 					</div>
 
-					<div className="grid md:grid-cols-2 gap-3 text-sm">
+					<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
 						<label className="flex flex-col gap-1">
-							<span>Start Date</span>
+							<span className="text-xs sm:text-sm">Start Date</span>
 							<input
 								type="date"
 								value={logDates.start}
 								onChange={(event) =>
 									setLogDates((prev) => ({ ...prev, start: event.target.value }))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 							/>
 						</label>
 						<label className="flex flex-col gap-1">
-							<span>End Date</span>
+							<span className="text-xs sm:text-sm">End Date</span>
 							<input
 								type="date"
 								value={logDates.end}
 								onChange={(event) =>
 									setLogDates((prev) => ({ ...prev, end: event.target.value }))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 							/>
 						</label>
 					</div>
@@ -237,23 +237,23 @@ export function LogViewerPage() {
 					<LogTable logs={logsQuery.data ?? []} isLoading={logsQuery.isLoading} />
 				</section>
 
-				<section className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-4 space-y-4">
-					<div className="flex items-center justify-between flex-wrap gap-2">
-						<h2 className="text-lg font-semibold">Error Logs</h2>
+				<section className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4 space-y-3 sm:space-y-4">
+					<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-2">
+						<h2 className="text-base sm:text-lg font-semibold">Error Logs</h2>
 						<div className="text-xs text-[var(--muted)]">
 							Click "Show Details" to inspect tracebacks and resolution notes.
 						</div>
 					</div>
 
-					<div className="grid md:grid-cols-4 gap-3 text-sm">
+					<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-sm">
 						<label className="flex flex-col gap-1">
-							<span>Status</span>
+							<span className="text-xs sm:text-sm">Status</span>
 							<select
 								value={errorFilters.resolved}
 								onChange={(event) =>
 									setErrorFilters((prev) => ({ ...prev, resolved: event.target.value }))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 							>
 								<option value="all">All</option>
 								<option value="false">Unresolved</option>
@@ -261,18 +261,18 @@ export function LogViewerPage() {
 							</select>
 						</label>
 						<label className="flex flex-col gap-1">
-							<span>Search</span>
+							<span className="text-xs sm:text-sm">Search</span>
 							<input
 								value={errorFilters.search}
 								onChange={(event) =>
 									setErrorFilters((prev) => ({ ...prev, search: event.target.value }))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 								placeholder="message contains..."
 							/>
 						</label>
 						<label className="flex flex-col gap-1">
-							<span>Limit</span>
+							<span className="text-xs sm:text-sm">Limit</span>
 							<input
 								type="number"
 								min={1}
@@ -284,32 +284,32 @@ export function LogViewerPage() {
 										limit: Number(event.target.value),
 									}))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 							/>
 						</label>
 					</div>
 
-					<div className="grid md:grid-cols-2 gap-3 text-sm">
+					<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
 						<label className="flex flex-col gap-1">
-							<span>Start Date</span>
+							<span className="text-xs sm:text-sm">Start Date</span>
 							<input
 								type="date"
 								value={errorDates.start}
 								onChange={(event) =>
 									setErrorDates((prev) => ({ ...prev, start: event.target.value }))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 							/>
 						</label>
 						<label className="flex flex-col gap-1">
-							<span>End Date</span>
+							<span className="text-xs sm:text-sm">End Date</span>
 							<input
 								type="date"
 								value={errorDates.end}
 								onChange={(event) =>
 									setErrorDates((prev) => ({ ...prev, end: event.target.value }))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-2 py-1"
+								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 							/>
 						</label>
 					</div>

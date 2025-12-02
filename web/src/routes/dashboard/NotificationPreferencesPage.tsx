@@ -12,6 +12,8 @@ export function NotificationPreferencesPage() {
 	const [hasChanges, setHasChanges] = useState(false);
 	const [localPrefs, setLocalPrefs] = useState<NotificationPreferences | null>(null);
 	const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+	const [testingTelegram, setTestingTelegram] = useState(false);
+	const [telegramTestResult, setTelegramTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
 	const { data: preferences, isLoading } = useQuery<NotificationPreferences>({
 		queryKey: ['notificationPreferences'],
@@ -132,22 +134,51 @@ export function NotificationPreferencesPage() {
 		setHasChanges(true);
 	};
 
+	const handleTestTelegram = async () => {
+		if (!localPrefs?.telegram_bot_token || !localPrefs?.telegram_chat_id) return;
+
+		setTestingTelegram(true);
+		setTelegramTestResult(null);
+
+		try {
+			const response = await fetch(
+				`/api/v1/user/notification-preferences/telegram/test?bot_token=${encodeURIComponent(localPrefs.telegram_bot_token)}&chat_id=${encodeURIComponent(localPrefs.telegram_chat_id)}`,
+				{
+					method: 'POST',
+					headers: {
+						'Authorization': `Bearer ${localStorage.getItem('ta_access_token')}`,
+					},
+				}
+			);
+
+		const data = await response.json();
+		setTelegramTestResult(data);
+	} catch {
+		setTelegramTestResult({
+			success: false,
+			message: 'Failed to test connection. Please try again.',
+		});
+	} finally {
+		setTestingTelegram(false);
+	}
+	};
+
 	if (isLoading || !localPrefs) {
-		return <div className="p-4">Loading notification preferences...</div>;
+		return <div className="p-2 sm:p-4 text-xs sm:text-sm">Loading notification preferences...</div>;
 	}
 
 	return (
-		<div className="p-4 space-y-6 max-w-4xl">
-			<div className="flex items-center justify-between">
-				<h1 className="text-xl font-semibold">Notification Preferences</h1>
-				<div className="flex items-center gap-3">
+		<div className="p-2 sm:p-4 space-y-4 sm:space-y-6 max-w-4xl">
+			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+				<h1 className="text-lg sm:text-xl font-semibold">Notification Preferences</h1>
+				<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
 					{hasChanges && (
-						<span className="text-sm text-yellow-400">Unsaved changes</span>
+						<span className="text-xs sm:text-sm text-yellow-400 self-center">Unsaved changes</span>
 					)}
 					<button
 						onClick={handleSave}
 						disabled={updateMutation.isPending || !hasChanges}
-						className="px-4 py-2 rounded bg-[var(--accent)] text-black disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--accent-hover)]"
+						className="px-4 py-3 sm:py-2 rounded bg-[var(--accent)] text-black disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--accent-hover)] min-h-[44px] sm:min-h-0 text-sm sm:text-base"
 					>
 						{updateMutation.isPending ? 'Saving...' : 'Save Preferences'}
 					</button>
@@ -156,7 +187,7 @@ export function NotificationPreferencesPage() {
 
 			{saveMessage && (
 				<div
-					className={`p-3 rounded ${
+					className={`p-2 sm:p-3 rounded text-xs sm:text-sm ${
 						saveMessage.type === 'success'
 							? 'bg-green-900/50 text-green-400 border border-green-700'
 							: 'bg-red-900/50 text-red-400 border border-red-700'
@@ -167,9 +198,9 @@ export function NotificationPreferencesPage() {
 			)}
 
 			{/* Notification Channels */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
-				<h2 className="text-lg font-semibold">Notification Channels</h2>
-				<p className="text-sm text-[var(--muted)]">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
+				<h2 className="text-base sm:text-lg font-semibold">Notification Channels</h2>
+				<p className="text-xs sm:text-sm text-[var(--muted)]">
 					Choose how you want to receive notifications
 				</p>
 
@@ -202,13 +233,34 @@ export function NotificationPreferencesPage() {
 								Receive notifications via Telegram bot
 							</p>
 							{localPrefs.telegram_enabled && (
-								<input
-									type="text"
-									value={localPrefs.telegram_chat_id || ''}
-									onChange={(e) => handleChange('telegram_chat_id', e.target.value || null)}
-									placeholder="Telegram Chat ID"
-									className="mt-2 w-full p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm"
-								/>
+								<div className="mt-2 space-y-2">
+									<input
+										type="text"
+										value={localPrefs.telegram_bot_token || ''}
+										onChange={(e) => handleChange('telegram_bot_token', e.target.value || null)}
+										placeholder="Telegram Bot Token (e.g., 123456:ABC-DEF)"
+										className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm"
+									/>
+									<input
+										type="text"
+										value={localPrefs.telegram_chat_id || ''}
+										onChange={(e) => handleChange('telegram_chat_id', e.target.value || null)}
+										placeholder="Telegram Chat ID (e.g., 123456789)"
+										className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm"
+									/>
+									<button
+										onClick={handleTestTelegram}
+										disabled={!localPrefs.telegram_bot_token || !localPrefs.telegram_chat_id || testingTelegram}
+										className="w-full px-4 py-3 sm:py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] sm:min-h-0"
+									>
+										{testingTelegram ? 'Testing...' : 'Test Connection'}
+									</button>
+									{telegramTestResult && (
+										<div className={`text-xs sm:text-sm p-2 sm:p-3 rounded ${telegramTestResult.success ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+											{telegramTestResult.message}
+										</div>
+									)}
+								</div>
 							)}
 						</div>
 					</label>
@@ -240,11 +292,11 @@ export function NotificationPreferencesPage() {
 			</section>
 
 			{/* Order Events */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
-						<h2 className="text-lg font-semibold">Order Events</h2>
-						<p className="text-sm text-[var(--muted)]">
+						<h2 className="text-base sm:text-lg font-semibold">Order Events</h2>
+						<p className="text-xs sm:text-sm text-[var(--muted)]">
 							Control which order-related events trigger notifications
 						</p>
 					</div>
@@ -326,11 +378,11 @@ export function NotificationPreferencesPage() {
 			</section>
 
 			{/* Retry Queue Events */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
-						<h2 className="text-lg font-semibold">Retry Queue Events</h2>
-						<p className="text-sm text-[var(--muted)]">
+						<h2 className="text-base sm:text-lg font-semibold">Retry Queue Events</h2>
+						<p className="text-xs sm:text-sm text-[var(--muted)]">
 							Control notifications for retry queue operations
 						</p>
 					</div>
@@ -393,11 +445,11 @@ export function NotificationPreferencesPage() {
 			</section>
 
 			{/* System Events */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
-						<h2 className="text-lg font-semibold">System Events</h2>
-						<p className="text-sm text-[var(--muted)]">
+						<h2 className="text-base sm:text-lg font-semibold">System Events</h2>
+						<p className="text-xs sm:text-sm text-[var(--muted)]">
 							Control notifications for system-level events
 						</p>
 					</div>
@@ -453,11 +505,11 @@ export function NotificationPreferencesPage() {
 			</section>
 
 			{/* Service Events */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
-						<h2 className="text-lg font-semibold">Service Events</h2>
-						<p className="text-sm text-[var(--muted)]">
+						<h2 className="text-base sm:text-lg font-semibold">Service Events</h2>
+						<p className="text-xs sm:text-sm text-[var(--muted)]">
 							Control notifications for service lifecycle events
 						</p>
 					</div>
@@ -511,9 +563,9 @@ export function NotificationPreferencesPage() {
 			</section>
 
 			{/* Quiet Hours */}
-			<section className="space-y-4 p-4 border border-[#1e293b] rounded">
-				<h2 className="text-lg font-semibold">Quiet Hours</h2>
-				<p className="text-sm text-[var(--muted)]">
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
+				<h2 className="text-base sm:text-lg font-semibold">Quiet Hours</h2>
+				<p className="text-xs sm:text-sm text-[var(--muted)]">
 					Set a time range when notifications will be suppressed (e.g., 22:00 - 08:00 for
 					nighttime)
 				</p>
@@ -548,7 +600,7 @@ export function NotificationPreferencesPage() {
 								handleChange('quiet_hours_start', null);
 								handleChange('quiet_hours_end', null);
 							}}
-							className="px-3 py-2 rounded bg-gray-600 hover:bg-gray-700 text-white text-sm"
+							className="px-4 py-3 sm:py-2 rounded bg-gray-600 hover:bg-gray-700 text-white text-sm sm:text-base min-h-[44px] sm:min-h-0"
 						>
 							Clear
 						</button>

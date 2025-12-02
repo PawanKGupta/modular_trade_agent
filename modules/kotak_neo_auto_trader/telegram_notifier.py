@@ -417,9 +417,13 @@ class TelegramNotifier:
             True if sent successfully
         """
         # Phase 3: Map severity to event type and check preferences
-        # Check if this is a service event (SERVICE_STARTED, SERVICE_STOPPED, SERVICE_EXECUTION)
-        if alert_type in ("SERVICE_STARTED", "SERVICE_STOPPED", "SERVICE_EXECUTION"):
-            event_type = NotificationEventType.SERVICE_EVENT
+        # Map alert_type to granular event types for preference checking
+        if alert_type == "SERVICE_STARTED":
+            event_type = NotificationEventType.SERVICE_STARTED
+        elif alert_type == "SERVICE_STOPPED":
+            event_type = NotificationEventType.SERVICE_STOPPED
+        elif alert_type == "SERVICE_EXECUTION":
+            event_type = NotificationEventType.SERVICE_EXECUTION_COMPLETED
         else:
             event_type_map = {
                 "ERROR": NotificationEventType.SYSTEM_ERROR,
@@ -437,7 +441,21 @@ class TelegramNotifier:
         emoji_map = {"ERROR": "", "WARNING": "", "INFO": "", "SUCCESS": ""}
         emoji = emoji_map.get(severity.upper(), "")
 
-        message = f"{emoji} SYSTEM ALERT: {alert_type}\n\n{message_text}\n\nTime: {timestamp}\n"
+        # For service events and trading events, use a cleaner format without redundant "SYSTEM ALERT" prefix
+        # since message_text already contains the context
+        clean_format_alert_types = (
+            "SERVICE_STARTED",
+            "SERVICE_STOPPED",
+            "SERVICE_EXECUTION",
+            "POSITION_ALERT",
+            "MANUAL_TRADE",
+            "PRE_MARKET_ADJUSTMENT",
+        )
+        if alert_type in clean_format_alert_types:
+            message = f"{emoji} {message_text}\n\nTime: {timestamp}\n"
+        else:
+            # For other alerts, include the alert type for context
+            message = f"{emoji} SYSTEM ALERT: {alert_type}\n\n{message_text}\n\nTime: {timestamp}\n"
 
         logger.info(f"Sending system alert: {alert_type}")
         return self.send_message(message, user_id=user_id)

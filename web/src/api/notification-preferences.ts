@@ -3,6 +3,7 @@ import { api } from './client';
 export type NotificationPreferences = {
 	// Notification channels
 	telegram_enabled: boolean;
+	telegram_bot_token: string | null;
 	telegram_chat_id: string | null;
 	email_enabled: boolean;
 	email_address: string | null;

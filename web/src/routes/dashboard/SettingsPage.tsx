@@ -52,32 +52,32 @@ export function SettingsPage() {
 		if (data) setForm(data);
 	}, [data]);
 
-	if (isLoading) return <div>Loading settings...</div>;
+	if (isLoading) return <div className="p-2 sm:p-4 text-sm sm:text-base">Loading settings...</div>;
 
 	const isBroker = form.trade_mode === 'broker';
 
 	return (
-		<div className="max-w-xl">
-			<h2 className="text-lg font-semibold mb-4">Trading mode</h2>
-			<div className="flex items-center gap-4 mb-6">
-				<label className="flex items-center gap-2">
-					<input type="radio" checked={form.trade_mode === 'paper'} onChange={() => setForm({ ...form, trade_mode: 'paper' })} />
-					<span>Paper Trade (default)</span>
+		<div className="p-2 sm:p-4 max-w-xl">
+			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Trading mode</h2>
+			<div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
+				<label className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
+					<input type="radio" checked={form.trade_mode === 'paper'} onChange={() => setForm({ ...form, trade_mode: 'paper' })} className="w-4 h-4" />
+					<span className="text-sm sm:text-base">Paper Trade (default)</span>
 				</label>
-				<label className="flex items-center gap-2">
-					<input type="radio" checked={form.trade_mode === 'broker'} onChange={() => setForm({ ...form, trade_mode: 'broker' })} />
-					<span>Kotak Neo</span>
+				<label className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
+					<input type="radio" checked={form.trade_mode === 'broker'} onChange={() => setForm({ ...form, trade_mode: 'broker' })} className="w-4 h-4" />
+					<span className="text-sm sm:text-base">Kotak Neo</span>
 				</label>
 			</div>
 			{isBroker && (
 				<div className="space-y-3 mb-6">
 					<div>
-						<label className="block text-sm mb-1">Broker</label>
-						<input className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]" value={form.broker ?? ''} onChange={(e) => setForm({ ...form, broker: e.target.value })} placeholder="kotak-neo" />
+						<label className="block text-xs sm:text-sm mb-1">Broker</label>
+						<input className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0" value={form.broker ?? ''} onChange={(e) => setForm({ ...form, broker: e.target.value })} placeholder="kotak-neo" />
 					</div>
 					<div className="space-y-3">
 						<div className="flex items-center justify-between mt-4">
-							<h3 className="text-sm font-semibold">Basic Credentials</h3>
+							<h3 className="text-xs sm:text-sm font-semibold">Basic Credentials</h3>
 							{credsInfo?.has_creds && (
 								<button
 									type="button"
@@ -85,21 +85,21 @@ export function SettingsPage() {
 										setShowFullCreds(!showFullCreds);
 										qc.invalidateQueries({ queryKey: ['brokerCredsInfo'] });
 									}}
-									className="text-xs text-blue-400 hover:text-blue-300 underline"
+									className="text-xs sm:text-sm text-blue-400 hover:text-blue-300 underline min-h-[44px] sm:min-h-0"
 								>
 									{showFullCreds ? 'Hide' : 'Show'} Full Credentials
 								</button>
 							)}
 						</div>
 						{credsInfo?.has_creds && (
-							<div className="text-sm text-green-400 mb-2">
+							<div className="text-xs sm:text-sm text-green-400 mb-2">
 								[OK] Credentials stored {showFullCreds ? '(showing full values)' : '(click Show to view/edit)'}
 							</div>
 						)}
 						<div>
-							<label className="block text-sm mb-1">API Key (Consumer Key)</label>
+							<label className="block text-xs sm:text-sm mb-1">API Key (Consumer Key)</label>
 							<input
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+								className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 								value={apiKey}
 								onChange={(e) => setApiKey(e.target.value)}
 								placeholder={credsInfo?.has_creds && !showFullCreds ? `Stored: ${credsInfo.api_key_masked}` : "Enter API Key"}
@@ -111,9 +111,9 @@ export function SettingsPage() {
 							)}
 						</div>
 						<div>
-							<label className="block text-sm mb-1">API Secret (Consumer Secret)</label>
+							<label className="block text-xs sm:text-sm mb-1">API Secret (Consumer Secret)</label>
 							<input
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+								className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 								type="password"
 								value={apiSecret}
 								onChange={(e) => setApiSecret(e.target.value)}
@@ -127,30 +127,30 @@ export function SettingsPage() {
 						</div>
 
 						<div className="mt-4">
-							<label className="block text-sm font-semibold mb-2">Connection Test Mode</label>
-							<div className="flex items-center gap-4 mb-3">
-								<label className="flex items-center gap-2">
-									<input type="radio" checked={testMode === 'basic'} onChange={() => setTestMode('basic')} />
-									<span className="text-sm">Basic Test (API Key/Secret only)</span>
+							<label className="block text-xs sm:text-sm font-semibold mb-2">Connection Test Mode</label>
+							<div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 mb-3">
+								<label className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
+									<input type="radio" checked={testMode === 'basic'} onChange={() => setTestMode('basic')} className="w-4 h-4" />
+									<span className="text-xs sm:text-sm">Basic Test (API Key/Secret only)</span>
 								</label>
-								<label className="flex items-center gap-2">
-									<input type="radio" checked={testMode === 'full'} onChange={() => setTestMode('full')} />
-									<span className="text-sm">Full Test (with Login & 2FA)</span>
+								<label className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
+									<input type="radio" checked={testMode === 'full'} onChange={() => setTestMode('full')} className="w-4 h-4" />
+									<span className="text-xs sm:text-sm">Full Test (with Login & 2FA)</span>
 								</label>
 							</div>
 						</div>
 
-						<div className="space-y-3 mt-4 p-4 border border-[#1e293b] rounded">
-							<h4 className="text-sm font-semibold">Full Authentication Credentials</h4>
+						<div className="space-y-3 mt-4 p-3 sm:p-4 border border-[#1e293b] rounded">
+							<h4 className="text-xs sm:text-sm font-semibold">Full Authentication Credentials</h4>
 							{credsInfo?.has_creds && !showFullCreds && (
 								<div className="text-xs text-[var(--muted)] mb-2">
 									Stored credentials available. Click "Show Full Credentials" above to view/edit.
 								</div>
 							)}
 							<div>
-								<label className="block text-sm mb-1">Mobile Number</label>
+								<label className="block text-xs sm:text-sm mb-1">Mobile Number</label>
 								<input
-									className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 									type="tel"
 									value={mobileNumber}
 									onChange={(e) => setMobileNumber(e.target.value)}
@@ -159,9 +159,9 @@ export function SettingsPage() {
 								/>
 							</div>
 							<div>
-								<label className="block text-sm mb-1">Password</label>
+								<label className="block text-xs sm:text-sm mb-1">Password</label>
 								<input
-									className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 									type="password"
 									value={password}
 									onChange={(e) => setPassword(e.target.value)}
@@ -170,9 +170,9 @@ export function SettingsPage() {
 								/>
 							</div>
 							<div>
-								<label className="block text-sm mb-1">MPIN (for 2FA)</label>
+								<label className="block text-xs sm:text-sm mb-1">MPIN (for 2FA)</label>
 								<input
-									className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 									type="password"
 									value={mpin}
 									onChange={(e) => setMpin(e.target.value)}
@@ -182,9 +182,9 @@ export function SettingsPage() {
 							</div>
 						</div>
 
-						<div className="flex gap-2 mt-4">
+						<div className="flex flex-col sm:flex-row gap-2 mt-4">
 							<button
-								className="bg-blue-600 text-white px-3 py-2 rounded disabled:opacity-50"
+								className="bg-blue-600 text-white px-4 py-3 sm:py-2 rounded disabled:opacity-50 min-h-[44px] sm:min-h-0 text-sm sm:text-base"
 								onClick={async () => {
 									setBrokerMsg(null);
 									if (!apiKey || !apiSecret) {
@@ -210,7 +210,7 @@ export function SettingsPage() {
 								{credsInfo?.has_creds ? 'Update Credentials' : 'Save Credentials'}
 							</button>
 							<button
-								className="bg-emerald-600 text-white px-3 py-2 rounded disabled:opacity-50"
+								className="bg-emerald-600 text-white px-4 py-3 sm:py-2 rounded disabled:opacity-50 min-h-[44px] sm:min-h-0 text-sm sm:text-base"
 								onClick={async () => {
 									setTesting(true);
 									setBrokerMsg(null);
@@ -267,7 +267,7 @@ export function SettingsPage() {
 							)}
 						</div>
 						{brokerMsg && (
-							<div className={`text-sm mt-2 ${brokerMsg.includes('successful') || brokerMsg.includes('OK') ? 'text-green-400' : 'text-red-400'}`}>
+							<div className={`text-xs sm:text-sm mt-2 ${brokerMsg.includes('successful') || brokerMsg.includes('OK') ? 'text-green-400' : 'text-red-400'}`}>
 								{brokerMsg}
 							</div>
 						)}
@@ -277,7 +277,7 @@ export function SettingsPage() {
 			)}
 			<button
 				onClick={() => mutation.mutate({ trade_mode: form.trade_mode, broker: form.broker ?? undefined })}
-				className="bg-[var(--accent)] text-black px-4 py-2 rounded"
+				className="bg-[var(--accent)] text-black px-4 py-3 sm:py-2 rounded text-sm sm:text-base min-h-[44px] sm:min-h-0"
 				disabled={mutation.isPending}
 			>
 				{mutation.isPending ? 'Saving...' : 'Save settings'}

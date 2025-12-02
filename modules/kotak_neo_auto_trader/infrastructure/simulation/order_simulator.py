@@ -53,8 +53,14 @@ class OrderSimulator:
         Returns:
             Tuple of (success, message, execution_price)
         """
-        # Check market hours
-        if not self._is_market_open(order):
+        # For AMO orders, allow execution even if market hours check fails
+        # (they should only be executed when should_execute_amo() returns True)
+        if order.is_amo_order():
+            # AMO orders can execute at market open time, bypassing regular market hours check
+            if not self.should_execute_amo(order):
+                return False, "AMO order execution time not reached", None
+        # For regular orders, check market hours
+        elif not self._is_market_open(order):
             return False, "Market is closed", None
 
         # Simulate execution delay
@@ -75,7 +81,7 @@ class OrderSimulator:
             price_symbol = f"{price_symbol}.NS"
             logger.debug(f"? Added .NS suffix for price fetching: {price_symbol}")
 
-        # Get current price
+        # Get current price (opening price for AMO orders at market open)
         current_price = self.price_provider.get_price(price_symbol)
         if current_price is None:
             # Try without suffix as fallback
@@ -84,6 +90,20 @@ class OrderSimulator:
                 return False, f"Price not available for {order.symbol} (tried {price_symbol})", None
 
         current_price_money = Money(current_price)
+
+        # For AMO buy orders, execute at opening price (matches real broker MARKET order behavior)
+        if order.is_amo_order() and order.is_buy_order():
+            # MARKET orders execute at opening price (no price adjustment needed)
+            if order.order_type == OrderType.MARKET:
+                execution_price = current_price_money  # Opening price
+                logger.info(
+                    f"? AMO MARKET BUY executed: {order.symbol} "
+                    f"@ Rs {execution_price.amount:.2f} (Opening price)"
+                )
+                return True, "AMO market order executed at opening price", execution_price
+            # For LIMIT orders (if any), use the existing logic
+            elif order.order_type == OrderType.LIMIT:
+                return self._execute_amo_buy_order(order, current_price_money)
 
         # Execute based on order type
         if order.order_type == OrderType.MARKET:
@@ -114,6 +134,64 @@ class OrderSimulator:
         )
 
         return True, "Order executed", execution_price
+
+    def _execute_amo_buy_order(self, order: Order, opening_price: Money) -> tuple[bool, str, Money]:
+        """
+        Execute AMO buy order with opening price adjustment logic
+
+        For AMO buy orders placed during off-market hours:
+        - If opening price <= order price: Execute at order price (limit order behavior)
+        - If opening price > order price: Adjust order price to opening price and execute
+          (essentially converting to market order behavior)
+
+        Args:
+            order: AMO buy order
+            opening_price: Opening price at market open
+
+        Returns:
+            Tuple of (success, message, execution_price)
+        """
+        if order.order_type == OrderType.MARKET:
+            # Market AMO order: Execute at opening price
+            execution_price = opening_price
+            logger.info(
+                f"? AMO MARKET BUY executed: {order.symbol} "
+                f"@ Rs {execution_price.amount:.2f} (Opening price)"
+            )
+            return True, "AMO market order executed at opening price", execution_price
+
+        elif order.order_type == OrderType.LIMIT:
+            if order.price is None:
+                return False, "Limit order requires price", None
+
+            # For limit AMO orders: Check opening price vs order price
+            if opening_price.amount <= order.price.amount:
+                # Opening price <= order price: Execute at order price (limit protection)
+                execution_price = order.price
+                logger.info(
+                    f"? AMO LIMIT BUY executed: {order.symbol} "
+                    f"@ Rs {execution_price.amount:.2f} "
+                    f"(Order price: Rs {order.price.amount:.2f}, Opening: Rs {opening_price.amount:.2f})"
+                )
+                return True, "AMO limit order executed at order price", execution_price
+            else:
+                # Opening price > order price: Adjust to opening price and execute
+                # This matches user requirement: "order price should automatically adjust to the opening price"
+                execution_price = opening_price
+                logger.info(
+                    f"? AMO LIMIT BUY adjusted and executed: {order.symbol} "
+                    f"@ Rs {execution_price.amount:.2f} (Adjusted from Rs {order.price.amount:.2f} "
+                    f"to opening price Rs {opening_price.amount:.2f})"
+                )
+                # Update order price to reflect the adjustment
+                order.price = execution_price
+                return (
+                    True,
+                    "AMO limit order adjusted to opening price and executed",
+                    execution_price,
+                )
+        else:
+            return False, f"Unsupported order type for AMO: {order.order_type}", None
 
     def _execute_limit_order(
         self, order: Order, current_price: Money

@@ -855,12 +855,13 @@ class AutoTradeEngine:
         # Priority 2: If database session is available, load from Signals table (unified source)
         if self.db and self.user_id:
             try:
+                from src.infrastructure.db.models import SignalStatus  # noqa: PLC0415
                 from src.infrastructure.db.timezone_utils import ist_now  # noqa: PLC0415
                 from src.infrastructure.persistence.signals_repository import (  # noqa: PLC0415
                     SignalsRepository,
                 )
 
-                signals_repo = SignalsRepository(self.db)
+                signals_repo = SignalsRepository(self.db, user_id=self.user_id)
 
                 # Get latest signals (today's or most recent)
                 today = ist_now().date()
@@ -876,58 +877,91 @@ class AutoTradeEngine:
                 else:
                     logger.info(f"Loaded {len(signals)} signals from database (Signals table)")
 
-                    # Convert Signals to Recommendation objects
-                    recommendations = []
+                    # Filter signals by effective status (considering per-user status)
+                    # Only include ACTIVE signals - skip TRADED, REJECTED, and EXPIRED
+                    active_signals = []
                     for signal in signals:
-                        # Determine verdict (prioritize final_verdict, then verdict, then ml_verdict)
-                        verdict = None
-                        if signal.final_verdict and signal.final_verdict.lower() in [
-                            "buy",
-                            "strong_buy",
-                        ]:
-                            verdict = signal.final_verdict.lower()
-                        elif signal.verdict and signal.verdict.lower() in ["buy", "strong_buy"]:
-                            verdict = signal.verdict.lower()
-                        elif signal.ml_verdict and signal.ml_verdict.lower() in [
-                            "buy",
-                            "strong_buy",
-                        ]:
-                            verdict = signal.ml_verdict.lower()
+                        # Get effective status (user-specific if exists, otherwise base status)
+                        user_status = signals_repo.get_user_signal_status(signal.id, self.user_id)
+                        effective_status = user_status if user_status is not None else signal.status
 
-                        # Only include buy/strong_buy signals
-                        if not verdict:
-                            continue
-
-                        # Convert symbol to ticker format (add .NS if not present)
-                        ticker = signal.symbol.upper()
-                        if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
-                            ticker = f"{ticker}.NS"
-
-                        # Get last_close price
-                        last_close = signal.last_close or 0.0
-                        if last_close <= 0:
-                            logger.warning(f"Skipping {ticker}: invalid last_close ({last_close})")
-                            continue
-
-                        # Extract execution_capital from liquidity_recommendation or trading_params
-                        execution_capital = None
-                        if signal.liquidity_recommendation and isinstance(
-                            signal.liquidity_recommendation, dict
-                        ):
-                            execution_capital = signal.liquidity_recommendation.get(
-                                "execution_capital"
+                        # Only include ACTIVE signals
+                        if effective_status != SignalStatus.ACTIVE:
+                            user_status_str = user_status.value if user_status else "none"
+                            logger.debug(
+                                f"Skipping signal {signal.symbol}: "
+                                f"status={effective_status.value} "
+                                f"(base={signal.status.value}, user={user_status_str})"
                             )
-                        elif signal.trading_params and isinstance(signal.trading_params, dict):
-                            execution_capital = signal.trading_params.get("execution_capital")
+                            continue
 
-                        # Create Recommendation object
-                        rec = Recommendation(
-                            ticker=ticker,
-                            verdict=verdict,
-                            last_close=last_close,
-                            execution_capital=execution_capital,
+                        active_signals.append(signal)
+
+                    logger.info(
+                        f"Filtered to {len(active_signals)} ACTIVE signals "
+                        f"(user {self.user_id}, skipped {len(signals) - len(active_signals)} non-ACTIVE)"
+                    )
+
+                    if not active_signals:
+                        logger.warning(
+                            "No ACTIVE signals found after filtering, falling back to CSV"
                         )
-                        recommendations.append(rec)
+                        # Fall through to CSV fallback
+                    else:
+                        # Convert Signals to Recommendation objects
+                        recommendations = []
+                        for signal in active_signals:
+                            # Determine verdict (prioritize final_verdict, then verdict, then ml_verdict)
+                            verdict = None
+                            if signal.final_verdict and signal.final_verdict.lower() in [
+                                "buy",
+                                "strong_buy",
+                            ]:
+                                verdict = signal.final_verdict.lower()
+                            elif signal.verdict and signal.verdict.lower() in ["buy", "strong_buy"]:
+                                verdict = signal.verdict.lower()
+                            elif signal.ml_verdict and signal.ml_verdict.lower() in [
+                                "buy",
+                                "strong_buy",
+                            ]:
+                                verdict = signal.ml_verdict.lower()
+
+                            # Only include buy/strong_buy signals
+                            if not verdict:
+                                continue
+
+                            # Convert symbol to ticker format (add .NS if not present)
+                            ticker = signal.symbol.upper()
+                            if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
+                                ticker = f"{ticker}.NS"
+
+                            # Get last_close price
+                            last_close = signal.last_close or 0.0
+                            if last_close <= 0:
+                                logger.warning(
+                                    f"Skipping {ticker}: invalid last_close ({last_close})"
+                                )
+                                continue
+
+                            # Extract execution_capital from liquidity_recommendation or trading_params
+                            execution_capital = None
+                            if signal.liquidity_recommendation and isinstance(
+                                signal.liquidity_recommendation, dict
+                            ):
+                                execution_capital = signal.liquidity_recommendation.get(
+                                    "execution_capital"
+                                )
+                            elif signal.trading_params and isinstance(signal.trading_params, dict):
+                                execution_capital = signal.trading_params.get("execution_capital")
+
+                            # Create Recommendation object
+                            rec = Recommendation(
+                                ticker=ticker,
+                                verdict=verdict,
+                                last_close=last_close,
+                                execution_capital=execution_capital,
+                            )
+                            recommendations.append(rec)
 
                     logger.info(
                         f"Converted {len(recommendations)} buy/strong_buy recommendations from database"
@@ -1146,26 +1180,34 @@ class AutoTradeEngine:
                                     broker_qty = disc.get("broker_qty", 0)
 
                                     if disc.get("trade_type") == "MANUAL_BUY":
-                                        message = (
-                                            f"MANUAL BUY DETECTED\n\n"
-                                            f"Symbol: {symbol}\n"
+                                        message_text = (
+                                            f"🛒 *Manual Buy Detected*\n\n"
+                                            f"Symbol: `{symbol}`\n"
                                             f"Quantity: +{qty_diff} shares\n"
-                                            f"New Total: {broker_qty} shares\n"
-                                            f"Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                                            f"New Total: {broker_qty} shares\n\n"
                                             f"Tracking updated automatically"
                                         )
-                                        self.telegram_notifier.send_message(message)
+                                        self.telegram_notifier.notify_system_alert(
+                                            alert_type="MANUAL_TRADE",
+                                            message_text=message_text,
+                                            severity="INFO",
+                                            user_id=self.user_id,
+                                        )
 
                                     elif disc.get("trade_type") == "MANUAL_SELL":
-                                        message = (
-                                            f"MANUAL SELL DETECTED\n\n"
-                                            f"Symbol: {symbol}\n"
+                                        message_text = (
+                                            f"💰 *Manual Sell Detected*\n\n"
+                                            f"Symbol: `{symbol}`\n"
                                             f"Quantity: {qty_diff} shares\n"
-                                            f"Remaining: {broker_qty} shares\n"
-                                            f"Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                                            f"Remaining: {broker_qty} shares\n\n"
                                             f"Tracking updated automatically"
                                         )
-                                        self.telegram_notifier.send_message(message)
+                                        self.telegram_notifier.notify_system_alert(
+                                            alert_type="MANUAL_TRADE",
+                                            message_text=message_text,
+                                            severity="INFO",
+                                            user_id=self.user_id,
+                                        )
 
                         # Notify about position closures
                         closed_positions = reconciliation.get("closed_positions", [])
@@ -1960,12 +2002,14 @@ class AutoTradeEngine:
                 # Send notification about uncertain order
                 from core.telegram import send_telegram
 
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 send_telegram(
-                    f"Order placement uncertain\n"
-                    f"Symbol: {broker_symbol}\n"
+                    f"⚠️ *Order Placement Uncertain*\n\n"
+                    f"Symbol: `{broker_symbol}`\n"
                     f"Qty: {qty}\n"
                     f"Order ID not received and not found in order book.\n"
-                    f"Please check broker app manually."
+                    f"Please check broker app manually.\n\n"
+                    f"_Time: {timestamp}_"
                 )
                 return (False, None)
 
@@ -1982,11 +2026,11 @@ class AutoTradeEngine:
                     SignalsRepository,
                 )
 
-                signals_repo = SignalsRepository(self.db)
+                signals_repo = SignalsRepository(self.db, user_id=self.user_id)
                 # Use the base symbol (without series suffix like -EQ)
                 base_symbol = broker_symbol.split("-")[0] if "-" in broker_symbol else broker_symbol
-                if signals_repo.mark_as_traded(base_symbol):
-                    logger.info(f"Marked signal for {base_symbol} as TRADED")
+                if signals_repo.mark_as_traded(base_symbol, user_id=self.user_id):
+                    logger.info(f"Marked signal for {base_symbol} as TRADED (user {self.user_id})")
             except Exception as mark_error:
                 # Don't fail order placement if marking fails
                 logger.warning(f"Failed to mark signal as traded for {broker_symbol}: {mark_error}")
@@ -2246,13 +2290,15 @@ class AutoTradeEngine:
 
                         # Phase 5: Send notification
                         try:
+                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             telegram_msg = (
-                                f"⚠️ AMO Order Immediately Rejected\n\n"
-                                f"Symbol: {symbol}\n"
-                                f"Order ID: {order_id}\n"
+                                f"⚠️ *AMO Order Immediately Rejected*\n\n"
+                                f"Symbol: `{symbol}`\n"
+                                f"Order ID: `{order_id}`\n"
                                 f"Reason: {rejection_reason}\n\n"
                                 f"Order was rejected within {wait_seconds} seconds of placement. "
-                                f"Please check broker app."
+                                f"Please check broker app.\n\n"
+                                f"_Time: {timestamp}_"
                             )
                             send_telegram(telegram_msg)
                         except Exception as e:
@@ -2828,15 +2874,23 @@ class AutoTradeEngine:
                 ) * 100
 
                 # 6. Modify the AMO order
+                # For MARKET orders, only quantity needs to be updated
+                # Price is logged for tracking but not passed to modify_order (not needed for MARKET)
+                original_price = float(
+                    order.get("price", order.get("prc", order.get("orderPrice", 0))) or 0
+                )
                 logger.info(
-                    f"{base_symbol}: Adjusting AMO qty {original_qty} → {new_qty} "
-                    f"(gap: {gap_pct:+.2f}%, premarket: Rs {premarket_price:.2f})"
+                    f"{base_symbol}: Adjusting AMO order: "
+                    f"qty {original_qty} → {new_qty}, "
+                    f"price Rs {original_price:.2f} → Rs {premarket_price:.2f} "
+                    f"(gap: {gap_pct:+.2f}%, capital: Rs {self.strategy_config.user_capital:,.0f})"
                 )
 
                 try:
                     result = self.orders.modify_order(
                         order_id=order_id,
                         quantity=new_qty,
+                        # Note: price parameter not needed for MARKET orders (executes at market price)
                         order_type="MKT",  # Keep as MARKET order
                     )
 
@@ -2865,12 +2919,18 @@ class AutoTradeEngine:
                         # Send Telegram notification
                         if self.telegram_notifier and self.telegram_notifier.enabled:
                             try:
-                                self.telegram_notifier.send_message(
-                                    f"📊 Pre-Market Adjustment\n"
-                                    f"Symbol: {base_symbol}\n"
+                                message_text = (
+                                    f"📊 *Pre-Market Adjustment*\n\n"
+                                    f"Symbol: `{base_symbol}`\n"
                                     f"Qty: {original_qty} → {new_qty} ({new_qty - original_qty:+d})\n"
                                     f"Gap: {gap_pct:+.2f}%\n"
                                     f"Pre-market: Rs {premarket_price:.2f}"
+                                )
+                                self.telegram_notifier.notify_system_alert(
+                                    alert_type="PRE_MARKET_ADJUSTMENT",
+                                    message_text=message_text,
+                                    severity="INFO",
+                                    user_id=self.user_id,
                                 )
                             except Exception as notify_err:
                                 logger.warning(
@@ -3023,8 +3083,8 @@ class AutoTradeEngine:
 
         logger.info("Holdings API healthy - proceeding with order placement")
 
-        # OPTIMIZATION: Cache portfolio snapshot and pre-fetch indicators for all recommendations
-        # This reduces API calls from O(n) to O(1) for portfolio checks and batches indicator fetches
+        # OPTIMIZATION: Cache portfolio snapshot and pre-fetch indicators
+        # Reduces API calls from O(n) to O(1) for portfolio checks
         # Update portfolio_service with current portfolio/orders if available
         if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
             self.portfolio_service.portfolio = self.portfolio
@@ -3049,7 +3109,8 @@ class AutoTradeEngine:
                 if base_sym:
                     cached_holdings_symbols.add(base_sym)
             logger.info(
-                f"Cached portfolio snapshot: {cached_portfolio_count} positions, {len(cached_holdings_symbols)} symbols"
+                f"Cached portfolio snapshot: {cached_portfolio_count} positions, "
+                f"{len(cached_holdings_symbols)} symbols"
             )
         except Exception as e:
             logger.warning(f"Failed to cache portfolio snapshot: {e}, will fetch per-ticker")
@@ -3060,7 +3121,8 @@ class AutoTradeEngine:
             # Try parallel execution first, fallback to sequential if it fails
             try:
                 logger.info(
-                    f"Pre-fetching indicators for {len(recommendations)} recommendations in parallel..."
+                    f"Pre-fetching indicators for {len(recommendations)} "
+                    f"recommendations in parallel..."
                 )
                 from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
 
@@ -3068,7 +3130,13 @@ class AutoTradeEngine:
                     """Fetch indicator for a single ticker"""
                     try:
                         # get_daily_indicators is a static method, call it correctly
+                        logger.debug(f"[Parallel Fetch] Starting fetch for {rec_ticker}")
                         ind = AutoTradeEngine.get_daily_indicators(rec_ticker)
+                        if ind:
+                            logger.debug(
+                                f"[Parallel Fetch] Fetched {rec_ticker}: "
+                                f"close={ind.get('close', 'N/A')}"
+                            )
                         return (rec_ticker, ind)
                     except Exception as e:
                         logger.warning(
@@ -3087,7 +3155,25 @@ class AutoTradeEngine:
                     for future in as_completed(future_to_ticker):
                         try:
                             ticker, ind = future.result()
+
+                            # Validate that we got the correct ticker back
+                            expected_ticker = future_to_ticker.get(future)
+                            if ticker != expected_ticker:
+                                logger.error(
+                                    f"BUG: Ticker mismatch! "
+                                    f"Expected {expected_ticker}, got {ticker}"
+                                )
+                                # Use the expected ticker to prevent cache corruption
+                                ticker = expected_ticker
+
                             cached_indicators[ticker] = ind
+                            if ind:
+                                logger.debug(
+                                    f"Cached indicators for {ticker}: "
+                                    f"close={ind.get('close', 'N/A')}"
+                                )
+                            else:
+                                logger.warning(f"Failed to fetch indicators for {ticker}")
                         except Exception as e:
                             ticker = future_to_ticker.get(future, "unknown")
                             logger.error(
@@ -3100,6 +3186,20 @@ class AutoTradeEngine:
                 logger.info(
                     f"Pre-fetched {successful_prefetches}/{len(recommendations)} indicators (parallel)"
                 )
+
+                # Detect potential price caching bugs: Check if multiple tickers have identical prices
+                if successful_prefetches > 1:
+                    prices = {}
+                    for ticker, ind in cached_indicators.items():
+                        if ind and "close" in ind:
+                            price = ind["close"]
+                            if price in prices:
+                                logger.warning(
+                                    f"⚠️  POTENTIAL BUG: {ticker} and {prices[price]} "
+                                    f"have identical price: Rs {price:.2f}"
+                                )
+                            else:
+                                prices[price] = ticker
             except Exception as parallel_error:
                 # Fallback to sequential execution if parallel fails
                 logger.warning(
@@ -3107,7 +3207,8 @@ class AutoTradeEngine:
                     exc_info=parallel_error,
                 )
                 logger.info(
-                    f"Pre-fetching indicators for {len(recommendations)} recommendations sequentially..."
+                    f"Pre-fetching indicators for {len(recommendations)} "
+                    f"recommendations sequentially..."
                 )
                 for rec in recommendations:
                     try:
@@ -3118,7 +3219,8 @@ class AutoTradeEngine:
                         cached_indicators[rec.ticker] = None
                 successful_prefetches = sum(1 for v in cached_indicators.values() if v is not None)
                 logger.info(
-                    f"Pre-fetched {successful_prefetches}/{len(recommendations)} indicators (sequential)"
+                    f"Pre-fetched {successful_prefetches}/{len(recommendations)} "
+                    f"indicators (sequential)"
                 )
 
         # Log summary of what we have before proceeding
@@ -3422,7 +3524,11 @@ class AutoTradeEngine:
             # Use cached indicators if available, otherwise fetch
             ind = cached_indicators.get(rec.ticker)
             if ind is None:
+                logger.debug(f"Cache miss for {rec.ticker}, fetching fresh indicators")
                 ind = self.get_daily_indicators(rec.ticker)
+            else:
+                logger.debug(f"Cache hit for {rec.ticker}, close={ind.get('close', 'N/A')}")
+
             if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
                 logger.warning(f"Skipping {rec.ticker}: missing indicators")
                 summary["skipped_missing_data"] += 1
@@ -3431,6 +3537,7 @@ class AutoTradeEngine:
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
             close = ind["close"]
+            logger.info(f"{rec.ticker}: Using close price = Rs {close:.2f} from indicators")
             if close <= 0:
                 logger.warning(f"Skipping {rec.ticker}: invalid close price {close}")
                 summary["skipped_invalid_qty"] += 1
@@ -3593,11 +3700,15 @@ class AutoTradeEngine:
                 required_cash = qty * close
                 shortfall = max(0.0, required_cash - (avail_cash or 0.0))
                 # Telegram message with emojis
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 telegram_msg = (
-                    f"Insufficient balance for {broker_symbol} AMO BUY.\n"
-                    f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}.\n"
-                    f"Available: Rs {(avail_cash or 0.0):,.0f}. Shortfall: Rs {shortfall:,.0f}.\n\n"
-                    f"Order status updated in database. Will be retried at scheduled time (8:00 AM) or manually."
+                    f"💰 *Insufficient Balance - AMO BUY*\n\n"
+                    f"Symbol: `{broker_symbol}`\n"
+                    f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
+                    f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
+                    f"Shortfall: Rs {shortfall:,.0f}\n\n"
+                    f"Order status updated in database. Will be retried at scheduled time (8:00 AM) or manually.\n\n"
+                    f"_Time: {timestamp}_"
                 )
                 send_telegram(telegram_msg)
 
@@ -3852,9 +3963,10 @@ class AutoTradeEngine:
 
                                     if retry_failed:
                                         # Send Telegram notification for failed retry
+                                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                         telegram_msg = (
-                                            f"SELL ORDER RETRY FAILED\n\n"
-                                            f"Symbol: *{symbol}*\n"
+                                            f"❌ *Sell Order Retry Failed*\n\n"
+                                            f"Symbol: `{symbol}`\n"
                                             f"Expected Qty: {total_qty}\n"
                                             f"Available Qty: {actual_qty}\n"
                                             f"Price: Rs {price:.2f}\n"
@@ -3862,7 +3974,7 @@ class AutoTradeEngine:
                                             f"EMA9: Rs {ema9:.2f}\n\n"
                                             f"Both initial and retry sell orders failed.\n"
                                             f"Manual intervention may be required.\n\n"
-                                            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                            f"_Time: {timestamp}_"
                                         )
                                         send_telegram(telegram_msg)
                                         logger.error(
@@ -3876,15 +3988,16 @@ class AutoTradeEngine:
                                         total_qty = actual_qty
                                 else:
                                     # Send Telegram notification when no holdings found
+                                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                     telegram_msg = (
-                                        f"SELL ORDER RETRY FAILED\n\n"
-                                        f"Symbol: *{symbol}*\n"
+                                        f"❌ *Sell Order Retry Failed*\n\n"
+                                        f"Symbol: `{symbol}`\n"
                                         f"Expected Qty: {total_qty}\n"
                                         f"Available Qty: 0 (not found in holdings)\n"
                                         f"Price: Rs {price:.2f}\n\n"
                                         f"Cannot retry - symbol not found in holdings.\n"
                                         f"Manual check required.\n\n"
-                                        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                        f"_Time: {timestamp}_"
                                     )
                                     send_telegram(telegram_msg)
                                     logger.error(
@@ -3892,15 +4005,16 @@ class AutoTradeEngine:
                                     )
                             else:
                                 # Send Telegram notification when holdings fetch fails
+                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 telegram_msg = (
-                                    f"SELL ORDER RETRY FAILED\n\n"
-                                    f"Symbol: *{symbol}*\n"
+                                    f"❌ *Sell Order Retry Failed*\n\n"
+                                    f"Symbol: `{symbol}`\n"
                                     f"Expected Qty: {total_qty}\n"
                                     f"Price: Rs {price:.2f}\n\n"
                                     f"Failed to fetch holdings from broker.\n"
                                     f"Cannot determine actual available quantity.\n"
                                     f"Manual intervention required.\n\n"
-                                    f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                    f"_Time: {timestamp}_"
                                 )
                                 send_telegram(telegram_msg)
                                 logger.error(
@@ -3908,14 +4022,15 @@ class AutoTradeEngine:
                                 )
                         except Exception as e:
                             # Send Telegram notification for exception during retry
+                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             telegram_msg = (
-                                f"SELL ORDER RETRY EXCEPTION\n\n"
-                                f"Symbol: *{symbol}*\n"
+                                f"❌ *Sell Order Retry Exception*\n\n"
+                                f"Symbol: `{symbol}`\n"
                                 f"Expected Qty: {total_qty}\n"
                                 f"Price: Rs {price:.2f}\n\n"
                                 f"Error: {str(e)[:100]}\n"
                                 f"Manual intervention required.\n\n"
-                                f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                f"_Time: {timestamp}_"
                             )
                             send_telegram(telegram_msg)
                             logger.error(

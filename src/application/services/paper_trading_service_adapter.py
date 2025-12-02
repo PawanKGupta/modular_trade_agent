@@ -139,11 +139,33 @@ class PaperTradingServiceAdapter:
 
             # Initialize paper trading broker
             self.logger.info("Initializing paper trading broker...", action="initialize")
-            self.broker = PaperTradingBrokerAdapter(self.config)
+            try:
+                self.broker = PaperTradingBrokerAdapter(self.config)
+            except Exception as broker_init_error:
+                self.logger.error(
+                    f"Failed to create paper trading broker: {broker_init_error}",
+                    exc_info=True,
+                    action="initialize",
+                )
+                raise RuntimeError(
+                    f"Failed to create paper trading broker: {broker_init_error}"
+                ) from broker_init_error
 
-            if not self.broker.connect():
-                self.logger.error("Failed to connect to paper trading system", action="initialize")
-                return False
+            try:
+                if not self.broker.connect():
+                    self.logger.error(
+                        "Failed to connect to paper trading system", action="initialize"
+                    )
+                    raise RuntimeError("Failed to connect to paper trading system")
+            except Exception as connect_error:
+                self.logger.error(
+                    f"Failed to connect to paper trading system: {connect_error}",
+                    exc_info=True,
+                    action="initialize",
+                )
+                raise RuntimeError(
+                    f"Failed to connect to paper trading system: {connect_error}"
+                ) from connect_error
 
             self.logger.info("? Paper trading broker connected", action="initialize")
 
@@ -336,31 +358,309 @@ class PaperTradingServiceAdapter:
 
     def adjust_amo_quantities_premarket(self) -> dict[str, int]:
         """
-        9:05 AM - Pre-market AMO quantity adjustment (NO-OP for paper trading)
+        9:05 AM - Pre-market AMO quantity adjustment (paper trading)
 
-        In paper trading, orders are simulated internally and executed immediately
-        or at the next market open. There's no real broker to communicate with,
-        so pre-market price adjustments don't apply.
-
-        This method exists only for interface compatibility with real trading.
+        Adjusts AMO order quantities based on pre-market prices to keep capital constant.
+        This matches the real broker behavior where quantities are adjusted before market open.
 
         Returns:
-            Summary dict (empty for paper trading)
+            Summary dict with adjustment statistics
         """
-        self.logger.info(
-            "Pre-market AMO adjustment skipped - not applicable to paper trading",
-            action="adjust_amo_quantities_premarket",
-        )
+        from src.application.services.task_execution_wrapper import execute_task
 
-        return {
+        summary = {
             "total_orders": 0,
             "adjusted": 0,
             "no_adjustment_needed": 0,
             "price_unavailable": 0,
             "modification_failed": 0,
             "skipped_not_enabled": 0,
-            "skipped_paper_trading": 1,  # Indicates this was skipped because it's paper trading
         }
+
+        with execute_task(
+            self.user_id,
+            self.db,
+            "premarket_amo_adjustment",
+            self.logger,
+            track_execution=not self.skip_execution_tracking,
+        ) as task_context:
+            self.logger.info("", action="adjust_amo_quantities_premarket")
+            self.logger.info("=" * 80, action="adjust_amo_quantities_premarket")
+            self.logger.info(
+                "TASK: PRE-MARKET AMO ADJUSTMENT (9:05 AM) - PAPER TRADING",
+                action="adjust_amo_quantities_premarket",
+            )
+            self.logger.info("=" * 80, action="adjust_amo_quantities_premarket")
+
+            if not self.broker or not self.broker.is_connected():
+                self.logger.error(
+                    "Paper trading broker not connected", action="adjust_amo_quantities_premarket"
+                )
+                return summary
+
+            # Get all pending AMO buy orders
+            pending_orders = self.broker.get_pending_orders()
+            amo_buy_orders = [
+                order
+                for order in pending_orders
+                if order.is_amo_order() and order.is_buy_order() and order.is_active()
+            ]
+
+            if not amo_buy_orders:
+                self.logger.info(
+                    "No pending AMO buy orders found", action="adjust_amo_quantities_premarket"
+                )
+                task_context["total_orders"] = 0
+                return summary
+
+            summary["total_orders"] = len(amo_buy_orders)
+            task_context["total_orders"] = len(amo_buy_orders)
+            self.logger.info(
+                f"Found {len(amo_buy_orders)} pending AMO buy orders",
+                action="adjust_amo_quantities_premarket",
+            )
+
+            # Get target capital from strategy config
+            target_capital = (
+                self.strategy_config.user_capital
+                if self.strategy_config and hasattr(self.strategy_config, "user_capital")
+                else 200000.0
+            )
+
+            from math import floor
+
+            # Process each AMO order
+            for order in amo_buy_orders:
+                try:
+                    # Get original ticker from metadata for price fetching
+                    price_symbol = order.symbol
+                    if (
+                        hasattr(order, "metadata")
+                        and order.metadata
+                        and "original_ticker" in order.metadata
+                    ):
+                        price_symbol = order.metadata["original_ticker"]
+                    elif (
+                        hasattr(order, "_metadata")
+                        and order._metadata
+                        and "original_ticker" in order._metadata
+                    ):
+                        price_symbol = order._metadata["original_ticker"]
+                    elif not price_symbol.endswith(".NS") and not price_symbol.endswith(".BO"):
+                        price_symbol = f"{price_symbol}.NS"
+
+                    # Fetch pre-market price
+                    premarket_price = self.broker.price_provider.get_price(price_symbol)
+                    if not premarket_price or premarket_price <= 0:
+                        self.logger.warning(
+                            f"{order.symbol}: Pre-market price not available",
+                            action="adjust_amo_quantities_premarket",
+                        )
+                        summary["price_unavailable"] += 1
+                        continue
+
+                    original_qty = order.quantity
+                    self.logger.info(
+                        f"{order.symbol}: Pre-market price = Rs {premarket_price:.2f}, "
+                        f"current qty = {original_qty}",
+                        action="adjust_amo_quantities_premarket",
+                    )
+
+                    # Recalculate quantity to keep capital constant
+                    new_qty = max(1, floor(target_capital / premarket_price))
+
+                    # Check if adjustment is needed
+                    if new_qty == original_qty:
+                        self.logger.info(
+                            f"{order.symbol}: No adjustment needed (qty={original_qty})",
+                            action="adjust_amo_quantities_premarket",
+                        )
+                        summary["no_adjustment_needed"] += 1
+                        continue
+
+                    # Calculate gap percentage
+                    original_price = order.price.amount if order.price else premarket_price
+                    gap_pct = ((premarket_price - original_price) / original_price) * 100
+
+                    self.logger.info(
+                        f"{order.symbol}: Adjusting AMO order: "
+                        f"qty {original_qty} → {new_qty}, "
+                        f"price Rs {original_price:.2f} → Rs {premarket_price:.2f} "
+                        f"(gap: {gap_pct:+.2f}%, capital: Rs {target_capital:,.0f})",
+                        action="adjust_amo_quantities_premarket",
+                    )
+
+                    # Update order quantity (cancel old and place new)
+                    # For MARKET orders, only quantity needs to be updated
+                    # Price is logged for tracking but not used (MARKET orders execute at market price)
+                    try:
+                        # Cancel old order
+                        self.broker.cancel_order(order.order_id)
+
+                        # Create new order with adjusted quantity
+                        # For MARKET orders, price parameter is not needed
+                        from modules.kotak_neo_auto_trader.domain import (
+                            Order,
+                        )
+
+                        new_order = Order(
+                            symbol=order.symbol,
+                            quantity=new_qty,
+                            order_type=order.order_type,  # Keep as MARKET
+                            transaction_type=order.transaction_type,
+                            # price=None for MARKET orders (not used, executes at market price)
+                            variety=order.variety,
+                            exchange=order.exchange,
+                            validity=order.validity,
+                        )
+
+                        # Preserve metadata
+                        if hasattr(order, "metadata") and order.metadata:
+                            new_order.metadata = order.metadata
+                        elif hasattr(order, "_metadata") and order._metadata:
+                            new_order._metadata = order._metadata
+
+                        # Place new order
+                        new_order_id = self.broker.place_order(new_order)
+                        self.logger.info(
+                            f"✅ {order.symbol}: AMO order modified successfully "
+                            f"(#{order.order_id} → #{new_order_id}, "
+                            f"qty: {original_qty} → {new_qty}, "
+                            f"price logged: Rs {original_price:.2f} → Rs {premarket_price:.2f}, "
+                            f"capital: Rs {original_qty * original_price:,.0f} → Rs {new_qty * premarket_price:,.0f})",
+                            action="adjust_amo_quantities_premarket",
+                        )
+                        summary["adjusted"] += 1
+
+                    except Exception as modify_error:
+                        self.logger.error(
+                            f"{order.symbol}: Failed to modify AMO order: {modify_error}",
+                            exc_info=True,
+                            action="adjust_amo_quantities_premarket",
+                        )
+                        summary["modification_failed"] += 1
+
+                except Exception as e:
+                    self.logger.error(
+                        f"Error processing AMO order {order.symbol}: {e}",
+                        exc_info=True,
+                        action="adjust_amo_quantities_premarket",
+                    )
+                    summary["modification_failed"] += 1
+
+            task_context["summary"] = summary
+            self.logger.info(
+                f"Pre-market AMO adjustment completed: {summary}",
+                action="adjust_amo_quantities_premarket",
+            )
+
+        return summary
+
+    def execute_amo_orders_at_market_open(self) -> dict[str, int]:
+        """
+        9:15 AM - Execute pending AMO orders at market open (paper trading)
+
+        Executes all pending AMO buy orders that were placed during off-market hours.
+        This matches the real broker behavior where AMO orders execute at market open.
+
+        Returns:
+            Summary dict with execution statistics
+        """
+        from src.application.services.task_execution_wrapper import execute_task
+
+        summary = {
+            "total_orders": 0,
+            "executed": 0,
+            "failed": 0,
+            "still_pending": 0,
+        }
+
+        with execute_task(
+            self.user_id,
+            self.db,
+            "execute_amo_orders",
+            self.logger,
+            track_execution=not self.skip_execution_tracking,
+        ) as task_context:
+            self.logger.info("", action="execute_amo_orders_at_market_open")
+            self.logger.info("=" * 80, action="execute_amo_orders_at_market_open")
+            self.logger.info(
+                "TASK: EXECUTE AMO ORDERS AT MARKET OPEN (9:15 AM) - PAPER TRADING",
+                action="execute_amo_orders_at_market_open",
+            )
+            self.logger.info("=" * 80, action="execute_amo_orders_at_market_open")
+
+            if not self.broker or not self.broker.is_connected():
+                self.logger.error(
+                    "Paper trading broker not connected", action="execute_amo_orders_at_market_open"
+                )
+                return summary
+
+            # Get all pending AMO buy orders
+            pending_orders = self.broker.get_pending_orders()
+            amo_buy_orders = [
+                order
+                for order in pending_orders
+                if order.is_amo_order() and order.is_buy_order() and order.is_active()
+            ]
+
+            if not amo_buy_orders:
+                self.logger.info(
+                    "No pending AMO buy orders to execute",
+                    action="execute_amo_orders_at_market_open",
+                )
+                task_context["total_orders"] = 0
+                return summary
+
+            summary["total_orders"] = len(amo_buy_orders)
+            task_context["total_orders"] = len(amo_buy_orders)
+            self.logger.info(
+                f"Found {len(amo_buy_orders)} pending AMO buy orders to execute",
+                action="execute_amo_orders_at_market_open",
+            )
+
+            # Execute each AMO order
+            for order in amo_buy_orders:
+                try:
+                    self.logger.info(
+                        f"Executing AMO order: {order.symbol} x{order.quantity}",
+                        action="execute_amo_orders_at_market_open",
+                    )
+
+                    # Execute the order (this will use the opening price logic)
+                    self.broker._execute_order(order)
+
+                    # Check if order executed successfully
+                    if order.is_executed():
+                        summary["executed"] += 1
+                        self.logger.info(
+                            f"✅ AMO order executed: {order.symbol} x{order.quantity} "
+                            f"@ Rs {order.executed_price.amount:.2f}",
+                            action="execute_amo_orders_at_market_open",
+                        )
+                    else:
+                        summary["still_pending"] += 1
+                        self.logger.warning(
+                            f"⚠️ AMO order still pending: {order.symbol} "
+                            f"(Status: {order.status.value})",
+                            action="execute_amo_orders_at_market_open",
+                        )
+
+                except Exception as e:
+                    summary["failed"] += 1
+                    self.logger.error(
+                        f"❌ Failed to execute AMO order {order.symbol}: {e}",
+                        exc_info=True,
+                        action="execute_amo_orders_at_market_open",
+                    )
+
+            task_context["summary"] = summary
+            self.logger.info(
+                f"AMO order execution completed: {summary}",
+                action="execute_amo_orders_at_market_open",
+            )
+
+        return summary
 
     def run_sell_monitor(self):
         """
@@ -1161,9 +1461,10 @@ class PaperTradingEngineAdapter:
 
         try:
             # Query Signals table for buy/strong_buy recommendations
-            signals_repo = SignalsRepository(self.db)
+            signals_repo = SignalsRepository(self.db, user_id=self.user_id)
 
             # Get latest signals (today's or most recent)
+            from src.infrastructure.db.models import SignalStatus  # noqa: PLC0415
             from src.infrastructure.db.timezone_utils import ist_now
 
             today = ist_now().date()
@@ -1181,9 +1482,42 @@ class PaperTradingEngineAdapter:
                 f"Found {len(signals)} signals in database", action="load_recommendations"
             )
 
+            # Filter signals by effective status (considering per-user status)
+            # Only include ACTIVE signals - skip TRADED, REJECTED, and EXPIRED
+            active_signals = []
+            for signal in signals:
+                # Get effective status (user-specific if exists, otherwise base status)
+                user_status = signals_repo.get_user_signal_status(signal.id, self.user_id)
+                effective_status = user_status if user_status is not None else signal.status
+
+                # Only include ACTIVE signals
+                if effective_status != SignalStatus.ACTIVE:
+                    user_status_str = user_status.value if user_status else "none"
+                    self.logger.debug(
+                        f"Skipping signal {signal.symbol}: "
+                        f"status={effective_status.value} "
+                        f"(base={signal.status.value}, user={user_status_str})",
+                        action="load_recommendations",
+                    )
+                    continue
+
+                active_signals.append(signal)
+
+            self.logger.info(
+                f"Filtered to {len(active_signals)} ACTIVE signals "
+                f"(user {self.user_id}, skipped {len(signals) - len(active_signals)} non-ACTIVE)",
+                action="load_recommendations",
+            )
+
+            if not active_signals:
+                self.logger.warning(
+                    "No ACTIVE signals found after filtering", action="load_recommendations"
+                )
+                return []
+
             # Convert Signals to Recommendation objects
             recommendations = []
-            for signal in signals:
+            for signal in active_signals:
                 # Determine verdict (prioritize final_verdict, then verdict, then ml_verdict)
                 verdict = None
                 if signal.final_verdict and signal.final_verdict.lower() in ["buy", "strong_buy"]:
@@ -1438,12 +1772,17 @@ class PaperTradingEngineAdapter:
                 # Extract base symbol (remove .NS suffix if present) for order placement
                 symbol = rec.ticker.replace(".NS", "").upper()
 
-                # Create order
+                # Create MARKET order with AMO variety (matches real broker behavior)
+                # MARKET orders execute at opening price, price parameter is not used
+                from modules.kotak_neo_auto_trader.domain import OrderVariety
+
                 order = Order(
                     symbol=symbol,
                     quantity=qty,
-                    order_type=OrderType.MARKET,
+                    order_type=OrderType.MARKET,  # MARKET order (matches real broker)
                     transaction_type=TransactionType.BUY,
+                    # price=None for MARKET orders (not used, executes at market price)
+                    variety=OrderVariety.AMO,  # Set as AMO order
                 )
 
                 # Store original ticker in order metadata for price fetching
@@ -1462,6 +1801,9 @@ class PaperTradingEngineAdapter:
                         action="place_new_entries",
                     )
                     summary["placed"] += 1
+                    # Add to current_symbols to prevent duplicates within same batch
+                    # This handles cases where recommendations have both "XYZ" and "XYZ.NS"
+                    current_symbols.add(normalized_ticker)
 
                     # Mark signal as TRADED
                     try:
@@ -1469,10 +1811,10 @@ class PaperTradingEngineAdapter:
                             SignalsRepository,
                         )
 
-                        signals_repo = SignalsRepository(self.db)
-                        if signals_repo.mark_as_traded(symbol):
+                        signals_repo = SignalsRepository(self.db, user_id=self.user_id)
+                        if signals_repo.mark_as_traded(symbol, user_id=self.user_id):
                             self.logger.info(
-                                f"Marked signal for {symbol} as TRADED",
+                                f"Marked signal for {symbol} as TRADED (user {self.user_id})",
                                 action="place_new_entries",
                             )
                     except Exception as mark_error:

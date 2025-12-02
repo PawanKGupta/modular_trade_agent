@@ -9,13 +9,15 @@ test.describe('Service Status Page', () => {
 	});
 
 	test('navigates to service status page', async ({ authenticatedPage }) => {
+		// Scope queries to sidebar navigation
+		const sidebar = authenticatedPage.locator('aside nav, aside');
 		// Expand System category first (it's collapsed by default)
-		const systemButton = authenticatedPage.getByRole('button', { name: /System/i });
+		const systemButton = sidebar.getByRole('button', { name: /System/i });
 		await systemButton.click();
 		await authenticatedPage.waitForTimeout(300);
 
 		// Click Service Status link
-		await authenticatedPage.getByRole('link', { name: /Service Status/i }).click();
+		await sidebar.getByRole('link', { name: /Service Status/i }).click();
 		await authenticatedPage.waitForLoadState('networkidle');
 
 		// Verify page loads - use heading to avoid strict mode violation
@@ -29,12 +31,14 @@ test.describe('Service Status Page', () => {
 	});
 
 	test('displays service status information', async ({ authenticatedPage }) => {
+		// Scope queries to sidebar navigation
+		const sidebar = authenticatedPage.locator('aside nav, aside');
 		// Expand System category first
-		const systemButton = authenticatedPage.getByRole('button', { name: /System/i });
+		const systemButton = sidebar.getByRole('button', { name: /System/i });
 		await systemButton.click();
 		await authenticatedPage.waitForTimeout(300);
 
-		await authenticatedPage.getByRole('link', { name: /Service Status/i }).click();
+		await sidebar.getByRole('link', { name: /Service Status/i }).click();
 		await authenticatedPage.waitForLoadState('networkidle');
 
 		// Verify service status sections are displayed
@@ -42,12 +46,14 @@ test.describe('Service Status Page', () => {
 	});
 
 	test('displays task execution history section', async ({ authenticatedPage }) => {
+		// Scope queries to sidebar navigation
+		const sidebar = authenticatedPage.locator('aside nav, aside');
 		// Expand System category first
-		const systemButton = authenticatedPage.getByRole('button', { name: /System/i });
+		const systemButton = sidebar.getByRole('button', { name: /System/i });
 		await systemButton.click();
 		await authenticatedPage.waitForTimeout(300);
 
-		await authenticatedPage.getByRole('link', { name: /Service Status/i }).click();
+		await sidebar.getByRole('link', { name: /Service Status/i }).click();
 		await authenticatedPage.waitForLoadState('networkidle');
 
 		// Verify task execution history section
@@ -55,12 +61,14 @@ test.describe('Service Status Page', () => {
 	});
 
 	test('displays service logs section', async ({ authenticatedPage }) => {
+		// Scope queries to sidebar navigation
+		const sidebar = authenticatedPage.locator('aside nav, aside');
 		// Expand System category first
-		const systemButton = authenticatedPage.getByRole('button', { name: /System/i });
+		const systemButton = sidebar.getByRole('button', { name: /System/i });
 		await systemButton.click();
 		await authenticatedPage.waitForTimeout(300);
 
-		await authenticatedPage.getByRole('link', { name: /Service Status/i }).click();
+		await sidebar.getByRole('link', { name: /Service Status/i }).click();
 		await authenticatedPage.waitForLoadState('networkidle');
 
 		// Verify service logs section (might be named differently)
@@ -69,12 +77,14 @@ test.describe('Service Status Page', () => {
 	});
 
 	test('has start and stop service buttons', async ({ authenticatedPage }) => {
+		// Scope queries to sidebar navigation
+		const sidebar = authenticatedPage.locator('aside nav, aside');
 		// Expand System category first
-		const systemButton = authenticatedPage.getByRole('button', { name: /System/i });
+		const systemButton = sidebar.getByRole('button', { name: /System/i });
 		await systemButton.click();
 		await authenticatedPage.waitForTimeout(300);
 
-		await authenticatedPage.getByRole('link', { name: /Service Status/i }).click();
+		await sidebar.getByRole('link', { name: /Service Status/i }).click();
 		await authenticatedPage.waitForLoadState('networkidle');
 
 		// Verify service control buttons - check for either start or stop button
@@ -93,12 +103,14 @@ test.describe('Service Status Page', () => {
 	});
 
 	test('toggles auto-refresh checkbox', async ({ authenticatedPage }) => {
+		// Scope queries to sidebar navigation
+		const sidebar = authenticatedPage.locator('aside nav, aside');
 		// Expand System category first
-		const systemButton = authenticatedPage.getByRole('button', { name: /System/i });
+		const systemButton = sidebar.getByRole('button', { name: /System/i });
 		await systemButton.click();
 		await authenticatedPage.waitForTimeout(300);
 
-		await authenticatedPage.getByRole('link', { name: /Service Status/i }).click();
+		await sidebar.getByRole('link', { name: /Service Status/i }).click();
 		await authenticatedPage.waitForLoadState('networkidle');
 
 		const checkbox = authenticatedPage.getByLabel(/Auto-refresh/i);

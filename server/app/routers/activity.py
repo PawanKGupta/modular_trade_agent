@@ -12,7 +12,7 @@ from ..schemas.activity import ActivityItem
 router = APIRouter()
 
 
-@router.get("/", response_model=list[ActivityItem])
+@router.get("", response_model=list[ActivityItem])
 def list_activity(
     level: Annotated[Literal["info", "warn", "error", "all"] | None, Query()] = "all",
     db: Session = Depends(get_db),  # noqa: B008

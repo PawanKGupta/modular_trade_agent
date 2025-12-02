@@ -12,11 +12,13 @@ from unittest.mock import Mock, patch
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-import pytest
-from sqlalchemy.orm import Session
+import pytest  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
 
-from src.application.services.multi_user_trading_service import MultiUserTradingService
-from src.infrastructure.db.models import Notification, UserNotificationPreferences
+from src.application.services.multi_user_trading_service import (
+    MultiUserTradingService,  # noqa: E402
+)
+from src.infrastructure.db.models import Notification, UserNotificationPreferences  # noqa: E402
 
 
 class TestMultiUserTradingServiceNotifications:
@@ -165,8 +167,9 @@ class TestMultiUserTradingServiceNotifications:
                 "src.application.services.multi_user_trading_service.NotificationPreferenceService",
                 return_value=mock_preference_service,
             ),
-            patch(
-                "modules.kotak_neo_auto_trader.telegram_notifier.get_telegram_notifier",
+            patch.object(
+                service,
+                "_get_telegram_notifier",
                 return_value=mock_telegram_notifier,
             ),
         ):
@@ -175,8 +178,10 @@ class TestMultiUserTradingServiceNotifications:
         # Verify Telegram notification was sent
         mock_telegram_notifier.notify_system_alert.assert_called_once()
         call_args = mock_telegram_notifier.notify_system_alert.call_args
-        assert "Unified Trading Service Started" in call_args[0][0]
+        assert call_args[1]["alert_type"] == "SERVICE_STARTED"
+        assert "Unified Trading Service Started" in call_args[1]["message_text"]
         assert call_args[1]["user_id"] == 1
+        assert call_args[1]["severity"] == "INFO"
 
         # Verify preference service was checked for telegram
         telegram_calls = [
@@ -279,8 +284,9 @@ class TestMultiUserTradingServiceNotifications:
                 "src.application.services.multi_user_trading_service.NotificationPreferenceService",
                 return_value=mock_preference_service,
             ),
-            patch(
-                "modules.kotak_neo_auto_trader.telegram_notifier.get_telegram_notifier",
+            patch.object(
+                service,
+                "_get_telegram_notifier",
                 return_value=mock_telegram_notifier,
             ),
         ):
@@ -289,8 +295,10 @@ class TestMultiUserTradingServiceNotifications:
         # Verify Telegram notification was sent
         mock_telegram_notifier.notify_system_alert.assert_called_once()
         call_args = mock_telegram_notifier.notify_system_alert.call_args
-        assert "Unified Trading Service Stopped" in call_args[0][0]
+        assert call_args[1]["alert_type"] == "SERVICE_STOPPED"
+        assert "Unified Trading Service Stopped" in call_args[1]["message_text"]
         assert call_args[1]["user_id"] == 1
+        assert call_args[1]["severity"] == "INFO"
 
         # Verify preference service was checked for telegram
         telegram_calls = [
@@ -396,8 +404,9 @@ class TestMultiUserTradingServiceNotifications:
                 "src.application.services.multi_user_trading_service.NotificationPreferenceService",
                 return_value=mock_preference_service,
             ),
-            patch(
-                "modules.kotak_neo_auto_trader.telegram_notifier.get_telegram_notifier",
+            patch.object(
+                service,
+                "_get_telegram_notifier",
                 return_value=mock_telegram_notifier,
             ),
             patch("src.application.services.multi_user_trading_service.get_user_logger"),
@@ -409,3 +418,218 @@ class TestMultiUserTradingServiceNotifications:
 
         # Verify Telegram notification was NOT sent
         mock_telegram_notifier.notify_system_alert.assert_not_called()
+
+
+class TestGetTelegramNotifier:
+    """Test suite for _get_telegram_notifier() method"""
+
+    @pytest.fixture
+    def service(self, db_session):
+        """Create a MultiUserTradingService instance with real DB session"""
+        return MultiUserTradingService(db=db_session)
+
+    @pytest.fixture
+    def sample_user(self, db_session):
+        """Create a sample user"""
+        from src.infrastructure.db.models import Users  # noqa: PLC0415
+        from src.infrastructure.db.timezone_utils import ist_now  # noqa: PLC0415
+
+        user = Users(
+            email="test@example.com",
+            password_hash="hashed_password",
+            created_at=ist_now(),
+        )
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+        return user
+
+    @pytest.fixture
+    def user_with_telegram_prefs(self, db_session, sample_user):
+        """Create user with Telegram preferences"""
+        prefs = UserNotificationPreferences(
+            user_id=sample_user.id,
+            telegram_enabled=True,
+            telegram_chat_id="123456789",
+            telegram_bot_token="test_bot_token_123",
+        )
+        db_session.add(prefs)
+        db_session.commit()
+        return sample_user
+
+    def test_get_telegram_notifier_success_with_user_preferences(
+        self, service, user_with_telegram_prefs
+    ):
+        """Test _get_telegram_notifier returns notifier when user has preferences"""
+        with patch(
+            "modules.kotak_neo_auto_trader.telegram_notifier.TelegramNotifier"
+        ) as mock_telegram_class:
+            mock_notifier = Mock()
+            mock_notifier.enabled = True
+            mock_telegram_class.return_value = mock_notifier
+
+            notifier = service._get_telegram_notifier(user_with_telegram_prefs.id)
+
+            assert notifier is not None
+            assert notifier == mock_notifier
+            mock_telegram_class.assert_called_once_with(
+                bot_token="test_bot_token_123",
+                chat_id="123456789",
+                enabled=True,
+                db_session=service.db,
+            )
+
+    def test_get_telegram_notifier_fallback_to_env_token(self, service, db_session, sample_user):
+        """Test _get_telegram_notifier falls back to environment variable for bot token"""
+        # Create preferences without bot_token
+        prefs = UserNotificationPreferences(
+            user_id=sample_user.id,
+            telegram_enabled=True,
+            telegram_chat_id="123456789",
+            telegram_bot_token=None,  # No user token
+        )
+        db_session.add(prefs)
+        db_session.commit()
+
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.telegram_notifier.TelegramNotifier"
+            ) as mock_telegram_class,
+            patch(
+                "src.application.services.multi_user_trading_service.os.getenv",
+                return_value="env_bot_token_456",
+            ) as mock_getenv,
+        ):
+            mock_notifier = Mock()
+            mock_notifier.enabled = True
+            mock_telegram_class.return_value = mock_notifier
+
+            notifier = service._get_telegram_notifier(sample_user.id)
+
+            assert notifier is not None
+            mock_getenv.assert_called_once_with("TELEGRAM_BOT_TOKEN")
+            mock_telegram_class.assert_called_once_with(
+                bot_token="env_bot_token_456",
+                chat_id="123456789",
+                enabled=True,
+                db_session=service.db,
+            )
+
+    def test_get_telegram_notifier_returns_none_when_telegram_disabled(
+        self, service, db_session, sample_user
+    ):
+        """Test _get_telegram_notifier returns None when Telegram is disabled"""
+        prefs = UserNotificationPreferences(
+            user_id=sample_user.id,
+            telegram_enabled=False,  # Disabled
+            telegram_chat_id="123456789",
+            telegram_bot_token="test_token",
+        )
+        db_session.add(prefs)
+        db_session.commit()
+
+        notifier = service._get_telegram_notifier(sample_user.id)
+
+        assert notifier is None
+
+    def test_get_telegram_notifier_returns_none_when_no_bot_token(
+        self, service, db_session, sample_user
+    ):
+        """Test _get_telegram_notifier returns None when no bot token available"""
+        prefs = UserNotificationPreferences(
+            user_id=sample_user.id,
+            telegram_enabled=True,
+            telegram_chat_id="123456789",
+            telegram_bot_token=None,  # No user token
+        )
+        db_session.add(prefs)
+        db_session.commit()
+
+        with patch(
+            "src.application.services.multi_user_trading_service.os.getenv",
+            return_value=None,
+        ):  # No env token either
+            notifier = service._get_telegram_notifier(sample_user.id)
+
+            assert notifier is None
+
+    def test_get_telegram_notifier_returns_none_when_no_chat_id(
+        self, service, db_session, sample_user
+    ):
+        """Test _get_telegram_notifier returns None when no chat ID"""
+        prefs = UserNotificationPreferences(
+            user_id=sample_user.id,
+            telegram_enabled=True,
+            telegram_chat_id=None,  # No chat ID
+            telegram_bot_token="test_token",
+        )
+        db_session.add(prefs)
+        db_session.commit()
+
+        notifier = service._get_telegram_notifier(sample_user.id)
+
+        assert notifier is None
+
+    def test_get_telegram_notifier_returns_none_when_no_preferences(self, service, sample_user):
+        """Test _get_telegram_notifier returns None when user has no preferences"""
+        notifier = service._get_telegram_notifier(sample_user.id)
+
+        assert notifier is None
+
+    def test_get_telegram_notifier_handles_import_error(self, service, user_with_telegram_prefs):
+        """Test _get_telegram_notifier handles ImportError gracefully"""
+        with patch(
+            "modules.kotak_neo_auto_trader.telegram_notifier.TelegramNotifier",
+            side_effect=ImportError("Module not found"),
+        ):
+            notifier = service._get_telegram_notifier(user_with_telegram_prefs.id)
+
+            assert notifier is None
+
+    def test_get_telegram_notifier_handles_exceptions_gracefully(
+        self, service, user_with_telegram_prefs
+    ):
+        """Test _get_telegram_notifier handles exceptions and logs warnings"""
+        with (
+            patch(
+                "src.application.services.multi_user_trading_service.NotificationPreferenceService"
+            ) as mock_pref_service,
+            patch(
+                "src.application.services.multi_user_trading_service.get_user_logger"
+            ) as mock_logger,
+        ):
+            # Make get_preferences raise an exception
+            mock_pref_service.return_value.get_preferences.side_effect = Exception("Database error")
+
+            notifier = service._get_telegram_notifier(user_with_telegram_prefs.id)
+
+            assert notifier is None
+            # Verify error was logged
+            mock_logger.return_value.warning.assert_called_once()
+            assert "Failed to get Telegram notifier" in str(
+                mock_logger.return_value.warning.call_args
+            )
+
+    def test_get_telegram_notifier_uses_user_bot_token_over_env(
+        self, service, user_with_telegram_prefs
+    ):
+        """Test _get_telegram_notifier prefers user bot_token over environment variable"""
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.telegram_notifier.TelegramNotifier"
+            ) as mock_telegram_class,
+            patch(
+                "src.application.services.multi_user_trading_service.os.getenv",
+                return_value="env_token_should_not_be_used",
+            ),
+        ):
+            mock_notifier = Mock()
+            mock_telegram_class.return_value = mock_notifier
+
+            notifier = service._get_telegram_notifier(user_with_telegram_prefs.id)
+
+            assert notifier is not None
+            # Verify user token was used, not env token
+            call_kwargs = mock_telegram_class.call_args[1]
+            assert call_kwargs["bot_token"] == "test_bot_token_123"
+            assert call_kwargs["bot_token"] != "env_token_should_not_be_used"

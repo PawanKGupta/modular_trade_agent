@@ -16,6 +16,7 @@ services:
     volumes:
       - trading_data:/app/data
       - trading_logs:/app/logs
+      - paper_trading_data:/app/paper_trading  # Paper trading data persistence
 
     # Production logging
     logging:
@@ -25,15 +26,8 @@ services:
         max-file: "5"
         compress: "true"
 
-    # Production resource limits
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
-          memory: 1G
+    # Note: Resource limits removed - deploy.resources is only for Docker Swarm mode
+    # For standalone Docker Compose, use docker stats or cgroup limits instead
 
   web-frontend:
     # Production: Use nginx with proper configuration
@@ -47,19 +41,14 @@ services:
         max-file: "3"
         compress: "true"
 
-    # Minimal resources for static file serving
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
-        reservations:
-          cpus: '0.25'
-          memory: 256M
+    # Note: Resource limits removed - deploy.resources is only for Docker Swarm mode
+    # For standalone Docker Compose, use docker stats or cgroup limits instead
 
 # Production volumes (named volumes for better management)
 volumes:
   trading_data:
     driver: local
   trading_logs:
+    driver: local
+  paper_trading_data:
     driver: local

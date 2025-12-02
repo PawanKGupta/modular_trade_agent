@@ -30,6 +30,7 @@ services:
     volumes:
       - ../data:/app/data
       - ../logs:/app/logs
+      - paper_trading_data:/app/paper_trading  # Paper trading data persistence (use named volume for proper permissions)
 
     networks:
       - tradeagent-network
@@ -90,3 +91,8 @@ networks:
 
 # Note: Named volumes are defined in docker-compose.prod.yml
 # This file uses bind mounts (../data, ../logs, etc.) for development
+# paper_trading uses named volume to avoid permission issues
+
+volumes:
+  paper_trading_data:
+    driver: local

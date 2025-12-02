@@ -135,7 +135,7 @@ class MultiUserTradingService:
                                         action="scheduler",
                                     )
 
-                    # 9:05 AM - Pre-market AMO adjustment (NO-OP for paper trading, kept for parity)
+                    # 9:05 AM - Pre-market AMO adjustment
                     if dt_time(9, 5) <= current_time < dt_time(9, 6):
                         if not service.tasks_completed.get("premarket_amo_adjustment"):
                             try:
@@ -144,6 +144,19 @@ class MultiUserTradingService:
                             except Exception as e:
                                 user_logger.error(
                                     f"Pre-market AMO adjustment failed: {e}",
+                                    exc_info=True,
+                                    action="scheduler",
+                                )
+
+                    # 9:15 AM - Execute AMO orders at market open
+                    if dt_time(9, 15) <= current_time < dt_time(9, 16):
+                        if not service.tasks_completed.get("amo_orders_executed"):
+                            try:
+                                service.execute_amo_orders_at_market_open()
+                                service.tasks_completed["amo_orders_executed"] = True
+                            except Exception as e:
+                                user_logger.error(
+                                    f"AMO order execution failed: {e}",
                                     exc_info=True,
                                     action="scheduler",
                                 )
@@ -628,6 +641,53 @@ class MultiUserTradingService:
             if hasattr(service, "running") and service.running
         ]
 
+    def _get_telegram_notifier(self, user_id: int):
+        """Get Telegram notifier instance with database session and user-specific chat ID"""
+        try:
+            # Check if telegram notifier module is available
+            try:
+                from modules.kotak_neo_auto_trader.telegram_notifier import (  # noqa: PLC0415
+                    TelegramNotifier,
+                )
+            except ImportError:
+                return None
+
+            # Get user's notification preferences to get Telegram chat ID and bot token
+            pref_service = NotificationPreferenceService(self.db)
+            preferences = pref_service.get_preferences(user_id)
+
+            # Check if Telegram is enabled for this user
+            if not preferences or not preferences.telegram_enabled:
+                return None
+
+            # Get bot token from user preferences first, then fall back to environment
+            bot_token = preferences.telegram_bot_token if preferences else None
+            if not bot_token:
+                bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+
+            chat_id = preferences.telegram_chat_id if preferences else None
+
+            # Only create notifier if both bot token and chat ID are available
+            if not bot_token:
+                return None
+            if not chat_id:
+                return None
+
+            # Create a new TelegramNotifier instance (not singleton) for this user
+            # This is necessary because each user has a different chat_id
+            return TelegramNotifier(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                enabled=True,
+                db_session=self.db,
+            )
+        except Exception as e:
+            user_logger = get_user_logger(
+                user_id=user_id, db=self.db, module="MultiUserTradingService"
+            )
+            user_logger.warning(f"Failed to get Telegram notifier: {e}")
+            return None
+
     def _notify_service_started(self, user_id: int) -> None:
         """Send notification when unified service starts"""
         try:
@@ -659,14 +719,18 @@ class MultiUserTradingService:
                 user_id, NotificationEventType.SERVICE_STARTED, channel="telegram"
             ):
                 try:
-                    from modules.kotak_neo_auto_trader.telegram_notifier import (
-                        get_telegram_notifier,
-                    )
-
-                    notifier = get_telegram_notifier(db_session=self.db, user_id=user_id)
+                    notifier = self._get_telegram_notifier(user_id)
                     if notifier and notifier.enabled:
-                        message = "🚀 *Unified Trading Service Started*\n\nAll scheduled tasks will execute automatically."
-                        notifier.notify_system_alert(message, user_id=user_id)
+                        message_text = (
+                            "🚀 *Unified Trading Service Started*\n\n"
+                            "All scheduled tasks will execute automatically."
+                        )
+                        notifier.notify_system_alert(
+                            alert_type="SERVICE_STARTED",
+                            message_text=message_text,
+                            severity="INFO",
+                            user_id=user_id,
+                        )
                 except Exception as e:
                     user_logger = get_user_logger(
                         user_id=user_id, db=self.db, module="MultiUserTradingService"
@@ -737,14 +801,18 @@ class MultiUserTradingService:
                 user_id, NotificationEventType.SERVICE_STOPPED, channel="telegram"
             ):
                 try:
-                    from modules.kotak_neo_auto_trader.telegram_notifier import (
-                        get_telegram_notifier,
-                    )
-
-                    notifier = get_telegram_notifier(db_session=self.db, user_id=user_id)
+                    notifier = self._get_telegram_notifier(user_id)
                     if notifier and notifier.enabled:
-                        message = "🛑 *Unified Trading Service Stopped*\n\nAll scheduled tasks have been halted."
-                        notifier.notify_system_alert(message, user_id=user_id)
+                        message_text = (
+                            "🛑 *Unified Trading Service Stopped*\n\n"
+                            "All scheduled tasks have been halted."
+                        )
+                        notifier.notify_system_alert(
+                            alert_type="SERVICE_STOPPED",
+                            message_text=message_text,
+                            severity="INFO",
+                            user_id=user_id,
+                        )
                 except Exception as e:
                     user_logger = get_user_logger(
                         user_id=user_id, db=self.db, module="MultiUserTradingService"

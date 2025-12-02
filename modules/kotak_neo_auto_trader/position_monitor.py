@@ -5,7 +5,6 @@ Monitors open positions during market hours and sends alerts
 """
 
 import sys
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -395,12 +394,15 @@ class PositionMonitor:
         if not self.telegram or not self.telegram.enabled:
             return
 
-        # Determine emoji based on alert level
-        emoji = {"info": "", "warning": "", "critical": ""}.get(status.alert_level, "")
+        # Determine emoji and severity based on alert level
+        emoji_map = {"info": "", "warning": "", "critical": ""}
+        severity_map = {"info": "INFO", "warning": "WARNING", "critical": "ERROR"}
+        emoji = emoji_map.get(status.alert_level, "")
+        severity = severity_map.get(status.alert_level, "INFO")
 
         # Build message
         message_lines = [
-            f"{emoji} *POSITION ALERT*",
+            f"{emoji} *Position Alert*",
             "",
             f"Symbol: *{status.symbol}*",
             f"Current: Rs {status.current_price:.2f}",
@@ -417,13 +419,16 @@ class PositionMonitor:
         for alert in status.alerts:
             message_lines.append(f"  - {alert}")
 
-        message_lines.append("")
-        message_lines.append(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-        message = "\n".join(message_lines)
+        message_text = "\n".join(message_lines)
 
         try:
-            self.telegram.send_message(message)
+            # Use notify_system_alert for consistent formatting and context
+            self.telegram.notify_system_alert(
+                alert_type="POSITION_ALERT",
+                message_text=message_text,
+                severity=severity,
+                user_id=None,  # Position monitor doesn't have user context
+            )
             logger.info(f"  [OK] Telegram alert sent for {status.symbol}")
         except Exception as e:
             logger.error(f"  [FAIL] Failed to send Telegram alert: {e}")

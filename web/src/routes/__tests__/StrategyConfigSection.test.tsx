@@ -77,9 +77,14 @@ describe('StrategyConfigSection', () => {
 		render(<StrategyConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
 		// Check that default values are shown (using more specific queries to avoid ambiguity)
+		// Find the input field first, then check for default value in its parent container
 		const rsiPeriodInput = screen.getByLabelText(/RSI Period/i);
-		expect(rsiPeriodInput.closest('div')?.querySelector('.text-xs')).toHaveTextContent(`Default: ${DEFAULT_CONFIG.rsi_period}`);
-		expect(screen.getByText(new RegExp(`Default: ${DEFAULT_CONFIG.rsi_oversold}`))).toBeInTheDocument();
+		const rsiPeriodContainer = rsiPeriodInput.closest('div');
+		expect(rsiPeriodContainer?.textContent).toContain(`Default: ${DEFAULT_CONFIG.rsi_period}`);
+
+		const rsiOversoldInput = screen.getByLabelText(/RSI Oversold Threshold/i);
+		const rsiOversoldContainer = rsiOversoldInput.closest('div');
+		expect(rsiOversoldContainer?.textContent).toContain(`Default: ${DEFAULT_CONFIG.rsi_oversold}`);
 	});
 
 	it('shows asterisk for modified fields', () => {

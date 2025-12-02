@@ -91,7 +91,9 @@ def example_telegram_test():
 
         # Send test notifications
         notifier.notify_system_alert(
-            "System Test", "Phase 2 integration test successful!", severity="SUCCESS"
+            alert_type="System Test",
+            message_text="Phase 2 integration test successful!",
+            severity="SUCCESS",
         )
     else:
         logger.error("[FAIL] Telegram connection failed")
@@ -117,7 +119,7 @@ def example_manual_eod_cleanup():
             results = engine.eod_cleanup.run_eod_cleanup()
 
             logger.info(f"\n{'=' * 70}")
-            logger.info(f"EOD Cleanup Results:")
+            logger.info("EOD Cleanup Results:")
             logger.info(f"  Success: {results['success']}")
             logger.info(f"  Duration: {results['duration_seconds']:.2f}s")
             logger.info(f"  Steps Completed: {len(results['steps_completed'])}/6")
@@ -153,13 +155,15 @@ def example_scheduled_eod_cleanup():
             logger.info(f"EOD cleanup completed: {results['success']}")
             if engine.telegram_notifier and engine.telegram_notifier.enabled:
                 engine.telegram_notifier.notify_system_alert(
-                    "EOD Cleanup",
-                    f"Completed in {results['duration_seconds']:.1f}s",
+                    alert_type="EOD Cleanup",
+                    message_text=f"Completed in {results['duration_seconds']:.1f}s",
                     severity="SUCCESS" if results["success"] else "WARNING",
                 )
 
         schedule_eod_cleanup(
-            broker_client=engine.orders, target_time="18:00", callback=eod_callback  # 6 PM IST
+            broker_client=engine.orders,
+            target_time="18:00",
+            callback=eod_callback,  # 6 PM IST
         )
 
         logger.info("[OK] EOD cleanup scheduled for 18:00 IST daily")

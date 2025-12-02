@@ -6,13 +6,27 @@ based on pre-market prices to keep capital constant.
 """
 
 from math import floor
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 from src.application.services.paper_trading_service_adapter import PaperTradingServiceAdapter
-from src.infrastructure.db.models import UserTradingConfig
+from src.infrastructure.db.models import Users, UserTradingConfig
+
+
+@pytest.fixture
+def test_user(db_session):
+    """Create a test user"""
+    user = Users(
+        email="amo_test@example.com",
+        password_hash="test_hash",
+        role="user",
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
 
 
 @pytest.fixture
@@ -432,22 +446,71 @@ def test_database_update_on_success(mock_auto_trade_engine):
                 engine.orders_repo.update.assert_called_once()
 
                 # Verify Telegram notification was sent
-                engine.telegram_notifier.send_message.assert_called_once()
+                engine.telegram_notifier.notify_system_alert.assert_called_once()
+                call_args = engine.telegram_notifier.notify_system_alert.call_args
+                assert call_args[1]["alert_type"] == "PRE_MARKET_ADJUSTMENT"
+                assert call_args[1]["severity"] == "INFO"
 
 
-def test_paper_trading_returns_skipped(mock_auto_trade_engine):
-    """Test that paper trading adapter returns skip status"""
-    with patch.object(PaperTradingServiceAdapter, "__init__", return_value=None):
-        adapter = PaperTradingServiceAdapter()
-        adapter.logger = Mock()
-        adapter.logger.info = Mock()
+def test_paper_trading_adjustment_updates_quantity(db_session, test_user):
+    """Test that paper trading adjustment updates quantity (not just skips)"""
+    from config.strategy_config import StrategyConfig
+    from modules.kotak_neo_auto_trader.domain import (
+        Order,
+        OrderStatus,
+        OrderType,
+        OrderVariety,
+        TransactionType,
+    )
 
-        summary = adapter.adjust_amo_quantities_premarket()
+    strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
 
-        # Verify paper trading specific skip
-        assert summary["skipped_paper_trading"] == 1
-        assert summary["adjusted"] == 0
-        assert summary["total_orders"] == 0
+    adapter = PaperTradingServiceAdapter(
+        user_id=test_user.id,
+        db_session=db_session,
+        strategy_config=strategy_config,
+    )
+
+    # Mock broker
+    mock_broker = MagicMock()
+    mock_broker.is_connected.return_value = True
+    mock_broker.config = MagicMock()
+    mock_broker.config.max_position_size = 200000.0
+
+    # Create pending AMO order
+    pending_order = Order(
+        symbol="RELIANCE",
+        quantity=2000,
+        order_type=OrderType.MARKET,
+        transaction_type=TransactionType.BUY,
+        variety=OrderVariety.AMO,
+        order_id="ORDER_123",
+        status=OrderStatus.OPEN,
+    )
+    pending_order._metadata = {"original_ticker": "RELIANCE.NS"}
+
+    mock_broker.get_pending_orders.return_value = [pending_order]
+    mock_broker.price_provider = MagicMock()
+    mock_broker.price_provider.get_price.return_value = 101.0  # Pre-market price
+    mock_broker.cancel_order.return_value = True
+    mock_broker.place_order.return_value = "ORDER_456"
+
+    adapter.broker = mock_broker
+
+    summary = adapter.adjust_amo_quantities_premarket()
+
+    # Verify adjustment happened (not skipped)
+    assert summary["adjusted"] == 1
+    assert summary["total_orders"] == 1
+    assert summary.get("skipped_paper_trading", 0) == 0  # Should not be skipped
+
+    # Verify new order placed with adjusted quantity
+    assert mock_broker.place_order.called
+    new_order = mock_broker.place_order.call_args[0][0]
+    expected_qty = floor(200000.0 / 101.0)
+    assert new_order.quantity == expected_qty
+    assert new_order.order_type == OrderType.MARKET  # Still MARKET
+    assert new_order.price is None  # Price not set for MARKET orders
 
 
 def test_authentication_failure(mock_auto_trade_engine):
