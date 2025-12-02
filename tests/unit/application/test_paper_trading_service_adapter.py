@@ -241,6 +241,43 @@ class TestPaperTradingEngineAdapter:
         assert placed_order.variety == OrderVariety.AMO
         assert placed_order.price is None  # MARKET orders don't have price parameter
 
+    def test_place_new_entries_prevents_duplicate_symbols_with_different_formats(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that duplicate orders are not placed for same symbol with different formats (XYZ vs XYZ.NS)"""
+        from config.strategy_config import StrategyConfig
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+
+        # Mock broker config with max_position_size
+        mock_paper_broker.config = MagicMock()
+        mock_paper_broker.config.max_position_size = 100000.0
+
+        # Create recommendations with same symbol but different formats
+        recommendations = [
+            Recommendation(ticker="XYZ", verdict="buy", last_close=100.0),  # Without .NS
+            Recommendation(ticker="XYZ.NS", verdict="buy", last_close=100.0),  # With .NS
+        ]
+
+        summary = adapter.place_new_entries(recommendations)
+
+        # Should attempt both but only place one (second should be detected as duplicate)
+        assert summary["attempted"] == 2
+        assert summary["placed"] == 1  # Only one order should be placed
+        assert summary["skipped_duplicates"] == 1  # One should be skipped as duplicate
+
+        # Verify only one order was placed
+        assert mock_paper_broker.place_order.call_count == 1
+
     def test_place_new_entries_respects_max_position_size(
         self, db_session, test_user, mock_paper_broker
     ):
