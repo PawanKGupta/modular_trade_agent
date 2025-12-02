@@ -50,8 +50,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy entire project (API needs access to src/, models/, etc.)
 COPY . .
 
-# Create directories
-RUN mkdir -p data logs && \
+# Create directories with proper permissions
+RUN mkdir -p data logs paper_trading && \
     chown -R trader:trader /app
 
 USER trader
