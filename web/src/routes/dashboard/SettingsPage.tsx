@@ -140,17 +140,17 @@ export function SettingsPage() {
 							</div>
 						</div>
 
-						<div className="space-y-3 mt-4 p-4 border border-[#1e293b] rounded">
-							<h4 className="text-sm font-semibold">Full Authentication Credentials</h4>
+						<div className="space-y-3 mt-4 p-3 sm:p-4 border border-[#1e293b] rounded">
+							<h4 className="text-xs sm:text-sm font-semibold">Full Authentication Credentials</h4>
 							{credsInfo?.has_creds && !showFullCreds && (
 								<div className="text-xs text-[var(--muted)] mb-2">
 									Stored credentials available. Click "Show Full Credentials" above to view/edit.
 								</div>
 							)}
 							<div>
-								<label className="block text-sm mb-1">Mobile Number</label>
+								<label className="block text-xs sm:text-sm mb-1">Mobile Number</label>
 								<input
-									className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 									type="tel"
 									value={mobileNumber}
 									onChange={(e) => setMobileNumber(e.target.value)}
@@ -159,9 +159,9 @@ export function SettingsPage() {
 								/>
 							</div>
 							<div>
-								<label className="block text-sm mb-1">Password</label>
+								<label className="block text-xs sm:text-sm mb-1">Password</label>
 								<input
-									className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 									type="password"
 									value={password}
 									onChange={(e) => setPassword(e.target.value)}
@@ -170,9 +170,9 @@ export function SettingsPage() {
 								/>
 							</div>
 							<div>
-								<label className="block text-sm mb-1">MPIN (for 2FA)</label>
+								<label className="block text-xs sm:text-sm mb-1">MPIN (for 2FA)</label>
 								<input
-									className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 									type="password"
 									value={mpin}
 									onChange={(e) => setMpin(e.target.value)}
@@ -182,9 +182,9 @@ export function SettingsPage() {
 							</div>
 						</div>
 
-						<div className="flex gap-2 mt-4">
+						<div className="flex flex-col sm:flex-row gap-2 mt-4">
 							<button
-								className="bg-blue-600 text-white px-3 py-2 rounded disabled:opacity-50"
+								className="bg-blue-600 text-white px-4 py-3 sm:py-2 rounded disabled:opacity-50 min-h-[44px] sm:min-h-0 text-sm sm:text-base"
 								onClick={async () => {
 									setBrokerMsg(null);
 									if (!apiKey || !apiSecret) {

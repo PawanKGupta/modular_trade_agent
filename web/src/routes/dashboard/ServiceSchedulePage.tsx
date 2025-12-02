@@ -107,8 +107,8 @@ export function ServiceSchedulePage() {
 
 	if (!user || !isAdmin) {
 		return (
-			<div className="p-4">
-				<div className="text-red-400">Access denied. Admin privileges required.</div>
+			<div className="p-2 sm:p-4">
+				<div className="text-xs sm:text-sm text-red-400">Access denied. Admin privileges required.</div>
 			</div>
 		);
 	}
@@ -118,7 +118,7 @@ export function ServiceSchedulePage() {
 	}
 
 	return (
-		<div className="p-4 space-y-6">
+		<div className="p-2 sm:p-4 space-y-4 sm:space-y-6">
 			<div className="flex items-center justify-between">
 				<h1 className="text-xl font-semibold text-[var(--text)]">Service Schedules</h1>
 			</div>
