@@ -1745,6 +1745,9 @@ class PaperTradingEngineAdapter:
                         action="place_new_entries",
                     )
                     summary["placed"] += 1
+                    # Add to current_symbols to prevent duplicates within same batch
+                    # This handles cases where recommendations have both "XYZ" and "XYZ.NS"
+                    current_symbols.add(normalized_ticker)
 
                     # Mark signal as TRADED
                     try:
