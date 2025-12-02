@@ -153,7 +153,7 @@ export function NotificationPreferencesPage() {
 
 			const data = await response.json();
 			setTelegramTestResult(data);
-		} catch {
+		} catch (error) {
 			setTelegramTestResult({
 				success: false,
 				message: 'Failed to test connection. Please try again.',
