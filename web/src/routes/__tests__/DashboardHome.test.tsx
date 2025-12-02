@@ -397,8 +397,11 @@ describe('DashboardHome', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText('Top Holdings')).toBeInTheDocument();
-			expect(screen.getByText('RELIANCE.NS')).toBeInTheDocument();
-			expect(screen.getByText('TCS.NS')).toBeInTheDocument();
+			// Holdings may appear in both mobile card view and desktop table view
+			const relianceElements = screen.getAllByText('RELIANCE.NS');
+			const tcsElements = screen.getAllByText('TCS.NS');
+			expect(relianceElements.length).toBeGreaterThan(0);
+			expect(tcsElements.length).toBeGreaterThan(0);
 		});
 	});
 
