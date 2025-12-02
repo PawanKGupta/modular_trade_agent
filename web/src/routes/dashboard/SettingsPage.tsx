@@ -267,7 +267,7 @@ export function SettingsPage() {
 							)}
 						</div>
 						{brokerMsg && (
-							<div className={`text-sm mt-2 ${brokerMsg.includes('successful') || brokerMsg.includes('OK') ? 'text-green-400' : 'text-red-400'}`}>
+							<div className={`text-xs sm:text-sm mt-2 ${brokerMsg.includes('successful') || brokerMsg.includes('OK') ? 'text-green-400' : 'text-red-400'}`}>
 								{brokerMsg}
 							</div>
 						)}
