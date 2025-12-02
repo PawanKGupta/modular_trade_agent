@@ -98,7 +98,7 @@ export function TradingConfigPage() {
 	};
 
 	if (isLoading || !localConfig) {
-		return <div className="p-4">Loading trading configuration...</div>;
+		return <div className="p-2 sm:p-4 text-xs sm:text-sm">Loading trading configuration...</div>;
 	}
 
 	return (
