@@ -139,11 +139,27 @@ class PaperTradingServiceAdapter:
 
             # Initialize paper trading broker
             self.logger.info("Initializing paper trading broker...", action="initialize")
-            self.broker = PaperTradingBrokerAdapter(self.config)
+            try:
+                self.broker = PaperTradingBrokerAdapter(self.config)
+            except Exception as broker_init_error:
+                self.logger.error(
+                    f"Failed to create paper trading broker: {broker_init_error}",
+                    exc_info=True,
+                    action="initialize",
+                )
+                raise RuntimeError(f"Failed to create paper trading broker: {broker_init_error}") from broker_init_error
 
-            if not self.broker.connect():
-                self.logger.error("Failed to connect to paper trading system", action="initialize")
-                return False
+            try:
+                if not self.broker.connect():
+                    self.logger.error("Failed to connect to paper trading system", action="initialize")
+                    raise RuntimeError("Failed to connect to paper trading system")
+            except Exception as connect_error:
+                self.logger.error(
+                    f"Failed to connect to paper trading system: {connect_error}",
+                    exc_info=True,
+                    action="initialize",
+                )
+                raise RuntimeError(f"Failed to connect to paper trading system: {connect_error}") from connect_error
 
             self.logger.info("? Paper trading broker connected", action="initialize")
 
