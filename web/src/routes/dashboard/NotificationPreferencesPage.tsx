@@ -199,8 +199,8 @@ export function NotificationPreferencesPage() {
 
 			{/* Notification Channels */}
 			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
-				<h2 className="text-lg font-semibold">Notification Channels</h2>
-				<p className="text-sm text-[var(--muted)]">
+				<h2 className="text-base sm:text-lg font-semibold">Notification Channels</h2>
+				<p className="text-xs sm:text-sm text-[var(--muted)]">
 					Choose how you want to receive notifications
 				</p>
 
@@ -295,7 +295,7 @@ export function NotificationPreferencesPage() {
 			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
-						<h2 className="text-lg font-semibold">Order Events</h2>
+						<h2 className="text-base sm:text-lg font-semibold">Order Events</h2>
 						<p className="text-sm text-[var(--muted)]">
 							Control which order-related events trigger notifications
 						</p>
@@ -564,8 +564,8 @@ export function NotificationPreferencesPage() {
 
 			{/* Quiet Hours */}
 			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
-				<h2 className="text-lg font-semibold">Quiet Hours</h2>
-				<p className="text-sm text-[var(--muted)]">
+				<h2 className="text-base sm:text-lg font-semibold">Quiet Hours</h2>
+				<p className="text-xs sm:text-sm text-[var(--muted)]">
 					Set a time range when notifications will be suppressed (e.g., 22:00 - 08:00 for
 					nighttime)
 				</p>
