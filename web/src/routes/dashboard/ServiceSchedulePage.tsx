@@ -114,7 +114,7 @@ export function ServiceSchedulePage() {
 	}
 
 	if (isLoading) {
-		return <div className="p-4 text-[var(--text)]">Loading schedules...</div>;
+		return <div className="p-2 sm:p-4 text-xs sm:text-sm text-[var(--text)]">Loading schedules...</div>;
 	}
 
 	return (

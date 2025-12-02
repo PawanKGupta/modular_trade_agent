@@ -164,7 +164,7 @@ export function NotificationPreferencesPage() {
 	};
 
 	if (isLoading || !localPrefs) {
-		return <div className="p-4">Loading notification preferences...</div>;
+		return <div className="p-2 sm:p-4 text-xs sm:text-sm">Loading notification preferences...</div>;
 	}
 
 	return (
