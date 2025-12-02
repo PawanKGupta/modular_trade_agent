@@ -8,13 +8,16 @@ test('auth -> dashboard -> admin users -> orders tabs', async ({ authenticatedPa
   // Should land on dashboard - verify main content
   await expect(authenticatedPage.locator('main, [role="main"]')).toBeVisible();
 
+  // Scope queries to sidebar navigation to avoid matching dashboard quick action links
+  const sidebar = authenticatedPage.locator('aside nav, aside');
+
   // Navigate to Admin Users (expand Administration menu first)
-  const adminButton = authenticatedPage.getByRole('button', { name: /Administration/i });
+  const adminButton = sidebar.getByRole('button', { name: /Administration/i });
   if (await adminButton.isVisible().catch(() => false)) {
     await adminButton.click();
     await authenticatedPage.waitForTimeout(300);
 
-    const usersLink = authenticatedPage.getByRole('link', { name: /Users/i });
+    const usersLink = sidebar.getByRole('link', { name: /Users/i });
     if (await usersLink.isVisible().catch(() => false)) {
       await usersLink.click();
       await authenticatedPage.waitForLoadState('networkidle');
@@ -27,13 +30,13 @@ test('auth -> dashboard -> admin users -> orders tabs', async ({ authenticatedPa
   }
 
   // Orders page and tabs - expand Trading category first
-  const tradingButton = authenticatedPage.getByRole('button', { name: /Trading/i });
+  const tradingButton = sidebar.getByRole('button', { name: /Trading/i });
   if (await tradingButton.isVisible().catch(() => false)) {
     await tradingButton.click();
     await authenticatedPage.waitForTimeout(300);
   }
 
-  await authenticatedPage.getByRole('link', { name: /Orders/i }).click();
+  await sidebar.getByRole('link', { name: /Orders/i }).click();
   await authenticatedPage.waitForLoadState('networkidle');
 
   // Verify orders page loaded
