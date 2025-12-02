@@ -89,8 +89,9 @@ class DummySignal(SimpleNamespace):
 
 
 class DummySignalsRepo:
-    def __init__(self, db):
+    def __init__(self, db, user_id=None):
         self.db = db
+        self.user_id = user_id
         self.recent_items = []
         self.by_date_items = {}
         self.last_n_dates_items = []
@@ -112,15 +113,34 @@ class DummySignalsRepo:
         self.last_n_dates_called.append((n, limit))
         return self.last_n_dates_items
 
-    def mark_as_rejected(self, symbol):
+    def mark_as_rejected(self, symbol, user_id=None):
         self.mark_rejected_called.append(symbol)
         return self.mark_rejected_result
+
+    def get_signals_with_user_status(self, user_id, limit=100, status_filter=None):
+        """Mock method for per-user status - returns signals with effective status"""
+        # For testing, just return signals as (signal, signal.status) tuples
+        if hasattr(self, 'recent_items') and self.recent_items:
+            items = self.recent_items
+        elif hasattr(self, 'by_date_items') and self.by_date_items:
+            items = list(self.by_date_items.values())[0] if self.by_date_items else []
+        elif hasattr(self, 'last_n_dates_items') and self.last_n_dates_items:
+            items = self.last_n_dates_items
+        else:
+            items = []
+
+        # Apply status filter if provided
+        if status_filter:
+            items = [s for s in items if s.status == status_filter]
+
+        # Return as (signal, effective_status) tuples
+        return [(s, s.status) for s in items]
 
 
 @pytest.fixture
 def signals_repo(monkeypatch):
     repo = DummySignalsRepo(db=None)
-    monkeypatch.setattr(signals, "SignalsRepository", lambda db: repo)
+    monkeypatch.setattr(signals, "SignalsRepository", lambda db, user_id=None: repo)
     return repo
 
 

@@ -1755,10 +1755,10 @@ class PaperTradingEngineAdapter:
                             SignalsRepository,
                         )
 
-                        signals_repo = SignalsRepository(self.db)
-                        if signals_repo.mark_as_traded(symbol):
+                        signals_repo = SignalsRepository(self.db, user_id=self.user_id)
+                        if signals_repo.mark_as_traded(symbol, user_id=self.user_id):
                             self.logger.info(
-                                f"Marked signal for {symbol} as TRADED",
+                                f"Marked signal for {symbol} as TRADED (user {self.user_id})",
                                 action="place_new_entries",
                             )
                     except Exception as mark_error:

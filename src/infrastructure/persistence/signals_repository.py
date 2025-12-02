@@ -5,13 +5,14 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Signals, SignalStatus
+from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus
 from src.infrastructure.db.timezone_utils import ist_now
 
 
 class SignalsRepository:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: int | None = None):
         self.db = db
+        self.user_id = user_id  # Optional: for per-user operations
 
     def recent(self, limit: int = 100, active_only: bool = False) -> list[Signals]:
         """Get recent signals, optionally filtered by status"""
@@ -90,41 +91,123 @@ class SignalsRepository:
         self.db.commit()
         return result.rowcount
 
-    def mark_as_traded(self, symbol: str) -> bool:
+    def mark_as_traded(self, symbol: str, user_id: int | None = None) -> bool:
         """
-        Mark a signal as TRADED when an order is placed.
+        Mark a signal as TRADED for a specific user.
+
+        Creates a UserSignalStatus entry to track per-user status.
+        The base signal remains ACTIVE for other users.
 
         Args:
             symbol: Stock symbol
+            user_id: User ID (uses self.user_id if not provided)
 
         Returns:
             True if signal was found and marked, False otherwise
         """
-        result = self.db.execute(
-            update(Signals)
-            .where(Signals.symbol == symbol, Signals.status == SignalStatus.ACTIVE)
-            .values(status=SignalStatus.TRADED)
-        )
-        self.db.commit()
-        return result.rowcount > 0
+        user_id = user_id or self.user_id
+        if not user_id:
+            # Fallback to old behavior if no user_id (backward compatibility)
+            result = self.db.execute(
+                update(Signals)
+                .where(Signals.symbol == symbol, Signals.status == SignalStatus.ACTIVE)
+                .values(status=SignalStatus.TRADED)
+            )
+            self.db.commit()
+            return result.rowcount > 0
 
-    def mark_as_rejected(self, symbol: str) -> bool:
+        # Find the signal
+        signal = self.db.execute(
+            select(Signals)
+            .where(Signals.symbol == symbol)
+            .where(Signals.status.in_([SignalStatus.ACTIVE, SignalStatus.EXPIRED]))
+            .order_by(Signals.ts.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+        if not signal:
+            return False
+
+        # Create or update user-specific status
+        existing = self.db.execute(
+            select(UserSignalStatus)
+            .where(UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal.id)
+        ).scalar_one_or_none()
+
+        if existing:
+            existing.status = SignalStatus.TRADED
+            existing.marked_at = ist_now()
+        else:
+            user_status = UserSignalStatus(
+                user_id=user_id,
+                signal_id=signal.id,
+                symbol=symbol,
+                status=SignalStatus.TRADED,
+                marked_at=ist_now()
+            )
+            self.db.add(user_status)
+
+        self.db.commit()
+        return True
+
+    def mark_as_rejected(self, symbol: str, user_id: int | None = None) -> bool:
         """
-        Mark a signal as REJECTED when user manually rejects it.
+        Mark a signal as REJECTED for a specific user.
+
+        Creates a UserSignalStatus entry to track per-user status.
+        The base signal remains ACTIVE for other users.
 
         Args:
             symbol: Stock symbol
+            user_id: User ID (uses self.user_id if not provided)
 
         Returns:
             True if signal was found and marked, False otherwise
         """
-        result = self.db.execute(
-            update(Signals)
-            .where(Signals.symbol == symbol, Signals.status == SignalStatus.ACTIVE)
-            .values(status=SignalStatus.REJECTED)
-        )
+        user_id = user_id or self.user_id
+        if not user_id:
+            # Fallback to old behavior if no user_id (backward compatibility)
+            result = self.db.execute(
+                update(Signals)
+                .where(Signals.symbol == symbol, Signals.status == SignalStatus.ACTIVE)
+                .values(status=SignalStatus.REJECTED)
+            )
+            self.db.commit()
+            return result.rowcount > 0
+
+        # Find the signal
+        signal = self.db.execute(
+            select(Signals)
+            .where(Signals.symbol == symbol)
+            .where(Signals.status.in_([SignalStatus.ACTIVE, SignalStatus.EXPIRED]))
+            .order_by(Signals.ts.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+        if not signal:
+            return False
+
+        # Create or update user-specific status
+        existing = self.db.execute(
+            select(UserSignalStatus)
+            .where(UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal.id)
+        ).scalar_one_or_none()
+
+        if existing:
+            existing.status = SignalStatus.REJECTED
+            existing.marked_at = ist_now()
+        else:
+            user_status = UserSignalStatus(
+                user_id=user_id,
+                signal_id=signal.id,
+                symbol=symbol,
+                status=SignalStatus.REJECTED,
+                marked_at=ist_now()
+            )
+            self.db.add(user_status)
+
         self.db.commit()
-        return result.rowcount > 0
+        return True
 
     def get_active_signals(self, limit: int = 100) -> list[Signals]:
         """Get only ACTIVE signals"""
@@ -135,3 +218,68 @@ class SignalsRepository:
             .limit(limit)
         )
         return list(self.db.execute(stmt).scalars().all())
+
+    def get_user_signal_status(self, signal_id: int, user_id: int) -> SignalStatus | None:
+        """
+        Get user-specific status for a signal.
+
+        Returns:
+            User's status if they have one, otherwise None (uses base signal status)
+        """
+        user_status = self.db.execute(
+            select(UserSignalStatus)
+            .where(UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal_id)
+        ).scalar_one_or_none()
+
+        return user_status.status if user_status else None
+
+    def get_signals_with_user_status(
+        self,
+        user_id: int,
+        limit: int = 100,
+        status_filter: SignalStatus | None = None
+    ) -> list[tuple[Signals, SignalStatus]]:
+        """
+        Get signals with per-user status applied.
+
+        Returns list of (signal, effective_status) tuples where:
+        - effective_status is user's custom status (TRADED/REJECTED) if they have one
+        - otherwise it's the base signal status (ACTIVE/EXPIRED)
+
+        Args:
+            user_id: User ID to get personalized status for
+            limit: Maximum number of signals to return
+            status_filter: Filter by effective status (after applying user overrides)
+
+        Returns:
+            List of (Signals, SignalStatus) tuples
+        """
+        from sqlalchemy import outerjoin
+
+        # Join signals with user_signal_status
+        stmt = (
+            select(Signals, UserSignalStatus.status)
+            .select_from(
+                outerjoin(
+                    Signals,
+                    UserSignalStatus,
+                    (Signals.id == UserSignalStatus.signal_id) & (UserSignalStatus.user_id == user_id)
+                )
+            )
+            .order_by(Signals.ts.desc())
+            .limit(limit)
+        )
+
+        results = self.db.execute(stmt).all()
+
+        # Build list with effective status
+        signals_with_status = []
+        for signal, user_status in results:
+            # Use user status if exists, otherwise use base signal status
+            effective_status = user_status if user_status else signal.status
+
+            # Apply status filter if provided
+            if status_filter is None or effective_status == status_filter:
+                signals_with_status.append((signal, effective_status))
+
+        return signals_with_status
