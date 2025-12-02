@@ -204,9 +204,10 @@ class TestPaperTradingEngineAdapter:
         assert "TCS.NS" in tickers or "TCS" in tickers
 
     def test_place_new_entries(self, db_session, test_user, mock_paper_broker):
-        """Test placing new entries"""
+        """Test placing new entries as MARKET AMO orders"""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
+        from modules.kotak_neo_auto_trader.domain import OrderType, OrderVariety
 
         strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
 
@@ -233,6 +234,12 @@ class TestPaperTradingEngineAdapter:
         assert summary["attempted"] == 1
         assert summary["placed"] == 1
         assert mock_paper_broker.place_order.called
+
+        # Verify order is MARKET AMO type (matches real broker)
+        placed_order = mock_paper_broker.place_order.call_args[0][0]
+        assert placed_order.order_type == OrderType.MARKET
+        assert placed_order.variety == OrderVariety.AMO
+        assert placed_order.price is None  # MARKET orders don't have price parameter
 
     def test_place_new_entries_respects_max_position_size(
         self, db_session, test_user, mock_paper_broker

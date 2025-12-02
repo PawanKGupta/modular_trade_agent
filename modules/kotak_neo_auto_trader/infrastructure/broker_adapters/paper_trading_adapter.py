@@ -21,6 +21,7 @@ from ...domain import (
     Order,
     OrderStatus,
     OrderType,
+    OrderVariety,
     TransactionType,
 )
 from ..persistence import PaperTradeStore
@@ -169,6 +170,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             f"? Placing order: {order.transaction_type.value} "
             f"{order.quantity} {order.symbol} @ "
             f"{order.order_type.value}"
+            f"{' (AMO)' if order.is_amo_order() else ''}"
         )
 
         try:
@@ -178,9 +180,23 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             # Save order
             self._save_order(order)
 
-            # Try to execute immediately (for market orders)
-            if order.order_type == OrderType.MARKET:
-                self._execute_order(order)
+            # For AMO orders: Always save as PENDING/OPEN, never execute immediately
+            # Execution happens at 9:15 AM after quantity adjustment at 9:05 AM
+            if order.is_amo_order():
+                logger.info(
+                    f"? AMO order placed - saved as PENDING (will execute at 9:15 AM): {order.symbol}"
+                )
+                # Order remains in OPEN status, will be executed at market open
+            # For regular market orders, execute immediately if market is open
+            elif order.order_type == OrderType.MARKET:
+                # Check if market is open before executing
+                if self.order_simulator._is_market_open(order):
+                    self._execute_order(order)
+                else:
+                    logger.info(
+                        f"? Market order placed during off-market hours - will execute when market opens: {order.symbol}"
+                    )
+            # For limit orders, they will be checked by check_and_execute_pending_orders()
 
             return order_id
 
@@ -410,6 +426,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
     def check_and_execute_pending_orders(self) -> dict:
         """
         Check all pending limit orders and execute if price conditions are met
+        This includes AMO orders that were placed during off-market hours
 
         Returns:
             Summary dict with counts of checked and executed orders
@@ -417,15 +434,22 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         if not self.is_connected():
             raise ConnectionError("Not connected")
 
-        summary = {"checked": 0, "executed": 0, "still_pending": 0}
+        summary = {"checked": 0, "executed": 0, "still_pending": 0, "amo_executed": 0}
 
         pending_orders = self.get_pending_orders()
         summary["checked"] = len(pending_orders)
 
         for order in pending_orders:
-            # Only check limit orders (market orders execute immediately)
+            # Check limit orders (including AMO orders)
             if order.order_type != OrderType.LIMIT:
                 continue
+
+            # For AMO orders, check if it's time to execute
+            if order.is_amo_order():
+                if not self.order_simulator.should_execute_amo(order):
+                    # Not yet time to execute AMO order
+                    summary["still_pending"] += 1
+                    continue
 
             # Try to execute the order
             try:
@@ -434,8 +458,10 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 # Check if order executed (status changed from OPEN/PENDING)
                 if order.is_executed():
                     summary["executed"] += 1
+                    if order.is_amo_order():
+                        summary["amo_executed"] += 1
                     logger.info(
-                        f"Pending limit order executed: {order.symbol} "
+                        f"Pending {'AMO ' if order.is_amo_order() else ''}limit order executed: {order.symbol} "
                         f"{order.transaction_type.value} @ Rs {order.execution_price.amount:.2f}"
                     )
                 else:
@@ -446,8 +472,8 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         if summary["executed"] > 0:
             logger.info(
-                f"Pending orders check: {summary['executed']} executed, "
-                f"{summary['still_pending']} still pending"
+                f"Pending orders check: {summary['executed']} executed "
+                f"({summary['amo_executed']} AMO), {summary['still_pending']} still pending"
             )
 
         return summary
@@ -669,12 +695,18 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 if price_clean:
                     price = Money(float(price_clean))
 
+        # Restore variety (default to REGULAR if not present for backward compatibility)
+        variety = OrderVariety.REGULAR
+        if "variety" in order_dict:
+            variety = OrderVariety[order_dict["variety"]]
+
         order = Order(
             symbol=order_dict["symbol"],
             quantity=order_dict["quantity"],
             order_type=OrderType[order_dict["order_type"]],
             transaction_type=TransactionType[order_dict["transaction_type"]],
             price=price,
+            variety=variety,  # Restore variety
             order_id=order_dict.get("order_id"),
             status=OrderStatus[order_dict["status"]],
             remarks=order_dict.get("remarks", ""),
