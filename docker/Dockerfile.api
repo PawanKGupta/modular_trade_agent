@@ -35,7 +35,10 @@ COPY server/requirements.txt ./server-requirements.txt
 # Install dependencies (main requirements first, then server-specific)
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir -r server-requirements.txt
+    pip install --no-cache-dir -r server-requirements.txt && \
+    pip install --no-cache-dir --no-deps git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client && \
+    python -c "from neo_api_client import NeoAPI; print('✓ Kotak Neo SDK installed successfully')" || \
+    (echo "ERROR: Failed to install Kotak Neo SDK" && exit 1)
 
 # Copy entire project (API needs access to src/, models/, etc.)
 COPY . .
