@@ -296,7 +296,7 @@ export function NotificationPreferencesPage() {
 				<div className="flex items-center justify-between">
 					<div>
 						<h2 className="text-base sm:text-lg font-semibold">Order Events</h2>
-						<p className="text-sm text-[var(--muted)]">
+						<p className="text-xs sm:text-sm text-[var(--muted)]">
 							Control which order-related events trigger notifications
 						</p>
 					</div>
@@ -382,7 +382,7 @@ export function NotificationPreferencesPage() {
 				<div className="flex items-center justify-between">
 					<div>
 						<h2 className="text-lg font-semibold">Retry Queue Events</h2>
-						<p className="text-sm text-[var(--muted)]">
+						<p className="text-xs sm:text-sm text-[var(--muted)]">
 							Control notifications for retry queue operations
 						</p>
 					</div>
@@ -449,7 +449,7 @@ export function NotificationPreferencesPage() {
 				<div className="flex items-center justify-between">
 					<div>
 						<h2 className="text-lg font-semibold">System Events</h2>
-						<p className="text-sm text-[var(--muted)]">
+						<p className="text-xs sm:text-sm text-[var(--muted)]">
 							Control notifications for system-level events
 						</p>
 					</div>
@@ -509,7 +509,7 @@ export function NotificationPreferencesPage() {
 				<div className="flex items-center justify-between">
 					<div>
 						<h2 className="text-lg font-semibold">Service Events</h2>
-						<p className="text-sm text-[var(--muted)]">
+						<p className="text-xs sm:text-sm text-[var(--muted)]">
 							Control notifications for service lifecycle events
 						</p>
 					</div>
