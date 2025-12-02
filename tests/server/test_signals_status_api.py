@@ -19,7 +19,7 @@ from src.infrastructure.db.timezone_utils import ist_now  # noqa: E402
 def _create_authenticated_client():
     """Helper to create authenticated test client"""
     import uuid
-    import jwt as pyjwt
+    from jose import jwt  # Use python-jose (already in server requirements)
 
     client = TestClient(app)
 
@@ -34,8 +34,19 @@ def _create_authenticated_client():
     token = response.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     
-    # Decode token to get user_id
-    decoded = pyjwt.decode(token, options={"verify_signature": False})
+    # Decode token to get user_id (python-jose requires key but we bypass verification)
+    try:
+        # Try to decode without verification (python-jose style)
+        decoded = jwt.decode(token, key="", options={"verify_signature": False})
+    except Exception:
+        # Fallback: manually parse JWT payload (base64 decode middle part)
+        import base64
+        import json
+        payload = token.split('.')[1]
+        # Add padding if needed
+        payload += '=' * (4 - len(payload) % 4)
+        decoded = json.loads(base64.urlsafe_b64decode(payload))
+    
     user_id = decoded.get("uid")
 
     return client, headers, user_id
