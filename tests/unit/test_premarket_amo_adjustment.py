@@ -12,7 +12,7 @@ import pytest
 
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 from src.application.services.paper_trading_service_adapter import PaperTradingServiceAdapter
-from src.infrastructure.db.models import UserTradingConfig, Users
+from src.infrastructure.db.models import Users, UserTradingConfig
 
 
 @pytest.fixture
@@ -446,7 +446,10 @@ def test_database_update_on_success(mock_auto_trade_engine):
                 engine.orders_repo.update.assert_called_once()
 
                 # Verify Telegram notification was sent
-                engine.telegram_notifier.send_message.assert_called_once()
+                engine.telegram_notifier.notify_system_alert.assert_called_once()
+                call_args = engine.telegram_notifier.notify_system_alert.call_args
+                assert call_args[1]["alert_type"] == "PRE_MARKET_ADJUSTMENT"
+                assert call_args[1]["severity"] == "INFO"
 
 
 def test_paper_trading_adjustment_updates_quantity(db_session, test_user):

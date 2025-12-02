@@ -4,12 +4,13 @@ Send Alerts Use Case
 Handles sending trading alerts via notifications.
 """
 
-from typing import List
-from ..dto.analysis_response import BulkAnalysisResponse, AnalysisResponse
+from datetime import datetime
 
 # Bridge to legacy code
 from core.telegram import send_telegram
 from utils.logger import logger
+
+from ..dto.analysis_response import AnalysisResponse, BulkAnalysisResponse
 
 
 class SendAlertsUseCase:
@@ -70,7 +71,7 @@ class SendAlertsUseCase:
             return False
 
     def _format_telegram_message(
-        self, buy_candidates: List[AnalysisResponse], strong_buys: List[AnalysisResponse]
+        self, buy_candidates: list[AnalysisResponse], strong_buys: list[AnalysisResponse]
     ) -> str:
         """
         Format Telegram message for buy candidates
@@ -98,6 +99,10 @@ class SendAlertsUseCase:
             msg += "\n? *BUY* candidates:\n"
             for i, stock in enumerate(regular_buys, 1):
                 msg += self._format_stock_info(stock, i)
+
+        # Add timestamp for context
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        msg += f"\n\n_Generated: {timestamp}_"
 
         return msg
 

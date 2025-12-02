@@ -675,6 +675,9 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
 
     # Send Telegram notification with final results (after backtest scoring if enabled)
     if buys:
+        # Add timestamp for context
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         msg_prefix = "*Reversal Buy Candidates (today)*"
         if enable_backtest_scoring:
             msg_prefix += " *with Backtest Scoring*"
@@ -720,6 +723,9 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
                 enhanced_info = get_enhanced_stock_info(b, i, is_strong_buy=False)
                 if enhanced_info:  # Skip stocks with invalid parameters
                     msg += enhanced_info
+
+        # Add timestamp at the end for context
+        msg += f"\n\n_Generated: {timestamp}_"
 
         send_telegram(msg)
         scoring_info = " (with backtest scoring)" if enable_backtest_scoring else ""
