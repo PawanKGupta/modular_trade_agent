@@ -58,7 +58,7 @@ def buying_zone(
         limit=limit,
         status_filter=status_enum
     )
-    
+
     # If we already filtered by date, filter the results
     if date_filter:
         base_signal_ids = {s.id for s in base_signals}

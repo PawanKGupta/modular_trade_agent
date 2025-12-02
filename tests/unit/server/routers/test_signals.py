@@ -116,7 +116,7 @@ class DummySignalsRepo:
     def mark_as_rejected(self, symbol, user_id=None):
         self.mark_rejected_called.append(symbol)
         return self.mark_rejected_result
-    
+
     def get_signals_with_user_status(self, user_id, limit=100, status_filter=None):
         """Mock method for per-user status - returns signals with effective status"""
         # For testing, just return signals as (signal, signal.status) tuples
@@ -128,11 +128,11 @@ class DummySignalsRepo:
             items = self.last_n_dates_items
         else:
             items = []
-        
+
         # Apply status filter if provided
         if status_filter:
             items = [s for s in items if s.status == status_filter]
-        
+
         # Return as (signal, effective_status) tuples
         return [(s, s.status) for s in items]
 
