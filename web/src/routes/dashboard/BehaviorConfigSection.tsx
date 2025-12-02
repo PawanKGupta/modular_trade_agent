@@ -10,20 +10,20 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 	const isDefault = (key: keyof TradingConfig) => config[key] === defaultConfig[key];
 
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
-			<h2 className="text-lg font-semibold mb-4">Behavior Settings</h2>
+		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
+			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Behavior Settings</h2>
 
-			<div className="space-y-4">
+			<div className="space-y-3 sm:space-y-4">
 				<div>
-					<label htmlFor="allow_duplicate_recommendations_same_day" className="flex items-center gap-2">
+					<label htmlFor="allow_duplicate_recommendations_same_day" className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
 						<input
 							id="allow_duplicate_recommendations_same_day"
 							type="checkbox"
 							checked={config.allow_duplicate_recommendations_same_day}
 							onChange={(e) => onChange({ allow_duplicate_recommendations_same_day: e.target.checked })}
-							className="rounded"
+							className="rounded w-4 h-4 sm:w-auto sm:h-auto"
 						/>
-						<span className="text-sm">
+						<span className="text-xs sm:text-sm">
 							Allow Duplicate Recommendations Same Day
 							{!isDefault('allow_duplicate_recommendations_same_day') && <span className="text-yellow-400 ml-1">*</span>}
 						</span>

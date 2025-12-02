@@ -14,12 +14,12 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 	const paperCapitalChange = config.paper_trading_initial_capital - (defaultConfig.paper_trading_initial_capital ?? 300000);
 
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
-			<h2 className="text-lg font-semibold mb-4">Capital & Position Management</h2>
+		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
+			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Capital & Position Management</h2>
 
-			<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+			<div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
 				<div>
-					<label htmlFor="user_capital" className="block text-sm mb-1">
+					<label htmlFor="user_capital" className="block text-xs sm:text-sm mb-1">
 						Capital per Trade (Rs )
 						{!isDefault('user_capital') && <span className="text-yellow-400 ml-1">*</span>}
 					</label>
@@ -30,7 +30,7 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 						min="0"
 						value={config.user_capital}
 						onChange={(e) => onChange({ user_capital: parseFloat(e.target.value) || 200000 })}
-						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+						className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 					/>
 					<div className="text-xs text-[var(--muted)] mt-1">
 						Default: Rs {defaultConfig.user_capital.toLocaleString('en-IN')}

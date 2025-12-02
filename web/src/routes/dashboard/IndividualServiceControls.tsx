@@ -174,11 +174,11 @@ export function IndividualServiceControls({
 	};
 
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-4">
-			<div className="flex items-start justify-between mb-3">
+		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">
+			<div className="flex items-start justify-between mb-2 sm:mb-3">
 				<div className="flex-1">
-					<div className="flex items-center gap-2 mb-1">
-						<h3 className="text-base font-semibold text-[var(--text)]">{taskDisplayName}</h3>
+					<div className="flex flex-wrap items-center gap-2 mb-1">
+						<h3 className="text-sm sm:text-base font-semibold text-[var(--text)]">{taskDisplayName}</h3>
 						<div
 							className={`px-2 py-0.5 rounded text-xs font-medium ${
 								isServiceActive
@@ -195,13 +195,13 @@ export function IndividualServiceControls({
 						)}
 					</div>
 					{taskDescription && (
-						<p className="text-sm text-[var(--muted)] mb-2">{taskDescription}</p>
+						<p className="text-xs sm:text-sm text-[var(--muted)] mb-2">{taskDescription}</p>
 					)}
 				</div>
 			</div>
 
 			{/* Status Info */}
-			<div className="grid grid-cols-2 gap-3 mb-3 text-sm">
+			<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 mb-2 sm:mb-3 text-xs sm:text-sm">
 				{service.last_execution_at && (
 					<div>
 						<div className="text-[var(--muted)] mb-1">Last Execution</div>
@@ -251,17 +251,17 @@ export function IndividualServiceControls({
 
 			{/* Conflict Warning */}
 			{showConflictWarning && conflictMessage && (
-				<div className="mb-3 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-sm text-yellow-400">
+				<div className="mb-2 sm:mb-3 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-xs sm:text-sm text-yellow-400">
 					⚠ {conflictMessage}
 				</div>
 			)}
 
 			{/* Action Buttons */}
-			<div className="flex gap-2">
+			<div className="flex flex-col sm:flex-row gap-2">
 				<button
 					onClick={handleStart}
 					disabled={!canStartIndividual || startMutation.isPending || stopMutation.isPending}
-					className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+					className={`px-3 py-2.5 sm:py-1.5 rounded text-xs sm:text-sm font-medium transition-colors min-h-[44px] sm:min-h-0 ${
 						!canStartIndividual || startMutation.isPending || stopMutation.isPending
 							? 'bg-gray-600 text-gray-400 cursor-not-allowed'
 							: 'bg-green-600 hover:bg-green-700 text-white'
@@ -281,7 +281,7 @@ export function IndividualServiceControls({
 				<button
 					onClick={handleStop}
 					disabled={!service.is_running || startMutation.isPending || stopMutation.isPending}
-					className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+					className={`px-3 py-2.5 sm:py-1.5 rounded text-xs sm:text-sm font-medium transition-colors min-h-[44px] sm:min-h-0 ${
 						!service.is_running || startMutation.isPending || stopMutation.isPending
 							? 'bg-gray-600 text-gray-400 cursor-not-allowed'
 							: 'bg-red-600 hover:bg-red-700 text-white'
@@ -292,7 +292,7 @@ export function IndividualServiceControls({
 				<button
 					onClick={handleRunOnce}
 					disabled={!canRunOnce || runOnceMutation.isPending || isRunOnceRunning}
-					className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+					className={`px-3 py-2.5 sm:py-1.5 rounded text-xs sm:text-sm font-medium transition-colors min-h-[44px] sm:min-h-0 ${
 						!canRunOnce || runOnceMutation.isPending || isRunOnceRunning
 							? 'bg-gray-600 text-gray-400 cursor-not-allowed'
 							: 'bg-blue-600 hover:bg-blue-700 text-white'

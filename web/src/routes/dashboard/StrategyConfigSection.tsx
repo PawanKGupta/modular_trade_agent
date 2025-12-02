@@ -10,15 +10,15 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 	const isDefault = (key: keyof TradingConfig) => config[key] === defaultConfig[key];
 
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
-			<h2 className="text-lg font-semibold mb-4">Strategy Parameters</h2>
+		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
+			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Strategy Parameters</h2>
 
 			{/* RSI Configuration */}
-			<div className="mb-6">
-				<h3 className="text-sm font-medium mb-3 text-[var(--muted)]">RSI Configuration</h3>
-				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+			<div className="mb-4 sm:mb-6">
+				<h3 className="text-xs sm:text-sm font-medium mb-2 sm:mb-3 text-[var(--muted)]">RSI Configuration</h3>
+				<div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
 					<div>
-						<label htmlFor="rsi_period" className="block text-sm mb-1">
+						<label htmlFor="rsi_period" className="block text-xs sm:text-sm mb-1">
 							RSI Period
 							{!isDefault('rsi_period') && <span className="text-yellow-400 ml-1">*</span>}
 						</label>
@@ -29,7 +29,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 							max="50"
 							value={config.rsi_period}
 							onChange={(e) => onChange({ rsi_period: parseInt(e.target.value) || 10 })}
-							className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+							className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 						/>
 						<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.rsi_period}</div>
 					</div>

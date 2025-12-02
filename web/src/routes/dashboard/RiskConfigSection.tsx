@@ -14,15 +14,15 @@ export function RiskConfigSection({ config, defaultConfig, onChange }: RiskConfi
 	};
 
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
-			<h2 className="text-lg font-semibold mb-4">Risk Management</h2>
+		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
+			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Risk Management</h2>
 
 			{/* Stop Loss Configuration */}
-			<div className="mb-6">
-				<h3 className="text-sm font-medium mb-3 text-[var(--muted)]">Stop Loss Percentages</h3>
-				<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+			<div className="mb-4 sm:mb-6">
+				<h3 className="text-xs sm:text-sm font-medium mb-2 sm:mb-3 text-[var(--muted)]">Stop Loss Percentages</h3>
+				<div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
 					<div>
-						<label htmlFor="min_stop_loss_pct" className="block text-sm mb-1">
+						<label htmlFor="min_stop_loss_pct" className="block text-xs sm:text-sm mb-1">
 							Min Stop Loss (%)
 							{!isDefault('min_stop_loss_pct') && <span className="text-yellow-400 ml-1">*</span>}
 						</label>
@@ -34,7 +34,7 @@ export function RiskConfigSection({ config, defaultConfig, onChange }: RiskConfi
 							max="1"
 							value={config.min_stop_loss_pct ?? ''}
 							onChange={(e) => onChange({ min_stop_loss_pct: e.target.value ? parseFloat(e.target.value) : null })}
-							className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+							className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 							placeholder="0.03"
 						/>
 						<div className="text-xs text-[var(--muted)] mt-1">

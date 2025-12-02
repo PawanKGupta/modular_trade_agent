@@ -22,8 +22,8 @@ export function IndividualServicesSection({
 
 	if (isLoading) {
 		return (
-			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
-				<div className="text-[var(--text)]">Loading individual services...</div>
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
+				<div className="text-xs sm:text-sm text-[var(--text)]">Loading individual services...</div>
 			</div>
 		);
 	}
@@ -33,8 +33,8 @@ export function IndividualServicesSection({
 
 	if (serviceEntries.length === 0) {
 		return (
-			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
-				<div className="text-[var(--text)]">No individual services available</div>
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
+				<div className="text-xs sm:text-sm text-[var(--text)]">No individual services available</div>
 			</div>
 		);
 	}
@@ -45,19 +45,19 @@ export function IndividualServicesSection({
 	);
 
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
-			<div className="mb-4">
-				<h2 className="text-lg font-semibold text-[var(--text)] mb-2">
+		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
+			<div className="mb-3 sm:mb-4">
+				<h2 className="text-base sm:text-lg font-semibold text-[var(--text)] mb-2">
 					Individual Service Management
 				</h2>
-				<p className="text-sm text-[var(--muted)]">
+				<p className="text-xs sm:text-sm text-[var(--muted)]">
 					{unifiedServiceRunning
 						? 'Unified service is running. Individual services and most "Run Once" tasks are disabled to prevent broker session conflicts.'
 						: 'Start individual services to run specific tasks on their own schedule.'}
 				</p>
 			</div>
 
-			<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+			<div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
 				{userServices.map(([taskName, service]) => (
 					<IndividualServiceControls
 						key={taskName}

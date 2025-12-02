@@ -6,22 +6,22 @@ interface ConfigPresetsProps {
 
 export function ConfigPresets({ onApply }: ConfigPresetsProps) {
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-6">
-			<h2 className="text-lg font-semibold mb-4">Configuration Presets</h2>
-			<p className="text-sm text-[var(--muted)] mb-4">
+		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
+			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Configuration Presets</h2>
+			<p className="text-xs sm:text-sm text-[var(--muted)] mb-3 sm:mb-4">
 				Apply predefined configuration templates. This will update your settings but won't save until you click "Save Changes".
 			</p>
-			<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+			<div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
 				{CONFIG_PRESETS.map((preset) => (
 					<div
 						key={preset.id}
-						className="p-4 border border-[#1e293b] rounded-lg hover:border-blue-500/50 transition-colors"
+						className="p-3 sm:p-4 border border-[#1e293b] rounded-lg hover:border-blue-500/50 transition-colors"
 					>
-						<h3 className="font-medium mb-1">{preset.name}</h3>
-						<p className="text-xs text-[var(--muted)] mb-3">{preset.description}</p>
+						<h3 className="text-sm sm:text-base font-medium mb-1">{preset.name}</h3>
+						<p className="text-xs text-[var(--muted)] mb-2 sm:mb-3">{preset.description}</p>
 						<button
 							onClick={() => onApply(preset.config)}
-							className="w-full px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm"
+							className="w-full px-3 py-2.5 sm:py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm min-h-[44px] sm:min-h-0"
 						>
 							Apply Preset
 						</button>
