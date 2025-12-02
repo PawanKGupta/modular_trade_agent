@@ -176,8 +176,10 @@ class TestMultiUserTradingServiceNotifications:
         # Verify Telegram notification was sent
         mock_telegram_notifier.notify_system_alert.assert_called_once()
         call_args = mock_telegram_notifier.notify_system_alert.call_args
-        assert "Unified Trading Service Started" in call_args[0][0]
+        assert call_args[1]["alert_type"] == "SERVICE_STARTED"
+        assert "Unified Trading Service Started" in call_args[1]["message_text"]
         assert call_args[1]["user_id"] == 1
+        assert call_args[1]["severity"] == "INFO"
 
         # Verify preference service was checked for telegram
         telegram_calls = [
@@ -291,8 +293,10 @@ class TestMultiUserTradingServiceNotifications:
         # Verify Telegram notification was sent
         mock_telegram_notifier.notify_system_alert.assert_called_once()
         call_args = mock_telegram_notifier.notify_system_alert.call_args
-        assert "Unified Trading Service Stopped" in call_args[0][0]
+        assert call_args[1]["alert_type"] == "SERVICE_STOPPED"
+        assert "Unified Trading Service Stopped" in call_args[1]["message_text"]
         assert call_args[1]["user_id"] == 1
+        assert call_args[1]["severity"] == "INFO"
 
         # Verify preference service was checked for telegram
         telegram_calls = [

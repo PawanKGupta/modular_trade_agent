@@ -417,9 +417,13 @@ class TelegramNotifier:
             True if sent successfully
         """
         # Phase 3: Map severity to event type and check preferences
-        # Check if this is a service event (SERVICE_STARTED, SERVICE_STOPPED, SERVICE_EXECUTION)
-        if alert_type in ("SERVICE_STARTED", "SERVICE_STOPPED", "SERVICE_EXECUTION"):
-            event_type = NotificationEventType.SERVICE_EVENT
+        # Map alert_type to granular event types for preference checking
+        if alert_type == "SERVICE_STARTED":
+            event_type = NotificationEventType.SERVICE_STARTED
+        elif alert_type == "SERVICE_STOPPED":
+            event_type = NotificationEventType.SERVICE_STOPPED
+        elif alert_type == "SERVICE_EXECUTION":
+            event_type = NotificationEventType.SERVICE_EXECUTION_COMPLETED
         else:
             event_type_map = {
                 "ERROR": NotificationEventType.SYSTEM_ERROR,
