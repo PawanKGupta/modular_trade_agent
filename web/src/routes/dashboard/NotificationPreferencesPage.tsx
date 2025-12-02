@@ -136,10 +136,10 @@ export function NotificationPreferencesPage() {
 
 	const handleTestTelegram = async () => {
 		if (!localPrefs?.telegram_bot_token || !localPrefs?.telegram_chat_id) return;
-		
+
 		setTestingTelegram(true);
 		setTelegramTestResult(null);
-		
+
 		try {
 			const response = await fetch(
 				`/api/v1/user/notification-preferences/telegram/test?bot_token=${encodeURIComponent(localPrefs.telegram_bot_token)}&chat_id=${encodeURIComponent(localPrefs.telegram_chat_id)}`,
@@ -150,17 +150,17 @@ export function NotificationPreferencesPage() {
 					},
 				}
 			);
-			
-			const data = await response.json();
-			setTelegramTestResult(data);
-		} catch (error) {
-			setTelegramTestResult({
-				success: false,
-				message: 'Failed to test connection. Please try again.',
-			});
-		} finally {
-			setTestingTelegram(false);
-		}
+
+		const data = await response.json();
+		setTelegramTestResult(data);
+	} catch {
+		setTelegramTestResult({
+			success: false,
+			message: 'Failed to test connection. Please try again.',
+		});
+	} finally {
+		setTestingTelegram(false);
+	}
 	};
 
 	if (isLoading || !localPrefs) {
