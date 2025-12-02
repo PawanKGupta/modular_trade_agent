@@ -39,7 +39,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
     # Install Kotak Neo SDK without dependencies (to avoid numpy conflicts)
     pip install --no-cache-dir --no-deps git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client && \
     # Install minimal required dependencies for neo_api_client
-    pip install --no-cache-dir PyJWT==2.6.0 websocket-client==1.5.1 websockets==8.1 python-dateutil==2.9.0.post0 && \
+    # Note: PyJWT and python-dateutil are already in requirements.txt
+    # websocket-client is separate from websockets (both needed)
+    # Use websockets>=13 for uvicorn compatibility (Kotak SDK works with newer versions)
+    pip install --no-cache-dir PyJWT==2.6.0 websocket-client==1.5.1 websockets>=13.0 python-dateutil==2.9.0.post0 && \
     # Verify SDK can be imported
     python -c "from neo_api_client import NeoAPI; print('✓ Kotak Neo SDK installed successfully')" || \
     (echo "ERROR: Failed to install Kotak Neo SDK" && exit 1)
