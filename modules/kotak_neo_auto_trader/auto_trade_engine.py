@@ -2828,15 +2828,23 @@ class AutoTradeEngine:
                 ) * 100
 
                 # 6. Modify the AMO order
+                # For MARKET orders, only quantity needs to be updated
+                # Price is logged for tracking but not passed to modify_order (not needed for MARKET)
+                original_price = float(
+                    order.get("price", order.get("prc", order.get("orderPrice", 0))) or 0
+                )
                 logger.info(
-                    f"{base_symbol}: Adjusting AMO qty {original_qty} → {new_qty} "
-                    f"(gap: {gap_pct:+.2f}%, premarket: Rs {premarket_price:.2f})"
+                    f"{base_symbol}: Adjusting AMO order: "
+                    f"qty {original_qty} → {new_qty}, "
+                    f"price Rs {original_price:.2f} → Rs {premarket_price:.2f} "
+                    f"(gap: {gap_pct:+.2f}%, capital: Rs {self.strategy_config.user_capital:,.0f})"
                 )
 
                 try:
                     result = self.orders.modify_order(
                         order_id=order_id,
                         quantity=new_qty,
+                        # Note: price parameter not needed for MARKET orders (executes at market price)
                         order_type="MKT",  # Keep as MARKET order
                     )
 
