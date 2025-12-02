@@ -210,7 +210,7 @@ export function SettingsPage() {
 								{credsInfo?.has_creds ? 'Update Credentials' : 'Save Credentials'}
 							</button>
 							<button
-								className="bg-emerald-600 text-white px-3 py-2 rounded disabled:opacity-50"
+								className="bg-emerald-600 text-white px-4 py-3 sm:py-2 rounded disabled:opacity-50 min-h-[44px] sm:min-h-0 text-sm sm:text-base"
 								onClick={async () => {
 									setTesting(true);
 									setBrokerMsg(null);
