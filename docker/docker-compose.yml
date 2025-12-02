@@ -30,6 +30,7 @@ services:
     volumes:
       - ../data:/app/data
       - ../logs:/app/logs
+      - ../paper_trading:/app/paper_trading  # Paper trading data persistence
 
     networks:
       - tradeagent-network
