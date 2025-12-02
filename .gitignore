@@ -97,3 +97,7 @@ test_output.csv
 # Model metadata
 models/model_versions.json
 models/verdict_model_features_*.txt
+
+# Temporary error files
+*run-once*
+*tatus*
