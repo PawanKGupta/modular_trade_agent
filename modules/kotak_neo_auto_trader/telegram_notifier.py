@@ -437,7 +437,21 @@ class TelegramNotifier:
         emoji_map = {"ERROR": "", "WARNING": "", "INFO": "", "SUCCESS": ""}
         emoji = emoji_map.get(severity.upper(), "")
 
-        message = f"{emoji} SYSTEM ALERT: {alert_type}\n\n{message_text}\n\nTime: {timestamp}\n"
+        # For service events and trading events, use a cleaner format without redundant "SYSTEM ALERT" prefix
+        # since message_text already contains the context
+        clean_format_alert_types = (
+            "SERVICE_STARTED",
+            "SERVICE_STOPPED",
+            "SERVICE_EXECUTION",
+            "POSITION_ALERT",
+            "MANUAL_TRADE",
+            "PRE_MARKET_ADJUSTMENT",
+        )
+        if alert_type in clean_format_alert_types:
+            message = f"{emoji} {message_text}\n\nTime: {timestamp}\n"
+        else:
+            # For other alerts, include the alert type for context
+            message = f"{emoji} SYSTEM ALERT: {alert_type}\n\n{message_text}\n\nTime: {timestamp}\n"
 
         logger.info(f"Sending system alert: {alert_type}")
         return self.send_message(message, user_id=user_id)

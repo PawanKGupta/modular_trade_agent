@@ -721,11 +721,16 @@ class MultiUserTradingService:
                 try:
                     notifier = self._get_telegram_notifier(user_id)
                     if notifier and notifier.enabled:
-                        message = (
+                        message_text = (
                             "🚀 *Unified Trading Service Started*\n\n"
                             "All scheduled tasks will execute automatically."
                         )
-                        notifier.notify_system_alert(message, user_id=user_id)
+                        notifier.notify_system_alert(
+                            alert_type="SERVICE_STARTED",
+                            message_text=message_text,
+                            severity="INFO",
+                            user_id=user_id,
+                        )
                 except Exception as e:
                     user_logger = get_user_logger(
                         user_id=user_id, db=self.db, module="MultiUserTradingService"
@@ -798,11 +803,16 @@ class MultiUserTradingService:
                 try:
                     notifier = self._get_telegram_notifier(user_id)
                     if notifier and notifier.enabled:
-                        message = (
+                        message_text = (
                             "🛑 *Unified Trading Service Stopped*\n\n"
                             "All scheduled tasks have been halted."
                         )
-                        notifier.notify_system_alert(message, user_id=user_id)
+                        notifier.notify_system_alert(
+                            alert_type="SERVICE_STOPPED",
+                            message_text=message_text,
+                            severity="INFO",
+                            user_id=user_id,
+                        )
                 except Exception as e:
                     user_logger = get_user_logger(
                         user_id=user_id, db=self.db, module="MultiUserTradingService"
