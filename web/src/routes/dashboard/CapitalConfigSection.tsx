@@ -42,7 +42,7 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 					)}
 				</div>
 				<div>
-					<label htmlFor="paper_trading_initial_capital" className="block text-sm mb-1">
+					<label htmlFor="paper_trading_initial_capital" className="block text-xs sm:text-sm mb-1">
 						Paper Trading Initial Capital (Rs )
 						{!isDefault('paper_trading_initial_capital') && <span className="text-yellow-400 ml-1">*</span>}
 					</label>
@@ -53,7 +53,7 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 						min="0"
 						value={config.paper_trading_initial_capital ?? 300000}
 						onChange={(e) => onChange({ paper_trading_initial_capital: parseFloat(e.target.value) || 300000 })}
-						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+						className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 					/>
 					<div className="text-xs text-[var(--muted)] mt-1">
 						Default: Rs {(defaultConfig.paper_trading_initial_capital ?? 300000).toLocaleString('en-IN')}
@@ -71,7 +71,7 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 
 			<div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
 				<div>
-					<label htmlFor="max_portfolio_size" className="block text-sm mb-1">
+					<label htmlFor="max_portfolio_size" className="block text-xs sm:text-sm mb-1">
 						Max Portfolio Size
 						{!isDefault('max_portfolio_size') && <span className="text-yellow-400 ml-1">*</span>}
 					</label>
@@ -82,7 +82,7 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 						max="20"
 						value={config.max_portfolio_size}
 						onChange={(e) => onChange({ max_portfolio_size: parseInt(e.target.value) || 6 })}
-						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+						className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 					/>
 					<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.max_portfolio_size}</div>
 					{maxPositionsChange !== 0 && (

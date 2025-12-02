@@ -39,7 +39,7 @@ export function OrderConfigSection({ config, defaultConfig, onChange }: OrderCon
 						id="default_product"
 						value={config.default_product}
 						onChange={(e) => onChange({ default_product: e.target.value as 'CNC' | 'MIS' | 'NRML' })}
-						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+						className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 					>
 						<option value="CNC">CNC (Cash & Carry)</option>
 						<option value="MIS">MIS (Margin Intraday)</option>
@@ -56,7 +56,7 @@ export function OrderConfigSection({ config, defaultConfig, onChange }: OrderCon
 						id="default_order_type"
 						value={config.default_order_type}
 						onChange={(e) => onChange({ default_order_type: e.target.value as 'MARKET' | 'LIMIT' })}
-						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+						className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 					>
 						<option value="MARKET">MARKET</option>
 						<option value="LIMIT">LIMIT</option>
@@ -72,7 +72,7 @@ export function OrderConfigSection({ config, defaultConfig, onChange }: OrderCon
 						id="default_variety"
 						value={config.default_variety}
 						onChange={(e) => onChange({ default_variety: e.target.value as 'AMO' | 'REGULAR' })}
-						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+						className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 					>
 						<option value="AMO">AMO (After Market Order)</option>
 						<option value="REGULAR">REGULAR</option>
@@ -88,7 +88,7 @@ export function OrderConfigSection({ config, defaultConfig, onChange }: OrderCon
 						id="default_validity"
 						value={config.default_validity}
 						onChange={(e) => onChange({ default_validity: e.target.value as 'DAY' | 'IOC' | 'GTC' })}
-						className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+						className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 					>
 						<option value="DAY">DAY</option>
 						<option value="IOC">IOC (Immediate or Cancel)</option>
