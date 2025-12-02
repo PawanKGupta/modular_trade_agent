@@ -102,24 +102,24 @@ export function TradingConfigPage() {
 	}
 
 	return (
-		<div className="p-4 space-y-6 max-w-6xl">
-			<div className="flex items-center justify-between">
-				<h1 className="text-xl font-semibold">Trading Configuration</h1>
-				<div className="flex gap-3">
+		<div className="p-2 sm:p-4 space-y-4 sm:space-y-6 max-w-6xl">
+			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+				<h1 className="text-lg sm:text-xl font-semibold">Trading Configuration</h1>
+				<div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
 					{hasChanges && (
-						<span className="text-sm text-yellow-400 self-center">Unsaved changes</span>
+						<span className="text-xs sm:text-sm text-yellow-400 self-center">Unsaved changes</span>
 					)}
 					<button
 						onClick={handleReset}
 						disabled={resetMutation.isPending}
-						className="px-4 py-2 rounded bg-gray-600 hover:bg-gray-700 text-white disabled:opacity-50"
+						className="px-4 py-3 sm:py-2 rounded bg-gray-600 hover:bg-gray-700 text-white disabled:opacity-50 min-h-[44px] sm:min-h-0 text-sm sm:text-base"
 					>
 						{resetMutation.isPending ? 'Resetting...' : 'Reset to Defaults'}
 					</button>
 					<button
 						onClick={handleSave}
 						disabled={!hasChanges || updateMutation.isPending}
-						className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+						className="px-4 py-3 sm:py-2 rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 min-h-[44px] sm:min-h-0 text-sm sm:text-base"
 					>
 						{updateMutation.isPending ? 'Saving...' : 'Save Changes'}
 					</button>

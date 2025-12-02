@@ -260,21 +260,21 @@ export function BuyingZonePage() {
 		return sortedMap;
 	}, [data]);
 
-	if (isLoading) return <div className="p-4 text-[var(--text)]">Loading...</div>;
-	if (error) return <div className="p-4 text-red-400">Failed to load</div>;
+	if (isLoading) return <div className="p-2 sm:p-4 text-sm sm:text-base text-[var(--text)]">Loading...</div>;
+	if (error) return <div className="p-2 sm:p-4 text-sm sm:text-base text-red-400">Failed to load</div>;
 
 	return (
-		<div className="p-4 space-y-4">
-			<div className="flex items-center justify-between">
-				<h1 className="text-xl font-semibold text-[var(--text)]">Buying Zone</h1>
-				<div className="flex items-center gap-4">
+		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
+			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+				<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Buying Zone</h1>
+				<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4 w-full sm:w-auto">
 					{/* Status Filter */}
 					<div className="flex items-center gap-2">
-						<label className="text-sm text-[var(--muted)]">Status:</label>
+						<label className="text-xs sm:text-sm text-[var(--muted)] whitespace-nowrap">Status:</label>
 						<select
 							value={statusFilter}
 							onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-							className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-1.5 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+							className="flex-1 sm:flex-none bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2 sm:py-1.5 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[44px] sm:min-h-0"
 						>
 							<option value="active">✓ Active</option>
 							<option value="all">All Statuses</option>
@@ -286,11 +286,11 @@ export function BuyingZonePage() {
 
 					{/* Date Filter */}
 					<div className="flex items-center gap-2">
-						<label className="text-sm text-[var(--muted)]">Date Filter:</label>
+						<label className="text-xs sm:text-sm text-[var(--muted)] whitespace-nowrap">Date:</label>
 						<select
 							value={dateFilter || ''}
 							onChange={(e) => setDateFilter((e.target.value || null) as DateFilter)}
-							className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-1.5 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+							className="flex-1 sm:flex-none bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2 sm:py-1.5 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[44px] sm:min-h-0"
 						>
 							<option value="">All (Recent)</option>
 							<option value="today">Today</option>
@@ -298,16 +298,16 @@ export function BuyingZonePage() {
 							<option value="last_10_days">Last 10 Days</option>
 						</select>
 					</div>
-					<span className="text-sm text-[var(--muted)]">
+					<span className="text-xs sm:text-sm text-[var(--muted)] self-center">
 						{selectedColumns.size} / {MAX_COLUMNS} columns
 					</span>
 				</div>
 			</div>
 
 			{/* Column Selection */}
-			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-4">
-				<div className="flex items-center justify-between mb-3">
-					<label className="text-sm font-medium text-[var(--text)]">
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">
+				<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 mb-3">
+					<label className="text-xs sm:text-sm font-medium text-[var(--text)]">
 						Select Columns (Min {MIN_COLUMNS}, Max {MAX_COLUMNS})
 					</label>
 					<span className="text-xs text-[var(--muted)]">
@@ -320,7 +320,7 @@ export function BuyingZonePage() {
 					<button
 						type="button"
 						onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-						className="w-full bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2 text-left text-sm text-[var(--text)] flex items-center justify-between hover:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+						className="w-full bg-[#0f1720] border border-[#1e293b] rounded px-3 py-3 sm:py-2 text-left text-sm text-[var(--text)] flex items-center justify-between hover:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[44px] sm:min-h-0"
 					>
 						<span>
 							{selectedColumns.size === 0
@@ -443,12 +443,12 @@ export function BuyingZonePage() {
 
 								{/* Table for this date */}
 								<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg overflow-hidden">
-									<div className="overflow-x-auto">
-										<table className="w-full text-sm">
+									<div className="overflow-x-auto -mx-2 sm:mx-0">
+										<table className="w-full text-xs sm:text-sm">
 											<thead className="bg-[#0f172a] text-[var(--muted)]">
 												<tr>
 													{visibleColumns.map((col) => (
-														<th key={col.key} className="py-2 px-3 text-left">
+														<th key={col.key} className="py-2 px-2 sm:px-3 text-left whitespace-nowrap">
 															{col.label}
 														</th>
 													))}
@@ -488,8 +488,8 @@ export function BuyingZonePage() {
 																	}
 
 																	return (
-																		<td key={col.key} className="py-2 px-3">
-																			<div className="flex items-center gap-2">
+																		<td key={col.key} className="py-2 px-2 sm:px-3">
+																			<div className="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2">
 																				<span className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass}`}>
 																					{badgeText}
 																				</span>
@@ -497,7 +497,7 @@ export function BuyingZonePage() {
 																					<button
 																						onClick={() => rejectMutation.mutate(row.symbol)}
 																						disabled={rejectMutation.isPending}
-																						className="text-xs px-2 py-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 disabled:opacity-50"
+																						className="text-xs px-2 py-1.5 sm:py-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 disabled:opacity-50 min-h-[32px] sm:min-h-0"
 																						title="Reject this signal"
 																					>
 																						Reject
@@ -516,7 +516,7 @@ export function BuyingZonePage() {
 																	displayValue = String((row as any)[col.key] ?? '-');
 																}
 																return (
-																	<td key={col.key} className="py-2 px-3 text-[var(--text)]">
+																	<td key={col.key} className="py-2 px-2 sm:px-3 text-[var(--text)]">
 																		{displayValue}
 																	</td>
 																);

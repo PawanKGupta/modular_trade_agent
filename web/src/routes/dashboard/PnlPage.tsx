@@ -95,9 +95,9 @@ export function PnlPage() {
 					<table className="w-full text-sm">
 						<thead className="bg-[#0f172a] text-[var(--muted)]">
 							<tr>
-								<th className="text-left p-2">Date</th>
-								<th className="text-right p-2">P&L</th>
-								<th className="text-right p-2">Status</th>
+								<th className="text-left p-2 whitespace-nowrap">Date</th>
+								<th className="text-right p-2 whitespace-nowrap">P&L</th>
+								<th className="text-right p-2 whitespace-nowrap">Status</th>
 							</tr>
 						</thead>
 						<tbody>
