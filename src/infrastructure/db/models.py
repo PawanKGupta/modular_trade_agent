@@ -541,6 +541,7 @@ class UserNotificationPreferences(Base):
     )
     # Notification channels
     telegram_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    telegram_bot_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
     telegram_chat_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     email_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     email_address: Mapped[str | None] = mapped_column(String(255), nullable=True)

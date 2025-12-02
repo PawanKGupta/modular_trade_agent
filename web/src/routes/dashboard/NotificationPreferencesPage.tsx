@@ -12,6 +12,8 @@ export function NotificationPreferencesPage() {
 	const [hasChanges, setHasChanges] = useState(false);
 	const [localPrefs, setLocalPrefs] = useState<NotificationPreferences | null>(null);
 	const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+	const [testingTelegram, setTestingTelegram] = useState(false);
+	const [telegramTestResult, setTelegramTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
 	const { data: preferences, isLoading } = useQuery<NotificationPreferences>({
 		queryKey: ['notificationPreferences'],
@@ -132,6 +134,35 @@ export function NotificationPreferencesPage() {
 		setHasChanges(true);
 	};
 
+	const handleTestTelegram = async () => {
+		if (!localPrefs?.telegram_bot_token || !localPrefs?.telegram_chat_id) return;
+
+		setTestingTelegram(true);
+		setTelegramTestResult(null);
+
+		try {
+			const response = await fetch(
+				`/api/v1/user/notification-preferences/telegram/test?bot_token=${encodeURIComponent(localPrefs.telegram_bot_token)}&chat_id=${encodeURIComponent(localPrefs.telegram_chat_id)}`,
+				{
+					method: 'POST',
+					headers: {
+						'Authorization': `Bearer ${localStorage.getItem('ta_access_token')}`,
+					},
+				}
+			);
+
+		const data = await response.json();
+		setTelegramTestResult(data);
+	} catch {
+		setTelegramTestResult({
+			success: false,
+			message: 'Failed to test connection. Please try again.',
+		});
+	} finally {
+		setTestingTelegram(false);
+	}
+	};
+
 	if (isLoading || !localPrefs) {
 		return <div className="p-4">Loading notification preferences...</div>;
 	}
@@ -202,13 +233,34 @@ export function NotificationPreferencesPage() {
 								Receive notifications via Telegram bot
 							</p>
 							{localPrefs.telegram_enabled && (
-								<input
-									type="text"
-									value={localPrefs.telegram_chat_id || ''}
-									onChange={(e) => handleChange('telegram_chat_id', e.target.value || null)}
-									placeholder="Telegram Chat ID"
-									className="mt-2 w-full p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm"
-								/>
+								<div className="mt-2 space-y-2">
+									<input
+										type="text"
+										value={localPrefs.telegram_bot_token || ''}
+										onChange={(e) => handleChange('telegram_bot_token', e.target.value || null)}
+										placeholder="Telegram Bot Token (e.g., 123456:ABC-DEF)"
+										className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm"
+									/>
+									<input
+										type="text"
+										value={localPrefs.telegram_chat_id || ''}
+										onChange={(e) => handleChange('telegram_chat_id', e.target.value || null)}
+										placeholder="Telegram Chat ID (e.g., 123456789)"
+										className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm"
+									/>
+									<button
+										onClick={handleTestTelegram}
+										disabled={!localPrefs.telegram_bot_token || !localPrefs.telegram_chat_id || testingTelegram}
+										className="w-full px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										{testingTelegram ? 'Testing...' : 'Test Connection'}
+									</button>
+									{telegramTestResult && (
+										<div className={`text-xs p-2 rounded ${telegramTestResult.success ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+											{telegramTestResult.message}
+										</div>
+									)}
+								</div>
 							)}
 						</div>
 					</label>

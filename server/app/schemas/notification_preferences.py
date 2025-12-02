@@ -14,6 +14,7 @@ class NotificationPreferencesResponse(BaseModel):
 
     # Notification channels
     telegram_enabled: bool = Field(default=False, description="Enable Telegram notifications")
+    telegram_bot_token: str | None = Field(default=None, description="Telegram bot token")
     telegram_chat_id: str | None = Field(default=None, description="Telegram chat ID")
     email_enabled: bool = Field(default=False, description="Enable email notifications")
     email_address: str | None = Field(default=None, description="Email address")
@@ -104,6 +105,7 @@ class NotificationPreferencesUpdate(BaseModel):
 
     # Notification channels
     telegram_enabled: bool | None = Field(default=None, description="Enable Telegram notifications")
+    telegram_bot_token: str | None = Field(default=None, description="Telegram bot token")
     telegram_chat_id: str | None = Field(default=None, description="Telegram chat ID")
     email_enabled: bool | None = Field(default=None, description="Enable email notifications")
     email_address: str | None = Field(default=None, description="Email address")

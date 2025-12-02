@@ -6,6 +6,7 @@ import { withProviders } from '@/test/utils';
 
 const mockPreferences = {
 	telegram_enabled: false,
+	telegram_bot_token: null,
 	telegram_chat_id: null,
 	email_enabled: false,
 	email_address: null,
@@ -123,7 +124,9 @@ describe('NotificationPreferencesPage', () => {
 		fireEvent.click(telegramCheckbox);
 
 		await waitFor(() => {
+			expect(screen.getByPlaceholderText(/Telegram Bot Token/i)).toBeInTheDocument();
 			expect(screen.getByPlaceholderText(/Telegram Chat ID/i)).toBeInTheDocument();
+			expect(screen.getByText(/Test Connection/i)).toBeInTheDocument();
 		});
 
 		// Enable Email
