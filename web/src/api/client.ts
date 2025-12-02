@@ -1,18 +1,30 @@
 import axios, { AxiosError, type AxiosRequestConfig } from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+// Use relative URLs in production (nginx proxies /api/ to backend)
+// In development, use VITE_API_URL or default to localhost
+const getApiBaseUrl = () => {
+	const envUrl = import.meta.env.VITE_API_URL;
+	if (envUrl) {
+		return envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl;
+	}
+	// Production: use relative URLs (nginx proxy handles /api/)
+	// Development: default to localhost
+	return import.meta.env.PROD ? '' : 'http://localhost:8000';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 const ACCESS_TOKEN_KEY = 'ta_access_token';
 const REFRESH_TOKEN_KEY = 'ta_refresh_token';
 
 type RetriableConfig = AxiosRequestConfig & { _retry?: boolean };
 
 export const api = axios.create({
-	baseURL: `${API_BASE_URL}/api/v1`,
+	baseURL: API_BASE_URL ? `${API_BASE_URL}/api/v1` : '/api/v1',
 	withCredentials: false,
 });
 
 const refreshClient = axios.create({
-	baseURL: `${API_BASE_URL}/api/v1`,
+	baseURL: API_BASE_URL ? `${API_BASE_URL}/api/v1` : '/api/v1',
 	withCredentials: false,
 });
 
