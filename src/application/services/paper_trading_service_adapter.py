@@ -147,11 +147,15 @@ class PaperTradingServiceAdapter:
                     exc_info=True,
                     action="initialize",
                 )
-                raise RuntimeError(f"Failed to create paper trading broker: {broker_init_error}") from broker_init_error
+                raise RuntimeError(
+                    f"Failed to create paper trading broker: {broker_init_error}"
+                ) from broker_init_error
 
             try:
                 if not self.broker.connect():
-                    self.logger.error("Failed to connect to paper trading system", action="initialize")
+                    self.logger.error(
+                        "Failed to connect to paper trading system", action="initialize"
+                    )
                     raise RuntimeError("Failed to connect to paper trading system")
             except Exception as connect_error:
                 self.logger.error(
@@ -159,7 +163,9 @@ class PaperTradingServiceAdapter:
                     exc_info=True,
                     action="initialize",
                 )
-                raise RuntimeError(f"Failed to connect to paper trading system: {connect_error}") from connect_error
+                raise RuntimeError(
+                    f"Failed to connect to paper trading system: {connect_error}"
+                ) from connect_error
 
             self.logger.info("? Paper trading broker connected", action="initialize")
 
@@ -1455,9 +1461,10 @@ class PaperTradingEngineAdapter:
 
         try:
             # Query Signals table for buy/strong_buy recommendations
-            signals_repo = SignalsRepository(self.db)
+            signals_repo = SignalsRepository(self.db, user_id=self.user_id)
 
             # Get latest signals (today's or most recent)
+            from src.infrastructure.db.models import SignalStatus  # noqa: PLC0415
             from src.infrastructure.db.timezone_utils import ist_now
 
             today = ist_now().date()
@@ -1475,9 +1482,42 @@ class PaperTradingEngineAdapter:
                 f"Found {len(signals)} signals in database", action="load_recommendations"
             )
 
+            # Filter signals by effective status (considering per-user status)
+            # Only include ACTIVE signals - skip TRADED, REJECTED, and EXPIRED
+            active_signals = []
+            for signal in signals:
+                # Get effective status (user-specific if exists, otherwise base status)
+                user_status = signals_repo.get_user_signal_status(signal.id, self.user_id)
+                effective_status = user_status if user_status is not None else signal.status
+
+                # Only include ACTIVE signals
+                if effective_status != SignalStatus.ACTIVE:
+                    user_status_str = user_status.value if user_status else "none"
+                    self.logger.debug(
+                        f"Skipping signal {signal.symbol}: "
+                        f"status={effective_status.value} "
+                        f"(base={signal.status.value}, user={user_status_str})",
+                        action="load_recommendations",
+                    )
+                    continue
+
+                active_signals.append(signal)
+
+            self.logger.info(
+                f"Filtered to {len(active_signals)} ACTIVE signals "
+                f"(user {self.user_id}, skipped {len(signals) - len(active_signals)} non-ACTIVE)",
+                action="load_recommendations",
+            )
+
+            if not active_signals:
+                self.logger.warning(
+                    "No ACTIVE signals found after filtering", action="load_recommendations"
+                )
+                return []
+
             # Convert Signals to Recommendation objects
             recommendations = []
-            for signal in signals:
+            for signal in active_signals:
                 # Determine verdict (prioritize final_verdict, then verdict, then ml_verdict)
                 verdict = None
                 if signal.final_verdict and signal.final_verdict.lower() in ["buy", "strong_buy"]:
