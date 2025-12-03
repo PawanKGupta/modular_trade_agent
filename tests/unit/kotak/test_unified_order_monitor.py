@@ -881,10 +881,22 @@ class TestUnifiedOrderMonitor:
         # Verify list was called with correct parameters
         mock_orders_repo.list.assert_called_once()
         call_args = mock_orders_repo.list.call_args
-        assert call_args[0][0] == 1  # user_id
-        # Check that status parameter is ONGOING (may be passed as enum or value)
-        status_arg = call_args[0][1]
-        assert status_arg == DbOrderStatus.ONGOING or (hasattr(status_arg, 'value') and status_arg.value == 'ongoing')
+        # Check user_id (can be positional or keyword)
+        if call_args.args:
+            assert call_args.args[0] == 1  # user_id as positional
+        else:
+            assert call_args.kwargs.get('user_id') == 1  # user_id as keyword
+        
+        # Check status parameter (can be positional or keyword)
+        status_arg = None
+        if len(call_args.args) > 1:
+            status_arg = call_args.args[1]
+        elif 'status' in call_args.kwargs:
+            status_arg = call_args.kwargs['status']
+        
+        # Verify status is ONGOING (may be passed as enum or value)
+        if status_arg:
+            assert status_arg == DbOrderStatus.ONGOING or (hasattr(status_arg, 'value') and status_arg.value == 'ongoing')
 
     def test_check_and_place_sell_orders_for_new_holdings_no_db(self, unified_monitor):
         """Test checking for new holdings when DB is not available"""

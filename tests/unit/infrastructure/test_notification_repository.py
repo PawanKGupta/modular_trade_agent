@@ -291,7 +291,8 @@ class TestNotificationRepository:
             orig=Exception("UNIQUE constraint failed: notifications.id"),
         )
 
-        mock_db_session.commit.side_effect = [error, None]  # Second commit succeeds
+        # Commit sequence: first fails, sequence fix commits (succeeds), retry commit succeeds
+        mock_db_session.commit.side_effect = [error, None, None]  # Sequence fix commit, then retry commit
         mock_db_session.rollback = Mock()
 
         # Mock sequence fix - need to mock execute for both max ID query and sequence update
@@ -335,7 +336,8 @@ class TestNotificationRepository:
             params=(21, 1, "service", "info", "Test", "Test message", 0, None, None, 0, 0, 1),
             orig=Exception("UNIQUE constraint failed: notifications.id"),
         )
-        mock_db_session.commit.side_effect = [error, error]  # Both fail
+        # Commit sequence: first fails, sequence fix commits (succeeds), retry commit fails
+        mock_db_session.commit.side_effect = [error, None, error]  # Sequence fix commit succeeds, retry fails
         mock_db_session.rollback = Mock()
 
         # Mock sequence fix
@@ -496,8 +498,9 @@ class TestNotificationRepository:
             params=(21, 1, "service", "info", "Test", "Test message", 0, None, None, 0, 0, 1),
             orig=Exception("UNIQUE constraint failed: notifications.id"),
         )
-        mock_db_session.commit.side_effect = [error, error]  # Both fail
-        # Rollback fails in retry error handler
+        # Commit sequence: first fails, sequence fix commits (succeeds), retry commit fails
+        mock_db_session.commit.side_effect = [error, None, error]  # Sequence fix commit succeeds, retry fails
+        # Rollback sequence: first rollback succeeds, second rollback (in error handler) fails
         mock_db_session.rollback.side_effect = [None, Exception("Rollback failed")]
 
         # Mock sequence fix
