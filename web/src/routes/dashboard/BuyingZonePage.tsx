@@ -513,14 +513,35 @@ export function BuyingZonePage() {
 																					</button>
 																				)}
 																				{(status === 'rejected' || status === 'traded') && (() => {
-																					// Check if signal is expired based on timestamp or base_status
-																					const signalDate = new Date(row.ts);
-																					const today = new Date();
-																					today.setHours(0, 0, 0, 0);
-																					const signalDateOnly = new Date(signalDate);
-																					signalDateOnly.setHours(0, 0, 0, 0);
-																					const isExpiredByDate = signalDateOnly < today;
-																					const isExpired = row.base_status === 'expired' || isExpiredByDate;
+																					// Check if signal is expired based on market close time (3:30 PM IST)
+																					// Rules:
+																					// - Signals from day before yesterday (2 days ago) are expired
+																					// - Signals generated yesterday are active until today's 3:30 PM
+																					const signalTime = new Date(row.ts);
+																					const now = new Date();
+
+																					// Market close time: 3:30 PM (15:30)
+																					const marketCloseHour = 15;
+																					const marketCloseMinute = 30;
+
+																					// Calculate yesterday's start (00:00)
+																					const yesterdayStart = new Date(now);
+																					yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+																					yesterdayStart.setHours(0, 0, 0, 0);
+
+																					// Calculate today's market close (3:30 PM)
+																					const todayMarketClose = new Date(now);
+																					todayMarketClose.setHours(marketCloseHour, marketCloseMinute, 0, 0);
+
+																					// Signal is expired if:
+																					// 1. base_status is 'expired', OR
+																					// 2. Signal was created before yesterday (day before yesterday or earlier), OR
+																					// 3. Signal was created yesterday but current time >= today's 3:30 PM
+																					const isExpiredByStatus = row.base_status === 'expired';
+																					const isExpiredByMarketClose =
+																						signalTime < yesterdayStart ||
+																						(signalTime >= yesterdayStart && now >= todayMarketClose);
+																					const isExpired = isExpiredByStatus || isExpiredByMarketClose;
 
 																					return (
 																						<button

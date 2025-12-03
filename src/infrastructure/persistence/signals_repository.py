@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import func, outerjoin, select, update
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus
-from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.db.timezone_utils import IST, ist_now
 
 
 class SignalsRepository:
@@ -275,11 +275,11 @@ class SignalsRepository:
         if signal.status == SignalStatus.EXPIRED:
             return False
 
-        # Check if signal is expired based on timestamp (from previous day)
-        signal_date = signal.ts.date()
-        today = ist_now().date()
-        if signal_date < today:
-            # Signal is from a previous day, consider it expired
+        # Check if signal is expired based on market close time (3:30 PM IST)
+        # Rules:
+        # - Signals before yesterday's 3:30 PM are expired
+        # - Signals after yesterday's 3:30 PM are active until today's 3:30 PM
+        if self._is_signal_expired_by_market_close(signal.ts):
             return False
 
         # Find and delete user-specific status override
@@ -298,6 +298,47 @@ class SignalsRepository:
         # No override exists, signal is already using base status
         # Only return True if base status is ACTIVE
         return signal.status == SignalStatus.ACTIVE
+
+    def _is_signal_expired_by_market_close(self, signal_timestamp: datetime) -> bool:
+        """
+        Check if a signal is expired based on market close time (3:30 PM IST).
+
+        Rules:
+        - Signals from day before yesterday (2 days ago) are expired
+        - Signals generated yesterday are active until today's 3:30 PM
+
+        Args:
+            signal_timestamp: Signal creation timestamp
+
+        Returns:
+            True if signal is expired, False otherwise
+        """
+        # Ensure signal timestamp is timezone-aware (IST)
+        if signal_timestamp.tzinfo is None:
+            signal_timestamp = signal_timestamp.replace(tzinfo=IST)
+        else:
+            signal_timestamp = signal_timestamp.astimezone(IST)
+
+        now = ist_now()
+        market_close_time = time(15, 30)  # 3:30 PM IST
+
+        # Calculate yesterday's date (start of day)
+        yesterday = now.date() - timedelta(days=1)
+        yesterday_start = datetime.combine(yesterday, time(0, 0)).replace(tzinfo=IST)
+
+        # Calculate today's market close (3:30 PM)
+        today_market_close = datetime.combine(now.date(), market_close_time).replace(tzinfo=IST)
+
+        # Signal is expired if:
+        # 1. Signal was created before yesterday (day before yesterday or earlier), OR
+        # 2. Signal was created yesterday but current time >= today's 3:30 PM
+        if signal_timestamp < yesterday_start:
+            return True  # Signal from day before yesterday or earlier is expired
+
+        if signal_timestamp >= yesterday_start and now >= today_market_close:
+            return True  # Signal from yesterday but past today's 3:30 PM is expired
+
+        return False  # Signal is still active
 
     def get_active_signals(self, limit: int = 100) -> list[Signals]:
         """Get only ACTIVE signals"""

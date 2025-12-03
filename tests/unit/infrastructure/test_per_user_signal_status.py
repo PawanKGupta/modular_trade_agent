@@ -5,7 +5,7 @@ Tests that signal status (TRADED/REJECTED) is tracked per-user
 while keeping base signals shared across users.
 """
 
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 import pytest
 
@@ -328,11 +328,14 @@ class TestPerUserSignalStatus:
         assert user_status is not None
 
     def test_mark_as_active_cannot_reactivate_old_signal(self, db_session, test_users):
-        """Test that cannot reactivate a signal from a previous day (timestamp-based expiration)"""
+        """Test that cannot reactivate a signal from day before yesterday"""
         user1, user2 = test_users
 
-        # Create signal from yesterday
-        yesterday = ist_now() - timedelta(days=1)
+        # Create signal from day before yesterday
+        now = ist_now()
+        day_before_yesterday = now.date() - timedelta(days=2)
+        # Set to any time on day before yesterday
+        signal_time = datetime.combine(day_before_yesterday, time(14, 0)).replace(tzinfo=now.tzinfo)
         old_signal = Signals(
             symbol="RELIANCE",
             status=SignalStatus.ACTIVE,
@@ -340,7 +343,7 @@ class TestPerUserSignalStatus:
             ema9=2600.0,
             last_close=2500.0,
             verdict="buy",
-            ts=yesterday,
+            ts=signal_time,
         )
         db_session.add(old_signal)
         db_session.commit()
