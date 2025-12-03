@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, outerjoin, select, update
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus
@@ -130,8 +130,9 @@ class SignalsRepository:
 
         # Create or update user-specific status
         existing = self.db.execute(
-            select(UserSignalStatus)
-            .where(UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal.id)
+            select(UserSignalStatus).where(
+                UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal.id
+            )
         ).scalar_one_or_none()
 
         if existing:
@@ -143,7 +144,7 @@ class SignalsRepository:
                 signal_id=signal.id,
                 symbol=symbol,
                 status=SignalStatus.TRADED,
-                marked_at=ist_now()
+                marked_at=ist_now(),
             )
             self.db.add(user_status)
 
@@ -189,8 +190,9 @@ class SignalsRepository:
 
         # Create or update user-specific status
         existing = self.db.execute(
-            select(UserSignalStatus)
-            .where(UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal.id)
+            select(UserSignalStatus).where(
+                UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal.id
+            )
         ).scalar_one_or_none()
 
         if existing:
@@ -202,12 +204,100 @@ class SignalsRepository:
                 signal_id=signal.id,
                 symbol=symbol,
                 status=SignalStatus.REJECTED,
-                marked_at=ist_now()
+                marked_at=ist_now(),
             )
             self.db.add(user_status)
 
         self.db.commit()
         return True
+
+    def mark_as_active(self, symbol: str, user_id: int | None = None) -> bool:  # noqa: PLR0911
+        """
+        Mark a signal as ACTIVE again for a specific user (reactivate).
+
+        Removes the user-specific status override, allowing the signal to use
+        its base status. Cannot reactivate if the base signal is EXPIRED.
+
+        Args:
+            symbol: Stock symbol
+            user_id: User ID (uses self.user_id if not provided)
+
+        Returns:
+            True if signal was found and reactivated, False otherwise
+        """
+        user_id = user_id or self.user_id
+        if not user_id:
+            # Fallback: try to update base signal if it's REJECTED or TRADED
+            # First check if signal exists and is already ACTIVE
+            signal = self.db.execute(
+                select(Signals).where(Signals.symbol == symbol).order_by(Signals.ts.desc()).limit(1)
+            ).scalar_one_or_none()
+
+            if not signal:
+                return False
+
+            # If already ACTIVE, return True
+            if signal.status == SignalStatus.ACTIVE:
+                return True
+
+            # Cannot reactivate if expired
+            if signal.status == SignalStatus.EXPIRED:
+                return False
+
+            # Check if signal is expired based on timestamp (from previous day)
+            signal_date = signal.ts.date()
+            today = ist_now().date()
+            if signal_date < today:
+                # Signal is from a previous day, consider it expired
+                return False
+
+            # Update REJECTED or TRADED to ACTIVE
+            result = self.db.execute(
+                update(Signals)
+                .where(
+                    Signals.symbol == symbol,
+                    Signals.status.in_([SignalStatus.REJECTED, SignalStatus.TRADED]),
+                )
+                .values(status=SignalStatus.ACTIVE)
+            )
+            self.db.commit()
+            return result.rowcount > 0
+
+        # Find the signal
+        signal = self.db.execute(
+            select(Signals).where(Signals.symbol == symbol).order_by(Signals.ts.desc()).limit(1)
+        ).scalar_one_or_none()
+
+        if not signal:
+            return False
+
+        # Cannot reactivate if base signal is EXPIRED
+        if signal.status == SignalStatus.EXPIRED:
+            return False
+
+        # Check if signal is expired based on timestamp (from previous day)
+        signal_date = signal.ts.date()
+        today = ist_now().date()
+        if signal_date < today:
+            # Signal is from a previous day, consider it expired
+            return False
+
+        # Find and delete user-specific status override
+        existing = self.db.execute(
+            select(UserSignalStatus).where(
+                UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal.id
+            )
+        ).scalar_one_or_none()
+
+        if existing:
+            # Delete the override to revert to base signal status
+            self.db.delete(existing)
+            self.db.commit()
+            return True
+
+        # No override exists, signal is already using base status
+        # Only return True if base status is ACTIVE
+        return signal.status == SignalStatus.ACTIVE
 
     def get_active_signals(self, limit: int = 100) -> list[Signals]:
         """Get only ACTIVE signals"""
@@ -227,17 +317,15 @@ class SignalsRepository:
             User's status if they have one, otherwise None (uses base signal status)
         """
         user_status = self.db.execute(
-            select(UserSignalStatus)
-            .where(UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal_id)
+            select(UserSignalStatus).where(
+                UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal_id
+            )
         ).scalar_one_or_none()
 
         return user_status.status if user_status else None
 
     def get_signals_with_user_status(
-        self,
-        user_id: int,
-        limit: int = 100,
-        status_filter: SignalStatus | None = None
+        self, user_id: int, limit: int = 100, status_filter: SignalStatus | None = None
     ) -> list[tuple[Signals, SignalStatus]]:
         """
         Get signals with per-user status applied.
@@ -254,8 +342,6 @@ class SignalsRepository:
         Returns:
             List of (Signals, SignalStatus) tuples
         """
-        from sqlalchemy import outerjoin
-
         # Join signals with user_signal_status
         stmt = (
             select(Signals, UserSignalStatus.status)
@@ -263,7 +349,8 @@ class SignalsRepository:
                 outerjoin(
                     Signals,
                     UserSignalStatus,
-                    (Signals.id == UserSignalStatus.signal_id) & (UserSignalStatus.user_id == user_id)
+                    (Signals.id == UserSignalStatus.signal_id)
+                    & (UserSignalStatus.user_id == user_id),
                 )
             )
             .order_by(Signals.ts.desc())

@@ -100,6 +100,8 @@ class DummySignalsRepo:
         self.last_n_dates_called = []
         self.mark_rejected_called = []
         self.mark_rejected_result = True
+        self.mark_active_called = []
+        self.mark_active_result = True
 
     def recent(self, limit=100, active_only=False):
         self.recent_called.append((limit, active_only))
@@ -117,14 +119,18 @@ class DummySignalsRepo:
         self.mark_rejected_called.append(symbol)
         return self.mark_rejected_result
 
+    def mark_as_active(self, symbol, user_id=None):
+        self.mark_active_called.append(symbol)
+        return self.mark_active_result
+
     def get_signals_with_user_status(self, user_id, limit=100, status_filter=None):
         """Mock method for per-user status - returns signals with effective status"""
         # For testing, just return signals as (signal, signal.status) tuples
-        if hasattr(self, 'recent_items') and self.recent_items:
+        if hasattr(self, "recent_items") and self.recent_items:
             items = self.recent_items
-        elif hasattr(self, 'by_date_items') and self.by_date_items:
+        elif hasattr(self, "by_date_items") and self.by_date_items:
             items = list(self.by_date_items.values())[0] if self.by_date_items else []
-        elif hasattr(self, 'last_n_dates_items') and self.last_n_dates_items:
+        elif hasattr(self, "last_n_dates_items") and self.last_n_dates_items:
             items = self.last_n_dates_items
         else:
             items = []
@@ -327,6 +333,8 @@ def test_buying_zone_maps_all_fields(signals_repo, current_user):
     assert result[0]["ema9"] == 2500.0
     assert result[0]["target"] == 2600.0
     assert result[0]["ts"] == "2025-01-15T10:30:00"
+    assert "base_status" in result[0]
+    assert result[0]["base_status"] == "active"  # Base signal status
 
 
 def test_buying_zone_handles_none_fields(signals_repo, current_user):
@@ -395,6 +403,19 @@ def test_buying_zone_status_filter_rejected(signals_repo, current_user):
 
     assert len(result) == 1
     assert result[0]["status"] == "rejected"
+    assert result[0]["base_status"] == "rejected"  # Base signal status
+
+
+def test_buying_zone_includes_base_status_for_expired(signals_repo, current_user):
+    """Test that base_status is included and shows expired status"""
+    expired_signal = DummySignal(id=1, symbol="EXPIRED.NS", status=SignalStatus.EXPIRED)
+    signals_repo.recent_items = [expired_signal]
+
+    result = signals.buying_zone(limit=100, status_filter="expired", db=None, user=current_user)
+
+    assert len(result) == 1
+    assert result[0]["status"] == "expired"
+    assert result[0]["base_status"] == "expired"
 
 
 def test_buying_zone_status_filter_case_insensitive(signals_repo, current_user):
@@ -415,3 +436,27 @@ def test_buying_zone_none_status_filter(signals_repo, current_user):
 
     # None status filter means no filtering - all items returned
     assert len(result) == 1
+
+
+# PATCH /signals/{symbol}/activate tests
+def test_activate_signal_success(signals_repo, current_user):
+    signals_repo.mark_active_result = True
+
+    result = signals.activate_signal(symbol="RELIANCE.NS", db=None, user=current_user)
+
+    assert result["message"] == "Signal for RELIANCE.NS marked as ACTIVE"
+    assert result["symbol"] == "RELIANCE.NS"
+    assert result["status"] == "active"
+    assert len(signals_repo.mark_active_called) == 1
+    assert signals_repo.mark_active_called[0] == "RELIANCE.NS"
+
+
+def test_activate_signal_not_found_or_expired(signals_repo, current_user):
+    signals_repo.mark_active_result = False
+
+    with pytest.raises(HTTPException) as exc:
+        signals.activate_signal(symbol="NONEXISTENT.NS", db=None, user=current_user)
+
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Cannot reactivate signal" in exc.value.detail
+    assert "NONEXISTENT.NS" in exc.value.detail

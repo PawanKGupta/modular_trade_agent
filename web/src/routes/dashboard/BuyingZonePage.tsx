@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useMemo, useEffect } from 'react';
-import { getBuyingZone, getBuyingZoneColumns, saveBuyingZoneColumns, rejectSignal, type BuyingZoneItem, type DateFilter, type StatusFilter } from '@/api/signals';
+import { getBuyingZone, getBuyingZoneColumns, saveBuyingZoneColumns, rejectSignal, activateSignal, type BuyingZoneItem, type DateFilter, type StatusFilter } from '@/api/signals';
 
 type ColumnKey =
 	| 'symbol'
@@ -136,6 +136,15 @@ export function BuyingZonePage() {
 	// Reject signal mutation
 	const rejectMutation = useMutation({
 		mutationFn: (symbol: string) => rejectSignal(symbol),
+		onSuccess: () => {
+			// Refetch buying zone data
+			qc.invalidateQueries({ queryKey: ['buying-zone'] });
+		},
+	});
+
+	// Activate signal mutation
+	const activateMutation = useMutation({
+		mutationFn: (symbol: string) => activateSignal(symbol),
 		onSuccess: () => {
 			// Refetch buying zone data
 			qc.invalidateQueries({ queryKey: ['buying-zone'] });
@@ -503,6 +512,27 @@ export function BuyingZonePage() {
 																						Reject
 																					</button>
 																				)}
+																				{(status === 'rejected' || status === 'traded') && (() => {
+																					// Check if signal is expired based on timestamp or base_status
+																					const signalDate = new Date(row.ts);
+																					const today = new Date();
+																					today.setHours(0, 0, 0, 0);
+																					const signalDateOnly = new Date(signalDate);
+																					signalDateOnly.setHours(0, 0, 0, 0);
+																					const isExpiredByDate = signalDateOnly < today;
+																					const isExpired = row.base_status === 'expired' || isExpiredByDate;
+
+																					return (
+																						<button
+																							onClick={() => activateMutation.mutate(row.symbol)}
+																							disabled={activateMutation.isPending || isExpired}
+																							className="text-xs px-2 py-1.5 sm:py-1 rounded bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed min-h-[32px] sm:min-h-0"
+																							title={isExpired ? 'Cannot reactivate expired signals' : 'Reactivate this signal'}
+																						>
+																							{activateMutation.isPending ? 'Activating...' : 'Active'}
+																						</button>
+																					);
+																				})()}
 																			</div>
 																		</td>
 																	);

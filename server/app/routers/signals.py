@@ -1,7 +1,7 @@
 # ruff: noqa: B008
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Signals, SignalStatus
@@ -54,21 +54,22 @@ def buying_zone(
 
     # Apply per-user status using repository method
     items_with_status = repo.get_signals_with_user_status(
-        user_id=user.id,
-        limit=limit,
-        status_filter=status_enum
+        user_id=user.id, limit=limit, status_filter=status_enum
     )
 
     # If we already filtered by date, filter the results
     if date_filter:
         base_signal_ids = {s.id for s in base_signals}
-        items_with_status = [(s, status) for s, status in items_with_status if s.id in base_signal_ids]
+        items_with_status = [
+            (s, status) for s, status in items_with_status if s.id in base_signal_ids
+        ]
     # Map to client shape with all analysis result fields (use effective status)
     return [
         {
             "id": s.id,
             "symbol": s.symbol,
             "status": effective_status.value,  # Use per-user status
+            "base_status": s.status.value,  # Base signal status (for checking expiration)
             # Technical indicators
             "rsi10": s.rsi10,
             "ema9": s.ema9,
@@ -147,8 +148,6 @@ def reject_signal(
     success = repo.mark_as_rejected(symbol, user_id=user.id)
 
     if not success:
-        from fastapi import HTTPException, status
-
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No active signal found for symbol: {symbol}",
@@ -158,4 +157,29 @@ def reject_signal(
         "message": f"Signal for {symbol} marked as REJECTED",
         "symbol": symbol,
         "status": "rejected",
+    }
+
+
+@router.patch("/signals/{symbol}/activate")
+def activate_signal(
+    symbol: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Mark a signal as ACTIVE again - reactivate a rejected or traded signal"""
+    repo = SignalsRepository(db, user_id=user.id)
+    success = repo.mark_as_active(symbol, user_id=user.id)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Cannot reactivate signal for {symbol}. Signal may not exist or may be expired."
+            ),
+        )
+
+    return {
+        "message": f"Signal for {symbol} marked as ACTIVE",
+        "symbol": symbol,
+        "status": "active",
     }

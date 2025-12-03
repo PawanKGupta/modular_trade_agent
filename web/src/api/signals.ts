@@ -6,6 +6,7 @@ export type BuyingZoneItem = {
 	id: number;
 	symbol: string;
 	status: SignalStatus;
+	base_status?: SignalStatus; // Base signal status (for checking expiration)
 	// Technical indicators
 	rsi10?: number | null;
 	ema9?: number | null;
@@ -101,4 +102,8 @@ export async function saveBuyingZoneColumns(columns: string[]): Promise<string[]
 
 export async function rejectSignal(symbol: string): Promise<void> {
 	await api.patch(`/signals/signals/${symbol}/reject`);
+}
+
+export async function activateSignal(symbol: string): Promise<void> {
+	await api.patch(`/signals/signals/${symbol}/activate`);
 }

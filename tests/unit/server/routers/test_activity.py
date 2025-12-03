@@ -44,4 +44,3 @@ def test_list_activity_defaults_and_detail(monkeypatch):
     assert repo.args == (5, 200, None)
     assert result[0].detail is None
     assert result[1].level == "info"  # fallback when type not in allowed set
-

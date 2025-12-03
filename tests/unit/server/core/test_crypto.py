@@ -46,4 +46,3 @@ def test_decrypt_blob_handles_invalid_tokens(monkeypatch, token):
     key = _fresh_key()
     monkeypatch.setenv("BROKER_SECRET_KEY", key)
     assert crypto.decrypt_blob(token) is None
-
