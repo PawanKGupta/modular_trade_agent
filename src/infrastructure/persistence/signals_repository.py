@@ -77,7 +77,8 @@ class SignalsRepository:
 
         Args:
             before_timestamp: Mark signals before this time as expired (defaults to current time)
-            exclude_symbols: Set of symbols to exclude from expiration (e.g., symbols that appear in new analysis)
+            exclude_symbols: Set of symbols to exclude from expiration
+                (e.g., symbols that appear in new analysis)
 
         Returns:
             Number of signals marked as expired
@@ -91,7 +92,8 @@ class SignalsRepository:
 
         # Format timestamp for SQL (SQLite datetime format)
         # SQLite's julianday() can parse various formats, but we'll use a consistent format
-        # Use the format that matches what SQLite stores: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD HH:MM:SS.ffffff
+        # Use the format that matches what SQLite stores:
+        # YYYY-MM-DD HH:MM:SS or YYYY-MM-DD HH:MM:SS.ffffff
         # julianday() handles both formats correctly
         timestamp_str = before_timestamp.strftime("%Y-%m-%d %H:%M:%S")
         if before_timestamp.microsecond:
@@ -100,28 +102,21 @@ class SignalsRepository:
         # Build SQL query to avoid Python-side datetime comparison issues
         # Use julianday() for reliable numeric comparison
         # This handles both with and without microseconds correctly
-        # Note: Use LOWER() for case-insensitive status comparison since SQLite stores enums as strings
+        # Note: Use LOWER() for case-insensitive status comparison
+        # since SQLite stores enums as strings
         if exclude_symbols:
-            # Build IN clause for excluded symbols
-            # Use simple string formatting since symbols are safe (not user input)
-            placeholders = ",".join([f"'{sym}'" for sym in exclude_symbols])
-            sql = text(
-                f"""
-                UPDATE signals
-                SET status = :status
-                WHERE status = :active_status
-                  AND julianday(ts) < julianday(:before_timestamp)
-                  AND symbol NOT IN ({placeholders})
-                """
+            # Use SQLAlchemy update() to avoid SQL injection warnings
+            # Symbols come from internal code, not user input, but using ORM is safer
+            stmt = (
+                update(Signals)
+                .where(
+                    Signals.status == SignalStatus.ACTIVE,
+                    func.julianday(Signals.ts) < func.julianday(text(":before_timestamp")),
+                    ~Signals.symbol.in_(exclude_symbols),
+                )
+                .values(status=SignalStatus.EXPIRED)
             )
-            result = self.db.execute(
-                sql,
-                {
-                    "status": SignalStatus.EXPIRED.name,  # "EXPIRED" (uppercase name, as stored by SQLAlchemy)
-                    "active_status": SignalStatus.ACTIVE.name,  # "ACTIVE" (uppercase name, as stored by SQLAlchemy)
-                    "before_timestamp": timestamp_str,
-                },
-            )
+            result = self.db.execute(stmt, {"before_timestamp": timestamp_str})
         else:
             sql = text(
                 """
@@ -134,8 +129,8 @@ class SignalsRepository:
             result = self.db.execute(
                 sql,
                 {
-                    "status": SignalStatus.EXPIRED.name,  # "EXPIRED" (uppercase name, as stored by SQLAlchemy)
-                    "active_status": SignalStatus.ACTIVE.name,  # "ACTIVE" (uppercase name, as stored by SQLAlchemy)
+                    "status": SignalStatus.EXPIRED.value,  # "expired"
+                    "active_status": SignalStatus.ACTIVE.value,  # "active"
                     "before_timestamp": timestamp_str,
                 },
             )
