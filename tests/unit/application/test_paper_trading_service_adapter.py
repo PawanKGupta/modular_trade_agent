@@ -235,7 +235,8 @@ class TestPaperTradingEngineAdapter:
             )
         ]
 
-        summary = adapter.place_new_entries(recommendations)
+        with patch("core.volume_analysis.is_market_hours", return_value=False):
+            summary = adapter.place_new_entries(recommendations)
 
         assert summary["attempted"] == 1
         assert summary["placed"] == 1
