@@ -23,7 +23,7 @@ export function useSettings() {
 		queryKey: ['broker-status'],
 		queryFn: getBrokerStatus,
 		enabled: isBrokerMode, // Only poll when in broker mode
-		refetchInterval: 10 * 1000, // Poll every 10 seconds for connection status
+		refetchInterval: 60 * 1000, // Poll every 60 seconds for connection status (reduced from 10s to avoid frequent checks)
 		staleTime: 5 * 1000, // Consider stale after 5 seconds
 	});
 

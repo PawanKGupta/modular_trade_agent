@@ -344,9 +344,56 @@ def broker_status(
     db: Session = Depends(get_db),  # noqa: B008
     current: Users = Depends(get_current_user),  # noqa: B008
 ) -> dict[str, str | None]:
+    """
+    Get broker connection status.
+
+    For Kotak Neo, this checks if a valid session exists without triggering login/OTP.
+    Only updates status if session check fails.
+    """
     repo = SettingsRepository(db)
     settings = repo.ensure_default(current.id)
-    return {"broker": settings.broker, "status": settings.broker_status}
+
+    # If not in broker mode or no broker configured, return stored status
+    if settings.trade_mode != TradeMode.BROKER or not settings.broker_creds_encrypted:
+        return {"broker": settings.broker, "status": settings.broker_status}
+
+    # Try to verify session validity without triggering login
+    try:
+        broker_creds = decrypt_broker_credentials(settings.broker_creds_encrypted)
+        if not broker_creds:
+            return {"broker": settings.broker, "status": "Disconnected"}
+
+        # Create temp env file
+        temp_env_file = create_temp_env_file(broker_creds)
+
+        try:
+            from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+
+            # Create auth instance (doesn't login yet)
+            auth = KotakNeoAuth(temp_env_file)
+
+            # Check if auth is already authenticated (has valid session from previous request)
+            # Note: This will be False for a new instance, but we check anyway
+            if auth.is_authenticated():
+                # Already authenticated - session is valid
+                if settings.broker_status != "Connected":
+                    settings = repo.update(settings, broker_status="Connected")
+                    db.commit()
+                return {"broker": settings.broker, "status": "Connected"}
+
+            # For a new instance, we can't check session without triggering login
+            # So we rely on the status from previous successful API calls
+            # The status will be updated by portfolio/orders endpoints when they succeed/fail
+            # This endpoint just returns the stored status without triggering OTP
+            return {"broker": settings.broker, "status": settings.broker_status}
+
+        except Exception as e:
+            logger.warning(f"Session check failed: {e}")
+            # On error, return stored status
+            return {"broker": settings.broker, "status": settings.broker_status}
+    except Exception as e:
+        logger.warning(f"Broker status check error: {e}")
+        return {"broker": settings.broker, "status": settings.broker_status}
 
 
 @router.get("/creds/info", response_model=BrokerCredsInfo)
@@ -481,14 +528,16 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
             # Create auth handler
             auth = KotakNeoAuth(temp_env_file)
 
-            # Login to broker
-            if not auth.login():
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "Failed to connect to broker. Please check your credentials and try again."
-                    ),
-                )
+            # Only login if not already authenticated to avoid unnecessary OTP requests
+            if not auth.is_authenticated():
+                if not auth.login():
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "Failed to connect to broker. "
+                            "Please check your credentials and try again."
+                        ),
+                    )
 
             # Create broker gateway
             broker = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
@@ -702,14 +751,16 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
             # Create auth handler
             auth = KotakNeoAuth(temp_env_file)
 
-            # Login to broker
-            if not auth.login():
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "Failed to connect to broker. Please check your credentials and try again."
-                    ),
-                )
+            # Only login if not already authenticated to avoid unnecessary OTP requests
+            if not auth.is_authenticated():
+                if not auth.login():
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "Failed to connect to broker. "
+                            "Please check your credentials and try again."
+                        ),
+                    )
 
             # Create broker gateway
             broker_gateway = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)

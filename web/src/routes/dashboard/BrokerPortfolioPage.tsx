@@ -18,7 +18,7 @@ export function BrokerPortfolioPage() {
 	const { data, isLoading, error, refetch, dataUpdatedAt, failureCount } = useQuery<PaperTradingPortfolio>({
 		queryKey: ['portfolio', 'broker'],
 		queryFn: getPortfolio,
-		refetchInterval: 5000, // Refresh every 5 seconds for live P&L
+		refetchInterval: 30000, // Refresh every 30 seconds (reduced from 5s to avoid frequent auth/OTP)
 		enabled: isBrokerMode && isBrokerConnected, // Only fetch if in broker mode and connected
 		retry: (failureCount, error) => {
 			// Retry up to 3 times for retryable errors
