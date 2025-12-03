@@ -7,6 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+# Import domain entities for broker tests
+from modules.kotak_neo_auto_trader.domain.entities import Holding
+from modules.kotak_neo_auto_trader.domain.value_objects import Exchange, Money
 from server.app.routers import broker
 from server.app.routers.broker import KotakNeoCreds, _extract_error_message
 from server.app.schemas.user import BrokerCredsRequest
@@ -40,9 +43,18 @@ class DummySettingsRepo:
         self.settings = DummySettings(user_id=1)
         self.ensure_default_called = []
         self.update_called = []
+        self.get_by_user_id_called = []
 
     def ensure_default(self, user_id):
         self.ensure_default_called.append(user_id)
+        self.settings.user_id = user_id
+        return self.settings
+
+    def get_by_user_id(self, user_id):
+        """Get settings by user ID (used by broker endpoints)"""
+        self.get_by_user_id_called.append(user_id)
+        if self.settings is None:
+            return None
         self.settings.user_id = user_id
         return self.settings
 
@@ -963,7 +975,7 @@ def test_get_broker_portfolio_auth_fails(monkeypatch):
     def mock_auth_init(env_file):
         return mock_auth
 
-    with patch("server.app.routers.broker.KotakNeoAuth", mock_auth_init):
+    with patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init):
         db_session = MagicMock()
         with pytest.raises(HTTPException) as exc:
             broker.get_broker_portfolio(db=db_session, current=user)
@@ -1027,14 +1039,15 @@ def test_get_broker_portfolio_success(monkeypatch):
     def mock_yf_ticker(symbol):
         return mock_ticker
 
+    # Patch at the import location (inside the function)
     with (
-        patch("server.app.routers.broker.KotakNeoAuth", mock_auth_init),
-        patch("server.app.routers.broker.BrokerFactory") as mock_factory,
-        patch("server.app.routers.broker.yf") as mock_yf,
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+        patch("yfinance.Ticker", mock_yf_ticker),
     ):
-        mock_factory.create_broker = mock_broker_factory
-        mock_yf.Ticker = mock_yf_ticker
-
         db_session = MagicMock()
         result = broker.get_broker_portfolio(db=db_session, current=user)
 
@@ -1155,11 +1168,12 @@ def test_get_broker_orders_success(monkeypatch):
         return mock_broker
 
     with (
-        patch("server.app.routers.broker.KotakNeoAuth", mock_auth_init),
-        patch("server.app.routers.broker.BrokerFactory") as mock_factory,
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
     ):
-        mock_factory.create_broker = mock_broker_factory
-
         db_session = MagicMock()
         result = broker.get_broker_orders(db=db_session, current=user)
 
@@ -1198,7 +1212,7 @@ def test_get_broker_orders_auth_fails(monkeypatch):
     def mock_auth_init(env_file):
         return mock_auth
 
-    with patch("server.app.routers.broker.KotakNeoAuth", mock_auth_init):
+    with patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init):
         db_session = MagicMock()
         with pytest.raises(HTTPException) as exc:
             broker.get_broker_orders(db=db_session, current=user)
