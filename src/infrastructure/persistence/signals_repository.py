@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import func, outerjoin, select, text, update
+from sqlalchemy import bindparam, func, outerjoin, select, text, update
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus
@@ -107,16 +107,18 @@ class SignalsRepository:
         if exclude_symbols:
             # Use SQLAlchemy update() to avoid SQL injection warnings
             # Symbols come from internal code, not user input, but using ORM is safer
+            # Use bindparam() to properly bind the timestamp parameter
+            before_timestamp_param = bindparam("before_timestamp", timestamp_str)
             stmt = (
                 update(Signals)
                 .where(
                     Signals.status == SignalStatus.ACTIVE,
-                    func.julianday(Signals.ts) < func.julianday(text(":before_timestamp")),
+                    func.julianday(Signals.ts) < func.julianday(before_timestamp_param),
                     ~Signals.symbol.in_(exclude_symbols),
                 )
                 .values(status=SignalStatus.EXPIRED)
             )
-            result = self.db.execute(stmt, {"before_timestamp": timestamp_str})
+            result = self.db.execute(stmt)
         else:
             sql = text(
                 """
