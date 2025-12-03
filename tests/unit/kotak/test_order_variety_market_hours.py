@@ -2,9 +2,10 @@
 Tests for order variety selection based on market hours
 """
 
+import types
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import patch, Mock
-from datetime import datetime, time as dt_time
 
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
@@ -24,14 +25,19 @@ class TestOrderVarietyMarketHours:
 
     def test_get_order_variety_for_market_hours_during_market(self, mock_engine):
         """Test that REGULAR is returned during market hours (9:00 AM - 3:30 PM)"""
-        # Create actual engine instance for testing
-        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
-        # Mock the engine initialization
-        with patch.object(AutoTradeEngine, "__init__", return_value=None):
+        # Create a real instance by patching __init__ to skip initialization
+        def init_none(self):
+            pass
+
+        with patch.object(AutoTradeEngine, "__init__", init_none):
             engine = AutoTradeEngine()
             engine.strategy_config = Mock()
             engine.strategy_config.default_variety = "AMO"
+            # Manually bind the method to the instance
+            engine._get_order_variety_for_market_hours = types.MethodType(
+                AutoTradeEngine._get_order_variety_for_market_hours, engine
+            )
 
             # Test during pre-market (9:00 AM)
             with patch("core.volume_analysis.is_market_hours", return_value=True):
@@ -50,12 +56,19 @@ class TestOrderVarietyMarketHours:
 
     def test_get_order_variety_for_market_hours_after_market(self, mock_engine):
         """Test that AMO is returned when market is closed"""
-        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
-        with patch.object(AutoTradeEngine, "__init__", return_value=None):
+        # Create a real instance by patching __init__ to skip initialization
+        def init_none(self):
+            pass
+
+        with patch.object(AutoTradeEngine, "__init__", init_none):
             engine = AutoTradeEngine()
             engine.strategy_config = Mock()
             engine.strategy_config.default_variety = "AMO"
+            # Manually bind the method to the instance
+            engine._get_order_variety_for_market_hours = types.MethodType(
+                AutoTradeEngine._get_order_variety_for_market_hours, engine
+            )
 
             # Test before market open (8:00 AM)
             with patch("core.volume_analysis.is_market_hours", return_value=False):
@@ -74,7 +87,7 @@ class TestOrderVarietyMarketHours:
 
         mock_is_market_hours.return_value = True
 
-        with patch.object(AutoTradeEngine, "__init__", return_value=None):
+        with patch.object(AutoTradeEngine, "__init__", lambda self: None):
             engine = AutoTradeEngine()
             engine.orders = Mock()
             engine.orders.place_market_buy = Mock(return_value={"stat": "ok", "nOrdNo": "12345"})
@@ -82,19 +95,24 @@ class TestOrderVarietyMarketHours:
             engine.scrip_master = None
             engine.orders_repo = Mock()
             engine.telegram_notifier = None
+            engine.db = None  # Add db attribute
+            engine.user_id = 1  # Add user_id attribute
+            engine.portfolio = Mock()  # Add portfolio attribute
+            engine.strategy_config = Mock()
+            engine.strategy_config.default_variety = "AMO"
 
             # Mock the order tracking functions
-            with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_tracked_symbol"), \
-                 patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"), \
-                 patch("modules.kotak_neo_auto_trader.auto_trade_engine.extract_order_id", return_value="12345"):
-
+            with (
+                patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_tracked_symbol"),
+                patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"),
+                patch(
+                    "modules.kotak_neo_auto_trader.auto_trade_engine.extract_order_id",
+                    return_value="12345",
+                ),
+            ):
                 # Call _attempt_place_order
                 success, order_id = engine._attempt_place_order(
-                    broker_symbol="RELIANCE-EQ",
-                    ticker="RELIANCE.NS",
-                    qty=10,
-                    close=2500.0,
-                    ind={}
+                    broker_symbol="RELIANCE-EQ", ticker="RELIANCE.NS", qty=10, close=2500.0, ind={}
                 )
 
                 # Verify that place_market_buy was called with REGULAR variety
@@ -109,7 +127,7 @@ class TestOrderVarietyMarketHours:
 
         mock_is_market_hours.return_value = False
 
-        with patch.object(AutoTradeEngine, "__init__", return_value=None):
+        with patch.object(AutoTradeEngine, "__init__", lambda self: None):
             engine = AutoTradeEngine()
             engine.orders = Mock()
             engine.orders.place_market_buy = Mock(return_value={"stat": "ok", "nOrdNo": "12345"})
@@ -117,29 +135,32 @@ class TestOrderVarietyMarketHours:
             engine.scrip_master = None
             engine.orders_repo = Mock()
             engine.telegram_notifier = None
+            engine.db = None  # Add db attribute
+            engine.user_id = 1  # Add user_id attribute
+            engine.portfolio = Mock()  # Add portfolio attribute
             engine.strategy_config = Mock()
             engine.strategy_config.default_variety = "AMO"
 
             # Mock config module
             import modules.kotak_neo_auto_trader.config as config_module
+
             config_module.DEFAULT_VARIETY = "AMO"
 
             # Mock the order tracking functions
-            with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_tracked_symbol"), \
-                 patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"), \
-                 patch("modules.kotak_neo_auto_trader.auto_trade_engine.extract_order_id", return_value="12345"):
-
+            with (
+                patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_tracked_symbol"),
+                patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"),
+                patch(
+                    "modules.kotak_neo_auto_trader.auto_trade_engine.extract_order_id",
+                    return_value="12345",
+                ),
+            ):
                 # Call _attempt_place_order
                 success, order_id = engine._attempt_place_order(
-                    broker_symbol="RELIANCE-EQ",
-                    ticker="RELIANCE.NS",
-                    qty=10,
-                    close=2500.0,
-                    ind={}
+                    broker_symbol="RELIANCE-EQ", ticker="RELIANCE.NS", qty=10, close=2500.0, ind={}
                 )
 
                 # Verify that place_market_buy was called with AMO variety
                 if engine.orders.place_market_buy.called:
                     call_args = engine.orders.place_market_buy.call_args
                     assert call_args[1]["variety"] == "AMO"
-

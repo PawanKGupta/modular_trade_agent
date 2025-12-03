@@ -768,7 +768,11 @@ class AutoTradeEngine:
             return "REGULAR"
         else:
             # Use configured default (typically AMO for after-market orders)
-            return self.strategy_config.default_variety if hasattr(self, 'strategy_config') else config.DEFAULT_VARIETY
+            return (
+                self.strategy_config.default_variety
+                if hasattr(self, "strategy_config")
+                else config.DEFAULT_VARIETY
+            )
 
     def market_was_open_today() -> bool:
         # Try NIFTY 50 index to detect trading day
@@ -1880,7 +1884,9 @@ class AutoTradeEngine:
             logger.debug(f"Market is open - using REGULAR order variety for {broker_symbol}")
         else:
             order_variety = config.DEFAULT_VARIETY  # Default to AMO when market is closed
-            logger.debug(f"Market is closed - using {order_variety} order variety for {broker_symbol}")
+            logger.debug(
+                f"Market is closed - using {order_variety} order variety for {broker_symbol}"
+            )
 
         # Determine if this is a BE/BL/BZ segment stock (trade-to-trade)
         # These segments require LIMIT orders, not MARKET orders

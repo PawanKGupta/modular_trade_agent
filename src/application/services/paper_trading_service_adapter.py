@@ -1775,8 +1775,8 @@ class PaperTradingEngineAdapter:
                 # Create MARKET order - variety depends on market hours
                 # During market hours: REGULAR orders execute immediately
                 # Outside market hours: AMO orders execute at next market open
-                from modules.kotak_neo_auto_trader.domain import OrderVariety
                 from core.volume_analysis import is_market_hours
+                from modules.kotak_neo_auto_trader.domain import OrderVariety
 
                 # Determine order variety based on market hours
                 if is_market_hours():

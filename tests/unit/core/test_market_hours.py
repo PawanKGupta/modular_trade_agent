@@ -2,11 +2,9 @@
 Tests for market hours detection functionality
 """
 
-import pytest
 from unittest.mock import patch
-from datetime import datetime, time as dt_time
 
-from core.volume_analysis import is_market_hours, get_current_market_time
+from core.volume_analysis import get_current_market_time, is_market_hours
 
 
 class TestMarketHours:
@@ -116,4 +114,3 @@ class TestMarketHours:
         mock_datetime.now.return_value.hour = 15
         mock_datetime.now.return_value.minute = 30
         assert get_current_market_time() == 15.5
-
