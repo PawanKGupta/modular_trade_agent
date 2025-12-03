@@ -1634,18 +1634,51 @@ class PaperTradingEngineAdapter:
         holdings = self.broker.get_holdings()
         pending_orders = self.broker.get_all_orders()
 
-        # Normalize symbols from holdings (remove .NS suffix and uppercase)
-        current_symbols = {h.symbol.replace(".NS", "").upper() for h in holdings}
+        # Normalize symbols from holdings (remove .NS/.BO suffix and uppercase)
+        # This matches the normalization in load_latest_recommendations()
+        current_symbols = {h.symbol.replace(".NS", "").replace(".BO", "").upper() for h in holdings}
 
         # Also check pending/open buy orders to prevent duplicates
         for order in pending_orders:
             if order.is_buy_order() and order.is_active():
-                normalized_symbol = order.symbol.replace(".NS", "").upper()
+                # Normalize symbol (remove .NS/.BO suffix and uppercase)
+                normalized_symbol = order.symbol.replace(".NS", "").replace(".BO", "").upper()
                 current_symbols.add(normalized_symbol)
                 self.logger.debug(
                     f"Found pending buy order for {order.symbol} (Status: {order.status})",
                     action="place_new_entries",
                 )
+
+        # Also check database for completed/ongoing buy orders from today to prevent duplicates
+        # This catches cases where orders were placed in previous runs but aren't in broker yet
+        if self.user_id and self.db:
+            from src.infrastructure.db.timezone_utils import ist_now
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+            orders_repo = OrdersRepository(self.db)
+            today = ist_now().date()
+
+            # Get all buy orders from today (any status except CANCELLED/FAILED)
+            # This includes ONGOING and CLOSED orders which indicate a position was opened
+            from src.infrastructure.db.models import OrderStatus
+
+            today_orders = orders_repo.list(self.user_id, status=None)
+            for order in today_orders:
+                if (
+                    order.side == "buy"
+                    and order.placed_at
+                    and order.placed_at.date() == today
+                    and order.status
+                    not in [OrderStatus.CANCELLED, OrderStatus.FAILED]  # Skip cancelled/failed
+                ):
+                    # Normalize symbol (remove .NS/.BO suffix and uppercase)
+                    normalized_symbol = order.symbol.replace(".NS", "").replace(".BO", "").upper()
+                    current_symbols.add(normalized_symbol)
+                    self.logger.debug(
+                        f"Found today's buy order in DB for {order.symbol} "
+                        f"(Status: {order.status.value}, Placed: {order.placed_at})",
+                        action="place_new_entries",
+                    )
 
         # Check portfolio limit (from strategy config or default 6)
         max_portfolio_size = (
@@ -1715,8 +1748,9 @@ class PaperTradingEngineAdapter:
         for rec in recommendations:
             summary["attempted"] += 1
 
-            # Normalize ticker for comparison (remove .NS suffix and uppercase)
-            normalized_ticker = rec.ticker.replace(".NS", "").upper()
+            # Normalize ticker for comparison (remove .NS/.BO suffix and uppercase)
+            # This matches the normalization in load_latest_recommendations()
+            normalized_ticker = rec.ticker.replace(".NS", "").replace(".BO", "").upper()
 
             # Skip if already in portfolio or has pending buy order
             if normalized_ticker in current_symbols:
