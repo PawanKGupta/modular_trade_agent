@@ -32,7 +32,7 @@ export function AppShell() {
 	});
 
 	// Get user settings to determine trade mode
-	const { isPaperMode, isBrokerMode, broker, brokerStatus, isBrokerConnected } = useSettings();
+	const { isPaperMode, isBrokerMode, broker, isBrokerConnected } = useSettings();
 
 	// Load expanded groups from localStorage, default only Overview expanded
 	const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
