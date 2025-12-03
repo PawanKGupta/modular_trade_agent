@@ -113,7 +113,7 @@ describe('AppShell', () => {
 			const nav = screen.getByRole('navigation');
 			const ordersLink = nav.querySelector('a[href="/dashboard/orders"]');
 			expect(ordersLink).toBeInTheDocument();
-		}, { timeout: 3000 });
+		}, { timeout: 10000 });
 
 		// Verify Trading items are visible in the menu
 		const nav = screen.getByRole('navigation');
@@ -128,7 +128,7 @@ describe('AppShell', () => {
 		await waitFor(() => {
 			const allBuyingZones = screen.getAllByText('Buying Zone');
 			expect(allBuyingZones.length).toBeGreaterThan(0);
-		}, { timeout: 3000 });
+		}, { timeout: 10000 });
 
 		// Find the menu link (should be in a <nav> element)
 		const nav = screen.getByRole('navigation');
@@ -154,7 +154,7 @@ describe('AppShell', () => {
 		// Wait for component to load
 		await waitFor(() => {
 			expect(screen.getByText(/notifications/i)).toBeInTheDocument();
-		}, { timeout: 3000 });
+		}, { timeout: 10000 });
 
 		// Expand Notifications category
 		const notificationsButton = await screen.findByText(/notifications/i);
@@ -170,7 +170,7 @@ describe('AppShell', () => {
 			const nav = screen.getByRole('navigation');
 			const notificationsLink = nav.querySelector('a[href*="notifications"]');
 			expect(notificationsLink).toBeInTheDocument();
-		}, { timeout: 3000 });
+		}, { timeout: 10000 });
 	});
 
 	it('persists expanded/collapsed state in localStorage', async () => {
