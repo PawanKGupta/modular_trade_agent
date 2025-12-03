@@ -4,8 +4,23 @@ import { AppShell } from '../AppShell';
 import { server } from '@/mocks/server';
 import { http, HttpResponse } from 'msw';
 import { withProviders } from '@/test/utils';
+import { vi } from 'vitest';
 
 const API = (path: string) => `http://localhost:8000/api/v1${path}`;
+
+// Mock useSettings hook
+vi.mock('@/hooks/useSettings', () => ({
+	useSettings: vi.fn(() => ({
+		settings: { trade_mode: 'paper', broker: null, broker_status: null },
+		isLoading: false,
+		error: null,
+		isPaperMode: true,
+		isBrokerMode: false,
+		broker: null,
+		brokerStatus: null,
+		isBrokerConnected: false,
+	})),
+}));
 
 function renderAppShell(initialPath = '/dashboard') {
 	return render(
@@ -187,6 +202,157 @@ describe('AppShell', () => {
 			expect(saved).toBeTruthy();
 			const expanded = JSON.parse(saved!);
 			expect(expanded).toContain('Trading');
+		});
+	});
+
+	describe('Trade Mode Conditional Rendering', () => {
+		it('displays paper mode badge in header when in paper mode', async () => {
+			const useSettings = await import('@/hooks/useSettings');
+			vi.mocked(useSettings.useSettings).mockReturnValue({
+				settings: { trade_mode: 'paper', broker: null, broker_status: null },
+				isLoading: false,
+				error: null,
+				isPaperMode: true,
+				isBrokerMode: false,
+				broker: null,
+				brokerStatus: null,
+				isBrokerConnected: false,
+			});
+
+			renderAppShell();
+
+			await waitFor(() => {
+				expect(screen.getByText('Paper Mode')).toBeInTheDocument();
+			});
+		});
+
+		it('displays broker mode badge with connection status in header when in broker mode', async () => {
+			const useSettings = await import('@/hooks/useSettings');
+			vi.mocked(useSettings.useSettings).mockReturnValue({
+				settings: { trade_mode: 'broker', broker: 'kotak-neo', broker_status: 'Connected' },
+				isLoading: false,
+				error: null,
+				isPaperMode: false,
+				isBrokerMode: true,
+				broker: 'kotak-neo',
+				brokerStatus: 'Connected',
+				isBrokerConnected: true,
+			});
+
+			renderAppShell();
+
+			await waitFor(() => {
+				expect(screen.getByText(/KOTAK-NEO/i)).toBeInTheDocument();
+				expect(screen.getByText(/✓/i)).toBeInTheDocument();
+			});
+		});
+
+		it('displays disconnected broker badge in header', async () => {
+			const useSettings = await import('@/hooks/useSettings');
+			vi.mocked(useSettings.useSettings).mockReturnValue({
+				settings: { trade_mode: 'broker', broker: 'kotak-neo', broker_status: 'Disconnected' },
+				isLoading: false,
+				error: null,
+				isPaperMode: false,
+				isBrokerMode: true,
+				broker: 'kotak-neo',
+				brokerStatus: 'Disconnected',
+				isBrokerConnected: false,
+			});
+
+			renderAppShell();
+
+			await waitFor(() => {
+				expect(screen.getByText(/⚠/i)).toBeInTheDocument();
+			});
+		});
+
+		it('shows paper trading menu items in paper mode', async () => {
+			const useSettings = await import('@/hooks/useSettings');
+			vi.mocked(useSettings.useSettings).mockReturnValue({
+				settings: { trade_mode: 'paper', broker: null, broker_status: null },
+				isLoading: false,
+				error: null,
+				isPaperMode: true,
+				isBrokerMode: false,
+				broker: null,
+				brokerStatus: null,
+				isBrokerConnected: false,
+			});
+
+			renderAppShell();
+
+			// Expand Trading category
+			const tradingButton = await screen.findByText(/trading/i);
+			const buttonElement = tradingButton.closest('button');
+			if (buttonElement) {
+				fireEvent.click(buttonElement);
+			}
+
+			await waitFor(() => {
+				expect(screen.getByText('Paper Trading')).toBeInTheDocument();
+				expect(screen.getByText('Trade History')).toBeInTheDocument();
+			});
+		});
+
+		it('hides paper trading menu items in broker mode', async () => {
+			const useSettings = await import('@/hooks/useSettings');
+			vi.mocked(useSettings.useSettings).mockReturnValue({
+				settings: { trade_mode: 'broker', broker: 'kotak-neo', broker_status: 'Connected' },
+				isLoading: false,
+				error: null,
+				isPaperMode: false,
+				isBrokerMode: true,
+				broker: 'kotak-neo',
+				brokerStatus: 'Connected',
+				isBrokerConnected: true,
+			});
+
+			renderAppShell();
+
+			// Expand Trading category
+			const tradingButton = await screen.findByText(/trading/i);
+			const buttonElement = tradingButton.closest('button');
+			if (buttonElement) {
+				fireEvent.click(buttonElement);
+			}
+
+			await waitFor(() => {
+				expect(screen.getByText('Buying Zone')).toBeInTheDocument();
+				expect(screen.getByText('Orders')).toBeInTheDocument();
+				expect(screen.queryByText('Paper Trading')).not.toBeInTheDocument();
+				expect(screen.queryByText('Trade History')).not.toBeInTheDocument();
+			});
+		});
+
+		it('shows other trading menu items in both modes', async () => {
+			const useSettings = await import('@/hooks/useSettings');
+			vi.mocked(useSettings.useSettings).mockReturnValue({
+				settings: { trade_mode: 'broker', broker: 'kotak-neo', broker_status: 'Connected' },
+				isLoading: false,
+				error: null,
+				isPaperMode: false,
+				isBrokerMode: true,
+				broker: 'kotak-neo',
+				brokerStatus: 'Connected',
+				isBrokerConnected: true,
+			});
+
+			renderAppShell();
+
+			// Expand Trading category
+			const tradingButton = await screen.findByText(/trading/i);
+			const buttonElement = tradingButton.closest('button');
+			if (buttonElement) {
+				fireEvent.click(buttonElement);
+			}
+
+			await waitFor(() => {
+				expect(screen.getByText('Buying Zone')).toBeInTheDocument();
+				expect(screen.getByText('Orders')).toBeInTheDocument();
+				expect(screen.getByText('PnL')).toBeInTheDocument();
+				expect(screen.getByText('Targets')).toBeInTheDocument();
+			});
 		});
 	});
 });
