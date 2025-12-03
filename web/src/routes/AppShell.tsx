@@ -82,11 +82,15 @@ export function AppShell() {
 			{ path: '/dashboard/orders', label: 'Orders', icon: '📦' },
 		];
 
-		// Only show paper trading items in paper mode
+		// Show paper trading items in paper mode, broker portfolio in broker mode
 		if (isPaperMode) {
 			tradingItems.push(
 				{ path: '/dashboard/paper-trading', label: 'Paper Trading', icon: '📝' },
 				{ path: '/dashboard/paper-trading-history', label: 'Trade History', icon: '📜', isSubItem: true }
+			);
+		} else if (isBrokerMode) {
+			tradingItems.push(
+				{ path: '/dashboard/broker-portfolio', label: 'Broker Portfolio', icon: '🏦' }
 			);
 		}
 

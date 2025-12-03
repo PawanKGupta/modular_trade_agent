@@ -486,8 +486,7 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                 raise HTTPException(
                     status_code=503,
                     detail=(
-                        "Failed to connect to broker. "
-                        "Please check your credentials and try again."
+                        "Failed to connect to broker. Please check your credentials and try again."
                     ),
                 )
 
@@ -636,4 +635,161 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
         logger.exception(f"Error fetching broker portfolio for user {current.id}: {e}")
         raise HTTPException(
             status_code=500, detail=f"Failed to fetch broker portfolio: {str(e)}"
+        ) from e
+
+
+@router.get("/orders", response_model=list[dict])
+def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
+    db: Session = Depends(get_db),  # noqa: B008
+    current: Users = Depends(get_current_user),  # noqa: B008
+):
+    """
+    Get broker orders for the current user.
+
+    Fetches orders directly from the connected broker and returns them
+    in a simplified format.
+    """
+    try:
+        # Get user settings
+        settings_repo = SettingsRepository(db)
+        settings = settings_repo.get_by_user_id(current.id)
+        if not settings:
+            raise HTTPException(
+                status_code=404, detail="User settings not found. Please configure your account."
+            )
+
+        # Check if broker mode
+        if settings.trade_mode != TradeMode.BROKER:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Broker orders are only available in broker mode. "
+                    f"Current mode: {settings.trade_mode.value}"
+                ),
+            )
+
+        # Check if broker credentials exist
+        if not settings.broker_creds_encrypted:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Broker credentials not configured. "
+                    "Please configure broker credentials in settings."
+                ),
+            )
+
+        # Decrypt broker credentials
+        broker_creds = decrypt_broker_credentials(settings.broker_creds_encrypted)
+        if not broker_creds:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Failed to decrypt broker credentials. "
+                    "Please reconfigure your broker credentials."
+                ),
+            )
+
+        # Create temporary env file for KotakNeoAuth
+        temp_env_file = create_temp_env_file(broker_creds)
+
+        try:
+            # Import broker components
+            from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+            from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (
+                BrokerFactory,
+            )
+
+            # Create auth handler
+            auth = KotakNeoAuth(temp_env_file)
+
+            # Login to broker
+            if not auth.login():
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Failed to connect to broker. Please check your credentials and try again."
+                    ),
+                )
+
+            # Create broker gateway
+            broker_gateway = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
+
+            # Connect to broker
+            if not broker_gateway.connect():
+                raise HTTPException(
+                    status_code=503,
+                    detail="Failed to connect to broker gateway. Please try again later.",
+                )
+
+            # Get orders from broker
+            broker_orders = broker_gateway.get_all_orders()
+
+            # Convert broker orders to simplified format
+            orders_list = []
+            for order in broker_orders:
+                # Map broker order status to our status format
+                broker_status = (
+                    order.status.value.lower()
+                    if hasattr(order.status, "value")
+                    else str(order.status).lower()
+                )
+                status_map = {
+                    "pending": "pending",
+                    "open": "pending",
+                    "executed": "ongoing",
+                    "completed": "closed",
+                    "filled": "closed",
+                    "rejected": "failed",
+                    "cancelled": "cancelled",
+                    "failed": "failed",
+                }
+                mapped_status = status_map.get(broker_status, "pending")
+
+                # Determine side
+                side = "buy" if order.transaction_type.value == "BUY" else "sell"
+
+                orders_list.append(
+                    {
+                        "broker_order_id": order.order_id if hasattr(order, "order_id") else None,
+                        "symbol": order.symbol,
+                        "side": side,
+                        "quantity": order.quantity,
+                        "price": (
+                            float(order.price.amount)
+                            if hasattr(order, "price") and hasattr(order.price, "amount")
+                            else None
+                        ),
+                        "status": mapped_status,
+                        "created_at": (
+                            order.created_at.isoformat()
+                            if hasattr(order, "created_at") and order.created_at
+                            else None
+                        ),
+                        "execution_price": (
+                            float(order.execution_price.amount)
+                            if hasattr(order, "execution_price")
+                            and hasattr(order.execution_price, "amount")
+                            else None
+                        ),
+                        "execution_qty": (
+                            order.execution_qty if hasattr(order, "execution_qty") else None
+                        ),
+                    }
+                )
+
+            return orders_list
+
+        finally:
+            # Clean up temporary env file
+            try:
+                Path(temp_env_file).unlink(missing_ok=True)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp env file: {cleanup_error}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching broker orders for user {current.id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch broker orders: {str(e)}"
         ) from e

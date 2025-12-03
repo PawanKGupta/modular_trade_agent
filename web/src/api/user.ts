@@ -82,3 +82,20 @@ export async function getPortfolio(): Promise<import('./paper-trading').PaperTra
 	const res = await api.get('/user/portfolio');
 	return res.data;
 }
+
+export interface BrokerOrder {
+	broker_order_id: string | null;
+	symbol: string;
+	side: 'buy' | 'sell';
+	quantity: number;
+	price: number | null;
+	status: 'pending' | 'ongoing' | 'closed' | 'failed' | 'cancelled';
+	created_at: string | null;
+	execution_price: number | null;
+	execution_qty: number | null;
+}
+
+export async function getBrokerOrders(): Promise<BrokerOrder[]> {
+	const res = await api.get('/broker/orders');
+	return res.data as BrokerOrder[];
+}
