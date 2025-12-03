@@ -1,10 +1,11 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSessionStore } from '@/state/sessionStore';
 import { getNotificationCount } from '@/api/notifications';
 import { clsx } from 'clsx';
 import { ReboundLogo } from '@/components/ReboundLogo';
+import { useSettings } from '@/hooks/useSettings';
 
 interface NavItem {
 	path: string;
@@ -29,6 +30,9 @@ export function AppShell() {
 		queryFn: getNotificationCount,
 		refetchInterval: 30000, // Refetch every 30 seconds
 	});
+
+	// Get user settings to determine trade mode
+	const { isPaperMode, isBrokerMode, broker, brokerStatus, isBrokerConnected } = useSettings();
 
 	// Load expanded groups from localStorage, default only Overview expanded
 	const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
@@ -71,22 +75,35 @@ export function AppShell() {
 		return location.pathname.startsWith(path);
 	};
 
-	const navGroups: NavGroup[] = [
-		{
-			title: 'Overview',
-			items: [{ path: '/dashboard', label: 'Dashboard', icon: '📊' }],
-		},
-		{
-			title: 'Trading',
-			items: [
-				{ path: '/dashboard/buying-zone', label: 'Buying Zone', icon: '🎯' },
-				{ path: '/dashboard/orders', label: 'Orders', icon: '📦' },
+	// Build navigation groups with conditional items based on trade mode
+	const navGroups: NavGroup[] = useMemo(() => {
+		const tradingItems: NavItem[] = [
+			{ path: '/dashboard/buying-zone', label: 'Buying Zone', icon: '🎯' },
+			{ path: '/dashboard/orders', label: 'Orders', icon: '📦' },
+		];
+
+		// Only show paper trading items in paper mode
+		if (isPaperMode) {
+			tradingItems.push(
 				{ path: '/dashboard/paper-trading', label: 'Paper Trading', icon: '📝' },
-				{ path: '/dashboard/paper-trading-history', label: 'Trade History', icon: '📜', isSubItem: true },
-				{ path: '/dashboard/pnl', label: 'PnL', icon: '💰' },
-				{ path: '/dashboard/targets', label: 'Targets', icon: '🎪' },
-			],
-		},
+				{ path: '/dashboard/paper-trading-history', label: 'Trade History', icon: '📜', isSubItem: true }
+			);
+		}
+
+		tradingItems.push(
+			{ path: '/dashboard/pnl', label: 'PnL', icon: '💰' },
+			{ path: '/dashboard/targets', label: 'Targets', icon: '🎪' }
+		);
+
+		return [
+			{
+				title: 'Overview',
+				items: [{ path: '/dashboard', label: 'Dashboard', icon: '📊' }],
+			},
+			{
+				title: 'Trading',
+				items: tradingItems,
+			},
 		{
 			title: 'System',
 			items: [
@@ -114,7 +131,8 @@ export function AppShell() {
 				{ path: '/dashboard/notifications', label: 'Notifications', icon: '🔔', badge: notificationCount?.unread_count },
 			],
 		},
-	];
+		];
+	}, [isPaperMode, notificationCount?.unread_count]);
 
 	const adminItems: NavItem[] = [
 		{ path: '/dashboard/admin/users', label: 'Users', icon: '👥' },
@@ -349,19 +367,52 @@ export function AppShell() {
 			</aside>
 			<main className="bg-[var(--bg)] min-h-screen flex-1 sm:flex-none">
 				<div className="sticky top-0 z-10 bg-[var(--bg)]/80 backdrop-blur-sm border-b border-[#1e293b]/50 px-3 sm:px-6 py-3 sm:py-4">
-					<div className="flex items-center justify-end gap-2 sm:gap-4">
-						<Link
-							to="/dashboard/notifications"
-							className="relative p-2.5 sm:p-2 rounded-lg hover:bg-[#1e293b]/50 transition-colors text-[var(--text)]/80 hover:text-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50 focus:ring-offset-2 focus:ring-offset-[var(--bg)] min-h-[44px] sm:min-h-0 flex items-center justify-center"
-							title="Notifications"
-						>
-							<span className="text-lg sm:text-xl">🔔</span>
-							{notificationCount && notificationCount.unread_count > 0 && (
-								<span className="absolute top-0 right-0 px-1.5 py-0.5 text-xs font-semibold rounded-full bg-red-500 text-white min-w-[18px] text-center animate-pulse">
-									{notificationCount.unread_count > 99 ? '99+' : notificationCount.unread_count}
-								</span>
+					<div className="flex items-center justify-between gap-2 sm:gap-4">
+						{/* Mode Badge */}
+						<div className="flex items-center gap-2">
+							{isPaperMode && (
+								<div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-500/20 border border-blue-500/30">
+									<div className="w-2 h-2 bg-blue-400 rounded-full" />
+									<span className="text-xs text-blue-400 font-medium">Paper Mode</span>
+								</div>
 							)}
-						</Link>
+							{isBrokerMode && (
+								<div
+									className={`flex items-center gap-1.5 px-2.5 py-1 rounded border ${
+										isBrokerConnected
+											? 'bg-green-500/20 border-green-500/30'
+											: 'bg-yellow-500/20 border-yellow-500/30'
+									}`}
+								>
+									<div
+										className={`w-2 h-2 rounded-full ${
+											isBrokerConnected ? 'bg-green-400' : 'bg-yellow-400'
+										}`}
+									/>
+									<span
+										className={`text-xs font-medium ${
+											isBrokerConnected ? 'text-green-400' : 'text-yellow-400'
+										}`}
+									>
+										{broker ? broker.toUpperCase() : 'Broker'} {isBrokerConnected ? '✓' : '⚠'}
+									</span>
+								</div>
+							)}
+						</div>
+						<div className="flex items-center gap-2 sm:gap-4">
+							<Link
+								to="/dashboard/notifications"
+								className="relative p-2.5 sm:p-2 rounded-lg hover:bg-[#1e293b]/50 transition-colors text-[var(--text)]/80 hover:text-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50 focus:ring-offset-2 focus:ring-offset-[var(--bg)] min-h-[44px] sm:min-h-0 flex items-center justify-center"
+								title="Notifications"
+							>
+								<span className="text-lg sm:text-xl">🔔</span>
+								{notificationCount && notificationCount.unread_count > 0 && (
+									<span className="absolute top-0 right-0 px-1.5 py-0.5 text-xs font-semibold rounded-full bg-red-500 text-white min-w-[18px] text-center animate-pulse">
+										{notificationCount.unread_count > 99 ? '99+' : notificationCount.unread_count}
+									</span>
+								)}
+							</Link>
+						</div>
 					</div>
 				</div>
 				<div className="p-0 sm:p-6">

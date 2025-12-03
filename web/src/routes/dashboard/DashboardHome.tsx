@@ -7,6 +7,7 @@ import { getPnlSummary, type PnlSummary } from '../../api/pnl';
 import { getBuyingZone } from '../../api/signals';
 import { listOrders } from '../../api/orders';
 import { getNotificationCount } from '../../api/notifications';
+import { useSettings } from '../../hooks/useSettings';
 
 function formatMoney(amount: number): string {
 	return new Intl.NumberFormat('en-IN', {
@@ -41,6 +42,9 @@ export function DashboardHome() {
 		document.title = 'Dashboard';
 	}, []);
 
+	// Get user settings to determine trade mode
+	const { isPaperMode, isBrokerMode, broker, brokerStatus, isBrokerConnected } = useSettings();
+
 	// Fetch all dashboard data
 	const serviceStatusQ = useQuery<ServiceStatus>({
 		queryKey: ['service-status'],
@@ -48,10 +52,12 @@ export function DashboardHome() {
 		refetchInterval: 15000, // Refresh every 15 seconds
 	});
 
+	// Only fetch paper trading portfolio if in paper mode
 	const portfolioQ = useQuery<PaperTradingPortfolio>({
 		queryKey: ['paper-trading-portfolio'],
 		queryFn: getPaperTradingPortfolio,
 		refetchInterval: 30000, // Refresh every 30 seconds
+		enabled: isPaperMode, // Only fetch when in paper mode
 	});
 
 	const pnlQ = useQuery<PnlSummary>({
@@ -96,7 +102,7 @@ export function DashboardHome() {
 
 	const isLoading =
 		serviceStatusQ.isLoading ||
-		portfolioQ.isLoading ||
+		(isPaperMode && portfolioQ.isLoading) ||
 		pnlQ.isLoading ||
 		signalsQ.isLoading ||
 		ordersQ.isLoading ||
@@ -115,9 +121,40 @@ export function DashboardHome() {
 			{/* Header */}
 			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
 				<h1 className="text-xl sm:text-2xl font-semibold text-[var(--text)]">Dashboard</h1>
-				<div className="flex items-center gap-2">
-					<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-					<span className="text-xs text-[var(--muted)]">Live</span>
+				<div className="flex items-center gap-3">
+					{/* Mode Badge */}
+					{isPaperMode && (
+						<div className="flex items-center gap-1.5 px-2 py-1 rounded bg-blue-500/20 border border-blue-500/30">
+							<div className="w-2 h-2 bg-blue-400 rounded-full" />
+							<span className="text-xs text-blue-400 font-medium">Paper Mode</span>
+						</div>
+					)}
+					{isBrokerMode && (
+						<div
+							className={`flex items-center gap-1.5 px-2 py-1 rounded border ${
+								isBrokerConnected
+									? 'bg-green-500/20 border-green-500/30'
+									: 'bg-yellow-500/20 border-yellow-500/30'
+							}`}
+						>
+							<div
+								className={`w-2 h-2 rounded-full ${
+									isBrokerConnected ? 'bg-green-400' : 'bg-yellow-400'
+								}`}
+							/>
+							<span
+								className={`text-xs font-medium ${
+									isBrokerConnected ? 'text-green-400' : 'text-yellow-400'
+								}`}
+							>
+								{broker ? `${broker.toUpperCase()}` : 'Broker'} {isBrokerConnected ? 'Connected' : 'Disconnected'}
+							</span>
+						</div>
+					)}
+					<div className="flex items-center gap-2">
+						<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+						<span className="text-xs text-[var(--muted)]">Live</span>
+					</div>
 				</div>
 			</div>
 
@@ -156,32 +193,82 @@ export function DashboardHome() {
 				</div>
 			</div>
 
+			{/* Broker Connection Status Card (only in broker mode) */}
+			{isBrokerMode && (
+				<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">
+					<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 mb-3 sm:mb-4">
+						<h2 className="text-base sm:text-lg font-semibold text-[var(--text)]">Broker Connection</h2>
+						<Link
+							to="/dashboard/settings"
+							className="text-sm text-[var(--accent)] hover:underline min-h-[44px] flex items-center"
+						>
+							Configure →
+						</Link>
+					</div>
+					<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4">
+						<div className="flex items-center gap-2">
+							<div
+								className={`w-3 h-3 rounded-full ${
+									isBrokerConnected ? 'bg-green-500' : 'bg-yellow-500'
+								}`}
+							/>
+							<span className="text-sm sm:text-base text-[var(--text)]">
+								{broker ? broker.toUpperCase() : 'Broker'}: {brokerStatus || 'Not Connected'}
+							</span>
+						</div>
+						{!isBrokerConnected && (
+							<span className="text-xs sm:text-sm text-yellow-400">
+								Please configure broker credentials in settings
+							</span>
+						)}
+					</div>
+				</div>
+			)}
+
 			{/* Stats Grid */}
 			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-				{/* Portfolio Value */}
-				<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">
-					<div className="text-xs sm:text-sm text-[var(--muted)] mb-1">Portfolio Value</div>
-					<div className="text-xl sm:text-2xl font-semibold text-[var(--text)]">
-						{portfolio ? formatMoney(portfolio.account.total_value) : '—'}
-					</div>
-					{portfolio && (
-						<div
-							className={`text-xs sm:text-sm mt-1 ${
-								portfolio.account.return_percentage >= 0
-									? 'text-green-400'
-									: 'text-red-400'
-							}`}
-						>
-							{formatPercent(portfolio.account.return_percentage)}
+				{/* Portfolio Value - Only show in paper mode */}
+				{isPaperMode && (
+					<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">
+						<div className="text-xs sm:text-sm text-[var(--muted)] mb-1">Portfolio Value</div>
+						<div className="text-xl sm:text-2xl font-semibold text-[var(--text)]">
+							{portfolio ? formatMoney(portfolio.account.total_value) : '—'}
 						</div>
-					)}
-					<Link
-						to="/dashboard/paper-trading"
-						className="text-xs text-[var(--accent)] hover:underline mt-2 block min-h-[44px] flex items-center"
-					>
-						View Portfolio →
-					</Link>
-				</div>
+						{portfolio && (
+							<div
+								className={`text-xs sm:text-sm mt-1 ${
+									portfolio.account.return_percentage >= 0
+										? 'text-green-400'
+										: 'text-red-400'
+								}`}
+							>
+								{formatPercent(portfolio.account.return_percentage)}
+							</div>
+						)}
+						<Link
+							to="/dashboard/paper-trading"
+							className="text-xs text-[var(--accent)] hover:underline mt-2 block min-h-[44px] flex items-center"
+						>
+							View Portfolio →
+						</Link>
+					</div>
+				)}
+				{/* Broker Portfolio Placeholder - Only show in broker mode */}
+				{isBrokerMode && (
+					<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">
+						<div className="text-xs sm:text-sm text-[var(--muted)] mb-1">Broker Portfolio</div>
+						<div className="text-xl sm:text-2xl font-semibold text-[var(--text)]">—</div>
+						<div className="text-xs sm:text-sm mt-1 text-[var(--muted)]">
+							{isBrokerConnected ? 'Connected' : 'Not Connected'}
+						</div>
+						<Link
+							to="/dashboard/settings"
+							className="text-xs text-[var(--accent)] hover:underline mt-2 block min-h-[44px] flex items-center"
+						>
+							{isBrokerConnected ? 'View Portfolio →' : 'Configure Broker →'}
+						</Link>
+					</div>
+				)}
 
 				{/* Total P&L */}
 				<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">
@@ -235,8 +322,8 @@ export function DashboardHome() {
 
 			{/* Portfolio Details & Notifications */}
 			<div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-				{/* Portfolio Breakdown */}
-				{portfolio && (
+				{/* Portfolio Breakdown - Only show in paper mode */}
+				{isPaperMode && portfolio && (
 					<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">
 						<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 mb-3 sm:mb-4">
 							<h2 className="text-base sm:text-lg font-semibold text-[var(--text)]">Portfolio Breakdown</h2>
@@ -323,12 +410,22 @@ export function DashboardHome() {
 						>
 							📊 View Buying Zone
 						</Link>
-						<Link
-							to="/dashboard/paper-trading"
-							className="block p-3 sm:p-2 bg-[var(--bg)] rounded hover:bg-[var(--hover)] text-[var(--text)] text-sm sm:text-base min-h-[44px] flex items-center active:bg-[var(--hover)] transition-colors"
-						>
-							💼 Paper Trading Portfolio
-						</Link>
+						{isPaperMode && (
+							<Link
+								to="/dashboard/paper-trading"
+								className="block p-3 sm:p-2 bg-[var(--bg)] rounded hover:bg-[var(--hover)] text-[var(--text)] text-sm sm:text-base min-h-[44px] flex items-center active:bg-[var(--hover)] transition-colors"
+							>
+								💼 Paper Trading Portfolio
+							</Link>
+						)}
+						{isBrokerMode && (
+							<Link
+								to="/dashboard/settings"
+								className="block p-3 sm:p-2 bg-[var(--bg)] rounded hover:bg-[var(--hover)] text-[var(--text)] text-sm sm:text-base min-h-[44px] flex items-center active:bg-[var(--hover)] transition-colors"
+							>
+								🏦 Broker Portfolio {!isBrokerConnected && '(Not Connected)'}
+							</Link>
+						)}
 						<Link
 							to="/dashboard/orders"
 							className="block p-3 sm:p-2 bg-[var(--bg)] rounded hover:bg-[var(--hover)] text-[var(--text)] text-sm sm:text-base min-h-[44px] flex items-center active:bg-[var(--hover)] transition-colors"
@@ -359,8 +456,8 @@ export function DashboardHome() {
 				</div>
 			</div>
 
-			{/* Recent Holdings Preview */}
-			{portfolio && portfolio.holdings.length > 0 && (
+			{/* Recent Holdings Preview - Only show in paper mode */}
+			{isPaperMode && portfolio && portfolio.holdings.length > 0 && (
 				<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">
 					<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 mb-3 sm:mb-4">
 						<h2 className="text-base sm:text-lg font-semibold text-[var(--text)]">Top Holdings</h2>
