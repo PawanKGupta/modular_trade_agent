@@ -1516,6 +1516,9 @@ class PaperTradingEngineAdapter:
                 return []
 
             # Convert Signals to Recommendation objects
+            # Use a set to track normalized symbols to prevent duplicates
+            # (e.g., "XYZ" and "XYZ.NS" should be treated as the same symbol)
+            seen_symbols = set()
             recommendations = []
             for signal in active_signals:
                 # Determine verdict (prioritize final_verdict, then verdict, then ml_verdict)
@@ -1535,6 +1538,17 @@ class PaperTradingEngineAdapter:
                 ticker = signal.symbol.upper()
                 if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
                     ticker = f"{ticker}.NS"
+
+                # Normalize ticker for deduplication (remove .NS suffix and uppercase)
+                normalized_symbol = ticker.replace(".NS", "").replace(".BO", "").upper()
+
+                # Skip if we've already seen this normalized symbol
+                if normalized_symbol in seen_symbols:
+                    self.logger.debug(
+                        f"Skipping duplicate symbol: {ticker} (normalized: {normalized_symbol})",
+                        action="load_recommendations",
+                    )
+                    continue
 
                 # Get last_close price
                 last_close = signal.last_close or 0.0
@@ -1564,6 +1578,7 @@ class PaperTradingEngineAdapter:
                     execution_capital=execution_capital,
                 )
                 recommendations.append(rec)
+                seen_symbols.add(normalized_symbol)
 
             self.logger.info(
                 f"Converted {len(recommendations)} buy/strong_buy recommendations from database",
