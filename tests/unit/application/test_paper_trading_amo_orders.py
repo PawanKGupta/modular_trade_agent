@@ -96,8 +96,11 @@ class TestAMOOrderPlacement:
 
         recommendations = [Recommendation(ticker="RELIANCE.NS", verdict="buy", last_close=100.0)]
 
-        with patch.object(
-            adapter.engine, "load_latest_recommendations", return_value=recommendations
+        with (
+            patch.object(
+                adapter.engine, "load_latest_recommendations", return_value=recommendations
+            ),
+            patch("core.volume_analysis.is_market_hours", return_value=False),
         ):
             adapter.run_buy_orders()
 
@@ -136,7 +139,8 @@ class TestAMOOrderPlacement:
 
         recommendations = [Recommendation(ticker="RELIANCE.NS", verdict="buy", last_close=100.0)]
 
-        adapter.place_new_entries(recommendations)
+        with patch("core.volume_analysis.is_market_hours", return_value=False):
+            adapter.place_new_entries(recommendations)
 
         # Verify order was placed
         assert mock_paper_broker.place_order.called
@@ -593,8 +597,11 @@ class TestCompleteAMOFlow:
         # Step 1: 4:05 PM - Place AMO order
         recommendations = [Recommendation(ticker="RELIANCE.NS", verdict="buy", last_close=100.0)]
 
-        with patch.object(
-            adapter.engine, "load_latest_recommendations", return_value=recommendations
+        with (
+            patch.object(
+                adapter.engine, "load_latest_recommendations", return_value=recommendations
+            ),
+            patch("core.volume_analysis.is_market_hours", return_value=False),
         ):
             adapter.run_buy_orders()
 

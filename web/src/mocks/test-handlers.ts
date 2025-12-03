@@ -544,6 +544,13 @@ http.post(API('/auth/refresh'), async () => {
 			status: 'rejected',
 		});
 	}),
+	http.patch(API('/signals/signals/:symbol/activate'), async ({ params }) => {
+		return HttpResponse.json({
+			message: `Signal for ${params.symbol} marked as ACTIVE`,
+			symbol: params.symbol,
+			status: 'active',
+		});
+	}),
 	// buying zone columns
 	http.get(API('/user/buying-zone-columns'), async () => {
 		return HttpResponse.json({ columns: [] });
