@@ -886,14 +886,14 @@ class TestUnifiedOrderMonitor:
             assert call_args.args[0] == 1  # user_id as positional
         else:
             assert call_args.kwargs.get('user_id') == 1  # user_id as keyword
-        
+
         # Check status parameter (can be positional or keyword)
         status_arg = None
         if len(call_args.args) > 1:
             status_arg = call_args.args[1]
         elif 'status' in call_args.kwargs:
             status_arg = call_args.kwargs['status']
-        
+
         # Verify status is ONGOING (may be passed as enum or value)
         if status_arg:
             assert status_arg == DbOrderStatus.ONGOING or (hasattr(status_arg, 'value') and status_arg.value == 'ongoing')
