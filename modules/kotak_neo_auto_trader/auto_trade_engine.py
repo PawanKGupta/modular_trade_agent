@@ -754,7 +754,6 @@ class AutoTradeEngine:
         d = d or datetime.now().date()
         return d.weekday() in config.MARKET_DAYS
 
-    @staticmethod
     def _get_order_variety_for_market_hours(self) -> str:
         """
         Determine order variety based on market hours.
