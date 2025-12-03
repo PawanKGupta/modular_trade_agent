@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { withProviders } from '@/test/utils';
 import { DashboardHome } from '../dashboard/DashboardHome';
 import type { ServiceStatus } from '@/api/service';
-import type { PaperTradingPortfolio } from '@/api/paper-trading';
+import type { PaperTradingPortfolio } from '@/api/user';
 import type { PnlSummary } from '@/api/pnl';
 
 // Mock all API modules
@@ -19,8 +19,8 @@ vi.mock('@/api/service', () => ({
 	})),
 }));
 
-vi.mock('@/api/paper-trading', () => ({
-	getPaperTradingPortfolio: vi.fn(() => Promise.resolve({
+vi.mock('@/api/user', () => ({
+	getPortfolio: vi.fn(() => Promise.resolve({
 		account: {
 			initial_capital: 1000000,
 			available_cash: 500000,
@@ -439,8 +439,8 @@ describe('DashboardHome', () => {
 	});
 
 	it('does not display top holdings section when no holdings', async () => {
-		const paperTradingApi = await import('@/api/paper-trading');
-		vi.mocked(paperTradingApi.getPaperTradingPortfolio).mockResolvedValueOnce({
+		const userApi = await import('@/api/user');
+		vi.mocked(userApi.getPortfolio).mockResolvedValueOnce({
 			...mockPortfolio,
 			holdings: [],
 		});
@@ -480,8 +480,8 @@ describe('DashboardHome', () => {
 	});
 
 	it('handles missing portfolio data gracefully', async () => {
-		const paperTradingApi = await import('@/api/paper-trading');
-		vi.mocked(paperTradingApi.getPaperTradingPortfolio).mockResolvedValueOnce(null);
+		const userApi = await import('@/api/user');
+		vi.mocked(userApi.getPortfolio).mockResolvedValueOnce(null);
 
 		render(
 			withProviders(
@@ -612,8 +612,8 @@ describe('DashboardHome', () => {
 	});
 
 	it('displays negative return percentage correctly', async () => {
-		const paperTradingApi = await import('@/api/paper-trading');
-		vi.mocked(paperTradingApi.getPaperTradingPortfolio).mockResolvedValueOnce({
+		const userApi = await import('@/api/user');
+		vi.mocked(userApi.getPortfolio).mockResolvedValueOnce({
 			...mockPortfolio,
 			account: {
 				...mockPortfolio.account,
