@@ -30,6 +30,8 @@ modules/kotak_neo_auto_trader/dev_tests/*_tokens.txt
 # Paper trading test runtime data
 paper_trading/test/
 paper_trading/test/*.json
+paper_trading/test_amo/
+paper_trading/test_amo/*.json
 
 # Paper trading runtime data (user-specific files)
 paper_trading/user_*/account.json

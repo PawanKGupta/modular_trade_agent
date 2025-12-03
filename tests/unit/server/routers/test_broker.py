@@ -1,7 +1,15 @@
 import json
+from datetime import datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
+
+# Import domain entities for broker tests
+from modules.kotak_neo_auto_trader.domain.entities import Holding
+from modules.kotak_neo_auto_trader.domain.value_objects import Exchange, Money
 from server.app.routers import broker
 from server.app.routers.broker import KotakNeoCreds, _extract_error_message
 from server.app.schemas.user import BrokerCredsRequest
@@ -35,9 +43,18 @@ class DummySettingsRepo:
         self.settings = DummySettings(user_id=1)
         self.ensure_default_called = []
         self.update_called = []
+        self.get_by_user_id_called = []
 
     def ensure_default(self, user_id):
         self.ensure_default_called.append(user_id)
+        self.settings.user_id = user_id
+        return self.settings
+
+    def get_by_user_id(self, user_id):
+        """Get settings by user ID (used by broker endpoints)"""
+        self.get_by_user_id_called.append(user_id)
+        if self.settings is None:
+            return None
         self.settings.user_id = user_id
         return self.settings
 
@@ -77,7 +94,7 @@ def test_extract_error_message_string():
 
 # POST /creds tests
 def test_save_broker_creds_basic(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -105,7 +122,7 @@ def test_save_broker_creds_basic(monkeypatch):
 
 
 def test_save_broker_creds_full(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -143,7 +160,7 @@ def test_save_broker_creds_full(monkeypatch):
 
 
 def test_save_broker_creds_partial(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -218,7 +235,10 @@ def test_test_broker_connection_no_sdk(monkeypatch):
 
     assert result.ok is False
     # Should return user-friendly message without installation instructions
-    assert "not available" in result.message.lower() or "system administrator" in result.message.lower()
+    assert (
+        "not available" in result.message.lower()
+        or "system administrator" in result.message.lower()
+    )
     assert "pip install" not in result.message.lower()  # No installation commands for users
 
 
@@ -232,7 +252,7 @@ def test_test_broker_connection_sdk_available_basic(monkeypatch):
 
     monkeypatch.setattr(broker, "NeoAPI", mock_neo_api)
 
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -272,7 +292,7 @@ def test_test_broker_connection_success_updates_settings(monkeypatch):
     mock_client = MagicMock()
     monkeypatch.setattr(broker, "NeoAPI", lambda *args, **kwargs: mock_client)
 
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -303,7 +323,7 @@ def test_test_broker_connection_failure_no_update(monkeypatch):
 
     monkeypatch.setattr(broker, "NeoAPI", mock_neo_api)
 
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -375,7 +395,7 @@ def test_test_kotak_neo_connection_full_creds(monkeypatch):
 
 # GET /status tests
 def test_broker_status(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     repo.settings.broker = "kotak-neo"
     repo.settings.broker_status = "Connected"
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
@@ -388,7 +408,7 @@ def test_broker_status(monkeypatch):
 
 
 def test_broker_status_none(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     repo.settings.broker = None
     repo.settings.broker_status = None
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
@@ -401,7 +421,7 @@ def test_broker_status_none(monkeypatch):
 
 # GET /creds/info tests
 def test_get_broker_creds_info_no_creds(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     repo.settings.broker_creds_encrypted = None
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
@@ -414,7 +434,7 @@ def test_get_broker_creds_info_no_creds(monkeypatch):
 
 
 def test_get_broker_creds_info_masked(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     creds_dict = {"api_key": "test_key_12345", "api_secret": "test_secret_67890"}
     encrypted_blob = json.dumps(creds_dict).encode("utf-8")
     repo.settings.broker_creds_encrypted = encrypted_blob
@@ -436,7 +456,7 @@ def test_get_broker_creds_info_masked(monkeypatch):
 
 
 def test_get_broker_creds_info_full(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     creds_dict = {
         "api_key": "test_key_12345",
         "api_secret": "test_secret_67890",
@@ -468,7 +488,7 @@ def test_get_broker_creds_info_full(monkeypatch):
 
 
 def test_get_broker_creds_info_decrypt_fails(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     repo.settings.broker_creds_encrypted = b"invalid_encrypted_data"
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
@@ -484,7 +504,7 @@ def test_get_broker_creds_info_decrypt_fails(monkeypatch):
 
 
 def test_get_broker_creds_info_invalid_json(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     # Invalid JSON that can't be parsed
     repo.settings.broker_creds_encrypted = b"not json data"
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
@@ -502,7 +522,7 @@ def test_get_broker_creds_info_invalid_json(monkeypatch):
 
 
 def test_get_broker_creds_info_old_format(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     # Old format using Python dict literal
     old_format = "{'api_key': 'test_key', 'api_secret': 'test_secret'}"
     repo.settings.broker_creds_encrypted = old_format.encode("utf-8")
@@ -521,7 +541,7 @@ def test_get_broker_creds_info_old_format(monkeypatch):
 
 
 def test_get_broker_creds_info_mask_short_values(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     creds_dict = {"api_key": "abc", "api_secret": "12"}  # Too short to mask
     encrypted_blob = json.dumps(creds_dict).encode("utf-8")
     repo.settings.broker_creds_encrypted = encrypted_blob
@@ -541,7 +561,7 @@ def test_get_broker_creds_info_mask_short_values(monkeypatch):
 
 
 def test_get_broker_creds_info_exception_handling(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     repo.settings.broker_creds_encrypted = b"some_data"
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
@@ -824,7 +844,7 @@ def test_test_kotak_neo_2fa_other_exception(monkeypatch):
 
 
 def test_save_broker_creds_with_totp_secret(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -850,3 +870,352 @@ def test_save_broker_creds_with_totp_secret(monkeypatch):
     assert result == {"status": "ok"}
     creds_dict = json.loads(encrypted_data.decode("utf-8"))
     assert creds_dict["totp_secret"] == "totp123"
+
+
+# GET /portfolio tests
+def test_get_broker_portfolio_no_settings(monkeypatch):
+    """Test broker portfolio endpoint when user settings don't exist"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings = None
+
+    def mock_get_by_user_id(user_id):
+        return None
+
+    repo.get_by_user_id = mock_get_by_user_id
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_portfolio(db=db_session, current=user)
+
+    assert exc.value.status_code == 404
+    assert "User settings not found" in exc.value.detail
+
+
+def test_get_broker_portfolio_paper_mode(monkeypatch):
+    """Test broker portfolio endpoint when user is in paper mode"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.PAPER
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_portfolio(db=db_session, current=user)
+
+    assert exc.value.status_code == 400
+    assert "broker mode" in exc.value.detail.lower()
+
+
+def test_get_broker_portfolio_no_credentials(monkeypatch):
+    """Test broker portfolio endpoint when credentials are not configured"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = None
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_portfolio(db=db_session, current=user)
+
+    assert exc.value.status_code == 400
+    assert "credentials not configured" in exc.value.detail.lower()
+
+
+def test_get_broker_portfolio_decrypt_fails(monkeypatch):
+    """Test broker portfolio endpoint when credential decryption fails"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"invalid_encrypted"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return None
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_portfolio(db=db_session, current=user)
+
+    assert exc.value.status_code == 400
+    assert "Failed to decrypt" in exc.value.detail
+
+
+def test_get_broker_portfolio_auth_fails(monkeypatch):
+    """Test broker portfolio endpoint when authentication fails"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Mock KotakNeoAuth to fail login
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = False
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    with patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init):
+        db_session = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            broker.get_broker_portfolio(db=db_session, current=user)
+
+        assert exc.value.status_code == 503
+        assert "Failed to connect to broker" in exc.value.detail
+
+
+def test_get_broker_portfolio_success(monkeypatch):
+    """Test broker portfolio endpoint success case"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    temp_env_file = "/tmp/test_broker_portfolio.env"
+
+    def mock_create_temp_env(creds):
+        return temp_env_file
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Mock KotakNeoAuth
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = True
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    # Mock BrokerFactory and broker gateway
+    mock_holding = Holding(
+        symbol="RELIANCE.NS",
+        exchange=Exchange.NSE,
+        quantity=10,
+        average_price=Money(Decimal("2500.00")),
+        current_price=Money(Decimal("2600.00")),
+        last_updated=datetime.now(),
+    )
+
+    mock_broker = MagicMock()
+    mock_broker.connect.return_value = True
+    mock_broker.get_holdings.return_value = [mock_holding]
+    mock_broker.get_account_limits.return_value = {
+        "available_margin": {"cash": 100000.0},
+    }
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    # Mock yfinance
+    mock_ticker = MagicMock()
+    mock_ticker.info = {"currentPrice": 2600.0}
+
+    def mock_yf_ticker(symbol):
+        return mock_ticker
+
+    # Patch at the import location (inside the function)
+    with (
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+        patch("yfinance.Ticker", mock_yf_ticker),
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_portfolio(db=db_session, current=user)
+
+        assert result.account.available_cash == 100000.0
+        assert len(result.holdings) == 1
+        assert result.holdings[0].symbol == "RELIANCE.NS"
+        assert result.holdings[0].quantity == 10
+        assert result.holdings[0].average_price == 2500.0
+        assert result.holdings[0].current_price == 2600.0
+        assert result.holdings[0].pnl == 1000.0  # 10 * (2600 - 2500)
+        assert result.holdings[0].pnl_percentage == pytest.approx(4.0, rel=0.1)  # (1000/25000)*100
+        assert result.account.portfolio_value > 0
+        assert result.account.unrealized_pnl > 0
+
+
+def test_get_broker_orders_no_settings(monkeypatch):
+    """Test broker orders endpoint when user settings don't exist"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings = None
+
+    def mock_get_by_user_id(user_id):
+        return None
+
+    repo.get_by_user_id = mock_get_by_user_id
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_orders(db=db_session, current=user)
+
+    assert exc.value.status_code == 404
+    assert "User settings not found" in exc.value.detail
+
+
+def test_get_broker_orders_paper_mode(monkeypatch):
+    """Test broker orders endpoint when user is in paper mode"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.PAPER
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_orders(db=db_session, current=user)
+
+    assert exc.value.status_code == 400
+    assert "broker mode" in exc.value.detail.lower()
+
+
+def test_get_broker_orders_no_credentials(monkeypatch):
+    """Test broker orders endpoint when credentials are not configured"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = None
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_orders(db=db_session, current=user)
+
+    assert exc.value.status_code == 400
+    assert "credentials not configured" in exc.value.detail.lower()
+
+
+def test_get_broker_orders_success(monkeypatch):
+    """Test broker orders endpoint success case"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    temp_env_file = "/tmp/test_broker_orders.env"
+
+    def mock_create_temp_env(creds):
+        return temp_env_file
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Mock KotakNeoAuth
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = True
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    # Mock BrokerFactory and broker gateway
+    mock_order = MagicMock()
+    mock_order.order_id = "ORDER123"
+    mock_order.symbol = "RELIANCE.NS"
+    mock_order.quantity = 10
+    mock_order.transaction_type.value = "BUY"
+    mock_order.status.value = "OPEN"
+    mock_order.created_at = datetime.now()
+    # Create mock Money object
+    mock_price = MagicMock()
+    mock_price.amount = Decimal("2500.00")
+    mock_order.price = mock_price
+    mock_order.execution_price = None
+    mock_order.execution_qty = None
+
+    mock_broker = MagicMock()
+    mock_broker.connect.return_value = True
+    mock_broker.get_all_orders.return_value = [mock_order]
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_orders(db=db_session, current=user)
+
+        assert len(result) == 1
+        assert result[0]["broker_order_id"] == "ORDER123"
+        assert result[0]["symbol"] == "RELIANCE.NS"
+        assert result[0]["quantity"] == 10
+        assert result[0]["side"] == "buy"
+        assert result[0]["status"] == "pending"
+        assert result[0]["price"] == 2500.0
+
+
+def test_get_broker_orders_auth_fails(monkeypatch):
+    """Test broker orders endpoint when authentication fails"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Mock KotakNeoAuth to fail login
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = False
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    with patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init):
+        db_session = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            broker.get_broker_orders(db=db_session, current=user)
+
+        assert exc.value.status_code == 503
+        assert "Failed to connect to broker" in exc.value.detail

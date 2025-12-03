@@ -7,14 +7,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from src.application.services.broker_credentials import (
+    create_temp_env_file,
+    decrypt_broker_credentials,
+)
 from src.infrastructure.db.models import TradeMode, Users
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
 from ..core.crypto import decrypt_blob, encrypt_blob
 from ..core.deps import get_current_user, get_db
+from ..routers.paper_trading import (
+    PaperTradingAccount,
+    PaperTradingHolding,
+    PaperTradingPortfolio,
+)
 from ..schemas.user import BrokerCredsInfo, BrokerCredsRequest, BrokerTestResponse
 
 logger = logging.getLogger(__name__)
@@ -60,9 +69,7 @@ def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
 
         python_version = sys.version_info
         if python_version >= (3, 12):
-            install_cmd = (
-                "pip install --no-deps git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client"
-            )
+            install_cmd = "pip install --no-deps git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client"
             technical_details = (
                 f"Kotak Neo SDK (neo_api_client) not installed on server.\n"
                 f"Python version: {python_version.major}.{python_version.minor}\n"
@@ -71,9 +78,7 @@ def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
                 f"See docker/INSTALL_KOTAK_SDK.md for detailed instructions."
             )
         else:
-            install_cmd = (
-                "pip install git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client"
-            )
+            install_cmd = "pip install git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client"
             technical_details = (
                 f"Kotak Neo SDK (neo_api_client) not installed on server.\n"
                 f"Python version: {python_version.major}.{python_version.minor}\n"
@@ -410,3 +415,381 @@ def get_broker_creds_info(
     except Exception:
         # If decryption fails, assume no valid creds
         return BrokerCredsInfo(has_creds=False)
+
+
+@router.get("/portfolio", response_model=PaperTradingPortfolio)
+def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
+    db: Session = Depends(get_db),  # noqa: B008
+    current: Users = Depends(get_current_user),  # noqa: B008
+):
+    """
+    Get broker portfolio for the current user.
+
+    Fetches holdings from the connected broker and converts them to the same
+    format as paper trading portfolio for consistency.
+    """
+    try:
+        # Get user settings
+        settings_repo = SettingsRepository(db)
+        settings = settings_repo.get_by_user_id(current.id)
+        if not settings:
+            raise HTTPException(
+                status_code=404, detail="User settings not found. Please configure your account."
+            )
+
+        # Check if broker mode
+        if settings.trade_mode != TradeMode.BROKER:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Broker portfolio is only available in broker mode. "
+                    f"Current mode: {settings.trade_mode.value}"
+                ),
+            )
+
+        # Check if broker credentials exist
+        if not settings.broker_creds_encrypted:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Broker credentials not configured. "
+                    "Please configure broker credentials in settings."
+                ),
+            )
+
+        # Decrypt broker credentials
+        broker_creds = decrypt_broker_credentials(settings.broker_creds_encrypted)
+        if not broker_creds:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Failed to decrypt broker credentials. "
+                    "Please reconfigure your broker credentials."
+                ),
+            )
+
+        # Create temporary env file for KotakNeoAuth
+        temp_env_file = create_temp_env_file(broker_creds)
+
+        try:
+            # Import broker components
+            from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+            from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (
+                BrokerFactory,
+            )
+
+            # Create auth handler
+            auth = KotakNeoAuth(temp_env_file)
+
+            # Login to broker
+            if not auth.login():
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Failed to connect to broker. Please check your credentials and try again."
+                    ),
+                )
+
+            # Create broker gateway
+            broker = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
+
+            # Connect to broker
+            if not broker.connect():
+                raise HTTPException(
+                    status_code=503,
+                    detail="Failed to connect to broker gateway. Please try again later.",
+                )
+
+            # Get holdings from broker
+            holdings = broker.get_holdings()
+
+            # Get account limits/margins for available cash
+            try:
+                account_limits = broker.get_account_limits()
+                # Extract available cash from account limits
+                # Structure may vary by broker, adjust as needed
+                available_cash = float(
+                    account_limits.get("available_margin", {}).get("cash", 0.0)
+                    or account_limits.get("cash", 0.0)
+                    or 0.0
+                )
+            except Exception:
+                # If account limits not available, set to 0
+                available_cash = 0.0
+                logger.warning("Could not fetch account limits for broker portfolio")
+
+            # Convert broker holdings to paper trading format
+            portfolio_holdings = []
+            portfolio_value = 0.0
+            unrealized_pnl_total = 0.0
+
+            # Fetch live prices using yfinance
+            import yfinance as yf  # noqa: PLC0415
+
+            for holding in holdings:
+                if holding.quantity == 0:
+                    continue
+
+                # Get live price
+                symbol = holding.symbol
+                ticker = (
+                    f"{symbol}.NS"
+                    if not symbol.endswith(".NS") and not symbol.endswith(".BO")
+                    else symbol
+                )
+                try:
+                    stock = yf.Ticker(ticker)
+                    live_price = stock.info.get("currentPrice") or stock.info.get(
+                        "regularMarketPrice"
+                    )
+                    current_price = (
+                        float(live_price) if live_price else float(holding.current_price.amount)
+                    )
+                except Exception:
+                    # Fallback to holding's current price
+                    current_price = float(holding.current_price.amount)
+
+                # Calculate values
+                avg_price = float(holding.average_price.amount)
+                cost_basis = avg_price * holding.quantity
+                market_value = current_price * holding.quantity
+                pnl = market_value - cost_basis
+                pnl_pct = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+
+                portfolio_value += market_value
+                unrealized_pnl_total += pnl
+
+                portfolio_holdings.append(
+                    PaperTradingHolding(
+                        symbol=symbol,
+                        quantity=holding.quantity,
+                        average_price=avg_price,
+                        current_price=current_price,
+                        cost_basis=cost_basis,
+                        market_value=market_value,
+                        pnl=pnl,
+                        pnl_percentage=pnl_pct,
+                        target_price=None,  # Broker holdings don't have target prices
+                        distance_to_target=None,
+                    )
+                )
+
+            # Calculate account totals
+            total_value = available_cash + portfolio_value
+            # For broker mode, we don't track initial_capital or realized_pnl separately
+            # Use available_cash as initial capital estimate
+            initial_capital_estimate = available_cash + portfolio_value - unrealized_pnl_total
+            realized_pnl = 0.0  # Broker API doesn't provide this directly
+
+            total_pnl = realized_pnl + unrealized_pnl_total
+            return_pct = (
+                (total_pnl / initial_capital_estimate * 100)
+                if initial_capital_estimate > 0
+                else 0.0
+            )
+
+            # Create account object
+            account = PaperTradingAccount(
+                initial_capital=initial_capital_estimate,
+                available_cash=available_cash,
+                total_pnl=total_pnl,
+                realized_pnl=realized_pnl,
+                unrealized_pnl=unrealized_pnl_total,
+                portfolio_value=portfolio_value,
+                total_value=total_value,
+                return_percentage=return_pct,
+            )
+
+            # Get recent orders (empty for now - can be enhanced later)
+            recent_orders = []
+
+            # Order statistics (empty for now - can be enhanced later)
+            order_statistics = {
+                "total_orders": 0,
+                "buy_orders": 0,
+                "sell_orders": 0,
+                "completed_orders": 0,
+                "pending_orders": 0,
+                "cancelled_orders": 0,
+                "rejected_orders": 0,
+                "success_rate": 0.0,
+            }
+
+            return PaperTradingPortfolio(
+                account=account,
+                holdings=portfolio_holdings,
+                recent_orders=recent_orders,
+                order_statistics=order_statistics,
+            )
+
+        finally:
+            # Clean up temporary env file
+            try:
+                Path(temp_env_file).unlink(missing_ok=True)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp env file: {cleanup_error}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching broker portfolio for user {current.id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch broker portfolio: {str(e)}"
+        ) from e
+
+
+@router.get("/orders", response_model=list[dict])
+def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
+    db: Session = Depends(get_db),  # noqa: B008
+    current: Users = Depends(get_current_user),  # noqa: B008
+):
+    """
+    Get broker orders for the current user.
+
+    Fetches orders directly from the connected broker and returns them
+    in a simplified format.
+    """
+    try:
+        # Get user settings
+        settings_repo = SettingsRepository(db)
+        settings = settings_repo.get_by_user_id(current.id)
+        if not settings:
+            raise HTTPException(
+                status_code=404, detail="User settings not found. Please configure your account."
+            )
+
+        # Check if broker mode
+        if settings.trade_mode != TradeMode.BROKER:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Broker orders are only available in broker mode. "
+                    f"Current mode: {settings.trade_mode.value}"
+                ),
+            )
+
+        # Check if broker credentials exist
+        if not settings.broker_creds_encrypted:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Broker credentials not configured. "
+                    "Please configure broker credentials in settings."
+                ),
+            )
+
+        # Decrypt broker credentials
+        broker_creds = decrypt_broker_credentials(settings.broker_creds_encrypted)
+        if not broker_creds:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Failed to decrypt broker credentials. "
+                    "Please reconfigure your broker credentials."
+                ),
+            )
+
+        # Create temporary env file for KotakNeoAuth
+        temp_env_file = create_temp_env_file(broker_creds)
+
+        try:
+            # Import broker components
+            from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+            from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (
+                BrokerFactory,
+            )
+
+            # Create auth handler
+            auth = KotakNeoAuth(temp_env_file)
+
+            # Login to broker
+            if not auth.login():
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Failed to connect to broker. Please check your credentials and try again."
+                    ),
+                )
+
+            # Create broker gateway
+            broker_gateway = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
+
+            # Connect to broker
+            if not broker_gateway.connect():
+                raise HTTPException(
+                    status_code=503,
+                    detail="Failed to connect to broker gateway. Please try again later.",
+                )
+
+            # Get orders from broker
+            broker_orders = broker_gateway.get_all_orders()
+
+            # Convert broker orders to simplified format
+            orders_list = []
+            for order in broker_orders:
+                # Map broker order status to our status format
+                broker_status = (
+                    order.status.value.lower()
+                    if hasattr(order.status, "value")
+                    else str(order.status).lower()
+                )
+                status_map = {
+                    "pending": "pending",
+                    "open": "pending",
+                    "executed": "ongoing",
+                    "completed": "closed",
+                    "filled": "closed",
+                    "rejected": "failed",
+                    "cancelled": "cancelled",
+                    "failed": "failed",
+                }
+                mapped_status = status_map.get(broker_status, "pending")
+
+                # Determine side
+                side = "buy" if order.transaction_type.value == "BUY" else "sell"
+
+                orders_list.append(
+                    {
+                        "broker_order_id": order.order_id if hasattr(order, "order_id") else None,
+                        "symbol": order.symbol,
+                        "side": side,
+                        "quantity": order.quantity,
+                        "price": (
+                            float(order.price.amount)
+                            if hasattr(order, "price") and hasattr(order.price, "amount")
+                            else None
+                        ),
+                        "status": mapped_status,
+                        "created_at": (
+                            order.created_at.isoformat()
+                            if hasattr(order, "created_at") and order.created_at
+                            else None
+                        ),
+                        "execution_price": (
+                            float(order.execution_price.amount)
+                            if hasattr(order, "execution_price")
+                            and hasattr(order.execution_price, "amount")
+                            else None
+                        ),
+                        "execution_qty": (
+                            order.execution_qty if hasattr(order, "execution_qty") else None
+                        ),
+                    }
+                )
+
+            return orders_list
+
+        finally:
+            # Clean up temporary env file
+            try:
+                Path(temp_env_file).unlink(missing_ok=True)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp env file: {cleanup_error}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching broker orders for user {current.id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch broker orders: {str(e)}"
+        ) from e
