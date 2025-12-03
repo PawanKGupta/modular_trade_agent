@@ -339,20 +339,19 @@ class SignalsRepository:
         now = ist_now()
         market_close_time = time(15, 30)  # 3:30 PM IST
 
-        # Calculate yesterday's date (start of day)
-        yesterday = now.date() - timedelta(days=1)
-        yesterday_start = datetime.combine(yesterday, time(0, 0)).replace(tzinfo=IST)
-
-        # Calculate today's market close (3:30 PM)
-        today_market_close = datetime.combine(now.date(), market_close_time).replace(tzinfo=IST)
+        # Get signal date and today's date
+        signal_date = signal_timestamp.date()
+        today_date = now.date()
+        yesterday_date = today_date - timedelta(days=1)
+        day_before_yesterday_date = today_date - timedelta(days=2)
 
         # Signal is expired if:
-        # 1. Signal was created before yesterday (day before yesterday or earlier), OR
+        # 1. Signal was created on day before yesterday or earlier, OR
         # 2. Signal was created yesterday but current time >= today's 3:30 PM
-        if signal_timestamp < yesterday_start:
+        if signal_date <= day_before_yesterday_date:
             return True  # Signal from day before yesterday or earlier is expired
 
-        if signal_timestamp >= yesterday_start and now >= today_market_close:
+        if signal_date == yesterday_date and now >= datetime.combine(today_date, market_close_time).replace(tzinfo=IST):
             return True  # Signal from yesterday but past today's 3:30 PM is expired
 
         return False  # Signal is still active

@@ -651,7 +651,8 @@ class TradingService:
                     logger.debug(
                         f"Unified monitor: {stats.get('checked', 0)} checked, "
                         f"{stats.get('updated', 0)} updated, {stats.get('executed', 0)} executed, "
-                        f"{stats.get('rejected', 0)} rejected, {stats.get('cancelled', 0)} cancelled"
+                        f"{stats.get('rejected', 0)} rejected, {stats.get('cancelled', 0)} cancelled, "
+                        f"{stats.get('new_holdings_tracked', 0)} new holdings tracked"
                     )
                 elif self.sell_manager:
                     stats = self.sell_manager.monitor_and_update()

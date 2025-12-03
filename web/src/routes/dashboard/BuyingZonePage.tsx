@@ -550,7 +550,7 @@ export function BuyingZonePage() {
 																							className="text-xs px-2 py-1.5 sm:py-1 rounded bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed min-h-[32px] sm:min-h-0"
 																							title={isExpired ? 'Cannot reactivate expired signals' : 'Reactivate this signal'}
 																						>
-																							{activateMutation.isPending ? 'Activating...' : 'Active'}
+																							{activateMutation.isPending ? 'Activating...' : 'Reactivate'}
 																						</button>
 																					);
 																				})()}
