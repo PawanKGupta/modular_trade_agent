@@ -163,12 +163,6 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             portfolio_value += qty * current_price
 
         total_value = account_data["available_cash"] + portfolio_value
-        return_pct = (
-            ((total_value - account_data["initial_capital"]) / account_data["initial_capital"])
-            * 100
-            if account_data["initial_capital"] > 0
-            else 0.0
-        )
 
         # Get realized P&L from stored account (from completed trades)
         realized_pnl = account_data.get("realized_pnl", 0.0)
@@ -241,7 +235,14 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             cost_basis = qty * avg_price
             market_value = qty * current_price
             pnl = market_value - cost_basis
-            pnl_pct = ((current_price - avg_price) / avg_price * 100) if avg_price > 0 else 0.0
+            # P&L percentage: if quantity is 0, return 0% (no position)
+            # Otherwise, calculate based on price change
+            if qty == 0:
+                pnl_pct = 0.0
+            elif avg_price > 0:
+                pnl_pct = (current_price - avg_price) / avg_price * 100
+            else:
+                pnl_pct = 0.0
 
             # Accumulate unrealized P&L
             unrealized_pnl_total += pnl
@@ -273,6 +274,15 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
 
         # Calculate total P&L with live prices
         total_pnl = realized_pnl + unrealized_pnl_total
+
+        # Calculate return percentage based on total P&L
+        # (more accurate than total_value - initial_capital)
+        # This ensures consistency with the displayed total_pnl
+        return_pct = (
+            (total_pnl / account_data["initial_capital"]) * 100
+            if account_data["initial_capital"] > 0
+            else 0.0
+        )
 
         # Create account object with recalculated P&L
         account = PaperTradingAccount(
@@ -318,9 +328,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
 
         # Count re-entry orders (orders with entry_type="REENTRY" in metadata)
         reentry_count = sum(
-            1
-            for order in orders_data
-            if order.get("metadata", {}).get("entry_type") == "REENTRY"
+            1 for order in orders_data if order.get("metadata", {}).get("entry_type") == "REENTRY"
         )
 
         order_statistics = {
