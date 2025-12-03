@@ -62,7 +62,7 @@ export function BrokerOrdersPage() {
 		queryKey: ['broker-orders'],
 		queryFn: getBrokerOrders,
 		enabled: isBrokerMode && isBrokerConnected,
-		refetchInterval: 10000, // Refresh every 10 seconds
+		refetchInterval: 30000, // Refresh every 30 seconds (reduced from 10s to avoid frequent auth/OTP)
 		retry: (failureCount, error) => {
 			// Retry up to 3 times for retryable errors
 			if (failureCount >= 3) return false;
