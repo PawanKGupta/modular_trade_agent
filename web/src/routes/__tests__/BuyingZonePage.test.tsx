@@ -1149,6 +1149,10 @@ describe('BuyingZonePage', () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 
+			// Use today's timestamp so signal is not expired
+			const today = new Date();
+			const todayISO = today.toISOString();
+
 			server.use(
 				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
 					const url = new URL(request.url);
@@ -1160,7 +1164,7 @@ describe('BuyingZonePage', () => {
 								symbol: 'REJECTED1',
 								status: 'rejected',
 								base_status: 'active', // Base signal is active, can be reactivated
-								ts: '2024-01-15T10:00:00',
+								ts: todayISO,
 								distance_to_ema9: 5.5,
 								backtest_score: 75.5,
 								confidence: 0.85,
@@ -1208,6 +1212,10 @@ describe('BuyingZonePage', () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 
+			// Use today's timestamp so signal is not expired
+			const today = new Date();
+			const todayISO = today.toISOString();
+
 			server.use(
 				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
 					const url = new URL(request.url);
@@ -1219,7 +1227,7 @@ describe('BuyingZonePage', () => {
 								symbol: 'TRADED1',
 								status: 'traded',
 								base_status: 'active', // Base signal is active, can be reactivated
-								ts: '2024-01-15T10:00:00',
+								ts: todayISO,
 								distance_to_ema9: 5.5,
 								backtest_score: 75.5,
 								confidence: 0.85,
@@ -1327,10 +1335,10 @@ describe('BuyingZonePage', () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 
-			// Create a date from yesterday
-			const yesterday = new Date();
-			yesterday.setDate(yesterday.getDate() - 1);
-			const yesterdayISO = yesterday.toISOString();
+			// Create a date from day before yesterday (should be expired)
+			const dayBeforeYesterday = new Date();
+			dayBeforeYesterday.setDate(dayBeforeYesterday.getDate() - 2);
+			const dayBeforeYesterdayISO = dayBeforeYesterday.toISOString();
 
 			server.use(
 				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
@@ -1342,8 +1350,8 @@ describe('BuyingZonePage', () => {
 							{
 								symbol: 'REJECTED_OLD',
 								status: 'rejected',
-								base_status: 'rejected', // Base status is not expired, but signal is from yesterday
-								ts: yesterdayISO,
+								base_status: 'rejected', // Base status is not expired, but signal is from day before yesterday
+								ts: dayBeforeYesterdayISO,
 								distance_to_ema9: 5.5,
 								backtest_score: 75.5,
 								confidence: 0.85,
@@ -1393,6 +1401,10 @@ describe('BuyingZonePage', () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 
+			// Use today's timestamp so signal is not expired
+			const today = new Date();
+			const todayISO = today.toISOString();
+
 			server.use(
 				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
 					const url = new URL(request.url);
@@ -1404,7 +1416,7 @@ describe('BuyingZonePage', () => {
 								symbol: 'REJECTED1',
 								status: 'rejected',
 								base_status: 'active',
-								ts: '2024-01-15T10:00:00',
+								ts: todayISO,
 								distance_to_ema9: 5.5,
 								backtest_score: 75.5,
 								confidence: 0.85,
@@ -1452,6 +1464,10 @@ describe('BuyingZonePage', () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 
+			// Use today's timestamp so signal is not expired
+			const today = new Date();
+			const todayISO = today.toISOString();
+
 			let rejectedCallCount = 0;
 
 			server.use(
@@ -1469,7 +1485,7 @@ describe('BuyingZonePage', () => {
 										symbol: 'REJECTED1',
 										status: 'rejected',
 										base_status: 'active',
-										ts: '2024-01-15T10:00:00',
+										ts: todayISO,
 										distance_to_ema9: 5.5,
 										backtest_score: 75.5,
 										confidence: 0.85,
