@@ -246,7 +246,7 @@ describe('NotificationsPage', () => {
 		// Verify button has correct hover styles (opacity-based, not undefined CSS variable)
 		expect(markAllReadButton).toHaveClass('hover:opacity-90');
 		expect(markAllReadButton).toHaveClass('transition-opacity');
-		
+
 		// Verify button does NOT use undefined --accent-hover variable
 		expect(markAllReadButton.className).not.toContain('hover:bg-[var(--accent-hover)]');
 
