@@ -250,7 +250,16 @@ class MultiUserTradingService:
                                                 action="scheduler",
                                             )
                                     finally:
-                                        analysis_db.close()
+                                        # Ensure any pending transactions are handled before closing
+                                        try:
+                                            # Rollback any pending transaction
+                                            analysis_db.rollback()
+                                        except Exception:
+                                            pass  # Ignore rollback errors (session may already be closed/rolled back)
+                                        try:
+                                            analysis_db.close()
+                                        except Exception:
+                                            pass  # Ignore close errors if session is in bad state
                                 except Exception as e:
                                     user_logger.error(
                                         f"Analysis failed: {e}", exc_info=True, action="scheduler"
@@ -325,7 +334,16 @@ class MultiUserTradingService:
             user_logger.info("Paper trading scheduler stopped", action="scheduler")
         finally:
             # Clean up thread-local session
-            thread_db.close()
+            # Ensure any pending transactions are handled before closing
+            try:
+                # Rollback any pending transaction
+                thread_db.rollback()
+            except Exception:
+                pass  # Ignore rollback errors (session may already be closed/rolled back)
+            try:
+                thread_db.close()
+            except Exception:
+                pass  # Ignore close errors if session is in bad state
 
     def start_service(self, user_id: int) -> bool:  # noqa: PLR0915, PLR0912
         """

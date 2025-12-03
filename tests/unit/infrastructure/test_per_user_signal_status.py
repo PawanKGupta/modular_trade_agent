@@ -5,12 +5,13 @@ Tests that signal status (TRADED/REJECTED) is tracked per-user
 while keeping base signals shared across users.
 """
 
-import pytest
-from datetime import datetime
+from datetime import datetime, time, timedelta
 
-from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus, Users
-from src.infrastructure.persistence.signals_repository import SignalsRepository
+import pytest
+
+from src.infrastructure.db.models import Signals, SignalStatus, Users, UserSignalStatus
 from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.persistence.signals_repository import SignalsRepository
 
 
 @pytest.fixture
@@ -56,9 +57,11 @@ class TestPerUserSignalStatus:
         assert success is True
 
         # Verify user status was created
-        user_status = db_session.query(UserSignalStatus).filter_by(
-            user_id=user1.id, signal_id=test_signal.id
-        ).first()
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=test_signal.id)
+            .first()
+        )
 
         assert user_status is not None
         assert user_status.status == SignalStatus.TRADED
@@ -77,9 +80,11 @@ class TestPerUserSignalStatus:
         repo1.mark_as_traded("RELIANCE", user_id=user1.id)
 
         # User 2 should not have this status
-        user2_status = db_session.query(UserSignalStatus).filter_by(
-            user_id=user2.id, signal_id=test_signal.id
-        ).first()
+        user2_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user2.id, signal_id=test_signal.id)
+            .first()
+        )
 
         assert user2_status is None  # User 2 has no custom status
 
@@ -97,9 +102,11 @@ class TestPerUserSignalStatus:
         assert success is True
 
         # Verify user status was created
-        user_status = db_session.query(UserSignalStatus).filter_by(
-            user_id=user1.id, signal_id=test_signal.id
-        ).first()
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=test_signal.id)
+            .first()
+        )
 
         assert user_status is not None
         assert user_status.status == SignalStatus.REJECTED
@@ -121,12 +128,16 @@ class TestPerUserSignalStatus:
         repo2.mark_as_rejected("RELIANCE", user_id=user2.id)
 
         # Verify different statuses
-        user1_status = db_session.query(UserSignalStatus).filter_by(
-            user_id=user1.id, signal_id=test_signal.id
-        ).first()
-        user2_status = db_session.query(UserSignalStatus).filter_by(
-            user_id=user2.id, signal_id=test_signal.id
-        ).first()
+        user1_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=test_signal.id)
+            .first()
+        )
+        user2_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user2.id, signal_id=test_signal.id)
+            .first()
+        )
 
         assert user1_status.status == SignalStatus.TRADED
         assert user2_status.status == SignalStatus.REJECTED
@@ -135,7 +146,9 @@ class TestPerUserSignalStatus:
         db_session.refresh(test_signal)
         assert test_signal.status == SignalStatus.ACTIVE
 
-    def test_get_user_signal_status_returns_custom_status(self, db_session, test_users, test_signal):
+    def test_get_user_signal_status_returns_custom_status(
+        self, db_session, test_users, test_signal
+    ):
         """Test that get_user_signal_status returns user's custom status"""
         user1, user2 = test_users
 
@@ -236,10 +249,283 @@ class TestPerUserSignalStatus:
         repo.mark_as_rejected("RELIANCE", user_id=user1.id)
 
         # Should only have one user status entry
-        user_statuses = db_session.query(UserSignalStatus).filter_by(
-            user_id=user1.id, signal_id=test_signal.id
-        ).all()
+        user_statuses = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=test_signal.id)
+            .all()
+        )
 
         assert len(user_statuses) == 1
         assert user_statuses[0].status == SignalStatus.REJECTED  # Updated to REJECTED
 
+    def test_mark_as_active_removes_user_status_override(self, db_session, test_users, test_signal):
+        """Test that marking as active removes user-specific status override"""
+        user1, user2 = test_users
+
+        # User 1 marks as traded
+        repo = SignalsRepository(db_session, user_id=user1.id)
+        repo.mark_as_traded("RELIANCE", user_id=user1.id)
+
+        # Verify user status exists
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=test_signal.id)
+            .first()
+        )
+        assert user_status is not None
+        assert user_status.status == SignalStatus.TRADED
+
+        # Reactivate
+        success = repo.mark_as_active("RELIANCE", user_id=user1.id)
+        assert success is True
+
+        # User status override should be removed
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=test_signal.id)
+            .first()
+        )
+        assert user_status is None  # Override removed
+
+        # Base signal should still be ACTIVE
+        db_session.refresh(test_signal)
+        assert test_signal.status == SignalStatus.ACTIVE
+
+    def test_mark_as_active_cannot_reactivate_expired_base_signal(
+        self, db_session, test_users, test_signal
+    ):
+        """Test that cannot reactivate if base signal is expired"""
+        user1, user2 = test_users
+
+        # Mark base signal as expired
+        test_signal.status = SignalStatus.EXPIRED
+        db_session.commit()
+
+        # User 1 marks as traded (on expired base signal)
+        repo = SignalsRepository(db_session, user_id=user1.id)
+        # Note: mark_as_traded should fail for expired signals, but let's test the reactivation
+        # First create a user status manually to simulate the scenario
+        user_status = UserSignalStatus(
+            user_id=user1.id,
+            signal_id=test_signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.TRADED,
+            marked_at=ist_now(),
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        # Try to reactivate (should fail because base is expired)
+        success = repo.mark_as_active("RELIANCE", user_id=user1.id)
+        assert success is False
+
+        # User status should still exist
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=test_signal.id)
+            .first()
+        )
+        assert user_status is not None
+
+    def test_mark_as_active_cannot_reactivate_old_signal(self, db_session, test_users):
+        """Test that cannot reactivate a signal from day before yesterday"""
+        user1, user2 = test_users
+
+        # Create signal from day before yesterday
+        now = ist_now()
+        day_before_yesterday = now.date() - timedelta(days=2)
+        # Set to any time on day before yesterday
+        signal_time = datetime.combine(day_before_yesterday, time(14, 0)).replace(tzinfo=now.tzinfo)
+        old_signal = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.ACTIVE,
+            rsi10=25.0,
+            ema9=2600.0,
+            last_close=2500.0,
+            verdict="buy",
+            ts=signal_time,
+        )
+        db_session.add(old_signal)
+        db_session.commit()
+        db_session.refresh(old_signal)
+
+        # User 1 marks as traded
+        repo = SignalsRepository(db_session, user_id=user1.id)
+        # Create user status manually since mark_as_traded might fail for old signals
+        user_status = UserSignalStatus(
+            user_id=user1.id,
+            signal_id=old_signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.TRADED,
+            marked_at=ist_now(),
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        # Try to reactivate (should fail because signal is from previous day)
+        success = repo.mark_as_active("RELIANCE", user_id=user1.id)
+        assert success is False
+
+        # User status should still exist
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=old_signal.id)
+            .first()
+        )
+        assert user_status is not None
+
+    def test_mark_as_active_creates_override_for_base_rejected_signal(self, db_session, test_users):
+        """Test that reactivating a base REJECTED signal creates a user override"""
+        user1, user2 = test_users
+
+        # Create signal with base status REJECTED (no user override)
+        now = ist_now()
+        signal = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.REJECTED,  # Base status is REJECTED
+            rsi10=25.0,
+            ema9=2600.0,
+            last_close=2500.0,
+            verdict="buy",
+            ts=now,  # Today's signal, not expired
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # Verify no user override exists
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=signal.id)
+            .first()
+        )
+        assert user_status is None
+
+        # Reactivate for user1
+        repo = SignalsRepository(db_session, user_id=user1.id)
+        success = repo.mark_as_active("RELIANCE", user_id=user1.id)
+        assert success is True
+
+        # User override should now exist with ACTIVE status
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=signal.id)
+            .first()
+        )
+        assert user_status is not None
+        assert user_status.status == SignalStatus.ACTIVE
+
+        # Base signal should still be REJECTED (not changed for all users)
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.REJECTED
+
+    def test_mark_as_traded_updates_existing_active_override(self, db_session, test_users):
+        """Test that marking as traded updates existing ACTIVE user override"""
+        user1, user2 = test_users
+
+        # Create signal with base status REJECTED
+        now = ist_now()
+        signal = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.REJECTED,  # Base status is REJECTED
+            rsi10=25.0,
+            ema9=2600.0,
+            last_close=2500.0,
+            verdict="buy",
+            ts=now,  # Today's signal, not expired
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # User marks as active (creates user override with ACTIVE)
+        repo = SignalsRepository(db_session, user_id=user1.id)
+        success = repo.mark_as_active("RELIANCE", user_id=user1.id)
+        assert success is True
+
+        # Verify user override exists with ACTIVE status
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=signal.id)
+            .first()
+        )
+        assert user_status is not None
+        assert user_status.status == SignalStatus.ACTIVE
+
+        # Now mark as traded (should update the existing override)
+        success = repo.mark_as_traded("RELIANCE", user_id=user1.id)
+        assert success is True
+
+        # Verify user override is updated to TRADED
+        db_session.refresh(user_status)
+        assert user_status.status == SignalStatus.TRADED
+
+        # Base signal should still be REJECTED (not changed for all users)
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.REJECTED
+
+        # Verify effective status is TRADED for user1
+        signals_with_status = repo.get_signals_with_user_status(user1.id, limit=100)
+        assert len(signals_with_status) == 1
+        sig, effective_status = signals_with_status[0]
+        assert sig.id == signal.id
+        assert effective_status == SignalStatus.TRADED
+
+    def test_mark_as_active_does_not_affect_other_users(self, db_session, test_users, test_signal):
+        """Test that reactivating for one user doesn't affect other users"""
+        user1, user2 = test_users
+
+        # Both users mark as traded
+        repo1 = SignalsRepository(db_session, user_id=user1.id)
+        repo2 = SignalsRepository(db_session, user_id=user2.id)
+        repo1.mark_as_traded("RELIANCE", user_id=user1.id)
+        repo2.mark_as_traded("RELIANCE", user_id=user2.id)
+
+        # User 1 reactivates
+        success = repo1.mark_as_active("RELIANCE", user_id=user1.id)
+        assert success is True
+
+        # User 1's override should be removed
+        user1_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=test_signal.id)
+            .first()
+        )
+        assert user1_status is None
+
+        # User 2's override should still exist
+        user2_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user2.id, signal_id=test_signal.id)
+            .first()
+        )
+        assert user2_status is not None
+        assert user2_status.status == SignalStatus.TRADED
+
+    def test_mark_as_active_rejected_signal(self, db_session, test_users, test_signal):
+        """Test reactivating a rejected signal"""
+        user1, user2 = test_users
+
+        # User 1 marks as rejected
+        repo = SignalsRepository(db_session, user_id=user1.id)
+        repo.mark_as_rejected("RELIANCE", user_id=user1.id)
+
+        # Verify user status exists
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=test_signal.id)
+            .first()
+        )
+        assert user_status.status == SignalStatus.REJECTED
+
+        # Reactivate
+        success = repo.mark_as_active("RELIANCE", user_id=user1.id)
+        assert success is True
+
+        # User status override should be removed
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=test_signal.id)
+            .first()
+        )
+        assert user_status is None

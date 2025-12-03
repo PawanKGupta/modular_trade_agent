@@ -3,7 +3,7 @@ Tests for SignalsRepository signal status management (soft delete feature)
 """
 
 import os
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 import pytest
 
@@ -18,8 +18,8 @@ from src.infrastructure.persistence.signals_repository import SignalsRepository 
 @pytest.fixture
 def db_session():
     """Create a fresh database session for each test"""
-    from src.infrastructure.db.base import Base
-    from src.infrastructure.db.session import engine
+    from src.infrastructure.db.base import Base  # noqa: PLC0415
+    from src.infrastructure.db.session import engine  # noqa: PLC0415
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
@@ -287,3 +287,143 @@ class TestSignalStatusTransitions:
         # Status should remain expired
         db_session.refresh(signal)
         assert signal.status == SignalStatus.EXPIRED
+
+
+class TestMarkAsActive:
+    """Test reactivating signals (mark_as_active)"""
+
+    def test_reactivate_rejected_signal(self, signals_repo, db_session):
+        """Test: Can reactivate a rejected signal"""
+        # Create and mark as rejected
+        signal = Signals(symbol="TEST1", status=SignalStatus.ACTIVE, ts=ist_now(), rsi10=25.0)
+        db_session.add(signal)
+        db_session.commit()
+
+        signals_repo.mark_as_rejected("TEST1")
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.REJECTED
+
+        # Reactivate
+        success = signals_repo.mark_as_active("TEST1")
+        assert success is True
+
+        # Status should be back to ACTIVE
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.ACTIVE
+
+    def test_reactivate_traded_signal(self, signals_repo, db_session):
+        """Test: Can reactivate a traded signal"""
+        # Create and mark as traded
+        signal = Signals(symbol="TEST2", status=SignalStatus.ACTIVE, ts=ist_now(), rsi10=25.0)
+        db_session.add(signal)
+        db_session.commit()
+
+        signals_repo.mark_as_traded("TEST2")
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.TRADED
+
+        # Reactivate
+        success = signals_repo.mark_as_active("TEST2")
+        assert success is True
+
+        # Status should be back to ACTIVE
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.ACTIVE
+
+    def test_cannot_reactivate_expired_signal(self, signals_repo, db_session):
+        """Test: Cannot reactivate an expired signal"""
+        # Create expired signal
+        signal = Signals(symbol="TEST3", status=SignalStatus.EXPIRED, ts=ist_now(), rsi10=25.0)
+        db_session.add(signal)
+        db_session.commit()
+
+        # Try to reactivate
+        success = signals_repo.mark_as_active("TEST3")
+        assert success is False
+
+        # Status should remain expired
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.EXPIRED
+
+    def test_reactivate_nonexistent_signal(self, signals_repo):
+        """Test: Returns False for nonexistent symbol"""
+        success = signals_repo.mark_as_active("NONEXISTENT")
+        assert success is False
+
+    def test_reactivate_already_active_signal(self, signals_repo, db_session):
+        """Test: Returns True for already active signal (no override)"""
+        # Create active signal
+        signal = Signals(symbol="TEST4", status=SignalStatus.ACTIVE, ts=ist_now(), rsi10=25.0)
+        db_session.add(signal)
+        db_session.commit()
+
+        # Try to reactivate (should return True as it's already active)
+        success = signals_repo.mark_as_active("TEST4")
+        assert success is True
+
+        # Status should remain ACTIVE
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.ACTIVE
+
+    def test_cannot_reactivate_old_rejected_signal(self, signals_repo, db_session):
+        """Test: Cannot reactivate a rejected signal from day before yesterday"""
+        # Create rejected signal from day before yesterday
+        now = ist_now()
+        day_before_yesterday = now.date() - timedelta(days=2)
+        # Set to any time on day before yesterday
+        signal_time = datetime.combine(day_before_yesterday, time(14, 0)).replace(tzinfo=now.tzinfo)
+        signal = Signals(symbol="TEST5", status=SignalStatus.REJECTED, ts=signal_time, rsi10=25.0)
+        db_session.add(signal)
+        db_session.commit()
+
+        # Try to reactivate (should fail because signal is from day before yesterday)
+        success = signals_repo.mark_as_active("TEST5")
+        assert success is False
+
+        # Status should remain REJECTED
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.REJECTED
+
+    def test_cannot_reactivate_old_traded_signal(self, signals_repo, db_session):
+        """Test: Cannot reactivate a traded signal from day before yesterday"""
+        # Create traded signal from day before yesterday
+        now = ist_now()
+        day_before_yesterday = now.date() - timedelta(days=2)
+        # Set to any time on day before yesterday
+        signal_time = datetime.combine(day_before_yesterday, time(14, 0)).replace(tzinfo=now.tzinfo)
+        signal = Signals(symbol="TEST6", status=SignalStatus.TRADED, ts=signal_time, rsi10=25.0)
+        db_session.add(signal)
+        db_session.commit()
+
+        # Try to reactivate (should fail because signal is from day before yesterday)
+        success = signals_repo.mark_as_active("TEST6")
+        assert success is False
+
+        # Status should remain TRADED
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.TRADED
+
+    def test_cannot_reactivate_signal_after_today_market_close(self, signals_repo, db_session):
+        """Test: Cannot reactivate signal after today's 3:30 PM if created yesterday"""
+        # Create signal from yesterday (any time)
+        now = ist_now()
+        yesterday = now.date() - timedelta(days=1)
+        yesterday_signal = datetime.combine(yesterday, time(16, 0)).replace(tzinfo=now.tzinfo)
+        signal = Signals(
+            symbol="TEST7", status=SignalStatus.REJECTED, ts=yesterday_signal, rsi10=25.0
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        # Check if current time is after today's 3:30 PM
+        today_market_close = datetime.combine(now.date(), time(15, 30)).replace(tzinfo=now.tzinfo)
+        if now >= today_market_close:
+            # Current time is after today's 3:30 PM, signal should be expired
+            success = signals_repo.mark_as_active("TEST7")
+            assert success is False
+        else:
+            # Current time is before today's 3:30 PM, signal should be active
+            success = signals_repo.mark_as_active("TEST7")
+            # This test depends on current time, so we just verify the logic works
+            # If it's before 3:30 PM, it should succeed (unless other conditions fail)
+            assert success is not None

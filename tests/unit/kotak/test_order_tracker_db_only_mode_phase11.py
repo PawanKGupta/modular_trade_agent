@@ -234,11 +234,14 @@ class TestOrderTrackerDBOnlyModePhase11:
 
     def test_remove_pending_order_db_only_mode(self, mock_db_session, mock_orders_repo, temp_data_dir):
         """Test removing pending order in DB-only mode"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
         with patch(
             "src.infrastructure.persistence.orders_repository.OrdersRepository",
             return_value=mock_orders_repo,
         ):
             mock_db_order = Mock()
+            mock_db_order.status = DbOrderStatus.PENDING  # Set status to PENDING so it gets cancelled
             mock_orders_repo.get_by_broker_order_id.return_value = mock_db_order
 
             tracker = OrderTracker(

@@ -1772,9 +1772,19 @@ class PaperTradingEngineAdapter:
                 # Extract base symbol (remove .NS suffix if present) for order placement
                 symbol = rec.ticker.replace(".NS", "").upper()
 
-                # Create MARKET order with AMO variety (matches real broker behavior)
-                # MARKET orders execute at opening price, price parameter is not used
+                # Create MARKET order - variety depends on market hours
+                # During market hours: REGULAR orders execute immediately
+                # Outside market hours: AMO orders execute at next market open
+                from core.volume_analysis import is_market_hours
                 from modules.kotak_neo_auto_trader.domain import OrderVariety
+
+                # Determine order variety based on market hours
+                if is_market_hours():
+                    order_variety = OrderVariety.REGULAR
+                    self.logger.debug(f"Market is open - using REGULAR order variety for {symbol}")
+                else:
+                    order_variety = OrderVariety.AMO
+                    self.logger.debug(f"Market is closed - using AMO order variety for {symbol}")
 
                 order = Order(
                     symbol=symbol,
@@ -1782,7 +1792,7 @@ class PaperTradingEngineAdapter:
                     order_type=OrderType.MARKET,  # MARKET order (matches real broker)
                     transaction_type=TransactionType.BUY,
                     # price=None for MARKET orders (not used, executes at market price)
-                    variety=OrderVariety.AMO,  # Set as AMO order
+                    variety=order_variety,
                 )
 
                 # Store original ticker in order metadata for price fetching

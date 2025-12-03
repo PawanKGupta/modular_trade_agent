@@ -1,21 +1,80 @@
 import logging
 from datetime import datetime
+from math import floor
 from typing import Annotated, Literal
 
+import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
 from sqlalchemy.orm import Session
 
+from modules.kotak_neo_auto_trader import config as kotak_config
 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 from src.infrastructure.db.models import Users
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.orders_repository import OrdersRepository
+from src.infrastructure.persistence.user_trading_config_repository import (
+    UserTradingConfigRepository,
+)
 
 from ..core.deps import get_current_user, get_db
 from ..schemas.orders import OrderResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _recalculate_order_quantity(order, user_id: int, db: Session, order_id: int) -> None:
+    """
+    Recalculate order quantity based on current price and capital per trade.
+
+    Updates order.quantity and order.price in place.
+    """
+    try:
+        # Get user's trading config (capital per trade)
+        trading_config_repo = UserTradingConfigRepository(db)
+        trading_config = trading_config_repo.get(user_id)
+        user_capital = trading_config.capital_per_trade if trading_config else 20000.0
+
+        # Get current price from yfinance
+        ticker = getattr(order, "ticker", None) or f"{order.symbol}.NS"
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="1d")
+        if hist.empty:
+            # Fallback to order price if current price unavailable
+            current_price = order.price or 0.0
+            logger.warning(
+                f"Could not fetch current price for {ticker}, using order price {current_price}"
+            )
+        else:
+            current_price = float(hist["Close"].iloc[-1])
+
+        if current_price <= 0:
+            raise ValueError(f"Invalid current price: {current_price}")
+
+        # Calculate execution capital (simplified - use user_capital directly)
+        # In production, this would use LiquidityCapitalService like AutoTradeEngine
+        execution_capital = user_capital
+
+        # Calculate new quantity
+        new_qty = max(kotak_config.MIN_QTY, floor(execution_capital / current_price))
+
+        # Update order quantity and price
+        old_qty = order.quantity
+        order.quantity = new_qty
+        order.price = current_price
+
+        logger.info(
+            f"Recalculated quantity for order {order_id} ({order.symbol}): "
+            f"{old_qty} -> {new_qty} shares "
+            f"(capital: Rs {user_capital:,.0f}, price: Rs {current_price:.2f})"
+        )
+    except Exception as calc_error:
+        logger.warning(
+            f"Failed to recalculate quantity for order {order_id}: {calc_error}. "
+            "Using original quantity."
+        )
+        # Continue with original quantity if recalculation fails
 
 
 @router.get("/", response_model=list[OrderResponse])
@@ -182,15 +241,18 @@ def retry_order(
                 ),
             )
 
+        # Recalculate quantity based on current price and capital per trade
+        _recalculate_order_quantity(order, current.id, db, order_id)
+
         # Update order for retry (keep as FAILED, update retry metadata)
         order.retry_count = (order.retry_count or 0) + 1
         order.last_retry_attempt = ist_now()
         if not order.first_failed_at:
             order.first_failed_at = ist_now()
-        # Update reason to indicate manual retry
-        if order.reason:
+        # Update reason to indicate manual retry (remove duplicate "Manual retry requested")
+        if order.reason and "(Manual retry requested)" not in order.reason:
             order.reason = f"{order.reason} (Manual retry requested)"
-        else:
+        elif not order.reason:
             order.reason = "Manual retry requested"
 
         updated_order = repo.update(order)

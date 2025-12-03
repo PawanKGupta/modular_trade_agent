@@ -101,7 +101,7 @@ export function NotificationsPage() {
 					<button
 						onClick={handleMarkAllRead}
 						disabled={markAllReadMutation.isPending}
-						className="px-4 py-3 sm:py-2 rounded bg-[var(--accent)] text-black hover:bg-[var(--accent-hover)] disabled:opacity-50 min-h-[44px] sm:min-h-0 text-sm sm:text-base w-full sm:w-auto"
+						className="px-4 py-3 sm:py-2 rounded bg-[var(--accent)] text-black hover:opacity-90 disabled:opacity-50 min-h-[44px] sm:min-h-0 text-sm sm:text-base w-full sm:w-auto transition-opacity"
 					>
 						{markAllReadMutation.isPending ? 'Marking...' : `Mark All Read (${unreadCount})`}
 					</button>

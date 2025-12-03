@@ -1145,6 +1145,405 @@ describe('BuyingZonePage', () => {
 			});
 		});
 
+		it('shows Reactivate button for rejected signals', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			// Use today's timestamp so signal is not expired
+			const today = new Date();
+			const todayISO = today.toISOString();
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
+					const url = new URL(request.url);
+					const statusFilter = url.searchParams.get('status_filter');
+
+					if (statusFilter === 'rejected' || statusFilter === 'all') {
+						return HttpResponse.json([
+							{
+								symbol: 'REJECTED1',
+								status: 'rejected',
+								base_status: 'active', // Base signal is active, can be reactivated
+								ts: todayISO,
+								distance_to_ema9: 5.5,
+								backtest_score: 75.5,
+								confidence: 0.85,
+								ml_confidence: 0.82,
+							},
+						]);
+					}
+					return HttpResponse.json([]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Change filter to 'rejected'
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0];
+			fireEvent.change(statusFilter, { target: { value: 'rejected' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('REJECTED1')).toBeInTheDocument();
+			});
+
+			// Reactivate button should be present
+			const reactivateButton = await waitFor(() => {
+				const buttons = screen.getAllByRole('button');
+				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
+				expect(reactivateBtn).toBeDefined();
+				return reactivateBtn!;
+			}, { timeout: 3000 });
+
+			expect(reactivateButton).not.toBeDisabled();
+		});
+
+		it('shows Reactivate button for traded signals', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			// Use today's timestamp so signal is not expired
+			const today = new Date();
+			const todayISO = today.toISOString();
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
+					const url = new URL(request.url);
+					const statusFilter = url.searchParams.get('status_filter');
+
+					if (statusFilter === 'traded' || statusFilter === 'all') {
+						return HttpResponse.json([
+							{
+								symbol: 'TRADED1',
+								status: 'traded',
+								base_status: 'active', // Base signal is active, can be reactivated
+								ts: todayISO,
+								distance_to_ema9: 5.5,
+								backtest_score: 75.5,
+								confidence: 0.85,
+								ml_confidence: 0.82,
+							},
+						]);
+					}
+					return HttpResponse.json([]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Change filter to 'traded'
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0];
+			fireEvent.change(statusFilter, { target: { value: 'traded' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('TRADED1')).toBeInTheDocument();
+			});
+
+			// Reactivate button should be present
+			const reactivateButton = await waitFor(() => {
+				const buttons = screen.getAllByRole('button');
+				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
+				expect(reactivateBtn).toBeDefined();
+				return reactivateBtn!;
+			}, { timeout: 3000 });
+
+			expect(reactivateButton).not.toBeDisabled();
+		});
+
+		it('disables Reactivate button when base signal is expired', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
+					const url = new URL(request.url);
+					const statusFilter = url.searchParams.get('status_filter');
+
+					if (statusFilter === 'rejected' || statusFilter === 'all') {
+						return HttpResponse.json([
+							{
+								symbol: 'REJECTED_EXPIRED',
+								status: 'rejected',
+								base_status: 'expired', // Base signal is expired, cannot reactivate
+								ts: '2024-01-15T10:00:00',
+								distance_to_ema9: 5.5,
+								backtest_score: 75.5,
+								confidence: 0.85,
+								ml_confidence: 0.82,
+							},
+						]);
+					}
+					return HttpResponse.json([]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Change filter to 'rejected'
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0];
+			fireEvent.change(statusFilter, { target: { value: 'rejected' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('REJECTED_EXPIRED')).toBeInTheDocument();
+			});
+
+			// Reactivate button should be present but disabled
+			const reactivateButton = await waitFor(() => {
+				const buttons = screen.getAllByRole('button');
+				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
+				expect(reactivateBtn).toBeDefined();
+				return reactivateBtn!;
+			}, { timeout: 3000 });
+
+			expect(reactivateButton).toBeDisabled();
+			expect(reactivateButton).toHaveAttribute('title', 'Cannot reactivate expired signals');
+		});
+
+		it('disables Reactivate button when signal is from previous day (timestamp-based expiration)', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			// Create a date from day before yesterday (should be expired)
+			const dayBeforeYesterday = new Date();
+			dayBeforeYesterday.setDate(dayBeforeYesterday.getDate() - 2);
+			const dayBeforeYesterdayISO = dayBeforeYesterday.toISOString();
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
+					const url = new URL(request.url);
+					const statusFilter = url.searchParams.get('status_filter');
+
+					if (statusFilter === 'rejected' || statusFilter === 'all') {
+						return HttpResponse.json([
+							{
+								symbol: 'REJECTED_OLD',
+								status: 'rejected',
+								base_status: 'rejected', // Base status is not expired, but signal is from day before yesterday
+								ts: dayBeforeYesterdayISO,
+								distance_to_ema9: 5.5,
+								backtest_score: 75.5,
+								confidence: 0.85,
+								ml_confidence: 0.82,
+							},
+						]);
+					}
+					return HttpResponse.json([]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Change filter to 'rejected'
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0];
+			fireEvent.change(statusFilter, { target: { value: 'rejected' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('REJECTED_OLD')).toBeInTheDocument();
+			});
+
+			// Reactivate button should be present but disabled due to timestamp expiration
+			const reactivateButton = await waitFor(() => {
+				const buttons = screen.getAllByRole('button');
+				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
+				expect(reactivateBtn).toBeDefined();
+				return reactivateBtn!;
+			}, { timeout: 3000 });
+
+			expect(reactivateButton).toBeDisabled();
+			expect(reactivateButton).toHaveAttribute('title', 'Cannot reactivate expired signals');
+		});
+
+		it('calls activateSignal API when Reactivate button is clicked', async () => {
+			const activateSpy = vi.spyOn(signalsApi, 'activateSignal').mockResolvedValue(undefined);
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			// Use today's timestamp so signal is not expired
+			const today = new Date();
+			const todayISO = today.toISOString();
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
+					const url = new URL(request.url);
+					const statusFilter = url.searchParams.get('status_filter');
+
+					if (statusFilter === 'rejected' || statusFilter === 'all') {
+						return HttpResponse.json([
+							{
+								symbol: 'REJECTED1',
+								status: 'rejected',
+								base_status: 'active',
+								ts: todayISO,
+								distance_to_ema9: 5.5,
+								backtest_score: 75.5,
+								confidence: 0.85,
+								ml_confidence: 0.82,
+							},
+						]);
+					}
+					return HttpResponse.json([]);
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Change filter to 'rejected'
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0];
+			fireEvent.change(statusFilter, { target: { value: 'rejected' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('REJECTED1')).toBeInTheDocument();
+			});
+
+			const reactivateButton = await waitFor(() => {
+				return screen.getByRole('button', { name: /Reactivate/i });
+			}, { timeout: 3000 });
+
+			fireEvent.click(reactivateButton);
+
+			await waitFor(() => {
+				expect(activateSpy).toHaveBeenCalledWith('REJECTED1');
+			});
+		});
+
+		it('refetches data after activating a signal', async () => {
+			const { http, HttpResponse } = await import('msw');
+			const { server } = await import('@/mocks/server');
+
+			// Use today's timestamp so signal is not expired
+			const today = new Date();
+			const todayISO = today.toISOString();
+
+			let rejectedCallCount = 0;
+
+			server.use(
+				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
+					const url = new URL(request.url);
+					if (url.pathname.includes('buying-zone')) {
+						const statusFilter = url.searchParams.get('status_filter');
+
+						if (statusFilter === 'rejected') {
+							rejectedCallCount++;
+							if (rejectedCallCount === 1) {
+								// First call with rejected filter - return the signal
+								return HttpResponse.json([
+									{
+										symbol: 'REJECTED1',
+										status: 'rejected',
+										base_status: 'active',
+										ts: todayISO,
+										distance_to_ema9: 5.5,
+										backtest_score: 75.5,
+										confidence: 0.85,
+										ml_confidence: 0.82,
+									},
+								]);
+							} else {
+								// After activation, signal is removed from rejected filter
+								return HttpResponse.json([]);
+							}
+						}
+						// For other filters, return empty
+						return HttpResponse.json([]);
+					}
+					return HttpResponse.json([]);
+				}),
+				http.patch('*/api/v1/signals/signals/REJECTED1/activate', () => {
+					return HttpResponse.json({ message: 'Signal activated', symbol: 'REJECTED1', status: 'active' });
+				})
+			);
+
+			render(
+				withProviders(
+					<MemoryRouter initialEntries={['/dashboard/buying-zone']}>
+						<BuyingZonePage />
+					</MemoryRouter>
+				)
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText(/Buying Zone/i)).toBeInTheDocument();
+			});
+
+			// Change filter to 'rejected'
+			const filters = screen.getAllByRole('combobox');
+			const statusFilter = filters[0];
+			fireEvent.change(statusFilter, { target: { value: 'rejected' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('REJECTED1')).toBeInTheDocument();
+			}, { timeout: 3000 });
+
+			// Wait for Reactivate button to appear
+			const reactivateButton = await waitFor(() => {
+				const buttons = screen.getAllByRole('button');
+				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
+				expect(reactivateBtn).toBeDefined();
+				return reactivateBtn!;
+			}, { timeout: 3000 });
+
+			fireEvent.click(reactivateButton);
+
+			// After activation, signal should disappear (since we're filtering by rejected)
+			await waitFor(() => {
+				expect(screen.queryByText('REJECTED1')).not.toBeInTheDocument();
+			}, { timeout: 3000 });
+		});
+
 		it('displays mixed statuses correctly when filter is set to "all"', async () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');

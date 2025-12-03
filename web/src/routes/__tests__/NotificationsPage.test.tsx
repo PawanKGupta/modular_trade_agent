@@ -232,4 +232,29 @@ describe('NotificationsPage', () => {
 
 		expect(screen.queryByText(/Mark All Read/i)).not.toBeInTheDocument();
 	});
+
+	it('mark all read button remains visible on hover', async () => {
+		renderPage();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Mark All Read/i)).toBeInTheDocument();
+		});
+
+		const markAllReadButton = screen.getByText(/Mark All Read/i);
+		expect(markAllReadButton).toBeInTheDocument();
+
+		// Verify button has correct hover styles (opacity-based, not undefined CSS variable)
+		expect(markAllReadButton).toHaveClass('hover:opacity-90');
+		expect(markAllReadButton).toHaveClass('transition-opacity');
+
+		// Verify button does NOT use undefined --accent-hover variable
+		expect(markAllReadButton.className).not.toContain('hover:bg-[var(--accent-hover)]');
+
+		// Simulate hover
+		fireEvent.mouseEnter(markAllReadButton);
+
+		// Button should still be visible after hover
+		expect(markAllReadButton).toBeInTheDocument();
+		expect(markAllReadButton).toBeVisible();
+	});
 });

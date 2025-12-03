@@ -277,11 +277,13 @@ class TestOrderTrackerDualWrite:
 
     def test_remove_pending_order_dual_write(self, order_tracker_with_db, mock_orders_repo):
         """Test removing order writes to both DB and JSON"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
         # Add order first
         mock_order = Mock()
         mock_order.id = 1
         mock_order.broker_order_id = "ORDER123"
+        mock_order.status = DbOrderStatus.PENDING  # Set status to PENDING so it gets cancelled
         mock_orders_repo.get_by_broker_order_id.return_value = mock_order
         mock_orders_repo.create_amo.return_value = mock_order
 
@@ -507,6 +509,102 @@ class TestOrderTrackerDualWrite:
 
         # Should return False (not found)
         assert result is False
+        mock_orders_repo.mark_cancelled.assert_not_called()
+
+    def test_remove_pending_order_cancels_pending_status(self, order_tracker_with_db, mock_orders_repo):
+        """Test that removing PENDING order cancels it"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock order with PENDING status
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.broker_order_id = "ORDER123"
+        mock_order.status = DbOrderStatus.PENDING
+        mock_orders_repo.get_by_broker_order_id.return_value = mock_order
+        mock_orders_repo.mark_cancelled.return_value = mock_order
+
+        result = order_tracker_with_db.remove_pending_order("ORDER123")
+
+        # Should cancel PENDING order
+        assert result is True
+        mock_orders_repo.mark_cancelled.assert_called_once_with(
+            mock_order, cancelled_reason="Removed from pending tracking"
+        )
+
+    def test_remove_pending_order_cancels_failed_status(self, order_tracker_with_db, mock_orders_repo):
+        """Test that removing FAILED order cancels it"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock order with FAILED status
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.broker_order_id = "ORDER123"
+        mock_order.status = DbOrderStatus.FAILED
+        mock_orders_repo.get_by_broker_order_id.return_value = mock_order
+        mock_orders_repo.mark_cancelled.return_value = mock_order
+
+        result = order_tracker_with_db.remove_pending_order("ORDER123")
+
+        # Should cancel FAILED order
+        assert result is True
+        mock_orders_repo.mark_cancelled.assert_called_once_with(
+            mock_order, cancelled_reason="Removed from pending tracking"
+        )
+
+    def test_remove_pending_order_does_not_cancel_ongoing_status(self, order_tracker_with_db, mock_orders_repo):
+        """Test that removing ONGOING order does NOT cancel it (just removes from tracking)"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock order with ONGOING status (executed order)
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.broker_order_id = "ORDER123"
+        mock_order.status = DbOrderStatus.ONGOING
+        mock_orders_repo.get_by_broker_order_id.return_value = mock_order
+
+        # Add order to JSON tracking first
+        order_tracker_with_db.add_pending_order(
+            order_id="ORDER123", symbol="RELIANCE", ticker="RELIANCE.NS", qty=10
+        )
+
+        result = order_tracker_with_db.remove_pending_order("ORDER123")
+
+        # Should remove from tracking but NOT cancel ONGOING order
+        assert result is True
+        mock_orders_repo.mark_cancelled.assert_not_called()
+
+    def test_remove_pending_order_does_not_cancel_closed_status(self, order_tracker_with_db, mock_orders_repo):
+        """Test that removing CLOSED order does NOT cancel it"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock order with CLOSED status
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.broker_order_id = "ORDER123"
+        mock_order.status = DbOrderStatus.CLOSED
+        mock_orders_repo.get_by_broker_order_id.return_value = mock_order
+
+        result = order_tracker_with_db.remove_pending_order("ORDER123")
+
+        # Should remove from tracking but NOT cancel CLOSED order
+        assert result is True
+        mock_orders_repo.mark_cancelled.assert_not_called()
+
+    def test_remove_pending_order_does_not_cancel_cancelled_status(self, order_tracker_with_db, mock_orders_repo):
+        """Test that removing CANCELLED order does NOT cancel it again"""
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+        # Mock order with CANCELLED status
+        mock_order = Mock()
+        mock_order.id = 1
+        mock_order.broker_order_id = "ORDER123"
+        mock_order.status = DbOrderStatus.CANCELLED
+        mock_orders_repo.get_by_broker_order_id.return_value = mock_order
+
+        result = order_tracker_with_db.remove_pending_order("ORDER123")
+
+        # Should remove from tracking but NOT cancel already CANCELLED order
+        assert result is True
         mock_orders_repo.mark_cancelled.assert_not_called()
 
     def test_get_pending_orders_status_filter_pending(
