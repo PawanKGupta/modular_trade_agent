@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+from .case_insensitive_enum import CaseInsensitiveEnum
 from .timezone_utils import ist_now
 
 
@@ -198,7 +199,10 @@ class Signals(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     status: Mapped[SignalStatus] = mapped_column(
-        SAEnum(SignalStatus), default=SignalStatus.ACTIVE, index=True, nullable=False
+        CaseInsensitiveEnum(SignalStatus),
+        default=SignalStatus.ACTIVE,
+        index=True,
+        nullable=False,
     )
     # Technical indicators
     rsi10: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -285,14 +289,19 @@ class UserSignalStatus(Base):
     Allows each user to have their own status for signals (TRADED, REJECTED)
     while keeping the base signal data shared across users.
     """
+
     __tablename__ = "user_signal_status"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), index=True, nullable=False)
-    symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)  # Denormalized for faster queries
+    symbol: Mapped[str] = mapped_column(
+        String(32), index=True, nullable=False
+    )  # Denormalized for faster queries
     status: Mapped[SignalStatus] = mapped_column(
-        SAEnum(SignalStatus), index=True, nullable=False
+        CaseInsensitiveEnum(SignalStatus),
+        index=True,
+        nullable=False,
     )  # TRADED, REJECTED (per user)
     marked_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
 
