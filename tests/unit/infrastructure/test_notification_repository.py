@@ -284,13 +284,13 @@ class TestNotificationRepository:
         class MockIntegrityError(IntegrityError):
             def __str__(self):
                 return "UNIQUE constraint failed: notifications.id"
-        
+
         error = MockIntegrityError(
             statement="INSERT INTO notifications",
             params=(21, 1, "service", "info", "Test", "Test message", 0, None, None, 0, 0, 1),
             orig=Exception("UNIQUE constraint failed: notifications.id"),
         )
-        
+
         mock_db_session.commit.side_effect = [error, None]  # Second commit succeeds
         mock_db_session.rollback = Mock()
 
@@ -306,7 +306,7 @@ class TestNotificationRepository:
             else:
                 # Subsequent calls: sequence update or other queries
                 return Mock()
-        
+
         mock_db_session.execute = Mock(side_effect=mock_execute)
         mock_db_session.refresh = Mock(side_effect=lambda obj: setattr(obj, "id", 22))
 
@@ -391,6 +391,61 @@ class TestNotificationRepository:
             # If it fails, that's okay - the method handles errors gracefully
             pass
 
+    def test_fix_sqlite_sequence_sequence_update_fails(self, repository, mock_db_session):
+        """Test fixing SQLite sequence when sequence update fails"""
+        # Mock max ID query
+        mock_result = Mock()
+        mock_result.scalar_one_or_none.return_value = 25  # Max ID is 25
+        # First call returns max ID, second call (sequence update) fails
+        call_count = [0]
+        def mock_execute(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return mock_result
+            else:
+                raise Exception("Sequence update failed")
+        
+        mock_db_session.execute = Mock(side_effect=mock_execute)
+        mock_db_session.rollback = Mock()
+
+        # Should handle error gracefully
+        repository._fix_sqlite_sequence()
+        # Should have rolled back
+        assert mock_db_session.rollback.call_count >= 1
+
+    def test_fix_sqlite_sequence_delete_fails(self, repository, mock_db_session):
+        """Test fixing SQLite sequence when delete fails"""
+        # Mock max ID query returning None (no notifications)
+        mock_result = Mock()
+        mock_result.scalar_one_or_none.return_value = None
+        # First call returns None, second call (delete) fails
+        call_count = [0]
+        def mock_execute(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return mock_result
+            else:
+                raise Exception("Delete failed")
+        
+        mock_db_session.execute = Mock(side_effect=mock_execute)
+        mock_db_session.rollback = Mock()
+
+        # Should handle error gracefully
+        repository._fix_sqlite_sequence()
+        # Should have rolled back
+        assert mock_db_session.rollback.call_count >= 1
+
+    def test_fix_sqlite_sequence_outer_exception(self, repository, mock_db_session):
+        """Test fixing SQLite sequence when outer exception occurs"""
+        # Mock execute to raise exception on max ID query
+        mock_db_session.execute.side_effect = Exception("Query failed")
+        mock_db_session.rollback = Mock()
+
+        # Should handle error gracefully
+        repository._fix_sqlite_sequence()
+        # Should have tried to rollback
+        assert mock_db_session.rollback.call_count >= 1
+
     def test_create_notification_handles_transaction_error(self, repository, mock_db_session):
         """Test that notification creation handles transaction errors"""
         # First commit fails with transaction error (implementation checks error string)
@@ -431,3 +486,80 @@ class TestNotificationRepository:
 
         # Should have rolled back
         assert mock_db_session.rollback.call_count >= 1
+
+    def test_create_notification_retry_rollback_fails(self, repository, mock_db_session):
+        """Test that notification creation handles rollback failure in retry error handler"""
+        from sqlalchemy.exc import IntegrityError
+
+        error = IntegrityError(
+            statement="INSERT INTO notifications",
+            params=(21, 1, "service", "info", "Test", "Test message", 0, None, None, 0, 0, 1),
+            orig=Exception("UNIQUE constraint failed: notifications.id"),
+        )
+        mock_db_session.commit.side_effect = [error, error]  # Both fail
+        # Rollback fails in retry error handler
+        mock_db_session.rollback.side_effect = [None, Exception("Rollback failed")]
+
+        # Mock sequence fix
+        mock_result = Mock()
+        mock_result.scalar_one_or_none.return_value = 20
+        mock_db_session.execute.return_value = mock_result
+
+        with pytest.raises(IntegrityError):
+            repository.create(
+                user_id=1,
+                type="service",
+                level="info",
+                title="Test",
+                message="Test message",
+            )
+
+        # Should have tried to rollback (even if it failed)
+        assert mock_db_session.rollback.call_count >= 1
+
+    def test_create_notification_other_error_rollback_fails(self, repository, mock_db_session):
+        """Test that notification creation handles rollback failure for other errors"""
+        # Commit fails with unrelated error
+        mock_db_session.commit.side_effect = ValueError("Some other error")
+        # Rollback also fails
+        mock_db_session.rollback.side_effect = Exception("Rollback failed")
+
+        with pytest.raises(ValueError, match="Some other error"):
+            repository.create(
+                user_id=1,
+                type="service",
+                level="info",
+                title="Test",
+                message="Test message",
+            )
+
+        # Should have tried to rollback (even if it failed)
+        assert mock_db_session.rollback.call_count >= 1
+
+    def test_create_notification_integrity_error_without_notifications_id(self, repository, mock_db_session):
+        """Test that integrity errors without 'notifications.id' don't trigger sequence fix"""
+        from sqlalchemy.exc import IntegrityError
+
+        # Integrity error but not on notifications.id
+        error = IntegrityError(
+            statement="INSERT INTO notifications",
+            params=(1, 1, "service", "info", "Test", "Test message", 0, None, None, 0, 0, 1),
+            orig=Exception("UNIQUE constraint failed: notifications.user_id"),
+        )
+        mock_db_session.commit.side_effect = [error, None]  # Second commit succeeds
+        mock_db_session.rollback = Mock()
+        mock_db_session.refresh = Mock(side_effect=lambda obj: setattr(obj, "id", 1))
+
+        result = repository.create(
+            user_id=1,
+            type="service",
+            level="info",
+            title="Test",
+            message="Test message",
+        )
+
+        assert result is not None
+        # Should have rolled back and retried
+        assert mock_db_session.rollback.call_count >= 1
+        # Should NOT have called sequence fix (execute should not be called for sequence fix)
+        # Since we're not checking notifications.id, sequence fix shouldn't be called

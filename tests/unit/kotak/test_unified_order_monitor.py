@@ -1070,3 +1070,235 @@ class TestUnifiedOrderMonitor:
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
 
         assert count == 0
+
+    def test_check_and_place_sell_orders_for_new_holdings_no_execution_time_uses_filled_at(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Test that orders without execution_time use filled_at"""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        filled_at = ist_now().replace(hour=10, minute=30)
+
+        mock_order = Mock()
+        mock_order.side = "buy"
+        mock_order.symbol = "RELIANCE-EQ"
+        mock_order.execution_price = 2450.50
+        mock_order.execution_qty = 10.0
+        mock_order.quantity = 10.0
+        mock_order.execution_time = None  # No execution_time
+        mock_order.filled_at = filled_at  # Use filled_at instead
+        mock_order.order_metadata = {"ticker": "RELIANCE.NS"}
+
+        mock_orders_repo.list.return_value = [mock_order]
+
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager.get_current_ema9.return_value = 2500.0
+        mock_sell_manager.place_sell_order.return_value = "SELL123"
+        mock_sell_manager._register_order = Mock()
+        mock_sell_manager.lowest_ema9 = {}
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        assert count == 1
+        mock_sell_manager.place_sell_order.assert_called_once()
+
+    def test_check_and_place_sell_orders_for_new_holdings_no_ticker_constructs_from_symbol(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Test that ticker is constructed from symbol if not in metadata"""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        execution_time = ist_now().replace(hour=10, minute=30)
+
+        mock_order = Mock()
+        mock_order.side = "buy"
+        mock_order.symbol = "RELIANCE-EQ"
+        mock_order.execution_price = 2450.50
+        mock_order.execution_qty = 10.0
+        mock_order.quantity = 10.0
+        mock_order.execution_time = execution_time
+        mock_order.order_metadata = {}  # No ticker in metadata
+
+        mock_orders_repo.list.return_value = [mock_order]
+
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager.get_current_ema9.return_value = 2500.0
+        mock_sell_manager.place_sell_order.return_value = "SELL123"
+        mock_sell_manager._register_order = Mock()
+        mock_sell_manager.lowest_ema9 = {}
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        assert count == 1
+        # Verify ticker was constructed (get_current_ema9 should be called with RELIANCE.NS)
+        mock_sell_manager.get_current_ema9.assert_called_once()
+        call_args = mock_sell_manager.get_current_ema9.call_args
+        assert call_args[0][0] == "RELIANCE.NS"  # Ticker constructed from symbol
+
+    def test_check_and_place_sell_orders_for_new_holdings_invalid_price(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Test skipping orders with invalid execution price"""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        execution_time = ist_now().replace(hour=10, minute=30)
+
+        mock_order = Mock()
+        mock_order.side = "buy"
+        mock_order.symbol = "RELIANCE-EQ"
+        mock_order.execution_price = None  # Invalid price
+        mock_order.execution_qty = 10.0
+        mock_order.quantity = 10.0
+        mock_order.avg_price = None
+        mock_order.price = None
+        mock_order.execution_time = execution_time
+        mock_order.order_metadata = {"ticker": "RELIANCE.NS"}
+
+        mock_orders_repo.list.return_value = [mock_order]
+
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        assert count == 0
+        mock_sell_manager.place_sell_order.assert_not_called()
+
+    def test_check_and_place_sell_orders_for_new_holdings_invalid_qty(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Test skipping orders with invalid execution quantity"""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        execution_time = ist_now().replace(hour=10, minute=30)
+
+        mock_order = Mock()
+        mock_order.side = "buy"
+        mock_order.symbol = "RELIANCE-EQ"
+        mock_order.execution_price = 2450.50
+        mock_order.execution_qty = 0  # Invalid qty
+        mock_order.quantity = 0
+        mock_order.execution_time = execution_time
+        mock_order.order_metadata = {"ticker": "RELIANCE.NS"}
+
+        mock_orders_repo.list.return_value = [mock_order]
+
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        assert count == 0
+        mock_sell_manager.place_sell_order.assert_not_called()
+
+    def test_check_and_place_sell_orders_for_new_holdings_ema9_none(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Test skipping orders when EMA9 calculation fails"""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        execution_time = ist_now().replace(hour=10, minute=30)
+
+        mock_order = Mock()
+        mock_order.side = "buy"
+        mock_order.symbol = "RELIANCE-EQ"
+        mock_order.execution_price = 2450.50
+        mock_order.execution_qty = 10.0
+        mock_order.quantity = 10.0
+        mock_order.execution_time = execution_time
+        mock_order.order_metadata = {"ticker": "RELIANCE.NS"}
+
+        mock_orders_repo.list.return_value = [mock_order]
+
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager.get_current_ema9.return_value = None  # EMA9 calculation fails
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        assert count == 0
+        mock_sell_manager.place_sell_order.assert_not_called()
+
+    def test_check_and_place_sell_orders_for_new_holdings_place_order_returns_none(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Test handling when place_sell_order returns None"""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        execution_time = ist_now().replace(hour=10, minute=30)
+
+        mock_order = Mock()
+        mock_order.side = "buy"
+        mock_order.symbol = "RELIANCE-EQ"
+        mock_order.execution_price = 2450.50
+        mock_order.execution_qty = 10.0
+        mock_order.quantity = 10.0
+        mock_order.execution_time = execution_time
+        mock_order.order_metadata = {"ticker": "RELIANCE.NS"}
+
+        mock_orders_repo.list.return_value = [mock_order]
+
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager.get_current_ema9.return_value = 2500.0
+        mock_sell_manager.place_sell_order.return_value = None  # Order placement fails
+        mock_sell_manager._register_order = Mock()
+        mock_sell_manager.lowest_ema9 = {}
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        assert count == 0
+        mock_sell_manager.place_sell_order.assert_called_once()
+        mock_sell_manager._register_order.assert_not_called()  # Should not register if order placement fails
+
+    def test_check_and_place_sell_orders_for_new_holdings_multiple_orders_one_fails(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Test that processing continues when one order fails"""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        execution_time = ist_now().replace(hour=10, minute=30)
+
+        # First order fails
+        mock_order1 = Mock()
+        mock_order1.side = "buy"
+        mock_order1.symbol = "RELIANCE-EQ"
+        mock_order1.execution_price = 2450.50
+        mock_order1.execution_qty = 10.0
+        mock_order1.quantity = 10.0
+        mock_order1.execution_time = execution_time
+        mock_order1.order_metadata = {"ticker": "RELIANCE.NS"}
+
+        # Second order succeeds
+        mock_order2 = Mock()
+        mock_order2.side = "buy"
+        mock_order2.symbol = "TCS-EQ"
+        mock_order2.execution_price = 3200.0
+        mock_order2.execution_qty = 5.0
+        mock_order2.quantity = 5.0
+        mock_order2.execution_time = execution_time
+        mock_order2.order_metadata = {"ticker": "TCS.NS"}
+
+        mock_orders_repo.list.return_value = [mock_order1, mock_order2]
+
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager.get_current_ema9.side_effect = [None, 3300.0]  # First fails, second succeeds
+        mock_sell_manager.place_sell_order.return_value = "SELL456"
+        mock_sell_manager._register_order = Mock()
+        mock_sell_manager.lowest_ema9 = {}
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        # Should have processed both orders, but only placed one
+        assert count == 1
+        assert mock_sell_manager.get_current_ema9.call_count == 2
+        assert mock_sell_manager.place_sell_order.call_count == 1
+        assert "TCS" in mock_sell_manager.lowest_ema9
