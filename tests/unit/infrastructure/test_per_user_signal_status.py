@@ -419,6 +419,58 @@ class TestPerUserSignalStatus:
         db_session.refresh(signal)
         assert signal.status == SignalStatus.REJECTED
 
+    def test_mark_as_traded_updates_existing_active_override(self, db_session, test_users):
+        """Test that marking as traded updates existing ACTIVE user override"""
+        user1, user2 = test_users
+
+        # Create signal with base status REJECTED
+        now = ist_now()
+        signal = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.REJECTED,  # Base status is REJECTED
+            rsi10=25.0,
+            ema9=2600.0,
+            last_close=2500.0,
+            verdict="buy",
+            ts=now,  # Today's signal, not expired
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # User marks as active (creates user override with ACTIVE)
+        repo = SignalsRepository(db_session, user_id=user1.id)
+        success = repo.mark_as_active("RELIANCE", user_id=user1.id)
+        assert success is True
+
+        # Verify user override exists with ACTIVE status
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=signal.id)
+            .first()
+        )
+        assert user_status is not None
+        assert user_status.status == SignalStatus.ACTIVE
+
+        # Now mark as traded (should update the existing override)
+        success = repo.mark_as_traded("RELIANCE", user_id=user1.id)
+        assert success is True
+
+        # Verify user override is updated to TRADED
+        db_session.refresh(user_status)
+        assert user_status.status == SignalStatus.TRADED
+
+        # Base signal should still be REJECTED (not changed for all users)
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.REJECTED
+
+        # Verify effective status is TRADED for user1
+        signals_with_status = repo.get_signals_with_user_status(user1.id, limit=100)
+        assert len(signals_with_status) == 1
+        sig, effective_status = signals_with_status[0]
+        assert sig.id == signal.id
+        assert effective_status == SignalStatus.TRADED
+
     def test_mark_as_active_does_not_affect_other_users(self, db_session, test_users, test_signal):
         """Test that reactivating for one user doesn't affect other users"""
         user1, user2 = test_users
