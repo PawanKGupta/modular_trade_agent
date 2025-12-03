@@ -96,6 +96,6 @@ export interface BrokerOrder {
 }
 
 export async function getBrokerOrders(): Promise<BrokerOrder[]> {
-	const res = await api.get('/broker/orders');
+	const res = await api.get('/user/broker/orders');
 	return res.data as BrokerOrder[];
 }
