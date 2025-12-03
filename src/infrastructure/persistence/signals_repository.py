@@ -244,11 +244,8 @@ class SignalsRepository:
             if signal.status == SignalStatus.EXPIRED:
                 return False
 
-            # Check if signal is expired based on timestamp (from previous day)
-            signal_date = signal.ts.date()
-            today = ist_now().date()
-            if signal_date < today:
-                # Signal is from a previous day, consider it expired
+            # Check if signal is expired based on market close time (3:30 PM IST)
+            if self._is_signal_expired_by_market_close(signal.ts):
                 return False
 
             # Update REJECTED or TRADED to ACTIVE
@@ -296,8 +293,27 @@ class SignalsRepository:
             return True
 
         # No override exists, signal is already using base status
-        # Only return True if base status is ACTIVE
-        return signal.status == SignalStatus.ACTIVE
+        # If base status is ACTIVE, we're done
+        if signal.status == SignalStatus.ACTIVE:
+            return True
+
+        # If base status is REJECTED or TRADED, we need to create a user override
+        # to mark it as ACTIVE for this user (since we can't change base status for all users)
+        if signal.status in [SignalStatus.REJECTED, SignalStatus.TRADED]:
+            # Create user-specific override to mark as ACTIVE
+            user_status = UserSignalStatus(
+                user_id=user_id,
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                status=SignalStatus.ACTIVE,
+                marked_at=ist_now(),
+            )
+            self.db.add(user_status)
+            self.db.commit()
+            return True
+
+        # Base status is something else (shouldn't happen), return False
+        return False
 
     def _is_signal_expired_by_market_close(self, signal_timestamp: datetime) -> bool:
         """

@@ -374,6 +374,51 @@ class TestPerUserSignalStatus:
         )
         assert user_status is not None
 
+    def test_mark_as_active_creates_override_for_base_rejected_signal(self, db_session, test_users):
+        """Test that reactivating a base REJECTED signal creates a user override"""
+        user1, user2 = test_users
+
+        # Create signal with base status REJECTED (no user override)
+        now = ist_now()
+        signal = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.REJECTED,  # Base status is REJECTED
+            rsi10=25.0,
+            ema9=2600.0,
+            last_close=2500.0,
+            verdict="buy",
+            ts=now,  # Today's signal, not expired
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # Verify no user override exists
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=signal.id)
+            .first()
+        )
+        assert user_status is None
+
+        # Reactivate for user1
+        repo = SignalsRepository(db_session, user_id=user1.id)
+        success = repo.mark_as_active("RELIANCE", user_id=user1.id)
+        assert success is True
+
+        # User override should now exist with ACTIVE status
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter_by(user_id=user1.id, signal_id=signal.id)
+            .first()
+        )
+        assert user_status is not None
+        assert user_status.status == SignalStatus.ACTIVE
+
+        # Base signal should still be REJECTED (not changed for all users)
+        db_session.refresh(signal)
+        assert signal.status == SignalStatus.REJECTED
+
     def test_mark_as_active_does_not_affect_other_users(self, db_session, test_users, test_signal):
         """Test that reactivating for one user doesn't affect other users"""
         user1, user2 = test_users
