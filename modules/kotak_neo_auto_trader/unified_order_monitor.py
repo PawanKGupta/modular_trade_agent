@@ -477,11 +477,15 @@ class UnifiedOrderMonitor:
         except Exception as e:
             logger.error(f"Error fetching broker orders: {e}")
 
+        # Monitor buy orders (new functionality) - check for executions first
+        buy_stats = self.check_buy_order_status(broker_orders=broker_orders)
+
+        # Check for newly executed orders and place sell orders for them
+        # This allows tracking holdings that were executed during the day
+        new_holdings_sell_orders = self.check_and_place_sell_orders_for_new_holdings()
+
         # Monitor sell orders (existing functionality)
         sell_stats = self.sell_manager.monitor_and_update()
-
-        # Monitor buy orders (new functionality)
-        buy_stats = self.check_buy_order_status(broker_orders=broker_orders)
 
         # Combine statistics
         combined_stats = {
@@ -490,6 +494,158 @@ class UnifiedOrderMonitor:
             "executed": sell_stats.get("executed", 0) + buy_stats.get("executed", 0),
             "rejected": buy_stats.get("rejected", 0),
             "cancelled": buy_stats.get("cancelled", 0),
+            "new_holdings_tracked": new_holdings_sell_orders,
         }
 
         return combined_stats
+
+    def check_and_place_sell_orders_for_new_holdings(self) -> int:
+        """
+        Check for newly executed buy orders (ONGOING status) that were executed today
+        and place sell orders for them if they don't already have sell orders.
+
+        This allows the sell monitor to track holdings that were executed during the day,
+        not just at market open.
+
+        Returns:
+            Number of sell orders placed for new holdings
+        """
+        if not self.orders_repo or not self.user_id:
+            return 0
+
+        if not self.sell_manager:
+            return 0
+
+        try:
+            from datetime import datetime, timedelta
+            from src.infrastructure.db.timezone_utils import ist_now
+
+            # Get today's date
+            today = ist_now().date()
+            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=ist_now().tzinfo)
+
+            # Get all ONGOING buy orders executed today
+            # We'll check orders that have execution_time >= today_start
+            all_orders = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
+
+            newly_executed_orders = []
+            for order in all_orders:
+                # Only process buy orders
+                if order.side.lower() != "buy":
+                    continue
+
+                # Check if order was executed today
+                # Use execution_time if available, otherwise use filled_at
+                execution_time = getattr(order, "execution_time", None) or order.filled_at
+                if execution_time:
+                    if execution_time >= today_start:
+                        newly_executed_orders.append(order)
+                elif order.filled_at and order.filled_at >= today_start:
+                    newly_executed_orders.append(order)
+
+            if not newly_executed_orders:
+                return 0
+
+            logger.info(f"Found {len(newly_executed_orders)} newly executed buy orders today")
+
+            # Get existing sell orders to avoid duplicates
+            existing_sell_orders = self.sell_manager.get_existing_sell_orders()
+            existing_symbols = {extract_base_symbol(symbol).upper() for symbol in existing_sell_orders.keys()}
+
+            # Get currently tracked sell orders
+            active_sell_symbols = {
+                extract_base_symbol(symbol).upper() for symbol in self.sell_manager.active_sell_orders.keys()
+            }
+
+            orders_placed = 0
+
+            for db_order in newly_executed_orders:
+                try:
+                    base_symbol = extract_base_symbol(db_order.symbol).upper()
+
+                    # Skip if already has sell order
+                    if base_symbol in existing_symbols or base_symbol in active_sell_symbols:
+                        logger.debug(f"Skipping {base_symbol}: Already has sell order")
+                        continue
+
+                    # Check if position already has a completed sell order
+                    completed_order_info = self.sell_manager.has_completed_sell_order(base_symbol)
+                    if completed_order_info:
+                        logger.debug(f"Skipping {base_symbol}: Already has completed sell order")
+                        continue
+
+                    # Convert order to trade format
+                    # Get ticker from order metadata or construct from symbol
+                    ticker = None
+                    if db_order.order_metadata and isinstance(db_order.order_metadata, dict):
+                        ticker = db_order.order_metadata.get("ticker")
+
+                    if not ticker:
+                        # Construct ticker from symbol (e.g., "RELIANCE-EQ" -> "RELIANCE.NS")
+                        base_sym = extract_base_symbol(db_order.symbol).upper()
+                        ticker = f"{base_sym}.NS"
+
+                    # Get execution price and quantity
+                    execution_price = getattr(db_order, "execution_price", None) or db_order.avg_price or db_order.price
+                    execution_qty = getattr(db_order, "execution_qty", None) or db_order.quantity
+
+                    if not execution_price or execution_qty <= 0:
+                        logger.warning(f"Skipping {base_symbol}: Invalid execution price or quantity")
+                        continue
+
+                    # Create trade dict in format expected by place_sell_order
+                    trade = {
+                        "symbol": base_symbol,
+                        "ticker": ticker,
+                        "qty": int(execution_qty),
+                        "entry_price": execution_price,
+                        "placed_symbol": db_order.symbol,  # Keep original broker symbol
+                        "entry_time": execution_time.isoformat() if execution_time else ist_now().isoformat(),
+                    }
+
+                    # Get current EMA9 as target
+                    broker_sym = db_order.symbol
+                    ema9 = self.sell_manager.get_current_ema9(ticker, broker_symbol=broker_sym)
+                    if not ema9:
+                        logger.warning(f"Skipping {base_symbol}: Failed to calculate EMA9")
+                        continue
+
+                    # Check if price is reasonable (not too far from entry)
+                    if ema9 < execution_price * 0.95:  # More than 5% below entry
+                        logger.warning(
+                            f"Skipping {base_symbol}: EMA9 (Rs {ema9:.2f}) is too low "
+                            f"(entry: Rs {execution_price:.2f})"
+                        )
+                        continue
+
+                    # Place sell order
+                    order_id = self.sell_manager.place_sell_order(trade, ema9)
+
+                    if order_id:
+                        # Track the order
+                        self.sell_manager._register_order(
+                            symbol=base_symbol,
+                            order_id=order_id,
+                            target_price=ema9,
+                            qty=int(execution_qty),
+                            ticker=ticker,
+                            placed_symbol=broker_sym,
+                        )
+                        self.sell_manager.lowest_ema9[base_symbol] = ema9
+                        orders_placed += 1
+                        logger.info(
+                            f"Placed sell order for newly executed holding: {base_symbol} "
+                            f"(Order ID: {order_id}, Target: Rs {ema9:.2f})"
+                        )
+
+                except Exception as e:
+                    logger.error(f"Error placing sell order for {db_order.symbol}: {e}")
+
+            if orders_placed > 0:
+                logger.info(f"Placed {orders_placed} sell orders for newly executed holdings")
+
+            return orders_placed
+
+        except Exception as e:
+            logger.error(f"Error checking for new holdings: {e}")
+            return 0
