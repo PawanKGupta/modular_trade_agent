@@ -116,24 +116,25 @@ class SignalsRepository:
             self.db.commit()
             return result.rowcount > 0
 
-        # Find the signal
+        # Find the signal (don't restrict by base status - user may have overridden it)
         signal = self.db.execute(
-            select(Signals)
-            .where(Signals.symbol == symbol)
-            .where(Signals.status.in_([SignalStatus.ACTIVE, SignalStatus.EXPIRED]))
-            .order_by(Signals.ts.desc())
-            .limit(1)
+            select(Signals).where(Signals.symbol == symbol).order_by(Signals.ts.desc()).limit(1)
         ).scalar_one_or_none()
 
         if not signal:
             return False
 
-        # Create or update user-specific status
+        # Check if user already has a status override for this signal
         existing = self.db.execute(
             select(UserSignalStatus).where(
                 UserSignalStatus.user_id == user_id, UserSignalStatus.signal_id == signal.id
             )
         ).scalar_one_or_none()
+
+        # If user has an override, allow updating to TRADED regardless of base status
+        # If no override exists, only allow if base signal is ACTIVE or EXPIRED
+        if not existing and signal.status not in [SignalStatus.ACTIVE, SignalStatus.EXPIRED]:
+            return False
 
         if existing:
             existing.status = SignalStatus.TRADED
