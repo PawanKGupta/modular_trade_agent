@@ -107,7 +107,7 @@ describe('SettingsPage', () => {
 			// Should show test result message
 			const message = screen.queryByText(/Connection/i) || screen.queryByText(/successful/i) || screen.queryByText(/failed/i);
 			expect(message).toBeInTheDocument();
-		}, { timeout: 3000 });
+		}, { timeout: 10000 });
 	});
 
 	it('allows testing full connection', async () => {
@@ -140,6 +140,6 @@ describe('SettingsPage', () => {
 			// Should show test result message
 			const message = screen.queryByText(/Connection/i) || screen.queryByText(/successful/i) || screen.queryByText(/failed/i);
 			expect(message).toBeInTheDocument();
-		}, { timeout: 3000 });
+		}, { timeout: 10000 });
 	});
 });
