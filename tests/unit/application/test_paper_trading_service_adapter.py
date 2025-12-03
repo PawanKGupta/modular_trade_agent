@@ -1813,3 +1813,260 @@ class TestSignalStatusFiltering:
         # signal4 is EXPIRED (base) - excluded
         assert len(recs) == 1
         assert recs[0].ticker == "RELIANCE.NS"
+
+
+class TestDuplicateSymbolDeduplication:
+    """Test that duplicate symbols are deduplicated when loading recommendations"""
+
+    def test_load_recommendations_deduplicates_xyz_and_xyz_ns(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that signals with 'XYZ' and 'XYZ.NS' are deduplicated"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signals with same symbol but different formats
+        signal1 = Signals(
+            symbol="XYZ",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=100.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal2 = Signals(
+            symbol="XYZ.NS",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=100.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should only return one recommendation (first one encountered)
+        assert len(recs) == 1
+        # Both should normalize to XYZ.NS
+        assert recs[0].ticker == "XYZ.NS"
+
+    def test_load_recommendations_deduplicates_case_insensitive(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that symbol deduplication is case-insensitive"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signals with same symbol but different cases
+        signal1 = Signals(
+            symbol="reliance",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal2 = Signals(
+            symbol="RELIANCE",
+            verdict="strong_buy",
+            final_verdict="strong_buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should only return one recommendation
+        assert len(recs) == 1
+        assert recs[0].ticker == "RELIANCE.NS"
+
+    def test_load_recommendations_deduplicates_with_bo_suffix(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that symbols with .BO suffix are also deduplicated"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signals with same base symbol but different suffixes
+        signal1 = Signals(
+            symbol="ABC",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=50.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal2 = Signals(
+            symbol="ABC.BO",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=50.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should only return one recommendation
+        assert len(recs) == 1
+        # First one should be converted to ABC.NS (not .BO)
+        assert recs[0].ticker == "ABC.NS"
+
+    def test_load_recommendations_keeps_first_duplicate(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that the first signal encountered is kept when duplicates exist"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signals with same normalized symbol but different prices
+        # First signal has higher price
+        signal1 = Signals(
+            symbol="TEST",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=200.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        # Second signal has lower price
+        signal2 = Signals(
+            symbol="TEST.NS",
+            verdict="strong_buy",
+            final_verdict="strong_buy",
+            last_close=150.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should only return one recommendation
+        assert len(recs) == 1
+        # Should keep the first one (TEST -> TEST.NS with price 200.0)
+        assert recs[0].ticker == "TEST.NS"
+        assert recs[0].last_close == 200.0
+
+    def test_load_recommendations_no_deduplication_for_different_symbols(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that different symbols are not deduplicated"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signals with different symbols
+        signal1 = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal2 = Signals(
+            symbol="TCS",
+            verdict="strong_buy",
+            final_verdict="strong_buy",
+            last_close=3500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal3 = Signals(
+            symbol="INFY",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=1500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2, signal3])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should return all three recommendations (no duplicates)
+        assert len(recs) == 3
+        tickers = {r.ticker for r in recs}
+        assert "RELIANCE.NS" in tickers
+        assert "TCS.NS" in tickers
+        assert "INFY.NS" in tickers
+
+    def test_load_recommendations_deduplicates_multiple_duplicates(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that multiple duplicates of the same symbol are all deduplicated"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create multiple signals with same normalized symbol
+        signal1 = Signals(
+            symbol="MULTI",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=100.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal2 = Signals(
+            symbol="MULTI.NS",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=100.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal3 = Signals(
+            symbol="multi",
+            verdict="strong_buy",
+            final_verdict="strong_buy",
+            last_close=100.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2, signal3])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should only return one recommendation (first one)
+        assert len(recs) == 1
+        assert recs[0].ticker == "MULTI.NS"
