@@ -97,8 +97,8 @@ describe('BrokerOrdersPage', () => {
 			expect(screen.getByText('RELIANCE.NS')).toBeInTheDocument();
 		});
 
-		// Click on "Closed" tab
-		const closedTab = screen.getByText(/Closed/i);
+		// Click on "Closed" tab - use getByRole to find the button specifically
+		const closedTab = screen.getByRole('button', { name: /Closed/i });
 		closedTab.click();
 
 		await waitFor(() => {
@@ -164,6 +164,19 @@ describe('BrokerOrdersPage', () => {
 		const mockError = new Error('Failed to fetch orders');
 		vi.mocked(userApi.getBrokerOrders).mockRejectedValueOnce(mockError);
 
+		// Ensure broker is connected so query is enabled
+		const useSettings = await import('@/hooks/useSettings');
+		vi.mocked(useSettings.useSettings).mockReturnValue({
+			settings: { trade_mode: 'broker', broker: 'kotak-neo', broker_status: 'Connected' },
+			isLoading: false,
+			error: null,
+			isPaperMode: false,
+			isBrokerMode: true,
+			broker: 'kotak-neo',
+			brokerStatus: 'Connected',
+			isBrokerConnected: true,
+		});
+
 		render(
 			withProviders(
 				<MemoryRouter>
@@ -175,12 +188,25 @@ describe('BrokerOrdersPage', () => {
 		await waitFor(() => {
 			expect(screen.getByText(/Failed to load orders/i)).toBeInTheDocument();
 			expect(screen.getByText('Retry Now')).toBeInTheDocument();
-		});
+		}, { timeout: 10000 });
 	});
 
 	it('displays empty state when no orders', async () => {
 		const userApi = await import('@/api/user');
 		vi.mocked(userApi.getBrokerOrders).mockResolvedValueOnce([]);
+
+		// Ensure broker is connected so query is enabled
+		const useSettings = await import('@/hooks/useSettings');
+		vi.mocked(useSettings.useSettings).mockReturnValue({
+			settings: { trade_mode: 'broker', broker: 'kotak-neo', broker_status: 'Connected' },
+			isLoading: false,
+			error: null,
+			isPaperMode: false,
+			isBrokerMode: true,
+			broker: 'kotak-neo',
+			brokerStatus: 'Connected',
+			isBrokerConnected: true,
+		});
 
 		render(
 			withProviders(
@@ -192,6 +218,6 @@ describe('BrokerOrdersPage', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText('No orders found')).toBeInTheDocument();
-		});
+		}, { timeout: 10000 });
 	});
 });

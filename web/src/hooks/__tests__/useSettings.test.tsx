@@ -9,6 +9,7 @@ import type { ReactNode } from 'react';
 // Mock the user API
 vi.mock('@/api/user', () => ({
 	getSettings: vi.fn(),
+	getBrokerStatus: vi.fn(() => Promise.resolve({ broker: 'kotak-neo', status: 'Connected' })),
 }));
 
 function createWrapper() {
@@ -91,6 +92,8 @@ describe('useSettings', () => {
 		};
 
 		vi.mocked(userApi.getSettings).mockResolvedValue(mockSettings);
+		// Mock getBrokerStatus to return Disconnected status
+		vi.mocked(userApi.getBrokerStatus).mockResolvedValue({ broker: 'kotak-neo', status: 'Disconnected' });
 
 		const { result } = renderHook(() => useSettings(), {
 			wrapper: createWrapper(),
