@@ -1145,7 +1145,7 @@ describe('BuyingZonePage', () => {
 			});
 		});
 
-		it('shows Active button for rejected signals', async () => {
+		it('shows Reactivate button for rejected signals', async () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 
@@ -1197,18 +1197,18 @@ describe('BuyingZonePage', () => {
 				expect(screen.getByText('REJECTED1')).toBeInTheDocument();
 			});
 
-			// Active button should be present
-			const activeButton = await waitFor(() => {
+			// Reactivate button should be present
+			const reactivateButton = await waitFor(() => {
 				const buttons = screen.getAllByRole('button');
-				const activeBtn = buttons.find(btn => btn.textContent?.includes('Active'));
-				expect(activeBtn).toBeDefined();
-				return activeBtn!;
+				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
+				expect(reactivateBtn).toBeDefined();
+				return reactivateBtn!;
 			}, { timeout: 3000 });
 
-			expect(activeButton).not.toBeDisabled();
+			expect(reactivateButton).not.toBeDisabled();
 		});
 
-		it('shows Active button for traded signals', async () => {
+		it('shows Reactivate button for traded signals', async () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 
@@ -1260,18 +1260,18 @@ describe('BuyingZonePage', () => {
 				expect(screen.getByText('TRADED1')).toBeInTheDocument();
 			});
 
-			// Active button should be present
-			const activeButton = await waitFor(() => {
+			// Reactivate button should be present
+			const reactivateButton = await waitFor(() => {
 				const buttons = screen.getAllByRole('button');
-				const activeBtn = buttons.find(btn => btn.textContent?.includes('Active'));
-				expect(activeBtn).toBeDefined();
-				return activeBtn!;
+				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
+				expect(reactivateBtn).toBeDefined();
+				return reactivateBtn!;
 			}, { timeout: 3000 });
 
-			expect(activeButton).not.toBeDisabled();
+			expect(reactivateButton).not.toBeDisabled();
 		});
 
-		it('disables Active button when base signal is expired', async () => {
+		it('disables Reactivate button when base signal is expired', async () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 
@@ -1319,19 +1319,19 @@ describe('BuyingZonePage', () => {
 				expect(screen.getByText('REJECTED_EXPIRED')).toBeInTheDocument();
 			});
 
-			// Active button should be present but disabled
-			const activeButton = await waitFor(() => {
+			// Reactivate button should be present but disabled
+			const reactivateButton = await waitFor(() => {
 				const buttons = screen.getAllByRole('button');
-				const activeBtn = buttons.find(btn => btn.textContent?.includes('Active'));
-				expect(activeBtn).toBeDefined();
-				return activeBtn!;
+				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
+				expect(reactivateBtn).toBeDefined();
+				return reactivateBtn!;
 			}, { timeout: 3000 });
 
-			expect(activeButton).toBeDisabled();
-			expect(activeButton).toHaveAttribute('title', 'Cannot reactivate expired signals');
+			expect(reactivateButton).toBeDisabled();
+			expect(reactivateButton).toHaveAttribute('title', 'Cannot reactivate expired signals');
 		});
 
-		it('disables Active button when signal is from previous day (timestamp-based expiration)', async () => {
+		it('disables Reactivate button when signal is from previous day (timestamp-based expiration)', async () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 
@@ -1384,19 +1384,19 @@ describe('BuyingZonePage', () => {
 				expect(screen.getByText('REJECTED_OLD')).toBeInTheDocument();
 			});
 
-			// Active button should be present but disabled due to timestamp expiration
-			const activeButton = await waitFor(() => {
+			// Reactivate button should be present but disabled due to timestamp expiration
+			const reactivateButton = await waitFor(() => {
 				const buttons = screen.getAllByRole('button');
-				const activeBtn = buttons.find(btn => btn.textContent?.includes('Active'));
-				expect(activeBtn).toBeDefined();
-				return activeBtn!;
+				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
+				expect(reactivateBtn).toBeDefined();
+				return reactivateBtn!;
 			}, { timeout: 3000 });
 
-			expect(activeButton).toBeDisabled();
-			expect(activeButton).toHaveAttribute('title', 'Cannot reactivate expired signals');
+			expect(reactivateButton).toBeDisabled();
+			expect(reactivateButton).toHaveAttribute('title', 'Cannot reactivate expired signals');
 		});
 
-		it('calls activateSignal API when Active button is clicked', async () => {
+		it('calls activateSignal API when Reactivate button is clicked', async () => {
 			const activateSpy = vi.spyOn(signalsApi, 'activateSignal').mockResolvedValue(undefined);
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
@@ -1449,11 +1449,11 @@ describe('BuyingZonePage', () => {
 				expect(screen.getByText('REJECTED1')).toBeInTheDocument();
 			});
 
-			const activeButton = await waitFor(() => {
-				return screen.getByRole('button', { name: /Active/i });
+			const reactivateButton = await waitFor(() => {
+				return screen.getByRole('button', { name: /Reactivate/i });
 			}, { timeout: 3000 });
 
-			fireEvent.click(activeButton);
+			fireEvent.click(reactivateButton);
 
 			await waitFor(() => {
 				expect(activateSpy).toHaveBeenCalledWith('REJECTED1');
@@ -1528,15 +1528,15 @@ describe('BuyingZonePage', () => {
 				expect(screen.getByText('REJECTED1')).toBeInTheDocument();
 			}, { timeout: 3000 });
 
-			// Wait for Active button to appear
-			const activeButton = await waitFor(() => {
+			// Wait for Reactivate button to appear
+			const reactivateButton = await waitFor(() => {
 				const buttons = screen.getAllByRole('button');
-				const activeBtn = buttons.find(btn => btn.textContent?.includes('Active'));
-				expect(activeBtn).toBeDefined();
-				return activeBtn!;
+				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
+				expect(reactivateBtn).toBeDefined();
+				return reactivateBtn!;
 			}, { timeout: 3000 });
 
-			fireEvent.click(activeButton);
+			fireEvent.click(reactivateButton);
 
 			// After activation, signal should disappear (since we're filtering by rejected)
 			await waitFor(() => {
