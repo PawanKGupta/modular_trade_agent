@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getPortfolio, type PaperTradingPortfolio } from '@/api/user';
 import { useSettings } from '@/hooks/useSettings';
+import { formatBrokerError, calculateRetryDelay } from '@/utils/brokerApi';
 
 function formatMoney(amount: number): string {
 	return `Rs ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -14,11 +15,18 @@ function formatPercent(value: number): string {
 export function BrokerPortfolioPage() {
 	const { isBrokerMode, isBrokerConnected, broker } = useSettings();
 
-	const { data, isLoading, error, refetch, dataUpdatedAt } = useQuery<PaperTradingPortfolio>({
+	const { data, isLoading, error, refetch, dataUpdatedAt, failureCount } = useQuery<PaperTradingPortfolio>({
 		queryKey: ['portfolio', 'broker'],
 		queryFn: getPortfolio,
 		refetchInterval: 5000, // Refresh every 5 seconds for live P&L
 		enabled: isBrokerMode && isBrokerConnected, // Only fetch if in broker mode and connected
+		retry: (failureCount, error) => {
+			// Retry up to 3 times for retryable errors
+			if (failureCount >= 3) return false;
+			const brokerError = formatBrokerError(error);
+			return brokerError.retryable;
+		},
+		retryDelay: (attemptIndex) => calculateRetryDelay(attemptIndex),
 	});
 
 	useEffect(() => {
@@ -57,14 +65,24 @@ export function BrokerPortfolioPage() {
 	}
 
 	if (error) {
+		const brokerError = formatBrokerError(error);
 		return (
 			<div className="p-2 sm:p-4">
-				<div className="text-xs sm:text-sm text-red-400">Error loading portfolio: {String(error)}</div>
+				<div className="text-xs sm:text-sm text-red-400">
+					Error loading portfolio: {brokerError.message}
+					{brokerError.statusCode && ` (Status: ${brokerError.statusCode})`}
+					{failureCount && failureCount > 0 && ` (Retry attempt: ${failureCount})`}
+				</div>
+				{brokerError.retryable && (
+					<div className="mt-2 text-xs text-yellow-400">
+						This error is retryable. The system will automatically retry.
+					</div>
+				)}
 				<button
 					onClick={() => refetch()}
 					className="mt-2 px-4 py-3 sm:py-2 bg-[var(--accent)] text-white rounded hover:opacity-90 text-sm sm:text-base min-h-[44px] sm:min-h-0"
 				>
-					Retry
+					Retry Now
 				</button>
 			</div>
 		);

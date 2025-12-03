@@ -90,7 +90,8 @@ export function AppShell() {
 			);
 		} else if (isBrokerMode) {
 			tradingItems.push(
-				{ path: '/dashboard/broker-portfolio', label: 'Broker Portfolio', icon: '🏦' }
+				{ path: '/dashboard/broker-portfolio', label: 'Broker Portfolio', icon: '🏦' },
+				{ path: '/dashboard/broker-orders', label: 'Broker Orders', icon: '📋' }
 			);
 		}
 
