@@ -70,3 +70,15 @@ export async function getBrokerCredsInfo(showFull = false): Promise<BrokerCredsI
 	const res = await api.get('/user/broker/creds/info', { params: { show_full: showFull } });
 	return res.data as BrokerCredsInfo;
 }
+
+// Unified portfolio types (re-exported from paper-trading for consistency)
+export type { PaperTradingPortfolio, PaperTradingAccount, PaperTradingHolding } from './paper-trading';
+
+/**
+ * Get unified portfolio (paper trading or broker portfolio based on user's trade mode)
+ * This endpoint automatically routes to the appropriate portfolio source.
+ */
+export async function getPortfolio(): Promise<import('./paper-trading').PaperTradingPortfolio> {
+	const res = await api.get('/user/portfolio');
+	return res.data;
+}

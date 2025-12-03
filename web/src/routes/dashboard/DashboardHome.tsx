@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { getServiceStatus, type ServiceStatus } from '../../api/service';
-import { getPaperTradingPortfolio, type PaperTradingPortfolio } from '../../api/paper-trading';
+import { getPortfolio, type PaperTradingPortfolio } from '../../api/user';
 import { getPnlSummary, type PnlSummary } from '../../api/pnl';
 import { getBuyingZone } from '../../api/signals';
 import { listOrders } from '../../api/orders';
@@ -52,12 +52,11 @@ export function DashboardHome() {
 		refetchInterval: 15000, // Refresh every 15 seconds
 	});
 
-	// Only fetch paper trading portfolio if in paper mode
+	// Fetch unified portfolio (paper or broker based on trade mode)
 	const portfolioQ = useQuery<PaperTradingPortfolio>({
-		queryKey: ['paper-trading-portfolio'],
-		queryFn: getPaperTradingPortfolio,
+		queryKey: ['portfolio', isPaperMode ? 'paper' : 'broker'],
+		queryFn: getPortfolio,
 		refetchInterval: 30000, // Refresh every 30 seconds
-		enabled: isPaperMode, // Only fetch when in paper mode
 	});
 
 	const pnlQ = useQuery<PnlSummary>({
@@ -102,7 +101,7 @@ export function DashboardHome() {
 
 	const isLoading =
 		serviceStatusQ.isLoading ||
-		(isPaperMode && portfolioQ.isLoading) ||
+		portfolioQ.isLoading ||
 		pnlQ.isLoading ||
 		signalsQ.isLoading ||
 		ordersQ.isLoading ||
