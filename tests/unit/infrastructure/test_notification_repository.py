@@ -404,7 +404,7 @@ class TestNotificationRepository:
                 return mock_result
             else:
                 raise Exception("Sequence update failed")
-        
+
         mock_db_session.execute = Mock(side_effect=mock_execute)
         mock_db_session.rollback = Mock()
 
@@ -426,7 +426,7 @@ class TestNotificationRepository:
                 return mock_result
             else:
                 raise Exception("Delete failed")
-        
+
         mock_db_session.execute = Mock(side_effect=mock_execute)
         mock_db_session.rollback = Mock()
 
