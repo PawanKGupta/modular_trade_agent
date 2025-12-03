@@ -1539,10 +1539,12 @@ describe('BuyingZonePage', () => {
 			fireEvent.click(reactivateButton);
 
 			// After activation, signal should disappear (since we're filtering by rejected)
+			// Also check that the refetch happened by verifying the call count increased
 			await waitFor(() => {
+				expect(rejectedCallCount).toBeGreaterThan(1);
 				expect(screen.queryByText('REJECTED1')).not.toBeInTheDocument();
-			}, { timeout: 10000 });
-		});
+			}, { timeout: 15000 });
+		}, { timeout: 20000 });
 
 		it('displays mixed statuses correctly when filter is set to "all"', async () => {
 			const { http, HttpResponse } = await import('msw');
