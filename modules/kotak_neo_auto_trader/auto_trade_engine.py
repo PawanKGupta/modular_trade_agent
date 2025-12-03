@@ -755,6 +755,21 @@ class AutoTradeEngine:
         return d.weekday() in config.MARKET_DAYS
 
     @staticmethod
+    def _get_order_variety_for_market_hours(self) -> str:
+        """
+        Determine order variety based on market hours.
+
+        Returns:
+            "REGULAR" if market is open, otherwise uses configured default (typically "AMO")
+        """
+        from core.volume_analysis import is_market_hours
+
+        if is_market_hours():
+            return "REGULAR"
+        else:
+            # Use configured default (typically AMO for after-market orders)
+            return self.strategy_config.default_variety if hasattr(self, 'strategy_config') else config.DEFAULT_VARIETY
+
     def market_was_open_today() -> bool:
         # Try NIFTY 50 index to detect trading day
         try:
@@ -1855,6 +1870,18 @@ class AutoTradeEngine:
         placed_symbol = None
         placement_time = datetime.now().isoformat()
 
+        # Determine order variety based on market hours
+        # AMO orders should only be used when market is closed
+        # During market hours, use REGULAR orders
+        from core.volume_analysis import is_market_hours
+
+        if is_market_hours():
+            order_variety = "REGULAR"
+            logger.debug(f"Market is open - using REGULAR order variety for {broker_symbol}")
+        else:
+            order_variety = config.DEFAULT_VARIETY  # Default to AMO when market is closed
+            logger.debug(f"Market is closed - using {order_variety} order variety for {broker_symbol}")
+
         # Determine if this is a BE/BL/BZ segment stock (trade-to-trade)
         # These segments require LIMIT orders, not MARKET orders
         is_t2t_segment = any(broker_symbol.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"])
@@ -1885,7 +1912,7 @@ class AutoTradeEngine:
                     symbol=place_symbol,
                     quantity=qty,
                     price=limit_price,
-                    variety=config.DEFAULT_VARIETY,
+                    variety=order_variety,
                     exchange=config.DEFAULT_EXCHANGE,
                     product=config.DEFAULT_PRODUCT,
                 )
@@ -1893,7 +1920,7 @@ class AutoTradeEngine:
                 trial = self.orders.place_market_buy(
                     symbol=place_symbol,
                     quantity=qty,
-                    variety=config.DEFAULT_VARIETY,
+                    variety=order_variety,
                     exchange=config.DEFAULT_EXCHANGE,
                     product=config.DEFAULT_PRODUCT,
                 )
@@ -1930,7 +1957,7 @@ class AutoTradeEngine:
                         symbol=place_symbol,
                         quantity=qty,
                         price=limit_price,
-                        variety=config.DEFAULT_VARIETY,
+                        variety=order_variety,
                         exchange=config.DEFAULT_EXCHANGE,
                         product=config.DEFAULT_PRODUCT,
                     )
@@ -1938,7 +1965,7 @@ class AutoTradeEngine:
                     trial = self.orders.place_market_buy(
                         symbol=place_symbol,
                         quantity=qty,
-                        variety=config.DEFAULT_VARIETY,
+                        variety=order_variety,
                         exchange=config.DEFAULT_EXCHANGE,
                         product=config.DEFAULT_PRODUCT,
                     )
@@ -3870,7 +3897,7 @@ class AutoTradeEngine:
                     resp = self.orders.place_market_sell(
                         symbol=symbol,
                         quantity=total_qty,
-                        variety=self.strategy_config.default_variety,
+                        variety=self._get_order_variety_for_market_hours(),
                         exchange=self.strategy_config.default_exchange,
                         product=self.strategy_config.default_product,
                     )
@@ -3947,7 +3974,7 @@ class AutoTradeEngine:
                                     resp = self.orders.place_market_sell(
                                         symbol=symbol,
                                         quantity=actual_qty,
-                                        variety=self.strategy_config.default_variety,
+                                        variety=self._get_order_variety_for_market_hours(),
                                         exchange=self.strategy_config.default_exchange,
                                         product=self.strategy_config.default_product,
                                     )
@@ -4112,7 +4139,7 @@ class AutoTradeEngine:
                     resp = self.orders.place_market_buy(
                         symbol=place_symbol,
                         quantity=qty,
-                        variety=self.strategy_config.default_variety,
+                        variety=self._get_order_variety_for_market_hours(),
                         exchange=self.strategy_config.default_exchange,
                         product=self.strategy_config.default_product,
                     )
