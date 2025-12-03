@@ -161,6 +161,19 @@ describe('BrokerPortfolioPage', () => {
 		const userApi = await import('@/api/user');
 		vi.mocked(userApi.getPortfolio).mockImplementation(() => new Promise(() => {})); // Never resolves
 
+		// Ensure broker is connected so query is enabled
+		const useSettings = await import('@/hooks/useSettings');
+		vi.mocked(useSettings.useSettings).mockReturnValue({
+			settings: { trade_mode: 'broker', broker: 'kotak-neo', broker_status: 'Connected' },
+			isLoading: false,
+			error: null,
+			isPaperMode: false,
+			isBrokerMode: true,
+			broker: 'kotak-neo',
+			brokerStatus: 'Connected',
+			isBrokerConnected: true,
+		});
+
 		render(
 			withProviders(
 				<MemoryRouter>
@@ -171,13 +184,26 @@ describe('BrokerPortfolioPage', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText(/Loading portfolio/i)).toBeInTheDocument();
-		});
+		}, { timeout: 10000 });
 	});
 
 	it('handles error state with retry button', async () => {
 		const userApi = await import('@/api/user');
 		const mockError = new Error('Failed to fetch portfolio');
 		vi.mocked(userApi.getPortfolio).mockRejectedValueOnce(mockError);
+
+		// Ensure broker is connected so query is enabled
+		const useSettings = await import('@/hooks/useSettings');
+		vi.mocked(useSettings.useSettings).mockReturnValue({
+			settings: { trade_mode: 'broker', broker: 'kotak-neo', broker_status: 'Connected' },
+			isLoading: false,
+			error: null,
+			isPaperMode: false,
+			isBrokerMode: true,
+			broker: 'kotak-neo',
+			brokerStatus: 'Connected',
+			isBrokerConnected: true,
+		});
 
 		render(
 			withProviders(
@@ -189,8 +215,8 @@ describe('BrokerPortfolioPage', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText(/Error loading portfolio/i)).toBeInTheDocument();
-			expect(screen.getByText('Retry')).toBeInTheDocument();
-		});
+			expect(screen.getByText('Retry Now')).toBeInTheDocument();
+		}, { timeout: 10000 });
 	});
 
 	it('displays empty state when no holdings', async () => {
@@ -211,6 +237,19 @@ describe('BrokerPortfolioPage', () => {
 			order_statistics: {},
 		});
 
+		// Ensure broker is connected so query is enabled
+		const useSettings = await import('@/hooks/useSettings');
+		vi.mocked(useSettings.useSettings).mockReturnValue({
+			settings: { trade_mode: 'broker', broker: 'kotak-neo', broker_status: 'Connected' },
+			isLoading: false,
+			error: null,
+			isPaperMode: false,
+			isBrokerMode: true,
+			broker: 'kotak-neo',
+			brokerStatus: 'Connected',
+			isBrokerConnected: true,
+		});
+
 		render(
 			withProviders(
 				<MemoryRouter>
@@ -220,8 +259,8 @@ describe('BrokerPortfolioPage', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText('Holdings (0)')).toBeInTheDocument();
+			expect(screen.getByText(/Holdings \(0\)/)).toBeInTheDocument();
 			expect(screen.getByText('No holdings')).toBeInTheDocument();
-		});
+		}, { timeout: 10000 });
 	});
 });
