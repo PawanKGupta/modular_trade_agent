@@ -483,7 +483,8 @@ class OrderTracker:
         Remove order from pending tracking.
 
         Phase 7: Supports dual-write (JSON + DB).
-        Note: In DB, we mark as CLOSED instead of deleting.
+        Note: Only cancels orders that are PENDING or FAILED. ONGOING orders
+        are removed from tracking but remain ONGOING (not cancelled).
 
         Args:
             order_id: Order ID to remove
@@ -493,21 +494,34 @@ class OrderTracker:
         """
         removed = False
 
-        # Phase 7: Update in DB if available (mark as closed instead of deleting)
+        # Phase 7: Update in DB if available
         if self.use_db and self.orders_repo:
             try:
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
                 # Find order in DB
                 db_order = self.orders_repo.get_by_broker_order_id(
                     self.user_id, order_id
                 ) or self.orders_repo.get_by_order_id(self.user_id, order_id)
 
                 if db_order:
-                    # Mark as closed instead of deleting
-                    self.orders_repo.mark_cancelled(
-                        db_order, cancelled_reason="Removed from pending tracking"
-                    )
+                    # Only cancel if order is PENDING or FAILED
+                    # ONGOING orders should remain ONGOING (they're executed, not cancelled)
+                    # CLOSED/CANCELLED orders should remain as-is
+                    if db_order.status in [DbOrderStatus.PENDING, DbOrderStatus.FAILED]:
+                        # Mark as cancelled only for pending/failed orders
+                        self.orders_repo.mark_cancelled(
+                            db_order, cancelled_reason="Removed from pending tracking"
+                        )
+                        logger.debug(f"Marked order {order_id} as cancelled in database")
+                    else:
+                        # For ONGOING/CLOSED/CANCELLED orders, just remove from tracking
+                        # Don't change their status
+                        logger.debug(
+                            f"Removed order {order_id} from pending tracking "
+                            f"(status: {db_order.status.value}, unchanged)"
+                        )
                     removed = True
-                    logger.debug(f"Marked order {order_id} as closed in database")
             except Exception as e:
                 logger.warning(f"Failed to remove order from database: {e}")
                 # Phase 11: In DB-only mode, fail if DB removal fails
