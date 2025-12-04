@@ -54,11 +54,13 @@ class AnalyzeStockUseCase:
             logger.info(f"Analyzing {request.ticker} (MTF: {request.enable_multi_timeframe})")
             
             # Use existing analysis logic (legacy bridge)
+            # Pass config if available in request (for ML support)
             result = legacy_analyze_ticker(
                 ticker=request.ticker,
                 enable_multi_timeframe=request.enable_multi_timeframe,
                 export_to_csv=request.export_to_csv,
-                as_of_date=request.end_date
+                as_of_date=request.end_date,
+                config=getattr(request, 'config', None)  # Pass config if available
             )
             
             # Check if analysis succeeded
@@ -78,7 +80,14 @@ class AnalyzeStockUseCase:
             if request.enable_backtest:
                 try:
                     # Use the exact legacy backtest logic
-                    backtest_data = run_stock_backtest(request.ticker, years_back=2, dip_mode=request.dip_mode)
+                    # Pass config if available (for ML support during backtest)
+                    config = getattr(request, 'config', None)
+                    backtest_data = run_stock_backtest(
+                        request.ticker, 
+                        years_back=2, 
+                        dip_mode=request.dip_mode,
+                        config=config  # Pass config to enable ML if configured
+                    )
                     
                     # Add backtest data to result (as legacy does)
                     result['backtest'] = {

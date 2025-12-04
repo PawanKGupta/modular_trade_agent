@@ -651,6 +651,10 @@ class AnalysisService:
                 # Also append to master CSV for historical tracking
                 csv_exporter.append_to_master_csv(result)
 
+            # Store config in result for backtest to use (for ML support)
+            # This allows backtest to use the same config that was used for analysis
+            result['_config'] = self.config
+
             return result
 
         except Exception as e:

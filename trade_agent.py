@@ -503,8 +503,19 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
         mode_info = " (DIP MODE)" if dip_mode else ""
         logger.info(f"Running backtest scoring analysis{mode_info}...")
         # Use BacktestService (Phase 4)
+        # Extract config from first result if available (for ML support)
+        # All results should have the same config from the same analysis service
+        config = None
+        if results and len(results) > 0:
+            # Try to extract config from result metadata if available
+            first_result = results[0]
+            if hasattr(first_result, '_config'):
+                config = first_result._config
+            elif isinstance(first_result, dict) and '_config' in first_result:
+                config = first_result.get('_config')
+        
         backtest_service = BacktestService(default_years_back=2, dip_mode=dip_mode)
-        results = backtest_service.add_backtest_scores_to_results(results)
+        results = backtest_service.add_backtest_scores_to_results(results, config=config)
         # Re-sort by priority score for better trading decisions
         results = [r for r in results if r is not None]  # Filter out None values
         results.sort(key=lambda x: -compute_trading_priority_score(x))
