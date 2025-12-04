@@ -2413,8 +2413,9 @@ class PaperTradingEngineAdapter:
                     )
 
                     # Check for duplicates (holdings or active buy orders)
-                    broker_symbol = symbol.upper()
-                    if broker_symbol in current_symbols:
+                    # Normalize symbol for comparison (remove .NS/.BO suffix)
+                    normalized_symbol = symbol.replace(".NS", "").replace(".BO", "").upper()
+                    if normalized_symbol in current_symbols:
                         self.logger.info(
                             f"Skipping {symbol}: already in holdings or pending orders",
                             action="place_reentry_orders",
@@ -2451,14 +2452,17 @@ class PaperTradingEngineAdapter:
                                 summary["failed_balance"] += 1
                                 summary["skipped_invalid_qty"] += 1
                                 continue
+                    # If portfolio is None, proceed without balance check (for testing)
 
                     # Place re-entry order (AMO-like, similar to fresh entries)
+                    from modules.kotak_neo_auto_trader.domain import Money
+                    
                     reentry_order = Order(
                         symbol=ticker,
                         quantity=qty,
                         order_type=OrderType.LIMIT,
                         transaction_type=TransactionType.BUY,
-                        price=current_price,  # AMO order at current price
+                        price=Money(current_price),  # AMO order at current price
                     )
 
                     # Tag as re-entry with metadata for tracking
@@ -2494,7 +2498,7 @@ class PaperTradingEngineAdapter:
                             orders_repo = OrdersRepository(self.db)
                             orders_repo.create(
                                 user_id=self.user_id,
-                                symbol=broker_symbol,
+                                symbol=normalized_symbol,
                                 side="buy",
                                 order_type="limit",
                                 quantity=qty,

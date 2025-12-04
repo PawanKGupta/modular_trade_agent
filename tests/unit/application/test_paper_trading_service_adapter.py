@@ -120,6 +120,52 @@ class TestPaperTradingServiceAdapter:
 
         assert adapter.tasks_completed["buy_orders"] is True
 
+    def test_run_buy_orders_calls_place_reentry_orders(self, db_session, test_user, mock_paper_broker):
+        """Test that run_buy_orders calls place_reentry_orders after placing fresh entries"""
+        from config.strategy_config import StrategyConfig
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+        )
+        adapter.broker = mock_paper_broker
+        adapter.logger = MagicMock()
+
+        # Initialize engine
+        from src.application.services.paper_trading_service_adapter import PaperTradingEngineAdapter
+
+        adapter.engine = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=adapter.logger,
+        )
+
+        # Mock load_latest_recommendations to return empty (no fresh entries)
+        adapter.engine.load_latest_recommendations = MagicMock(return_value=[])
+
+        # Mock place_reentry_orders
+        mock_reentry_summary = {
+            "attempted": 1,
+            "placed": 1,
+            "failed_balance": 0,
+            "skipped_duplicates": 0,
+            "skipped_invalid_rsi": 0,
+            "skipped_missing_data": 0,
+            "skipped_invalid_qty": 0,
+        }
+        adapter.engine.place_reentry_orders = MagicMock(return_value=mock_reentry_summary)
+
+        # Run buy orders
+        adapter.run_buy_orders()
+
+        # Verify place_reentry_orders was called
+        adapter.engine.place_reentry_orders.assert_called_once()
+
     def test_run_buy_orders_with_recommendations(self, db_session, test_user, mock_paper_broker):
         """Test buy orders with recommendations"""
         from config.strategy_config import StrategyConfig
