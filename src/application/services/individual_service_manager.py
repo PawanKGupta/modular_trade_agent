@@ -677,6 +677,7 @@ class IndividualServiceManager:
                             encoding="utf-8",
                             errors="replace",
                             timeout=timeout_seconds,
+                            env=env,  # Pass environment with user_id
                         )
 
                         task_context["return_code"] = result.returncode
