@@ -63,6 +63,9 @@ class AnalysisService:
         if verdict_service is None:
             # Check if ML is enabled in config (respects UI setting)
             ml_enabled = getattr(self.config, "ml_enabled", False)
+            
+            # Debug logging to trace config value
+            logger.debug(f"AnalysisService init: ml_enabled={ml_enabled}, config type={type(self.config)}, config.ml_enabled={getattr(self.config, 'ml_enabled', 'NOT_SET')}")
 
             if not ml_enabled:
                 logger.debug("ML is disabled in config, using VerdictService")
