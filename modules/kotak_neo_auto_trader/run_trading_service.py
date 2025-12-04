@@ -1256,12 +1256,13 @@ class TradingService:
                 self.setup_signal_handlers()
                 self.logger.info("Signal handlers setup complete", action="run")
             except Exception as e:
-                self.logger.error(
-                    f"Failed to setup signal handlers: {e}",
-                    exc_info=True,
+                # Signal handlers may fail in background threads (expected on some platforms)
+                # This is non-critical - service can still be stopped via shutdown_requested flag
+                self.logger.warning(
+                    f"Signal handlers setup failed (non-critical in background thread): {e}",
                     action="run",
                 )
-                return
+                # Continue anyway - signal handlers are not required for service operation
 
             # Initialize service (single login)
             self.logger.info("Starting service initialization...", action="run")
