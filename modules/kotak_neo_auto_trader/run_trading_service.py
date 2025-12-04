@@ -75,13 +75,13 @@ class TradingService:
 
         Args:
             user_id: User ID for this service instance
-            db_session: SQLAlchemy database session
+            db_session: SQLAlchemy database session (used for initialization only, thread-local session created in run())
             broker_creds: Decrypted broker credentials dict (None for paper trading mode)
             strategy_config: User-specific StrategyConfig (optional, will be loaded if not provided)
             env_file: Deprecated - kept for backward compatibility only
         """
         self.user_id = user_id
-        self.db = db_session
+        self.db = db_session  # Initial session (for setup only)
         self.broker_creds = broker_creds
         self.skip_execution_tracking = skip_execution_tracking
 
@@ -1036,6 +1036,7 @@ class TradingService:
 
         last_minute = -1
         loop_count = 0
+        heartbeat_counter = 0  # Track heartbeat updates
 
         while not self.shutdown_requested:
             loop_count += 1
@@ -1046,8 +1047,9 @@ class TradingService:
 
                 # Log first few loops to confirm it's running
                 if loop_count <= 3:
-                    logger.info(
-                        f"Scheduler loop iteration #{loop_count} at {now.strftime('%H:%M:%S')}"
+                    self.logger.info(
+                        f"Scheduler loop iteration #{loop_count} at {now.strftime('%H:%M:%S')}",
+                        action="scheduler",
                     )
 
                 # Run tasks only once per minute (on trading days only)
@@ -1126,11 +1128,27 @@ class TradingService:
                             ):
                                 self.run_eod_cleanup()
 
-                # Periodic heartbeat log (every 5 minutes to show service is alive)
-                if now.minute % 5 == 0 and now.second < 30:
-                    logger.info(
-                        f"Scheduler heartbeat: {now.strftime('%Y-%m-%d %H:%M:%S')} - Service running (loop #{loop_count})..."
+                # Update heartbeat every minute using thread-local session
+                try:
+                    from src.infrastructure.persistence.service_status_repository import (
+                        ServiceStatusRepository,
                     )
+
+                    # Use ServiceStatusRepository with thread-local session
+                    status_repo = ServiceStatusRepository(self.db)
+                    status_repo.update_heartbeat(self.user_id)
+                    self.db.commit()
+
+                    # Log heartbeat every 5 minutes
+                    heartbeat_counter += 1
+                    if heartbeat_counter == 1 or heartbeat_counter % 300 == 0:
+                        self.logger.info(
+                            f"💓 Scheduler heartbeat (running for {heartbeat_counter // 60} minutes)",
+                            action="scheduler",
+                        )
+                except Exception as e:
+                    self.logger.warning(f"Failed to update heartbeat: {e}", action="scheduler")
+                    self.db.rollback()
 
                 # Sleep for 30 seconds between checks
                 time.sleep(30)
@@ -1178,30 +1196,67 @@ class TradingService:
             logger.error(f"Error during shutdown: {e}")
 
     def run(self):
-        """Main entry point - Runs continuously"""
-        logger.info("Setting up signal handlers...")
-        self.setup_signal_handlers()
+        """
+        Main entry point - Runs continuously in background thread.
 
-        # Initialize service (single login)
-        logger.info("Starting service initialization...")
-        if not self.initialize():
-            logger.error("Failed to initialize service - service will exit")
-            return
+        CRITICAL: Creates its own database session to avoid thread-safety issues.
+        SQLAlchemy sessions are NOT thread-safe and cannot be shared across threads.
+        """
+        # Create a new database session for this thread
+        from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
 
-        logger.info("Initialization complete - entering scheduler loop...")
+        thread_db = SessionLocal()
 
         try:
-            # Run scheduler continuously
-            self.run_scheduler()
-        except Exception as e:
-            logger.error(f"Fatal error in scheduler: {e}")
-            import traceback
+            # Recreate logger with thread-local database session
+            from src.infrastructure.logging import get_user_logger  # noqa: PLC0415
 
-            traceback.print_exc()
+            self.logger = get_user_logger(
+                user_id=self.user_id, db=thread_db, module="TradingService"
+            )
+
+            # Update self.db to use thread-local session
+            self.db = thread_db
+
+            # Also update schedule manager to use thread-local session
+            from src.application.services.schedule_manager import ScheduleManager  # noqa: PLC0415
+
+            self._schedule_manager = ScheduleManager(thread_db)
+
+            self.logger.info("Setting up signal handlers...", action="run")
+            self.setup_signal_handlers()
+
+            # Initialize service (single login)
+            self.logger.info("Starting service initialization...", action="run")
+            if not self.initialize():
+                self.logger.error("Failed to initialize service - service will exit", action="run")
+                return
+
+            self.logger.info("Initialization complete - entering scheduler loop...", action="run")
+
+            try:
+                # Run scheduler continuously
+                self.run_scheduler()
+            except Exception as e:
+                self.logger.error(f"Fatal error in scheduler: {e}", exc_info=True, action="run")
+                import traceback
+
+                traceback.print_exc()
+            finally:
+                # Always cleanup on exit
+                self.logger.info("Entering shutdown sequence...", action="run")
+                self.shutdown()
         finally:
-            # Always cleanup on exit
-            logger.info("Entering shutdown sequence...")
-            self.shutdown()
+            # Clean up thread-local session
+            try:
+                # Rollback any pending transaction
+                thread_db.rollback()
+            except Exception:
+                pass  # Ignore rollback errors (session may already be closed/rolled back)
+            try:
+                thread_db.close()
+            except Exception:
+                pass  # Ignore close errors if session is in bad state
 
 
 def main():
