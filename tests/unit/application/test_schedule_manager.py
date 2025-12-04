@@ -284,18 +284,18 @@ def test_validate_schedule_analysis_flexible_time(db_session, schedule_manager):
     assert "off-trading hours" in message.lower() or "4:00 PM" in message
 
 
-def test_validate_schedule_position_monitor_hourly(db_session, schedule_manager):
-    """Test validation for position monitor hourly requirement"""
+def test_validate_schedule_position_monitor_invalid(db_session, schedule_manager):
+    """Test that position_monitor is rejected as invalid task name (removed in Phase 3)"""
     is_valid, message = schedule_manager.validate_schedule(
         task_name="position_monitor",
-        schedule_time=time(9, 15),  # Not :30 minutes
+        schedule_time=time(9, 30),
         is_hourly=True,
         is_continuous=False,
         end_time=None,
         schedule_type="daily",
     )
     assert is_valid is False
-    assert ":30" in message or "30" in message
+    assert "Invalid task name" in message or "invalid" in message.lower()
 
 
 def test_validate_schedule_sell_monitor_continuous(db_session, schedule_manager):
