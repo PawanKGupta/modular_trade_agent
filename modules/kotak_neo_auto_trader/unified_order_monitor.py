@@ -359,6 +359,9 @@ class UnifiedOrderMonitor:
                 logger.warning(f"Failed to update OrderStateManager for executed buy order: {e}")
 
         # Update in database (already done in _update_buy_order_status)
+        
+        # Create/update position with entry RSI from order metadata
+        self._create_position_from_executed_order(order_id, order_info, execution_price, execution_qty)
 
     def _handle_buy_order_rejection(
         self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
