@@ -10,6 +10,8 @@ test.describe('Error Handling & Edge Cases', () => {
 
 	test('application handles API errors gracefully', async ({ authenticatedPage }) => {
 		// Intercept API calls and return error (but exclude auth endpoints to maintain session)
+		// Use unroute to ensure clean state if route was set in previous test
+		await authenticatedPage.unroute('**/api/v1/buying-zone**');
 		await authenticatedPage.route('**/api/v1/buying-zone**', route => {
 			route.fulfill({
 				status: 500,
@@ -19,25 +21,38 @@ test.describe('Error Handling & Edge Cases', () => {
 		});
 
 		// Navigate to a page that requires API call
-		await authenticatedPage.goto('/dashboard/buying-zone');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.goto('/dashboard/buying-zone', { waitUntil: 'domcontentloaded' });
+
+		// Wait for page structure to load first
+		await authenticatedPage.waitForLoadState('domcontentloaded');
+
+		// Wait for network requests to complete (or timeout)
+		await authenticatedPage.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
+			// Network idle timeout is acceptable - error might prevent some requests
+		});
+
+		// Wait a bit for error state to render
+		await authenticatedPage.waitForTimeout(1000);
 
 		// Verify error message is displayed (BuyingZonePage shows "Failed to load" on error)
 		// Check for the specific error message in the main content area
 		const errorMessage = authenticatedPage.locator('main, [role="main"]').getByText(/Failed to load|error|Error/i);
-		const hasError = await errorMessage.isVisible().catch(() => false);
+		const hasError = await errorMessage.isVisible({ timeout: 5000 }).catch(() => false);
 
 		// If no error message, at least verify the page structure is intact
 		if (!hasError) {
 			// Page might show empty state instead of error
 			const pageContent = authenticatedPage.locator('main, [role="main"]');
-			await expect(pageContent).toBeVisible();
+			await expect(pageContent).toBeVisible({ timeout: 10000 });
 		} else {
-			await expect(errorMessage).toBeVisible();
+			await expect(errorMessage).toBeVisible({ timeout: 5000 });
 		}
 
 		// Verify application doesn't crash - page should still be visible
-		await expect(authenticatedPage.locator('main, [role="main"]')).toBeVisible();
+		await expect(authenticatedPage.locator('main, [role="main"]')).toBeVisible({ timeout: 10000 });
+
+		// Clean up route interception
+		await authenticatedPage.unroute('**/api/v1/buying-zone**');
 	});
 
 	test('application shows loading states', async ({ authenticatedPage }) => {

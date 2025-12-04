@@ -5,15 +5,14 @@ ML-enhanced verdict service that uses trained models to predict verdicts.
 Falls back to rule-based logic if ML model is unavailable.
 """
 
-import os
-import pandas as pd
-import numpy as np
-from typing import Optional, Dict, List, Tuple, Any
 from pathlib import Path
-import joblib
+from typing import Any
 
-from utils.logger import logger
+import joblib
+import pandas as pd
+
 from services.verdict_service import VerdictService
+from utils.logger import logger
 
 
 class MLVerdictService(VerdictService):
@@ -24,7 +23,7 @@ class MLVerdictService(VerdictService):
     falls back to rule-based logic if ML unavailable.
     """
 
-    def __init__(self, model_path: Optional[str] = None, config=None):
+    def __init__(self, model_path: str | None = None, config=None):
         """
         Initialize ML verdict service
 
@@ -94,51 +93,47 @@ class MLVerdictService(VerdictService):
                         break
 
                 if feature_cols_path:
-                    with open(feature_cols_path, "r") as f:
+                    with open(feature_cols_path) as f:
                         self.feature_cols = [line.strip() for line in f if line.strip()]
                     logger.info(
                         f"   Loaded {len(self.feature_cols)} feature columns from {feature_cols_path.name}"
                     )
+                # Try to get feature names from the model itself (scikit-learn stores them)
+                elif hasattr(self.model, "feature_names_in_"):
+                    self.feature_cols = list(self.model.feature_names_in_)
+                    logger.info(
+                        f"   Loaded {len(self.feature_cols)} feature columns from model (feature_names_in_)"
+                    )
                 else:
-                    # Try to get feature names from the model itself (scikit-learn stores them)
-                    if hasattr(self.model, "feature_names_in_"):
-                        self.feature_cols = list(self.model.feature_names_in_)
-                        logger.info(
-                            f"   Loaded {len(self.feature_cols)} feature columns from model (feature_names_in_)"
-                        )
-                    else:
-                        logger.warning(
-                            "Feature columns file not found and model doesn't have feature_names_in_. Will extract features dynamically."
-                        )
+                    logger.warning(
+                        "Feature columns file not found and model doesn't have feature_names_in_. Will extract features dynamically."
+                    )
 
             except Exception as e:
                 logger.warning(f"[WARN]? Failed to load ML model: {e}, using rule-based logic")
                 self.model = None
                 self.model_loaded = False
+        elif model_path:
+            logger.warning(f"[WARN]? Model file not found: {model_path}, using rule-based logic")
         else:
-            if model_path:
-                logger.warning(
-                    f"[WARN]? Model file not found: {model_path}, using rule-based logic"
-                )
-            else:
-                logger.info("i? No ML model path provided, using rule-based logic")
+            logger.info("i? No ML model path provided, using rule-based logic")
 
     def determine_verdict(
         self,
-        signals: List[str],
-        rsi_value: Optional[float],
+        signals: list[str],
+        rsi_value: float | None,
         is_above_ema200: bool,
         vol_ok: bool,
         vol_strong: bool,
         fundamental_ok: bool,
-        timeframe_confirmation: Optional[Dict[str, Any]],
-        news_sentiment: Optional[Dict[str, Any]],
+        timeframe_confirmation: dict[str, Any] | None,
+        news_sentiment: dict[str, Any] | None,
         chart_quality_passed: bool = True,
-        fundamental_assessment: Optional[Dict[str, Any]] = None,
-        indicators: Optional[Dict[str, Any]] = None,
-        fundamentals: Optional[Dict[str, Any]] = None,
-        df: Optional[Any] = None,
-    ) -> Tuple[str, List[str]]:
+        fundamental_assessment: dict[str, Any] | None = None,
+        indicators: dict[str, Any] | None = None,
+        fundamentals: dict[str, Any] | None = None,
+        df: Any | None = None,
+    ) -> tuple[str, list[str]]:
         """
         Determine verdict using ML if available, else rule-based
 
@@ -168,9 +163,9 @@ class MLVerdictService(VerdictService):
         # This is a CRITICAL filter - ML model should NEVER predict when chart quality fails
         if not chart_quality_passed:
             logger.info(
-                f"ML verdict service: Chart quality FAILED - returning 'avoid' immediately (hard filter)"
+                "ML verdict service: Chart quality FAILED - returning 'avoid' immediately (hard filter)"
             )
-            logger.info(f"ML verdict service: Skipping ML prediction (chart quality is mandatory)")
+            logger.info("ML verdict service: Skipping ML prediction (chart quality is mandatory)")
             return "avoid", ["Chart quality failed - too many gaps/extreme candles/flat movement"]
 
         # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Check fundamental_avoid flag
@@ -182,30 +177,25 @@ class MLVerdictService(VerdictService):
                     "fundamental_reason", "loss_making_expensive"
                 )
                 logger.info(
-                    f"ML verdict service: Fundamental filter FAILED - returning 'avoid' immediately (hard filter)"
+                    "ML verdict service: Fundamental filter FAILED - returning 'avoid' immediately (hard filter)"
                 )
                 logger.info(
                     f"ML verdict service: Skipping ML prediction (fundamental filter: {fundamental_reason})"
                 )
                 return "avoid", [f"Fundamental filter: {fundamental_reason}"]
 
-        # Stage 2: ML model prediction (DISABLED FOR VERDICT - 2025-11-11)
+        # Stage 2: ML model prediction
         # ML model is fully trained (72.5% accuracy, 8,490 examples)
-        # Currently logging ML predictions for monitoring/comparison only
-        # Using rule-based logic for actual verdict until fully validated
+        # Use ML prediction if confidence meets threshold, otherwise fallback to rule-based
 
         ml_prediction_info = None  # Store ML prediction for Telegram notification
+        verdict_source = "rule_based"  # Track which source was used
 
         if self.model_loaded:
             try:
-                logger.info(
-                    f"ML verdict service: ML model loaded but using rule-based logic (monitoring mode)"
-                )
-                logger.debug(
-                    f"ML verdict service: Chart quality passed - getting ML prediction for monitoring"
-                )
+                logger.debug("ML verdict service: Chart quality passed - getting ML prediction")
 
-                # Get ML prediction for logging/monitoring (but don't use it for verdict)
+                # Get ML prediction
                 ml_result = self._predict_with_ml(
                     signals,
                     rsi_value,
@@ -223,22 +213,210 @@ class MLVerdictService(VerdictService):
                 if ml_result:
                     ml_verdict, ml_confidence, ml_probs = ml_result
                     ml_justification = self._build_ml_justification(ml_verdict)
-                    logger.info(
-                        f"ML verdict service: ML predicts '{ml_verdict}' ({ml_confidence:.1%} confidence) - monitoring only"
-                    )
-                    logger.debug(
-                        f"ML prediction (for monitoring): {ml_verdict}, confidence: {ml_confidence:.1%}, justification: {ml_justification}"
+
+                    # Get confidence threshold from config (default: 0.5)
+                    confidence_threshold = (
+                        getattr(self.config, "ml_confidence_threshold", 0.5) if self.config else 0.5
                     )
 
-                    # Store ML prediction info for Telegram notification
-                    ml_prediction_info = {
-                        "ml_verdict": ml_verdict,
-                        "ml_confidence": ml_confidence,
-                        "ml_probabilities": ml_probs,
-                        "ml_justification": ml_justification,
-                    }
+                    # Check if ML confidence meets threshold
+                    if ml_confidence >= confidence_threshold:
+                        # Get rule-based verdict for comparison/combination
+                        rule_verdict, rule_justification = super().determine_verdict(
+                            signals,
+                            rsi_value,
+                            is_above_ema200,
+                            vol_ok,
+                            vol_strong,
+                            fundamental_ok,
+                            timeframe_confirmation,
+                            news_sentiment,
+                            chart_quality_passed=chart_quality_passed,
+                            fundamental_assessment=fundamental_assessment,
+                        )
+
+                        # Determine if we should combine verdicts (more conservative approach)
+                        combine_with_rules = (
+                            self.config
+                            and hasattr(self.config, "ml_combine_with_rules")
+                            and self.config.ml_combine_with_rules
+                        )
+
+                        if combine_with_rules:
+                            # COMBINE MODE: Use confidence-aware combination
+                            # Consider ML confidence when combining with rules
+                            final_verdict = self._get_confidence_aware_combined_verdict(
+                                ml_verdict, ml_confidence, rule_verdict, confidence_threshold
+                            )
+
+                            # Check if both systems agree (strong signal)
+                            if ml_verdict == rule_verdict:
+                                verdict_source = "ml_combined"
+                                logger.info(
+                                    f"ML verdict service: ML+Rules AGREE - both predict '{final_verdict}' "
+                                    f"(confidence: {ml_confidence:.1%}) - Strong signal!"
+                                )
+                                # Build justification highlighting agreement
+                                justification = [
+                                    f"ML prediction: {ml_verdict} (confidence: {ml_confidence:.1%})",
+                                    f"Rule-based verdict: {rule_verdict}",
+                                    f"✅ Both systems agree: {final_verdict} (strong confirmation)",
+                                ]
+                                justification.extend(rule_justification)
+                            elif final_verdict == ml_verdict:
+                                verdict_source = "ml"
+                                # Check if ML is more conservative than rules (important signal)
+                                ml_rank = {"strong_buy": 0, "buy": 1, "watch": 2, "avoid": 3}.get(
+                                    ml_verdict, 2
+                                )
+                                rule_rank = {"strong_buy": 0, "buy": 1, "watch": 2, "avoid": 3}.get(
+                                    rule_verdict, 2
+                                )
+
+                                if ml_rank > rule_rank:
+                                    # ML is more cautious - check confidence level
+                                    if ml_confidence >= 0.70:
+                                        logger.warning(
+                                            f"ML verdict service: ML is MORE CONSERVATIVE than rules - "
+                                            f"ML: '{ml_verdict}' (HIGH confidence: {ml_confidence:.1%}), Rules: '{rule_verdict}' "
+                                            f"- Using ML verdict (high-confidence safety signal)"
+                                        )
+                                        justification = [
+                                            f"ML prediction: {ml_verdict} (HIGH confidence: {ml_confidence:.1%})",
+                                            f"Rule-based verdict: {rule_verdict}",
+                                            f"⚠️ ML is more cautious with HIGH confidence - using '{final_verdict}' (safety-first)",
+                                        ]
+                                    elif ml_confidence >= 0.50:
+                                        logger.warning(
+                                            f"ML verdict service: ML is MORE CONSERVATIVE than rules - "
+                                            f"ML: '{ml_verdict}' (confidence: {ml_confidence:.1%}), Rules: '{rule_verdict}' "
+                                            f"- Using ML verdict (safety-first approach)"
+                                        )
+                                        justification = [
+                                            f"ML prediction: {ml_verdict} (confidence: {ml_confidence:.1%})",
+                                            f"Rule-based verdict: {rule_verdict}",
+                                            f"⚠️ ML is more cautious - using '{final_verdict}' (safety-first approach)",
+                                        ]
+                                    else:
+                                        # Low confidence but still using ML because it's much more conservative
+                                        logger.warning(
+                                            f"ML verdict service: ML is MORE CONSERVATIVE than rules - "
+                                            f"ML: '{ml_verdict}' (LOW confidence: {ml_confidence:.1%}), Rules: '{rule_verdict}' "
+                                            f"- Using ML verdict (strong safety signal despite low confidence)"
+                                        )
+                                        justification = [
+                                            f"ML prediction: {ml_verdict} (LOW confidence: {ml_confidence:.1%})",
+                                            f"Rule-based verdict: {rule_verdict}",
+                                            f"⚠️ ML is much more cautious - using '{final_verdict}' (strong safety signal)",
+                                        ]
+                                else:
+                                    # Same conservativeness level (shouldn't happen often, but handle it)
+                                    logger.info(
+                                        f"ML verdict service: ML+Rules combined - using ML verdict '{ml_verdict}' "
+                                        f"(ML: {ml_verdict}, Rules: {rule_verdict}, confidence: {ml_confidence:.1%})"
+                                    )
+                                    justification = [
+                                        f"ML prediction: {ml_verdict} (confidence: {ml_confidence:.1%})",
+                                        f"Rule-based verdict: {rule_verdict}",
+                                        f"Combined verdict: {final_verdict} (confidence-aware combination - ML used)",
+                                    ]
+                                justification.extend(rule_justification)
+                            elif final_verdict == rule_verdict:
+                                verdict_source = "rule_based"
+                                # Check why rules were used (ML low confidence or rules more conservative)
+                                ml_rank = {"strong_buy": 0, "buy": 1, "watch": 2, "avoid": 3}.get(
+                                    ml_verdict, 2
+                                )
+                                rule_rank = {"strong_buy": 0, "buy": 1, "watch": 2, "avoid": 3}.get(
+                                    rule_verdict, 2
+                                )
+
+                                if ml_confidence < 0.50:
+                                    logger.info(
+                                        f"ML verdict service: ML+Rules combined - using rule-based verdict '{rule_verdict}' "
+                                        f"(ML: {ml_verdict} with LOW confidence: {ml_confidence:.1%}, Rules: {rule_verdict})"
+                                    )
+                                    justification = [
+                                        f"ML prediction: {ml_verdict} (LOW confidence: {ml_confidence:.1%})",
+                                        f"Rule-based verdict: {rule_verdict}",
+                                        f"Combined verdict: {final_verdict} (using rules due to low ML confidence)",
+                                    ]
+                                elif rule_rank > ml_rank:
+                                    logger.info(
+                                        f"ML verdict service: ML+Rules combined - using rule-based verdict '{rule_verdict}' "
+                                        f"(ML: {ml_verdict}, Rules: {rule_verdict} is more conservative, ML confidence: {ml_confidence:.1%})"
+                                    )
+                                    justification = [
+                                        f"ML prediction: {ml_verdict} (confidence: {ml_confidence:.1%})",
+                                        f"Rule-based verdict: {rule_verdict}",
+                                        f"Combined verdict: {final_verdict} (rules are more conservative - safety-first)",
+                                    ]
+                                else:
+                                    logger.info(
+                                        f"ML verdict service: ML+Rules combined - using rule-based verdict '{rule_verdict}' "
+                                        f"(ML: {ml_verdict}, Rules: {rule_verdict}, confidence: {ml_confidence:.1%})"
+                                    )
+                                    justification = [
+                                        f"ML prediction: {ml_verdict} (confidence: {ml_confidence:.1%})",
+                                        f"Rule-based verdict: {rule_verdict}",
+                                        f"Combined verdict: {final_verdict} (confidence-aware combination - Rules used)",
+                                    ]
+                                justification.extend(rule_justification)
+                            else:
+                                # Should not happen, but handle edge case
+                                verdict_source = "ml_combined"
+                                logger.warning(
+                                    f"ML verdict service: Unexpected verdict combination - "
+                                    f"ML: {ml_verdict}, Rules: {rule_verdict}, Final: {final_verdict}"
+                                )
+                                justification = [
+                                    f"ML prediction: {ml_verdict} (confidence: {ml_confidence:.1%})",
+                                    f"Rule-based verdict: {rule_verdict}",
+                                    f"Combined verdict: {final_verdict}",
+                                ]
+                                justification.extend(rule_justification)
+                        else:
+                            # DIRECT ML MODE: Use ML verdict directly (less conservative)
+                            final_verdict = ml_verdict
+                            verdict_source = "ml"
+                            logger.info(
+                                f"ML verdict service: Using ML prediction '{ml_verdict}' "
+                                f"({ml_confidence:.1%} confidence, threshold: {confidence_threshold:.1%})"
+                            )
+
+                            # Build justification with ML as primary
+                            justification = [
+                                f"ML prediction: {ml_verdict} (confidence: {ml_confidence:.1%})",
+                                f"Rule-based verdict: {rule_verdict} (for comparison)",
+                            ]
+
+                        # Store ML prediction info
+                        ml_prediction_info = {
+                            "ml_verdict": ml_verdict,
+                            "ml_confidence": ml_confidence,
+                            "ml_probabilities": ml_probs,
+                            "ml_justification": ml_justification,
+                            "rule_verdict": rule_verdict,
+                            "verdict_source": verdict_source,
+                        }
+
+                        return final_verdict, justification
+                    else:
+                        # ML confidence too low - fallback to rule-based
+                        logger.info(
+                            f"ML verdict service: ML confidence too low "
+                            f"({ml_confidence:.1%} < {confidence_threshold:.1%}), using rule-based logic"
+                        )
+
+                        # Store ML prediction for monitoring even though we're not using it
+                        ml_prediction_info = {
+                            "ml_verdict": ml_verdict,
+                            "ml_confidence": ml_confidence,
+                            "ml_probabilities": ml_probs,
+                            "ml_justification": ml_justification,
+                        }
                 else:
-                    logger.debug(f"ML prediction returned None - using rule-based logic")
+                    logger.debug("ML prediction returned None - using rule-based logic")
 
             except Exception as e:
                 logger.warning(f"ML prediction failed: {e}, using rule-based logic")
@@ -246,10 +424,10 @@ class MLVerdictService(VerdictService):
 
                 logger.debug(traceback.format_exc())
         else:
-            logger.debug(f"ML verdict service: ML model not loaded - using rule-based logic")
+            logger.debug("ML verdict service: ML model not loaded - using rule-based logic")
 
-        # Use rule-based logic for actual verdict (ML is monitoring only for now)
-        logger.debug(f"ML verdict service: Using rule-based logic for verdict determination")
+        # Fallback to rule-based logic if ML not available or confidence too low
+        logger.debug("ML verdict service: Using rule-based logic for verdict determination")
         verdict, justification = super().determine_verdict(
             signals,
             rsi_value,
@@ -263,12 +441,13 @@ class MLVerdictService(VerdictService):
             fundamental_assessment=fundamental_assessment,
         )
 
-        # Return verdict, justification, and ML prediction info separately
-        # ML info will be added to result dict by analysis_service for Telegram display
+        # Store ML prediction info for monitoring/telegram (even if not used for verdict)
         if ml_prediction_info:
+            ml_prediction_info["verdict_source"] = verdict_source
             self._ml_prediction_info = ml_prediction_info  # Store for retrieval
             logger.debug(
-                f"Stored ML prediction info: {ml_prediction_info['ml_verdict']} ({ml_prediction_info['ml_confidence']:.1%})"
+                f"Stored ML prediction info: {ml_prediction_info['ml_verdict']} "
+                f"({ml_prediction_info['ml_confidence']:.1%}), verdict_source: {verdict_source}"
             )
         else:
             # Clear previous ML prediction if no new one available
@@ -278,7 +457,7 @@ class MLVerdictService(VerdictService):
 
         return verdict, justification
 
-    def get_last_ml_prediction(self) -> Optional[Dict[str, Any]]:
+    def get_last_ml_prediction(self) -> dict[str, Any] | None:
         """
         Get the ML prediction info from the last determine_verdict call.
 
@@ -291,18 +470,18 @@ class MLVerdictService(VerdictService):
 
     def _predict_with_ml(
         self,
-        signals: List[str],
-        rsi_value: Optional[float],
+        signals: list[str],
+        rsi_value: float | None,
         is_above_ema200: bool,
         vol_ok: bool,
         vol_strong: bool,
         fundamental_ok: bool,
-        timeframe_confirmation: Optional[Dict[str, Any]],
-        news_sentiment: Optional[Dict[str, Any]],
-        indicators: Optional[Dict[str, Any]] = None,
-        fundamentals: Optional[Dict[str, Any]] = None,
-        df: Optional[Any] = None,
-    ) -> Optional[tuple]:
+        timeframe_confirmation: dict[str, Any] | None,
+        news_sentiment: dict[str, Any] | None,
+        indicators: dict[str, Any] | None = None,
+        fundamentals: dict[str, Any] | None = None,
+        df: Any | None = None,
+    ) -> tuple | None:
         """
         Predict verdict using ML model
 
@@ -364,18 +543,18 @@ class MLVerdictService(VerdictService):
 
     def _extract_features(
         self,
-        signals: List[str],
-        rsi_value: Optional[float],
+        signals: list[str],
+        rsi_value: float | None,
         is_above_ema200: bool,
         vol_ok: bool,
         vol_strong: bool,
         fundamental_ok: bool,
-        timeframe_confirmation: Optional[Dict[str, Any]],
-        news_sentiment: Optional[Dict[str, Any]],
-        indicators: Optional[Dict[str, Any]] = None,
-        fundamentals: Optional[Dict[str, Any]] = None,
-        df: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+        timeframe_confirmation: dict[str, Any] | None,
+        news_sentiment: dict[str, Any] | None,
+        indicators: dict[str, Any] | None = None,
+        fundamentals: dict[str, Any] | None = None,
+        df: Any | None = None,
+    ) -> dict[str, Any]:
         """
         Extract features for ML model matching training data format
 
@@ -387,7 +566,6 @@ class MLVerdictService(VerdictService):
         Returns:
             Dict with feature values
         """
-        import pandas as pd
 
         features = {}
 
@@ -414,33 +592,28 @@ class MLVerdictService(VerdictService):
 
         # Volume features - use configurable volume lookback
         # Note: We calculate volume internally but don't expose absolute volume as feature
+        # Model expects 'avg_volume_20' (not dynamic avg_volume_{volume_lookback})
+        # Always calculate avg_volume_20 to match training data
         if df is not None and not df.empty:
             try:
                 current_volume = float(df["volume"].iloc[-1])  # For calculation only
-                avg_volume_feature_name = f"avg_volume_{volume_lookback}"
-                avg_volume = (
-                    float(df["volume"].tail(volume_lookback).mean())
-                    if len(df) >= volume_lookback
-                    else current_volume
+                # Calculate avg_volume_20 (model expects this exact feature name)
+                avg_volume_20 = (
+                    float(df["volume"].tail(20).mean()) if len(df) >= 20 else current_volume
                 )
-                features[avg_volume_feature_name] = avg_volume
+                features["avg_volume_20"] = avg_volume_20
 
-                # Also keep 'avg_volume_20' for backward compatibility if lookback == 20
-                if volume_lookback == 20:
-                    features["avg_volume_20"] = avg_volume
-
-                features["volume_ratio"] = current_volume / avg_volume if avg_volume > 0 else 1.0
+                # Use avg_volume_20 for volume_ratio calculation (not volume_lookback)
+                features["volume_ratio"] = (
+                    current_volume / avg_volume_20 if avg_volume_20 > 0 else 1.0
+                )
             except:
-                avg_volume_feature_name = f"avg_volume_{volume_lookback}"
-                features[avg_volume_feature_name] = 0.0
-                if volume_lookback == 20:
-                    features["avg_volume_20"] = 0.0
+                # Always create avg_volume_20 for backward compatibility
+                features["avg_volume_20"] = 0.0
                 features["volume_ratio"] = 1.0
         else:
-            avg_volume_feature_name = f"avg_volume_{volume_lookback}"
-            features[avg_volume_feature_name] = 0.0
-            if volume_lookback == 20:
-                features["avg_volume_20"] = 0.0
+            # Always create avg_volume_20 for backward compatibility
+            features["avg_volume_20"] = 0.0
             features["volume_ratio"] = 1.0
 
         features["vol_strong"] = 1.0 if vol_strong else 0.0
@@ -449,36 +622,27 @@ class MLVerdictService(VerdictService):
         # Use current price from indicators for calculations
         current_price = float(indicators.get("close", 0)) if indicators else 0.0
 
+        # Model expects 'recent_high_20' and 'recent_low_20' (not dynamic recent_high_{support_lookback})
+        # Always calculate recent_high_20 and recent_low_20 to match training data
         if df is not None and not df.empty:
             try:
-                recent_high_feature_name = f"recent_high_{support_lookback}"
-                recent_low_feature_name = f"recent_low_{support_lookback}"
-
-                features[recent_high_feature_name] = (
-                    float(df["high"].tail(support_lookback).max())
-                    if len(df) >= support_lookback
-                    else current_price
+                # Calculate recent_high_20 and recent_low_20 (model expects these exact feature names)
+                features["recent_high_20"] = (
+                    float(df["high"].tail(20).max()) if len(df) >= 20 else current_price
                 )
-                features[recent_low_feature_name] = (
-                    float(df["low"].tail(support_lookback).min())
-                    if len(df) >= support_lookback
-                    else current_price
+                features["recent_low_20"] = (
+                    float(df["low"].tail(20).min()) if len(df) >= 20 else current_price
                 )
-
-                # Also keep 'recent_high_20' and 'recent_low_20' for backward compatibility if lookback == 20
-                if support_lookback == 20:
-                    features["recent_high_20"] = features[recent_high_feature_name]
-                    features["recent_low_20"] = features[recent_low_feature_name]
 
                 if current_price > 0:
                     features["support_distance_pct"] = (
-                        (current_price - features[recent_low_feature_name]) / current_price
+                        (current_price - features["recent_low_20"]) / current_price
                     ) * 100
                 else:
                     features["support_distance_pct"] = 0.0
 
                 # EMA9 distance (target proximity) - critical for mean reversion strategy
-                if df is not None and "ema9" in df.columns:
+                if "ema9" in df.columns:
                     ema9_value = float(df["ema9"].iloc[-1])
                     if current_price > 0:
                         features["ema9_distance_pct"] = (
@@ -489,23 +653,15 @@ class MLVerdictService(VerdictService):
                 else:
                     features["ema9_distance_pct"] = 0.0
             except:
-                recent_high_feature_name = f"recent_high_{support_lookback}"
-                recent_low_feature_name = f"recent_low_{support_lookback}"
-                features[recent_high_feature_name] = current_price
-                features[recent_low_feature_name] = current_price
-                if support_lookback == 20:
-                    features["recent_high_20"] = current_price
-                    features["recent_low_20"] = current_price
+                # Always create recent_high_20 and recent_low_20 for backward compatibility
+                features["recent_high_20"] = current_price
+                features["recent_low_20"] = current_price
                 features["support_distance_pct"] = 0.0
                 features["ema9_distance_pct"] = 0.0
         else:
-            recent_high_feature_name = f"recent_high_{support_lookback}"
-            recent_low_feature_name = f"recent_low_{support_lookback}"
-            features[recent_high_feature_name] = current_price
-            features[recent_low_feature_name] = current_price
-            if support_lookback == 20:
-                features["recent_high_20"] = current_price
-                features["recent_low_20"] = current_price
+            # Always create recent_high_20 and recent_low_20 for backward compatibility
+            features["recent_high_20"] = current_price
+            features["recent_low_20"] = current_price
             features["support_distance_pct"] = 0.0
             features["ema9_distance_pct"] = 0.0
 
@@ -688,25 +844,137 @@ class MLVerdictService(VerdictService):
 
         return features
 
-    def _build_ml_justification(self, verdict: str) -> List[str]:
+    def _build_ml_justification(self, verdict: str) -> list[str]:
         """Build justification for ML verdict"""
         return [f"ML prediction: {verdict}"]
 
+    def _get_more_conservative_verdict(self, ml_verdict: str, rule_verdict: str) -> str:
+        """
+        Get the more conservative verdict between ML and rule-based.
+
+        Verdict hierarchy (most aggressive to most conservative):
+        - strong_buy (most aggressive)
+        - buy
+        - watch
+        - avoid (most conservative)
+
+        Returns the verdict that is lower in the hierarchy (more conservative).
+
+        Args:
+            ml_verdict: ML model's verdict
+            rule_verdict: Rule-based verdict
+
+        Returns:
+            More conservative verdict
+        """
+        verdict_hierarchy = {
+            "strong_buy": 0,
+            "buy": 1,
+            "watch": 2,
+            "avoid": 3,
+        }
+
+        ml_rank = verdict_hierarchy.get(ml_verdict, 2)  # Default to "watch" if unknown
+        rule_rank = verdict_hierarchy.get(rule_verdict, 2)  # Default to "watch" if unknown
+
+        # Return the verdict with higher rank (more conservative)
+        if ml_rank >= rule_rank:
+            return ml_verdict
+        else:
+            return rule_verdict
+
+    def _get_confidence_aware_combined_verdict(
+        self,
+        ml_verdict: str,
+        ml_confidence: float,
+        rule_verdict: str,
+        confidence_threshold: float,
+    ) -> str:
+        """
+        Get combined verdict considering ML confidence level.
+
+        Logic:
+        - High ML confidence (>= 70%): Trust ML more, but still use more conservative verdict
+        - Medium ML confidence (50-70%): Weight both equally, use more conservative
+        - Low ML confidence (just above threshold): Trust rules more, but still consider ML if it's more conservative
+
+        Args:
+            ml_verdict: ML model's verdict
+            ml_confidence: ML confidence (0.0 to 1.0)
+            rule_verdict: Rule-based verdict
+            confidence_threshold: Minimum confidence threshold
+
+        Returns:
+            Combined verdict considering confidence
+        """
+        verdict_hierarchy = {
+            "strong_buy": 0,
+            "buy": 1,
+            "watch": 2,
+            "avoid": 3,
+        }
+
+        ml_rank = verdict_hierarchy.get(ml_verdict, 2)  # Default to "watch" if unknown
+        rule_rank = verdict_hierarchy.get(rule_verdict, 2)  # Default to "watch" if unknown
+
+        # Validate verdicts - if unknown, use default rank but prefer known verdict
+        if ml_verdict not in verdict_hierarchy and rule_verdict in verdict_hierarchy:
+            # ML verdict is unknown, rule verdict is known - prefer rule verdict
+            return rule_verdict
+        elif rule_verdict not in verdict_hierarchy and ml_verdict in verdict_hierarchy:
+            # Rule verdict is unknown, ML verdict is known - prefer ML verdict
+            return ml_verdict
+
+        # Define confidence bands
+        high_confidence = 0.70  # 70% - trust ML more
+        medium_confidence = 0.60  # 60% - equal weight
+        low_confidence_threshold = 0.50  # 50% - just above minimum threshold
+
+        if ml_confidence >= high_confidence:
+            # High confidence: Trust ML more, but still prefer conservative if ML is aggressive
+            # If ML is more conservative, use it. If rules are more conservative, still consider ML's high confidence.
+            if ml_rank > rule_rank:
+                # ML is more conservative - use it (high confidence in being cautious is valuable)
+                return ml_verdict
+            elif ml_rank < rule_rank:
+                # Rules are more conservative, but ML has high confidence
+                # Use rules (safety-first), but this is a case where high ML confidence suggests it might be okay
+                return rule_verdict
+            else:
+                # Same level - use ML (high confidence)
+                return ml_verdict
+
+        elif ml_confidence >= medium_confidence:
+            # Medium confidence (60-70%): Equal weight, use more conservative verdict
+            return self._get_more_conservative_verdict(ml_verdict, rule_verdict)
+
+        # Low confidence (50-60%, just above threshold): Trust rules more
+        # Only use ML if it's significantly more conservative (safety signal)
+        elif ml_rank > rule_rank + 1:
+            # ML is much more conservative (e.g., ML=avoid, Rules=buy) - use ML (safety signal)
+            return ml_verdict
+        elif ml_rank > rule_rank:
+            # ML is slightly more conservative - use rules (low ML confidence)
+            return rule_verdict
+        else:
+            # Rules are more conservative or equal - use rules (low ML confidence)
+            return rule_verdict
+
     def predict_verdict_with_confidence(
         self,
-        signals: List[str],
-        rsi_value: Optional[float],
+        signals: list[str],
+        rsi_value: float | None,
         is_above_ema200: bool,
         vol_ok: bool,
         vol_strong: bool,
         fundamental_ok: bool,
-        timeframe_confirmation: Optional[Dict[str, Any]],
-        news_sentiment: Optional[Dict[str, Any]],
-        indicators: Optional[Dict[str, Any]] = None,
-        fundamentals: Optional[Dict[str, Any]] = None,
-        df: Optional[Any] = None,
+        timeframe_confirmation: dict[str, Any] | None,
+        news_sentiment: dict[str, Any] | None,
+        indicators: dict[str, Any] | None = None,
+        fundamentals: dict[str, Any] | None = None,
+        df: Any | None = None,
         chart_quality_passed: bool = True,
-    ) -> Tuple[Optional[str], float]:
+    ) -> tuple[str | None, float]:
         """
         Predict verdict with confidence score (for testing/comparison)
 

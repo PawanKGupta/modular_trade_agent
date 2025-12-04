@@ -415,7 +415,7 @@ class MultiUserTradingService:
 
                 # Load user trading configuration and convert to StrategyConfig
                 user_config = self._config_repo.get_or_create_default(user_id)
-                strategy_config = user_config_to_strategy_config(user_config)
+                strategy_config = user_config_to_strategy_config(user_config, db_session=self.db)
 
                 # Create appropriate service based on mode
                 if settings.trade_mode.value == "paper":

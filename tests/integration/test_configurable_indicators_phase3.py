@@ -561,11 +561,9 @@ class TestMLCompatibility:
 
             # Verify default config produces expected feature names
             assert "rsi_10" in features  # Default RSI period = 10
-            # Default volume_exhaustion_lookback_daily = 10 (not 20)
-            assert "avg_volume_10" in features  # Default volume lookback = 10
-            # Also check for backward compatibility if lookback == 20
-            if config.volume_exhaustion_lookback_daily == 20:
-                assert "avg_volume_20" in features
+            # Model expects 'avg_volume_20' (not dynamic avg_volume_{volume_lookback})
+            # Always create avg_volume_20 to match training data (43 features)
+            assert "avg_volume_20" in features  # Model expects this exact feature name
             assert "recent_high_20" in features  # Default support lookback = 20
             assert "recent_low_20" in features  # Default support lookback = 20
 

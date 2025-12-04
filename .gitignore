@@ -63,6 +63,7 @@ data/
 # Test coverage
 .coverage
 .coverage.*
+coverage.json
 htmlcov/
 .pytest_cache/
 

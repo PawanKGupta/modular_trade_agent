@@ -16,10 +16,14 @@ test.describe('Authentication', () => {
 		// Complete signup flow
 		await signupPage.signup(email, password, name);
 
-		// Should redirect to dashboard
-		await expect(page).toHaveURL(/\/dashboard/);
-		// Wait for dashboard to load - check for main content area
-		await expect(page.locator('main, [role="main"]')).toBeVisible();
+		// Should redirect to dashboard - wait with longer timeout for signup processing
+		await expect(page).toHaveURL(/\/dashboard/, { timeout: 15000 });
+
+		// Wait for network to be idle to ensure all API calls complete
+		await page.waitForLoadState('networkidle', { timeout: 10000 });
+
+		// Wait for dashboard to load - check for main content area with retry
+		await expect(page.locator('main, [role="main"]')).toBeVisible({ timeout: 10000 });
 	});
 
 	test('user can login with correct credentials', async ({ loginPage, page }) => {

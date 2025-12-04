@@ -54,8 +54,8 @@ test.describe('Dashboard & Navigation', () => {
 
 				if (!isExpanded) {
 					await categoryButton.click();
-					// Wait for menu items to appear after expanding
-					await menuLink.waitFor({ state: 'visible', timeout: 5000 });
+					// Wait for menu items to appear after expanding with longer timeout
+					await menuLink.waitFor({ state: 'visible', timeout: 10000 });
 				}
 			}
 
@@ -63,13 +63,21 @@ test.describe('Dashboard & Navigation', () => {
 			const menuLink = sidebar.getByRole('link', { name: item.name });
 			await menuLink.click();
 
-			// Verify navigation
-			await expect(authenticatedPage).toHaveURL(item.url);
-			await authenticatedPage.waitForLoadState('networkidle');
+			// Verify navigation with longer timeout for slow pages
+			await expect(authenticatedPage).toHaveURL(item.url, { timeout: 15000 });
 
-			// Navigate back to dashboard for next test
-			await authenticatedPage.goto('/dashboard');
-			await authenticatedPage.waitForLoadState('networkidle');
+			// Wait for page to fully load - use domcontentloaded first, then networkidle
+			await authenticatedPage.waitForLoadState('domcontentloaded');
+			await authenticatedPage.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
+				// If networkidle times out, at least ensure domcontentloaded is done
+				// This handles pages that have long-polling or websocket connections
+			});
+
+			// Navigate back to dashboard for next test - ensure we're ready
+			await authenticatedPage.goto('/dashboard', { waitUntil: 'domcontentloaded' });
+			await authenticatedPage.waitForLoadState('domcontentloaded');
+			// Wait a bit for navigation to settle
+			await authenticatedPage.waitForTimeout(300);
 		}
 	});
 

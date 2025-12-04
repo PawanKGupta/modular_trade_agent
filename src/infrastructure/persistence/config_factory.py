@@ -114,7 +114,9 @@ def db_config_to_strategy_config(db_config: UserTradingConfig) -> StrategyConfig
         news_sentiment_pos_threshold=db_config.news_sentiment_pos_threshold,
         news_sentiment_neg_threshold=db_config.news_sentiment_neg_threshold,
         # ML Configuration
-        ml_enabled=db_config.ml_enabled,
+        ml_enabled=db_config.ml_enabled,  # Use user's ML enabled setting
+        ml_verdict_model_path="models/verdict_model_random_forest.pkl",  # Default, can be resolved from ml_model_version if needed
+        ml_price_model_path="models/price_model_random_forest.pkl",
         ml_confidence_threshold=db_config.ml_confidence_threshold,
         ml_combine_with_rules=db_config.ml_combine_with_rules,
     )
