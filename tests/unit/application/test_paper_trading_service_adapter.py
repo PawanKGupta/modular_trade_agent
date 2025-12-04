@@ -938,6 +938,7 @@ class TestPaperTradingSellMonitoring:
         )
         adapter.broker = MagicMock()
         adapter.logger = MagicMock()
+        adapter.converted_to_market = set()  # Initialize RSI exit tracking
 
         adapter.active_sell_orders = {
             "RELIANCE": {
@@ -960,8 +961,21 @@ class TestPaperTradingSellMonitoring:
             with patch("pandas_ta.rsi", return_value=pd.Series([45.0])):
                 adapter._monitor_sell_orders()
 
-                # Verify fetch_ohlcv_yf was called with days=60
-                mock_fetch.assert_called_with("RELIANCE.NS", days=60, interval="1d")
+                # Verify fetch_ohlcv_yf was called
+                # Main monitoring path uses days=60, RSI exit logic uses days=200
+                calls = [call for call in mock_fetch.call_args_list if call[0][0] == "RELIANCE.NS"]
+                assert len(calls) > 0, "fetch_ohlcv_yf should be called for RELIANCE.NS"
+                
+                # Check that main monitoring path uses days=60
+                # (RSI exit logic may also call with days=200, but main path should use 60)
+                main_call = next(
+                    (call for call in calls if call[1].get("days") == 60),
+                    None
+                )
+                assert main_call is not None, (
+                    "fetch_ohlcv_yf should be called with days=60 for main monitoring. "
+                    f"Actual calls: {[call[1] for call in calls]}"
+                )
 
     def test_service_state_attributes(self, db_session, test_user):
         """Test that service has running and shutdown_requested attributes for scheduler control"""
