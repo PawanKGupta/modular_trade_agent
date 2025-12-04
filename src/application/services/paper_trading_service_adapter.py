@@ -318,6 +318,20 @@ class PaperTradingServiceAdapter:
                 task_context["recommendations_count"] = 0
                 summary_result = {"message": "No recommendations found in CSV files"}
 
+            # Check and place re-entry orders (same as real trading)
+            self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
+            reentry_summary = self.engine.place_reentry_orders()
+            self.logger.info(
+                f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders"
+            )
+            self.logger.info(
+                f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
+                f"Placed: {reentry_summary.get('placed', 0)}, "
+                f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
+                f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
+                action="run_buy_orders",
+            )
+
             self.tasks_completed["buy_orders"] = True
             self.logger.info("Buy orders placement completed", action="run_buy_orders")
 
