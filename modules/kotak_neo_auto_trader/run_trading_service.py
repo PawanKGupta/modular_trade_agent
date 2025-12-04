@@ -18,6 +18,7 @@ All other components receive the shared auth session and only handle re-authenti
 import argparse
 import signal
 import sys
+import threading
 import time
 from datetime import datetime
 from datetime import time as dt_time
@@ -136,8 +137,19 @@ class TradingService:
 
     def setup_signal_handlers(self):
         """Setup graceful shutdown handlers"""
-        signal.signal(signal.SIGINT, self._handle_shutdown)
-        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        try:
+            # Note: signal.signal() may not work in background threads on some platforms
+            # This is non-critical - the service can still be stopped via shutdown_requested flag
+            signal.signal(signal.SIGINT, self._handle_shutdown)
+            signal.signal(signal.SIGTERM, self._handle_shutdown)
+        except (ValueError, OSError) as e:
+            # Signal handlers can only be set from main thread on some platforms
+            # This is expected behavior for background threads - log but don't fail
+            import sys
+            if threading.current_thread() is threading.main_thread():
+                # Only log if we're in main thread (shouldn't happen, but be safe)
+                logger.warning(f"Could not set signal handlers: {e}")
+            # In background thread, this is expected - silently continue
 
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signal"""
