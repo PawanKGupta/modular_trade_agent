@@ -71,12 +71,13 @@ class SellOrderManager:
     def __init__(
         self,
         auth: KotakNeoAuth,
-        history_path: str = None,
+        positions_repo=None,  # Optional: PositionsRepository for database-only position tracking
+        user_id: int | None = None,  # Optional: User ID for database operations
+        orders_repo=None,  # Optional: OrdersRepository for metadata enrichment
+        history_path: str = None,  # Deprecated: Kept for backward compatibility only
         max_workers: int = 10,
         price_manager=None,
         order_state_manager: OrderStateManager | None = None,
-        positions_repo=None,
-        user_id: int | None = None,
         order_verifier=None,  # Phase 3.2: Optional OrderStatusVerifier for shared results
     ):
         """
@@ -84,21 +85,29 @@ class SellOrderManager:
 
         Args:
             auth: Authenticated Kotak Neo session
-            history_path: Path to trade history JSON
+            positions_repo: PositionsRepository (optional) - required for database-only position tracking via get_open_positions()
+            user_id: User ID (optional) - required for database operations via get_open_positions()
+            orders_repo: OrdersRepository (optional) - for enriching position metadata
+            history_path: Deprecated - kept for backward compatibility only, not used for position tracking
             max_workers: Maximum threads for parallel monitoring
             price_manager: Optional LivePriceManager for real-time prices
             order_state_manager: Optional OrderStateManager for unified state management
-            positions_repo: Optional PositionsRepository for direct DB updates
-            user_id: Optional user ID for DB operations
+            order_verifier: Optional OrderStatusVerifier for shared results
+
+        Note:
+            positions_repo and user_id are required when calling get_open_positions().
+            They are optional in __init__ for backward compatibility with test files and standalone scripts.
         """
+
         self.auth = auth
         self.orders = KotakNeoOrders(auth)
         self.portfolio = KotakNeoPortfolio(auth, price_manager=price_manager)
         self.market_data = KotakNeoMarketData(auth)
-        self.history_path = history_path or config.TRADES_HISTORY_PATH
+        self.history_path = history_path or config.TRADES_HISTORY_PATH  # Deprecated, kept for OrderStateManager
         self.max_workers = max_workers
         self.price_manager = price_manager
         self.positions_repo = positions_repo
+        self.orders_repo = orders_repo  # For metadata enrichment
         self.user_id = user_id
         self.order_verifier = order_verifier  # Phase 3.2: OrderStatusVerifier for shared results
 
@@ -135,12 +144,7 @@ class SellOrderManager:
         self.indicator_service = get_indicator_service(
             price_service=self.price_service, enable_caching=True
         )
-        # Initialize PositionLoader (Phase 2.2: Portfolio & Position Services)
-        from modules.kotak_neo_auto_trader.services import get_position_loader
-
-        self.position_loader = get_position_loader(
-            history_path=self.history_path, enable_caching=True
-        )
+        # PositionLoader removed - using database-only tracking via PositionsRepository
 
         # Track active sell orders {symbol: {'order_id': str, 'target_price': float}}
         # Legacy mode: Used when OrderStateManager is not available
@@ -381,26 +385,70 @@ class SellOrderManager:
 
     def get_open_positions(self) -> list[dict[str, Any]]:
         """
-        Get all open positions from trade history.
+        Get all open positions from database (positions table).
 
-        .. deprecated:: Phase 2.2
-           Use :meth:`position_loader.load_open_positions` instead.
-           This method is kept for backward compatibility and delegates to PositionLoader.
-           Will be removed in a future version.
+        Database-only: No file fallback. Uses positions table as single source of truth.
 
         Returns:
-            List of open trade entries from trade history
+            List of open trade entries in format expected by sell order placement
         """
-        import warnings
+        if not self.positions_repo or not self.user_id:
+            raise ValueError(
+                "PositionsRepository and user_id are required for database-only position tracking. "
+                "Please provide positions_repo and user_id when initializing SellOrderManager."
+            )
 
-        warnings.warn(
-            "get_open_positions() is deprecated. "
-            "Use position_loader.load_open_positions() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        # Use PositionLoader to get open positions (Phase 2.2)
-        return self.position_loader.load_open_positions()
+        open_positions = []
+        positions = self.positions_repo.list(self.user_id)
+
+        for pos in positions:
+            if pos.closed_at is None:  # Open position
+                # Get ticker and placed_symbol from matching ONGOING order if available
+                ticker = f"{pos.symbol}.NS"
+                placed_symbol = f"{pos.symbol}-EQ"
+
+                # Try to get ticker and placed_symbol from most recent ONGOING order
+                if self.orders_repo:
+                    try:
+                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+                        from .utils.symbol_utils import extract_base_symbol
+
+                        ongoing_orders = self.orders_repo.list(
+                            self.user_id, status=DbOrderStatus.ONGOING
+                        )
+                        for order in ongoing_orders:
+                            if (
+                                order.side.lower() == "buy"
+                                and extract_base_symbol(order.symbol).upper()
+                                == pos.symbol.upper()
+                            ):
+                                # Found matching order - use its metadata
+                                if order.order_metadata and isinstance(
+                                    order.order_metadata, dict
+                                ):
+                                    ticker = order.order_metadata.get("ticker", ticker)
+                                placed_symbol = order.symbol  # Full broker symbol
+                                break
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to enrich position metadata from orders: {e}"
+                        )
+
+                # Convert Positions model to trade dict format
+                open_positions.append(
+                    {
+                        "symbol": pos.symbol,
+                        "ticker": ticker,
+                        "qty": pos.quantity,
+                        "entry_price": pos.avg_price,
+                        "entry_time": pos.opened_at.isoformat(),
+                        "status": "open",
+                        "placed_symbol": placed_symbol,
+                    }
+                )
+
+        logger.debug(f"Loaded {len(open_positions)} open positions from database")
+        return open_positions
 
     def get_current_ema9(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
