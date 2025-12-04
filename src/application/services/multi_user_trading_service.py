@@ -178,8 +178,8 @@ class MultiUserTradingService:
                                     action="scheduler",
                                 )
 
-                    # Position monitoring (hourly, uses DB schedule)
-                    # 4:00 PM - Analysis (check custom schedule from DB and trigger via Individual Service Manager)
+                    # 4:00 PM - Analysis (check custom schedule from DB and trigger via
+                    # Individual Service Manager)
                     analysis_schedule = self._schedule_manager.get_schedule("analysis")
                     if analysis_schedule and analysis_schedule.enabled:
                         analysis_time = analysis_schedule.schedule_time
@@ -330,11 +330,10 @@ class MultiUserTradingService:
         Returns:
             True if service started successfully, False otherwise
         """
-        # Get or create lock for this user
-        if user_id not in self._locks:
-            self._locks[user_id] = threading.Lock()
+        # Get or create lock for this user (thread-safe using setdefault)
+        lock = self._locks.setdefault(user_id, threading.Lock())
 
-        with self._locks[user_id]:
+        with lock:
             # Check if service already running
             if user_id in self._services:
                 # Service already exists - check if it's actually running
@@ -516,11 +515,10 @@ class MultiUserTradingService:
         Returns:
             True if service stopped successfully, False otherwise
         """
-        if user_id not in self._locks:
-            # Create lock to make stop idempotent even if service was never started
-            self._locks[user_id] = threading.Lock()
+        # Get or create lock for this user (thread-safe using setdefault)
+        lock = self._locks.setdefault(user_id, threading.Lock())
 
-        with self._locks[user_id]:
+        with lock:
             service = self._services.pop(user_id, None)
             service_thread = self._service_threads.pop(user_id, None)
 
