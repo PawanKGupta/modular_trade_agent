@@ -360,9 +360,13 @@ async def main_async(
             config_repo = UserTradingConfigRepository(db_session)
             user_config = config_repo.get_or_create_default(user_id)
             config = user_config_to_strategy_config(user_config, db_session=db_session)
-            logger.info(f"Loaded user-specific config for user {user_id} (ml_enabled={config.ml_enabled})")
+            logger.info(
+                f"Loaded user-specific config for user {user_id} (ml_enabled={config.ml_enabled})"
+            )
         except Exception as e:
-            logger.warning(f"Failed to load user config for user {user_id}: {e}, using default config")
+            logger.warning(
+                f"Failed to load user config for user {user_id}: {e}, using default config"
+            )
 
     # Use async batch analysis (Phase 2)
     try:
@@ -544,10 +548,10 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
         if results and len(results) > 0:
             # Try to extract config from result metadata if available
             first_result = results[0]
-            if hasattr(first_result, '_config'):
+            if hasattr(first_result, "_config"):
                 config = first_result._config
-            elif isinstance(first_result, dict) and '_config' in first_result:
-                config = first_result.get('_config')
+            elif isinstance(first_result, dict) and "_config" in first_result:
+                config = first_result.get("_config")
 
         backtest_service = BacktestService(default_years_back=2, dip_mode=dip_mode)
         results = backtest_service.add_backtest_scores_to_results(results, config=config)
@@ -719,6 +723,75 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
             and (r.get("verdict") == "strong_buy" or r.get("ml_verdict") == "strong_buy")
         ]
 
+    # Log recommended signals with reasons
+    all_recommendations = strong_buys + [
+        r for r in buys if r.get("ticker") not in {s.get("ticker") for s in strong_buys}
+    ]
+    if all_recommendations:
+        logger.info(f"=== Recommended Signals ({len(all_recommendations)} total) ===")
+        for rec in all_recommendations:
+            ticker = rec.get("ticker", "UNKNOWN")
+
+            # Determine verdict and source
+            if enable_backtest_scoring:
+                rule_verdict = rec.get("final_verdict") or rec.get("verdict", "unknown")
+            else:
+                rule_verdict = rec.get("verdict", "unknown")
+            ml_verdict = rec.get("ml_verdict")
+
+            # Determine signal source
+            if rule_verdict in ["buy", "strong_buy"] and ml_verdict in ["buy", "strong_buy"]:
+                source = "Rule+ML"
+                verdict = (
+                    rule_verdict
+                    if rule_verdict == "strong_buy"
+                    else ml_verdict if ml_verdict == "strong_buy" else rule_verdict
+                )
+            elif rule_verdict in ["buy", "strong_buy"]:
+                source = "Rule-based"
+                verdict = rule_verdict
+            elif ml_verdict in ["buy", "strong_buy"]:
+                source = "ML-only"
+                verdict = ml_verdict
+            else:
+                source = "Unknown"
+                verdict = rule_verdict
+
+            # Get justification/reasons
+            justification = rec.get("justification", [])
+            if isinstance(justification, str):
+                reasons = [justification]
+            elif isinstance(justification, list):
+                reasons = justification
+            else:
+                reasons = []
+
+            # Get key metrics
+            combined_score = rec.get("combined_score")
+            priority_score = rec.get("priority_score")
+            rsi = rec.get("rsi")
+            ml_confidence = rec.get("ml_confidence")
+
+            # Build reason string
+            reason_parts = []
+            if reasons:
+                reason_parts.append(" | ".join(reasons))
+            if combined_score is not None:
+                reason_parts.append(f"Combined Score: {combined_score:.1f}")
+            if priority_score is not None:
+                reason_parts.append(f"Priority: {priority_score:.1f}")
+            if rsi is not None:
+                reason_parts.append(f"RSI: {rsi:.1f}")
+            if ml_confidence is not None:
+                conf_pct = ml_confidence if ml_confidence > 1 else ml_confidence * 100
+                reason_parts.append(f"ML Confidence: {conf_pct:.0f}%")
+
+            reason_str = " | ".join(reason_parts) if reason_parts else "No reasons provided"
+
+            # Log the recommendation
+            logger.info(f"  {ticker}: {verdict.upper()} ({source}) - {reason_str}")
+        logger.info("=== End of Recommended Signals ===")
+
     # Send Telegram notification with final results (after backtest scoring if enabled)
     if buys:
         # Add timestamp for context
@@ -865,19 +938,26 @@ if __name__ == "__main__":
             from src.infrastructure.persistence.user_trading_config_repository import (
                 UserTradingConfigRepository,
             )
+
             config_repo = UserTradingConfigRepository(db_session)
             user_config = config_repo.get_or_create_default(user_id)
-            logger.info(f"DEBUG: User config from DB - ml_enabled={user_config.ml_enabled}, ml_confidence_threshold={user_config.ml_confidence_threshold}")
+            logger.info(
+                f"DEBUG: User config from DB - ml_enabled={user_config.ml_enabled}, ml_confidence_threshold={user_config.ml_confidence_threshold}"
+            )
 
             # Convert to StrategyConfig and log
             from src.application.services.config_converter import (
                 user_config_to_strategy_config,
             )
+
             strategy_config = user_config_to_strategy_config(user_config, db_session=db_session)
-            logger.info(f"DEBUG: StrategyConfig after conversion - ml_enabled={strategy_config.ml_enabled}, ml_confidence_threshold={strategy_config.ml_confidence_threshold}")
+            logger.info(
+                f"DEBUG: StrategyConfig after conversion - ml_enabled={strategy_config.ml_enabled}, ml_confidence_threshold={strategy_config.ml_confidence_threshold}"
+            )
         except (ValueError, Exception) as e:
             logger.warning(f"Failed to load user_id from environment: {e}, using default config")
             import traceback
+
             logger.error(f"Traceback: {traceback.format_exc()}")
 
     main(
