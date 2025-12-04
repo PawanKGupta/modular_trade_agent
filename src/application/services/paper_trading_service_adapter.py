@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -319,11 +320,10 @@ class PaperTradingServiceAdapter:
                 summary_result = {"message": "No recommendations found in CSV files"}
 
             # Check and place re-entry orders (same as real trading)
+            # Re-entry should be checked regardless of whether there are fresh entry recommendations
             self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
             reentry_summary = self.engine.place_reentry_orders()
-            self.logger.info(
-                f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders"
-            )
+            self.logger.info(f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders")
             self.logger.info(
                 f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
                 f"Placed: {reentry_summary.get('placed', 0)}, "
@@ -500,7 +500,7 @@ class PaperTradingServiceAdapter:
                         continue
 
                     # Calculate gap percentage
-                    original_price = order.price.amount if order.price else premarket_price
+                    original_price = float(order.price.amount) if order.price else premarket_price
                     gap_pct = ((premarket_price - original_price) / original_price) * 100
 
                     self.logger.info(
@@ -520,16 +520,25 @@ class PaperTradingServiceAdapter:
 
                         # Create new order with adjusted quantity
                         # For MARKET orders, price parameter is not needed
+                        # For LIMIT orders, update price to pre-market price
                         from modules.kotak_neo_auto_trader.domain import (
+                            Money,
                             Order,
+                        )
+
+                        # Use pre-market price for LIMIT orders, None for MARKET orders
+                        new_price = (
+                            Money(premarket_price)
+                            if order.order_type.value == "LIMIT"
+                            else (order.price if order.price else None)
                         )
 
                         new_order = Order(
                             symbol=order.symbol,
                             quantity=new_qty,
-                            order_type=order.order_type,  # Keep as MARKET
+                            order_type=order.order_type,
                             transaction_type=order.transaction_type,
-                            # price=None for MARKET orders (not used, executes at market price)
+                            price=new_price,
                             variety=order.variety,
                             exchange=order.exchange,
                             validity=order.validity,
@@ -747,7 +756,6 @@ class PaperTradingServiceAdapter:
             self.logger.error(
                 f"Sell monitoring error: {e}", exc_info=True, action="run_sell_monitor"
             )
-
 
     def run_eod_cleanup(self):
         """6:00 PM - End-of-day cleanup (paper trading)"""
@@ -2014,7 +2022,9 @@ class PaperTradingEngineAdapter:
 
         return summary
 
-    def monitor_positions(self):  # Deprecated: Position monitoring removed, re-entry now in buy order service
+    def monitor_positions(
+        self,
+    ):  # Deprecated: Position monitoring removed, re-entry now in buy order service
         """
         Monitor positions for reentry/exit signals (paper trading).
 
@@ -2323,9 +2333,7 @@ class PaperTradingEngineAdapter:
             return summary
 
         if not self.broker.is_connected():
-            self.logger.warning(
-                "Paper trading broker not connected", action="place_reentry_orders"
-            )
+            self.logger.warning("Paper trading broker not connected", action="place_reentry_orders")
             return summary
 
         # Get open positions from database
@@ -2337,7 +2345,9 @@ class PaperTradingEngineAdapter:
             open_positions = [pos for pos in open_positions if pos.closed_at is None]
 
             if not open_positions:
-                self.logger.info("No open positions for re-entry check", action="place_reentry_orders")
+                self.logger.info(
+                    "No open positions for re-entry check", action="place_reentry_orders"
+                )
                 return summary
 
             self.logger.info(
@@ -2348,7 +2358,9 @@ class PaperTradingEngineAdapter:
             # Get current holdings and pending orders for duplicate checks
             holdings = self.broker.get_holdings()
             pending_orders = self.broker.get_all_orders()
-            current_symbols = {h.symbol.replace(".NS", "").replace(".BO", "").upper() for h in holdings}
+            current_symbols = {
+                h.symbol.replace(".NS", "").replace(".BO", "").upper() for h in holdings
+            }
             for order in pending_orders:
                 if order.is_buy_order() and order.is_active():
                     normalized_symbol = order.symbol.replace(".NS", "").replace(".BO", "").upper()
@@ -2438,8 +2450,12 @@ class PaperTradingEngineAdapter:
                     # Check balance and adjust quantity if needed
                     portfolio = self.broker.get_portfolio()
                     if portfolio:
-                        available_cash = portfolio.get("availableCash", 0) or portfolio.get("cash", 0)
-                        affordable_qty = int(available_cash / current_price) if current_price > 0 else 0
+                        available_cash = portfolio.get("availableCash", 0) or portfolio.get(
+                            "cash", 0
+                        )
+                        affordable_qty = (
+                            int(available_cash / current_price) if current_price > 0 else 0
+                        )
                         if affordable_qty < qty:
                             self.logger.warning(
                                 f"Insufficient balance for {symbol}: "
@@ -2456,7 +2472,7 @@ class PaperTradingEngineAdapter:
 
                     # Place re-entry order (AMO-like, similar to fresh entries)
                     from modules.kotak_neo_auto_trader.domain import Money
-                    
+
                     reentry_order = Order(
                         symbol=ticker,
                         quantity=qty,
@@ -2491,24 +2507,25 @@ class PaperTradingEngineAdapter:
 
                         # Save to database (similar to fresh entries)
                         if self.user_id and self.db:
-                            from src.infrastructure.db.timezone_utils import ist_now
-                            from src.infrastructure.persistence.orders_repository import OrdersRepository
-                            from src.infrastructure.db.models import OrderStatus
+                            from src.infrastructure.persistence.orders_repository import (
+                                OrdersRepository,
+                            )
 
                             orders_repo = OrdersRepository(self.db)
-                            orders_repo.create(
+                            orders_repo.create_amo(
                                 user_id=self.user_id,
                                 symbol=normalized_symbol,
                                 side="buy",
                                 order_type="limit",
                                 quantity=qty,
                                 price=current_price,
-                                status=OrderStatus.PENDING_EXECUTION,
                                 broker_order_id=order_id,
                                 order_metadata=reentry_order._metadata,
                                 entry_type="reentry",
                             )
-                            self.db.commit()
+                            # Note: create_amo already commits, but we keep commit here for safety
+                            if not self.db.in_transaction():
+                                self.db.commit()
                     else:
                         self.logger.warning(
                             f"Failed to place re-entry order for {symbol}",

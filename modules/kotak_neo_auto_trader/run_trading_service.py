@@ -920,20 +920,6 @@ class TradingService:
                         f"Skipped: {summary.get('skipped_duplicates', 0) + summary.get('skipped_portfolio_limit', 0) + summary.get('skipped_missing_data', 0) + summary.get('skipped_invalid_qty', 0)}",
                         action="run_buy_orders",
                     )
-
-                    # Check and place re-entry orders
-                    self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
-                    reentry_summary = self.engine.place_reentry_orders()
-                    self.logger.info(
-                        f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders"
-                    )
-                    self.logger.info(
-                        f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
-                        f"Placed: {reentry_summary.get('placed', 0)}, "
-                        f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
-                        f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
-                        action="run_buy_orders",
-                    )
                 except OrderPlacementError as exc:
                     # OrderPlacementError should no longer be raised (changed to continue)
                     # But keep this handler for backward compatibility
@@ -962,6 +948,19 @@ class TradingService:
                 )
                 task_context["recommendations_count"] = 0
                 task_context["summary"] = summary  # Return empty summary
+
+            # Check and place re-entry orders (regardless of whether there are fresh entry recommendations)
+            # Re-entry should be checked independently of fresh entry orders
+            self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
+            reentry_summary = self.engine.place_reentry_orders()
+            self.logger.info(f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders")
+            self.logger.info(
+                f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
+                f"Placed: {reentry_summary.get('placed', 0)}, "
+                f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
+                f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
+                action="run_buy_orders",
+            )
 
             self.tasks_completed["buy_orders"] = True
             self.logger.info("Buy orders placement completed", action="run_buy_orders")

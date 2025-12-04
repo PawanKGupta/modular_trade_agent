@@ -69,7 +69,7 @@ class TestPaperTradingDetermineReentryLevel:
 
     def test_determine_reentry_level_entry_at_30_reentry_at_10(self, paper_engine):
         """Test that entry at RSI < 30, after re-entry at 20, triggers re-entry at RSI < 10
-        
+
         Note: This test simulates after first re-entry at 20. In real scenario,
         levels_taken would be updated after first re-entry. This test verifies
         the initial logic based on entry_rsi.
@@ -227,8 +227,8 @@ class TestPaperTradingPlaceReentryOrders:
         )
 
         # Create open position in database
-        from src.infrastructure.persistence.positions_repository import PositionsRepository
         from src.infrastructure.db.timezone_utils import ist_now
+        from src.infrastructure.persistence.positions_repository import PositionsRepository
 
         positions_repo = PositionsRepository(db_session)
         positions_repo.upsert(
@@ -268,7 +268,9 @@ class TestPaperTradingPlaceReentryOrders:
         assert summary["placed"] == 0
         assert summary["skipped_no_position"] == 0
 
-    def test_place_reentry_orders_successful_placement(self, paper_engine_with_positions, db_session):
+    def test_place_reentry_orders_successful_placement(
+        self, paper_engine_with_positions, db_session
+    ):
         """Test successful re-entry order placement"""
         engine = paper_engine_with_positions
 
@@ -286,14 +288,18 @@ class TestPaperTradingPlaceReentryOrders:
         with patch.object(engine, "_get_daily_indicators", return_value=mock_indicators):
             summary = engine.place_reentry_orders()
 
-        assert summary["attempted"] == 1, f"Expected 1 attempted, got {summary['attempted']}. Summary: {summary}"
+        assert (
+            summary["attempted"] == 1
+        ), f"Expected 1 attempted, got {summary['attempted']}. Summary: {summary}"
 
         # Check if place_order was called
         if engine.broker.place_order.called:
             # Order was called - check return value
             call_result = engine.broker.place_order.return_value
             if call_result:
-                assert summary["placed"] == 1, f"Expected 1 placed, got {summary['placed']}. Order returned: {call_result}. Summary: {summary}"
+                assert (
+                    summary["placed"] == 1
+                ), f"Expected 1 placed, got {summary['placed']}. Order returned: {call_result}. Summary: {summary}"
             else:
                 pytest.fail(f"place_order returned None/False. Summary: {summary}")
         else:
@@ -308,7 +314,9 @@ class TestPaperTradingPlaceReentryOrders:
         assert call_args._metadata["entry_type"] == "reentry"
         assert call_args._metadata["reentry_level"] == 20
 
-    def test_place_reentry_orders_insufficient_balance(self, paper_engine_with_positions, db_session):
+    def test_place_reentry_orders_insufficient_balance(
+        self, paper_engine_with_positions, db_session
+    ):
         """Test that re-entry order is skipped when insufficient balance"""
         engine = paper_engine_with_positions
 
@@ -331,7 +339,9 @@ class TestPaperTradingPlaceReentryOrders:
         assert summary["skipped_invalid_qty"] == 1
         assert summary["placed"] == 0
 
-    def test_place_reentry_orders_no_reentry_opportunity(self, paper_engine_with_positions, db_session):
+    def test_place_reentry_orders_no_reentry_opportunity(
+        self, paper_engine_with_positions, db_session
+    ):
         """Test that no order is placed when RSI doesn't meet re-entry conditions"""
         engine = paper_engine_with_positions
 
@@ -350,7 +360,9 @@ class TestPaperTradingPlaceReentryOrders:
         assert summary["skipped_invalid_rsi"] == 1
         assert summary["placed"] == 0
 
-    def test_place_reentry_orders_duplicate_prevention(self, paper_engine_with_positions, db_session):
+    def test_place_reentry_orders_duplicate_prevention(
+        self, paper_engine_with_positions, db_session
+    ):
         """Test that re-entry is skipped if symbol already in holdings"""
         engine = paper_engine_with_positions
 
@@ -410,8 +422,8 @@ class TestPaperTradingPlaceReentryOrders:
         )
 
         # Create position without entry_rsi
-        from src.infrastructure.persistence.positions_repository import PositionsRepository
         from src.infrastructure.db.timezone_utils import ist_now
+        from src.infrastructure.persistence.positions_repository import PositionsRepository
 
         positions_repo = PositionsRepository(db_session)
         positions_repo.upsert(
@@ -504,3 +516,85 @@ class TestPaperTradingRunBuyOrdersWithReentry:
             "Re-entry orders summary" in str(call) for call in adapter.logger.info.call_args_list
         )
 
+    def test_place_reentry_orders_premarket_adjustment_eligibility(self, db_session, test_user):
+        """Test that re-entry orders are eligible for pre-market adjustment (paper trading)
+
+        This test verifies that re-entry orders placed at 4:05 PM are eligible
+        for pre-market adjustment (9:05 AM) with recalculated quantity and price.
+        The actual adjustment is tested in test_premarket_amo_adjustment.py.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from config.strategy_config import StrategyConfig
+        from src.application.services.paper_trading_service_adapter import (
+            PaperTradingEngineAdapter,
+        )
+        from src.infrastructure.db.models import OrderStatus
+        from src.infrastructure.persistence.orders_repository import OrdersRepository
+        from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+        # Create mock broker
+        mock_broker = MagicMock()
+        mock_broker.is_connected.return_value = True
+        mock_broker.store = MagicMock()
+        mock_broker.store.storage_path = "test_storage"
+        mock_broker.get_holdings.return_value = []
+        mock_broker.get_all_orders.return_value = []
+        mock_broker.get_portfolio.return_value = {
+            "availableCash": 100000.0,
+            "cash": 100000.0,
+        }
+        mock_broker.place_order.return_value = "REENTRY_ORDER_123"
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        engine = PaperTradingEngineAdapter(
+            broker=mock_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+
+        # Create a position with entry_rsi
+        positions_repo = PositionsRepository(db_session)
+        positions_repo.upsert(
+            user_id=test_user.id,
+            symbol="RELIANCE",
+            quantity=10,
+            avg_price=2500.0,
+            entry_rsi=25.0,
+        )
+
+        # Mock indicators for re-entry
+        mock_indicators = {
+            "close": 2400.0,
+            "rsi10": 18.0,
+            "ema9": 2450.0,
+            "avg_volume": 1000000,
+        }
+        with patch.object(engine, "_get_daily_indicators", return_value=mock_indicators):
+            summary = engine.place_reentry_orders()
+            # Commit session to persist order to database
+            db_session.commit()
+
+        # Verify re-entry order was placed
+        assert summary["placed"] == 1, f"Expected 1 placed order, got {summary}"
+
+        # Get the order from database
+        orders_repo = OrdersRepository(db_session)
+        all_orders = orders_repo.list(test_user.id)
+        assert len(all_orders) > 0, f"No orders found in database. Summary: {summary}"
+
+        # Find the re-entry order
+        reentry_orders = [o for o in all_orders if o.entry_type == "reentry"]
+        assert len(reentry_orders) > 0, f"No re-entry orders found. All orders: {all_orders}"
+        reentry_order = reentry_orders[-1]
+
+        # Verify order is eligible for pre-market adjustment
+        assert reentry_order.entry_type == "reentry"
+        assert reentry_order.status == OrderStatus.PENDING
+        assert reentry_order.side == "buy"
+        # Verify order has correct metadata for adjustment
+        assert reentry_order.quantity is not None
+        assert reentry_order.price is not None
