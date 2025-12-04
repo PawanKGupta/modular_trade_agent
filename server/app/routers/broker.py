@@ -563,11 +563,20 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
             # Create broker gateway
             broker = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
 
-            # Connect to broker
-            if not broker.connect():
-                raise HTTPException(
-                    status_code=503,
-                    detail="Failed to connect to broker gateway. Please try again later.",
+            # Connect to broker (only if not already connected)
+            # broker.connect() calls auth.login() which triggers OTP,
+            # so skip if already authenticated
+            if not auth.is_authenticated():
+                if not broker.connect():
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Failed to connect to broker gateway. Please try again later.",
+                    )
+            else:
+                # Auth is already authenticated, just ensure broker is initialized
+                # The broker gateway should work with the existing auth session
+                logger.debug(
+                    f"Auth already authenticated for user {current.id}, skipping connect()"
                 )
 
             # Get holdings from broker
@@ -801,11 +810,20 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
             # Create broker gateway
             broker_gateway = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
 
-            # Connect to broker
-            if not broker_gateway.connect():
-                raise HTTPException(
-                    status_code=503,
-                    detail="Failed to connect to broker gateway. Please try again later.",
+            # Connect to broker (only if not already connected)
+            # broker.connect() calls auth.login() which triggers OTP,
+            # so skip if already authenticated
+            if not auth.is_authenticated():
+                if not broker_gateway.connect():
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Failed to connect to broker gateway. Please try again later.",
+                    )
+            else:
+                # Auth is already authenticated, just ensure broker is initialized
+                # The broker gateway should work with the existing auth session
+                logger.debug(
+                    f"Auth already authenticated for user {current.id}, skipping connect()"
                 )
 
             # Get orders from broker
