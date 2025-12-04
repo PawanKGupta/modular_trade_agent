@@ -622,36 +622,27 @@ class MLVerdictService(VerdictService):
         # Use current price from indicators for calculations
         current_price = float(indicators.get("close", 0)) if indicators else 0.0
 
+        # Model expects 'recent_high_20' and 'recent_low_20' (not dynamic recent_high_{support_lookback})
+        # Always calculate recent_high_20 and recent_low_20 to match training data
         if df is not None and not df.empty:
             try:
-                recent_high_feature_name = f"recent_high_{support_lookback}"
-                recent_low_feature_name = f"recent_low_{support_lookback}"
-
-                features[recent_high_feature_name] = (
-                    float(df["high"].tail(support_lookback).max())
-                    if len(df) >= support_lookback
-                    else current_price
+                # Calculate recent_high_20 and recent_low_20 (model expects these exact feature names)
+                features["recent_high_20"] = (
+                    float(df["high"].tail(20).max()) if len(df) >= 20 else current_price
                 )
-                features[recent_low_feature_name] = (
-                    float(df["low"].tail(support_lookback).min())
-                    if len(df) >= support_lookback
-                    else current_price
+                features["recent_low_20"] = (
+                    float(df["low"].tail(20).min()) if len(df) >= 20 else current_price
                 )
-
-                # Also keep 'recent_high_20' and 'recent_low_20' for backward compatibility if lookback == 20
-                if support_lookback == 20:
-                    features["recent_high_20"] = features[recent_high_feature_name]
-                    features["recent_low_20"] = features[recent_low_feature_name]
 
                 if current_price > 0:
                     features["support_distance_pct"] = (
-                        (current_price - features[recent_low_feature_name]) / current_price
+                        (current_price - features["recent_low_20"]) / current_price
                     ) * 100
                 else:
                     features["support_distance_pct"] = 0.0
 
                 # EMA9 distance (target proximity) - critical for mean reversion strategy
-                if df is not None and "ema9" in df.columns:
+                if "ema9" in df.columns:
                     ema9_value = float(df["ema9"].iloc[-1])
                     if current_price > 0:
                         features["ema9_distance_pct"] = (
@@ -662,23 +653,15 @@ class MLVerdictService(VerdictService):
                 else:
                     features["ema9_distance_pct"] = 0.0
             except:
-                recent_high_feature_name = f"recent_high_{support_lookback}"
-                recent_low_feature_name = f"recent_low_{support_lookback}"
-                features[recent_high_feature_name] = current_price
-                features[recent_low_feature_name] = current_price
-                if support_lookback == 20:
-                    features["recent_high_20"] = current_price
-                    features["recent_low_20"] = current_price
+                # Always create recent_high_20 and recent_low_20 for backward compatibility
+                features["recent_high_20"] = current_price
+                features["recent_low_20"] = current_price
                 features["support_distance_pct"] = 0.0
                 features["ema9_distance_pct"] = 0.0
         else:
-            recent_high_feature_name = f"recent_high_{support_lookback}"
-            recent_low_feature_name = f"recent_low_{support_lookback}"
-            features[recent_high_feature_name] = current_price
-            features[recent_low_feature_name] = current_price
-            if support_lookback == 20:
-                features["recent_high_20"] = current_price
-                features["recent_low_20"] = current_price
+            # Always create recent_high_20 and recent_low_20 for backward compatibility
+            features["recent_high_20"] = current_price
+            features["recent_low_20"] = current_price
             features["support_distance_pct"] = 0.0
             features["ema9_distance_pct"] = 0.0
 
