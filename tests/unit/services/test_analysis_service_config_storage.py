@@ -6,7 +6,7 @@ Tests that AnalysisService stores config in results for backtest to use.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -45,7 +45,7 @@ class TestAnalysisServiceConfigStorage:
 
     def test_config_stored_in_results_ml_enabled(self, config_ml_enabled):
         """Test that config is stored in results when ML is enabled
-        
+
         Note: This test verifies the system behavior that config is stored in results.
         The actual implementation stores config at line 659 in analysis_service.py
         only when analysis succeeds. This is verified by the test_config_stored_in_results_ml_disabled
@@ -57,14 +57,21 @@ class TestAnalysisServiceConfigStorage:
         # 2. Code inspection shows config is stored at line 659 in analysis_service.py
         # 3. The system correctly returns early with no_data/error status when analysis fails
         #    (verified by test_config_stored_even_on_error)
-        pytest.skip("Complex mocking required - behavior verified by other tests and code inspection")
+        pytest.skip(
+            "Complex mocking required - behavior verified by other tests and code inspection"
+        )
 
     @patch("services.analysis_service.DataService")
     @patch("services.analysis_service.IndicatorService")
     @patch("services.analysis_service.SignalService")
     @patch("services.analysis_service.VerdictService")
     def test_config_stored_in_results_ml_disabled(
-        self, mock_verdict_service, mock_signal_service, mock_indicator_service, mock_data_service, config_ml_disabled
+        self,
+        mock_verdict_service,
+        mock_signal_service,
+        mock_indicator_service,
+        mock_data_service,
+        config_ml_disabled,
     ):
         """Test that config is stored in results when ML is disabled"""
         # Setup mocks
@@ -92,6 +99,7 @@ class TestAnalysisServiceConfigStorage:
 
         # Mock the data to return a DataFrame
         import pandas as pd
+
         dates = pd.date_range("2024-01-01", periods=50, freq="D")
         df = pd.DataFrame(
             {
@@ -106,13 +114,19 @@ class TestAnalysisServiceConfigStorage:
         mock_data.fetch_multi_timeframe_data.return_value = {"daily": df, "weekly": None}
 
         # Analyze ticker
-        result = service.analyze_ticker("TEST.NS", enable_multi_timeframe=False, export_to_csv=False)
+        result = service.analyze_ticker(
+            "TEST.NS", enable_multi_timeframe=False, export_to_csv=False
+        )
 
         # Verify config is stored in results (only if analysis succeeded)
         if result.get("status") == "success":
             assert "_config" in result, "Config should be stored in results"
-            assert result["_config"] == config_ml_disabled, "Stored config should match service config"
-            assert result["_config"].ml_enabled is False, "Stored config should have ml_enabled=False"
+            assert (
+                result["_config"] == config_ml_disabled
+            ), "Stored config should match service config"
+            assert (
+                result["_config"].ml_enabled is False
+            ), "Stored config should have ml_enabled=False"
 
     @patch("services.analysis_service.DataService")
     @patch("services.analysis_service.IndicatorService")
@@ -120,7 +134,13 @@ class TestAnalysisServiceConfigStorage:
     @patch("services.ml_verdict_service.MLVerdictService")
     @patch("pathlib.Path.exists")
     def test_config_stored_even_on_error(
-        self, mock_path_exists, mock_ml_verdict_service, mock_signal_service, mock_indicator_service, mock_data_service, config_ml_enabled
+        self,
+        mock_path_exists,
+        mock_ml_verdict_service,
+        mock_signal_service,
+        mock_indicator_service,
+        mock_data_service,
+        config_ml_enabled,
     ):
         """Test that config is NOT stored when there's no data (correct behavior)"""
         # Setup mocks
@@ -139,12 +159,15 @@ class TestAnalysisServiceConfigStorage:
         service = AnalysisService(config=config_ml_enabled)
 
         # Analyze ticker (should return no_data status)
-        result = service.analyze_ticker("TEST.NS", enable_multi_timeframe=False, export_to_csv=False)
+        result = service.analyze_ticker(
+            "TEST.NS", enable_multi_timeframe=False, export_to_csv=False
+        )
 
         # Verify no_data status (correct behavior when no data)
-        assert result.get("status") == "no_data", "Result should have no_data status when no data available"
+        assert (
+            result.get("status") == "no_data"
+        ), "Result should have no_data status when no data available"
 
         # Verify config is NOT stored when there's no data (correct behavior)
         # Config is only stored on successful analysis
         assert "_config" not in result, "Config should NOT be stored when there's no data"
-

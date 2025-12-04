@@ -6,7 +6,7 @@ Tests that _process_results extracts config from results and passes to backtest.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -36,15 +36,24 @@ class TestProcessResultsConfigExtraction:
     @patch("trade_agent.compute_trading_priority_score")
     @patch("services.ml_verdict_service.MLVerdictService")
     @patch("pathlib.Path.exists")
-    def test_extracts_config_from_results(self, mock_path_exists, mock_ml_service, mock_priority_score, mock_strength_score, mock_backtest_service_class, config_ml_enabled):
+    def test_extracts_config_from_results(
+        self,
+        mock_path_exists,
+        mock_ml_service,
+        mock_priority_score,
+        mock_strength_score,
+        mock_backtest_service_class,
+        config_ml_enabled,
+    ):
         """Test that config is extracted from results and passed to backtest"""
         # Setup mocks to avoid loading ML model
         mock_path_exists.return_value = False
         mock_strength_score.return_value = 50.0
         mock_priority_score.return_value = 60.0
-        
+
         # Import the function
         import trade_agent
+
         _process_results = trade_agent._process_results
 
         # Create mock results with config
@@ -83,14 +92,22 @@ class TestProcessResultsConfigExtraction:
     @patch("trade_agent.compute_trading_priority_score")
     @patch("services.ml_verdict_service.MLVerdictService")
     @patch("pathlib.Path.exists")
-    def test_handles_results_without_config(self, mock_path_exists, mock_ml_service, mock_priority_score, mock_strength_score, mock_backtest_service_class):
+    def test_handles_results_without_config(
+        self,
+        mock_path_exists,
+        mock_ml_service,
+        mock_priority_score,
+        mock_strength_score,
+        mock_backtest_service_class,
+    ):
         """Test that None config is used when results don't have _config field"""
         # Setup mocks
         mock_path_exists.return_value = False  # Model doesn't exist to avoid loading
         mock_strength_score.return_value = 50.0
         mock_priority_score.return_value = 60.0
-        
+
         import trade_agent
+
         _process_results = trade_agent._process_results
 
         # Create results without config
@@ -123,14 +140,23 @@ class TestProcessResultsConfigExtraction:
     @patch("trade_agent.compute_trading_priority_score")
     @patch("services.ml_verdict_service.MLVerdictService")
     @patch("pathlib.Path.exists")
-    def test_extracts_config_from_first_result(self, mock_path_exists, mock_ml_service, mock_priority_score, mock_strength_score, mock_backtest_service_class, config_ml_enabled):
+    def test_extracts_config_from_first_result(
+        self,
+        mock_path_exists,
+        mock_ml_service,
+        mock_priority_score,
+        mock_strength_score,
+        mock_backtest_service_class,
+        config_ml_enabled,
+    ):
         """Test that config is extracted from first result when available"""
         # Setup mocks
         mock_path_exists.return_value = False  # Model doesn't exist to avoid loading
         mock_strength_score.return_value = 50.0
         mock_priority_score.return_value = 60.0
-        
+
         import trade_agent
+
         _process_results = trade_agent._process_results
 
         # Create results with config in first result only
@@ -161,4 +187,3 @@ class TestProcessResultsConfigExtraction:
         assert mock_backtest_service.add_backtest_scores_to_results.called
         call_kwargs = mock_backtest_service.add_backtest_scores_to_results.call_args[1]
         assert call_kwargs["config"] == config_ml_enabled, "Config from first result should be used"
-
