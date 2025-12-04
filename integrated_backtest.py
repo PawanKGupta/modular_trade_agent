@@ -172,7 +172,7 @@ def validate_initial_entry_with_trade_agent(
     Returns dict with buy_price, target if approved, None if rejected.
 
     Uses the same approach as integrated_backtest.py trade_agent() wrapper.
-    
+
     Args:
         stock_name: Stock symbol
         signal_date: Signal date

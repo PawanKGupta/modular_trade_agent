@@ -860,7 +860,7 @@ if __name__ == "__main__":
 
             db_session = next(get_session())
             logger.info(f"Loaded user_id={user_id} from environment, will use user-specific config")
-            
+
             # Debug: Check what ml_enabled value is in database
             from src.infrastructure.persistence.user_trading_config_repository import (
                 UserTradingConfigRepository,
@@ -868,7 +868,7 @@ if __name__ == "__main__":
             config_repo = UserTradingConfigRepository(db_session)
             user_config = config_repo.get_or_create_default(user_id)
             logger.info(f"DEBUG: User config from DB - ml_enabled={user_config.ml_enabled}, ml_confidence_threshold={user_config.ml_confidence_threshold}")
-            
+
             # Convert to StrategyConfig and log
             from src.application.services.config_converter import (
                 user_config_to_strategy_config,
