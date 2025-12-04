@@ -4,7 +4,6 @@ import json
 import logging
 import sys
 import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -32,9 +31,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # In-memory cache for authenticated broker sessions
-# Key: user_id, Value: (auth_instance, timestamp)
-_broker_auth_cache: dict[int, tuple] = {}
-_AUTH_CACHE_TTL = 600  # 10 minutes in seconds
+# Key: user_id, Value: auth_instance
+_broker_auth_cache: dict[int, object] = {}
 _broker_auth_cache_lock = threading.Lock()
 
 # Try to import NeoAPI at module level (may not be available in all environments)
@@ -535,15 +533,10 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
 
             # Thread-safe session caching with double-check locking
             # First check without lock (fast path)
-            cache_entry = _broker_auth_cache.get(current.id)
-            if cache_entry:
-                auth, timestamp = cache_entry
-                if time.time() - timestamp < _AUTH_CACHE_TTL and auth.is_authenticated():
-                    # Use cached authenticated session
-                    pass
-                else:
-                    # Cache expired or session invalid, need to re-authenticate
-                    auth = None
+            auth = _broker_auth_cache.get(current.id)
+            if auth and auth.is_authenticated():
+                # Use cached authenticated session
+                pass
             else:
                 auth = None
 
@@ -551,14 +544,12 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
             if not auth:
                 with _broker_auth_cache_lock:
                     # Double-check: another thread might have populated the cache
-                    cache_entry = _broker_auth_cache.get(current.id)
-                    if cache_entry:
-                        auth, timestamp = cache_entry
-                        if time.time() - timestamp < _AUTH_CACHE_TTL and auth.is_authenticated():
-                            # Another thread just cached it, use it
-                            pass
-                        else:
-                            auth = None
+                    auth = _broker_auth_cache.get(current.id)
+                    if auth and auth.is_authenticated():
+                        # Another thread just cached it, use it
+                        pass
+                    else:
+                        auth = None
 
                     if not auth:
                         # Create new auth instance and login
@@ -572,7 +563,7 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                                 ),
                             )
                         # Cache the authenticated session
-                        _broker_auth_cache[current.id] = (auth, time.time())
+                        _broker_auth_cache[current.id] = auth
 
             # Create broker gateway
             broker = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
@@ -785,15 +776,10 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
 
             # Thread-safe session caching with double-check locking
             # First check without lock (fast path)
-            cache_entry = _broker_auth_cache.get(current.id)
-            if cache_entry:
-                auth, timestamp = cache_entry
-                if time.time() - timestamp < _AUTH_CACHE_TTL and auth.is_authenticated():
-                    # Use cached authenticated session
-                    pass
-                else:
-                    # Cache expired or session invalid, need to re-authenticate
-                    auth = None
+            auth = _broker_auth_cache.get(current.id)
+            if auth and auth.is_authenticated():
+                # Use cached authenticated session
+                pass
             else:
                 auth = None
 
@@ -801,14 +787,12 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
             if not auth:
                 with _broker_auth_cache_lock:
                     # Double-check: another thread might have populated the cache
-                    cache_entry = _broker_auth_cache.get(current.id)
-                    if cache_entry:
-                        auth, timestamp = cache_entry
-                        if time.time() - timestamp < _AUTH_CACHE_TTL and auth.is_authenticated():
-                            # Another thread just cached it, use it
-                            pass
-                        else:
-                            auth = None
+                    auth = _broker_auth_cache.get(current.id)
+                    if auth and auth.is_authenticated():
+                        # Another thread just cached it, use it
+                        pass
+                    else:
+                        auth = None
 
                     if not auth:
                         # Create new auth instance and login
@@ -822,7 +806,7 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
                                 ),
                             )
                         # Cache the authenticated session
-                        _broker_auth_cache[current.id] = (auth, time.time())
+                        _broker_auth_cache[current.id] = auth
 
             # Create broker gateway
             broker_gateway = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
