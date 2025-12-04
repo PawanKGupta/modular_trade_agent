@@ -172,6 +172,8 @@ class Positions(Base):
     )  # Array of reentry details
     initial_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_reentry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Entry RSI tracking (for re-entry level progression)
+    entry_rsi: Mapped[float | None] = mapped_column(Float, nullable=True)  # RSI10 at entry
 
     __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_positions_user_symbol"),)
 

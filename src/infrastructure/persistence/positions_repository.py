@@ -41,6 +41,7 @@ class PositionsRepository:
         reentries: dict | None = None,
         initial_entry_price: float | None = None,
         last_reentry_price: float | None = None,
+        entry_rsi: float | None = None,
     ) -> Positions:
         pos = self.get_by_symbol(user_id, symbol)
         if pos:
@@ -52,6 +53,9 @@ class PositionsRepository:
                 pos.reentries = reentries
             if last_reentry_price is not None:
                 pos.last_reentry_price = last_reentry_price
+            # Only update entry_rsi if it's not already set (preserve original entry RSI)
+            if entry_rsi is not None and pos.entry_rsi is None:
+                pos.entry_rsi = entry_rsi
         else:
             # New position - set initial_entry_price if provided, otherwise use avg_price
             initial_price = initial_entry_price if initial_entry_price is not None else avg_price
@@ -66,6 +70,7 @@ class PositionsRepository:
                 reentries=reentries,
                 initial_entry_price=initial_price,
                 last_reentry_price=last_reentry_price,
+                entry_rsi=entry_rsi,
             )
             self.db.add(pos)
         self.db.commit()
