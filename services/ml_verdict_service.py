@@ -5,15 +5,14 @@ ML-enhanced verdict service that uses trained models to predict verdicts.
 Falls back to rule-based logic if ML model is unavailable.
 """
 
-import os
-import pandas as pd
-import numpy as np
-from typing import Optional, Dict, List, Tuple, Any
 from pathlib import Path
-import joblib
+from typing import Any
 
-from utils.logger import logger
+import joblib
+import pandas as pd
+
 from services.verdict_service import VerdictService
+from utils.logger import logger
 
 
 class MLVerdictService(VerdictService):
@@ -24,7 +23,7 @@ class MLVerdictService(VerdictService):
     falls back to rule-based logic if ML unavailable.
     """
 
-    def __init__(self, model_path: Optional[str] = None, config=None):
+    def __init__(self, model_path: str | None = None, config=None):
         """
         Initialize ML verdict service
 
@@ -94,51 +93,47 @@ class MLVerdictService(VerdictService):
                         break
 
                 if feature_cols_path:
-                    with open(feature_cols_path, "r") as f:
+                    with open(feature_cols_path) as f:
                         self.feature_cols = [line.strip() for line in f if line.strip()]
                     logger.info(
                         f"   Loaded {len(self.feature_cols)} feature columns from {feature_cols_path.name}"
                     )
+                # Try to get feature names from the model itself (scikit-learn stores them)
+                elif hasattr(self.model, "feature_names_in_"):
+                    self.feature_cols = list(self.model.feature_names_in_)
+                    logger.info(
+                        f"   Loaded {len(self.feature_cols)} feature columns from model (feature_names_in_)"
+                    )
                 else:
-                    # Try to get feature names from the model itself (scikit-learn stores them)
-                    if hasattr(self.model, "feature_names_in_"):
-                        self.feature_cols = list(self.model.feature_names_in_)
-                        logger.info(
-                            f"   Loaded {len(self.feature_cols)} feature columns from model (feature_names_in_)"
-                        )
-                    else:
-                        logger.warning(
-                            "Feature columns file not found and model doesn't have feature_names_in_. Will extract features dynamically."
-                        )
+                    logger.warning(
+                        "Feature columns file not found and model doesn't have feature_names_in_. Will extract features dynamically."
+                    )
 
             except Exception as e:
                 logger.warning(f"[WARN]? Failed to load ML model: {e}, using rule-based logic")
                 self.model = None
                 self.model_loaded = False
+        elif model_path:
+            logger.warning(f"[WARN]? Model file not found: {model_path}, using rule-based logic")
         else:
-            if model_path:
-                logger.warning(
-                    f"[WARN]? Model file not found: {model_path}, using rule-based logic"
-                )
-            else:
-                logger.info("i? No ML model path provided, using rule-based logic")
+            logger.info("i? No ML model path provided, using rule-based logic")
 
     def determine_verdict(
         self,
-        signals: List[str],
-        rsi_value: Optional[float],
+        signals: list[str],
+        rsi_value: float | None,
         is_above_ema200: bool,
         vol_ok: bool,
         vol_strong: bool,
         fundamental_ok: bool,
-        timeframe_confirmation: Optional[Dict[str, Any]],
-        news_sentiment: Optional[Dict[str, Any]],
+        timeframe_confirmation: dict[str, Any] | None,
+        news_sentiment: dict[str, Any] | None,
         chart_quality_passed: bool = True,
-        fundamental_assessment: Optional[Dict[str, Any]] = None,
-        indicators: Optional[Dict[str, Any]] = None,
-        fundamentals: Optional[Dict[str, Any]] = None,
-        df: Optional[Any] = None,
-    ) -> Tuple[str, List[str]]:
+        fundamental_assessment: dict[str, Any] | None = None,
+        indicators: dict[str, Any] | None = None,
+        fundamentals: dict[str, Any] | None = None,
+        df: Any | None = None,
+    ) -> tuple[str, list[str]]:
         """
         Determine verdict using ML if available, else rule-based
 
@@ -168,9 +163,9 @@ class MLVerdictService(VerdictService):
         # This is a CRITICAL filter - ML model should NEVER predict when chart quality fails
         if not chart_quality_passed:
             logger.info(
-                f"ML verdict service: Chart quality FAILED - returning 'avoid' immediately (hard filter)"
+                "ML verdict service: Chart quality FAILED - returning 'avoid' immediately (hard filter)"
             )
-            logger.info(f"ML verdict service: Skipping ML prediction (chart quality is mandatory)")
+            logger.info("ML verdict service: Skipping ML prediction (chart quality is mandatory)")
             return "avoid", ["Chart quality failed - too many gaps/extreme candles/flat movement"]
 
         # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Check fundamental_avoid flag
@@ -182,7 +177,7 @@ class MLVerdictService(VerdictService):
                     "fundamental_reason", "loss_making_expensive"
                 )
                 logger.info(
-                    f"ML verdict service: Fundamental filter FAILED - returning 'avoid' immediately (hard filter)"
+                    "ML verdict service: Fundamental filter FAILED - returning 'avoid' immediately (hard filter)"
                 )
                 logger.info(
                     f"ML verdict service: Skipping ML prediction (fundamental filter: {fundamental_reason})"
@@ -199,10 +194,10 @@ class MLVerdictService(VerdictService):
         if self.model_loaded:
             try:
                 logger.info(
-                    f"ML verdict service: ML model loaded but using rule-based logic (monitoring mode)"
+                    "ML verdict service: ML model loaded but using rule-based logic (monitoring mode)"
                 )
                 logger.debug(
-                    f"ML verdict service: Chart quality passed - getting ML prediction for monitoring"
+                    "ML verdict service: Chart quality passed - getting ML prediction for monitoring"
                 )
 
                 # Get ML prediction for logging/monitoring (but don't use it for verdict)
@@ -238,7 +233,7 @@ class MLVerdictService(VerdictService):
                         "ml_justification": ml_justification,
                     }
                 else:
-                    logger.debug(f"ML prediction returned None - using rule-based logic")
+                    logger.debug("ML prediction returned None - using rule-based logic")
 
             except Exception as e:
                 logger.warning(f"ML prediction failed: {e}, using rule-based logic")
@@ -246,10 +241,10 @@ class MLVerdictService(VerdictService):
 
                 logger.debug(traceback.format_exc())
         else:
-            logger.debug(f"ML verdict service: ML model not loaded - using rule-based logic")
+            logger.debug("ML verdict service: ML model not loaded - using rule-based logic")
 
         # Use rule-based logic for actual verdict (ML is monitoring only for now)
-        logger.debug(f"ML verdict service: Using rule-based logic for verdict determination")
+        logger.debug("ML verdict service: Using rule-based logic for verdict determination")
         verdict, justification = super().determine_verdict(
             signals,
             rsi_value,
@@ -278,7 +273,7 @@ class MLVerdictService(VerdictService):
 
         return verdict, justification
 
-    def get_last_ml_prediction(self) -> Optional[Dict[str, Any]]:
+    def get_last_ml_prediction(self) -> dict[str, Any] | None:
         """
         Get the ML prediction info from the last determine_verdict call.
 
@@ -291,18 +286,18 @@ class MLVerdictService(VerdictService):
 
     def _predict_with_ml(
         self,
-        signals: List[str],
-        rsi_value: Optional[float],
+        signals: list[str],
+        rsi_value: float | None,
         is_above_ema200: bool,
         vol_ok: bool,
         vol_strong: bool,
         fundamental_ok: bool,
-        timeframe_confirmation: Optional[Dict[str, Any]],
-        news_sentiment: Optional[Dict[str, Any]],
-        indicators: Optional[Dict[str, Any]] = None,
-        fundamentals: Optional[Dict[str, Any]] = None,
-        df: Optional[Any] = None,
-    ) -> Optional[tuple]:
+        timeframe_confirmation: dict[str, Any] | None,
+        news_sentiment: dict[str, Any] | None,
+        indicators: dict[str, Any] | None = None,
+        fundamentals: dict[str, Any] | None = None,
+        df: Any | None = None,
+    ) -> tuple | None:
         """
         Predict verdict using ML model
 
@@ -364,18 +359,18 @@ class MLVerdictService(VerdictService):
 
     def _extract_features(
         self,
-        signals: List[str],
-        rsi_value: Optional[float],
+        signals: list[str],
+        rsi_value: float | None,
         is_above_ema200: bool,
         vol_ok: bool,
         vol_strong: bool,
         fundamental_ok: bool,
-        timeframe_confirmation: Optional[Dict[str, Any]],
-        news_sentiment: Optional[Dict[str, Any]],
-        indicators: Optional[Dict[str, Any]] = None,
-        fundamentals: Optional[Dict[str, Any]] = None,
-        df: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+        timeframe_confirmation: dict[str, Any] | None,
+        news_sentiment: dict[str, Any] | None,
+        indicators: dict[str, Any] | None = None,
+        fundamentals: dict[str, Any] | None = None,
+        df: Any | None = None,
+    ) -> dict[str, Any]:
         """
         Extract features for ML model matching training data format
 
@@ -387,7 +382,6 @@ class MLVerdictService(VerdictService):
         Returns:
             Dict with feature values
         """
-        import pandas as pd
 
         features = {}
 
@@ -425,22 +419,29 @@ class MLVerdictService(VerdictService):
                 )
                 features[avg_volume_feature_name] = avg_volume
 
-                # Also keep 'avg_volume_20' for backward compatibility if lookback == 20
+                # Always keep 'avg_volume_20' for backward compatibility with trained models
+                # Model was trained with avg_volume_20, so we must always provide it
                 if volume_lookback == 20:
                     features["avg_volume_20"] = avg_volume
+                else:
+                    # Calculate avg_volume_20 separately if using different lookback
+                    avg_volume_20 = (
+                        float(df["volume"].tail(20).mean()) if len(df) >= 20 else current_volume
+                    )
+                    features["avg_volume_20"] = avg_volume_20
 
                 features["volume_ratio"] = current_volume / avg_volume if avg_volume > 0 else 1.0
             except:
                 avg_volume_feature_name = f"avg_volume_{volume_lookback}"
                 features[avg_volume_feature_name] = 0.0
-                if volume_lookback == 20:
-                    features["avg_volume_20"] = 0.0
+                # Always create avg_volume_20 for backward compatibility
+                features["avg_volume_20"] = 0.0
                 features["volume_ratio"] = 1.0
         else:
             avg_volume_feature_name = f"avg_volume_{volume_lookback}"
             features[avg_volume_feature_name] = 0.0
-            if volume_lookback == 20:
-                features["avg_volume_20"] = 0.0
+            # Always create avg_volume_20 for backward compatibility
+            features["avg_volume_20"] = 0.0
             features["volume_ratio"] = 1.0
 
         features["vol_strong"] = 1.0 if vol_strong else 0.0
@@ -688,25 +689,25 @@ class MLVerdictService(VerdictService):
 
         return features
 
-    def _build_ml_justification(self, verdict: str) -> List[str]:
+    def _build_ml_justification(self, verdict: str) -> list[str]:
         """Build justification for ML verdict"""
         return [f"ML prediction: {verdict}"]
 
     def predict_verdict_with_confidence(
         self,
-        signals: List[str],
-        rsi_value: Optional[float],
+        signals: list[str],
+        rsi_value: float | None,
         is_above_ema200: bool,
         vol_ok: bool,
         vol_strong: bool,
         fundamental_ok: bool,
-        timeframe_confirmation: Optional[Dict[str, Any]],
-        news_sentiment: Optional[Dict[str, Any]],
-        indicators: Optional[Dict[str, Any]] = None,
-        fundamentals: Optional[Dict[str, Any]] = None,
-        df: Optional[Any] = None,
+        timeframe_confirmation: dict[str, Any] | None,
+        news_sentiment: dict[str, Any] | None,
+        indicators: dict[str, Any] | None = None,
+        fundamentals: dict[str, Any] | None = None,
+        df: Any | None = None,
         chart_quality_passed: bool = True,
-    ) -> Tuple[Optional[str], float]:
+    ) -> tuple[str | None, float]:
         """
         Predict verdict with confidence score (for testing/comparison)
 
