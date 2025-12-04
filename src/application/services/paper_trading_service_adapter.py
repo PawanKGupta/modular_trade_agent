@@ -89,6 +89,14 @@ class PaperTradingServiceAdapter:
         self.active_sell_orders = {}
         self._sell_orders_file = Path(self.storage_path) / "active_sell_orders.json"
 
+        # RSI Exit: Cache for RSI10 values {symbol: rsi10_value}
+        # Cached at market open (previous day's RSI10), updated with real-time if available
+        self.rsi10_cache: dict[str, float] = {}
+
+        # RSI Exit: Track orders converted to market {symbol}
+        # Prevents duplicate conversion attempts
+        self.converted_to_market: set[str] = set()
+
         # Service state (for scheduler control)
         self.running = False
         self.shutdown_requested = False
@@ -1008,6 +1016,9 @@ class PaperTradingServiceAdapter:
             action="_place_sell_orders",
         )
 
+        # Initialize RSI10 cache for all active sell orders (previous day's RSI10)
+        self._initialize_rsi10_cache_paper()
+
         # Save active sell orders to JSON for UI display
         self._save_sell_orders_to_file()
 
@@ -1096,10 +1107,17 @@ class PaperTradingServiceAdapter:
                     continue
 
                 # Exit Condition 2: RSI > 50 (secondary exit for failing stocks)
+                # Use cache-based RSI (previous day first, then real-time)
+                # Skip if already converted
+                if symbol in self.converted_to_market:
+                    continue
+                
+                rsi10 = self._get_current_rsi10_paper(symbol, ticker)
                 RSI_EXIT_THRESHOLD = 50  # From backtest: 10% of exits, 37% win rate
-                if not pd.isna(rsi) and rsi > RSI_EXIT_THRESHOLD:
+                
+                if rsi10 is not None and rsi10 > RSI_EXIT_THRESHOLD:
                     self.logger.info(
-                        f"? EXIT TRIGGERED: {symbol} - RSI {rsi:.1f} > 50 (falling knife exit)",
+                        f"? EXIT TRIGGERED: {symbol} - RSI {rsi10:.1f} > 50 (falling knife exit)",
                         action="_monitor_sell_orders",
                     )
 
@@ -1126,9 +1144,10 @@ class PaperTradingServiceAdapter:
                         # In paper trading, just remove the order and execute at market
                         self.broker.place_order(market_order)
                         symbols_to_remove.append(symbol)
+                        self.converted_to_market.add(symbol)  # Track conversion
 
                         self.logger.info(
-                            f"? RSI exit: {symbol} @ Rs {close:.2f} (RSI: {rsi:.1f})",
+                            f"? RSI exit: {symbol} @ Rs {close:.2f} (RSI: {rsi10:.1f})",
                             action="_monitor_sell_orders",
                         )
                     except Exception as e:
@@ -1155,6 +1174,157 @@ class PaperTradingServiceAdapter:
             )
             # Update saved file after removing executed orders
             self._save_sell_orders_to_file()
+
+    def _initialize_rsi10_cache_paper(self) -> None:
+        """
+        Initialize RSI10 cache with previous day's RSI10 for all active sell orders.
+        Called at market open (when sell orders are placed).
+
+        Paper trading version - uses fetch_ohlcv_yf directly.
+        """
+        if not self.active_sell_orders:
+            return
+
+        self.logger.info(
+            f"Initializing RSI10 cache for {len(self.active_sell_orders)} positions...",
+            action="_initialize_rsi10_cache_paper",
+        )
+
+        for symbol, order_info in self.active_sell_orders.items():
+            ticker = order_info.get("ticker")
+
+            if not ticker:
+                continue
+
+            try:
+                # Get previous day's RSI10
+                previous_rsi = self._get_previous_day_rsi10_paper(ticker)
+                if previous_rsi is not None:
+                    self.rsi10_cache[symbol] = previous_rsi
+                    self.logger.debug(
+                        f"Cached previous day RSI10 for {symbol}: {previous_rsi:.2f}",
+                        action="_initialize_rsi10_cache_paper",
+                    )
+                else:
+                    self.logger.warning(
+                        f"Could not get previous day RSI10 for {symbol}, will use real-time when available",
+                        action="_initialize_rsi10_cache_paper",
+                    )
+            except Exception as e:
+                self.logger.warning(
+                    f"Error caching RSI10 for {symbol}: {e}",
+                    action="_initialize_rsi10_cache_paper",
+                )
+
+        self.logger.info(
+            f"RSI10 cache initialized for {len(self.rsi10_cache)} positions",
+            action="_initialize_rsi10_cache_paper",
+        )
+
+    def _get_previous_day_rsi10_paper(self, ticker: str) -> float | None:
+        """
+        Get previous day's RSI10 value (paper trading).
+
+        Args:
+            ticker: Stock ticker (e.g., 'RELIANCE.NS')
+
+        Returns:
+            Previous day's RSI10 value, or None if unavailable
+        """
+        try:
+            import pandas_ta as ta
+
+            from core.data_fetcher import fetch_ohlcv_yf
+
+            # Get price data (exclude current day to get previous day's data)
+            data = fetch_ohlcv_yf(ticker, days=200, interval="1d", add_current_day=False)
+
+            if data is None or data.empty or len(data) < 2:
+                return None
+
+            # Calculate RSI
+            data["rsi10"] = ta.rsi(data["close"], length=10)
+
+            if data is None or data.empty or len(data) < 2:
+                return None
+
+            # Get second-to-last row (previous day)
+            previous_day = data.iloc[-2]
+            previous_rsi = previous_day.get("rsi10", None)
+
+            if previous_rsi is not None:
+                # Check if NaN
+                if not pd.isna(previous_rsi):
+                    return float(previous_rsi)
+
+            return None
+        except Exception as e:
+            self.logger.debug(
+                f"Error getting previous day RSI10 for {ticker}: {e}",
+                action="_get_previous_day_rsi10_paper",
+            )
+            return None
+
+    def _get_current_rsi10_paper(self, symbol: str, ticker: str) -> float | None:
+        """
+        Get current RSI10 value with real-time calculation and fallback to cache (paper trading).
+
+        Priority:
+        1. Try to calculate real-time RSI10 (update cache if available)
+        2. Fallback to cached previous day's RSI10
+
+        Args:
+            symbol: Stock symbol (for cache lookup)
+            ticker: Stock ticker (e.g., 'RELIANCE.NS')
+
+        Returns:
+            Current RSI10 value, or None if unavailable
+        """
+        try:
+            import pandas_ta as ta
+
+            from core.data_fetcher import fetch_ohlcv_yf
+
+            # Try to get real-time RSI10 (include current day)
+            data = fetch_ohlcv_yf(ticker, days=200, interval="1d", add_current_day=True)
+
+            if data is not None and not data.empty:
+                # Calculate RSI
+                data["rsi10"] = ta.rsi(data["close"], length=10)
+
+                if data is not None and not data.empty:
+                    # Get latest row (current day)
+                    latest = data.iloc[-1]
+                    current_rsi = latest.get("rsi10", None)
+
+                    if current_rsi is not None and not pd.isna(current_rsi):
+                        # Update cache with real-time value
+                        self.rsi10_cache[symbol] = float(current_rsi)
+                        self.logger.debug(
+                            f"Updated RSI10 cache for {symbol} with real-time value: {current_rsi:.2f}",
+                            action="_get_current_rsi10_paper",
+                        )
+                        return float(current_rsi)
+        except Exception as e:
+            self.logger.debug(
+                f"Error calculating real-time RSI10 for {symbol}: {e}",
+                action="_get_current_rsi10_paper",
+            )
+
+        # Fallback to cached previous day's RSI10
+        cached_rsi = self.rsi10_cache.get(symbol)
+        if cached_rsi is not None:
+            self.logger.debug(
+                f"Using cached RSI10 for {symbol}: {cached_rsi:.2f}",
+                action="_get_current_rsi10_paper",
+            )
+            return cached_rsi
+
+        self.logger.debug(
+            f"RSI10 unavailable for {symbol} (no cache, real-time failed)",
+            action="_get_current_rsi10_paper",
+        )
+        return None
 
     def _load_sell_orders_from_file(self):
         """Load active sell orders from JSON file on service startup"""

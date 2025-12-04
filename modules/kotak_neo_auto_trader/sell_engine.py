@@ -1414,6 +1414,147 @@ class SellOrderManager:
         logger.info(f"Placed {orders_placed} sell orders at market open")
         return orders_placed
 
+    def _initialize_rsi10_cache(self, open_positions: list[dict[str, Any]]) -> None:
+        """
+        Initialize RSI10 cache with previous day's RSI10 for all open positions.
+        Called at market open (9:15 AM).
+
+        Args:
+            open_positions: List of open position dictionaries
+        """
+        if not open_positions:
+            return
+
+        logger.info(f"Initializing RSI10 cache for {len(open_positions)} positions...")
+
+        for position in open_positions:
+            symbol = position.get("symbol")
+            ticker = position.get("ticker")
+
+            if not symbol or not ticker:
+                continue
+
+            try:
+                # Get previous day's RSI10
+                previous_rsi = self._get_previous_day_rsi10(ticker)
+                if previous_rsi is not None:
+                    self.rsi10_cache[symbol] = previous_rsi
+                    logger.debug(f"Cached previous day RSI10 for {symbol}: {previous_rsi:.2f}")
+                else:
+                    logger.warning(f"Could not get previous day RSI10 for {symbol}, will use real-time when available")
+            except Exception as e:
+                logger.warning(f"Error caching RSI10 for {symbol}: {e}")
+
+        logger.info(f"RSI10 cache initialized for {len(self.rsi10_cache)} positions")
+
+    def _get_previous_day_rsi10(self, ticker: str) -> float | None:
+        """
+        Get previous day's RSI10 value.
+
+        Args:
+            ticker: Stock ticker (e.g., 'RELIANCE.NS')
+
+        Returns:
+            Previous day's RSI10 value, or None if unavailable
+        """
+        try:
+            # Get price data (exclude current day to get previous day's data)
+            df = self.price_service.get_price(
+                ticker, days=200, interval="1d", add_current_day=False
+            )
+
+            if df is None or df.empty or len(df) < 2:
+                return None
+
+            # Calculate indicators
+            df = self.indicator_service.calculate_all_indicators(df)
+
+            if df is None or df.empty or len(df) < 2:
+                return None
+
+            # Get second-to-last row (previous day)
+            previous_day = df.iloc[-2]
+            previous_rsi = previous_day.get("rsi10", None)
+
+            if previous_rsi is not None:
+                # Check if NaN - use simple check since pandas may not be imported
+                try:
+                    import pandas as pd
+                    is_na = pd.isna(previous_rsi)
+                except (ImportError, AttributeError):
+                    # Fallback: check if value is None or NaN-like
+                    is_na = (
+                        previous_rsi is None
+                        or (isinstance(previous_rsi, float) and str(previous_rsi).lower() == "nan")
+                    )
+
+                if not is_na:
+                    return float(previous_rsi)
+
+            return None
+        except Exception as e:
+            logger.debug(f"Error getting previous day RSI10 for {ticker}: {e}")
+            return None
+
+    def _get_current_rsi10(self, symbol: str, ticker: str) -> float | None:
+        """
+        Get current RSI10 value with real-time calculation and fallback to cache.
+
+        Priority:
+        1. Try to calculate real-time RSI10 (update cache if available)
+        2. Fallback to cached previous day's RSI10
+
+        Args:
+            symbol: Stock symbol (for cache lookup)
+            ticker: Stock ticker (e.g., 'RELIANCE.NS')
+
+        Returns:
+            Current RSI10 value, or None if unavailable
+        """
+        try:
+            # Try to get real-time RSI10 (include current day)
+            df = self.price_service.get_price(
+                ticker, days=200, interval="1d", add_current_day=True
+            )
+
+            if df is not None and not df.empty:
+                # Calculate indicators
+                df = self.indicator_service.calculate_all_indicators(df)
+
+                if df is not None and not df.empty:
+                    # Get latest row (current day)
+                    latest = df.iloc[-1]
+                    current_rsi = latest.get("rsi10", None)
+
+                    if current_rsi is not None:
+                        # Check if NaN - use simple check since pandas may not be imported
+                        try:
+                            import pandas as pd
+                            is_na = pd.isna(current_rsi)
+                        except (ImportError, AttributeError):
+                            # Fallback: check if value is None or NaN-like
+                            is_na = (
+                                current_rsi is None
+                                or (isinstance(current_rsi, float) and str(current_rsi).lower() == "nan")
+                            )
+
+                        if not is_na:
+                            # Update cache with real-time value
+                            self.rsi10_cache[symbol] = float(current_rsi)
+                            logger.debug(f"Updated RSI10 cache for {symbol} with real-time value: {current_rsi:.2f}")
+                            return float(current_rsi)
+        except Exception as e:
+            logger.debug(f"Error calculating real-time RSI10 for {symbol}: {e}")
+
+        # Fallback to cached previous day's RSI10
+        cached_rsi = self.rsi10_cache.get(symbol)
+        if cached_rsi is not None:
+            logger.debug(f"Using cached RSI10 for {symbol}: {cached_rsi:.2f}")
+            return cached_rsi
+
+        logger.debug(f"RSI10 unavailable for {symbol} (no cache, real-time failed)")
+        return None
+
     def _check_and_update_single_stock(
         self, symbol: str, order_info: dict[str, Any], executed_ids: list[str]
     ) -> dict[str, Any]:
