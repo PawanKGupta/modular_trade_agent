@@ -104,6 +104,14 @@ export function ServiceSchedulePage() {
 		eod_cleanup: 'End-of-Day Cleanup',
 	};
 
+	const TASK_DESCRIPTIONS: Record<string, string> = {
+		premarket_retry: 'Retries failed orders from previous day',
+		sell_monitor: 'Monitors sell orders continuously, converts to market on RSI exit',
+		analysis: 'Analyzes stocks and generates recommendations',
+		buy_orders: 'Places AMO buy orders (fresh entries and re-entries) for the next day',
+		eod_cleanup: 'End-of-day cleanup and reset for the next day',
+	};
+
 	if (!user || !isAdmin) {
 		return (
 			<div className="p-2 sm:p-4">
