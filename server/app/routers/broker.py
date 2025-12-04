@@ -575,12 +575,33 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
             else:
                 # Auth is already authenticated, manually set client to avoid re-login
                 # This prevents OTP spam while ensuring broker is properly initialized
+                # Trust the cached auth - only re-authenticate if API calls actually fail
                 logger.debug(
                     f"Auth already authenticated for user {current.id}, "
                     "manually initializing broker client"
                 )
-                broker._client = auth.get_client()
-                broker._connected = True
+                client = auth.get_client()
+                if client:
+                    # Client is available - use it directly without calling connect()
+                    broker._client = client
+                    broker._connected = True
+                else:
+                    # Client is None - this shouldn't happen if is_authenticated() is True
+                    # But if it does, clear cache and let it re-authenticate on next request
+                    # Don't force reconnect here to avoid OTP spam
+                    logger.warning(
+                        f"Auth says authenticated but client is None for user {current.id}, "
+                        "clearing cache - will re-authenticate on next request"
+                    )
+                    with _broker_auth_cache_lock:
+                        _broker_auth_cache.pop(current.id, None)
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "Broker session expired. Please refresh the page to reconnect. "
+                            "This should not trigger frequent OTP requests."
+                        ),
+                    )
 
             # Get holdings from broker
             holdings = broker.get_holdings()
@@ -825,12 +846,33 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
             else:
                 # Auth is already authenticated, manually set client to avoid re-login
                 # This prevents OTP spam while ensuring broker is properly initialized
+                # Trust the cached auth - only re-authenticate if API calls actually fail
                 logger.debug(
                     f"Auth already authenticated for user {current.id}, "
                     "manually initializing broker client"
                 )
-                broker_gateway._client = auth.get_client()
-                broker_gateway._connected = True
+                client = auth.get_client()
+                if client:
+                    # Client is available - use it directly without calling connect()
+                    broker_gateway._client = client
+                    broker_gateway._connected = True
+                else:
+                    # Client is None - this shouldn't happen if is_authenticated() is True
+                    # But if it does, clear cache and let it re-authenticate on next request
+                    # Don't force reconnect here to avoid OTP spam
+                    logger.warning(
+                        f"Auth says authenticated but client is None for user {current.id}, "
+                        "clearing cache - will re-authenticate on next request"
+                    )
+                    with _broker_auth_cache_lock:
+                        _broker_auth_cache.pop(current.id, None)
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "Broker session expired. Please refresh the page to reconnect. "
+                            "This should not trigger frequent OTP requests."
+                        ),
+                    )
 
             # Get orders from broker
             broker_orders = broker_gateway.get_all_orders()
