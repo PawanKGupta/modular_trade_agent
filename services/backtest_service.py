@@ -162,7 +162,7 @@ class BacktestService:
             return 0.0
 
     def run_stock_backtest(
-        self, stock_symbol: str, years_back: int | None = None, dip_mode: bool | None = None
+        self, stock_symbol: str, years_back: int | None = None, dip_mode: bool | None = None, config=None
     ) -> dict:
         """
         Run backtest for a stock using available method (integrated or simple).
@@ -174,6 +174,7 @@ class BacktestService:
             stock_symbol: Stock symbol (e.g., "RELIANCE.NS")
             years_back: Number of years to backtest (uses default if None)
             dip_mode: Whether to use dip mode (uses instance default if None)
+            config: StrategyConfig instance (for ML-enabled backtests)
 
         Returns:
             Dict with backtest results and score
@@ -183,13 +184,14 @@ class BacktestService:
         if dip_mode is None:
             dip_mode = self.dip_mode
 
-        return run_stock_backtest(stock_symbol, years_back, dip_mode)
+        return run_stock_backtest(stock_symbol, years_back, dip_mode, config)
 
     def add_backtest_scores_to_results(
         self,
         stock_results: list[dict],
         years_back: int | None = None,
         dip_mode: bool | None = None,
+        config=None,
     ) -> list[dict]:
         """
         Add backtest scores to existing stock analysis results.
@@ -232,7 +234,9 @@ class BacktestService:
                 )
 
                 # Run backtest for this stock
-                backtest_data = self.run_stock_backtest(ticker, years_back, dip_mode)
+                # Use config from stock_result if available, otherwise use passed config
+                stock_config = stock_result.get("_config") or config
+                backtest_data = self.run_stock_backtest(ticker, years_back, dip_mode, config=stock_config)
 
                 # Add backtest data to stock result
                 stock_result["backtest"] = {

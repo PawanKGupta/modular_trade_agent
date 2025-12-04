@@ -64,6 +64,9 @@ class AnalysisService:
             # Check if ML is enabled in config (respects UI setting)
             ml_enabled = getattr(self.config, "ml_enabled", False)
 
+            # Debug logging to trace config value
+            logger.debug(f"AnalysisService init: ml_enabled={ml_enabled}, config type={type(self.config)}, config.ml_enabled={getattr(self.config, 'ml_enabled', 'NOT_SET')}")
+
             if not ml_enabled:
                 logger.debug("ML is disabled in config, using VerdictService")
                 self.verdict_service = VerdictService(self.config)
@@ -650,6 +653,10 @@ class AnalysisService:
 
                 # Also append to master CSV for historical tracking
                 csv_exporter.append_to_master_csv(result)
+
+            # Store config in result for backtest to use (for ML support)
+            # This allows backtest to use the same config that was used for analysis
+            result['_config'] = self.config
 
             return result
 

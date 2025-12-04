@@ -109,6 +109,7 @@ class Recommendation:
     verdict: str  # strong_buy|buy|watch
     last_close: float
     execution_capital: float | None = None  # Phase 11: Dynamic capital based on liquidity
+    priority_score: float | None = None  # Priority score for sorting (higher = higher priority)
 
 
 class OrderPlacementError(RuntimeError):
@@ -839,15 +840,57 @@ class AutoTradeEngine:
                         )
                     except (ValueError, TypeError):
                         execution_capital = None
+                # Load priority_score from CSV if available (for sorting)
+                priority_score = row.get("priority_score")
+                if priority_score is not None:
+                    try:
+                        priority_score = float(priority_score) if priority_score != "" else None
+                    except (ValueError, TypeError):
+                        priority_score = None
+                else:
+                    # Fallback to combined_score if priority_score not available
+                    combined_score = row.get("combined_score")
+                    if combined_score is not None:
+                        try:
+                            priority_score = float(combined_score) if combined_score != "" else None
+                        except (ValueError, TypeError):
+                            priority_score = None
+                    else:
+                        priority_score = None
+
+                # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
+                # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
+                ml_confidence = row.get("ml_confidence")
+                if ml_confidence is not None and priority_score is not None:
+                    try:
+                        ml_confidence = float(ml_confidence) if ml_confidence != "" else None
+                        if ml_confidence is not None and ml_confidence > 0:
+                            # Boost priority based on ML confidence bands:
+                            # - High confidence (>=70%): +20 points (strong ML conviction)
+                            # - Medium confidence (60-70%): +10 points (good ML conviction)
+                            # - Low confidence (50-60%): +5 points (moderate ML conviction)
+                            if ml_confidence >= 0.70:
+                                priority_score += 20  # High ML confidence boost
+                            elif ml_confidence >= 0.60:
+                                priority_score += 10  # Medium ML confidence boost
+                            elif ml_confidence >= 0.50:
+                                priority_score += 5   # Low ML confidence boost
+                            # ML confidence < 50%: No boost (below threshold)
+                    except (ValueError, TypeError):
+                        pass  # Ignore ML confidence if invalid
+
                 recs.append(
                     Recommendation(
                         ticker=ticker,
                         verdict=row[verdict_col],
                         last_close=last_close,
                         execution_capital=execution_capital,
+                        priority_score=priority_score,
                     )
                 )
-            logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path}")
+            # Sort by priority_score (descending) - higher priority stocks placed first
+            recs.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
+            logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path} (sorted by priority_score)")
             return recs
         # Otherwise, DO NOT recompute; trust the CSV that trade_agent produced
         if "verdict" in df.columns:
@@ -865,15 +908,57 @@ class AutoTradeEngine:
                         )
                     except (ValueError, TypeError):
                         execution_capital = None
+                # Load priority_score from CSV if available (for sorting)
+                priority_score = row.get("priority_score")
+                if priority_score is not None:
+                    try:
+                        priority_score = float(priority_score) if priority_score != "" else None
+                    except (ValueError, TypeError):
+                        priority_score = None
+                else:
+                    # Fallback to combined_score if priority_score not available
+                    combined_score = row.get("combined_score")
+                    if combined_score is not None:
+                        try:
+                            priority_score = float(combined_score) if combined_score != "" else None
+                        except (ValueError, TypeError):
+                            priority_score = None
+                    else:
+                        priority_score = None
+
+                # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
+                # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
+                ml_confidence = row.get("ml_confidence")
+                if ml_confidence is not None and priority_score is not None:
+                    try:
+                        ml_confidence = float(ml_confidence) if ml_confidence != "" else None
+                        if ml_confidence is not None and ml_confidence > 0:
+                            # Boost priority based on ML confidence bands:
+                            # - High confidence (>=70%): +20 points (strong ML conviction)
+                            # - Medium confidence (60-70%): +10 points (good ML conviction)
+                            # - Low confidence (50-60%): +5 points (moderate ML conviction)
+                            if ml_confidence >= 0.70:
+                                priority_score += 20  # High ML confidence boost
+                            elif ml_confidence >= 0.60:
+                                priority_score += 10  # Medium ML confidence boost
+                            elif ml_confidence >= 0.50:
+                                priority_score += 5   # Low ML confidence boost
+                            # ML confidence < 50%: No boost (below threshold)
+                    except (ValueError, TypeError):
+                        pass  # Ignore ML confidence if invalid
+
                 recs.append(
                     Recommendation(
                         ticker=ticker,
                         verdict=str(row.get("verdict", "")).lower(),
                         last_close=last_close,
                         execution_capital=execution_capital,
+                        priority_score=priority_score,
                     )
                 )
-            logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path} (raw verdicts)")
+            # Sort by priority_score (descending) - higher priority stocks placed first
+            recs.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
+            logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path} (raw verdicts, sorted by priority_score)")
             return recs
         logger.warning(
             f"CSV {csv_path} missing 'final_verdict' and 'verdict' columns; no recommendations loaded"
@@ -987,17 +1072,44 @@ class AutoTradeEngine:
                             elif signal.trading_params and isinstance(signal.trading_params, dict):
                                 execution_capital = signal.trading_params.get("execution_capital")
 
+                            # Extract priority_score from signal (for sorting)
+                            priority_score = signal.priority_score
+                            if priority_score is None:
+                                # Fallback to combined_score if priority_score not available
+                                priority_score = signal.combined_score or 0.0
+
+                            # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
+                            # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
+                            ml_confidence = signal.ml_confidence
+                            if ml_confidence is not None and ml_confidence > 0:
+                                # Boost priority based on ML confidence bands:
+                                # - High confidence (>=70%): +20 points (strong ML conviction)
+                                # - Medium confidence (60-70%): +10 points (good ML conviction)
+                                # - Low confidence (50-60%): +5 points (moderate ML conviction)
+                                if ml_confidence >= 0.70:
+                                    priority_score += 20  # High ML confidence boost
+                                elif ml_confidence >= 0.60:
+                                    priority_score += 10  # Medium ML confidence boost
+                                elif ml_confidence >= 0.50:
+                                    priority_score += 5   # Low ML confidence boost
+                                # ML confidence < 50%: No boost (below threshold)
+
                             # Create Recommendation object
                             rec = Recommendation(
                                 ticker=ticker,
                                 verdict=verdict,
                                 last_close=last_close,
                                 execution_capital=execution_capital,
+                                priority_score=priority_score,
                             )
                             recommendations.append(rec)
 
+                    # Sort by priority_score (descending) - higher priority stocks placed first
+                    recommendations.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
+
                     logger.info(
-                        f"Converted {len(recommendations)} buy/strong_buy recommendations from database"
+                        f"Converted {len(recommendations)} buy/strong_buy recommendations from database "
+                        f"(sorted by priority_score)"
                     )
                     return recommendations
 

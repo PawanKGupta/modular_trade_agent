@@ -165,18 +165,30 @@ class Position:
 
 
 def validate_initial_entry_with_trade_agent(
-    stock_name: str, signal_date: str, rsi: float, ema200: float, full_market_data: pd.DataFrame
+    stock_name: str, signal_date: str, rsi: float, ema200: float, full_market_data: pd.DataFrame, config=None
 ) -> Optional[Dict]:
     """
     Validate initial entry with trade agent.
     Returns dict with buy_price, target if approved, None if rejected.
 
     Uses the same approach as integrated_backtest.py trade_agent() wrapper.
+
+    Args:
+        stock_name: Stock symbol
+        signal_date: Signal date
+        rsi: RSI value
+        ema200: EMA200 value
+        full_market_data: Full market data DataFrame
+        config: StrategyConfig instance (uses default if None)
     """
     try:
         # Call analyze_ticker using AnalysisService (same as old implementation)
         from services.analysis_service import AnalysisService
         from config.strategy_config import StrategyConfig
+
+        # Use provided config or default
+        if config is None:
+            config = StrategyConfig.default()
 
         # Convert column names to lowercase for AnalysisService
         market_data_for_agent = full_market_data.copy()
@@ -191,7 +203,7 @@ def validate_initial_entry_with_trade_agent(
                 }
             )
 
-        service = AnalysisService(config=StrategyConfig.default())
+        service = AnalysisService(config=config)
         result = service.analyze_ticker(
             ticker=stock_name,
             enable_multi_timeframe=True,
@@ -230,6 +242,7 @@ def run_integrated_backtest(
     date_range: Tuple[str, str],
     capital_per_position: float = 50000,
     skip_trade_agent_validation: bool = False,
+    config=None,
 ) -> Dict:
     """
     Single-pass integrated backtest - checks RSI daily and executes trades inline.
@@ -468,7 +481,7 @@ def run_integrated_backtest(
                     # Normal mode: Validate with trade agent
                     print(f"   ? Trade Agent analyzing...")
                     validation = validate_initial_entry_with_trade_agent(
-                        stock_name, date_str, rsi, ema200, market_data
+                        stock_name, date_str, rsi, ema200, market_data, config=config
                     )
 
                 if validation and validation.get("approved"):

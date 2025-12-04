@@ -622,6 +622,23 @@ class IndividualServiceManager:
                         task_name="analysis",
                     )
 
+            # Load user config to pass to trade_agent
+            user_config = self._config_repo.get_or_create_default(user_id)
+            from src.application.services.config_converter import (
+                user_config_to_strategy_config,
+            )
+
+            strategy_config = user_config_to_strategy_config(
+                user_config, db_session=self.db
+            )
+
+            # Pass user_id as environment variable so trade_agent can load config
+            # Note: trade_agent.py will need to be updated to read user_id from env
+            import os
+
+            env = os.environ.copy()
+            env["TRADE_AGENT_USER_ID"] = str(user_id)
+
             cmd = [
                 sys.executable,
                 str(trade_agent_path),
@@ -660,6 +677,7 @@ class IndividualServiceManager:
                             encoding="utf-8",
                             errors="replace",
                             timeout=timeout_seconds,
+                            env=env,  # Pass environment with user_id
                         )
 
                         task_context["return_code"] = result.returncode
