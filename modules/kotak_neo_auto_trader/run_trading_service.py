@@ -1239,7 +1239,16 @@ class TradingService:
             self._schedule_manager = ScheduleManager(thread_db)
 
             self.logger.info("Setting up signal handlers...", action="run")
-            self.setup_signal_handlers()
+            try:
+                self.setup_signal_handlers()
+                self.logger.info("Signal handlers setup complete", action="run")
+            except Exception as e:
+                self.logger.error(
+                    f"Failed to setup signal handlers: {e}",
+                    exc_info=True,
+                    action="run",
+                )
+                return
 
             # Initialize service (single login)
             self.logger.info("Starting service initialization...", action="run")
