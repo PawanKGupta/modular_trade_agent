@@ -150,14 +150,18 @@ class TradingService:
         Returns True if successful
         """
         try:
-            logger.info("=" * 80)
-            logger.info("TRADING SERVICE INITIALIZATION")
-            logger.info("=" * 80)
+            self.logger.info("=" * 80, action="initialize")
+            self.logger.info("TRADING SERVICE INITIALIZATION", action="initialize")
+            self.logger.info("=" * 80, action="initialize")
 
             # Check for service conflicts (prevent running with old services)
+            self.logger.info("Checking for service conflicts...", action="initialize")
             if not prevent_service_conflict("run_trading_service.py", is_unified=True):
-                logger.error("Service initialization aborted due to conflicts.")
+                self.logger.error(
+                    "Service initialization aborted due to conflicts.", action="initialize"
+                )
                 return False
+            self.logger.info("No service conflicts detected", action="initialize")
 
             # Initialize authentication
             self.logger.info("Authenticating with Kotak Neo...", action="initialize")
@@ -201,14 +205,16 @@ class TradingService:
             # Initialize engine (creates portfolio, orders, etc.)
             # Since auth is already logged in, this just initializes components without re-auth
             if not self.engine.login():
-                logger.error("Engine initialization failed")
+                self.logger.error("Engine initialization failed", action="initialize")
                 return False
+            self.logger.info("Trading engine initialized successfully", action="initialize")
 
             # Initialize live prices (WebSocket for real-time LTP)
             # For buy_orders task, WebSocket is not needed (AMO orders don't need real-time prices)
             # Skip WebSocket initialization to avoid blocking - buy orders use yfinance for prices
-            logger.info(
-                "Skipping WebSocket initialization for buy_orders (not needed for AMO orders)"
+            self.logger.info(
+                "Skipping WebSocket initialization for buy_orders (not needed for AMO orders)",
+                action="initialize",
             )
             self.price_cache = None
             self.scrip_master = None
@@ -220,7 +226,7 @@ class TradingService:
             # Initialize sell order manager (will be started at market open)
             # For buy_orders task, this is not needed, but initialize it anyway for consistency
             try:
-                logger.info("Initializing sell order manager...")
+                self.logger.info("Initializing sell order manager...", action="initialize")
                 # Pass positions_repo and user_id if available for direct DB updates
                 positions_repo = (
                     self.engine.positions_repo if hasattr(self.engine, "positions_repo") else None
@@ -256,13 +262,17 @@ class TradingService:
                         user_id=self.user_id,
                         telegram_notifier=telegram_notifier,
                     )
-                    logger.info("Unified order monitor initialized")
+                    self.logger.info("Unified order monitor initialized", action="initialize")
                 except Exception as e:
-                    logger.warning(f"Unified order monitor initialization failed: {e}")
+                    self.logger.warning(
+                        f"Unified order monitor initialization failed: {e}",
+                        action="initialize",
+                    )
                     self.unified_order_monitor = None
             except Exception as e:
-                logger.warning(
-                    f"Sell order manager initialization failed (non-critical for buy orders): {e}"
+                self.logger.warning(
+                    f"Sell order manager initialization failed (non-critical for buy orders): {e}",
+                    action="initialize",
                 )
                 self.sell_manager = None
                 self.unified_order_monitor = None
@@ -270,18 +280,23 @@ class TradingService:
             # Subscribe to open positions immediately to avoid reconnect loops
             # For buy_orders task, this is not needed (AMO orders don't need real-time prices)
             # Skip it to avoid blocking
-            logger.info("Skipping position subscription for buy_orders (not needed for AMO orders)")
+            self.logger.info(
+                "Skipping position subscription for buy_orders (not needed for AMO orders)",
+                action="initialize",
+            )
             # try:
             #     self._subscribe_to_open_positions()
             # except Exception as e:
-            #     logger.warning(f"Position subscription failed (non-critical for buy orders): {e}")
+            #     self.logger.warning(f"Position subscription failed (non-critical for buy orders): {e}")
 
-            logger.info("Service initialized successfully")
-            logger.info("=" * 80)
+            self.logger.info("Service initialized successfully", action="initialize")
+            self.logger.info("=" * 80, action="initialize")
             return True
 
         except Exception as e:
-            logger.error(f"Service initialization failed: {e}")
+            self.logger.error(
+                f"Service initialization failed: {e}", exc_info=True, action="initialize"
+            )
             import traceback
 
             traceback.print_exc()
@@ -1224,12 +1239,31 @@ class TradingService:
             self._schedule_manager = ScheduleManager(thread_db)
 
             self.logger.info("Setting up signal handlers...", action="run")
-            self.setup_signal_handlers()
+            try:
+                self.setup_signal_handlers()
+                self.logger.info("Signal handlers setup complete", action="run")
+            except Exception as e:
+                self.logger.error(
+                    f"Failed to setup signal handlers: {e}",
+                    exc_info=True,
+                    action="run",
+                )
+                return
 
             # Initialize service (single login)
             self.logger.info("Starting service initialization...", action="run")
-            if not self.initialize():
-                self.logger.error("Failed to initialize service - service will exit", action="run")
+            try:
+                if not self.initialize():
+                    self.logger.error(
+                        "Failed to initialize service - service will exit", action="run"
+                    )
+                    return
+            except Exception as e:
+                self.logger.error(
+                    f"Exception during service initialization: {e}",
+                    exc_info=True,
+                    action="run",
+                )
                 return
 
             self.logger.info("Initialization complete - entering scheduler loop...", action="run")
