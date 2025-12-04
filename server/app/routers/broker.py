@@ -565,7 +565,7 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
 
             # Connect to broker (only if not already connected)
             # broker.connect() calls auth.login() which triggers OTP,
-            # so skip if already authenticated
+            # so manually set client if already authenticated
             if not auth.is_authenticated():
                 if not broker.connect():
                     raise HTTPException(
@@ -573,11 +573,14 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                         detail="Failed to connect to broker gateway. Please try again later.",
                     )
             else:
-                # Auth is already authenticated, just ensure broker is initialized
-                # The broker gateway should work with the existing auth session
+                # Auth is already authenticated, manually set client to avoid re-login
+                # This prevents OTP spam while ensuring broker is properly initialized
                 logger.debug(
-                    f"Auth already authenticated for user {current.id}, skipping connect()"
+                    f"Auth already authenticated for user {current.id}, "
+                    "manually initializing broker client"
                 )
+                broker._client = auth.get_client()
+                broker._connected = True
 
             # Get holdings from broker
             holdings = broker.get_holdings()
@@ -812,7 +815,7 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
 
             # Connect to broker (only if not already connected)
             # broker.connect() calls auth.login() which triggers OTP,
-            # so skip if already authenticated
+            # so manually set client if already authenticated
             if not auth.is_authenticated():
                 if not broker_gateway.connect():
                     raise HTTPException(
@@ -820,11 +823,14 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
                         detail="Failed to connect to broker gateway. Please try again later.",
                     )
             else:
-                # Auth is already authenticated, just ensure broker is initialized
-                # The broker gateway should work with the existing auth session
+                # Auth is already authenticated, manually set client to avoid re-login
+                # This prevents OTP spam while ensuring broker is properly initialized
                 logger.debug(
-                    f"Auth already authenticated for user {current.id}, skipping connect()"
+                    f"Auth already authenticated for user {current.id}, "
+                    "manually initializing broker client"
                 )
+                broker_gateway._client = auth.get_client()
+                broker_gateway._connected = True
 
             # Get orders from broker
             broker_orders = broker_gateway.get_all_orders()
