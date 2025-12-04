@@ -517,18 +517,22 @@ class UnifiedOrderMonitor:
             return 0
 
         try:
-            from datetime import datetime, timedelta
+            from datetime import datetime
+
             from src.infrastructure.db.timezone_utils import ist_now
 
             # Get today's date
             today = ist_now().date()
-            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=ist_now().tzinfo)
+            today_start = datetime.combine(today, datetime.min.time()).replace(
+                tzinfo=ist_now().tzinfo
+            )
 
             # Get all ONGOING buy orders executed today
             # We'll check orders that have execution_time >= today_start
             all_orders = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
 
             newly_executed_orders = []
+            skipped_orders = []
             for order in all_orders:
                 # Only process buy orders
                 if order.side.lower() != "buy":
@@ -540,8 +544,20 @@ class UnifiedOrderMonitor:
                 if execution_time:
                     if execution_time >= today_start:
                         newly_executed_orders.append(order)
+                    else:
+                        skipped_orders.append(
+                            f"{order.symbol}: executed {execution_time} (before today)"
+                        )
                 elif order.filled_at and order.filled_at >= today_start:
                     newly_executed_orders.append(order)
+                else:
+                    skipped_orders.append(f"{order.symbol}: no execution_time or filled_at < today")
+
+            if skipped_orders:
+                logger.debug(
+                    f"Skipped {len(skipped_orders)} ONGOING orders (not executed today): "
+                    f"{', '.join(skipped_orders[:5])}"
+                )
 
             if not newly_executed_orders:
                 return 0
@@ -550,11 +566,14 @@ class UnifiedOrderMonitor:
 
             # Get existing sell orders to avoid duplicates
             existing_sell_orders = self.sell_manager.get_existing_sell_orders()
-            existing_symbols = {extract_base_symbol(symbol).upper() for symbol in existing_sell_orders.keys()}
+            existing_symbols = {
+                extract_base_symbol(symbol).upper() for symbol in existing_sell_orders.keys()
+            }
 
             # Get currently tracked sell orders
             active_sell_symbols = {
-                extract_base_symbol(symbol).upper() for symbol in self.sell_manager.active_sell_orders.keys()
+                extract_base_symbol(symbol).upper()
+                for symbol in self.sell_manager.active_sell_orders.keys()
             }
 
             orders_placed = 0
@@ -565,7 +584,7 @@ class UnifiedOrderMonitor:
 
                     # Skip if already has sell order
                     if base_symbol in existing_symbols or base_symbol in active_sell_symbols:
-                        logger.debug(f"Skipping {base_symbol}: Already has sell order")
+                        logger.info(f"Skipping {base_symbol}: Already has sell order")
                         continue
 
                     # Check if position already has a completed sell order
@@ -586,11 +605,17 @@ class UnifiedOrderMonitor:
                         ticker = f"{base_sym}.NS"
 
                     # Get execution price and quantity
-                    execution_price = getattr(db_order, "execution_price", None) or db_order.avg_price or db_order.price
+                    execution_price = (
+                        getattr(db_order, "execution_price", None)
+                        or db_order.avg_price
+                        or db_order.price
+                    )
                     execution_qty = getattr(db_order, "execution_qty", None) or db_order.quantity
 
                     if not execution_price or execution_qty <= 0:
-                        logger.warning(f"Skipping {base_symbol}: Invalid execution price or quantity")
+                        logger.warning(
+                            f"Skipping {base_symbol}: Invalid execution price or quantity"
+                        )
                         continue
 
                     # Create trade dict in format expected by place_sell_order
@@ -600,7 +625,9 @@ class UnifiedOrderMonitor:
                         "qty": int(execution_qty),
                         "entry_price": execution_price,
                         "placed_symbol": db_order.symbol,  # Keep original broker symbol
-                        "entry_time": execution_time.isoformat() if execution_time else ist_now().isoformat(),
+                        "entry_time": (
+                            execution_time.isoformat() if execution_time else ist_now().isoformat()
+                        ),
                     }
 
                     # Get current EMA9 as target
@@ -619,9 +646,14 @@ class UnifiedOrderMonitor:
                         continue
 
                     # Place sell order
+                    logger.info(
+                        f"Placing sell order for {base_symbol}: qty={int(execution_qty)}, "
+                        f"entry_price={execution_price:.2f}, ema9={ema9:.2f}"
+                    )
                     order_id = self.sell_manager.place_sell_order(trade, ema9)
 
                     if order_id:
+                        logger.info(f"Successfully placed sell order for {base_symbol}: {order_id}")
                         # Track the order
                         self.sell_manager._register_order(
                             symbol=base_symbol,
