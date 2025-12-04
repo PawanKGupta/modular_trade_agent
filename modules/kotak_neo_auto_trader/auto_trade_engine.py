@@ -1471,7 +1471,11 @@ class AutoTradeEngine:
             logger.error(f"Failed to initialize Phase 2 modules: {e}", exc_info=True)
             logger.warning("Continuing without Phase 2 features")
 
-    def monitor_positions(self, live_price_manager=None) -> dict[str, Any]:  # Deprecated: Position monitoring removed, exit in sell monitor, re-entry in buy order service
+    def monitor_positions(
+        self, live_price_manager=None
+    ) -> dict[
+        str, Any
+    ]:  # Deprecated: Position monitoring removed, exit in sell monitor, re-entry in buy order service
         """
         Monitor all open positions for reentry/exit signals.
 
@@ -2883,7 +2887,9 @@ class AutoTradeEngine:
                     ]
 
                     if reentry_orders_from_db:
-                        logger.info(f"Found {len(reentry_orders_from_db)} re-entry orders in database")
+                        logger.info(
+                            f"Found {len(reentry_orders_from_db)} re-entry orders in database"
+                        )
                 except Exception as e:
                     logger.warning(f"Error fetching re-entry orders from database: {e}")
 
@@ -2895,7 +2901,11 @@ class AutoTradeEngine:
 
             # Add re-entry orders from database to processing list
             # Match them with broker orders by order_id
-            reentry_order_ids = {db_order.broker_order_id for db_order in reentry_orders_from_db if db_order.broker_order_id}
+            reentry_order_ids = {
+                db_order.broker_order_id
+                for db_order in reentry_orders_from_db
+                if db_order.broker_order_id
+            }
             for db_order in reentry_orders_from_db:
                 # Check if position is closed - cancel re-entry order if closed
                 if self.positions_repo:
@@ -2908,12 +2918,23 @@ class AutoTradeEngine:
                             if db_order.broker_order_id:
                                 cancel_result = self.orders.cancel_order(db_order.broker_order_id)
                                 if cancel_result:
-                                    logger.info(f"Cancelled re-entry order {db_order.broker_order_id} for closed position")
+                                    logger.info(
+                                        f"Cancelled re-entry order {db_order.broker_order_id} for closed position"
+                                    )
                                     # Update DB order status
-                                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-                                    self.orders_repo.update(db_order, status=DbOrderStatus.CANCELLED, reason="Position closed")
+                                    from src.infrastructure.db.models import (
+                                        OrderStatus as DbOrderStatus,
+                                    )
+
+                                    self.orders_repo.update(
+                                        db_order,
+                                        status=DbOrderStatus.CANCELLED,
+                                        reason="Position closed",
+                                    )
                         except Exception as e:
-                            logger.warning(f"Error cancelling re-entry order {db_order.broker_order_id}: {e}")
+                            logger.warning(
+                                f"Error cancelling re-entry order {db_order.broker_order_id}: {e}"
+                            )
                         continue
 
                 # If re-entry order not in broker orders list, add it for processing
@@ -2921,7 +2942,9 @@ class AutoTradeEngine:
                     # Try to find matching broker order
                     matching_broker_order = None
                     for broker_order in pending_orders:
-                        broker_order_id = broker_order.get("nOrdNo", broker_order.get("orderId", ""))
+                        broker_order_id = broker_order.get(
+                            "nOrdNo", broker_order.get("orderId", "")
+                        )
                         if broker_order_id == db_order.broker_order_id:
                             matching_broker_order = broker_order
                             break
@@ -3971,7 +3994,9 @@ class AutoTradeEngine:
 
         # Load all open positions from database
         if not self.positions_repo or not self.user_id:
-            logger.warning("Positions repository or user_id not available - skipping re-entry check")
+            logger.warning(
+                "Positions repository or user_id not available - skipping re-entry check"
+            )
             return summary
 
         open_positions = self.positions_repo.list(self.user_id)
@@ -4025,7 +4050,9 @@ class AutoTradeEngine:
                 next_level = self._determine_reentry_level(entry_rsi, current_rsi, position)
 
                 if next_level is None:
-                    logger.debug(f"No re-entry opportunity for {symbol} (entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})")
+                    logger.debug(
+                        f"No re-entry opportunity for {symbol} (entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})"
+                    )
                     summary["skipped_invalid_rsi"] += 1
                     continue
 
@@ -4069,8 +4096,10 @@ class AutoTradeEngine:
 
                 # Check for active buy orders
                 if self.order_validation_service:
-                    is_duplicate, duplicate_reason = self.order_validation_service.check_duplicate_order(
-                        broker_symbol, check_active_buy_order=True, check_holdings=False
+                    is_duplicate, duplicate_reason = (
+                        self.order_validation_service.check_duplicate_order(
+                            broker_symbol, check_active_buy_order=True, check_holdings=False
+                        )
                     )
                     if is_duplicate:
                         logger.info(f"Skipping {symbol}: {duplicate_reason}")
@@ -4089,7 +4118,7 @@ class AutoTradeEngine:
                     continue
 
                 # Check balance and adjust quantity if needed
-                affordable_qty = self._get_affordable_quantity(execution_capital, current_price)
+                affordable_qty = self.get_affordable_qty(current_price)
                 if affordable_qty < qty:
                     logger.warning(
                         f"Insufficient balance for {symbol}: requested={qty}, affordable={affordable_qty}"
