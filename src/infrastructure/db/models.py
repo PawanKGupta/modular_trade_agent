@@ -172,6 +172,8 @@ class Positions(Base):
     )  # Array of reentry details
     initial_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_reentry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Entry RSI tracking (for re-entry level progression)
+    entry_rsi: Mapped[float | None] = mapped_column(Float, nullable=True)  # RSI10 at entry
 
     __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_positions_user_symbol"),)
 
@@ -652,7 +654,7 @@ class ServiceSchedule(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     task_name: Mapped[str] = mapped_column(
         String(64), unique=True, index=True, nullable=False
-    )  # premarket_retry, sell_monitor, position_monitor, analysis, buy_orders, eod_cleanup
+    )  # premarket_retry, sell_monitor, analysis, buy_orders, eod_cleanup
     schedule_time: Mapped[time] = mapped_column(Time, nullable=False)  # HH:MM in IST
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_hourly: Mapped[bool] = mapped_column(

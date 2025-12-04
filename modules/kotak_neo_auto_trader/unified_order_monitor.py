@@ -27,6 +27,7 @@ try:
 
     from src.infrastructure.db.models import OrderStatus as DbOrderStatus
     from src.infrastructure.persistence.orders_repository import OrdersRepository
+    from src.infrastructure.persistence.positions_repository import PositionsRepository
 
     DB_AVAILABLE = True
 except ImportError:
@@ -72,6 +73,7 @@ class UnifiedOrderMonitor:
 
         # Initialize orders repository if DB is available
         self.orders_repo = None
+        self.positions_repo = None
         if DB_AVAILABLE and db_session:
             try:
                 self.orders_repo = OrdersRepository(db_session)
@@ -79,6 +81,13 @@ class UnifiedOrderMonitor:
             except Exception as e:
                 logger.warning(f"Failed to initialize OrdersRepository: {e}")
                 self.orders_repo = None
+
+            try:
+                self.positions_repo = PositionsRepository(db_session)
+                logger.info("PositionsRepository initialized for position tracking")
+            except Exception as e:
+                logger.warning(f"Failed to initialize PositionsRepository: {e}")
+                self.positions_repo = None
 
         logger.info("UnifiedOrderMonitor initialized")
 
@@ -359,6 +368,134 @@ class UnifiedOrderMonitor:
                 logger.warning(f"Failed to update OrderStateManager for executed buy order: {e}")
 
         # Update in database (already done in _update_buy_order_status)
+
+        # Create/update position with entry RSI from order metadata
+        self._create_position_from_executed_order(
+            order_id, order_info, execution_price, execution_qty
+        )
+
+    def _create_position_from_executed_order(
+        self,
+        order_id: str,
+        order_info: dict[str, Any],
+        execution_price: float,
+        execution_qty: float,
+    ) -> None:
+        """
+        Create or update position from executed buy order with entry RSI tracking.
+
+        Phase 2: Entry RSI Tracking - Extracts entry RSI from order metadata and stores in position.
+
+        Args:
+            order_id: Order ID
+            order_info: Order tracking info
+            execution_price: Execution price
+            execution_qty: Execution quantity
+        """
+        if not self.positions_repo or not self.user_id:
+            logger.debug("Cannot create position: positions_repo or user_id not available")
+            return
+
+        if not self.orders_repo:
+            logger.debug("Cannot create position: orders_repo not available")
+            return
+
+        try:
+            symbol = order_info.get("symbol", "").upper()
+            if not symbol:
+                logger.warning("Cannot create position: symbol not found in order_info")
+                return
+
+            # Extract base symbol (remove -EQ suffix if present)
+            base_symbol = extract_base_symbol(symbol).upper()
+
+            # Get order from database to extract metadata
+            db_order = None
+            if order_info.get("db_order_id"):
+                db_order = self.orders_repo.get(order_info["db_order_id"])
+            else:
+                # Try to find order by broker_order_id
+                db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
+
+            # Extract entry RSI from order metadata
+            entry_rsi = None
+            if db_order and db_order.order_metadata:
+                metadata = (
+                    db_order.order_metadata if isinstance(db_order.order_metadata, dict) else {}
+                )
+                # Priority: rsi_entry_level > entry_rsi > rsi10
+                if metadata.get("rsi_entry_level") is not None:
+                    entry_rsi = float(metadata["rsi_entry_level"])
+                elif metadata.get("entry_rsi") is not None:
+                    entry_rsi = float(metadata["entry_rsi"])
+                elif metadata.get("rsi10") is not None:
+                    entry_rsi = float(metadata["rsi10"])
+
+            # Default to 29.5 if no RSI data available (assume entry at RSI < 30)
+            if entry_rsi is None:
+                entry_rsi = 29.5
+                logger.debug(
+                    f"No entry RSI found in order metadata for {base_symbol}, defaulting to 29.5"
+                )
+
+            # Check if position already exists
+            existing_pos = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+
+            # Calculate execution time (use current time if not available)
+
+            from src.infrastructure.db.timezone_utils import ist_now
+
+            execution_time = ist_now()
+            if db_order and hasattr(db_order, "filled_at") and db_order.filled_at:
+                execution_time = db_order.filled_at
+            elif db_order and hasattr(db_order, "execution_time") and db_order.execution_time:
+                execution_time = db_order.execution_time
+
+            # Create or update position
+            if existing_pos:
+                # Update existing position (add to quantity, recalculate avg price)
+                existing_qty = existing_pos.quantity
+                existing_avg_price = existing_pos.avg_price
+
+                # Calculate new average price
+                total_cost = (existing_qty * existing_avg_price) + (execution_qty * execution_price)
+                new_qty = existing_qty + execution_qty
+                new_avg_price = total_cost / new_qty if new_qty > 0 else execution_price
+
+                # Only update entry_rsi if it's not already set (preserve original entry RSI)
+                entry_rsi_to_set = None
+                if existing_pos.entry_rsi is None:
+                    entry_rsi_to_set = entry_rsi
+
+                self.positions_repo.upsert(
+                    user_id=self.user_id,
+                    symbol=base_symbol,
+                    quantity=new_qty,
+                    avg_price=new_avg_price,
+                    opened_at=existing_pos.opened_at,  # Preserve original open time
+                    entry_rsi=entry_rsi_to_set,  # Only set if not already set
+                )
+                logger.info(
+                    f"Updated position for {base_symbol}: qty {existing_qty} -> {new_qty}, "
+                    f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}"
+                )
+            else:
+                # Create new position
+                self.positions_repo.upsert(
+                    user_id=self.user_id,
+                    symbol=base_symbol,
+                    quantity=execution_qty,
+                    avg_price=execution_price,
+                    opened_at=execution_time,
+                    entry_rsi=entry_rsi,
+                )
+                logger.info(
+                    f"Created position for {base_symbol}: qty={execution_qty}, "
+                    f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"
+                )
+
+        except Exception as e:
+            logger.error(f"Error creating/updating position from executed order {order_id}: {e}")
 
     def _handle_buy_order_rejection(
         self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]

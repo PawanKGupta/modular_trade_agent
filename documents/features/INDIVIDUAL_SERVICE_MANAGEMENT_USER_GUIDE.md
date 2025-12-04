@@ -36,7 +36,7 @@ The Individual Service Management feature allows users to run specific trading t
 3. You'll see cards for each available service:
    - Pre-market Retry
    - Sell Monitor
-   - Position Monitor
+   - Analysis
    - Buy Orders
    - End-of-Day Cleanup
 
@@ -103,7 +103,7 @@ The schedule table shows:
 1. Click **Edit** on the desired schedule row
 2. Modify the fields:
    - **Schedule Time**: Change the execution time (HH:MM format)
-   - **Hourly**: Check if task runs hourly (e.g., position_monitor)
+   - **Hourly**: Check if task runs hourly (deprecated - no hourly tasks currently)
    - **Continuous**: Check if task runs continuously (e.g., sell_monitor)
    - **End Time**: Set end time for continuous tasks
    - **Enabled**: Enable or disable the schedule
@@ -123,7 +123,6 @@ The schedule table shows:
 ### Schedule Types
 
 - **One-time**: Runs once per day at the specified time (e.g., premarket_retry at 9:00 AM)
-- **Hourly**: Runs every hour at :30 minutes (e.g., position_monitor at 9:30, 10:30, 11:30...)
 - **Continuous**: Runs continuously from start time to end time (e.g., sell_monitor from 9:15 AM to 3:30 PM)
 
 ---

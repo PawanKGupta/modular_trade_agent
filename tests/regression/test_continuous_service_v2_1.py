@@ -52,7 +52,7 @@ class TestContinuousServiceArchitecture:
         assert "eod_cleanup" in service.tasks_completed
         assert "premarket_retry" in service.tasks_completed
         assert "sell_monitor_started" in service.tasks_completed
-        assert "position_monitor" in service.tasks_completed
+        # Position monitor removed in Phase 3 (RSI Exit & Re-entry integration)
 
         # All should start as False
         assert service.tasks_completed["analysis"] == False
@@ -392,7 +392,7 @@ class TestEODCleanupBehavior:
         service.tasks_completed["buy_orders"] = True
         service.tasks_completed["premarket_retry"] = True
         service.tasks_completed["sell_monitor_started"] = True
-        service.tasks_completed["position_monitor"] = {9: True, 10: True}
+        # Position monitor removed in Phase 3 (RSI Exit & Re-entry integration)
 
         # Mock engine with eod_cleanup
         mock_engine = Mock()
@@ -409,7 +409,7 @@ class TestEODCleanupBehavior:
         assert service.tasks_completed["buy_orders"] == False
         assert service.tasks_completed["premarket_retry"] == False
         assert service.tasks_completed["sell_monitor_started"] == False
-        assert service.tasks_completed["position_monitor"] == {}
+        # Position monitor removed in Phase 3 (RSI Exit & Re-entry integration)
 
         # Verify EOD task itself marked complete
         assert service.tasks_completed["eod_cleanup"] == True

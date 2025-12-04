@@ -126,7 +126,6 @@ class TradingService:
             "premarket_retry": False,
             "premarket_amo_adjustment": False,
             "sell_monitor_started": False,
-            "position_monitor": {},  # Track hourly runs
         }
 
         # User-scoped logger
@@ -717,46 +716,6 @@ class TradingService:
                         "buy orders still pending (will be tracked next market open)"
                     )
 
-    def run_position_monitor(self):
-        """9:30 AM (hourly) - Monitor positions for reentry/exit signals"""
-        from src.application.services.task_execution_wrapper import execute_task
-
-        current_hour = datetime.now().hour
-
-        # Run once per hour, skip if already done this hour
-        if self.tasks_completed["position_monitor"].get(current_hour):
-            from src.application.services.task_execution_wrapper import skip_task
-
-            skip_task(
-                self.user_id,
-                self.db,
-                "position_monitor",
-                f"Already executed for hour {current_hour}",
-                self.logger,
-            )
-            return
-
-        with execute_task(
-            self.user_id,
-            self.db,
-            "position_monitor",
-            self.logger,
-            track_execution=not self.skip_execution_tracking,
-        ) as task_context:
-            logger.info("")
-            logger.info("=" * 80)
-            logger.info(f"TASK: POSITION MONITOR ({current_hour}:30)")
-            logger.info("=" * 80)
-
-            # Monitor positions for signals (pass shared price_cache to avoid duplicate auth)
-            summary = self.engine.monitor_positions(live_price_manager=self.price_cache)
-            logger.info(f"Position monitor summary: {summary}")
-            task_context["hour"] = current_hour
-            task_context["summary"] = summary
-
-            self.tasks_completed["position_monitor"][current_hour] = True
-            logger.info("Position monitoring completed")
-
     def run_analysis(self):
         """4:00 PM - Analyze stocks and generate recommendations"""
         from src.application.services.task_execution_wrapper import execute_task
@@ -949,6 +908,7 @@ class TradingService:
                     f"Processing {len(recs)} recommendations...", action="run_buy_orders"
                 )
                 try:
+                    # Place fresh entry orders
                     summary = self.engine.place_new_entries(recs)
                     self.logger.info(f"Buy orders summary: {summary}", action="run_buy_orders")
                     # Log detailed summary
@@ -988,6 +948,19 @@ class TradingService:
                 )
                 task_context["recommendations_count"] = 0
                 task_context["summary"] = summary  # Return empty summary
+
+            # Check and place re-entry orders (regardless of whether there are fresh entry recommendations)
+            # Re-entry should be checked independently of fresh entry orders
+            self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
+            reentry_summary = self.engine.place_reentry_orders()
+            self.logger.info(f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders")
+            self.logger.info(
+                f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
+                f"Placed: {reentry_summary.get('placed', 0)}, "
+                f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
+                f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
+                action="run_buy_orders",
+            )
 
             self.tasks_completed["buy_orders"] = True
             self.logger.info("Buy orders placement completed", action="run_buy_orders")
@@ -1053,7 +1026,6 @@ class TradingService:
             self.tasks_completed["premarket_retry"] = False
             self.tasks_completed["premarket_amo_adjustment"] = False
             self.tasks_completed["sell_monitor_started"] = False
-            self.tasks_completed["position_monitor"] = {}
             task_context["tasks_reset"] = True
             logger.info("Service ready for next trading day")
 
@@ -1131,20 +1103,6 @@ class TradingService:
                                 start_time.hour, start_time.minute
                             ) and current_time <= dt_time(end_time.hour, end_time.minute):
                                 self.run_sell_monitor()
-
-                        # Position monitoring (hourly, uses DB schedule)
-                        position_schedule = self._schedule_manager.get_schedule("position_monitor")
-                        if (
-                            position_schedule
-                            and position_schedule.enabled
-                            and position_schedule.is_hourly
-                        ):
-                            start_time = position_schedule.schedule_time
-                            if (
-                                current_time.minute == start_time.minute
-                                and start_time.hour <= current_time.hour <= 15
-                            ):
-                                self.run_position_monitor()
 
                         # Analysis (uses DB schedule)
                         analysis_schedule = self._schedule_manager.get_schedule("analysis")

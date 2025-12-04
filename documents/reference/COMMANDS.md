@@ -176,27 +176,6 @@ Automated sell order management with EMA9 profit targets.
 - **Auto-updates:** Modifies orders when lower EMA9 detected
 - **Auto-closes:** Marks positions as closed when orders execute
 
-### Position Monitoring
-```powershell
-# Standard monitoring (market hours only)
-python -m modules.kotak_neo_auto_trader.run_position_monitor
-
-# Custom history file
-python -m modules.kotak_neo_auto_trader.run_position_monitor --history data\trades_history.json
-
-# Disable Telegram alerts
-python -m modules.kotak_neo_auto_trader.run_position_monitor --no-alerts
-
-# Force run outside market hours
-python -m modules.kotak_neo_auto_trader.run_position_monitor --force
-```
-Real-time position monitoring with exit signals and averaging opportunities.
-
-**Alerts:**
-- ⚠️ Exit imminent (RSI > 50 or price < EMA9)
-- 🔄 Averaging opportunity (RSI < 30)
-- 📊 Position health status
-
 ### End-of-Day Cleanup
 ```powershell
 # Standard EOD cleanup
@@ -223,9 +202,6 @@ python -m modules.kotak_neo_auto_trader.run_place_amo
 
 # 9:15 AM - Sell Orders (runs until 3:30 PM)
 python -m modules.kotak_neo_auto_trader.run_sell_orders
-
-# 10:00 AM - 3:00 PM - Position Monitoring (hourly)
-python -m modules.kotak_neo_auto_trader.run_position_monitor
 
 # 3:35 PM - End-of-Day Cleanup
 python -m modules.kotak_neo_auto_trader.run_eod_cleanup
@@ -365,8 +341,7 @@ Get-Process python | Where-Object {$_.Modules.FileName -like "*run_trading_servi
 | **At Startup** | Service Start | Login once, runs continuously |
 | **Mon-Fri 9:00 AM** | Pre-Market Retry | Retry failed orders from previous day |
 | **Mon-Fri 9:15 AM** | Sell Orders | Place limit sell orders at EMA9 targets |
-| **Mon-Fri 9:15-3:30 PM** | Sell Monitoring | Update orders every minute |
-| **Mon-Fri 9:30+ AM (hourly)** | Position Monitor | Check for reentry/exit signals |
+| **Mon-Fri 9:15-3:30 PM** | Sell Monitoring | Update orders every minute, RSI exit check |
 | **Mon-Fri 4:00 PM** | Market Analysis | Run trade_agent.py --backtest |
 | **Mon-Fri 4:05 PM** | Buy Orders | Place AMO buy orders for next day |
 | **Mon-Fri 6:00 PM** | EOD Cleanup | Cleanup + reset for next day |

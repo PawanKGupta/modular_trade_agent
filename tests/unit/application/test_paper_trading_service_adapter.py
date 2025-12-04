@@ -120,6 +120,52 @@ class TestPaperTradingServiceAdapter:
 
         assert adapter.tasks_completed["buy_orders"] is True
 
+    def test_run_buy_orders_calls_place_reentry_orders(self, db_session, test_user, mock_paper_broker):
+        """Test that run_buy_orders calls place_reentry_orders after placing fresh entries"""
+        from config.strategy_config import StrategyConfig
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+        )
+        adapter.broker = mock_paper_broker
+        adapter.logger = MagicMock()
+
+        # Initialize engine
+        from src.application.services.paper_trading_service_adapter import PaperTradingEngineAdapter
+
+        adapter.engine = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=adapter.logger,
+        )
+
+        # Mock load_latest_recommendations to return empty (no fresh entries)
+        adapter.engine.load_latest_recommendations = MagicMock(return_value=[])
+
+        # Mock place_reentry_orders
+        mock_reentry_summary = {
+            "attempted": 1,
+            "placed": 1,
+            "failed_balance": 0,
+            "skipped_duplicates": 0,
+            "skipped_invalid_rsi": 0,
+            "skipped_missing_data": 0,
+            "skipped_invalid_qty": 0,
+        }
+        adapter.engine.place_reentry_orders = MagicMock(return_value=mock_reentry_summary)
+
+        # Run buy orders
+        adapter.run_buy_orders()
+
+        # Verify place_reentry_orders was called
+        adapter.engine.place_reentry_orders.assert_called_once()
+
     def test_run_buy_orders_with_recommendations(self, db_session, test_user, mock_paper_broker):
         """Test buy orders with recommendations"""
         from config.strategy_config import StrategyConfig
@@ -938,6 +984,7 @@ class TestPaperTradingSellMonitoring:
         )
         adapter.broker = MagicMock()
         adapter.logger = MagicMock()
+        adapter.converted_to_market = set()  # Initialize RSI exit tracking
 
         adapter.active_sell_orders = {
             "RELIANCE": {
@@ -960,8 +1007,21 @@ class TestPaperTradingSellMonitoring:
             with patch("pandas_ta.rsi", return_value=pd.Series([45.0])):
                 adapter._monitor_sell_orders()
 
-                # Verify fetch_ohlcv_yf was called with days=60
-                mock_fetch.assert_called_with("RELIANCE.NS", days=60, interval="1d")
+                # Verify fetch_ohlcv_yf was called
+                # Main monitoring path uses days=60, RSI exit logic uses days=200
+                calls = [call for call in mock_fetch.call_args_list if call[0][0] == "RELIANCE.NS"]
+                assert len(calls) > 0, "fetch_ohlcv_yf should be called for RELIANCE.NS"
+
+                # Check that main monitoring path uses days=60
+                # (RSI exit logic may also call with days=200, but main path should use 60)
+                main_call = next(
+                    (call for call in calls if call[1].get("days") == 60),
+                    None
+                )
+                assert main_call is not None, (
+                    "fetch_ohlcv_yf should be called with days=60 for main monitoring. "
+                    f"Actual calls: {[call[1] for call in calls]}"
+                )
 
     def test_service_state_attributes(self, db_session, test_user):
         """Test that service has running and shutdown_requested attributes for scheduler control"""

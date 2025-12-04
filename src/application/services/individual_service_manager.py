@@ -573,9 +573,6 @@ class IndividualServiceManager:
         elif task_name == "sell_monitor":
             service.run_sell_monitor()
             return {"task": "sell_monitor", "status": "completed"}
-        elif task_name == "position_monitor":
-            service.run_position_monitor()
-            return {"task": "position_monitor", "status": "completed"}
         elif task_name == "buy_orders":
             logger.info(
                 "About to call service.run_buy_orders()", action="execute_task", task_name=task_name
@@ -1235,16 +1232,7 @@ class IndividualServiceManager:
                 "is_continuous": True,
                 "end_time": time(15, 30),
                 "schedule_type": "daily",
-                "description": "Place sell orders and monitor continuously",
-            },
-            {
-                "task_name": "position_monitor",
-                "schedule_time": time(9, 30),
-                "enabled": True,
-                "is_hourly": True,
-                "is_continuous": False,
-                "schedule_type": "daily",
-                "description": "Monitor positions for reentry/exit signals (hourly)",
+                "description": "Monitors sell orders continuously, converts to market on RSI exit",
             },
             {
                 "task_name": "analysis",
@@ -1305,9 +1293,12 @@ class IndividualServiceManager:
         service_statuses = {s.task_name: s for s in services}
 
         result = {}
-        # Return status for all scheduled tasks
+        # Return status for all scheduled tasks (excluding removed position_monitor)
         for schedule in schedules:
             task_name = schedule.task_name
+            # Skip position_monitor (removed in Phase 3: RSI Exit & Re-entry integration)
+            if task_name == "position_monitor":
+                continue
             service = service_statuses.get(task_name)
             # Query fresh from database to get latest execution status
             # Use raw SQL to bypass session cache and see commits from other threads
