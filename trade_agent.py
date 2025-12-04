@@ -848,6 +848,38 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # Load user config if user_id is provided via environment variable
+    user_id = None
+    db_session = None
+    user_id_str = os.environ.get("TRADE_AGENT_USER_ID")
+    if user_id_str:
+        try:
+            user_id = int(user_id_str)
+            # Create database session for loading user config
+            from src.infrastructure.db.session import get_session
+
+            db_session = next(get_session())
+            logger.info(f"Loaded user_id={user_id} from environment, will use user-specific config")
+            
+            # Debug: Check what ml_enabled value is in database
+            from src.infrastructure.persistence.user_trading_config_repository import (
+                UserTradingConfigRepository,
+            )
+            config_repo = UserTradingConfigRepository(db_session)
+            user_config = config_repo.get_or_create_default(user_id)
+            logger.info(f"DEBUG: User config from DB - ml_enabled={user_config.ml_enabled}, ml_confidence_threshold={user_config.ml_confidence_threshold}")
+            
+            # Convert to StrategyConfig and log
+            from src.application.services.config_converter import (
+                user_config_to_strategy_config,
+            )
+            strategy_config = user_config_to_strategy_config(user_config, db_session=db_session)
+            logger.info(f"DEBUG: StrategyConfig after conversion - ml_enabled={strategy_config.ml_enabled}, ml_confidence_threshold={strategy_config.ml_confidence_threshold}")
+        except (ValueError, Exception) as e:
+            logger.warning(f"Failed to load user_id from environment: {e}, using default config")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+
     main(
         export_csv=not args.no_csv,
         enable_multi_timeframe=not args.no_mtf,
@@ -855,4 +887,6 @@ if __name__ == "__main__":
         dip_mode=getattr(args, "dip_mode", False),
         use_async=args.use_async,
         json_output_path=args.json_output,
+        user_id=user_id,
+        db_session=db_session,
     )
