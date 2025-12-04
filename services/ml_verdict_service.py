@@ -592,38 +592,26 @@ class MLVerdictService(VerdictService):
 
         # Volume features - use configurable volume lookback
         # Note: We calculate volume internally but don't expose absolute volume as feature
+        # Model expects 'avg_volume_20' (not dynamic avg_volume_{volume_lookback})
+        # Always calculate avg_volume_20 to match training data
         if df is not None and not df.empty:
             try:
                 current_volume = float(df["volume"].iloc[-1])  # For calculation only
-                avg_volume_feature_name = f"avg_volume_{volume_lookback}"
-                avg_volume = (
-                    float(df["volume"].tail(volume_lookback).mean())
-                    if len(df) >= volume_lookback
-                    else current_volume
+                # Calculate avg_volume_20 (model expects this exact feature name)
+                avg_volume_20 = (
+                    float(df["volume"].tail(20).mean()) if len(df) >= 20 else current_volume
                 )
-                features[avg_volume_feature_name] = avg_volume
+                features["avg_volume_20"] = avg_volume_20
 
-                # Always keep 'avg_volume_20' for backward compatibility with trained models
-                # Model was trained with avg_volume_20, so we must always provide it
-                if volume_lookback == 20:
-                    features["avg_volume_20"] = avg_volume
-                else:
-                    # Calculate avg_volume_20 separately if using different lookback
-                    avg_volume_20 = (
-                        float(df["volume"].tail(20).mean()) if len(df) >= 20 else current_volume
-                    )
-                    features["avg_volume_20"] = avg_volume_20
-
-                features["volume_ratio"] = current_volume / avg_volume if avg_volume > 0 else 1.0
+                # Use avg_volume_20 for volume_ratio calculation (not volume_lookback)
+                features["volume_ratio"] = (
+                    current_volume / avg_volume_20 if avg_volume_20 > 0 else 1.0
+                )
             except:
-                avg_volume_feature_name = f"avg_volume_{volume_lookback}"
-                features[avg_volume_feature_name] = 0.0
                 # Always create avg_volume_20 for backward compatibility
                 features["avg_volume_20"] = 0.0
                 features["volume_ratio"] = 1.0
         else:
-            avg_volume_feature_name = f"avg_volume_{volume_lookback}"
-            features[avg_volume_feature_name] = 0.0
             # Always create avg_volume_20 for backward compatibility
             features["avg_volume_20"] = 0.0
             features["volume_ratio"] = 1.0
