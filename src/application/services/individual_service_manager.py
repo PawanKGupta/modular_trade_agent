@@ -1293,9 +1293,12 @@ class IndividualServiceManager:
         service_statuses = {s.task_name: s for s in services}
 
         result = {}
-        # Return status for all scheduled tasks
+        # Return status for all scheduled tasks (excluding removed position_monitor)
         for schedule in schedules:
             task_name = schedule.task_name
+            # Skip position_monitor (removed in Phase 3: RSI Exit & Re-entry integration)
+            if task_name == "position_monitor":
+                continue
             service = service_statuses.get(task_name)
             # Query fresh from database to get latest execution status
             # Use raw SQL to bypass session cache and see commits from other threads
