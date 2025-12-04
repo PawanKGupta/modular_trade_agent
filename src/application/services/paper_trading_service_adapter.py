@@ -2296,6 +2296,300 @@ class PaperTradingEngineAdapter:
             self.logger.warning(f"Failed to get indicators for {ticker}: {e}")
             return None
 
+    def place_reentry_orders(self) -> dict[str, int]:
+        """
+        Check re-entry conditions and place AMO orders for re-entries (paper trading).
+
+        Called at 4:05 PM (with buy orders), same as real trading.
+
+        Returns:
+            Summary dict with placement statistics
+        """
+        from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType
+
+        summary = {
+            "attempted": 0,
+            "placed": 0,
+            "failed_balance": 0,
+            "skipped_duplicates": 0,
+            "skipped_invalid_rsi": 0,
+            "skipped_missing_data": 0,
+            "skipped_invalid_qty": 0,
+            "skipped_no_position": 0,
+        }
+
+        if not self.broker:
+            self.logger.error("Paper trading broker not initialized", action="place_reentry_orders")
+            return summary
+
+        if not self.broker.is_connected():
+            self.logger.warning(
+                "Paper trading broker not connected", action="place_reentry_orders"
+            )
+            return summary
+
+        # Get open positions from database
+        try:
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+            positions_repo = PositionsRepository(self.db)
+            open_positions = positions_repo.list(self.user_id)
+            open_positions = [pos for pos in open_positions if pos.closed_at is None]
+
+            if not open_positions:
+                self.logger.info("No open positions for re-entry check", action="place_reentry_orders")
+                return summary
+
+            self.logger.info(
+                f"Checking re-entry conditions for {len(open_positions)} open positions...",
+                action="place_reentry_orders",
+            )
+
+            # Get current holdings and pending orders for duplicate checks
+            holdings = self.broker.get_holdings()
+            pending_orders = self.broker.get_all_orders()
+            current_symbols = {h.symbol.replace(".NS", "").replace(".BO", "").upper() for h in holdings}
+            for order in pending_orders:
+                if order.is_buy_order() and order.is_active():
+                    normalized_symbol = order.symbol.replace(".NS", "").replace(".BO", "").upper()
+                    current_symbols.add(normalized_symbol)
+
+            for position in open_positions:
+                symbol = position.symbol
+                entry_rsi = position.entry_rsi
+
+                # Default entry RSI to 29.5 if not available (assume entry at RSI < 30)
+                if entry_rsi is None:
+                    entry_rsi = 29.5
+                    self.logger.debug(
+                        f"Position {symbol} missing entry_rsi, defaulting to 29.5",
+                        action="place_reentry_orders",
+                    )
+
+                summary["attempted"] += 1
+
+                try:
+                    # Construct ticker from symbol
+                    ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+
+                    # Get current indicators
+                    ind = self._get_daily_indicators(ticker)
+                    if not ind:
+                        self.logger.warning(
+                            f"Skipping {symbol}: missing indicators for re-entry evaluation",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_missing_data"] += 1
+                        continue
+
+                    current_rsi = ind.get("rsi10")
+                    current_price = ind.get("close")
+                    avg_volume = ind.get("avg_volume", 0)
+
+                    if current_rsi is None or current_price is None:
+                        self.logger.warning(
+                            f"Skipping {symbol}: invalid indicators (RSI or price missing)",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_missing_data"] += 1
+                        continue
+
+                    # Determine next re-entry level based on entry RSI
+                    next_level = self._determine_reentry_level(entry_rsi, current_rsi, position)
+
+                    if next_level is None:
+                        self.logger.debug(
+                            f"No re-entry opportunity for {symbol} "
+                            f"(entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_invalid_rsi"] += 1
+                        continue
+
+                    self.logger.info(
+                        f"Re-entry opportunity for {symbol}: entry_rsi={entry_rsi:.2f}, "
+                        f"current_rsi={current_rsi:.2f}, next_level={next_level}",
+                        action="place_reentry_orders",
+                    )
+
+                    # Check for duplicates (holdings or active buy orders)
+                    broker_symbol = symbol.upper()
+                    if broker_symbol in current_symbols:
+                        self.logger.info(
+                            f"Skipping {symbol}: already in holdings or pending orders",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_duplicates"] += 1
+                        continue
+
+                    # Calculate execution capital and quantity
+                    execution_capital = self._calculate_execution_capital(current_price, avg_volume)
+                    qty = int(execution_capital / current_price)
+
+                    if qty <= 0:
+                        self.logger.warning(
+                            f"Skipping {symbol}: invalid quantity ({qty})",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_invalid_qty"] += 1
+                        continue
+
+                    # Check balance and adjust quantity if needed
+                    portfolio = self.broker.get_portfolio()
+                    if portfolio:
+                        available_cash = portfolio.get("availableCash", 0) or portfolio.get("cash", 0)
+                        affordable_qty = int(available_cash / current_price) if current_price > 0 else 0
+                        if affordable_qty < qty:
+                            self.logger.warning(
+                                f"Insufficient balance for {symbol}: "
+                                f"requested={qty}, affordable={affordable_qty}",
+                                action="place_reentry_orders",
+                            )
+                            qty = affordable_qty
+                            if qty <= 0:
+                                # Save as failed order for retry (similar to real trading)
+                                summary["failed_balance"] += 1
+                                summary["skipped_invalid_qty"] += 1
+                                continue
+
+                    # Place re-entry order (AMO-like, similar to fresh entries)
+                    reentry_order = Order(
+                        symbol=ticker,
+                        quantity=qty,
+                        order_type=OrderType.LIMIT,
+                        transaction_type=TransactionType.BUY,
+                        price=current_price,  # AMO order at current price
+                    )
+
+                    # Tag as re-entry with metadata for tracking
+                    reentry_order._metadata = {
+                        "original_ticker": ticker,
+                        "entry_type": "reentry",
+                        "rsi_level": next_level,
+                        "rsi_value": round(current_rsi, 2),
+                        "entry_rsi": entry_rsi,
+                        "reentry_level": next_level,
+                        "rsi10": current_rsi,
+                        "ema9": ind.get("ema9"),
+                        "ema200": ind.get("ema200"),
+                        "capital": execution_capital,
+                    }
+
+                    order_id = self.broker.place_order(reentry_order)
+
+                    if order_id:
+                        summary["placed"] += 1
+                        self.logger.info(
+                            f"Re-entry order placed: {symbol} (order_id: {order_id}, "
+                            f"qty: {qty}, level: {next_level})",
+                            action="place_reentry_orders",
+                        )
+
+                        # Save to database (similar to fresh entries)
+                        if self.user_id and self.db:
+                            from src.infrastructure.db.timezone_utils import ist_now
+                            from src.infrastructure.persistence.orders_repository import OrdersRepository
+                            from src.infrastructure.db.models import OrderStatus
+
+                            orders_repo = OrdersRepository(self.db)
+                            orders_repo.create(
+                                user_id=self.user_id,
+                                symbol=broker_symbol,
+                                side="buy",
+                                order_type="limit",
+                                quantity=qty,
+                                price=current_price,
+                                status=OrderStatus.PENDING_EXECUTION,
+                                broker_order_id=order_id,
+                                order_metadata=reentry_order._metadata,
+                                entry_type="reentry",
+                            )
+                            self.db.commit()
+                    else:
+                        self.logger.warning(
+                            f"Failed to place re-entry order for {symbol}",
+                            action="place_reentry_orders",
+                        )
+
+                except Exception as e:
+                    self.logger.error(
+                        f"Error checking re-entry for {symbol}: {e}",
+                        exc_info=True,
+                        action="place_reentry_orders",
+                    )
+                    continue
+
+            self.logger.info(
+                f"Re-entry check complete: attempted={summary['attempted']}, "
+                f"placed={summary['placed']}, failed_balance={summary['failed_balance']}, "
+                f"skipped={summary['skipped_duplicates'] + summary['skipped_invalid_rsi'] + summary['skipped_missing_data'] + summary['skipped_invalid_qty']}",
+                action="place_reentry_orders",
+            )
+
+        except Exception as e:
+            self.logger.error(
+                f"Error in place_reentry_orders: {e}",
+                exc_info=True,
+                action="place_reentry_orders",
+            )
+
+        return summary
+
+    def _determine_reentry_level(
+        self, entry_rsi: float, current_rsi: float, position: Any
+    ) -> int | None:
+        """
+        Determine next re-entry level based on entry RSI and current RSI (paper trading).
+
+        Logic (same as real trading):
+        - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
+        - Entry at RSI < 20 → Re-entry at RSI < 10 → Reset
+        - Entry at RSI < 10 → Only Reset
+
+        Reset mechanism:
+        - When RSI > 30: Set reset_ready = True
+        - When RSI drops < 30 after reset_ready: Reset all levels
+
+        Args:
+            entry_rsi: RSI10 value at initial entry
+            current_rsi: Current RSI10 value
+            position: Position object (for tracking reset state)
+
+        Returns:
+            Next re-entry level (30, 20, or 10), or None if no re-entry opportunity
+        """
+        reset_ready = False
+        levels_taken = {"30": False, "20": False, "10": False}
+
+        # Determine initial levels_taken based on entry_rsi
+        if entry_rsi < 10:
+            levels_taken = {"30": True, "20": True, "10": True}
+        elif entry_rsi < 20:
+            levels_taken = {"30": True, "20": True, "10": False}
+        elif entry_rsi < 30:
+            levels_taken = {"30": True, "20": False, "10": False}
+        else:
+            levels_taken = {"30": False, "20": False, "10": False}
+
+        # Check reset mechanism
+        if current_rsi > 30:
+            reset_ready = True
+
+        # If reset_ready and RSI drops < 30 again, trigger NEW CYCLE reentry at RSI<30
+        if current_rsi < 30 and reset_ready:
+            levels_taken = {"30": False, "20": False, "10": False}
+            reset_ready = False
+            return 30
+
+        # Normal progression through levels
+        next_level = None
+        if levels_taken.get("30") and not levels_taken.get("20") and current_rsi < 20:
+            next_level = 20
+        elif levels_taken.get("20") and not levels_taken.get("10") and current_rsi < 10:
+            next_level = 10
+
+        return next_level
+
     def _calculate_execution_capital(self, price: float, avg_volume: float) -> float:
         """
         Calculate execution capital based on liquidity (matches real trading logic).
