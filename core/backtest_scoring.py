@@ -475,6 +475,7 @@ def run_stock_backtest(
                 stock_name=stock_symbol,
                 date_range=date_range,
                 capital_per_position=50000,  # Reduced for faster execution
+                config=config,  # Pass user's config to enable ML if configured
             )
 
             # Calculate backtest score
