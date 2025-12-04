@@ -965,7 +965,7 @@ class TestPaperTradingSellMonitoring:
                 # Main monitoring path uses days=60, RSI exit logic uses days=200
                 calls = [call for call in mock_fetch.call_args_list if call[0][0] == "RELIANCE.NS"]
                 assert len(calls) > 0, "fetch_ohlcv_yf should be called for RELIANCE.NS"
-                
+
                 # Check that main monitoring path uses days=60
                 # (RSI exit logic may also call with days=200, but main path should use 60)
                 main_call = next(
