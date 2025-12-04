@@ -155,6 +155,14 @@ class SellOrderManager:
         # Track lowest EMA9 values {symbol: float}
         self.lowest_ema9: dict[str, float] = {}
 
+        # RSI Exit: Cache for RSI10 values {symbol: rsi10_value}
+        # Cached at market open (previous day's RSI10), updated with real-time if available
+        self.rsi10_cache: dict[str, float] = {}
+
+        # RSI Exit: Track orders converted to market {symbol}
+        # Prevents duplicate conversion attempts
+        self.converted_to_market: set[str] = set()
+
         logger.info(f"SellOrderManager initialized with {max_workers} worker threads")
 
     def _register_order(
@@ -1400,6 +1408,9 @@ class SellOrderManager:
         # Clean up any rejected orders from tracking
         self._cleanup_rejected_orders()
 
+        # Initialize RSI10 cache for all open positions (previous day's RSI10)
+        self._initialize_rsi10_cache(open_positions)
+
         logger.info(f"Placed {orders_placed} sell orders at market open")
         return orders_placed
 
@@ -1507,7 +1518,7 @@ class SellOrderManager:
         Returns:
             Dict with statistics
         """
-        stats = {"checked": 0, "updated": 0, "executed": 0}
+        stats = {"checked": 0, "updated": 0, "executed": 0, "converted_to_market": 0}
 
         # Clean up any rejected/cancelled orders before monitoring
         self._cleanup_rejected_orders()
@@ -1577,9 +1588,24 @@ class SellOrderManager:
                 logger.info(f"Monitor cycle: {stats['executed']} executed, all orders completed")
             return stats
 
-        # Process remaining active stocks in parallel
+        # Check RSI exit condition FIRST (priority over EMA9 check)
+        stats["converted_to_market"] = 0
+        symbols_to_skip_ema = []
+        for symbol, order_info in list(self.active_sell_orders.items()):
+            # Skip if already converted
+            if symbol in self.converted_to_market:
+                symbols_to_skip_ema.append(symbol)
+                continue
+
+            # Check RSI exit condition
+            if self._check_rsi_exit_condition(symbol, order_info):
+                stats["converted_to_market"] += 1
+                symbols_to_skip_ema.append(symbol)
+                continue  # Skip EMA9 check (order already converted)
+
+        # Process remaining active stocks in parallel (EMA9 monitoring)
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all monitoring tasks (only for non-executed orders)
+            # Submit all monitoring tasks (only for non-executed, non-converted orders)
             future_to_symbol = {
                 executor.submit(
                     self._check_and_update_single_stock,
@@ -1588,6 +1614,7 @@ class SellOrderManager:
                     [],  # Empty list - executed orders already removed
                 ): symbol
                 for symbol, order_info in self.active_sell_orders.items()
+                if symbol not in symbols_to_skip_ema
             }
 
             # Process results as they complete
@@ -1616,6 +1643,232 @@ class SellOrderManager:
                     self.lowest_ema9[symbol] = ema9
 
         logger.info(
-            f"Monitor cycle: {stats['checked']} checked, {stats['updated']} updated, {stats['executed']} executed"
+            f"Monitor cycle: {stats['checked']} checked, {stats['updated']} updated, "
+            f"{stats['executed']} executed, {stats.get('converted_to_market', 0)} converted to market"
         )
         return stats
+
+    def _check_rsi_exit_condition(self, symbol: str, order_info: dict[str, Any]) -> bool:
+        """
+        Check if RSI10 > 50 and convert limit order to market order.
+
+        Priority:
+        1. Check previous day's RSI10 (cached)
+        2. Then check real-time RSI10 (update cache if available)
+        3. If RSI10 > 50: Convert limit order to market order
+
+        Args:
+            symbol: Stock symbol
+            order_info: Order information dictionary
+
+        Returns:
+            True if order was converted to market, False otherwise
+        """
+        # Skip if already converted
+        if symbol in self.converted_to_market:
+            return False
+
+        # Get ticker for RSI calculation
+        ticker = order_info.get("ticker")
+        if not ticker:
+            logger.debug(f"No ticker found for {symbol}, skipping RSI exit check")
+            return False
+
+        # Get current RSI10 (previous day first, then real-time)
+        rsi10 = self._get_current_rsi10(symbol, ticker)
+        if rsi10 is None:
+            logger.debug(f"RSI10 unavailable for {symbol}, skipping exit check")
+            return False
+
+        # Check exit condition
+        if rsi10 > 50:
+            logger.info(f"RSI Exit triggered for {symbol}: RSI10={rsi10:.2f} > 50")
+            return self._convert_to_market_sell(symbol, order_info, rsi10)
+
+        return False
+
+    def _convert_to_market_sell(
+        self, symbol: str, order_info: dict[str, Any], rsi10: float
+    ) -> bool:
+        """
+        Convert existing limit sell order to market sell order.
+
+        Primary: Try to modify existing order (change order_type from LIMIT to MARKET)
+        Fallback: If modify fails, cancel existing order and place new market order
+
+        Args:
+            symbol: Stock symbol
+            order_info: Order information dictionary
+            rsi10: Current RSI10 value (for logging)
+
+        Returns:
+            True if conversion successful, False otherwise
+        """
+        order_id = order_info.get("order_id")
+        qty = order_info.get("qty")
+        placed_symbol = order_info.get("placed_symbol") or f"{symbol}-EQ"
+
+        if not order_id or not qty:
+            logger.error(f"Missing order_id or qty for {symbol}, cannot convert to market")
+            return False
+
+        try:
+            # Primary: Try to modify existing order (LIMIT → MARKET)
+            logger.info(f"Attempting to modify order {order_id} for {symbol} (LIMIT → MARKET)")
+            modify_result = self.orders.modify_order(
+                order_id=order_id,
+                quantity=qty,
+                order_type="MKT",  # Change to MARKET order
+            )
+
+            # Check if modify succeeded
+            if modify_result and modify_result.get("stat", "").lower() == "ok":
+                logger.info(f"Successfully modified order {order_id} for {symbol} to MARKET order")
+                self.converted_to_market.add(symbol)
+                self._remove_order(symbol, reason="Converted to market (RSI > 50)")
+                return True
+
+            # Modify failed, try fallback: cancel + place
+            logger.warning(
+                f"Modify order failed for {symbol}, falling back to cancel+place: {modify_result}"
+            )
+
+        except Exception as e:
+            logger.warning(f"Error modifying order for {symbol}, falling back to cancel+place: {e}")
+
+        # Fallback: Cancel existing order and place new market order
+        try:
+            # Cancel existing limit order
+            logger.info(f"Cancelling limit order {order_id} for {symbol}")
+            cancel_result = self.orders.cancel_order(order_id)
+
+            if not cancel_result:
+                logger.error(f"Failed to cancel limit order {order_id} for {symbol}")
+                # Send notification but don't retry
+                self._send_rsi_exit_error_notification(symbol, "cancel_failed", rsi10)
+                return False
+
+            # Place new market sell order
+            logger.info(f"Placing market sell order for {symbol}: qty={qty}")
+            market_order_resp = self.orders.place_market_sell(
+                symbol=placed_symbol,
+                quantity=qty,
+                variety=self._get_order_variety_for_market_hours(),
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
+
+            # Verify order placement
+            if self._is_valid_order_response(market_order_resp):
+                market_order_id = self._extract_order_id(market_order_resp)
+                logger.info(f"Placed market sell order for {symbol}: {market_order_id}")
+
+                # Track conversion
+                self.converted_to_market.add(symbol)
+
+                # Remove from limit order monitoring
+                self._remove_order(symbol, reason="Converted to market (RSI > 50)")
+
+                return True
+            else:
+                logger.error(f"Failed to place market sell order for {symbol}: {market_order_resp}")
+                self._send_rsi_exit_error_notification(symbol, "place_failed", rsi10)
+                return False
+
+        except Exception as e:
+            logger.error(f"Error converting {symbol} to market sell (fallback): {e}")
+            self._send_rsi_exit_error_notification(symbol, "conversion_error", rsi10)
+            return False
+
+    def _is_valid_order_response(self, response: Any) -> bool:
+        """
+        Check if order response is valid (order was placed successfully).
+
+        Args:
+            response: Order response from broker API
+
+        Returns:
+            True if order was placed successfully
+        """
+        if not response:
+            return False
+
+        if isinstance(response, dict):
+            # Check for error indicators
+            keys_lower = {str(k).lower() for k in response.keys()}
+            if any(k in keys_lower for k in ("error", "errors", "not_ok")):
+                return False
+
+            # Check for order ID indicators
+            has_order_id = any(
+                key in response for key in ["nOrdNo", "orderId", "order_id", "neoOrdNo", "data"]
+            )
+            return has_order_id
+
+        return False
+
+    def _extract_order_id(self, response: Any) -> str | None:
+        """
+        Extract order ID from broker response.
+
+        Args:
+            response: Order response from broker API
+
+        Returns:
+            Order ID string, or None if not found
+        """
+        if not response or not isinstance(response, dict):
+            return None
+
+        # Try various order ID fields
+        order_id = (
+            response.get("nOrdNo")
+            or response.get("orderId")
+            or response.get("order_id")
+            or response.get("neoOrdNo")
+            or response.get("data", {}).get("nOrdNo")
+            or response.get("data", {}).get("orderId")
+            or response.get("order", {}).get("neoOrdNo")
+        )
+
+        return str(order_id) if order_id else None
+
+    def _send_rsi_exit_error_notification(self, symbol: str, error_type: str, rsi10: float) -> None:
+        """
+        Send Telegram notification for RSI exit conversion errors.
+
+        Args:
+            symbol: Stock symbol
+            error_type: Type of error (cancel_failed, place_failed, conversion_error)
+            rsi10: Current RSI10 value
+        """
+        try:
+            from modules.kotak_neo_auto_trader.telegram_notifier import send_telegram
+
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            error_messages = {
+                "cancel_failed": "Failed to cancel limit order",
+                "place_failed": "Failed to place market order",
+                "conversion_error": "Error during order conversion",
+            }
+
+            message = (
+                f"❌ *RSI Exit Conversion Failed*\n\n"
+                f"Symbol: `{symbol}`\n"
+                f"RSI10: {rsi10:.2f}\n"
+                f"Error: {error_messages.get(error_type, 'Unknown error')}\n\n"
+                f"Limit order remains active. Manual intervention may be required.\n\n"
+                f"_Time: {timestamp}_"
+            )
+
+            send_telegram(message)
+        except Exception as e:
+            logger.warning(f"Failed to send RSI exit error notification: {e}")
+
+    def _get_order_variety_for_market_hours(self) -> str:
+        """Get order variety based on market hours."""
+        from core.volume_analysis import is_market_hours
+
+        if is_market_hours():
+            return "REGULAR"
+        return config.DEFAULT_VARIETY
