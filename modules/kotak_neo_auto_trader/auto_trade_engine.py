@@ -903,6 +903,28 @@ class AutoTradeEngine:
                             priority_score = None
                     else:
                         priority_score = None
+
+                # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
+                # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
+                ml_confidence = row.get("ml_confidence")
+                if ml_confidence is not None and priority_score is not None:
+                    try:
+                        ml_confidence = float(ml_confidence) if ml_confidence != "" else None
+                        if ml_confidence is not None and ml_confidence > 0:
+                            # Boost priority based on ML confidence bands:
+                            # - High confidence (>=70%): +20 points (strong ML conviction)
+                            # - Medium confidence (60-70%): +10 points (good ML conviction)
+                            # - Low confidence (50-60%): +5 points (moderate ML conviction)
+                            if ml_confidence >= 0.70:
+                                priority_score += 20  # High ML confidence boost
+                            elif ml_confidence >= 0.60:
+                                priority_score += 10  # Medium ML confidence boost
+                            elif ml_confidence >= 0.50:
+                                priority_score += 5   # Low ML confidence boost
+                            # ML confidence < 50%: No boost (below threshold)
+                    except (ValueError, TypeError):
+                        pass  # Ignore ML confidence if invalid
+
                 recs.append(
                     Recommendation(
                         ticker=ticker,
@@ -1033,6 +1055,22 @@ class AutoTradeEngine:
                             if priority_score is None:
                                 # Fallback to combined_score if priority_score not available
                                 priority_score = signal.combined_score or 0.0
+
+                            # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
+                            # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
+                            ml_confidence = signal.ml_confidence
+                            if ml_confidence is not None and ml_confidence > 0:
+                                # Boost priority based on ML confidence bands:
+                                # - High confidence (>=70%): +20 points (strong ML conviction)
+                                # - Medium confidence (60-70%): +10 points (good ML conviction)
+                                # - Low confidence (50-60%): +5 points (moderate ML conviction)
+                                if ml_confidence >= 0.70:
+                                    priority_score += 20  # High ML confidence boost
+                                elif ml_confidence >= 0.60:
+                                    priority_score += 10  # Medium ML confidence boost
+                                elif ml_confidence >= 0.50:
+                                    priority_score += 5   # Low ML confidence boost
+                                # ML confidence < 50%: No boost (below threshold)
 
                             # Create Recommendation object
                             rec = Recommendation(
