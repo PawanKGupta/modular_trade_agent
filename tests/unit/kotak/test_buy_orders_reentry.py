@@ -152,7 +152,7 @@ class TestDetermineReentryLevel:
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
     def test_determine_reentry_level_reset_mechanism_comprehensive(self, mock_auth):
         """Test reset mechanism comprehensively: all levels taken, RSI > 30, then < 30
-        
+
         This test verifies the reset logic works correctly within the constraints
         of the current implementation (reset_ready not persisted).
         """
@@ -177,14 +177,14 @@ class TestDetermineReentryLevel:
         # However, this is impossible in practice (RSI can't be both > 30 and < 30)
         # So we test the logic: if reset_ready was True and RSI < 30, it would reset
         # This demonstrates the intended behavior, even though it requires persistence
-        
+
         # Test normal progression: Entry at RSI < 30, current RSI < 20
         # Without persisted reset_ready, this won't trigger reset
         entry_rsi_normal = 25.0
         next_level_low = engine._determine_reentry_level(entry_rsi_normal, 28.0, position)
         # Entry at RSI < 30, current RSI = 28 (not < 20), so no re-entry
         assert next_level_low is None  # RSI not < 20, so no re-entry
-        
+
         # Test actual re-entry: Entry at RSI < 30, current RSI < 20
         next_level_actual = engine._determine_reentry_level(entry_rsi_normal, 18.0, position)
         assert next_level_actual == 20  # Normal progression to level 20
@@ -486,3 +486,34 @@ class TestPlaceReentryOrders:
         # When affordable_qty < qty and affordable_qty <= 0, it saves as failed order
         # So should be in failed_balance, not skipped_invalid_qty
         assert summary["failed_balance"] == 1
+
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
+    def test_place_reentry_orders_missing_indicators(self, mock_auth):
+        """Test that re-entry is skipped when indicators are missing"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth.return_value = mock_auth_instance
+
+        engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
+
+        # Mock position
+        mock_position = Mock()
+        mock_position.symbol = "RELIANCE"
+        mock_position.entry_rsi = 25.0
+        mock_position.closed_at = None
+
+        # Mock positions repository
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+        engine.positions_repo = mock_positions_repo
+        engine.user_id = 1
+
+        # Mock get_daily_indicators to return None (missing data)
+        engine.get_daily_indicators = Mock(return_value=None)
+
+        summary = engine.place_reentry_orders()
+
+        # Verify missing indicators was handled
+        assert summary["attempted"] == 1
+        assert summary["placed"] == 0
+        assert summary["skipped_missing_data"] == 1
