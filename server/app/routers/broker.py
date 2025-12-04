@@ -363,43 +363,21 @@ def broker_status(
     if settings.trade_mode != TradeMode.BROKER or not settings.broker_creds_encrypted:
         return {"broker": settings.broker, "status": settings.broker_status}
 
-    # Try to verify session validity without triggering login
-    try:
-        broker_creds = decrypt_broker_credentials(settings.broker_creds_encrypted)
-        if not broker_creds:
-            return {"broker": settings.broker, "status": "Disconnected"}
+    # Check cached auth session first (if available from previous API calls)
+    # This avoids creating new auth instances on every status check
+    auth = _broker_auth_cache.get(current.id)
 
-        # Create temp env file
-        temp_env_file = create_temp_env_file(broker_creds)
+    if auth and auth.is_authenticated():
+        # Cached session is valid - return Connected status
+        if settings.broker_status != "Connected":
+            settings = repo.update(settings, broker_status="Connected")
+            db.commit()
+        return {"broker": settings.broker, "status": "Connected"}
 
-        try:
-            from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
-
-            # Create auth instance (doesn't login yet)
-            auth = KotakNeoAuth(temp_env_file)
-
-            # Check if auth is already authenticated (has valid session from previous request)
-            # Note: This will be False for a new instance, but we check anyway
-            if auth.is_authenticated():
-                # Already authenticated - session is valid
-                if settings.broker_status != "Connected":
-                    settings = repo.update(settings, broker_status="Connected")
-                    db.commit()
-                return {"broker": settings.broker, "status": "Connected"}
-
-            # For a new instance, we can't check session without triggering login
-            # So we rely on the status from previous successful API calls
-            # The status will be updated by portfolio/orders endpoints when they succeed/fail
-            # This endpoint just returns the stored status without triggering OTP
-            return {"broker": settings.broker, "status": settings.broker_status}
-
-        except Exception as e:
-            logger.warning(f"Session check failed: {e}")
-            # On error, return stored status
-            return {"broker": settings.broker, "status": settings.broker_status}
-    except Exception as e:
-        logger.warning(f"Broker status check error: {e}")
-        return {"broker": settings.broker, "status": settings.broker_status}
+    # No cached session - just return stored status without creating new auth instance
+    # This prevents "KotakNeoAuth initialized" log spam from status polling
+    # The status will be updated by portfolio/orders endpoints when they succeed/fail
+    return {"broker": settings.broker, "status": settings.broker_status}
 
 
 @router.get("/creds/info", response_model=BrokerCredsInfo)
