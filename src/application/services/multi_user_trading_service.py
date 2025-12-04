@@ -179,31 +179,6 @@ class MultiUserTradingService:
                                 )
 
                     # Position monitoring (hourly, uses DB schedule)
-                    position_schedule = self._schedule_manager.get_schedule("position_monitor")
-                    if (
-                        position_schedule
-                        and position_schedule.enabled
-                        and position_schedule.is_hourly
-                    ):
-                        start_time = position_schedule.schedule_time
-                        # Run hourly at the scheduled minute (e.g., every hour at :30)
-                        if (
-                            current_time.minute == start_time.minute
-                            and start_time.hour <= now.hour <= 15
-                        ):  # noqa: PLR2004
-                            hour_key = now.strftime("%Y-%m-%d %H")
-                            if not service.tasks_completed.get("position_monitor", {}).get(
-                                hour_key
-                            ):
-                                try:
-                                    service.run_position_monitor()
-                                except Exception as e:
-                                    user_logger.error(
-                                        f"Position monitoring failed: {e}",
-                                        exc_info=True,
-                                        action="scheduler",
-                                    )
-
                     # 4:00 PM - Analysis (check custom schedule from DB and trigger via Individual Service Manager)
                     analysis_schedule = self._schedule_manager.get_schedule("analysis")
                     if analysis_schedule and analysis_schedule.enabled:

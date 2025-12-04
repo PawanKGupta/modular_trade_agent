@@ -77,7 +77,6 @@ class PaperTradingServiceAdapter:
             "premarket_retry": False,
             "premarket_amo_adjustment": False,
             "sell_monitor_started": False,
-            "position_monitor": {},
         }
 
         # Engine-like interface for compatibility
@@ -735,85 +734,6 @@ class PaperTradingServiceAdapter:
                 f"Sell monitoring error: {e}", exc_info=True, action="run_sell_monitor"
             )
 
-    def run_position_monitor(self):
-        """9:30 AM (hourly) - Monitor positions for reentry/exit signals (paper trading)"""
-        from datetime import datetime
-
-        from src.application.services.task_execution_wrapper import execute_task
-
-        current_hour = datetime.now().hour
-
-        # Run once per hour, skip if already done this hour
-        if self.tasks_completed["position_monitor"].get(current_hour):
-            from src.application.services.task_execution_wrapper import skip_task
-
-            skip_task(
-                self.user_id,
-                self.db,
-                "position_monitor",
-                f"Already monitored this hour ({current_hour}:00)",
-                self.logger,
-            )
-            return
-
-        with execute_task(
-            self.user_id,
-            self.db,
-            "position_monitor",
-            self.logger,
-            track_execution=not self.skip_execution_tracking,
-        ) as task_context:
-            self.logger.info("", action="run_position_monitor")
-            self.logger.info("=" * 80, action="run_position_monitor")
-            self.logger.info(
-                f"TASK: POSITION MONITOR ({current_hour}:30) - PAPER TRADING",
-                action="run_position_monitor",
-            )
-            self.logger.info("=" * 80, action="run_position_monitor")
-
-            if not self.engine:
-                error_msg = "Paper trading engine not initialized. Call initialize() first."
-                self.logger.error(error_msg, action="run_position_monitor")
-                raise RuntimeError(error_msg)
-
-            # Paper trading: Monitor positions
-            summary = self.engine.monitor_positions()
-            self.logger.info(f"Position monitor summary: {summary}", action="run_position_monitor")
-            task_context["hour"] = current_hour
-            task_context["summary"] = summary
-
-            # If re-entries happened, sync sell order quantities and targets with updated holdings
-            if summary.get("reentries", 0) > 0:
-                self.logger.info(
-                    f"Re-entries detected ({summary['reentries']}), syncing sell order quantities and targets...",
-                    action="run_position_monitor",
-                )
-
-                # Calculate new EMA9 targets for symbols with re-entries (matches backtest)
-                symbol_targets = {}
-                holdings = self.broker.get_holdings() if self.broker else []
-                for holding in holdings:
-                    symbol = holding.symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
-                    if symbol in self.active_sell_orders:
-                        ticker = f"{symbol}.NS"
-                        new_target = self._calculate_ema9(ticker)
-                        if new_target:
-                            symbol_targets[symbol] = new_target
-                            self.logger.debug(
-                                f"Calculated new EMA9 target for {symbol}: Rs {new_target:.2f}",
-                                action="run_position_monitor",
-                            )
-
-                updated_count = self._sync_sell_order_quantities_with_holdings(symbol_targets)
-                if updated_count > 0:
-                    self.logger.info(
-                        f"Updated {updated_count} sell order quantities and targets after re-entry",
-                        action="run_position_monitor",
-                    )
-                    task_context["sell_orders_updated"] = updated_count
-
-            self.tasks_completed["position_monitor"][current_hour] = True
-            self.logger.info("Position monitoring completed", action="run_position_monitor")
 
     def run_eod_cleanup(self):
         """6:00 PM - End-of-day cleanup (paper trading)"""
@@ -1111,10 +1031,10 @@ class PaperTradingServiceAdapter:
                 # Skip if already converted
                 if symbol in self.converted_to_market:
                     continue
-                
+
                 rsi10 = self._get_current_rsi10_paper(symbol, ticker)
                 RSI_EXIT_THRESHOLD = 50  # From backtest: 10% of exits, 37% win rate
-                
+
                 if rsi10 is not None and rsi10 > RSI_EXIT_THRESHOLD:
                     self.logger.info(
                         f"? EXIT TRIGGERED: {symbol} - RSI {rsi10:.1f} > 50 (falling knife exit)",
@@ -2081,7 +2001,7 @@ class PaperTradingEngineAdapter:
 
         return summary
 
-    def monitor_positions(self):
+    def monitor_positions(self):  # Deprecated: Position monitoring removed, re-entry now in buy order service
         """
         Monitor positions for reentry/exit signals (paper trading).
 

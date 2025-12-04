@@ -17,7 +17,6 @@ interface IndividualServiceControlsProps {
 const TASK_DISPLAY_NAMES: Record<string, string> = {
 	premarket_retry: 'Pre-market Retry',
 	sell_monitor: 'Sell Monitor',
-	position_monitor: 'Position Monitor',
 	analysis: 'Analysis',
 	buy_orders: 'Buy Orders',
 	eod_cleanup: 'End-of-Day Cleanup',
@@ -26,7 +25,6 @@ const TASK_DISPLAY_NAMES: Record<string, string> = {
 const TASK_DESCRIPTIONS: Record<string, string> = {
 	premarket_retry: 'Retries failed orders from previous day',
 	sell_monitor: 'Places sell orders and monitors them continuously',
-	position_monitor: 'Monitors positions hourly for reentry/exit signals',
 	analysis: 'Analyzes stocks and generates recommendations',
 	buy_orders: 'Places AMO buy orders for the next day',
 	eod_cleanup: 'End-of-day cleanup and reset for the next day',

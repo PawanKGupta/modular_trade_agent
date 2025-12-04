@@ -99,7 +99,6 @@ export function ServiceSchedulePage() {
 	const TASK_DISPLAY_NAMES: Record<string, string> = {
 		premarket_retry: 'Pre-market Retry',
 		sell_monitor: 'Sell Monitor',
-		position_monitor: 'Position Monitor',
 		analysis: 'Analysis',
 		buy_orders: 'Buy Orders',
 		eod_cleanup: 'End-of-Day Cleanup',

@@ -407,7 +407,7 @@ class AutoTradeEngine:
                 entry_rsi = trade.get("rsi_entry_level")
             elif trade.get("rsi10") is not None:
                 entry_rsi = trade.get("rsi10")
-            
+
             # Only set entry_rsi for new positions (preserve original entry RSI)
             # If position exists and already has entry_rsi, don't overwrite it
             if existing_pos and existing_pos.entry_rsi is not None:
@@ -1471,7 +1471,7 @@ class AutoTradeEngine:
             logger.error(f"Failed to initialize Phase 2 modules: {e}", exc_info=True)
             logger.warning("Continuing without Phase 2 features")
 
-    def monitor_positions(self, live_price_manager=None) -> dict[str, Any]:
+    def monitor_positions(self, live_price_manager=None) -> dict[str, Any]:  # Deprecated: Position monitoring removed, exit in sell monitor, re-entry in buy order service
         """
         Monitor all open positions for reentry/exit signals.
 
