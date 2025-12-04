@@ -18,7 +18,6 @@ All other components receive the shared auth session and only handle re-authenti
 import argparse
 import signal
 import sys
-import threading
 import time
 from datetime import datetime
 from datetime import time as dt_time
@@ -138,7 +137,7 @@ class TradingService:
     def setup_signal_handlers(self):
         """
         Setup graceful shutdown handlers.
-        
+
         Note: signal.signal() may not work in background threads on some platforms.
         This is expected and non-critical - the service can still be stopped via
         shutdown_requested flag or through the service management API.
@@ -146,7 +145,7 @@ class TradingService:
         try:
             signal.signal(signal.SIGINT, self._handle_shutdown)
             signal.signal(signal.SIGTERM, self._handle_shutdown)
-        except (ValueError, OSError, RuntimeError) as e:
+        except (ValueError, OSError, RuntimeError):
             # Signal handlers can only be set from main thread on some platforms
             # This is expected behavior for background threads - re-raise to be handled by caller
             raise
@@ -239,11 +238,29 @@ class TradingService:
             # For buy_orders task, this is not needed, but initialize it anyway for consistency
             try:
                 self.logger.info("Initializing sell order manager...", action="initialize")
-                # Pass positions_repo and user_id if available for direct DB updates
+                # Get positions_repo and orders_repo from engine (required for database-only tracking)
                 positions_repo = (
                     self.engine.positions_repo if hasattr(self.engine, "positions_repo") else None
                 )
+                orders_repo = (
+                    self.engine.orders_repo if hasattr(self.engine, "orders_repo") else None
+                )
                 user_id = self.user_id
+
+                if not positions_repo:
+                    self.logger.error(
+                        "PositionsRepository not available - sell order placement will fail. "
+                        "Ensure AutoTradeEngine has positions_repo initialized.",
+                        action="initialize",
+                    )
+                    # Don't raise - let it fail gracefully when get_open_positions() is called
+                if not user_id:
+                    self.logger.error(
+                        "user_id not available - sell order placement will fail.",
+                        action="initialize",
+                    )
+                    # Don't raise - let it fail gracefully when get_open_positions() is called
+
                 # Phase 3.2: Pass OrderStatusVerifier to SellOrderManager for shared results
                 order_verifier = (
                     self.engine.order_verifier
@@ -252,9 +269,10 @@ class TradingService:
                 )
                 self.sell_manager = SellOrderManager(
                     self.auth,
-                    price_manager=self.price_cache,
                     positions_repo=positions_repo,
                     user_id=user_id,
+                    orders_repo=orders_repo,  # For metadata enrichment
+                    price_manager=self.price_cache,
                     order_verifier=order_verifier,  # Phase 3.2: Share OrderStatusVerifier results
                 )
 
