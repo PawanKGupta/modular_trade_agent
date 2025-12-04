@@ -531,28 +531,17 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                 BrokerFactory,
             )
 
-            # Thread-safe session caching with double-check locking
-            # First check without lock (fast path)
+            # Thread-safe session caching - similar to trading service pattern
+            # Reuse existing auth instance if available (it handles re-auth internally)
             auth = _broker_auth_cache.get(current.id)
-            if auth and auth.is_authenticated():
-                # Use cached authenticated session
-                pass
-            else:
-                auth = None
 
-            # If no valid cache, acquire lock and double-check
             if not auth:
                 with _broker_auth_cache_lock:
-                    # Double-check: another thread might have populated the cache
+                    # Double-check: another thread might have created it
                     auth = _broker_auth_cache.get(current.id)
-                    if auth and auth.is_authenticated():
-                        # Another thread just cached it, use it
-                        pass
-                    else:
-                        auth = None
-
                     if not auth:
-                        # Create new auth instance and login
+                        # Create new auth instance and login (only once per user)
+                        logger.info(f"Creating new auth session for user {current.id}")
                         auth = KotakNeoAuth(temp_env_file)
                         if not auth.login():
                             raise HTTPException(
@@ -562,8 +551,14 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                                     "Please check your credentials and try again."
                                 ),
                             )
-                        # Cache the authenticated session
+                        # Cache the authenticated session for reuse
                         _broker_auth_cache[current.id] = auth
+                        logger.info(
+                            f"Cached auth session for user {current.id} - "
+                            "will reuse for subsequent requests"
+                        )
+            else:
+                logger.debug(f"Reusing cached auth session for user {current.id}")
 
             # Create broker gateway
             broker = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
@@ -774,28 +769,17 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
                 BrokerFactory,
             )
 
-            # Thread-safe session caching with double-check locking
-            # First check without lock (fast path)
+            # Thread-safe session caching - similar to trading service pattern
+            # Reuse existing auth instance if available (it handles re-auth internally)
             auth = _broker_auth_cache.get(current.id)
-            if auth and auth.is_authenticated():
-                # Use cached authenticated session
-                pass
-            else:
-                auth = None
 
-            # If no valid cache, acquire lock and double-check
             if not auth:
                 with _broker_auth_cache_lock:
-                    # Double-check: another thread might have populated the cache
+                    # Double-check: another thread might have created it
                     auth = _broker_auth_cache.get(current.id)
-                    if auth and auth.is_authenticated():
-                        # Another thread just cached it, use it
-                        pass
-                    else:
-                        auth = None
-
                     if not auth:
-                        # Create new auth instance and login
+                        # Create new auth instance and login (only once per user)
+                        logger.info(f"Creating new auth session for user {current.id}")
                         auth = KotakNeoAuth(temp_env_file)
                         if not auth.login():
                             raise HTTPException(
@@ -805,8 +789,14 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
                                     "Please check your credentials and try again."
                                 ),
                             )
-                        # Cache the authenticated session
+                        # Cache the authenticated session for reuse
                         _broker_auth_cache[current.id] = auth
+                        logger.info(
+                            f"Cached auth session for user {current.id} - "
+                            "will reuse for subsequent requests"
+                        )
+            else:
+                logger.debug(f"Reusing cached auth session for user {current.id}")
 
             # Create broker gateway
             broker_gateway = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
