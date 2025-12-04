@@ -318,12 +318,23 @@ async def main_async(
     enable_backtest_scoring=False,
     dip_mode=False,
     json_output_path: str | None = None,
+    user_id: int | None = None,
+    db_session=None,
 ):
     """
     Async main function using async batch analysis
 
     This version uses async/await for parallel processing, significantly
     reducing analysis time for batch operations.
+
+    Args:
+        export_csv: Export results to CSV
+        enable_multi_timeframe: Enable multi-timeframe analysis
+        enable_backtest_scoring: Enable backtest scoring
+        dip_mode: Enable dip-buying mode
+        json_output_path: Optional path to write results as JSON
+        user_id: Optional user ID to load user-specific config
+        db_session: Optional database session for loading user config
     """
     tickers = get_stocks()
 
@@ -335,6 +346,24 @@ async def main_async(
         f"Starting async analysis for {len(tickers)} stocks (Multi-timeframe: {enable_multi_timeframe}, CSV Export: {export_csv})"
     )
 
+    # Load user-specific config if user_id is provided
+    config = None
+    if user_id and db_session:
+        try:
+            from src.application.services.config_converter import (
+                user_config_to_strategy_config,
+            )
+            from src.infrastructure.persistence.user_trading_config_repository import (
+                UserTradingConfigRepository,
+            )
+
+            config_repo = UserTradingConfigRepository(db_session)
+            user_config = config_repo.get_or_create_default(user_id)
+            config = user_config_to_strategy_config(user_config, db_session=db_session)
+            logger.info(f"Loaded user-specific config for user {user_id} (ml_enabled={config.ml_enabled})")
+        except Exception as e:
+            logger.warning(f"Failed to load user config for user {user_id}: {e}, using default config")
+
     # Use async batch analysis (Phase 2)
     try:
         # Use configurable concurrency from settings
@@ -343,7 +372,7 @@ async def main_async(
         from config.settings import MAX_CONCURRENT_ANALYSES
         from services.async_analysis_service import AsyncAnalysisService
 
-        async_service = AsyncAnalysisService(max_concurrent=MAX_CONCURRENT_ANALYSES)
+        async_service = AsyncAnalysisService(max_concurrent=MAX_CONCURRENT_ANALYSES, config=config)
         results = await async_service.analyze_batch_async(
             tickers=tickers, enable_multi_timeframe=enable_multi_timeframe, export_to_csv=export_csv
         )
@@ -429,6 +458,8 @@ def main(
     dip_mode=False,
     use_async=True,
     json_output_path: str | None = None,
+    user_id: int | None = None,
+    db_session=None,
 ):
     """
     Main function - supports both async and sequential modes
@@ -439,6 +470,8 @@ def main(
         enable_backtest_scoring: Enable backtest scoring
         dip_mode: Enable dip-buying mode
         use_async: Use async batch analysis (Phase 2 feature, default: True)
+        user_id: Optional user ID to load user-specific config
+        db_session: Optional database session for loading user config
     """
     if use_async:
         # Use async analysis (Phase 2)
@@ -452,6 +485,8 @@ def main(
                     enable_backtest_scoring=enable_backtest_scoring,
                     dip_mode=dip_mode,
                     json_output_path=json_output_path,
+                    user_id=user_id,
+                    db_session=db_session,
                 )
             )
         except Exception as e:
@@ -513,7 +548,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
                 config = first_result._config
             elif isinstance(first_result, dict) and '_config' in first_result:
                 config = first_result.get('_config')
-        
+
         backtest_service = BacktestService(default_years_back=2, dip_mode=dip_mode)
         results = backtest_service.add_backtest_scores_to_results(results, config=config)
         # Re-sort by priority score for better trading decisions
