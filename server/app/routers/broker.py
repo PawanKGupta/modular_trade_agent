@@ -3,6 +3,8 @@ import ast
 import json
 import logging
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -28,6 +30,12 @@ from ..schemas.user import BrokerCredsInfo, BrokerCredsRequest, BrokerTestRespon
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# In-memory cache for authenticated broker sessions
+# Key: user_id, Value: (auth_instance, timestamp)
+_broker_auth_cache: dict[int, tuple] = {}
+_AUTH_CACHE_TTL = 600  # 10 minutes in seconds
+_broker_auth_cache_lock = threading.Lock()
 
 # Try to import NeoAPI at module level (may not be available in all environments)
 try:
@@ -525,19 +533,46 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                 BrokerFactory,
             )
 
-            # Create auth handler
-            auth = KotakNeoAuth(temp_env_file)
+            # Thread-safe session caching with double-check locking
+            # First check without lock (fast path)
+            cache_entry = _broker_auth_cache.get(current.id)
+            if cache_entry:
+                auth, timestamp = cache_entry
+                if time.time() - timestamp < _AUTH_CACHE_TTL and auth.is_authenticated():
+                    # Use cached authenticated session
+                    pass
+                else:
+                    # Cache expired or session invalid, need to re-authenticate
+                    auth = None
+            else:
+                auth = None
 
-            # Only login if not already authenticated to avoid unnecessary OTP requests
-            if not auth.is_authenticated():
-                if not auth.login():
-                    raise HTTPException(
-                        status_code=503,
-                        detail=(
-                            "Failed to connect to broker. "
-                            "Please check your credentials and try again."
-                        ),
-                    )
+            # If no valid cache, acquire lock and double-check
+            if not auth:
+                with _broker_auth_cache_lock:
+                    # Double-check: another thread might have populated the cache
+                    cache_entry = _broker_auth_cache.get(current.id)
+                    if cache_entry:
+                        auth, timestamp = cache_entry
+                        if time.time() - timestamp < _AUTH_CACHE_TTL and auth.is_authenticated():
+                            # Another thread just cached it, use it
+                            pass
+                        else:
+                            auth = None
+
+                    if not auth:
+                        # Create new auth instance and login
+                        auth = KotakNeoAuth(temp_env_file)
+                        if not auth.login():
+                            raise HTTPException(
+                                status_code=503,
+                                detail=(
+                                    "Failed to connect to broker. "
+                                    "Please check your credentials and try again."
+                                ),
+                            )
+                        # Cache the authenticated session
+                        _broker_auth_cache[current.id] = (auth, time.time())
 
             # Create broker gateway
             broker = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
@@ -748,19 +783,46 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
                 BrokerFactory,
             )
 
-            # Create auth handler
-            auth = KotakNeoAuth(temp_env_file)
+            # Thread-safe session caching with double-check locking
+            # First check without lock (fast path)
+            cache_entry = _broker_auth_cache.get(current.id)
+            if cache_entry:
+                auth, timestamp = cache_entry
+                if time.time() - timestamp < _AUTH_CACHE_TTL and auth.is_authenticated():
+                    # Use cached authenticated session
+                    pass
+                else:
+                    # Cache expired or session invalid, need to re-authenticate
+                    auth = None
+            else:
+                auth = None
 
-            # Only login if not already authenticated to avoid unnecessary OTP requests
-            if not auth.is_authenticated():
-                if not auth.login():
-                    raise HTTPException(
-                        status_code=503,
-                        detail=(
-                            "Failed to connect to broker. "
-                            "Please check your credentials and try again."
-                        ),
-                    )
+            # If no valid cache, acquire lock and double-check
+            if not auth:
+                with _broker_auth_cache_lock:
+                    # Double-check: another thread might have populated the cache
+                    cache_entry = _broker_auth_cache.get(current.id)
+                    if cache_entry:
+                        auth, timestamp = cache_entry
+                        if time.time() - timestamp < _AUTH_CACHE_TTL and auth.is_authenticated():
+                            # Another thread just cached it, use it
+                            pass
+                        else:
+                            auth = None
+
+                    if not auth:
+                        # Create new auth instance and login
+                        auth = KotakNeoAuth(temp_env_file)
+                        if not auth.login():
+                            raise HTTPException(
+                                status_code=503,
+                                detail=(
+                                    "Failed to connect to broker. "
+                                    "Please check your credentials and try again."
+                                ),
+                            )
+                        # Cache the authenticated session
+                        _broker_auth_cache[current.id] = (auth, time.time())
 
             # Create broker gateway
             broker_gateway = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
