@@ -783,7 +783,6 @@ class PaperTradingServiceAdapter:
                 "premarket_retry": False,
                 "premarket_amo_adjustment": False,
                 "sell_monitor_started": False,
-                "position_monitor": {},
             }
             task_context["tasks_reset"] = True
 
