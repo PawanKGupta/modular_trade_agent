@@ -1237,6 +1237,7 @@ class TradingService:
             from src.application.services.schedule_manager import ScheduleManager  # noqa: PLC0415
 
             self._schedule_manager = ScheduleManager(thread_db)
+            self.logger.info("Schedule manager recreated with thread-local session", action="run")
 
             self.logger.info("Setting up signal handlers...", action="run")
             try:

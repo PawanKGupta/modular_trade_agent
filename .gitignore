@@ -43,6 +43,13 @@ paper_trading/user_*/position_metadata.json
 paper_trading/user_*/active_sell_orders.json
 paper_trading/user_*/reports/*.json
 
+# Paper trading unified service runtime data
+paper_trading/unified_service/account.json
+paper_trading/unified_service/holdings.json
+paper_trading/unified_service/orders.json
+paper_trading/unified_service/transactions.json
+paper_trading/unified_service/reports/*.json
+
 # Paper trading config files (all instances)
 paper_trading/**/config.json
 
