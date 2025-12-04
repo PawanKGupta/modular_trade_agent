@@ -423,6 +423,121 @@ pytest tests/unit/application/test_config_converter_ml_enhancements.py \
 
 ---
 
+## ML Disabled Behavior
+
+### What Happens When ML is Disabled
+
+When `ml_enabled=false` in the UI configuration:
+
+1. **AnalysisService Behavior**:
+   - `AnalysisService` checks `config.ml_enabled` during initialization
+   - If `false`, it directly uses `VerdictService` (rule-based only)
+   - `MLVerdictService` is **never initialized**
+   - No ML model is loaded into memory
+
+2. **Verdict Determination**:
+   - Uses pure rule-based logic from `VerdictService`
+   - All ML configuration settings are ignored:
+     - `ml_model_version` - Not used
+     - `ml_confidence_threshold` - Not used
+     - `ml_combine_with_rules` - Not used
+   - Verdicts are based solely on:
+     - RSI levels
+     - Volume conditions
+     - Chart quality
+     - Fundamental filters
+     - Pattern signals
+     - Multi-timeframe alignment
+
+3. **Performance**:
+   - Faster execution (no ML model loading/prediction)
+   - Lower memory usage (no model in memory)
+   - No dependency on model files
+
+4. **Logging**:
+   ```
+   DEBUG: ML is disabled in config, using VerdictService
+   ```
+
+### Code Flow When ML Disabled
+
+```python
+# In AnalysisService.__init__()
+ml_enabled = config.ml_enabled  # False
+
+if not ml_enabled:
+    # Directly use VerdictService - no ML involved
+    self.verdict_service = VerdictService(self.config)
+else:
+    # ML enabled - try to use MLVerdictService
+    ...
+```
+
+### Fallback Scenarios
+
+Even if `ml_enabled=true`, the system falls back to rule-based logic if:
+
+1. **Model file doesn't exist**:
+   ```
+   DEBUG: ML enabled but model not found at: models/verdict_model_random_forest.pkl, using VerdictService
+   ```
+
+2. **Model fails to load**:
+   ```
+   WARNING: ML model file exists but failed to load: models/verdict_model_random_forest.pkl, using VerdictService
+   ```
+
+3. **MLVerdictService initialization fails**:
+   ```
+   DEBUG: Could not initialize MLVerdictService: <error>, using VerdictService
+   ```
+
+4. **ML confidence too low** (when ML is enabled):
+   ```
+   INFO: ML confidence too low (45.0% < 50.0%), using rule-based logic
+   ```
+
+5. **ML model not loaded** (when MLVerdictService is used but model failed):
+   ```
+   DEBUG: ML verdict service: ML model not loaded - using rule-based logic
+   ```
+
+### Comparison: ML Enabled vs Disabled
+
+| Aspect | ML Enabled | ML Disabled |
+|--------|-----------|-------------|
+| **Service Used** | `MLVerdictService` | `VerdictService` |
+| **Model Loaded** | Yes (if available) | No |
+| **Predictions Made** | Yes (if confidence ≥ threshold) | No |
+| **Verdict Source** | ML + Rules (combined) | Rules only |
+| **Memory Usage** | Higher (model in memory) | Lower |
+| **Execution Speed** | Slightly slower | Faster |
+| **Configuration Used** | All ML settings | Only non-ML settings |
+
+### When to Disable ML
+
+Consider disabling ML when:
+
+1. **Model Performance Issues**: ML predictions are consistently wrong
+2. **Resource Constraints**: Limited memory or CPU
+3. **Testing Rule-Based Logic**: Want to test pure rule-based strategy
+4. **Model File Missing**: Model file is corrupted or missing
+5. **Debugging**: Isolating issues in rule-based logic
+
+### Re-enabling ML
+
+To re-enable ML:
+
+1. Set `ml_enabled=true` in UI
+2. Ensure model file exists at configured path
+3. Restart the trading service
+4. Check logs for successful model loading:
+   ```
+   INFO: Using MLVerdictService with model: models/verdict_model_random_forest.pkl
+   ```
+
+---
+
 ## Troubleshooting
 
 ### Issue: ML Not Being Used Despite `ml_enabled=true`
