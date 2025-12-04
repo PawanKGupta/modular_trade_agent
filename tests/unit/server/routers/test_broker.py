@@ -1190,6 +1190,9 @@ def test_get_broker_orders_auth_fails(monkeypatch):
     """Test broker orders endpoint when authentication fails"""
     user = DummyUser(id=42)
 
+    # Clear the cache to ensure a fresh test
+    broker._broker_auth_cache.clear()
+
     repo = DummySettingsRepo(object())
     repo.settings.trade_mode = TradeMode.BROKER
     repo.settings.broker_creds_encrypted = b"encrypted_creds"
@@ -1208,6 +1211,7 @@ def test_get_broker_orders_auth_fails(monkeypatch):
     # Mock KotakNeoAuth to fail login
     mock_auth = MagicMock()
     mock_auth.login.return_value = False
+    mock_auth.is_authenticated.return_value = False  # Not authenticated
 
     def mock_auth_init(env_file):
         return mock_auth
