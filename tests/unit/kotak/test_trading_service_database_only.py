@@ -187,7 +187,7 @@ class TestTradingServiceDatabaseOnlyInitialization:
 
         # Create mock engine without positions_repo attribute
         # Use spec to limit attributes, then add only what we need
-        mock_engine = Mock(spec=['orders_repo', 'order_verifier', 'login', 'portfolio'])
+        mock_engine = Mock(spec=["orders_repo", "order_verifier", "login", "portfolio"])
         mock_engine.orders_repo = Mock()
         mock_engine.order_verifier = None
         mock_engine.login.return_value = True  # Engine login succeeds

@@ -18,7 +18,6 @@ All other components receive the shared auth session and only handle re-authenti
 import argparse
 import signal
 import sys
-import threading
 import time
 from datetime import datetime
 from datetime import time as dt_time
@@ -146,7 +145,7 @@ class TradingService:
         try:
             signal.signal(signal.SIGINT, self._handle_shutdown)
             signal.signal(signal.SIGTERM, self._handle_shutdown)
-        except (ValueError, OSError, RuntimeError) as e:
+        except (ValueError, OSError, RuntimeError):
             # Signal handlers can only be set from main thread on some platforms
             # This is expected behavior for background threads - re-raise to be handled by caller
             raise

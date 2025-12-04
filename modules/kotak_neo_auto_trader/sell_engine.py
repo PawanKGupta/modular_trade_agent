@@ -103,7 +103,9 @@ class SellOrderManager:
         self.orders = KotakNeoOrders(auth)
         self.portfolio = KotakNeoPortfolio(auth, price_manager=price_manager)
         self.market_data = KotakNeoMarketData(auth)
-        self.history_path = history_path or config.TRADES_HISTORY_PATH  # Deprecated, kept for OrderStateManager
+        self.history_path = (
+            history_path or config.TRADES_HISTORY_PATH
+        )  # Deprecated, kept for OrderStateManager
         self.max_workers = max_workers
         self.price_manager = price_manager
         self.positions_repo = positions_repo
@@ -411,6 +413,7 @@ class SellOrderManager:
                 if self.orders_repo:
                     try:
                         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
                         from .utils.symbol_utils import extract_base_symbol
 
                         ongoing_orders = self.orders_repo.list(
@@ -419,20 +422,15 @@ class SellOrderManager:
                         for order in ongoing_orders:
                             if (
                                 order.side.lower() == "buy"
-                                and extract_base_symbol(order.symbol).upper()
-                                == pos.symbol.upper()
+                                and extract_base_symbol(order.symbol).upper() == pos.symbol.upper()
                             ):
                                 # Found matching order - use its metadata
-                                if order.order_metadata and isinstance(
-                                    order.order_metadata, dict
-                                ):
+                                if order.order_metadata and isinstance(order.order_metadata, dict):
                                     ticker = order.order_metadata.get("ticker", ticker)
                                 placed_symbol = order.symbol  # Full broker symbol
                                 break
                     except Exception as e:
-                        logger.debug(
-                            f"Failed to enrich position metadata from orders: {e}"
-                        )
+                        logger.debug(f"Failed to enrich position metadata from orders: {e}")
 
                 # Convert Positions model to trade dict format
                 open_positions.append(
@@ -738,7 +736,7 @@ class SellOrderManager:
 
                     # Check OrderStatusVerifier result for this order
                     result = self.order_verifier.get_verification_result(order_id)
-                    if result and result.get('status') == 'EXECUTED':
+                    if result and result.get("status") == "EXECUTED":
                         executed_ids.append(str(order_id))
                         logger.info(
                             f"Sell order executed (from OrderStatusVerifier): Order ID {order_id}"
@@ -1181,18 +1179,20 @@ class SellOrderManager:
         if self.order_verifier:
             try:
                 # Get verification results for this symbol
-                verification_results = self.order_verifier.get_verification_results_for_symbol(symbol)
+                verification_results = self.order_verifier.get_verification_results_for_symbol(
+                    symbol
+                )
 
                 # Check if any result shows EXECUTED status (completed sell order)
                 for result in verification_results:
-                    if result.get('status') == 'EXECUTED':
+                    if result.get("status") == "EXECUTED":
                         # Extract price from broker_order if available
-                        broker_order = result.get('broker_order')
+                        broker_order = result.get("broker_order")
                         order_price = 0.0
                         if broker_order:
                             order_price = OrderFieldExtractor.get_price(broker_order) or 0.0
 
-                        order_id = result.get('order_id', '')
+                        order_id = result.get("order_id", "")
                         logger.info(
                             f"Found completed sell order for {symbol} from OrderStatusVerifier: "
                             f"Order ID {order_id}, Price: Rs {order_price:.2f}"
