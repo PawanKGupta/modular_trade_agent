@@ -136,20 +136,20 @@ class TradingService:
         self.logger = get_user_logger(user_id=user_id, db=db_session, module="TradingService")
 
     def setup_signal_handlers(self):
-        """Setup graceful shutdown handlers"""
+        """
+        Setup graceful shutdown handlers.
+        
+        Note: signal.signal() may not work in background threads on some platforms.
+        This is expected and non-critical - the service can still be stopped via
+        shutdown_requested flag or through the service management API.
+        """
         try:
-            # Note: signal.signal() may not work in background threads on some platforms
-            # This is non-critical - the service can still be stopped via shutdown_requested flag
             signal.signal(signal.SIGINT, self._handle_shutdown)
             signal.signal(signal.SIGTERM, self._handle_shutdown)
-        except (ValueError, OSError) as e:
+        except (ValueError, OSError, RuntimeError) as e:
             # Signal handlers can only be set from main thread on some platforms
-            # This is expected behavior for background threads - log but don't fail
-            import sys
-            if threading.current_thread() is threading.main_thread():
-                # Only log if we're in main thread (shouldn't happen, but be safe)
-                logger.warning(f"Could not set signal handlers: {e}")
-            # In background thread, this is expected - silently continue
+            # This is expected behavior for background threads - re-raise to be handled by caller
+            raise
 
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signal"""
