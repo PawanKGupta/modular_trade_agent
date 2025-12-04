@@ -4,28 +4,27 @@ Adapts Kotak Neo SDK to IBrokerGateway interface
 """
 
 import inspect
-from typing import List, Optional, Dict, Any
-from datetime import datetime
 
 # Import from existing legacy modules
 import sys
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
-from utils.logger import logger
+from utils.logger import logger  # noqa: E402
 
-from ...domain import (
-    Order,
-    Holding,
-    Money,
-    IBrokerGateway,
-    OrderType,
-    TransactionType,
-    OrderStatus,
-    ProductType,
-    OrderVariety,
+from ...domain import (  # noqa: E402
     Exchange,
+    Holding,
+    IBrokerGateway,
+    Money,
+    Order,
+    OrderStatus,
+    OrderType,
+    OrderVariety,
+    TransactionType,
 )
 
 
@@ -100,7 +99,8 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 params = self._adapt_payload_to_method(method, payload)
 
                 logger.info(
-                    f"? Placing {order.transaction_type.value} order: {order.symbol} x{order.quantity}"
+                    f"? Placing {order.transaction_type.value} order: "
+                    f"{order.symbol} x{order.quantity}"
                 )
                 response = method(**params)
 
@@ -143,13 +143,14 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                             break
                     if not payload:
                         # Try positional
-                        response = method(order_id)
+                        method(order_id)
                     else:
-                        response = method(**payload)
+                        method(**payload)
 
                     logger.info(f"? Cancelled order: {order_id}")
                     return True
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Cancel order method failed: {e}")
                     continue
 
             except Exception as e:
@@ -158,7 +159,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
 
         return False
 
-    def get_order(self, order_id: str) -> Optional[Order]:
+    def get_order(self, order_id: str) -> Order | None:
         """Get order details by ID"""
         orders = self.get_all_orders()
         for order in orders:
@@ -166,7 +167,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 return order
         return None
 
-    def get_all_orders(self) -> List[Order]:
+    def get_all_orders(self) -> list[Order]:
         """Get all orders"""
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
@@ -183,14 +184,14 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
             logger.error(f"? Failed to get orders: {e}")
             return []
 
-    def get_pending_orders(self) -> List[Order]:
+    def get_pending_orders(self) -> list[Order]:
         """Get pending/open orders"""
         all_orders = self.get_all_orders()
         return [order for order in all_orders if order.is_active()]
 
     # Portfolio Management
 
-    def get_holdings(self) -> List[Holding]:
+    def get_holdings(self) -> list[Holding]:
         """Get portfolio holdings"""
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
@@ -207,7 +208,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
             logger.error(f"? Failed to get holdings: {e}")
             return []
 
-    def get_holding(self, symbol: str) -> Optional[Holding]:
+    def get_holding(self, symbol: str) -> Holding | None:
         """Get holding for specific symbol"""
         holdings = self.get_holdings()
         for holding in holdings:
@@ -217,7 +218,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
 
     # Account Management
 
-    def get_account_limits(self) -> Dict[str, Any]:
+    def get_account_limits(self) -> dict[str, Any]:
         """Get account limits and margins"""
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
@@ -244,7 +245,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
 
     # Utility Methods
 
-    def search_orders_by_symbol(self, symbol: str) -> List[Order]:
+    def search_orders_by_symbol(self, symbol: str) -> list[Order]:
         """Search orders by symbol"""
         all_orders = self.get_all_orders()
         return [order for order in all_orders if order.symbol.upper() == symbol.upper()]
@@ -341,7 +342,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         resp_text = str(response).lower()
         return "error" in resp_text or "invalid" in resp_text
 
-    def _extract_order_id(self, response) -> Optional[str]:
+    def _extract_order_id(self, response) -> str | None:
         """Extract order ID from response"""
         if isinstance(response, dict):
             for key in ["neoOrdNo", "orderId", "order_id", "ordId", "id"]:
@@ -352,21 +353,83 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         return str(response["data"][key])
         return None
 
-    def _parse_orders_response(self, data: list) -> List[Order]:
+    def _parse_orders_response(self, data: list) -> list[Order]:
         """Parse orders from API response"""
         orders = []
         for item in data:
             try:
+                # Try multiple field name variations for symbol
+                # Priority: trdSym (actual Kotak API field) > sym (short symbol)
+                # > tradingSymbol > others
+                symbol = (
+                    item.get("trdSym")  # Primary: Kotak API uses "trdSym" (e.g., "IDEA-EQ")
+                    or item.get("sym")  # Fallback: Short symbol (e.g., "IDEA")
+                    or item.get("tradingSymbol")  # Legacy/compatibility
+                    or item.get("symbol")  # Generic fallback
+                    or item.get("instrumentName")  # Alternative field
+                    or item.get("securitySymbol")  # Alternative field
+                    or ""
+                )
+                symbol = str(symbol).strip()
+
+                # Only skip if symbol is still empty after trying all variations
+                # This could be invalid/corrupted data from broker API
+                if not symbol:
+                    order_id = (
+                        item.get("nOrdNo")  # Primary: Kotak API uses "nOrdNo"
+                        or item.get("neoOrdNo")  # Legacy/compatibility
+                        or item.get("orderId")  # Generic fallback
+                        or "N/A"
+                    )
+                    status = item.get("stat") or item.get("ordSt") or item.get("orderStatus", "N/A")
+                    logger.warning(
+                        f"Skipping order with empty symbol after trying all field variations "
+                        f"(order_id: {order_id}, status: {status})"
+                    )
+                    continue
+
+                # Extract order ID - prioritize nOrdNo (actual Kotak API field)
+                order_id = (
+                    item.get("nOrdNo")  # Primary: Kotak API uses "nOrdNo"
+                    or item.get("neoOrdNo")  # Legacy/compatibility
+                    or item.get("orderId")  # Generic fallback
+                    or ""
+                )
+
+                # Extract order status - try multiple field names
+                order_status = (
+                    item.get("stat")  # Primary: Kotak API uses "stat"
+                    or item.get("ordSt")  # Alternative
+                    or item.get("orderStatus")  # Legacy/compatibility
+                    or "PENDING"
+                )
+
+                # Extract transaction type - try multiple field names
+                transaction_type = (
+                    item.get("trnsTp")  # Primary: Kotak API uses "trnsTp" (B/S)
+                    or item.get("transactionType")  # Legacy/compatibility
+                    or "B"
+                )
+
+                # Extract order type - try multiple field names
+                order_type = (
+                    item.get("prcTp")  # Primary: Kotak API uses "prcTp" (L/M)
+                    or item.get("orderType")  # Legacy/compatibility
+                    or "MKT"
+                )
+
                 order = Order(
-                    symbol=str(item.get("tradingSymbol", "")),
-                    quantity=int(item.get("quantity", 0)),
-                    order_type=self._parse_order_type(item.get("orderType", "MKT")),
-                    transaction_type=self._parse_transaction_type(item.get("transactionType", "B")),
+                    symbol=symbol,
+                    quantity=int(item.get("qty") or item.get("quantity", 0)),
+                    order_type=self._parse_order_type(order_type),
+                    transaction_type=self._parse_transaction_type(transaction_type),
                     price=(
-                        Money.from_float(float(item.get("price", 0))) if item.get("price") else None
+                        Money.from_float(float(item.get("prc") or item.get("price", 0)))
+                        if (item.get("prc") or item.get("price"))
+                        else None
                     ),
-                    order_id=str(item.get("neoOrdNo", "")),
-                    status=self._parse_order_status(item.get("orderStatus", "PENDING")),
+                    order_id=str(order_id),
+                    status=self._parse_order_status(order_status),
                 )
                 orders.append(order)
             except Exception as e:
@@ -374,7 +437,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 continue
         return orders
 
-    def _parse_holdings_response(self, data: list) -> List[Holding]:
+    def _parse_holdings_response(self, data: list) -> list[Holding]:
         """Parse holdings from API response"""
         holdings = []
         for item in data:
