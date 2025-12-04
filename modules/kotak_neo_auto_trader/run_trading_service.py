@@ -96,7 +96,9 @@ class TradingService:
 
             config_repo = UserTradingConfigRepository(db_session)
             user_config = config_repo.get_or_create_default(user_id)
-            self.strategy_config = user_config_to_strategy_config(user_config)
+            self.strategy_config = user_config_to_strategy_config(
+                user_config, db_session=db_session
+            )
         else:
             self.strategy_config = strategy_config
 

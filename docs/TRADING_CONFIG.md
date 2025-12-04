@@ -252,9 +252,13 @@ Configure machine learning features.
   - Recommended: 0.6-0.8
 
 - **ML Combine with Rules** (default: true)
-  - Combine ML verdict with rule-based logic
-  - More conservative approach
-  - Recommended: true
+  - **When enabled (true)**: Uses the MORE CONSERVATIVE verdict between ML and rule-based
+    - Example: ML says "strong_buy", Rules say "buy" → Uses "buy" (more conservative)
+    - Example: ML says "buy", Rules say "watch" → Uses "watch" (more conservative)
+    - Safety-first approach: If either system is cautious, we're cautious
+  - **When disabled (false)**: Uses ML verdict directly if confidence meets threshold
+    - More aggressive approach: Trusts ML predictions when confidence is high
+  - Recommended: true (for safer trading)
 
 ## Configuration Presets
 

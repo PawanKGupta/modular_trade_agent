@@ -399,7 +399,7 @@ class IndividualServiceManager:
 
             # Load configuration
             user_config = self._config_repo.get_or_create_default(user_id)
-            strategy_config = user_config_to_strategy_config(user_config)
+            strategy_config = user_config_to_strategy_config(user_config, db_session=self.db)
 
             # Get broker credentials if needed
             broker_creds = None
