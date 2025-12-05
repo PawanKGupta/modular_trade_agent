@@ -736,6 +736,8 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
         """
         Check if result passes backtest quality filters.
         Even 1 trade with 100% win rate and profit is valuable for mean reversion.
+
+        When total_trades=0, we skip win_rate and avg_profit checks since they're not meaningful.
         """
         if not enable_backtest_scoring:
             return True  # No backtest data available, skip quality filters
@@ -744,12 +746,43 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
         if not backtest:
             return True  # No backtest data, skip quality filters
 
+        total_trades = backtest.get("total_trades", 0)
+        # Handle None, string "0", or missing key - normalize to int 0
+        if total_trades is None:
+            total_trades = 0
+        elif isinstance(total_trades, str):
+            try:
+                total_trades = int(total_trades)
+            except (ValueError, TypeError):
+                total_trades = 0
+        elif not isinstance(total_trades, (int, float)):
+            total_trades = 0
+
         win_rate = backtest.get("win_rate", 0)
         avg_return = backtest.get("avg_return", 0)
         total_return = backtest.get("total_return_pct", 0)
         backtest_score = backtest.get("score", 0)
 
-        # Check quality filters (NO minimum trades requirement)
+        # Debug: Log to diagnose why zero-trades check might not be working
+        logger.debug(
+            f"{result.get('ticker')}: Quality filter - total_trades={total_trades} "
+            f"(type={type(total_trades).__name__}), backtest_score={backtest_score:.1f}, "
+            f"avg_return={avg_return:.2f}%, win_rate={win_rate:.1f}%"
+        )
+
+        # When no trades were executed, we can't meaningfully evaluate win_rate or avg_profit
+        # Skip these checks but still check backtest_score and total_return if applicable
+        if total_trades == 0:
+            # Only check backtest_score when no trades (may be based on other factors)
+            if backtest_score < min_backtest_score:
+                logger.debug(
+                    f"{result.get('ticker')}: Backtest quality filter failed - no trades executed, backtest_score={backtest_score:.1f} < {min_backtest_score}"
+                )
+                return False
+            # If no trades but backtest_score passes, allow it (may be a valid signal that just didn't trigger in backtest period)
+            return True
+
+        # Check quality filters when trades exist (NO minimum trades requirement)
         if win_rate < min_win_rate:
             logger.debug(
                 f"{result.get('ticker')}: Backtest quality filter failed - win_rate={win_rate:.1f}% < {min_win_rate}%"

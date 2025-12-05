@@ -128,7 +128,7 @@ class TestQualityFocusedFiltering:
             )
 
             with patch("trade_agent.send_telegram"), patch("trade_agent.logger") as mock_logger:
-                processed = _process_results(
+                _process_results(
                     sample_results_with_backtest, enable_backtest_scoring=True, config=mock_config
                 )
 
@@ -175,11 +175,12 @@ class TestQualityFocusedFiltering:
             )
 
             with patch("trade_agent.send_telegram"), patch("trade_agent.logger") as mock_logger:
-                processed = _process_results(
+                _process_results(
                     sample_results_with_backtest, enable_backtest_scoring=True, config=mock_config
                 )
 
-                # STOCK2 has weak final_verdict (watch) but ML says buy with good confidence and score
+                # STOCK2 has weak final_verdict (watch) but ML says buy
+                # with good confidence and score
                 log_calls = [str(call) for call in mock_logger.info.call_args_list]
                 log_text = " ".join(log_calls)
                 assert (
@@ -216,7 +217,7 @@ class TestQualityFocusedFiltering:
             )
 
             with patch("trade_agent.send_telegram") as mock_telegram:
-                processed = _process_results(
+                _process_results(
                     sample_results_with_backtest, enable_backtest_scoring=True, config=mock_config
                 )
 
@@ -255,7 +256,7 @@ class TestQualityFocusedFiltering:
             )
 
             with patch("trade_agent.send_telegram"), patch("trade_agent.logger") as mock_logger:
-                processed = _process_results(
+                _process_results(
                     sample_results_with_backtest, enable_backtest_scoring=True, config=mock_config
                 )
 
@@ -277,12 +278,12 @@ class TestQualityFocusedFiltering:
             )
 
             # Pass config as parameter
-            processed = _process_results(
+            result = _process_results(
                 sample_results_with_backtest, enable_backtest_scoring=True, config=mock_config
             )
 
             # Should still work correctly with config passed as parameter
-            assert processed is not None
+            assert result is not None
 
     def test_ml_enabled_respected_in_filtering(self, sample_results_with_backtest, mock_config):
         """Test that ML-only signals are filtered out when ml_enabled=False"""
@@ -299,7 +300,7 @@ class TestQualityFocusedFiltering:
             )
 
             with patch("trade_agent.send_telegram"), patch("trade_agent.logger") as mock_logger:
-                processed = _process_results(
+                _process_results(
                     sample_results_with_backtest, enable_backtest_scoring=True, config=mock_config
                 )
 
@@ -360,3 +361,97 @@ class TestQualityFocusedFiltering:
 
             # Check that normalization was logged
             assert any("Normalized ML confidence" in record.message for record in caplog.records)
+
+    def test_zero_trades_skips_win_rate_avg_profit_checks(
+        self, sample_results_with_backtest, mock_config
+    ):
+        """Test that when total_trades=0, win_rate and avg_profit checks are skipped"""
+        # Set config in first result
+        sample_results_with_backtest[0]["_config"] = mock_config
+
+        # STOCK8: 0 trades but good backtest_score
+        # (may be valid signal that didn't trigger in backtest period)
+        zero_trades_stock = {
+            "ticker": "STOCK9.NS",
+            "status": "success",
+            "verdict": "buy",
+            "final_verdict": "buy",
+            "combined_score": 30.0,
+            "ml_verdict": "buy",
+            "ml_confidence": 0.65,
+            "strength_score": 50.0,
+            "backtest": {
+                "score": 50.0,  # Good score even with no trades
+                "total_return_pct": 0.0,
+                "win_rate": 0.0,  # Meaningless when trades=0
+                "total_trades": 0,  # No trades executed
+                "avg_return": 0.0,  # Meaningless when trades=0
+            },
+            "_config": None,
+        }
+        sample_results_with_backtest.append(zero_trades_stock)
+
+        with patch("trade_agent.BacktestService") as mock_backtest_service:
+            mock_backtest_service.return_value.add_backtest_scores_to_results.return_value = (
+                sample_results_with_backtest
+            )
+
+            with patch("trade_agent.send_telegram"), patch("trade_agent.logger") as mock_logger:
+                _process_results(
+                    sample_results_with_backtest, enable_backtest_scoring=True, config=mock_config
+                )
+
+                log_calls = [str(call) for call in mock_logger.info.call_args_list]
+                log_text = " ".join(log_calls)
+                # Should pass because backtest_score >= 45
+                # and we skip win_rate/avg_profit when trades=0
+                assert (
+                    "STOCK9.NS" in log_text and "BUY" in log_text
+                ), "STOCK9 should pass (0 trades but good backtest_score)"
+
+    def test_zero_trades_fails_if_backtest_score_too_low(
+        self, sample_results_with_backtest, mock_config
+    ):
+        """Test that when total_trades=0, we still check backtest_score"""
+        # Set config in first result
+        sample_results_with_backtest[0]["_config"] = mock_config
+
+        # STOCK10: 0 trades and low backtest_score
+        zero_trades_low_score_stock = {
+            "ticker": "STOCK10.NS",
+            "status": "success",
+            "verdict": "buy",
+            "final_verdict": "buy",
+            "combined_score": 30.0,
+            "ml_verdict": "buy",
+            "ml_confidence": 0.65,
+            "strength_score": 50.0,
+            "backtest": {
+                "score": 30.0,  # Low score
+                "total_return_pct": 0.0,
+                "win_rate": 0.0,
+                "total_trades": 0,
+                "avg_return": 0.0,
+            },
+            "_config": None,
+        }
+        sample_results_with_backtest.append(zero_trades_low_score_stock)
+
+        with patch("trade_agent.BacktestService") as mock_backtest_service:
+            mock_backtest_service.return_value.add_backtest_scores_to_results.return_value = (
+                sample_results_with_backtest
+            )
+
+            with patch("trade_agent.send_telegram"), patch("trade_agent.logger") as mock_logger:
+                _process_results(
+                    sample_results_with_backtest, enable_backtest_scoring=True, config=mock_config
+                )
+
+                log_calls = [str(call) for call in mock_logger.info.call_args_list]
+                log_text = " ".join(log_calls)
+                # Should fail because backtest_score < 45
+                debug_calls = [str(call) for call in mock_logger.debug.call_args_list]
+                debug_text = " ".join(debug_calls)
+                assert (
+                    "STOCK10.NS" not in log_text or "Backtest quality filter failed" in debug_text
+                ), "STOCK10 should fail (0 trades and low backtest_score)"
