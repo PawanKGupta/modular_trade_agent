@@ -163,6 +163,10 @@ class SellOrderManager:
         # Prevents duplicate conversion attempts
         self.converted_to_market: set[str] = set()
 
+        # Circuit limit tracking: Symbols waiting for circuit expansion
+        # Format: {symbol: {'upper_circuit': float, 'ema9_target': float, 'trade': dict, 'last_checked': datetime}}
+        self.waiting_for_circuit_expansion: dict[str, dict[str, Any]] = {}
+
         logger.info(f"SellOrderManager initialized with {max_workers} worker threads")
 
     def _register_order(
@@ -1102,9 +1106,42 @@ class SellOrderManager:
 
         return total_value / total_qty if total_qty > 0 else 0.0
 
+    def _parse_circuit_limits_from_rejection(
+        self, rejection_reason: str
+    ) -> dict[str, float] | None:
+        """
+        Parse circuit limits from rejection message.
+
+        Example message: "RMS:Rule: Check circuit limit including square off order exceeds :
+        Circuit breach, Order Price :34.65, Low Price Range:30.32 High Price Range:33.51"
+
+        Returns:
+            Dict with 'upper' and 'lower' circuit limits, or None if not found
+        """
+        if not rejection_reason:
+            return None
+
+        import re
+
+        # Try to extract High Price Range and Low Price Range
+        # Pattern: "High Price Range:33.51" or "High Price Range: 33.51"
+        high_match = re.search(r"High Price Range[:\s]+([\d.]+)", rejection_reason, re.IGNORECASE)
+        low_match = re.search(r"Low Price Range[:\s]+([\d.]+)", rejection_reason, re.IGNORECASE)
+
+        if high_match and low_match:
+            try:
+                upper = float(high_match.group(1))
+                lower = float(low_match.group(1))
+                return {"upper": upper, "lower": lower}
+            except (ValueError, AttributeError):
+                pass
+
+        return None
+
     def _remove_rejected_orders(self):
         """
         Remove rejected/cancelled orders from active tracking.
+        Also checks for circuit limit rejections and stores them for retry.
         """
         all_orders = self.orders.get_orders()
         if not all_orders or "data" not in all_orders:
@@ -1125,6 +1162,45 @@ class SellOrderManager:
                     broker_order
                 ):
                     status = OrderStatusParser.parse_status(broker_order)
+
+                    # Check if rejection is due to circuit limit breach
+                    from .utils.order_field_extractor import OrderFieldExtractor
+
+                    rejection_reason = OrderFieldExtractor.get_rejection_reason(broker_order) or ""
+
+                    if (
+                        "circuit" in rejection_reason.lower()
+                        or "circuit limit" in rejection_reason.lower()
+                    ):
+                        # Parse circuit limits
+                        circuit_limits = self._parse_circuit_limits_from_rejection(rejection_reason)
+                        ema9_target = order_info.get("target_price", 0)
+
+                        if circuit_limits and ema9_target > circuit_limits.get("upper", 0):
+                            # EMA9 exceeds upper circuit - wait for expansion
+                            base_symbol = symbol.upper()
+                            self.waiting_for_circuit_expansion[base_symbol] = {
+                                "upper_circuit": circuit_limits["upper"],
+                                "lower_circuit": circuit_limits["lower"],
+                                "ema9_target": ema9_target,
+                                "trade": {
+                                    "symbol": symbol,
+                                    "placed_symbol": order_info.get("placed_symbol", symbol),
+                                    "ticker": order_info.get("ticker", ""),
+                                    "qty": order_info.get("qty", 0),
+                                },
+                                "rejection_reason": rejection_reason,
+                            }
+                            logger.info(
+                                f"{base_symbol}: Order rejected due to circuit limit breach. "
+                                f"EMA9 (Rs {ema9_target:.2f}) > Upper Circuit (Rs {circuit_limits['upper']:.2f}). "
+                                f"Waiting for circuit expansion..."
+                            )
+                            # Remove from active tracking but keep in waiting list
+                            self._remove_from_tracking(symbol)
+                            continue
+
+                    # Regular rejection (not circuit limit) - remove from tracking
                     rejected_symbols.append(symbol)
                     logger.info(
                         f"Removing {symbol} from tracking: order {order_id} is {status.value}"
@@ -1441,7 +1517,9 @@ class SellOrderManager:
                     self.rsi10_cache[symbol] = previous_rsi
                     logger.debug(f"Cached previous day RSI10 for {symbol}: {previous_rsi:.2f}")
                 else:
-                    logger.warning(f"Could not get previous day RSI10 for {symbol}, will use real-time when available")
+                    logger.warning(
+                        f"Could not get previous day RSI10 for {symbol}, will use real-time when available"
+                    )
             except Exception as e:
                 logger.warning(f"Error caching RSI10 for {symbol}: {e}")
 
@@ -1480,12 +1558,12 @@ class SellOrderManager:
                 # Check if NaN - use simple check since pandas may not be imported
                 try:
                     import pandas as pd
+
                     is_na = pd.isna(previous_rsi)
                 except (ImportError, AttributeError):
                     # Fallback: check if value is None or NaN-like
-                    is_na = (
-                        previous_rsi is None
-                        or (isinstance(previous_rsi, float) and str(previous_rsi).lower() == "nan")
+                    is_na = previous_rsi is None or (
+                        isinstance(previous_rsi, float) and str(previous_rsi).lower() == "nan"
                     )
 
                 if not is_na:
@@ -1513,9 +1591,7 @@ class SellOrderManager:
         """
         try:
             # Try to get real-time RSI10 (include current day)
-            df = self.price_service.get_price(
-                ticker, days=200, interval="1d", add_current_day=True
-            )
+            df = self.price_service.get_price(ticker, days=200, interval="1d", add_current_day=True)
 
             if df is not None and not df.empty:
                 # Calculate indicators
@@ -1530,18 +1606,20 @@ class SellOrderManager:
                         # Check if NaN - use simple check since pandas may not be imported
                         try:
                             import pandas as pd
+
                             is_na = pd.isna(current_rsi)
                         except (ImportError, AttributeError):
                             # Fallback: check if value is None or NaN-like
-                            is_na = (
-                                current_rsi is None
-                                or (isinstance(current_rsi, float) and str(current_rsi).lower() == "nan")
+                            is_na = current_rsi is None or (
+                                isinstance(current_rsi, float) and str(current_rsi).lower() == "nan"
                             )
 
                         if not is_na:
                             # Update cache with real-time value
                             self.rsi10_cache[symbol] = float(current_rsi)
-                            logger.debug(f"Updated RSI10 cache for {symbol} with real-time value: {current_rsi:.2f}")
+                            logger.debug(
+                                f"Updated RSI10 cache for {symbol} with real-time value: {current_rsi:.2f}"
+                            )
                             return float(current_rsi)
         except Exception as e:
             logger.debug(f"Error calculating real-time RSI10 for {symbol}: {e}")
@@ -1652,6 +1730,101 @@ class SellOrderManager:
 
         return result
 
+    def _check_and_retry_circuit_expansion(self) -> int:
+        """
+        Check if EMA9 has dropped within circuit limits for waiting symbols and retry placing orders.
+        Only retries when EMA9 is within the stored upper circuit limit.
+
+        Returns:
+            Number of orders successfully retried
+        """
+        if not self.waiting_for_circuit_expansion:
+            return 0
+
+        retried_count = 0
+
+        for base_symbol, wait_info in list(self.waiting_for_circuit_expansion.items()):
+            try:
+                trade = wait_info["trade"]
+                ticker = trade.get("ticker", "")
+                broker_symbol = trade.get("placed_symbol", trade.get("symbol", ""))
+
+                if not ticker and broker_symbol:
+                    # Try to extract ticker from symbol
+                    ticker = (
+                        broker_symbol.replace("-EQ", "")
+                        .replace("-BE", "")
+                        .replace("-BL", "")
+                        .replace("-BZ", "")
+                        + ".NS"
+                    )
+
+                if not ticker:
+                    logger.debug(f"{base_symbol}: No ticker available for circuit check")
+                    continue
+
+                # Get current EMA9
+                current_ema9 = self.get_current_ema9(ticker, broker_symbol=broker_symbol)
+                if not current_ema9:
+                    continue
+
+                upper_circuit = wait_info["upper_circuit"]
+                ema9_target = wait_info["ema9_target"]
+
+                # Check if current EMA9 is now within the upper circuit limit
+                if current_ema9 > upper_circuit:
+                    # EMA9 still exceeds circuit - wait
+                    logger.debug(
+                        f"{base_symbol}: EMA9 (Rs {current_ema9:.2f}) still exceeds upper circuit "
+                        f"(Rs {upper_circuit:.2f}). Waiting..."
+                    )
+                    continue
+
+                # EMA9 is now within circuit limits - retry placing order
+                # Use current EMA9 if it's lower than stored target (better price), otherwise use stored target
+                target_price = min(current_ema9, ema9_target)
+
+                logger.info(
+                    f"{base_symbol}: EMA9 (Rs {current_ema9:.2f}) is now within circuit limit "
+                    f"(Rs {upper_circuit:.2f}). Retrying order placement at Rs {target_price:.2f}..."
+                )
+
+                # Place order - if it succeeds, remove from waiting list
+                # If it fails again with circuit limit, it will be re-added with updated limits
+                order_id = self.place_sell_order(trade, target_price)
+
+                if order_id:
+                    # Order placed successfully - remove from waiting list
+                    logger.info(
+                        f"{base_symbol}: Order placed successfully at Rs {target_price:.2f}, "
+                        f"Order ID: {order_id}"
+                    )
+                    del self.waiting_for_circuit_expansion[base_symbol]
+                    retried_count += 1
+
+                    # Register the order for tracking
+                    qty = trade.get("qty", 0)
+                    ticker = trade.get("ticker", "")
+                    placed_symbol = trade.get("placed_symbol", trade.get("symbol", base_symbol))
+                    self._register_order(
+                        symbol=placed_symbol,
+                        order_id=order_id,
+                        target_price=target_price,
+                        qty=qty,
+                        ticker=ticker,
+                        placed_symbol=placed_symbol,
+                    )
+                else:
+                    logger.debug(
+                        f"{base_symbol}: Order placement failed. Will check again on next cycle."
+                    )
+
+            except Exception as e:
+                logger.error(f"Error checking circuit expansion for {base_symbol}: {e}")
+                continue
+
+        return retried_count
+
     def monitor_and_update(self) -> dict[str, int]:  # noqa: PLR0912, PLR0915
         """
         Monitor EMA9 and update sell orders if lower value found (parallel processing)
@@ -1659,10 +1832,20 @@ class SellOrderManager:
         Returns:
             Dict with statistics
         """
-        stats = {"checked": 0, "updated": 0, "executed": 0, "converted_to_market": 0}
+        stats = {
+            "checked": 0,
+            "updated": 0,
+            "executed": 0,
+            "converted_to_market": 0,
+            "circuit_retried": 0,
+        }
 
         # Clean up any rejected/cancelled orders before monitoring
         self._cleanup_rejected_orders()
+
+        # Check for circuit expansion and retry waiting orders
+        circuit_retried = self._check_and_retry_circuit_expansion()
+        stats["circuit_retried"] = circuit_retried
 
         if not self.active_sell_orders:
             logger.debug("No active sell orders to monitor")

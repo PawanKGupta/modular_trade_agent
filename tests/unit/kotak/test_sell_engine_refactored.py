@@ -106,6 +106,79 @@ class TestRefactoredSellEngineMethods:
         assert sell_manager._is_tracked_order("67890") is True
         assert sell_manager._is_tracked_order("99999") is False
 
+    def test_parse_circuit_limits_from_rejection(self, sell_manager):
+        """Extract upper/lower circuit from rejection text"""
+        rejection = (
+            "RMS:Rule: Check circuit limit including square off order exceeds : "
+            "Circuit breach, Order Price :34.65, Low Price Range:30.32 High Price Range:33.51"
+        )
+        limits = sell_manager._parse_circuit_limits_from_rejection(rejection)
+        assert limits == {"upper": 33.51, "lower": 30.32}
+
+    def test_remove_rejected_orders_moves_to_waiting_on_circuit_breach(self, sell_manager):
+        """When rejection is circuit breach, move symbol to waiting_for_circuit_expansion"""
+        sell_manager.active_sell_orders = {
+            "TARAPUR": {
+                "order_id": "123",
+                "target_price": 34.65,
+                "qty": 306,
+                "ticker": "TARAPUR.NS",
+                "placed_symbol": "TARAPUR-BE",
+            }
+        }
+
+        broker_orders = [
+            {
+                "nOrdNo": "123",
+                "status": "REJECTED",
+                "rejRsn": (
+                    "RMS:Rule: Check circuit limit including square off order exceeds : "
+                    "Circuit breach, Order Price :34.65, Low Price Range:30.32 High Price Range:33.51"
+                ),
+            }
+        ]
+        sell_manager.orders.get_orders.return_value = {"data": broker_orders}
+
+        with patch.object(sell_manager, "_remove_from_tracking") as mock_remove:
+            sell_manager._remove_rejected_orders()
+
+        waiting = sell_manager.waiting_for_circuit_expansion.get("TARAPUR")
+        assert waiting is not None
+        assert waiting["upper_circuit"] == 33.51
+        assert waiting["lower_circuit"] == 30.32
+        assert waiting["ema9_target"] == 34.65
+        assert waiting["trade"]["qty"] == 306
+        assert waiting["trade"]["placed_symbol"] == "TARAPUR-BE"
+        mock_remove.assert_called_once_with("TARAPUR")
+
+    def test_retry_places_order_when_ema9_within_circuit(self, sell_manager):
+        """Retry triggers only when EMA9 is within upper circuit"""
+        sell_manager.waiting_for_circuit_expansion = {
+            "TARAPUR": {
+                "upper_circuit": 33.51,
+                "lower_circuit": 30.32,
+                "ema9_target": 34.65,
+                "trade": {
+                    "symbol": "TARAPUR",
+                    "placed_symbol": "TARAPUR-BE",
+                    "ticker": "TARAPUR.NS",
+                    "qty": 306,
+                },
+                "rejection_reason": "Circuit breach",
+            }
+        }
+
+        sell_manager.get_current_ema9 = Mock(return_value=33.00)  # Within circuit
+        sell_manager.place_sell_order = Mock(return_value="SELL-1")
+        sell_manager._register_order = Mock()
+
+        retried = sell_manager._check_and_retry_circuit_expansion()
+
+        assert retried == 1
+        assert "TARAPUR" not in sell_manager.waiting_for_circuit_expansion
+        sell_manager.place_sell_order.assert_called_once()
+        sell_manager._register_order.assert_called_once()
+
     def test_handle_manual_sells_full_exit(self, sell_manager):
         """Test _handle_manual_sells with full exit"""
         # Setup tracked order
@@ -505,3 +578,458 @@ class TestRefactoredSellEngineMethods:
 
             # Verify existing lowest_ema9 preserved (not overwritten)
             assert sell_manager.lowest_ema9["RELIANCE"] == 2480.0
+
+
+class TestCircuitLimitHandling:
+    """Test circuit limit rejection handling and retry logic"""
+
+    @pytest.fixture
+    def mock_auth(self):
+        """Create mock auth object"""
+        auth = Mock(spec=KotakNeoAuth)
+        auth.client = Mock()
+        return auth
+
+    @pytest.fixture
+    def sell_manager(self, mock_auth):
+        """Create SellOrderManager instance"""
+        with patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster"):
+            manager = SellOrderManager(auth=mock_auth, history_path="test_history.json")
+            manager.orders = Mock()
+            return manager
+
+    def test_parse_circuit_limits_valid_message(self, sell_manager):
+        """Test parsing circuit limits from valid rejection message"""
+        rejection_msg = (
+            "RMS:Rule: Check circuit limit including square off order exceeds : "
+            "Circuit breach, Order Price :34.65, Low Price Range:30.32 High Price Range:33.51"
+        )
+        result = sell_manager._parse_circuit_limits_from_rejection(rejection_msg)
+
+        assert result is not None
+        assert result["upper"] == 33.51
+        assert result["lower"] == 30.32
+
+    def test_parse_circuit_limits_with_spaces(self, sell_manager):
+        """Test parsing circuit limits with spaces in message"""
+        rejection_msg = "High Price Range: 33.51 Low Price Range: 30.32"
+        result = sell_manager._parse_circuit_limits_from_rejection(rejection_msg)
+
+        assert result is not None
+        assert result["upper"] == 33.51
+        assert result["lower"] == 30.32
+
+    def test_parse_circuit_limits_case_insensitive(self, sell_manager):
+        """Test parsing is case insensitive"""
+        rejection_msg = "HIGH PRICE RANGE:33.51 LOW PRICE RANGE:30.32"
+        result = sell_manager._parse_circuit_limits_from_rejection(rejection_msg)
+
+        assert result is not None
+        assert result["upper"] == 33.51
+        assert result["lower"] == 30.32
+
+    def test_parse_circuit_limits_missing_high(self, sell_manager):
+        """Test parsing when high price range is missing"""
+        rejection_msg = "Low Price Range:30.32"
+        result = sell_manager._parse_circuit_limits_from_rejection(rejection_msg)
+
+        assert result is None
+
+    def test_parse_circuit_limits_missing_low(self, sell_manager):
+        """Test parsing when low price range is missing"""
+        rejection_msg = "High Price Range:33.51"
+        result = sell_manager._parse_circuit_limits_from_rejection(rejection_msg)
+
+        assert result is None
+
+    def test_parse_circuit_limits_empty_message(self, sell_manager):
+        """Test parsing with empty rejection message"""
+        result = sell_manager._parse_circuit_limits_from_rejection("")
+        assert result is None
+
+    def test_parse_circuit_limits_none(self, sell_manager):
+        """Test parsing with None rejection message"""
+        result = sell_manager._parse_circuit_limits_from_rejection(None)
+        assert result is None
+
+    def test_parse_circuit_limits_invalid_format(self, sell_manager):
+        """Test parsing with invalid format"""
+        rejection_msg = "Some other error message"
+        result = sell_manager._parse_circuit_limits_from_rejection(rejection_msg)
+        assert result is None
+
+    def test_remove_rejected_orders_circuit_limit_breach(self, sell_manager):
+        """Test that circuit limit rejections are stored in waiting list"""
+        from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
+        from modules.kotak_neo_auto_trader.utils.order_status_parser import OrderStatusParser
+
+        # Setup active order
+        sell_manager.active_sell_orders = {
+            "TARAPUR": {
+                "order_id": "12345",
+                "target_price": 34.65,  # EMA9 target
+                "placed_symbol": "TARAPUR-BE",
+                "ticker": "TARAPUR.NS",
+                "qty": 306,
+            }
+        }
+
+        # Mock broker order with circuit limit rejection
+        broker_order = {
+            "nOrdNo": "12345",
+            "ordSt": "REJECTED",
+            "rejRsn": (
+                "RMS:Rule: Check circuit limit including square off order exceeds : "
+                "Circuit breach, Order Price :34.65, Low Price Range:30.32 High Price Range:33.51"
+            ),
+        }
+
+        # Mock get_orders response
+        sell_manager.orders.get_orders.return_value = {"data": [broker_order]}
+
+        # Mock OrderStatusParser
+        with (
+            patch.object(OrderStatusParser, "is_rejected", return_value=True),
+            patch.object(OrderStatusParser, "is_cancelled", return_value=False),
+            patch.object(OrderStatusParser, "parse_status", return_value=Mock(value="REJECTED")),
+            patch.object(
+                OrderFieldExtractor, "get_rejection_reason", return_value=broker_order["rejRsn"]
+            ),
+            patch.object(OrderFieldExtractor, "get_order_id", return_value="12345"),
+            patch.object(sell_manager, "_remove_from_tracking") as mock_remove,
+        ):
+            sell_manager._remove_rejected_orders()
+
+        # Verify order was stored in waiting list
+        assert "TARAPUR" in sell_manager.waiting_for_circuit_expansion
+        wait_info = sell_manager.waiting_for_circuit_expansion["TARAPUR"]
+        assert wait_info["upper_circuit"] == 33.51
+        assert wait_info["lower_circuit"] == 30.32
+        assert wait_info["ema9_target"] == 34.65
+        assert wait_info["trade"]["qty"] == 306
+
+        # Verify order was removed from active tracking
+        mock_remove.assert_called_once_with("TARAPUR")
+
+    def test_remove_rejected_orders_circuit_limit_but_ema9_below(self, sell_manager):
+        """Test that circuit limit rejection is ignored if EMA9 is below upper circuit"""
+        from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
+        from modules.kotak_neo_auto_trader.utils.order_status_parser import OrderStatusParser
+
+        # Setup active order with EMA9 below circuit
+        sell_manager.active_sell_orders = {
+            "TARAPUR": {
+                "order_id": "12345",
+                "target_price": 32.00,  # Below upper circuit of 33.51
+                "placed_symbol": "TARAPUR-BE",
+                "ticker": "TARAPUR.NS",
+                "qty": 306,
+            }
+        }
+
+        broker_order = {
+            "nOrdNo": "12345",
+            "ordSt": "REJECTED",
+            "rejRsn": "Circuit breach, High Price Range:33.51 Low Price Range:30.32",
+        }
+
+        sell_manager.orders.get_orders.return_value = {"data": [broker_order]}
+
+        with (
+            patch.object(OrderStatusParser, "is_rejected", return_value=True),
+            patch.object(OrderStatusParser, "is_cancelled", return_value=False),
+            patch.object(OrderStatusParser, "parse_status", return_value=Mock(value="REJECTED")),
+            patch.object(
+                OrderFieldExtractor, "get_rejection_reason", return_value=broker_order["rejRsn"]
+            ),
+            patch.object(OrderFieldExtractor, "get_order_id", return_value="12345"),
+            patch.object(sell_manager, "_remove_from_tracking") as mock_remove,
+        ):
+            sell_manager._remove_rejected_orders()
+
+        # Should not be in waiting list (EMA9 is below circuit)
+        assert "TARAPUR" not in sell_manager.waiting_for_circuit_expansion
+        # Should be removed as regular rejection
+        mock_remove.assert_called_once_with("TARAPUR")
+
+    def test_remove_rejected_orders_regular_rejection(self, sell_manager):
+        """Test that regular rejections (not circuit limit) are handled normally"""
+        from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
+        from modules.kotak_neo_auto_trader.utils.order_status_parser import OrderStatusParser
+
+        sell_manager.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "12345",
+                "target_price": 2500.0,
+                "placed_symbol": "RELIANCE-EQ",
+                "qty": 10,
+            }
+        }
+
+        broker_order = {
+            "nOrdNo": "12345",
+            "ordSt": "REJECTED",
+            "rejRsn": "Insufficient funds",
+        }
+
+        sell_manager.orders.get_orders.return_value = {"data": [broker_order]}
+
+        with (
+            patch.object(OrderStatusParser, "is_rejected", return_value=True),
+            patch.object(OrderStatusParser, "is_cancelled", return_value=False),
+            patch.object(OrderStatusParser, "parse_status", return_value=Mock(value="REJECTED")),
+            patch.object(
+                OrderFieldExtractor, "get_rejection_reason", return_value=broker_order["rejRsn"]
+            ),
+            patch.object(OrderFieldExtractor, "get_order_id", return_value="12345"),
+            patch.object(sell_manager, "_remove_from_tracking") as mock_remove,
+        ):
+            sell_manager._remove_rejected_orders()
+
+        # Should not be in waiting list
+        assert "RELIANCE" not in sell_manager.waiting_for_circuit_expansion
+        # Should be removed as regular rejection
+        mock_remove.assert_called_once_with("RELIANCE")
+
+    def test_check_and_retry_circuit_expansion_empty_waiting_list(self, sell_manager):
+        """Test retry when waiting list is empty"""
+        sell_manager.waiting_for_circuit_expansion = {}
+        result = sell_manager._check_and_retry_circuit_expansion()
+        assert result == 0
+
+    def test_check_and_retry_circuit_expansion_ema9_still_above_circuit(self, sell_manager):
+        """Test retry when EMA9 is still above circuit limit"""
+        sell_manager.waiting_for_circuit_expansion = {
+            "TARAPUR": {
+                "upper_circuit": 33.51,
+                "lower_circuit": 30.32,
+                "ema9_target": 34.65,
+                "trade": {
+                    "placed_symbol": "TARAPUR-BE",
+                    "ticker": "TARAPUR.NS",
+                    "qty": 306,
+                },
+            }
+        }
+
+        # EMA9 is still above circuit
+        with patch.object(sell_manager, "get_current_ema9", return_value=34.00):
+            result = sell_manager._check_and_retry_circuit_expansion()
+
+        assert result == 0
+        # Should still be in waiting list
+        assert "TARAPUR" in sell_manager.waiting_for_circuit_expansion
+
+    def test_check_and_retry_circuit_expansion_ema9_within_circuit_success(self, sell_manager):
+        """Test successful retry when EMA9 drops within circuit limit"""
+        sell_manager.waiting_for_circuit_expansion = {
+            "TARAPUR": {
+                "upper_circuit": 33.51,
+                "lower_circuit": 30.32,
+                "ema9_target": 34.65,
+                "trade": {
+                    "placed_symbol": "TARAPUR-BE",
+                    "ticker": "TARAPUR.NS",
+                    "qty": 306,
+                },
+            }
+        }
+
+        # EMA9 is now within circuit
+        current_ema9 = 33.00
+        with (
+            patch.object(sell_manager, "get_current_ema9", return_value=current_ema9),
+            patch.object(sell_manager, "place_sell_order", return_value="NEW123") as mock_place,
+            patch.object(sell_manager, "_register_order") as mock_register,
+        ):
+            result = sell_manager._check_and_retry_circuit_expansion()
+
+        assert result == 1
+        # Should be removed from waiting list
+        assert "TARAPUR" not in sell_manager.waiting_for_circuit_expansion
+        # Should have placed order at min(current_ema9, ema9_target) = 33.00
+        mock_place.assert_called_once()
+        call_args = mock_place.call_args
+        assert call_args[0][1] == 33.00  # target_price
+        # Should have registered order
+        mock_register.assert_called_once()
+
+    def test_check_and_retry_circuit_expansion_ema9_at_circuit_boundary(self, sell_manager):
+        """Test retry when EMA9 is exactly at circuit limit"""
+        sell_manager.waiting_for_circuit_expansion = {
+            "TARAPUR": {
+                "upper_circuit": 33.51,
+                "lower_circuit": 30.32,
+                "ema9_target": 34.65,
+                "trade": {
+                    "placed_symbol": "TARAPUR-BE",
+                    "ticker": "TARAPUR.NS",
+                    "qty": 306,
+                },
+            }
+        }
+
+        # EMA9 is exactly at upper circuit
+        current_ema9 = 33.51
+        with (
+            patch.object(sell_manager, "get_current_ema9", return_value=current_ema9),
+            patch.object(sell_manager, "place_sell_order", return_value="NEW123"),
+            patch.object(sell_manager, "_register_order"),
+        ):
+            result = sell_manager._check_and_retry_circuit_expansion()
+
+        assert result == 1
+        assert "TARAPUR" not in sell_manager.waiting_for_circuit_expansion
+
+    def test_check_and_retry_circuit_expansion_ema9_below_target(self, sell_manager):
+        """Test retry uses current EMA9 when it's lower than stored target"""
+        sell_manager.waiting_for_circuit_expansion = {
+            "TARAPUR": {
+                "upper_circuit": 33.51,
+                "lower_circuit": 30.32,
+                "ema9_target": 34.65,  # Higher target
+                "trade": {
+                    "placed_symbol": "TARAPUR-BE",
+                    "ticker": "TARAPUR.NS",
+                    "qty": 306,
+                },
+            }
+        }
+
+        # Current EMA9 is lower than stored target
+        current_ema9 = 32.50
+        with (
+            patch.object(sell_manager, "get_current_ema9", return_value=current_ema9),
+            patch.object(sell_manager, "place_sell_order", return_value="NEW123") as mock_place,
+            patch.object(sell_manager, "_register_order"),
+        ):
+            result = sell_manager._check_and_retry_circuit_expansion()
+
+        assert result == 1
+        # Should use current_ema9 (32.50) not ema9_target (34.65)
+        call_args = mock_place.call_args
+        assert call_args[0][1] == 32.50
+
+    def test_check_and_retry_circuit_expansion_place_order_fails(self, sell_manager):
+        """Test retry when order placement fails"""
+        sell_manager.waiting_for_circuit_expansion = {
+            "TARAPUR": {
+                "upper_circuit": 33.51,
+                "lower_circuit": 30.32,
+                "ema9_target": 34.65,
+                "trade": {
+                    "placed_symbol": "TARAPUR-BE",
+                    "ticker": "TARAPUR.NS",
+                    "qty": 306,
+                },
+            }
+        }
+
+        current_ema9 = 33.00
+        with (
+            patch.object(sell_manager, "get_current_ema9", return_value=current_ema9),
+            patch.object(sell_manager, "place_sell_order", return_value=None),
+        ):
+            result = sell_manager._check_and_retry_circuit_expansion()
+
+        assert result == 0
+        # Should still be in waiting list (will retry next cycle)
+        assert "TARAPUR" in sell_manager.waiting_for_circuit_expansion
+
+    def test_check_and_retry_circuit_expansion_no_ticker(self, sell_manager):
+        """Test retry when ticker is missing"""
+        sell_manager.waiting_for_circuit_expansion = {
+            "TARAPUR": {
+                "upper_circuit": 33.51,
+                "lower_circuit": 30.32,
+                "ema9_target": 34.65,
+                "trade": {
+                    "placed_symbol": "TARAPUR-BE",
+                    "ticker": "",  # Missing ticker
+                    "qty": 306,
+                },
+            }
+        }
+
+        # Should extract ticker from symbol
+        with (
+            patch.object(sell_manager, "get_current_ema9", return_value=33.00),
+            patch.object(sell_manager, "place_sell_order", return_value="NEW123"),
+            patch.object(sell_manager, "_register_order"),
+        ):
+            result = sell_manager._check_and_retry_circuit_expansion()
+
+        # Should still work (ticker extracted from symbol)
+        assert result == 1
+
+    def test_check_and_retry_circuit_expansion_ema9_fetch_fails(self, sell_manager):
+        """Test retry when EMA9 fetch fails"""
+        sell_manager.waiting_for_circuit_expansion = {
+            "TARAPUR": {
+                "upper_circuit": 33.51,
+                "lower_circuit": 30.32,
+                "ema9_target": 34.65,
+                "trade": {
+                    "placed_symbol": "TARAPUR-BE",
+                    "ticker": "TARAPUR.NS",
+                    "qty": 306,
+                },
+            }
+        }
+
+        with patch.object(sell_manager, "get_current_ema9", return_value=None):
+            result = sell_manager._check_and_retry_circuit_expansion()
+
+        assert result == 0
+        # Should still be in waiting list
+        assert "TARAPUR" in sell_manager.waiting_for_circuit_expansion
+
+    def test_check_and_retry_circuit_expansion_exception_handling(self, sell_manager):
+        """Test that exceptions are handled gracefully"""
+        sell_manager.waiting_for_circuit_expansion = {
+            "TARAPUR": {
+                "upper_circuit": 33.51,
+                "lower_circuit": 30.32,
+                "ema9_target": 34.65,
+                "trade": {
+                    "placed_symbol": "TARAPUR-BE",
+                    "ticker": "TARAPUR.NS",
+                    "qty": 306,
+                },
+            }
+        }
+
+        # Simulate exception
+        with patch.object(sell_manager, "get_current_ema9", side_effect=Exception("API Error")):
+            result = sell_manager._check_and_retry_circuit_expansion()
+
+        assert result == 0
+        # Should still be in waiting list (will retry next cycle)
+        assert "TARAPUR" in sell_manager.waiting_for_circuit_expansion
+
+    def test_check_and_retry_circuit_expansion_multiple_symbols(self, sell_manager):
+        """Test retry with multiple symbols in waiting list"""
+        sell_manager.waiting_for_circuit_expansion = {
+            "TARAPUR": {
+                "upper_circuit": 33.51,
+                "ema9_target": 34.65,
+                "trade": {"placed_symbol": "TARAPUR-BE", "ticker": "TARAPUR.NS", "qty": 306},
+            },
+            "THYROCARE": {
+                "upper_circuit": 450.00,
+                "ema9_target": 460.00,
+                "trade": {"placed_symbol": "THYROCARE-EQ", "ticker": "THYROCARE.NS", "qty": 23},
+            },
+        }
+
+        # TARAPUR: EMA9 within circuit, THYROCARE: still above
+        with (
+            patch.object(sell_manager, "get_current_ema9", side_effect=[33.00, 455.00]),
+            patch.object(sell_manager, "place_sell_order", side_effect=["NEW123", None]),
+            patch.object(sell_manager, "_register_order"),
+        ):
+            result = sell_manager._check_and_retry_circuit_expansion()
+
+        assert result == 1  # Only TARAPUR succeeded
+        assert "TARAPUR" not in sell_manager.waiting_for_circuit_expansion
+        assert "THYROCARE" in sell_manager.waiting_for_circuit_expansion  # Still waiting
