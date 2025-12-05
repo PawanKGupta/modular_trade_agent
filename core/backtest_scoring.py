@@ -481,6 +481,17 @@ def run_stock_backtest(
             # Calculate backtest score
             backtest_score = calculate_backtest_score(backtest_results, dip_mode)
 
+            # Calculate avg_return from positions if available
+            avg_return = 0.0
+            positions = backtest_results.get("positions", [])
+            if positions:
+                # Calculate average return from position return_pct values
+                return_pcts = [
+                    p.get("return_pct", 0) for p in positions if p.get("return_pct") is not None
+                ]
+                if return_pcts:
+                    avg_return = np.mean(return_pcts)
+
             # Return summary with score
             return {
                 "symbol": stock_symbol,
@@ -491,6 +502,7 @@ def run_stock_backtest(
                 "total_trades": backtest_results.get("executed_trades", 0),
                 "vs_buy_hold": backtest_results.get("strategy_vs_buy_hold", 0),
                 "execution_rate": backtest_results.get("trade_agent_accuracy", 0),
+                "avg_return": avg_return,  # Calculate from positions
                 "full_results": backtest_results,
             }
 
