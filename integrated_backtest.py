@@ -15,12 +15,12 @@ when they should have exited. This version properly exits positions immediately
 when exit conditions are met.
 """
 
-import sys
 import os
-import pandas as pd
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+import sys
 import warnings
+from datetime import datetime, timedelta
+
+import pandas as pd
 
 warnings.filterwarnings("ignore")
 import pandas_ta as ta
@@ -28,8 +28,8 @@ import pandas_ta as ta
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core.analysis import analyze_ticker
 from core.data_fetcher import fetch_ohlcv_yf
+from utils.logger import logger
 
 
 class Position:
@@ -137,8 +137,7 @@ class Position:
         unrealized_pnl_pct = ((low_price - self.entry_price) / self.entry_price) * 100
 
         # Update max drawdown if this is worse
-        if unrealized_pnl_pct < self.max_drawdown_pct:
-            self.max_drawdown_pct = unrealized_pnl_pct
+        self.max_drawdown_pct = min(self.max_drawdown_pct, unrealized_pnl_pct)
 
     def close_position(self, exit_date: str, exit_price: float, exit_reason: str):
         """Close the position"""
@@ -165,8 +164,13 @@ class Position:
 
 
 def validate_initial_entry_with_trade_agent(
-    stock_name: str, signal_date: str, rsi: float, ema200: float, full_market_data: pd.DataFrame, config=None
-) -> Optional[Dict]:
+    stock_name: str,
+    signal_date: str,
+    rsi: float,
+    ema200: float,
+    full_market_data: pd.DataFrame,
+    config=None,
+) -> dict | None:
     """
     Validate initial entry with trade agent.
     Returns dict with buy_price, target if approved, None if rejected.
@@ -183,12 +187,51 @@ def validate_initial_entry_with_trade_agent(
     """
     try:
         # Call analyze_ticker using AnalysisService (same as old implementation)
-        from services.analysis_service import AnalysisService
         from config.strategy_config import StrategyConfig
+        from services.analysis_service import AnalysisService
 
-        # Use provided config or default
+        # Use provided config or try to load from environment/database
         if config is None:
-            config = StrategyConfig.default()
+            # Try to load user config from environment variable (if trade_agent was called with user_id)
+            user_id_str = os.environ.get("TRADE_AGENT_USER_ID")
+            if user_id_str:
+                try:
+                    user_id = int(user_id_str)
+                    logger.debug(
+                        f"validate_initial_entry_with_trade_agent: config was None, trying to load user config for user_id={user_id}"
+                    )
+                    from src.application.services.config_converter import (
+                        user_config_to_strategy_config,
+                    )
+                    from src.infrastructure.db.session import get_session
+                    from src.infrastructure.persistence.user_trading_config_repository import (
+                        UserTradingConfigRepository,
+                    )
+
+                    db_session = next(get_session())
+                    config_repo = UserTradingConfigRepository(db_session)
+                    user_config = config_repo.get_or_create_default(user_id)
+                    config = user_config_to_strategy_config(user_config, db_session=db_session)
+                    logger.debug(
+                        f"validate_initial_entry_with_trade_agent: loaded user config (ml_enabled={config.ml_enabled})"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"validate_initial_entry_with_trade_agent: failed to load user config: {e}, using default"
+                    )
+                    config = StrategyConfig.default()
+                    logger.debug(
+                        f"validate_initial_entry_with_trade_agent: using default config (ml_enabled={config.ml_enabled})"
+                    )
+            else:
+                config = StrategyConfig.default()
+                logger.debug(
+                    f"validate_initial_entry_with_trade_agent: config was None and no TRADE_AGENT_USER_ID, using default (ml_enabled={config.ml_enabled})"
+                )
+        else:
+            logger.debug(
+                f"validate_initial_entry_with_trade_agent: using provided config (ml_enabled={config.ml_enabled})"
+            )
 
         # Convert column names to lowercase for AnalysisService
         market_data_for_agent = full_market_data.copy()
@@ -239,11 +282,11 @@ def validate_initial_entry_with_trade_agent(
 
 def run_integrated_backtest(
     stock_name: str,
-    date_range: Tuple[str, str],
+    date_range: tuple[str, str],
     capital_per_position: float = 50000,
     skip_trade_agent_validation: bool = False,
     config=None,
-) -> Dict:
+) -> dict:
     """
     Single-pass integrated backtest - checks RSI daily and executes trades inline.
 
@@ -265,8 +308,8 @@ def run_integrated_backtest(
     print(f"? Starting Integrated Backtest for {stock_name}")
     print(f"Period: {start_date} to {end_date}")
     print(f"Capital per position: ${capital_per_position:,.0f}")
-    print(f"Target: EMA9 at entry/re-entry date")
-    print(f"Exit: High >= Target OR RSI > 50")
+    print("Target: EMA9 at entry/re-entry date")
+    print("Exit: High >= Target OR RSI > 50")
     print("=" * 60)
 
     # Fetch market data with buffer for indicators
@@ -306,7 +349,7 @@ def run_integrated_backtest(
         print(
             f"   [WARN]? EMA Warm-up Warning: Only {available_warmup} periods before backtest start (recommended: {ema_warmup_periods})"
         )
-        print(f"   [WARN]? EMA values at backtest start may have lag")
+        print("   [WARN]? EMA values at backtest start may have lag")
 
         # If critical, adjust start date to allow warm-up
         if available_warmup < 20:
@@ -333,8 +376,8 @@ def run_integrated_backtest(
     print()
 
     # Track state
-    position: Optional[Position] = None
-    all_positions: List[Position] = []  # Track all positions for results
+    position: Position | None = None
+    all_positions: list[Position] = []  # Track all positions for results
     executed_trades = 0
     skipped_signals = 0
     signal_count = 0  # Counter for signal numbering
@@ -475,11 +518,11 @@ def run_integrated_backtest(
 
                 if skip_trade_agent_validation:
                     # For training data: Skip trade agent validation, execute all RSI<30 & price>EMA200
-                    print(f"   [WARN]?  Training mode: Skipping trade agent validation")
+                    print("   [WARN]?  Training mode: Skipping trade agent validation")
                     validation = {"approved": True, "target": exec_ema9}
                 else:
                     # Normal mode: Validate with trade agent
-                    print(f"   ? Trade Agent analyzing...")
+                    print("   ? Trade Agent analyzing...")
                     validation = validate_initial_entry_with_trade_agent(
                         stock_name, date_str, rsi, ema200, market_data, config=config
                     )
@@ -502,7 +545,7 @@ def run_integrated_backtest(
                     print(f"      Target: {position.target_price:.2f}")
                     executed_trades += 1
                 else:
-                    print(f"   ?? SKIPPED: Trade agent rejected")
+                    print("   ?? SKIPPED: Trade agent rejected")
                     skipped_signals += 1
 
     # Close any remaining open position at period end
@@ -515,8 +558,8 @@ def run_integrated_backtest(
         all_positions.append(position)
 
     # Generate results
-    print(f"\n" + "=" * 60)
-    print(f"? Integrated Backtest Complete!")
+    print("\n" + "=" * 60)
+    print("? Integrated Backtest Complete!")
     print(f"Total Signals: {signal_count}")
     print(f"Executed Trades: {executed_trades}")
     print(f"Skipped Signals: {skipped_signals}")
@@ -533,7 +576,7 @@ def run_integrated_backtest(
 
         print(f"Total P&L: ${total_pnl:,.0f}")
         print(f"Total Return: {total_return:+.2f}%")
-        print(f"Win Rate: {len(winning)/len(all_positions)*100:.1f}%")
+        print(f"Win Rate: {len(winning) / len(all_positions) * 100:.1f}%")
 
         # Convert Position objects to dicts for backward compatibility
         positions_list = []
@@ -588,7 +631,7 @@ def run_integrated_backtest(
     return results
 
 
-def print_integrated_results(results: Dict):
+def print_integrated_results(results: dict):
     """
     Print formatted results from integrated backtest.
     Compatible with old interface for backwards compatibility.
@@ -598,7 +641,7 @@ def print_integrated_results(results: Dict):
         return
 
     print(f"\n{'=' * 60}")
-    print(f"? BACKTEST RESULTS:")
+    print("? BACKTEST RESULTS:")
     print(f"{'=' * 60}")
     print(f"  Stock: {results.get('stock_name', 'N/A')}")
     print(f"  Period: {results.get('period', 'N/A')}")
