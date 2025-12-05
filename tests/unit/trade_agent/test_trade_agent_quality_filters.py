@@ -121,6 +121,8 @@ class TestQualityFocusedFiltering:
         """Test that high-quality stocks pass backtest quality filters"""
         # Set config in first result
         sample_results_with_backtest[0]["_config"] = mock_config
+        # Lower threshold for this test since default is 100% and STOCK2 has 68% confidence
+        mock_config.ml_confidence_threshold = 0.6
 
         with patch("trade_agent.BacktestService") as mock_backtest_service:
             mock_backtest_service.return_value.add_backtest_scores_to_results.return_value = (
