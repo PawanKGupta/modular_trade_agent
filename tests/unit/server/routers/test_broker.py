@@ -1371,8 +1371,11 @@ def test_get_broker_orders_success(monkeypatch):
     mock_price = MagicMock()
     mock_price.amount = Decimal("2500.00")
     mock_order.price = mock_price
-    mock_order.execution_price = None
-    mock_order.execution_qty = None
+    # Fixed: Use correct field names (executed_price, executed_quantity)
+    mock_executed_price = MagicMock()
+    mock_executed_price.amount = Decimal("2500.50")
+    mock_order.executed_price = mock_executed_price
+    mock_order.executed_quantity = 10
 
     mock_broker = MagicMock()
     mock_broker.connect.return_value = True
@@ -1398,6 +1401,148 @@ def test_get_broker_orders_success(monkeypatch):
         assert result[0]["side"] == "buy"
         assert result[0]["status"] == "pending"
         assert result[0]["price"] == 2500.0
+        # Test that executed_price and execution_qty are correctly mapped
+        assert result[0]["execution_price"] == 2500.50
+        assert result[0]["execution_qty"] == 10
+
+
+def test_get_broker_orders_with_executed_fields(monkeypatch):
+    """Test broker orders endpoint with executed_price and executed_quantity"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = True
+    mock_auth.is_authenticated.return_value = True
+    mock_client = MagicMock()
+    mock_auth.get_client.return_value = mock_client
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    # Create order with executed fields
+    mock_order = MagicMock()
+    mock_order.order_id = "ORDER456"
+    mock_order.symbol = "TCS-EQ"
+    mock_order.quantity = 5
+    mock_order.transaction_type.value = "SELL"
+    mock_order.status.value = "EXECUTED"
+    mock_order.created_at = datetime.now()
+
+    mock_price = MagicMock()
+    mock_price.amount = Decimal("3500.00")
+    mock_order.price = mock_price
+
+    # Test executed_price and executed_quantity
+    mock_executed_price = MagicMock()
+    mock_executed_price.amount = Decimal("3500.75")
+    mock_order.executed_price = mock_executed_price
+    mock_order.executed_quantity = 5
+
+    mock_broker = MagicMock()
+    mock_broker.get_all_orders.return_value = [mock_order]
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_orders(db=db_session, current=user)
+
+        assert len(result) == 1
+        assert result[0]["broker_order_id"] == "ORDER456"
+        assert result[0]["symbol"] == "TCS-EQ"
+        assert result[0]["side"] == "sell"
+        assert result[0]["status"] == "ongoing"  # EXECUTED -> ongoing
+        assert result[0]["execution_price"] == 3500.75
+        assert result[0]["execution_qty"] == 5
+
+
+def test_get_broker_orders_conversion_error_handling(monkeypatch):
+    """Test that order conversion errors are handled gracefully"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    mock_auth = MagicMock()
+    mock_auth.is_authenticated.return_value = True
+    mock_client = MagicMock()
+    mock_auth.get_client.return_value = mock_client
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    # Create invalid order that will cause conversion error
+    mock_order_invalid = MagicMock()
+    mock_order_invalid.order_id = "INVALID"
+    # Missing required attributes will cause AttributeError
+    del mock_order_invalid.symbol
+
+    mock_order_valid = MagicMock()
+    mock_order_valid.order_id = "VALID"
+    mock_order_valid.symbol = "RELIANCE-EQ"
+    mock_order_valid.quantity = 10
+    mock_order_valid.transaction_type.value = "BUY"
+    mock_order_valid.status.value = "OPEN"
+    mock_order_valid.created_at = datetime.now()
+    mock_price = MagicMock()
+    mock_price.amount = Decimal("2500.00")
+    mock_order_valid.price = mock_price
+    mock_order_valid.executed_price = None
+    mock_order_valid.executed_quantity = None
+
+    mock_broker = MagicMock()
+    mock_broker.get_all_orders.return_value = [mock_order_invalid, mock_order_valid]
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_orders(db=db_session, current=user)
+
+        # Should return only the valid order, invalid one should be skipped
+        assert len(result) == 1
+        assert result[0]["broker_order_id"] == "VALID"
 
 
 def test_get_broker_orders_auth_fails(monkeypatch):

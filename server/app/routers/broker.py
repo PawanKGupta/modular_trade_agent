@@ -858,55 +858,63 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
             # Convert broker orders to simplified format
             orders_list = []
             for order in broker_orders:
-                # Map broker order status to our status format
-                broker_status = (
-                    order.status.value.lower()
-                    if hasattr(order.status, "value")
-                    else str(order.status).lower()
-                )
-                status_map = {
-                    "pending": "pending",
-                    "open": "pending",
-                    "executed": "ongoing",
-                    "completed": "closed",
-                    "filled": "closed",
-                    "rejected": "failed",
-                    "cancelled": "cancelled",
-                    "failed": "failed",
-                }
-                mapped_status = status_map.get(broker_status, "pending")
-
-                # Determine side
-                side = "buy" if order.transaction_type.value == "BUY" else "sell"
-
-                orders_list.append(
-                    {
-                        "broker_order_id": order.order_id if hasattr(order, "order_id") else None,
-                        "symbol": order.symbol,
-                        "side": side,
-                        "quantity": order.quantity,
-                        "price": (
-                            float(order.price.amount)
-                            if hasattr(order, "price") and hasattr(order.price, "amount")
-                            else None
-                        ),
-                        "status": mapped_status,
-                        "created_at": (
-                            order.created_at.isoformat()
-                            if hasattr(order, "created_at") and order.created_at
-                            else None
-                        ),
-                        "execution_price": (
-                            float(order.execution_price.amount)
-                            if hasattr(order, "execution_price")
-                            and hasattr(order.execution_price, "amount")
-                            else None
-                        ),
-                        "execution_qty": (
-                            order.execution_qty if hasattr(order, "execution_qty") else None
-                        ),
+                try:
+                    # Map broker order status to our status format
+                    broker_status = (
+                        order.status.value.lower()
+                        if hasattr(order.status, "value")
+                        else str(order.status).lower()
+                    )
+                    status_map = {
+                        "pending": "pending",
+                        "open": "pending",
+                        "executed": "ongoing",
+                        "completed": "closed",
+                        "filled": "closed",
+                        "rejected": "failed",
+                        "cancelled": "cancelled",
+                        "failed": "failed",
                     }
-                )
+                    mapped_status = status_map.get(broker_status, "pending")
+
+                    # Determine side
+                    side = "buy" if order.transaction_type.value == "BUY" else "sell"
+
+                    orders_list.append(
+                        {
+                            "broker_order_id": (
+                                order.order_id if hasattr(order, "order_id") else None
+                            ),
+                            "symbol": order.symbol,
+                            "side": side,
+                            "quantity": order.quantity,
+                            "price": (
+                                float(order.price.amount)
+                                if hasattr(order, "price") and hasattr(order.price, "amount")
+                                else None
+                            ),
+                            "status": mapped_status,
+                            "created_at": (
+                                order.created_at.isoformat()
+                                if hasattr(order, "created_at") and order.created_at
+                                else None
+                            ),
+                            "execution_price": (
+                                float(order.executed_price.amount)
+                                if hasattr(order, "executed_price")
+                                and hasattr(order.executed_price, "amount")
+                                else None
+                            ),
+                            "execution_qty": (
+                                order.executed_quantity
+                                if hasattr(order, "executed_quantity")
+                                else None
+                            ),
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to convert order to API format: {e}")
+                    continue
 
             return orders_list
 
