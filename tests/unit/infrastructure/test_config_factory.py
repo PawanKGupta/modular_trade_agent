@@ -59,6 +59,8 @@ class TestConfigFactory:
         # Verify ML defaults
         assert config.ml_enabled is False
         assert config.ml_confidence_threshold == 0.5
+        # Verify behavior settings defaults
+        assert config.enable_premarket_amo_adjustment is True
 
     def test_create_default_config_matches_strategy_config(self, sample_user):
         """Test that default config matches StrategyConfig.default()"""
@@ -78,6 +80,11 @@ class TestConfigFactory:
         assert db_config.default_target_pct == strategy_config.default_target_pct
         assert db_config.strong_buy_target_pct == strategy_config.strong_buy_target_pct
         assert db_config.excellent_target_pct == strategy_config.excellent_target_pct
+        # Verify behavior settings
+        assert (
+            db_config.enable_premarket_amo_adjustment
+            == strategy_config.enable_premarket_amo_adjustment
+        )
 
     def test_db_config_to_strategy_config(self, db_session, sample_user):
         """Test converting UserTradingConfig to StrategyConfig"""
@@ -103,6 +110,8 @@ class TestConfigFactory:
         assert strategy_config.min_volume_multiplier == 1.0
         assert strategy_config.volume_multiplier_for_strong == 1.2
         assert strategy_config.volume_lookback_days == 50
+        # Verify enable_premarket_amo_adjustment uses database default (True)
+        assert strategy_config.enable_premarket_amo_adjustment is True
 
     def test_round_trip_conversion(self, db_session, sample_user):
         """Test that config can be converted back and forth"""
@@ -120,6 +129,10 @@ class TestConfigFactory:
         assert strategy_config.rsi_oversold == original_db_config.rsi_oversold
         assert strategy_config.user_capital == original_db_config.user_capital
         assert strategy_config.chart_quality_enabled == original_db_config.chart_quality_enabled
+        assert (
+            strategy_config.enable_premarket_amo_adjustment
+            == original_db_config.enable_premarket_amo_adjustment
+        )
 
     def test_config_with_custom_values(self, db_session, sample_user):
         """Test creating config with custom values"""
@@ -148,3 +161,43 @@ class TestConfigFactory:
         assert strategy_config.chart_quality_enabled is False
         assert strategy_config.ml_enabled is True
         assert strategy_config.ml_confidence_threshold == 0.7
+
+    def test_enable_premarket_amo_adjustment_in_default_config(self, sample_user):
+        """Test that enable_premarket_amo_adjustment is included in default config"""
+        config = create_default_user_config(sample_user.id)
+
+        assert hasattr(config, "enable_premarket_amo_adjustment")
+        assert config.enable_premarket_amo_adjustment is True
+
+    def test_enable_premarket_amo_adjustment_conversion(self, db_session, sample_user):
+        """Test that enable_premarket_amo_adjustment is properly converted"""
+        db_config = UserTradingConfig(
+            user_id=sample_user.id,
+            enable_premarket_amo_adjustment=False,
+        )
+        db_session.add(db_config)
+        db_session.commit()
+        db_session.refresh(db_config)
+
+        strategy_config = db_config_to_strategy_config(db_config)
+
+        assert strategy_config.enable_premarket_amo_adjustment is False
+
+    def test_enable_premarket_amo_adjustment_default_value(self, db_session, sample_user):
+        """Test that enable_premarket_amo_adjustment defaults to True when not specified"""
+        db_config = UserTradingConfig(
+            user_id=sample_user.id,
+            rsi_period=10,
+            rsi_oversold=30.0,
+        )
+        db_session.add(db_config)
+        db_session.commit()
+        db_session.refresh(db_config)
+
+        # Database default should be True
+        assert db_config.enable_premarket_amo_adjustment is True
+
+        strategy_config = db_config_to_strategy_config(db_config)
+
+        # Conversion should preserve the database value
+        assert strategy_config.enable_premarket_amo_adjustment is True

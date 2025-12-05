@@ -54,6 +54,7 @@ def sample_user_config(db_session):
         news_sentiment_min_articles=3,
         news_sentiment_pos_threshold=0.30,
         news_sentiment_neg_threshold=-0.30,
+        enable_premarket_amo_adjustment=True,
     )
     db_session.add(config)
     db_session.commit()
@@ -86,7 +87,10 @@ class TestConfigConverter:
         strategy_config = user_config_to_strategy_config(sample_user_config)
 
         assert strategy_config.user_capital == sample_user_config.user_capital
-        assert strategy_config.max_position_volume_ratio == sample_user_config.max_position_volume_ratio
+        assert (
+            strategy_config.max_position_volume_ratio
+            == sample_user_config.max_position_volume_ratio
+        )
         assert strategy_config.min_absolute_avg_volume == sample_user_config.min_absolute_avg_volume
 
     def test_chart_quality_configuration(self, sample_user_config):
@@ -95,7 +99,10 @@ class TestConfigConverter:
 
         assert strategy_config.chart_quality_enabled == sample_user_config.chart_quality_enabled
         assert strategy_config.chart_quality_min_score == sample_user_config.chart_quality_min_score
-        assert strategy_config.chart_quality_max_gap_frequency == sample_user_config.chart_quality_max_gap_frequency
+        assert (
+            strategy_config.chart_quality_max_gap_frequency
+            == sample_user_config.chart_quality_max_gap_frequency
+        )
         assert (
             strategy_config.chart_quality_min_daily_range_pct
             == sample_user_config.chart_quality_min_daily_range_pct
@@ -129,10 +136,22 @@ class TestConfigConverter:
         strategy_config = user_config_to_strategy_config(sample_user_config)
 
         assert strategy_config.news_sentiment_enabled == sample_user_config.news_sentiment_enabled
-        assert strategy_config.news_sentiment_lookback_days == sample_user_config.news_sentiment_lookback_days
-        assert strategy_config.news_sentiment_min_articles == sample_user_config.news_sentiment_min_articles
-        assert strategy_config.news_sentiment_pos_threshold == sample_user_config.news_sentiment_pos_threshold
-        assert strategy_config.news_sentiment_neg_threshold == sample_user_config.news_sentiment_neg_threshold
+        assert (
+            strategy_config.news_sentiment_lookback_days
+            == sample_user_config.news_sentiment_lookback_days
+        )
+        assert (
+            strategy_config.news_sentiment_min_articles
+            == sample_user_config.news_sentiment_min_articles
+        )
+        assert (
+            strategy_config.news_sentiment_pos_threshold
+            == sample_user_config.news_sentiment_pos_threshold
+        )
+        assert (
+            strategy_config.news_sentiment_neg_threshold
+            == sample_user_config.news_sentiment_neg_threshold
+        )
 
     def test_default_values_for_missing_fields(self, sample_user_config):
         """Test that defaults are used for fields not in UserTradingConfig"""
@@ -174,3 +193,66 @@ class TestConfigConverter:
         assert strategy_config.tight_stop_loss_pct == 0.06
         assert strategy_config.min_stop_loss_pct == 0.03
 
+    def test_enable_premarket_amo_adjustment_conversion(self, sample_user_config):
+        """Test that enable_premarket_amo_adjustment is properly converted"""
+        strategy_config = user_config_to_strategy_config(sample_user_config)
+
+        assert (
+            strategy_config.enable_premarket_amo_adjustment
+            == sample_user_config.enable_premarket_amo_adjustment
+        )
+        assert strategy_config.enable_premarket_amo_adjustment is True
+
+    def test_enable_premarket_amo_adjustment_false(self, db_session):
+        """Test conversion when enable_premarket_amo_adjustment is False"""
+        from src.infrastructure.db.models import Users
+
+        user = Users(
+            email="test3@example.com",
+            password_hash="hash",
+            created_at=ist_now(),
+        )
+        db_session.add(user)
+        db_session.commit()
+
+        config = UserTradingConfig(
+            user_id=user.id,
+            enable_premarket_amo_adjustment=False,
+        )
+        db_session.add(config)
+        db_session.commit()
+
+        strategy_config = user_config_to_strategy_config(config)
+
+        assert strategy_config.enable_premarket_amo_adjustment is False
+
+    def test_enable_premarket_amo_adjustment_default(self, db_session):
+        """Test that enable_premarket_amo_adjustment defaults to True when not specified"""
+        from src.infrastructure.db.models import Users
+
+        user = Users(
+            email="test4@example.com",
+            password_hash="hash",
+            created_at=ist_now(),
+        )
+        db_session.add(user)
+        db_session.commit()
+
+        # Create config without explicitly setting enable_premarket_amo_adjustment
+        # Database default should be True
+        config = UserTradingConfig(
+            user_id=user.id,
+            rsi_period=10,
+            rsi_oversold=30.0,
+        )
+        db_session.add(config)
+        db_session.commit()
+        db_session.refresh(config)
+
+        # Verify database default is True
+        assert config.enable_premarket_amo_adjustment is True
+
+        strategy_config = user_config_to_strategy_config(config)
+
+        # Verify conversion preserves the value
+        assert strategy_config.enable_premarket_amo_adjustment is True
