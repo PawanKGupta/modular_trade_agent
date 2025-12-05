@@ -345,3 +345,111 @@ class TestGetHolding:
 
         assert holding is not None
         assert holding.symbol == "IDEA"
+
+
+class TestGetAccountLimits:
+    """Test get_account_limits() with Kotak Neo API format"""
+
+    def test_get_account_limits_with_kotak_format(self, adapter, mock_client):
+        """Test parsing account limits with exact Kotak Neo API format"""
+        mock_client.limits.return_value = {
+            "Category": "CLIENT_SPECIAL",
+            "Net": "19.409999999999997",
+            "MarginUsed": "18.78",
+            "CollateralValue": "38.19",
+            "Collateral": "0",
+            "stCode": 200,
+            "stat": "Ok",
+        }
+
+        limits = adapter.get_account_limits()
+
+        assert "available_cash" in limits
+        assert "margin_used" in limits
+        assert "margin_available" in limits
+        assert "collateral" in limits
+        assert "net" in limits
+
+        # Check available cash (from Net field)
+        assert float(limits["available_cash"].amount) == pytest.approx(19.41, abs=0.01)
+        assert float(limits["net"].amount) == pytest.approx(19.41, abs=0.01)
+
+        # Check margin used
+        assert float(limits["margin_used"].amount) == pytest.approx(18.78, abs=0.01)
+
+        # Check collateral
+        assert float(limits["collateral"].amount) == pytest.approx(38.19, abs=0.01)
+
+        # Check margin available (calculated: available_cash - margin_used)
+        expected_margin_available = 19.41 - 18.78
+        assert float(limits["margin_available"].amount) == pytest.approx(
+            expected_margin_available, abs=0.01
+        )
+
+        # Verify client.limits was called with correct parameters
+        mock_client.limits.assert_called_once_with(segment="ALL", exchange="ALL", product="ALL")
+
+    def test_get_account_limits_with_fallback_fields(self, adapter, mock_client):
+        """Test parsing account limits with fallback field names"""
+        mock_client.limits.return_value = {
+            "net": "100.50",  # Lowercase fallback
+            "marginUsed": "50.25",  # CamelCase fallback
+            "collateralValue": "200.75",  # CamelCase fallback
+            "stCode": 200,
+        }
+
+        limits = adapter.get_account_limits()
+
+        assert float(limits["available_cash"].amount) == pytest.approx(100.50, abs=0.01)
+        assert float(limits["margin_used"].amount) == pytest.approx(50.25, abs=0.01)
+        assert float(limits["collateral"].amount) == pytest.approx(200.75, abs=0.01)
+
+    def test_get_account_limits_with_zero_values(self, adapter, mock_client):
+        """Test parsing account limits with zero values"""
+        mock_client.limits.return_value = {
+            "Net": "0",
+            "MarginUsed": "0",
+            "CollateralValue": "0",
+            "stCode": 200,
+        }
+
+        limits = adapter.get_account_limits()
+
+        assert float(limits["available_cash"].amount) == 0.0
+        assert float(limits["margin_used"].amount) == 0.0
+        assert float(limits["collateral"].amount) == 0.0
+        assert float(limits["margin_available"].amount) == 0.0
+
+    def test_get_account_limits_with_invalid_response(self, adapter, mock_client):
+        """Test handling of invalid response"""
+        mock_client.limits.return_value = None
+
+        limits = adapter.get_account_limits()
+
+        assert limits == {}
+
+    def test_get_account_limits_with_missing_fields(self, adapter, mock_client):
+        """Test parsing account limits with missing fields uses defaults"""
+        mock_client.limits.return_value = {
+            "stCode": 200,
+            "stat": "Ok",
+            # Missing Net, MarginUsed, CollateralValue
+        }
+
+        limits = adapter.get_account_limits()
+
+        assert float(limits["available_cash"].amount) == 0.0
+        assert float(limits["margin_used"].amount) == 0.0
+        assert float(limits["collateral"].amount) == 0.0
+
+    def test_get_available_balance(self, adapter, mock_client):
+        """Test get_available_balance() returns available cash"""
+        mock_client.limits.return_value = {
+            "Net": "100.50",
+            "MarginUsed": "50.25",
+            "stCode": 200,
+        }
+
+        balance = adapter.get_available_balance()
+
+        assert float(balance.amount) == pytest.approx(100.50, abs=0.01)
