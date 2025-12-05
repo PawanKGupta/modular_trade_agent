@@ -384,7 +384,15 @@ async def main_async(
         logger.info(f"Async analysis complete: {len(results)} results")
 
         # Process results (scoring, backtest, Telegram)
-        processed_results = _process_results(results, enable_backtest_scoring, dip_mode)
+        # Extract config from results if available
+        config = None
+        if results and len(results) > 0:
+            first_result = results[0]
+            if isinstance(first_result, dict) and "_config" in first_result:
+                config = first_result.get("_config")
+        processed_results = _process_results(
+            results, enable_backtest_scoring, dip_mode, config=config
+        )
         return _finalize_results(processed_results, json_output_path)
 
     except ImportError:
@@ -513,7 +521,7 @@ def main(
         )
 
 
-def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
+def _process_results(results, enable_backtest_scoring=False, dip_mode=False, config=None):
     """Process analysis results (common for both async and sequential)"""
 
     # Calculate strength scores for all results (needed for backtest scoring)
@@ -675,22 +683,58 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
     # Include both 'buy' and 'strong_buy' candidates, but exclude failed analysis
     # Use final_verdict if backtest scoring was enabled, otherwise use original verdict
     # ALSO include ML buy/strong_buy predictions for monitoring/comparison (2025-11-12)
+
+    # Get ML confidence threshold from config if available, otherwise use default 0.5 (50%)
+    ml_confidence_threshold = 0.5
+    if config and hasattr(config, "ml_confidence_threshold"):
+        ml_confidence_threshold = config.ml_confidence_threshold
+
+    # Helper function to normalize ML confidence (handles both 0-1 and 0-100 formats)
+    def _normalize_ml_confidence(ml_conf):
+        if ml_conf is None:
+            return 0.0
+        if isinstance(ml_conf, (int, float)):
+            # If > 1, assume it's percentage (0-100), convert to 0-1
+            return ml_conf if ml_conf <= 1 else ml_conf / 100.0
+        return 0.0
+
+    # Use config from results if not passed as parameter (for backward compatibility)
+    if config is None and results and len(results) > 0:
+        first_result = results[0]
+        if isinstance(first_result, dict) and "_config" in first_result:
+            config = first_result.get("_config")
+            if config and hasattr(config, "ml_confidence_threshold"):
+                ml_confidence_threshold = config.ml_confidence_threshold
+
     if enable_backtest_scoring:
+        # Check if ML combine with rules is enabled
+        ml_combine_with_rules = False
+        if config and hasattr(config, "ml_combine_with_rules"):
+            ml_combine_with_rules = config.ml_combine_with_rules
+
         # Apply filtering with reasonable combined score threshold
-        # Include stocks where EITHER rule OR ML predicts buy/strong_buy
+        # When ml_combine_with_rules=true, final_verdict is already combined (trust it)
+        # When ml_combine_with_rules=false, check ML verdict separately for ML-only cases
         buys = [
             r
             for r in results
             if r.get("status") == "success"
             and (
-                # Rule-based buy/strong_buy (existing logic)
+                # Combined/Rule-based buy/strong_buy (existing logic)
+                # When ml_combine_with_rules=true, final_verdict is already the combined verdict
                 (
                     r.get("final_verdict") in ["buy", "strong_buy"]
                     and r.get("combined_score", 0) >= 25
                 )
                 or
-                # ML buy/strong_buy (new logic for monitoring)
-                r.get("ml_verdict") in ["buy", "strong_buy"]
+                # ML-only buy/strong_buy (only when ml_combine_with_rules=false)
+                # When ml_combine_with_rules=true, ML is already considered in final_verdict
+                (
+                    not ml_combine_with_rules
+                    and r.get("ml_verdict") in ["buy", "strong_buy"]
+                    and _normalize_ml_confidence(r.get("ml_confidence")) >= ml_confidence_threshold
+                    and r.get("combined_score", 0) >= 0  # Non-negative combined score
+                )
             )
         ]
         strong_buys = [
@@ -698,11 +742,16 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
             for r in results
             if r.get("status") == "success"
             and (
-                # Rule-based strong_buy
+                # Combined/Rule-based strong_buy
                 (r.get("final_verdict") == "strong_buy" and r.get("combined_score", 0) >= 25)
                 or
-                # ML strong_buy
-                r.get("ml_verdict") == "strong_buy"
+                # ML-only strong_buy (only when ml_combine_with_rules=false)
+                (
+                    not ml_combine_with_rules
+                    and r.get("ml_verdict") == "strong_buy"
+                    and _normalize_ml_confidence(r.get("ml_confidence")) >= ml_confidence_threshold
+                    and r.get("combined_score", 0) >= 0  # Non-negative combined score
+                )
             )
         ]
     else:
