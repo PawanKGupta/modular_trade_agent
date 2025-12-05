@@ -508,39 +508,111 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         return orders
 
     def _parse_holdings_response(self, data: list) -> list[Holding]:
-        """Parse holdings from API response"""
+        """
+        Parse holdings from API response
+
+        Handles Kotak Neo API response format:
+        {
+            "data": [
+                {
+                    "displaySymbol": "IDEA",
+                    "symbol": "IDEA",
+                    "averagePrice": 9.5699,
+                    "quantity": 35,
+                    "closingPrice": 9.36,
+                    "mktValue": 327.6,
+                    "holdingCost": 334.9475,
+                    ...
+                }
+            ]
+        }
+        """
         holdings = []
         for item in data:
             try:
+                # Symbol: prioritize displaySymbol (Kotak API format) then symbol
                 symbol = self._extract_field(
-                    item, ["tradingSymbol", "symbol", "instrumentName", "securitySymbol"]
+                    item,
+                    [
+                        "displaySymbol",  # Primary: Kotak API uses "displaySymbol"
+                        "symbol",  # Fallback: Generic symbol field
+                        "tradingSymbol",  # Legacy/compatibility
+                        "instrumentName",  # Alternative field
+                        "securitySymbol",  # Alternative field
+                    ],
                 )
+                if not symbol:
+                    logger.warning(f"Skipping holding with empty symbol: {item}")
+                    continue
+
+                # Quantity: prioritize quantity (Kotak API format)
                 quantity = int(
                     self._extract_field(
-                        item, ["quantity", "qty", "netQuantity", "holdingsQuantity"], 0
-                    )
-                )
-                avg_price = float(
-                    self._extract_field(
-                        item, ["avgPrice", "averagePrice", "buyAvg", "buyAvgPrice"], 0
-                    )
-                )
-                ltp = float(
-                    self._extract_field(
-                        item, ["ltp", "lastPrice", "lastTradedPrice", "ltpPrice"], 0
+                        item,
+                        [
+                            "quantity",  # Primary: Kotak API uses "quantity"
+                            "qty",  # Fallback: Short form
+                            "netQuantity",  # Alternative
+                            "holdingsQuantity",  # Alternative
+                        ],
+                        0,
                     )
                 )
 
+                # Average price: prioritize averagePrice (Kotak API format)
+                avg_price = float(
+                    self._extract_field(
+                        item,
+                        [
+                            "averagePrice",  # Primary: Kotak API uses "averagePrice"
+                            "avgPrice",  # Fallback: Short form
+                            "buyAvg",  # Alternative
+                            "buyAvgPrice",  # Alternative
+                        ],
+                        0,
+                    )
+                )
+
+                # Current price: prioritize closingPrice (Kotak API format) then ltp
+                current_price = float(
+                    self._extract_field(
+                        item,
+                        [
+                            "closingPrice",  # Primary: Kotak API uses "closingPrice"
+                            "ltp",  # Fallback: Last traded price
+                            "lastPrice",  # Alternative
+                            "lastTradedPrice",  # Alternative
+                            "ltpPrice",  # Alternative
+                        ],
+                        0,
+                    )
+                )
+
+                # If current_price is 0, try to calculate from mktValue / quantity
+                if current_price == 0 and quantity > 0:
+                    mkt_value = float(
+                        self._extract_field(
+                            item,
+                            ["mktValue", "marketValue", "market_value"],
+                            0,
+                        )
+                    )
+                    if mkt_value > 0:
+                        current_price = mkt_value / quantity
+                        logger.debug(
+                            f"{symbol}: Calculated current_price from mktValue: {current_price:.2f}"
+                        )
+
                 holding = Holding(
-                    symbol=symbol,
+                    symbol=str(symbol).strip(),
                     quantity=quantity,
                     average_price=Money.from_float(avg_price),
-                    current_price=Money.from_float(ltp),
+                    current_price=Money.from_float(current_price),
                     last_updated=datetime.now(),
                 )
                 holdings.append(holding)
             except Exception as e:
-                logger.warning(f"[WARN]? Failed to parse holding: {e}")
+                logger.warning(f"[WARN]? Failed to parse holding: {e}, item: {item}")
                 continue
         return holdings
 
