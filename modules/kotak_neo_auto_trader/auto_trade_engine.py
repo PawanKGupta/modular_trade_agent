@@ -874,7 +874,7 @@ class AutoTradeEngine:
                             elif ml_confidence >= 0.60:
                                 priority_score += 10  # Medium ML confidence boost
                             elif ml_confidence >= 0.50:
-                                priority_score += 5   # Low ML confidence boost
+                                priority_score += 5  # Low ML confidence boost
                             # ML confidence < 50%: No boost (below threshold)
                     except (ValueError, TypeError):
                         pass  # Ignore ML confidence if invalid
@@ -890,7 +890,9 @@ class AutoTradeEngine:
                 )
             # Sort by priority_score (descending) - higher priority stocks placed first
             recs.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
-            logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path} (sorted by priority_score)")
+            logger.info(
+                f"Loaded {len(recs)} BUY recommendations from {csv_path} (sorted by priority_score)"
+            )
             return recs
         # Otherwise, DO NOT recompute; trust the CSV that trade_agent produced
         if "verdict" in df.columns:
@@ -942,7 +944,7 @@ class AutoTradeEngine:
                             elif ml_confidence >= 0.60:
                                 priority_score += 10  # Medium ML confidence boost
                             elif ml_confidence >= 0.50:
-                                priority_score += 5   # Low ML confidence boost
+                                priority_score += 5  # Low ML confidence boost
                             # ML confidence < 50%: No boost (below threshold)
                     except (ValueError, TypeError):
                         pass  # Ignore ML confidence if invalid
@@ -958,7 +960,9 @@ class AutoTradeEngine:
                 )
             # Sort by priority_score (descending) - higher priority stocks placed first
             recs.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
-            logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path} (raw verdicts, sorted by priority_score)")
+            logger.info(
+                f"Loaded {len(recs)} BUY recommendations from {csv_path} (raw verdicts, sorted by priority_score)"
+            )
             return recs
         logger.warning(
             f"CSV {csv_path} missing 'final_verdict' and 'verdict' columns; no recommendations loaded"
@@ -1091,7 +1095,7 @@ class AutoTradeEngine:
                                 elif ml_confidence >= 0.60:
                                     priority_score += 10  # Medium ML confidence boost
                                 elif ml_confidence >= 0.50:
-                                    priority_score += 5   # Low ML confidence boost
+                                    priority_score += 5  # Low ML confidence boost
                                 # ML confidence < 50%: No boost (below threshold)
 
                             # Create Recommendation object
@@ -2163,10 +2167,8 @@ class AutoTradeEngine:
                     f"No order ID and not found in order book"
                 )
                 # Send notification about uncertain order
-                from core.telegram import send_telegram
-
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                send_telegram(
+                telegram_msg = (
                     f"⚠️ *Order Placement Uncertain*\n\n"
                     f"Symbol: `{broker_symbol}`\n"
                     f"Qty: {qty}\n"
@@ -2174,6 +2176,24 @@ class AutoTradeEngine:
                     f"Please check broker app manually.\n\n"
                     f"_Time: {timestamp}_"
                 )
+                # Use TelegramNotifier to respect notification preferences
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_system_alert(
+                            alert_type="ORDER_PLACEMENT_UNCERTAIN",
+                            message_text=telegram_msg,
+                            severity="WARNING",
+                            user_id=self.user_id,
+                        )
+                    except Exception as notify_err:
+                        logger.warning(
+                            f"Failed to send order placement uncertain notification: {notify_err}"
+                        )
+                else:
+                    # Fallback to old method if telegram_notifier not available
+                    from core.telegram import send_telegram
+
+                    send_telegram(telegram_msg)
                 return (False, None)
 
         # Order successfully placed with order_id
@@ -2463,7 +2483,26 @@ class AutoTradeEngine:
                                 f"Please check broker app.\n\n"
                                 f"_Time: {timestamp}_"
                             )
-                            send_telegram(telegram_msg)
+                            # Use TelegramNotifier to respect notification preferences
+                            if self.telegram_notifier and self.telegram_notifier.enabled:
+                                try:
+                                    # Use notify_order_rejection for order rejections
+                                    self.telegram_notifier.notify_order_rejection(
+                                        symbol=symbol,
+                                        order_id=order_id,
+                                        quantity=0,  # Quantity not available in this context
+                                        reason=rejection_reason,
+                                        user_id=self.user_id,
+                                    )
+                                except Exception as notify_err:
+                                    logger.warning(
+                                        f"Failed to send rejection notification: {notify_err}"
+                                    )
+                            else:
+                                # Fallback to old method if telegram_notifier not available
+                                from core.telegram import send_telegram
+
+                                send_telegram(telegram_msg)
                         except Exception as e:
                             logger.warning(f"Failed to send rejection notification: {e}")
 
@@ -3953,7 +3992,22 @@ class AutoTradeEngine:
                     f"Order status updated in database. Will be retried at scheduled time (8:00 AM) or manually.\n\n"
                     f"_Time: {timestamp}_"
                 )
-                send_telegram(telegram_msg)
+                # Use TelegramNotifier to respect notification preferences
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_system_alert(
+                            alert_type="BALANCE_SHORTFALL",
+                            message_text=telegram_msg,
+                            severity="WARNING",
+                            user_id=self.user_id,
+                        )
+                    except Exception as notify_err:
+                        logger.warning(
+                            f"Failed to send balance shortfall notification: {notify_err}"
+                        )
+                else:
+                    # Fallback to old method if telegram_notifier not available (backward compatibility)
+                    send_telegram(telegram_msg)
 
                 # Logger message without emojis
                 logger.warning(
@@ -4535,7 +4589,27 @@ class AutoTradeEngine:
                                             f"Manual intervention may be required.\n\n"
                                             f"_Time: {timestamp}_"
                                         )
-                                        send_telegram(telegram_msg)
+                                        # Use TelegramNotifier to respect notification preferences
+                                        if (
+                                            self.telegram_notifier
+                                            and self.telegram_notifier.enabled
+                                        ):
+                                            try:
+                                                self.telegram_notifier.notify_system_alert(
+                                                    alert_type="SELL_ORDER_RETRY_FAILED",
+                                                    message_text=telegram_msg,
+                                                    severity="ERROR",
+                                                    user_id=self.user_id,
+                                                )
+                                            except Exception as notify_err:
+                                                logger.warning(
+                                                    f"Failed to send sell order retry failed notification: {notify_err}"
+                                                )
+                                        else:
+                                            # Fallback to old method if telegram_notifier not available
+                                            from core.telegram import send_telegram
+
+                                            send_telegram(telegram_msg)
                                         logger.error(
                                             f"Sell order retry FAILED for {symbol} - Telegram alert sent"
                                         )
@@ -4558,7 +4632,24 @@ class AutoTradeEngine:
                                         f"Manual check required.\n\n"
                                         f"_Time: {timestamp}_"
                                     )
-                                    send_telegram(telegram_msg)
+                                    # Use TelegramNotifier to respect notification preferences
+                                    if self.telegram_notifier and self.telegram_notifier.enabled:
+                                        try:
+                                            self.telegram_notifier.notify_system_alert(
+                                                alert_type="SELL_ORDER_NO_HOLDINGS",
+                                                message_text=telegram_msg,
+                                                severity="ERROR",
+                                                user_id=self.user_id,
+                                            )
+                                        except Exception as notify_err:
+                                            logger.warning(
+                                                f"Failed to send no holdings notification: {notify_err}"
+                                            )
+                                    else:
+                                        # Fallback to old method if telegram_notifier not available
+                                        from core.telegram import send_telegram
+
+                                        send_telegram(telegram_msg)
                                     logger.error(
                                         f"No holdings found for {symbol} - cannot retry sell order - Telegram alert sent"
                                     )
@@ -4575,7 +4666,24 @@ class AutoTradeEngine:
                                     f"Manual intervention required.\n\n"
                                     f"_Time: {timestamp}_"
                                 )
-                                send_telegram(telegram_msg)
+                                # Use TelegramNotifier to respect notification preferences
+                                if self.telegram_notifier and self.telegram_notifier.enabled:
+                                    try:
+                                        self.telegram_notifier.notify_system_alert(
+                                            alert_type="SELL_ORDER_HOLDINGS_FETCH_FAILED",
+                                            message_text=telegram_msg,
+                                            severity="ERROR",
+                                            user_id=self.user_id,
+                                        )
+                                    except Exception as notify_err:
+                                        logger.warning(
+                                            f"Failed to send holdings fetch failed notification: {notify_err}"
+                                        )
+                                else:
+                                    # Fallback to old method if telegram_notifier not available
+                                    from core.telegram import send_telegram
+
+                                    send_telegram(telegram_msg)
                                 logger.error(
                                     f"Failed to fetch holdings for retry - cannot determine actual quantity for {symbol} - Telegram alert sent"
                                 )
@@ -4591,7 +4699,24 @@ class AutoTradeEngine:
                                 f"Manual intervention required.\n\n"
                                 f"_Time: {timestamp}_"
                             )
-                            send_telegram(telegram_msg)
+                            # Use TelegramNotifier to respect notification preferences
+                            if self.telegram_notifier and self.telegram_notifier.enabled:
+                                try:
+                                    self.telegram_notifier.notify_system_alert(
+                                        alert_type="SELL_ORDER_RETRY_EXCEPTION",
+                                        message_text=telegram_msg,
+                                        severity="ERROR",
+                                        user_id=self.user_id,
+                                    )
+                                except Exception as notify_err:
+                                    logger.warning(
+                                        f"Failed to send sell order retry exception notification: {notify_err}"
+                                    )
+                            else:
+                                # Fallback to old method if telegram_notifier not available
+                                from core.telegram import send_telegram
+
+                                send_telegram(telegram_msg)
                             logger.error(
                                 f"Error during sell order retry for {symbol}: {e} - Telegram alert sent"
                             )

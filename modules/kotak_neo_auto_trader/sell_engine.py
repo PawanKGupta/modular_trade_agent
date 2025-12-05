@@ -2167,8 +2167,6 @@ class SellOrderManager:
             rsi10: Current RSI10 value
         """
         try:
-            from modules.kotak_neo_auto_trader.telegram_notifier import send_telegram
-
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             error_messages = {
                 "cancel_failed": "Failed to cancel limit order",
@@ -2185,7 +2183,34 @@ class SellOrderManager:
                 f"_Time: {timestamp}_"
             )
 
-            send_telegram(message)
+            # Use TelegramNotifier to respect notification preferences
+            try:
+                from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
+
+                telegram_notifier = get_telegram_notifier(
+                    db_session=None,  # SellOrderManager doesn't have db_session
+                )
+                if telegram_notifier and telegram_notifier.enabled:
+                    telegram_notifier.notify_system_alert(
+                        alert_type="RSI_EXIT_CONVERSION_FAILED",
+                        message_text=message,
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                else:
+                    # Fallback to old method if telegram_notifier not available
+                    from modules.kotak_neo_auto_trader.telegram_notifier import send_telegram
+
+                    send_telegram(message)
+            except Exception as notify_err:
+                logger.warning(f"Failed to send RSI exit error notification: {notify_err}")
+                # Fallback to old method on error
+                try:
+                    from modules.kotak_neo_auto_trader.telegram_notifier import send_telegram
+
+                    send_telegram(message)
+                except Exception:
+                    pass  # Already logged
         except Exception as e:
             logger.warning(f"Failed to send RSI exit error notification: {e}")
 
