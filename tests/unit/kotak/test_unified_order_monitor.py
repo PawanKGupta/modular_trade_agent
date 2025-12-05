@@ -1334,9 +1334,15 @@ class TestUnifiedOrderMonitor:
         """Test that timezone-naive datetimes are handled correctly without comparison errors"""
         from datetime import datetime
 
+        from src.infrastructure.db.timezone_utils import ist_now
+
         # Create a timezone-naive datetime (simulating database storage without timezone)
+        # Use ist_now() to ensure it's definitely today, then remove timezone
         # This is the scenario that was causing the error
-        naive_execution_time = datetime.now().replace(hour=10, minute=30, second=0, microsecond=0)
+        ist_time = ist_now().replace(hour=10, minute=30, second=0, microsecond=0)
+        naive_execution_time = datetime(
+            ist_time.year, ist_time.month, ist_time.day, ist_time.hour, ist_time.minute
+        )
 
         mock_order = Mock()
         mock_order.side = "buy"
@@ -1376,8 +1382,14 @@ class TestUnifiedOrderMonitor:
         """Test that timezone-naive filled_at is handled correctly"""
         from datetime import datetime
 
+        from src.infrastructure.db.timezone_utils import ist_now
+
         # Create a timezone-naive datetime for filled_at
-        naive_filled_at = datetime.now().replace(hour=10, minute=30, second=0, microsecond=0)
+        # Use ist_now() to ensure it's definitely today, then remove timezone
+        ist_time = ist_now().replace(hour=10, minute=30, second=0, microsecond=0)
+        naive_filled_at = datetime(
+            ist_time.year, ist_time.month, ist_time.day, ist_time.hour, ist_time.minute
+        )
 
         mock_order = Mock()
         mock_order.side = "buy"
