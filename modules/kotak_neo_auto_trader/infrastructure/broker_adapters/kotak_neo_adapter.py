@@ -177,11 +177,26 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
             for method_name in ["order_report", "get_order_report", "orderBook", "orders"]:
                 if hasattr(self._client, method_name):
                     response = getattr(self._client, method_name)()
-                    if isinstance(response, dict) and "data" in response:
-                        return self._parse_orders_response(response["data"])
+
+                    # Handle different response formats
+                    data = None
+                    if isinstance(response, dict):
+                        # Try "data" key first
+                        if "data" in response:
+                            data = response["data"]
+                        # Try other common keys
+                        elif "orders" in response:
+                            data = response["orders"]
+                        elif "orderList" in response:
+                            data = response["orderList"]
+                    elif isinstance(response, list):
+                        data = response
+
+                    if data is not None and isinstance(data, list):
+                        return self._parse_orders_response(data)
             return []
         except Exception as e:
-            logger.error(f"? Failed to get orders: {e}")
+            logger.error(f"? Failed to get orders: {e}", exc_info=True)
             return []
 
     def get_pending_orders(self) -> list[Order]:
@@ -353,8 +368,11 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         return str(response["data"][key])
         return None
 
-    def _parse_orders_response(self, data: list) -> list[Order]:
+    def _parse_orders_response(self, data: list) -> list[Order]:  # noqa: PLR0912, PLR0915
         """Parse orders from API response"""
+        if not isinstance(data, list):
+            return []
+
         orders = []
         for item in data:
             try:
@@ -418,6 +436,50 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                     or "MKT"
                 )
 
+                # Parse datetime fields - Kotak API uses "22-Jan-2025 14:28:01" format
+                placed_at = None
+                created_at = None
+                for dt_field in ["ordDtTm", "ordEntTm", "ordDt", "ordEnt"]:
+                    dt_str = item.get(dt_field)
+                    if dt_str:
+                        try:
+                            # Try Kotak format: "22-Jan-2025 14:28:01"
+                            parsed_dt = datetime.strptime(str(dt_str), "%d-%b-%Y %H:%M:%S")
+                            placed_at = parsed_dt
+                            created_at = parsed_dt
+                            break
+                        except (ValueError, TypeError):
+                            try:
+                                # Try ISO format as fallback
+                                parsed_dt = datetime.fromisoformat(
+                                    str(dt_str).replace("Z", "+00:00")
+                                )
+                                placed_at = parsed_dt
+                                created_at = parsed_dt
+                                break
+                            except (ValueError, TypeError):
+                                continue
+
+                # Parse execution price from avgPrc
+                executed_price = None
+                avg_prc_str = item.get("avgPrc") or item.get("avgPrice") or item.get("averagePrice")
+                if avg_prc_str:
+                    try:
+                        avg_prc = float(str(avg_prc_str))
+                        if avg_prc > 0:
+                            executed_price = Money.from_float(avg_prc)
+                    except (ValueError, TypeError):
+                        pass
+
+                # Parse executed quantity from fldQty (filled quantity)
+                executed_quantity = 0
+                fld_qty = item.get("fldQty") or item.get("filledQty") or item.get("executedQty")
+                if fld_qty:
+                    try:
+                        executed_quantity = int(float(str(fld_qty)))
+                    except (ValueError, TypeError):
+                        pass
+
                 order = Order(
                     symbol=symbol,
                     quantity=int(item.get("qty") or item.get("quantity", 0)),
@@ -430,11 +492,19 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                     ),
                     order_id=str(order_id),
                     status=self._parse_order_status(order_status),
+                    placed_at=placed_at,
+                    executed_price=executed_price,
+                    executed_quantity=executed_quantity,
                 )
+                # Set created_at explicitly if we parsed it
+                if created_at:
+                    order.created_at = created_at
                 orders.append(order)
             except Exception as e:
-                logger.warning(f"[WARN]? Failed to parse order: {e}")
+                logger.warning(f"Failed to parse order: {e}")
                 continue
+
+        return orders
         return orders
 
     def _parse_holdings_response(self, data: list) -> list[Holding]:

@@ -55,16 +55,24 @@ const getSideColor = (side: string): string => {
 };
 
 export function BrokerOrdersPage() {
-	const { isBrokerMode, isBrokerConnected, broker } = useSettings();
+	// ============================================
+	// ALL HOOKS MUST BE CALLED FIRST
+	// No conditional logic, no early returns before all hooks
+	// ============================================
+
+	// Hook 1: useSettings - always called
+	const settings = useSettings();
+
+	// Hook 2: useState - always called
 	const [statusFilter, setStatusFilter] = useState<OrderStatusFilter>('all');
 
-	const { data, isLoading, error, refetch, dataUpdatedAt, failureCount } = useQuery<BrokerOrder[]>({
+	// Hook 3: useQuery - always called (enabled controls execution, not hook call)
+	const ordersQuery = useQuery<BrokerOrder[]>({
 		queryKey: ['broker-orders'],
 		queryFn: getBrokerOrders,
-		enabled: isBrokerMode && isBrokerConnected,
-		refetchInterval: 30000, // Refresh every 30 seconds (reduced from 10s to avoid frequent auth/OTP)
+		enabled: Boolean(settings.isBrokerMode && settings.isBrokerConnected),
+		refetchInterval: 30000,
 		retry: (failureCount, error) => {
-			// Retry up to 3 times for retryable errors
 			if (failureCount >= 3) return false;
 			const brokerError = formatBrokerError(error);
 			return brokerError.retryable;
@@ -72,13 +80,48 @@ export function BrokerOrdersPage() {
 		retryDelay: (attemptIndex) => calculateRetryDelay(attemptIndex),
 	});
 
+	// Hook 4: useEffect - always called
 	useEffect(() => {
 		document.title = 'Broker Orders';
 	}, []);
 
-	// Format last update time
-	const lastUpdate = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : 'Never';
+	// Hook 5: useMemo - always called (MUST be before any conditional returns)
+	const filteredOrders = useMemo(() => {
+		if (!ordersQuery.data) return [];
+		if (statusFilter === 'all') return ordersQuery.data;
+		return ordersQuery.data.filter((o) => o.status === statusFilter);
+	}, [ordersQuery.data, statusFilter]);
 
+	// ============================================
+	// NON-HOOK COMPUTATIONS (safe after all hooks)
+	// ============================================
+
+	const isBrokerMode = Boolean(settings.isBrokerMode);
+	const isBrokerConnected = Boolean(settings.isBrokerConnected);
+	const broker = settings.broker;
+	const isLoading = settings.isLoading || ordersQuery.isLoading;
+	const error = ordersQuery.error;
+	const data = ordersQuery.data;
+	const lastUpdate = ordersQuery.dataUpdatedAt
+		? new Date(ordersQuery.dataUpdatedAt).toLocaleTimeString()
+		: 'Never';
+	const filteredOrdersCount = filteredOrders.length;
+	const totalOrdersCount = data?.length ?? 0;
+
+	// ============================================
+	// CONDITIONAL RENDERING (safe after all hooks)
+	// ============================================
+
+	// Loading state
+	if (settings.isLoading) {
+		return (
+			<div className="p-2 sm:p-4">
+				<div className="text-xs sm:text-sm text-[var(--text)]">Loading settings...</div>
+			</div>
+		);
+	}
+
+	// Not in broker mode
 	if (!isBrokerMode) {
 		return (
 			<div className="p-2 sm:p-4">
@@ -89,6 +132,7 @@ export function BrokerOrdersPage() {
 		);
 	}
 
+	// Broker not connected
 	if (!isBrokerConnected) {
 		return (
 			<div className="p-2 sm:p-4">
@@ -99,17 +143,10 @@ export function BrokerOrdersPage() {
 		);
 	}
 
-	const orders: BrokerOrder[] = useMemo(() => {
-		if (!data) return [];
-		if (statusFilter === 'all') return data;
-		return data.filter((o) => o.status === statusFilter);
-	}, [data, statusFilter]);
-
-	const filteredOrdersCount = orders.length;
-	const totalOrdersCount = data?.length ?? 0;
-
+	// Main content
 	return (
 		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
+			{/* Header */}
 			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
 				<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
 					<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">
@@ -123,7 +160,7 @@ export function BrokerOrdersPage() {
 					</div>
 				</div>
 				<button
-					onClick={() => refetch()}
+					onClick={() => ordersQuery.refetch()}
 					disabled={isLoading}
 					className="px-3 py-2 sm:py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] sm:min-h-0 w-full sm:w-auto"
 				>
@@ -153,33 +190,40 @@ export function BrokerOrdersPage() {
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
 				<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 px-3 py-2 border-b border-[#1e293b]">
 					<div className="font-medium text-sm sm:text-base text-[var(--text)]">
-						{statusFilter === 'all' ? 'All Orders' : `${STATUS_TABS.find((t) => t.key === statusFilter)?.label} Orders`} ({filteredOrdersCount} / {totalOrdersCount})
+						{statusFilter === 'all'
+							? 'All Orders'
+							: `${STATUS_TABS.find((t) => t.key === statusFilter)?.label} Orders`}
+						({filteredOrdersCount} / {totalOrdersCount})
 					</div>
 					{isLoading && <span className="text-xs sm:text-sm text-[var(--muted)]">Loading...</span>}
-					{error && (() => {
-						const brokerError = formatBrokerError(error);
-						return (
-							<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-								<div className="flex flex-col">
-									<span className="text-xs sm:text-sm text-red-400">
-										Failed to load orders: {brokerError.message}
-										{brokerError.statusCode && ` (${brokerError.statusCode})`}
-									</span>
-									{brokerError.retryable && failureCount && failureCount > 0 && (
-										<span className="text-xs text-yellow-400">
-											Retrying... (Attempt {failureCount}/3)
-										</span>
-									)}
-								</div>
-								<button
-									onClick={() => refetch()}
-									className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 min-h-[32px] sm:min-h-0"
-								>
-									Retry Now
-								</button>
+					{error && (
+						<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+							<div className="flex flex-col">
+								{(() => {
+									const brokerError = formatBrokerError(error);
+									return (
+										<>
+											<span className="text-xs sm:text-sm text-red-400">
+												Failed to load orders: {brokerError.message}
+												{brokerError.statusCode && ` (${brokerError.statusCode})`}
+											</span>
+											{brokerError.retryable && ordersQuery.failureCount && ordersQuery.failureCount > 0 && (
+												<span className="text-xs text-yellow-400">
+													Retrying... (Attempt {ordersQuery.failureCount}/3)
+												</span>
+											)}
+										</>
+									);
+								})()}
 							</div>
-						);
-					})()}
+							<button
+								onClick={() => ordersQuery.refetch()}
+								className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 min-h-[32px] sm:min-h-0"
+							>
+								Retry Now
+							</button>
+						</div>
+					)}
 				</div>
 				<div className="overflow-x-auto -mx-2 sm:mx-0">
 					<table className="w-full text-xs sm:text-sm">
@@ -197,8 +241,8 @@ export function BrokerOrdersPage() {
 							</tr>
 						</thead>
 						<tbody>
-							{orders.map((order, index) => (
-								<tr key={order.broker_order_id || index} className="border-t border-[#1e293b]">
+							{filteredOrders.map((order, index) => (
+								<tr key={order.broker_order_id || `order-${index}`} className="border-t border-[#1e293b]">
 									<td className="p-2 text-[var(--text)] font-mono text-xs">
 										{order.broker_order_id || '-'}
 									</td>
@@ -222,7 +266,7 @@ export function BrokerOrdersPage() {
 									<td className="p-2 text-[var(--text)]">{order.execution_qty ?? '-'}</td>
 								</tr>
 							))}
-							{orders.length === 0 && !isLoading && (
+							{filteredOrders.length === 0 && !isLoading && (
 								<tr>
 									<td className="p-2 text-[var(--muted)]" colSpan={9}>
 										No orders found
