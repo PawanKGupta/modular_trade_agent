@@ -503,6 +503,8 @@ def run_stock_backtest(
                 "vs_buy_hold": backtest_results.get("strategy_vs_buy_hold", 0),
                 "execution_rate": backtest_results.get("trade_agent_accuracy", 0),
                 "avg_return": avg_return,  # Calculate from positions
+                "backtest_ml_verdict": backtest_results.get("backtest_ml_verdict"),  # Best ML from backtest
+                "backtest_ml_confidence": backtest_results.get("backtest_ml_confidence"),  # Best ML confidence
                 "full_results": backtest_results,
             }
 

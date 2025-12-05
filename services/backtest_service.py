@@ -285,18 +285,55 @@ class BacktestService:
                 # Re-classify based on combined score and key metrics
                 self._reclassify_with_backtest(stock_result, backtest_score, combined_score)
 
-                # Restore initial ML predictions (2025-11-11)
+                # Use best ML prediction from backtest if available and better than initial
+                # This allows backtest ML predictions to override initial weak predictions
+                backtest_ml_verdict = backtest_data.get("backtest_ml_verdict")
+                backtest_ml_confidence = backtest_data.get("backtest_ml_confidence")
+                
+                # Normalize backtest ML confidence to 0-1 range if needed
+                if backtest_ml_confidence is not None and backtest_ml_confidence > 1:
+                    backtest_ml_confidence = backtest_ml_confidence / 100.0
+                
+                # Normalize initial ML confidence for comparison
+                initial_ml_conf_normalized = initial_ml_confidence
+                if initial_ml_conf_normalized is not None and initial_ml_conf_normalized > 1:
+                    initial_ml_conf_normalized = initial_ml_conf_normalized / 100.0
+                
+                # Use backtest ML if it's a buy/strong_buy and better than initial
+                use_backtest_ml = False
+                if (
+                    backtest_ml_verdict
+                    and backtest_ml_verdict in ["buy", "strong_buy"]
+                    and backtest_ml_confidence is not None
+                ):
+                    # Use backtest ML if:
+                    # 1. Initial ML is weak (watch/avoid) OR
+                    # 2. Backtest ML confidence is higher
+                    if (
+                        initial_ml_verdict not in ["buy", "strong_buy"]
+                        or (initial_ml_conf_normalized is not None and backtest_ml_confidence > initial_ml_conf_normalized)
+                    ):
+                        use_backtest_ml = True
+                        stock_result["ml_verdict"] = backtest_ml_verdict
+                        stock_result["ml_confidence"] = backtest_ml_confidence * 100  # Convert back to 0-100 for consistency
+                        logger.info(
+                            f"{ticker}: ? Using backtest ML: {backtest_ml_verdict} ({backtest_ml_confidence*100:.1f}%) "
+                            f"(better than initial: {initial_ml_verdict} ({initial_ml_confidence}))"
+                        )
+                
+                # Restore initial ML predictions if backtest ML not used (2025-11-11)
                 # Ensure live ML prediction is preserved (backtest may have overwritten it)
-                # Restore if we had initial ML data (even if value was None)
-                if has_initial_ml:
-                    stock_result["ml_verdict"] = initial_ml_verdict
-                    stock_result["ml_confidence"] = initial_ml_confidence
-                    stock_result["ml_probabilities"] = initial_ml_probabilities
-                    logger.info(
-                        f"{ticker}: ? Restored initial ML: {initial_ml_verdict} ({initial_ml_confidence})"
-                    )
-                else:
-                    logger.debug(f"{ticker}: No initial ML to restore")
+                # Restore if we had initial ML data (even if value was None) and didn't use backtest ML
+                if not use_backtest_ml:
+                    if has_initial_ml:
+                        stock_result["ml_verdict"] = initial_ml_verdict
+                        stock_result["ml_confidence"] = initial_ml_confidence
+                        stock_result["ml_probabilities"] = initial_ml_probabilities
+                        logger.info(
+                            f"{ticker}: ? Restored initial ML: {initial_ml_verdict} ({initial_ml_confidence})"
+                        )
+                    else:
+                        logger.debug(f"{ticker}: No initial ML to restore")
 
                 logger.debug(
                     f"{ticker}: Final values in dict: ml_verdict={stock_result.get('ml_verdict')}, ml_conf={stock_result.get('ml_confidence')}"

@@ -930,6 +930,9 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
     all_recommendations = strong_buys + [
         r for r in buys if r.get("ticker") not in {s.get("ticker") for s in strong_buys}
     ]
+    # Create a set of strong_buy tickers for quick lookup
+    strong_buy_tickers = {s.get("ticker") for s in strong_buys}
+    
     if all_recommendations:
         logger.info(f"=== Recommended Signals ({len(all_recommendations)} total) ===")
         for rec in all_recommendations:
@@ -942,23 +945,33 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
                 rule_verdict = rec.get("verdict", "unknown")
             ml_verdict = rec.get("ml_verdict")
 
-            # Determine signal source
-            if rule_verdict in ["buy", "strong_buy"] and ml_verdict in ["buy", "strong_buy"]:
-                source = "Rule+ML"
-                verdict = (
-                    rule_verdict
-                    if rule_verdict == "strong_buy"
-                    else ml_verdict if ml_verdict == "strong_buy" else rule_verdict
-                )
-            elif rule_verdict in ["buy", "strong_buy"]:
-                source = "Rule-based"
-                verdict = rule_verdict
-            elif ml_verdict in ["buy", "strong_buy"]:
-                source = "ML-only"
-                verdict = ml_verdict
+            # Determine which list the stock is in (strong_buys or buys)
+            # This determines the displayed verdict, not just picking the stronger verdict
+            is_strong_buy = ticker in strong_buy_tickers
+            
+            # Determine signal source and verdict based on actual list membership
+            if is_strong_buy:
+                # Stock is in strong_buys list
+                verdict = "strong_buy"
+                if rule_verdict == "strong_buy" and ml_verdict in ["buy", "strong_buy"]:
+                    source = "Rule+ML"
+                elif rule_verdict == "strong_buy":
+                    source = "Rule-based"
+                elif ml_verdict == "strong_buy":
+                    source = "ML-only"
+                else:
+                    source = "Rule-based"  # Fallback
             else:
-                source = "Unknown"
-                verdict = rule_verdict
+                # Stock is in buys list (not strong_buys)
+                verdict = "buy"
+                if rule_verdict in ["buy", "strong_buy"] and ml_verdict in ["buy", "strong_buy"]:
+                    source = "Rule+ML"
+                elif rule_verdict in ["buy", "strong_buy"]:
+                    source = "Rule-based"
+                elif ml_verdict in ["buy", "strong_buy"]:
+                    source = "ML-only"
+                else:
+                    source = "Rule-based"  # Fallback
 
             # Get justification/reasons
             justification = rec.get("justification", [])

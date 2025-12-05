@@ -263,13 +263,27 @@ def validate_initial_entry_with_trade_agent(
 
         verdict = result.get("verdict", "avoid")
 
+        # Extract ML predictions for tracking during backtest
+        ml_verdict = result.get("ml_verdict")
+        ml_confidence = result.get("ml_confidence")
+        ml_probabilities = result.get("ml_probabilities")
+
         if verdict in ["buy", "strong_buy"]:
             confidence = "high" if verdict == "strong_buy" else "medium"
             target = result.get("target", 0)
             print(f"      ? Trade Agent: BUY signal (confidence: {confidence})")
-            return {"approved": True, "target": target}
+            return {
+                "approved": True,
+                "target": target,
+                "ml_verdict": ml_verdict,
+                "ml_confidence": ml_confidence,
+                "ml_probabilities": ml_probabilities,
+            }
         else:
             print(f"      ?? Trade Agent: WATCH signal (verdict: {verdict})")
+            # Return None for backward compatibility when not approved
+            # But include ML predictions in a dict if we want to track them
+            # For now, return None to maintain backward compatibility
             return None
 
     except Exception as e:
@@ -382,6 +396,9 @@ def run_integrated_backtest(
     skipped_signals = 0
     signal_count = 0  # Counter for signal numbering
     reentries_by_date = {}  # {date: count} for daily cap
+    
+    # Track ML predictions during backtest to find the best one
+    backtest_ml_predictions = []  # List of (ml_verdict, ml_confidence) tuples
 
     # Iterate through each trading day
     for current_date, row in backtest_data.iterrows():
@@ -527,6 +544,16 @@ def run_integrated_backtest(
                         stock_name, date_str, rsi, ema200, market_data, config=config
                     )
 
+                # Track ML predictions from validation (if available)
+                if validation:
+                    ml_verdict = validation.get("ml_verdict")
+                    ml_confidence = validation.get("ml_confidence")
+                    if ml_verdict and ml_confidence is not None:
+                        # Normalize confidence to 0-1 range if needed
+                        if ml_confidence > 1:
+                            ml_confidence = ml_confidence / 100.0
+                        backtest_ml_predictions.append((ml_verdict, ml_confidence))
+                
                 if validation and validation.get("approved"):
                     # Execute initial entry
                     # Target is EMA9 (exit condition: High >= EMA9 OR RSI > 50)
@@ -601,6 +628,18 @@ def run_integrated_backtest(
                 }
             )
 
+        # Find best ML prediction from backtest (highest confidence buy/strong_buy)
+        best_ml_verdict = None
+        best_ml_confidence = None
+        if backtest_ml_predictions:
+            # Filter to only buy/strong_buy predictions
+            buy_predictions = [
+                (v, c) for v, c in backtest_ml_predictions if v in ["buy", "strong_buy"]
+            ]
+            if buy_predictions:
+                # Find the one with highest confidence
+                best_ml_verdict, best_ml_confidence = max(buy_predictions, key=lambda x: x[1])
+
         results = {
             "stock_name": stock_name,
             "period": f"{start_date} to {end_date}",
@@ -616,8 +655,22 @@ def run_integrated_backtest(
             "winning_trades": len(winning),
             "losing_trades": len(losing),
             "positions": positions_list,  # Backward compatibility
+            "backtest_ml_verdict": best_ml_verdict,  # Best ML prediction from backtest
+            "backtest_ml_confidence": best_ml_confidence,  # Confidence of best prediction
         }
     else:
+        # Find best ML prediction from backtest (highest confidence buy/strong_buy)
+        best_ml_verdict = None
+        best_ml_confidence = None
+        if backtest_ml_predictions:
+            # Filter to only buy/strong_buy predictions
+            buy_predictions = [
+                (v, c) for v, c in backtest_ml_predictions if v in ["buy", "strong_buy"]
+            ]
+            if buy_predictions:
+                # Find the one with highest confidence
+                best_ml_verdict, best_ml_confidence = max(buy_predictions, key=lambda x: x[1])
+
         results = {
             "stock_name": stock_name,
             "period": f"{start_date} to {end_date}",
@@ -626,6 +679,8 @@ def run_integrated_backtest(
             "skipped_signals": skipped_signals,
             "total_positions": 0,
             "positions": [],  # Backward compatibility
+            "backtest_ml_verdict": best_ml_verdict,  # Best ML prediction from backtest
+            "backtest_ml_confidence": best_ml_confidence,  # Confidence of best prediction
         }
 
     return results
