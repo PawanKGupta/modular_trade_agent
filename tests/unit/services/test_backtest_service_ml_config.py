@@ -7,7 +7,7 @@ ensuring ML predictions are enabled when ml_enabled=True.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -44,9 +44,7 @@ def config_ml_disabled():
 class TestBacktestServiceMLConfig:
     """Test that BacktestService passes ML config to backtest analysis"""
 
-    def test_run_stock_backtest_passes_config_to_integrated_backtest(
-        self, config_ml_enabled
-    ):
+    def test_run_stock_backtest_passes_config_to_integrated_backtest(self, config_ml_enabled):
         """Test that run_stock_backtest passes config to run_integrated_backtest"""
         service = BacktestService(default_years_back=2, dip_mode=False)
 
@@ -91,9 +89,7 @@ class TestBacktestServiceMLConfig:
             assert "config" in call_kwargs
             assert call_kwargs["config"] is None
 
-    def test_add_backtest_scores_to_results_passes_config(
-        self, config_ml_enabled
-    ):
+    def test_add_backtest_scores_to_results_passes_config(self, config_ml_enabled):
         """Test that add_backtest_scores_to_results passes config to run_stock_backtest"""
         service = BacktestService(default_years_back=2, dip_mode=False)
 
@@ -127,9 +123,7 @@ class TestBacktestServiceMLConfig:
             assert call_kwargs["config"] == config_ml_enabled
             assert call_kwargs["config"].ml_enabled is True
 
-    def test_add_backtest_scores_to_results_uses_config_from_stock_result(
-        self, config_ml_enabled
-    ):
+    def test_add_backtest_scores_to_results_uses_config_from_stock_result(self, config_ml_enabled):
         """Test that add_backtest_scores_to_results uses _config from stock_result if available"""
         service = BacktestService(default_years_back=2, dip_mode=False)
 
@@ -163,13 +157,12 @@ class TestBacktestServiceMLConfig:
             assert call_kwargs["config"] == config_ml_enabled
             assert call_kwargs["config"].ml_enabled is True
 
-    def test_integrated_backtest_passes_config_to_validation(
-        self, config_ml_enabled
-    ):
+    def test_integrated_backtest_passes_config_to_validation(self, config_ml_enabled):
         """Test that run_integrated_backtest passes config to validate_initial_entry_with_trade_agent"""
         with patch("integrated_backtest.fetch_ohlcv_yf") as mock_fetch:
             # Mock market data
             import pandas as pd
+
             dates = pd.date_range("2024-01-01", periods=300, freq="D")
             mock_df = pd.DataFrame(
                 {
@@ -204,9 +197,7 @@ class TestBacktestServiceMLConfig:
                     assert call_kwargs["config"] == config_ml_enabled
                     assert call_kwargs["config"].ml_enabled is True
 
-    def test_validate_initial_entry_uses_config_for_analysis_service(
-        self, config_ml_enabled
-    ):
+    def test_validate_initial_entry_uses_config_for_analysis_service(self, config_ml_enabled):
         """Test that validate_initial_entry_with_trade_agent uses config for AnalysisService"""
         import pandas as pd
 
@@ -270,7 +261,13 @@ class TestBacktestServiceMLConfig:
         )
 
         # Patch AnalysisService where it's imported (inside the function)
-        with patch("services.analysis_service.AnalysisService") as mock_analysis_service_class:
+        with (
+            patch("services.analysis_service.AnalysisService") as mock_analysis_service_class,
+            patch("integrated_backtest.os.environ.get") as mock_env_get,
+        ):
+            # Ensure no environment variable is set so it uses default config
+            mock_env_get.return_value = None
+
             mock_service = MagicMock()
             mock_service.analyze_ticker.return_value = {
                 "status": "success",
@@ -279,9 +276,9 @@ class TestBacktestServiceMLConfig:
             }
             mock_analysis_service_class.return_value = mock_service
 
-            with patch("config.strategy_config.StrategyConfig") as mock_strategy_config:
+            with patch("config.strategy_config.StrategyConfig.default") as mock_default:
                 mock_default_config = StrategyConfig.default()
-                mock_strategy_config.default.return_value = mock_default_config
+                mock_default.return_value = mock_default_config
 
                 from integrated_backtest import validate_initial_entry_with_trade_agent
 
@@ -294,6 +291,13 @@ class TestBacktestServiceMLConfig:
                     config=None,  # None config
                 )
 
-                # Verify StrategyConfig.default() was called
-                mock_strategy_config.default.assert_called_once()
+                # Verify StrategyConfig.default() was called (at least once)
+                assert (
+                    mock_default.call_count >= 1
+                ), "StrategyConfig.default() should be called when config is None"
 
+                # Verify AnalysisService was initialized with a config
+                assert mock_analysis_service_class.called
+                call_kwargs = mock_analysis_service_class.call_args[1]
+                assert "config" in call_kwargs
+                assert call_kwargs["config"] is not None

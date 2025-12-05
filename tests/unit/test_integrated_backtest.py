@@ -13,18 +13,22 @@ Tests cover:
 Target: >90% code coverage
 """
 
-import pytest
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from unittest.mock import Mock, patch, MagicMock
-import sys
 import os
+import sys
+from unittest.mock import Mock, patch
+
+import pandas as pd
+import pytest
 
 # Add project root to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from integrated_backtest import Position, run_integrated_backtest, validate_initial_entry_with_trade_agent, print_integrated_results
+from integrated_backtest import (
+    Position,
+    print_integrated_results,
+    run_integrated_backtest,
+    validate_initial_entry_with_trade_agent,
+)
 
 
 class TestPositionClass:
@@ -37,7 +41,7 @@ class TestPositionClass:
             entry_date="2024-01-01",
             entry_price=100.0,
             target_price=110.0,
-            capital=50000
+            capital=50000,
         )
 
         assert pos.stock_name == "TEST.NS"
@@ -56,7 +60,7 @@ class TestPositionClass:
             entry_price=100.0,
             target_price=110.0,
             capital=50000,
-            entry_rsi=9.5
+            entry_rsi=9.5,
         )
 
         # All levels should be marked as taken
@@ -70,7 +74,7 @@ class TestPositionClass:
             entry_price=100.0,
             target_price=110.0,
             capital=50000,
-            entry_rsi=19.8
+            entry_rsi=19.8,
         )
 
         # Levels 30 and 20 should be marked as taken
@@ -84,7 +88,7 @@ class TestPositionClass:
             entry_price=100.0,
             target_price=110.0,
             capital=50000,
-            entry_rsi=28.5
+            entry_rsi=28.5,
         )
 
         # Only level 30 should be marked as taken
@@ -98,16 +102,12 @@ class TestPositionClass:
             entry_price=100.0,
             target_price=110.0,
             capital=50000,
-            entry_rsi=25.0
+            entry_rsi=25.0,
         )
 
         # Add re-entry at lower price
         pos.add_reentry(
-            add_date="2024-01-05",
-            add_price=90.0,
-            add_capital=50000,
-            new_target=105.0,
-            rsi_level=20
+            add_date="2024-01-05", add_price=90.0, add_capital=50000, new_target=105.0, rsi_level=20
         )
 
         # Check updated values
@@ -124,7 +124,7 @@ class TestPositionClass:
             entry_date="2024-01-01",
             entry_price=100.0,
             target_price=110.0,
-            capital=50000
+            capital=50000,
         )
 
         pos.close_position("2024-01-10", 110.0, "Target reached")
@@ -160,14 +160,15 @@ class TestValidateTradeAgent:
     def test_validate_trade_agent_signature(self):
         """Test function signature and parameters"""
         import inspect
+
         sig = inspect.signature(validate_initial_entry_with_trade_agent)
         params = list(sig.parameters.keys())
 
-        assert 'stock_name' in params
-        assert 'signal_date' in params
-        assert 'rsi' in params
-        assert 'ema200' in params
-        assert 'full_market_data' in params
+        assert "stock_name" in params
+        assert "signal_date" in params
+        assert "rsi" in params
+        assert "ema200" in params
+        assert "full_market_data" in params
 
 
 class TestBacktestLogic:
@@ -180,12 +181,13 @@ class TestBacktestLogic:
     def test_backtest_function_signature(self):
         """Test function signature"""
         import inspect
+
         sig = inspect.signature(run_integrated_backtest)
         params = list(sig.parameters.keys())
 
-        assert 'stock_name' in params
-        assert 'date_range' in params
-        assert 'capital_per_position' in params
+        assert "stock_name" in params
+        assert "date_range" in params
+        assert "capital_per_position" in params
 
     def test_print_results_function_exists(self):
         """Test that print_integrated_results function exists"""
@@ -194,38 +196,39 @@ class TestBacktestLogic:
     def test_print_results_with_valid_data(self):
         """Test print_integrated_results handles valid data"""
         results = {
-            'stock_name': 'TEST.NS',
-            'period': '2024-01-01 to 2024-12-31',
-            'executed_trades': 5,
-            'skipped_signals': 2,
-            'total_pnl': 10000,
-            'total_return_pct': 5.5,
-            'win_rate': 80.0,
-            'total_positions': 3,
-            'winning_trades': 4,
-            'losing_trades': 1
+            "stock_name": "TEST.NS",
+            "period": "2024-01-01 to 2024-12-31",
+            "executed_trades": 5,
+            "skipped_signals": 2,
+            "total_pnl": 10000,
+            "total_return_pct": 5.5,
+            "win_rate": 80.0,
+            "total_positions": 3,
+            "winning_trades": 4,
+            "losing_trades": 1,
         }
 
         # Should not raise an exception
         try:
-            from io import StringIO
             import sys
+            from io import StringIO
+
             old_stdout = sys.stdout
             sys.stdout = StringIO()
             print_integrated_results(results)
             output = sys.stdout.getvalue()
             sys.stdout = old_stdout
 
-            assert 'TEST.NS' in output
-            assert 'executed_trades' in output.lower() or '5' in output
-        except Exception as e:
+            assert "TEST.NS" in output
+            assert "executed_trades" in output.lower() or "5" in output
+        except Exception:
             sys.stdout = old_stdout
             raise
 
     def test_print_results_with_empty_data(self):
         """Test print_integrated_results handles empty data"""
-        from io import StringIO
         import sys
+        from io import StringIO
 
         old_stdout = sys.stdout
         sys.stdout = StringIO()
@@ -344,15 +347,18 @@ class TestThreadSafety:
 
     def test_independent_backtest_runs(self):
         """Test that multiple backtest calls don't interfere"""
-        with patch('integrated_backtest.fetch_ohlcv_yf') as mock_fetch:
-            dates = pd.date_range('2024-01-01', periods=5)
-            mock_data = pd.DataFrame({
-                'Open': [100, 101, 102, 103, 104],
-                'High': [102, 103, 104, 105, 106],
-                'Low': [99, 100, 101, 102, 103],
-                'Close': [101, 102, 103, 104, 105],
-                'Volume': [1000] * 5,
-            }, index=dates)
+        with patch("integrated_backtest.fetch_ohlcv_yf") as mock_fetch:
+            dates = pd.date_range("2024-01-01", periods=5)
+            mock_data = pd.DataFrame(
+                {
+                    "Open": [100, 101, 102, 103, 104],
+                    "High": [102, 103, 104, 105, 106],
+                    "Low": [99, 100, 101, 102, 103],
+                    "Close": [101, 102, 103, 104, 105],
+                    "Volume": [1000] * 5,
+                },
+                index=dates,
+            )
             mock_fetch.return_value = mock_data
 
             # Run two backtests
@@ -360,8 +366,8 @@ class TestThreadSafety:
             results2 = run_integrated_backtest("STOCK2.NS", ("2024-01-01", "2024-01-05"), 50000)
 
             # Both should have independent results
-            assert 'executed_trades' in results1
-            assert 'executed_trades' in results2
+            assert "executed_trades" in results1
+            assert "executed_trades" in results2
 
 
 class TestEdgeCases:
@@ -475,63 +481,71 @@ class TestBacktestIntegration:
 
     def test_backtest_with_no_data(self):
         """Test backtest with failed data fetch"""
-        with patch('integrated_backtest.fetch_ohlcv_yf') as mock_fetch:
+        with patch("integrated_backtest.fetch_ohlcv_yf") as mock_fetch:
             mock_fetch.return_value = None
 
             result = run_integrated_backtest("TEST.NS", ("2024-01-01", "2024-12-31"), 50000)
 
-            assert 'error' in result
+            assert "error" in result
 
     def test_backtest_with_empty_data(self):
         """Test backtest with empty dataframe"""
-        with patch('integrated_backtest.fetch_ohlcv_yf') as mock_fetch:
+        with patch("integrated_backtest.fetch_ohlcv_yf") as mock_fetch:
             mock_fetch.return_value = pd.DataFrame()
 
             result = run_integrated_backtest("TEST.NS", ("2024-01-01", "2024-12-31"), 50000)
 
-            assert 'error' in result
+            assert "error" in result
 
     def test_backtest_with_valid_exit_conditions(self):
         """Test backtest with data that triggers exit conditions"""
-        with patch('integrated_backtest.fetch_ohlcv_yf') as mock_fetch, \
-             patch('integrated_backtest.validate_initial_entry_with_trade_agent') as mock_validate:
-
+        with (
+            patch("integrated_backtest.fetch_ohlcv_yf") as mock_fetch,
+            patch("integrated_backtest.validate_initial_entry_with_trade_agent") as mock_validate,
+        ):
             # Create mock data
-            dates = pd.date_range('2024-01-01', periods=20, freq='D')
-            mock_data = pd.DataFrame({
-                'Open': [100] * 20,
-                'High': [105] * 20,
-                'Low': [95] * 20,
-                'Close': [102] * 20,
-                'Volume': [1000000] * 20,
-            }, index=dates)
+            dates = pd.date_range("2024-01-01", periods=20, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "Open": [100] * 20,
+                    "High": [105] * 20,
+                    "Low": [95] * 20,
+                    "Close": [102] * 20,
+                    "Volume": [1000000] * 20,
+                },
+                index=dates,
+            )
 
             mock_fetch.return_value = mock_data
-            mock_validate.return_value = {'approved': True, 'target': 110.0}
+            mock_validate.return_value = {"approved": True, "target": 110.0}
 
             result = run_integrated_backtest("TEST.NS", ("2024-01-01", "2024-01-20"), 50000)
 
             # Should have results structure
-            assert 'stock_name' in result
-            assert 'executed_trades' in result
+            assert "stock_name" in result
+            assert "executed_trades" in result
 
     def test_backtest_prints_summary(self):
         """Test that backtest prints summary at end"""
-        with patch('integrated_backtest.fetch_ohlcv_yf') as mock_fetch:
-            dates = pd.date_range('2024-01-01', periods=5, freq='D')
-            mock_data = pd.DataFrame({
-                'Open': [100, 101, 102, 103, 104],
-                'High': [102, 103, 104, 105, 106],
-                'Low': [99, 100, 101, 102, 103],
-                'Close': [101, 102, 103, 104, 105],
-                'Volume': [1000000] * 5,
-            }, index=dates)
+        with patch("integrated_backtest.fetch_ohlcv_yf") as mock_fetch:
+            dates = pd.date_range("2024-01-01", periods=5, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "Open": [100, 101, 102, 103, 104],
+                    "High": [102, 103, 104, 105, 106],
+                    "Low": [99, 100, 101, 102, 103],
+                    "Close": [101, 102, 103, 104, 105],
+                    "Volume": [1000000] * 5,
+                },
+                index=dates,
+            )
 
             mock_fetch.return_value = mock_data
 
             # Capture stdout
-            from io import StringIO
             import sys
+            from io import StringIO
+
             old_stdout = sys.stdout
             sys.stdout = StringIO()
 
@@ -541,8 +555,8 @@ class TestBacktestIntegration:
                 sys.stdout = old_stdout
 
                 # Should print backtest header
-                assert 'Starting Integrated Backtest' in output or 'TEST.NS' in output
-            except Exception as e:
+                assert "Starting Integrated Backtest" in output or "TEST.NS" in output
+            except Exception:
                 sys.stdout = old_stdout
                 raise
 
@@ -552,76 +566,97 @@ class TestValidateTradeAgentIntegration:
 
     def test_validate_with_buy_verdict(self):
         """Test validation returns approval for buy verdict"""
-        with patch('services.analysis_service.AnalysisService') as mock_service:
+        with (
+            patch("services.analysis_service.AnalysisService") as mock_service,
+            patch("integrated_backtest.os.environ.get") as mock_env_get,
+        ):
+            # Ensure no environment variable is set
+            mock_env_get.return_value = None
+
             mock_instance = Mock()
             mock_instance.analyze_ticker.return_value = {
-                'status': 'success',
-                'verdict': 'buy',
-                'target': 110.0
+                "status": "success",
+                "verdict": "buy",
+                "target": 110.0,
             }
             mock_service.return_value = mock_instance
 
-            dates = pd.date_range('2024-01-01', periods=5, freq='D')
-            mock_data = pd.DataFrame({
-                'open': [100] * 5,
-                'high': [105] * 5,
-                'low': [95] * 5,
-                'close': [102] * 5,
-                'volume': [1000000] * 5,
-            }, index=dates)
+            dates = pd.date_range("2024-01-01", periods=5, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "open": [100] * 5,
+                    "high": [105] * 5,
+                    "low": [95] * 5,
+                    "close": [102] * 5,
+                    "volume": [1000000] * 5,
+                },
+                index=dates,
+            )
 
             result = validate_initial_entry_with_trade_agent(
                 "TEST.NS", "2024-01-01", 25.0, 250.0, mock_data
             )
 
             assert result is not None
-            assert result['approved'] == True
+            assert result["approved"] == True
 
     def test_validate_with_strong_buy_verdict(self):
         """Test validation returns approval for strong_buy verdict"""
-        with patch('services.analysis_service.AnalysisService') as mock_service:
+        with (
+            patch("services.analysis_service.AnalysisService") as mock_service,
+            patch("integrated_backtest.os.environ.get") as mock_env_get,
+        ):
+            # Ensure no environment variable is set
+            mock_env_get.return_value = None
+
             mock_instance = Mock()
             mock_instance.analyze_ticker.return_value = {
-                'status': 'success',
-                'verdict': 'strong_buy',
-                'target': 115.0
+                "status": "success",
+                "verdict": "strong_buy",
+                "target": 115.0,
             }
             mock_service.return_value = mock_instance
 
-            dates = pd.date_range('2024-01-01', periods=5, freq='D')
-            mock_data = pd.DataFrame({
-                'open': [100] * 5,
-                'high': [105] * 5,
-                'low': [95] * 5,
-                'close': [102] * 5,
-                'volume': [1000000] * 5,
-            }, index=dates)
+            dates = pd.date_range("2024-01-01", periods=5, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "open": [100] * 5,
+                    "high": [105] * 5,
+                    "low": [95] * 5,
+                    "close": [102] * 5,
+                    "volume": [1000000] * 5,
+                },
+                index=dates,
+            )
 
             result = validate_initial_entry_with_trade_agent(
                 "TEST.NS", "2024-01-01", 25.0, 250.0, mock_data
             )
 
             assert result is not None
-            assert result['approved'] == True
+            assert result["approved"] == True
 
     def test_validate_with_watch_verdict(self):
         """Test validation rejects for watch verdict"""
-        with patch('services.analysis_service.AnalysisService') as mock_service:
+        with patch("services.analysis_service.AnalysisService") as mock_service:
             mock_instance = Mock()
             mock_instance.analyze_ticker.return_value = {
-                'status': 'success',
-                'verdict': 'watch',
+                "status": "success",
+                "verdict": "watch",
             }
             mock_service.return_value = mock_instance
 
-            dates = pd.date_range('2024-01-01', periods=5, freq='D')
-            mock_data = pd.DataFrame({
-                'open': [100] * 5,
-                'high': [105] * 5,
-                'low': [95] * 5,
-                'close': [102] * 5,
-                'volume': [1000000] * 5,
-            }, index=dates)
+            dates = pd.date_range("2024-01-01", periods=5, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "open": [100] * 5,
+                    "high": [105] * 5,
+                    "low": [95] * 5,
+                    "close": [102] * 5,
+                    "volume": [1000000] * 5,
+                },
+                index=dates,
+            )
 
             result = validate_initial_entry_with_trade_agent(
                 "TEST.NS", "2024-01-01", 25.0, 250.0, mock_data
@@ -631,21 +666,24 @@ class TestValidateTradeAgentIntegration:
 
     def test_validate_with_failed_analysis(self):
         """Test validation handles failed analysis"""
-        with patch('services.analysis_service.AnalysisService') as mock_service:
+        with patch("services.analysis_service.AnalysisService") as mock_service:
             mock_instance = Mock()
             mock_instance.analyze_ticker.return_value = {
-                'status': 'error',
+                "status": "error",
             }
             mock_service.return_value = mock_instance
 
-            dates = pd.date_range('2024-01-01', periods=5, freq='D')
-            mock_data = pd.DataFrame({
-                'open': [100] * 5,
-                'high': [105] * 5,
-                'low': [95] * 5,
-                'close': [102] * 5,
-                'volume': [1000000] * 5,
-            }, index=dates)
+            dates = pd.date_range("2024-01-01", periods=5, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "open": [100] * 5,
+                    "high": [105] * 5,
+                    "low": [95] * 5,
+                    "close": [102] * 5,
+                    "volume": [1000000] * 5,
+                },
+                index=dates,
+            )
 
             result = validate_initial_entry_with_trade_agent(
                 "TEST.NS", "2024-01-01", 25.0, 250.0, mock_data
@@ -655,17 +693,20 @@ class TestValidateTradeAgentIntegration:
 
     def test_validate_with_exception(self):
         """Test validation handles exceptions gracefully"""
-        with patch('services.analysis_service.AnalysisService') as mock_service:
+        with patch("services.analysis_service.AnalysisService") as mock_service:
             mock_service.side_effect = Exception("Test error")
 
-            dates = pd.date_range('2024-01-01', periods=5, freq='D')
-            mock_data = pd.DataFrame({
-                'open': [100] * 5,
-                'high': [105] * 5,
-                'low': [95] * 5,
-                'close': [102] * 5,
-                'volume': [1000000] * 5,
-            }, index=dates)
+            dates = pd.date_range("2024-01-01", periods=5, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "open": [100] * 5,
+                    "high": [105] * 5,
+                    "low": [95] * 5,
+                    "close": [102] * 5,
+                    "volume": [1000000] * 5,
+                },
+                index=dates,
+            )
 
             result = validate_initial_entry_with_trade_agent(
                 "TEST.NS", "2024-01-01", 25.0, 250.0, mock_data
@@ -675,23 +716,26 @@ class TestValidateTradeAgentIntegration:
 
     def test_validate_with_uppercase_columns(self):
         """Test validation handles uppercase column names"""
-        with patch('services.analysis_service.AnalysisService') as mock_service:
+        with patch("services.analysis_service.AnalysisService") as mock_service:
             mock_instance = Mock()
             mock_instance.analyze_ticker.return_value = {
-                'status': 'success',
-                'verdict': 'buy',
-                'target': 110.0
+                "status": "success",
+                "verdict": "buy",
+                "target": 110.0,
             }
             mock_service.return_value = mock_instance
 
-            dates = pd.date_range('2024-01-01', periods=5, freq='D')
-            mock_data = pd.DataFrame({
-                'Open': [100] * 5,  # Uppercase
-                'High': [105] * 5,
-                'Low': [95] * 5,
-                'Close': [102] * 5,
-                'Volume': [1000000] * 5,
-            }, index=dates)
+            dates = pd.date_range("2024-01-01", periods=5, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "Open": [100] * 5,  # Uppercase
+                    "High": [105] * 5,
+                    "Low": [95] * 5,
+                    "Close": [102] * 5,
+                    "Volume": [1000000] * 5,
+                },
+                index=dates,
+            )
 
             result = validate_initial_entry_with_trade_agent(
                 "TEST.NS", "2024-01-01", 25.0, 250.0, mock_data
@@ -706,83 +750,112 @@ class TestMainBacktestLogic:
 
     def test_backtest_entry_and_target_exit(self):
         """Test complete flow: entry signal -> execute -> target hit -> exit"""
-        with patch('integrated_backtest.fetch_ohlcv_yf') as mock_fetch, \
-             patch('integrated_backtest.validate_initial_entry_with_trade_agent') as mock_validate:
-
+        with (
+            patch("integrated_backtest.fetch_ohlcv_yf") as mock_fetch,
+            patch("integrated_backtest.validate_initial_entry_with_trade_agent") as mock_validate,
+        ):
             # Create realistic data: RSI drops below 30, then price rises to hit target
-            dates = pd.date_range('2024-01-01', periods=15, freq='D')
-            mock_data = pd.DataFrame({
-                'Open': [100, 102, 101, 100, 99, 98, 97, 96, 97, 98, 99, 100, 101, 102, 103],
-                'High': [102, 104, 103, 102, 101, 100, 99, 98, 99, 100, 101, 102, 110, 111, 112],  # Day 12 hits target
-                'Low': [99, 100, 99, 98, 97, 96, 95, 94, 95, 96, 97, 98, 99, 100, 101],
-                'Close': [101, 103, 100, 99, 98, 97, 96, 95, 97, 99, 100, 101, 109, 110, 111],
-                'Volume': [1000000] * 15,
-            }, index=dates)
+            dates = pd.date_range("2024-01-01", periods=15, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "Open": [100, 102, 101, 100, 99, 98, 97, 96, 97, 98, 99, 100, 101, 102, 103],
+                    "High": [
+                        102,
+                        104,
+                        103,
+                        102,
+                        101,
+                        100,
+                        99,
+                        98,
+                        99,
+                        100,
+                        101,
+                        102,
+                        110,
+                        111,
+                        112,
+                    ],  # Day 12 hits target
+                    "Low": [99, 100, 99, 98, 97, 96, 95, 94, 95, 96, 97, 98, 99, 100, 101],
+                    "Close": [101, 103, 100, 99, 98, 97, 96, 95, 97, 99, 100, 101, 109, 110, 111],
+                    "Volume": [1000000] * 15,
+                },
+                index=dates,
+            )
 
             mock_fetch.return_value = mock_data
-            mock_validate.return_value = {'approved': True, 'target': 108.0}
+            mock_validate.return_value = {"approved": True, "target": 108.0}
 
             result = run_integrated_backtest("TEST.NS", ("2024-01-01", "2024-01-15"), 50000)
 
-            assert 'executed_trades' in result
-            assert 'total_positions' in result
-            assert result['executed_trades'] >= 0
+            assert "executed_trades" in result
+            assert "total_positions" in result
+            assert result["executed_trades"] >= 0
 
     def test_backtest_entry_and_rsi_exit(self):
         """Test exit when RSI > 50"""
-        with patch('integrated_backtest.fetch_ohlcv_yf') as mock_fetch, \
-             patch('integrated_backtest.validate_initial_entry_with_trade_agent') as mock_validate:
-
+        with (
+            patch("integrated_backtest.fetch_ohlcv_yf") as mock_fetch,
+            patch("integrated_backtest.validate_initial_entry_with_trade_agent") as mock_validate,
+        ):
             # Create data where RSI rises above 50
-            dates = pd.date_range('2024-01-01', periods=10, freq='D')
-            mock_data = pd.DataFrame({
-                'Open': [100, 99, 98, 97, 98, 99, 100, 101, 102, 103],
-                'High': [102, 101, 100, 99, 100, 101, 102, 103, 104, 105],
-                'Low': [99, 97, 96, 95, 96, 97, 98, 99, 100, 101],
-                'Close': [100, 98, 97, 96, 98, 100, 101, 102, 103, 104],
-                'Volume': [1000000] * 10,
-            }, index=dates)
+            dates = pd.date_range("2024-01-01", periods=10, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "Open": [100, 99, 98, 97, 98, 99, 100, 101, 102, 103],
+                    "High": [102, 101, 100, 99, 100, 101, 102, 103, 104, 105],
+                    "Low": [99, 97, 96, 95, 96, 97, 98, 99, 100, 101],
+                    "Close": [100, 98, 97, 96, 98, 100, 101, 102, 103, 104],
+                    "Volume": [1000000] * 10,
+                },
+                index=dates,
+            )
 
             mock_fetch.return_value = mock_data
-            mock_validate.return_value = {'approved': True, 'target': 105.0}
+            mock_validate.return_value = {"approved": True, "target": 105.0}
 
             result = run_integrated_backtest("TEST.NS", ("2024-01-01", "2024-01-10"), 50000)
 
-            assert 'stock_name' in result
+            assert "stock_name" in result
 
     def test_backtest_no_signals(self):
         """Test backtest with no entry signals"""
-        with patch('integrated_backtest.fetch_ohlcv_yf') as mock_fetch:
-
+        with patch("integrated_backtest.fetch_ohlcv_yf") as mock_fetch:
             # Create data with RSI always above 30
-            dates = pd.date_range('2024-01-01', periods=10, freq='D')
-            mock_data = pd.DataFrame({
-                'Open': [100] * 10,
-                'High': [105] * 10,
-                'Low': [99] * 10,
-                'Close': [102] * 10,
-                'Volume': [1000000] * 10,
-            }, index=dates)
+            dates = pd.date_range("2024-01-01", periods=10, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "Open": [100] * 10,
+                    "High": [105] * 10,
+                    "Low": [99] * 10,
+                    "Close": [102] * 10,
+                    "Volume": [1000000] * 10,
+                },
+                index=dates,
+            )
 
             mock_fetch.return_value = mock_data
 
             result = run_integrated_backtest("TEST.NS", ("2024-01-01", "2024-01-10"), 50000)
 
-            assert 'executed_trades' in result
-            assert result['executed_trades'] == 0
+            assert "executed_trades" in result
+            assert result["executed_trades"] == 0
 
     def test_backtest_returns_proper_structure(self):
         """Test that backtest returns proper result structure"""
-        with patch('integrated_backtest.fetch_ohlcv_yf') as mock_fetch:
+        with patch("integrated_backtest.fetch_ohlcv_yf") as mock_fetch:
             # Simple valid data
-            dates = pd.date_range('2024-01-01', periods=5, freq='D')
-            mock_data = pd.DataFrame({
-                'Open': [100] * 5,
-                'High': [105] * 5,
-                'Low': [99] * 5,
-                'Close': [102] * 5,
-                'Volume': [1000000] * 5,
-            }, index=dates)
+            dates = pd.date_range("2024-01-01", periods=5, freq="D")
+            mock_data = pd.DataFrame(
+                {
+                    "Open": [100] * 5,
+                    "High": [105] * 5,
+                    "Low": [99] * 5,
+                    "Close": [102] * 5,
+                    "Volume": [1000000] * 5,
+                },
+                index=dates,
+            )
 
             mock_fetch.return_value = mock_data
 
@@ -790,7 +863,7 @@ class TestMainBacktestLogic:
 
             # Check result structure
             assert isinstance(result, dict)
-            assert 'stock_name' in result or 'executed_trades' in result
+            assert "stock_name" in result or "executed_trades" in result
 
 
 class TestPrintResults:
@@ -798,37 +871,37 @@ class TestPrintResults:
 
     def test_print_integrated_results_complete(self):
         """Test print_integrated_results with complete data"""
-        from io import StringIO
         import sys
+        from io import StringIO
 
         results = {
-            'stock_name': 'TESTSTOCK.NS',
-            'period': '2024-01-01 to 2024-12-31',
-            'executed_trades': 10,
-            'skipped_signals': 3,
-            'total_pnl': 25000.50,
-            'total_return_pct': 12.5,
-            'win_rate': 70.0,
-            'total_positions': 7,
-            'winning_trades': 7,
-            'losing_trades': 3,
-            'avg_win': 5000.0,
-            'avg_loss': -2000.0,
-            'largest_win': 10000.0,
-            'largest_loss': -5000.0,
-            'avg_days_to_exit': 15.5,
-            'positions': [
+            "stock_name": "TESTSTOCK.NS",
+            "period": "2024-01-01 to 2024-12-31",
+            "executed_trades": 10,
+            "skipped_signals": 3,
+            "total_pnl": 25000.50,
+            "total_return_pct": 12.5,
+            "win_rate": 70.0,
+            "total_positions": 7,
+            "winning_trades": 7,
+            "losing_trades": 3,
+            "avg_win": 5000.0,
+            "avg_loss": -2000.0,
+            "largest_win": 10000.0,
+            "largest_loss": -5000.0,
+            "avg_days_to_exit": 15.5,
+            "positions": [
                 {
-                    'entry_date': pd.to_datetime('2024-01-15'),
-                    'exit_date': pd.to_datetime('2024-01-30'),
-                    'entry_price': 100.0,
-                    'exit_price': 110.0,
-                    'exit_reason': 'Target reached',
-                    'pnl': 5000.0,
-                    'return_pct': 10.0,
-                    'max_drawdown_pct': -2.5
+                    "entry_date": pd.to_datetime("2024-01-15"),
+                    "exit_date": pd.to_datetime("2024-01-30"),
+                    "entry_price": 100.0,
+                    "exit_price": 110.0,
+                    "exit_reason": "Target reached",
+                    "pnl": 5000.0,
+                    "return_pct": 10.0,
+                    "max_drawdown_pct": -2.5,
                 }
-            ]
+            ],
         }
 
         old_stdout = sys.stdout
@@ -840,21 +913,21 @@ class TestPrintResults:
             sys.stdout = old_stdout
 
             # Verify output contains key information
-            assert 'TESTSTOCK.NS' in output or 'TEST' in output
+            assert "TESTSTOCK.NS" in output or "TEST" in output
             assert len(output) > 100  # Should have substantial output
-        except Exception as e:
+        except Exception:
             sys.stdout = old_stdout
             raise
 
     def test_print_integrated_results_minimal(self):
         """Test print_integrated_results with minimal data"""
-        from io import StringIO
         import sys
+        from io import StringIO
 
         results = {
-            'stock_name': 'TEST.NS',
-            'executed_trades': 0,
-            'total_pnl': 0,
+            "stock_name": "TEST.NS",
+            "executed_trades": 0,
+            "total_pnl": 0,
         }
 
         old_stdout = sys.stdout
@@ -867,26 +940,26 @@ class TestPrintResults:
 
             # Should handle gracefully
             assert len(output) >= 0
-        except Exception as e:
+        except Exception:
             sys.stdout = old_stdout
             raise
 
     def test_print_integrated_results_with_losses(self):
         """Test print_integrated_results with losing trades"""
-        from io import StringIO
         import sys
+        from io import StringIO
 
         results = {
-            'stock_name': 'LOSER.NS',
-            'period': '2024-01-01 to 2024-12-31',
-            'executed_trades': 5,
-            'skipped_signals': 1,
-            'total_pnl': -10000.0,
-            'total_return_pct': -8.5,
-            'win_rate': 20.0,
-            'total_positions': 5,
-            'winning_trades': 1,
-            'losing_trades': 4,
+            "stock_name": "LOSER.NS",
+            "period": "2024-01-01 to 2024-12-31",
+            "executed_trades": 5,
+            "skipped_signals": 1,
+            "total_pnl": -10000.0,
+            "total_return_pct": -8.5,
+            "win_rate": 20.0,
+            "total_positions": 5,
+            "winning_trades": 1,
+            "losing_trades": 4,
         }
 
         old_stdout = sys.stdout
@@ -898,7 +971,7 @@ class TestPrintResults:
             sys.stdout = old_stdout
 
             assert len(output) > 0
-        except Exception as e:
+        except Exception:
             sys.stdout = old_stdout
             raise
 
@@ -914,7 +987,7 @@ class TestPositionAdditionalMethods:
             entry_price=100.0,
             target_price=110.0,
             capital=50000,
-            entry_rsi=None  # Explicitly None
+            entry_rsi=None,  # Explicitly None
         )
 
         # Should default to level 30 taken
@@ -933,4 +1006,12 @@ class TestPositionAdditionalMethods:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--cov=integrated_backtest", "--cov-report=term-missing", "--cov-report=html"])
+    pytest.main(
+        [
+            __file__,
+            "-v",
+            "--cov=integrated_backtest",
+            "--cov-report=term-missing",
+            "--cov-report=html",
+        ]
+    )

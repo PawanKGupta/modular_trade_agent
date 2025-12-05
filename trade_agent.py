@@ -524,6 +524,21 @@ def main(
 def _process_results(results, enable_backtest_scoring=False, dip_mode=False, config=None):
     """Process analysis results (common for both async and sequential)"""
 
+    # ENHANCEMENT 1: Extract config FIRST (before any filtering or processing)
+    # This ensures we have config available for all subsequent operations
+    if config is None and results and len(results) > 0:
+        first_result = results[0]
+        if hasattr(first_result, "_config"):
+            config = first_result._config
+        elif isinstance(first_result, dict) and "_config" in first_result:
+            config = first_result.get("_config")
+        if config:
+            logger.debug(
+                f"Extracted config from results: ml_enabled={getattr(config, 'ml_enabled', None)}, "
+                f"ml_confidence_threshold={getattr(config, 'ml_confidence_threshold', None)}, "
+                f"ml_combine_with_rules={getattr(config, 'ml_combine_with_rules', None)}"
+            )
+
     # Calculate strength scores for all results (needed for backtest scoring)
     # Also add ML verdict predictions if ML service is available (for testing)
     for result in results:
@@ -550,16 +565,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
         mode_info = " (DIP MODE)" if dip_mode else ""
         logger.info(f"Running backtest scoring analysis{mode_info}...")
         # Use BacktestService (Phase 4)
-        # Extract config from first result if available (for ML support)
-        # All results should have the same config from the same analysis service
-        config = None
-        if results and len(results) > 0:
-            # Try to extract config from result metadata if available
-            first_result = results[0]
-            if hasattr(first_result, "_config"):
-                config = first_result._config
-            elif isinstance(first_result, dict) and "_config" in first_result:
-                config = first_result.get("_config")
+        # Config is already extracted above
 
         backtest_service = BacktestService(default_years_back=2, dip_mode=dip_mode)
         results = backtest_service.add_backtest_scores_to_results(results, config=config)
@@ -689,87 +695,202 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
     if config and hasattr(config, "ml_confidence_threshold"):
         ml_confidence_threshold = config.ml_confidence_threshold
 
-    # Helper function to normalize ML confidence (handles both 0-1 and 0-100 formats)
+    # ENHANCEMENT 2: Helper function to normalize ML confidence with logging
     def _normalize_ml_confidence(ml_conf):
+        """Normalize ML confidence (handles both 0-1 and 0-100 formats) with logging"""
         if ml_conf is None:
             return 0.0
         if isinstance(ml_conf, (int, float)):
             # If > 1, assume it's percentage (0-100), convert to 0-1
-            return ml_conf if ml_conf <= 1 else ml_conf / 100.0
+            normalized = ml_conf if ml_conf <= 1 else ml_conf / 100.0
+            if ml_conf > 1:
+                logger.debug(f"Normalized ML confidence: {ml_conf}% -> {normalized:.3f}")
+            return normalized
         return 0.0
 
-    # Use config from results if not passed as parameter (for backward compatibility)
-    if config is None and results and len(results) > 0:
-        first_result = results[0]
-        if isinstance(first_result, dict) and "_config" in first_result:
-            config = first_result.get("_config")
-            if config and hasattr(config, "ml_confidence_threshold"):
-                ml_confidence_threshold = config.ml_confidence_threshold
+    # Get ML enabled status from config (CRITICAL: Respect user's ML configuration)
+    ml_enabled = False
+    if config and hasattr(config, "ml_enabled"):
+        ml_enabled = config.ml_enabled
+
+    # Get ML combine with rules setting from config (only relevant if ML is enabled)
+    ml_combine_with_rules = False
+    if config and hasattr(config, "ml_combine_with_rules"):
+        ml_combine_with_rules = config.ml_combine_with_rules
+
+    # Log ML configuration status
+    if config:
+        logger.debug(
+            f"ML Configuration: ml_enabled={ml_enabled}, ml_confidence_threshold={ml_confidence_threshold}, "
+            f"ml_combine_with_rules={ml_combine_with_rules}"
+        )
+
+    # ENHANCEMENT 5: Backtest quality filter helper (NO minimum trades requirement)
+    def _passes_backtest_quality_filters(
+        result,
+        min_win_rate=65.0,
+        min_avg_profit=1.5,
+        min_backtest_score=45.0,
+        require_positive_return=True,
+    ):
+        """
+        Check if result passes backtest quality filters.
+        Even 1 trade with 100% win rate and profit is valuable for mean reversion.
+        """
+        if not enable_backtest_scoring:
+            return True  # No backtest data available, skip quality filters
+
+        backtest = result.get("backtest", {})
+        if not backtest:
+            return True  # No backtest data, skip quality filters
+
+        win_rate = backtest.get("win_rate", 0)
+        avg_return = backtest.get("avg_return", 0)
+        total_return = backtest.get("total_return_pct", 0)
+        backtest_score = backtest.get("score", 0)
+
+        # Check quality filters (NO minimum trades requirement)
+        if win_rate < min_win_rate:
+            logger.debug(
+                f"{result.get('ticker')}: Backtest quality filter failed - win_rate={win_rate:.1f}% < {min_win_rate}%"
+            )
+            return False
+
+        if avg_return < min_avg_profit:
+            logger.debug(
+                f"{result.get('ticker')}: Backtest quality filter failed - avg_profit={avg_return:.2f}% < {min_avg_profit}%"
+            )
+            return False
+
+        if require_positive_return and total_return <= 0:
+            logger.debug(
+                f"{result.get('ticker')}: Backtest quality filter failed - total_return={total_return:.1f}% <= 0%"
+            )
+            return False
+
+        if backtest_score < min_backtest_score:
+            logger.debug(
+                f"{result.get('ticker')}: Backtest quality filter failed - backtest_score={backtest_score:.1f} < {min_backtest_score}"
+            )
+            return False
+
+        return True
 
     if enable_backtest_scoring:
-        # Check if ML combine with rules is enabled
-        ml_combine_with_rules = False
-        if config and hasattr(config, "ml_combine_with_rules"):
-            ml_combine_with_rules = config.ml_combine_with_rules
+        # ENHANCEMENT 3 & 4: Apply filtering with all enhancements
+        # - Check ml_verdict even when combine=true if final_verdict is weak
+        # - Use minimum threshold (20) for ML-only instead of 0
+        # - Apply backtest quality filters
 
-        # Apply filtering with reasonable combined score threshold
-        # When ml_combine_with_rules=true, final_verdict is already combined (trust it)
-        # When ml_combine_with_rules=false, check ML verdict separately for ML-only cases
-        buys = [
-            r
-            for r in results
-            if r.get("status") == "success"
-            and (
-                # Combined/Rule-based buy/strong_buy (existing logic)
-                # When ml_combine_with_rules=true, final_verdict is already the combined verdict
-                (
-                    r.get("final_verdict") in ["buy", "strong_buy"]
-                    and r.get("combined_score", 0) >= 25
-                )
-                or
-                # ML-only buy/strong_buy (only when ml_combine_with_rules=false)
-                # When ml_combine_with_rules=true, ML is already considered in final_verdict
-                (
-                    not ml_combine_with_rules
-                    and r.get("ml_verdict") in ["buy", "strong_buy"]
-                    and _normalize_ml_confidence(r.get("ml_confidence")) >= ml_confidence_threshold
-                    and r.get("combined_score", 0) >= 0  # Non-negative combined score
-                )
-            )
-        ]
-        strong_buys = [
-            r
-            for r in results
-            if r.get("status") == "success"
-            and (
-                # Combined/Rule-based strong_buy
-                (r.get("final_verdict") == "strong_buy" and r.get("combined_score", 0) >= 25)
-                or
-                # ML-only strong_buy (only when ml_combine_with_rules=false)
-                (
-                    not ml_combine_with_rules
-                    and r.get("ml_verdict") == "strong_buy"
-                    and _normalize_ml_confidence(r.get("ml_confidence")) >= ml_confidence_threshold
-                    and r.get("combined_score", 0) >= 0  # Non-negative combined score
-                )
-            )
-        ]
+        ml_score_min = 20  # ENHANCEMENT 4: Higher quality threshold for ML-only
+
+        buys = []
+        for r in results:
+            if r.get("status") != "success":
+                continue
+
+            # ENHANCEMENT 5: Apply backtest quality filters first
+            if not _passes_backtest_quality_filters(r):
+                continue
+
+            # Determine if final_verdict is weak
+            weak_final_verdict = r.get("final_verdict") in ["watch", "avoid"]
+
+            # Combined/Rule-based buy/strong_buy
+            if r.get("final_verdict") in ["buy", "strong_buy"] and r.get("combined_score", 0) >= 25:
+                buys.append(r)
+            # ENHANCEMENT 3: Check ml_verdict even when combine=true if final_verdict is weak
+            # BUT ONLY IF ML IS ENABLED
+            elif ml_enabled and weak_final_verdict and r.get("ml_verdict") in ["buy", "strong_buy"]:
+                ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
+                if (
+                    ml_conf_normalized >= ml_confidence_threshold
+                    and r.get("combined_score", 0) >= ml_score_min
+                ):
+                    buys.append(r)
+                    logger.debug(
+                        f"{r.get('ticker')}: ML-only buy (weak final_verdict={r.get('final_verdict')}): "
+                        f"conf={ml_conf_normalized * 100:.0f}%>={ml_confidence_threshold * 100:.0f}%, "
+                        f"score={r.get('combined_score', 0):.1f}>={ml_score_min}"
+                    )
+            # ML-only buy/strong_buy (only when ml_combine_with_rules=false AND ml_enabled=true)
+            elif (
+                ml_enabled
+                and not ml_combine_with_rules
+                and r.get("ml_verdict") in ["buy", "strong_buy"]
+            ):
+                ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
+                if (
+                    ml_conf_normalized >= ml_confidence_threshold
+                    and r.get("combined_score", 0) >= ml_score_min
+                ):
+                    buys.append(r)
+                    logger.debug(
+                        f"{r.get('ticker')}: ML-only buy: conf={ml_conf_normalized * 100:.0f}%>={ml_confidence_threshold * 100:.0f}%, "
+                        f"score={r.get('combined_score', 0):.1f}>={ml_score_min}"
+                    )
+
+        strong_buys = []
+        for r in results:
+            if r.get("status") != "success":
+                continue
+
+            # ENHANCEMENT 5: Apply backtest quality filters first
+            if not _passes_backtest_quality_filters(r):
+                continue
+
+            # Determine if final_verdict is weak
+            weak_final_verdict = r.get("final_verdict") in ["watch", "avoid"]
+
+            # Combined/Rule-based strong_buy
+            if r.get("final_verdict") == "strong_buy" and r.get("combined_score", 0) >= 25:
+                strong_buys.append(r)
+            # ENHANCEMENT 3: Check ml_verdict even when combine=true if final_verdict is weak
+            # BUT ONLY IF ML IS ENABLED
+            elif ml_enabled and weak_final_verdict and r.get("ml_verdict") == "strong_buy":
+                ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
+                if (
+                    ml_conf_normalized >= ml_confidence_threshold
+                    and r.get("combined_score", 0) >= ml_score_min
+                ):
+                    strong_buys.append(r)
+                    logger.debug(
+                        f"{r.get('ticker')}: ML-only strong_buy (weak final_verdict={r.get('final_verdict')}): "
+                        f"conf={ml_conf_normalized * 100:.0f}%>={ml_confidence_threshold * 100:.0f}%, "
+                        f"score={r.get('combined_score', 0):.1f}>={ml_score_min}"
+                    )
+            # ML-only strong_buy (only when ml_combine_with_rules=false AND ml_enabled=true)
+            elif ml_enabled and not ml_combine_with_rules and r.get("ml_verdict") == "strong_buy":
+                ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
+                if (
+                    ml_conf_normalized >= ml_confidence_threshold
+                    and r.get("combined_score", 0) >= ml_score_min
+                ):
+                    strong_buys.append(r)
+                    logger.debug(
+                        f"{r.get('ticker')}: ML-only strong_buy: conf={ml_conf_normalized * 100:.0f}%>={ml_confidence_threshold * 100:.0f}%, "
+                        f"score={r.get('combined_score', 0):.1f}>={ml_score_min}"
+                    )
     else:
         # Include stocks where EITHER rule OR ML predicts buy/strong_buy
+        # BUT ONLY CHECK ML IF ML IS ENABLED
         buys = [
             r
             for r in results
             if r.get("status") == "success"
             and (
                 r.get("verdict") in ["buy", "strong_buy"]
-                or r.get("ml_verdict") in ["buy", "strong_buy"]
+                or (ml_enabled and r.get("ml_verdict") in ["buy", "strong_buy"])
             )
         ]
         strong_buys = [
             r
             for r in results
             if r.get("status") == "success"
-            and (r.get("verdict") == "strong_buy" or r.get("ml_verdict") == "strong_buy")
+            and (
+                r.get("verdict") == "strong_buy"
+                or (ml_enabled and r.get("ml_verdict") == "strong_buy")
+            )
         ]
 
     # Log recommended signals with reasons

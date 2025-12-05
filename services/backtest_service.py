@@ -162,7 +162,11 @@ class BacktestService:
             return 0.0
 
     def run_stock_backtest(
-        self, stock_symbol: str, years_back: int | None = None, dip_mode: bool | None = None, config=None
+        self,
+        stock_symbol: str,
+        years_back: int | None = None,
+        dip_mode: bool | None = None,
+        config=None,
     ) -> dict:
         """
         Run backtest for a stock using available method (integrated or simple).
@@ -236,7 +240,17 @@ class BacktestService:
                 # Run backtest for this stock
                 # Use config from stock_result if available, otherwise use passed config
                 stock_config = stock_result.get("_config") or config
-                backtest_data = self.run_stock_backtest(ticker, years_back, dip_mode, config=stock_config)
+                if stock_config:
+                    logger.debug(
+                        f"{ticker}: Using config for backtest - ml_enabled={getattr(stock_config, 'ml_enabled', None)}"
+                    )
+                else:
+                    logger.warning(
+                        f"{ticker}: No config available for backtest, will use default (ml_enabled=False)"
+                    )
+                backtest_data = self.run_stock_backtest(
+                    ticker, years_back, dip_mode, config=stock_config
+                )
 
                 # Add backtest data to stock result
                 stock_result["backtest"] = {
@@ -246,6 +260,7 @@ class BacktestService:
                     "total_trades": backtest_data.get("total_trades", 0),
                     "vs_buy_hold": backtest_data.get("vs_buy_hold", 0),
                     "execution_rate": backtest_data.get("execution_rate", 0),
+                    "avg_return": backtest_data.get("avg_return", 0),  # Average profit per trade
                 }
 
                 # Calculate combined score (50% current analysis + 50% backtest)
