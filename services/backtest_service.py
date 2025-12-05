@@ -42,12 +42,12 @@ class BacktestService:
     providing dependency injection and better testability.
     """
 
-    def __init__(self, default_years_back: int = 2, dip_mode: bool = False):
+    def __init__(self, default_years_back: int = 5, dip_mode: bool = False):
         """
         Initialize backtest service
 
         Args:
-            default_years_back: Default number of years for backtesting
+            default_years_back: Default number of years for backtesting (default: 5 for better trade sample size)
             dip_mode: Whether to use dip mode for backtesting
         """
         self.default_years_back = default_years_back
@@ -261,6 +261,9 @@ class BacktestService:
                     "vs_buy_hold": backtest_data.get("vs_buy_hold", 0),
                     "execution_rate": backtest_data.get("execution_rate", 0),
                     "avg_return": backtest_data.get("avg_return", 0),  # Average profit per trade
+                    "backtest_ml_verdict": backtest_data.get(
+                        "backtest_ml_verdict"
+                    ),  # Store for filtering logic
                 }
 
                 # Calculate combined score (50% current analysis + 50% backtest)
@@ -289,38 +292,47 @@ class BacktestService:
                 # This allows backtest ML predictions to override initial weak predictions
                 backtest_ml_verdict = backtest_data.get("backtest_ml_verdict")
                 backtest_ml_confidence = backtest_data.get("backtest_ml_confidence")
-                
+
                 # Normalize backtest ML confidence to 0-1 range if needed
                 if backtest_ml_confidence is not None and backtest_ml_confidence > 1:
                     backtest_ml_confidence = backtest_ml_confidence / 100.0
-                
+
                 # Normalize initial ML confidence for comparison
                 initial_ml_conf_normalized = initial_ml_confidence
                 if initial_ml_conf_normalized is not None and initial_ml_conf_normalized > 1:
                     initial_ml_conf_normalized = initial_ml_conf_normalized / 100.0
-                
-                # Use backtest ML if it's a buy/strong_buy and better than initial
+
+                # Use backtest ML if it's a buy/strong_buy and validated from profitable trades
+                # Backtest ML is preferred because it's validated from actual profitable reversals
                 use_backtest_ml = False
                 if (
                     backtest_ml_verdict
                     and backtest_ml_verdict in ["buy", "strong_buy"]
                     and backtest_ml_confidence is not None
                 ):
-                    # Use backtest ML if:
-                    # 1. Initial ML is weak (watch/avoid) OR
-                    # 2. Backtest ML confidence is higher
-                    if (
-                        initial_ml_verdict not in ["buy", "strong_buy"]
-                        or (initial_ml_conf_normalized is not None and backtest_ml_confidence > initial_ml_conf_normalized)
-                    ):
-                        use_backtest_ml = True
-                        stock_result["ml_verdict"] = backtest_ml_verdict
-                        stock_result["ml_confidence"] = backtest_ml_confidence * 100  # Convert back to 0-100 for consistency
-                        logger.info(
-                            f"{ticker}: ? Using backtest ML: {backtest_ml_verdict} ({backtest_ml_confidence*100:.1f}%) "
-                            f"(better than initial: {initial_ml_verdict} ({initial_ml_confidence}))"
-                        )
-                
+                    # Always prefer backtest ML if it's validated from profitable trades
+                    # Backtest ML is more reliable because it's based on actual profitable reversals
+                    # Even if initial ML confidence is slightly higher, backtest ML is validated
+                    use_backtest_ml = True
+                    stock_result["ml_verdict"] = backtest_ml_verdict
+                    stock_result["ml_confidence"] = (
+                        backtest_ml_confidence * 100
+                    )  # Convert back to 0-100 for consistency
+                    logger.info(
+                        f"{ticker}: ? Using backtest ML: {backtest_ml_verdict} ({backtest_ml_confidence * 100:.1f}%) "
+                        f"(validated from profitable trades, initial: {initial_ml_verdict} ({initial_ml_confidence}))"
+                    )
+                    # DEBUG: Verify ML predictions are set
+                    logger.debug(
+                        f"{ticker}: DEBUG - After setting backtest ML - ml_verdict={stock_result.get('ml_verdict')}, "
+                        f"ml_confidence={stock_result.get('ml_confidence')}"
+                    )
+                    # DEBUG: Verify ML predictions are set
+                    logger.debug(
+                        f"{ticker}: DEBUG - After setting backtest ML - ml_verdict={stock_result.get('ml_verdict')}, "
+                        f"ml_confidence={stock_result.get('ml_confidence')}"
+                    )
+
                 # Restore initial ML predictions if backtest ML not used (2025-11-11)
                 # Ensure live ML prediction is preserved (backtest may have overwritten it)
                 # Restore if we had initial ML data (even if value was None) and didn't use backtest ML
@@ -452,6 +464,20 @@ class BacktestService:
                     stock_result["ml_probabilities"] = initial_ml_probabilities
                     logger.debug(f"Restored ML after error for {ticker}")
                 enhanced_results.append(stock_result)
+
+        # DEBUG: Log summary of ML predictions in enhanced results
+        ml_count = sum(1 for r in enhanced_results if r.get("ml_verdict") in ["buy", "strong_buy"])
+        logger.debug(
+            f"DEBUG - add_backtest_scores_to_results returning {len(enhanced_results)} results, "
+            f"{ml_count} with buy/strong_buy ML predictions"
+        )
+        # DEBUG: Log ML predictions for first few results
+        for r in enhanced_results[:5]:
+            ticker = r.get("ticker", "Unknown")
+            logger.debug(
+                f"DEBUG - {ticker}: ml_verdict={r.get('ml_verdict')}, ml_confidence={r.get('ml_confidence')}, "
+                f"final_verdict={r.get('final_verdict')}"
+            )
 
         return enhanced_results
 

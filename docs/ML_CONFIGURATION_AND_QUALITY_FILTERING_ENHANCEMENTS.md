@@ -202,19 +202,24 @@ def _normalize_ml_confidence(confidence):
 For each result:
   ├─ Extract config (if not provided)
   ├─ Normalize ML confidence
+  ├─ Apply backtest quality filters
+  │   ├─ min_backtest_score >= 45.0
+  │   ├─ min_win_rate >= 65.0% (if trades > 0)
+  │   ├─ min_avg_profit >= 1.5% (if trades > 0)
+  │   └─ require_positive_return = True
   ├─ Check if rule-based buy/strong_buy
-  │   └─ Apply backtest quality filters
+  │   └─ combined_score >= 25
   ├─ Check if ML-only buy/strong_buy (when combine=false)
   │   ├─ Verify ml_enabled=True
-  │   ├─ Check ML confidence >= threshold
-  │   ├─ Check combined_score >= 20
-  │   └─ Apply backtest quality filters
+  │   ├─ Check ML confidence >= threshold (default 100%)
+  │   └─ Check combined_score >= 20
   └─ Check if weak final_verdict but ML says buy (when combine=true)
       ├─ Verify ml_enabled=True
-      ├─ Check ML confidence >= threshold
-      ├─ Check combined_score >= 20
-      └─ Apply backtest quality filters
+      ├─ Check ML confidence >= threshold (default 100%)
+      └─ Check combined_score >= 20
 ```
+
+**Note:** All ML predictions (initial and backtest) use the same `ml_confidence_threshold` without any adjustments.
 
 ---
 
@@ -244,6 +249,8 @@ Buy and strong_buy recommendations were not being prioritized for order placemen
 - **Medium Confidence (60-70%):** +10 points
 - **Low Confidence (50-60%):** +5 points
 - **Below Threshold (<50%):** No boost
+
+**Note:** With default `ml_confidence_threshold = 1.0` (100%), only very high confidence ML predictions will pass the threshold. Users can lower this threshold via configuration if needed.
 
 **Implementation:**
 ```python
@@ -498,7 +505,7 @@ Recommendations are now automatically sorted by priority score:
 |-----------|------|---------|-------------|
 | `ml_enabled` | bool | `False` | Enable/disable ML predictions |
 | `ml_model_version` | str | `None` | ML model version to use |
-| `ml_confidence_threshold` | float | `0.5` | Minimum ML confidence (0-1) |
+| `ml_confidence_threshold` | float | `1.0` | Minimum ML confidence (0-1), default 100% |
 | `ml_combine_with_rules` | bool | `True` | Combine ML with rule-based logic |
 
 ### Quality Filter Parameters
@@ -548,8 +555,9 @@ Recommendations are now automatically sorted by priority score:
 
 **Solutions:**
 1. Set `ml_combine_with_rules=False` to enable ML-only path
-2. Lower `ml_confidence_threshold` if needed
+2. Lower `ml_confidence_threshold` if needed (default is 100%, which is very strict)
 3. Check backtest results for quality issues
+4. Verify ML predictions are being generated and stored in CSV
 
 ### Issue: Config Not Passed to Backtest
 
@@ -666,5 +674,40 @@ For issues or questions:
 
 ---
 
+---
+
+## Recent Updates (2025-12-05)
+
+### CSV Export Enhancements
+
+1. **ML Verdicts in CSV:**
+   - ML predictions (`ml_verdict`, `ml_confidence`, `ml_probabilities`) are now properly stored in CSV files
+   - All columns are included even if values are None/empty
+   - `ml_confidence` and `combined_score` are rounded to 2 decimal places for cleaner output
+
+2. **Default ML Confidence Threshold:**
+   - Changed default `ml_confidence_threshold` from `0.5` (50%) to `1.0` (100%)
+   - This ensures only high-confidence ML predictions are used by default
+   - User can still override via configuration
+
+3. **Backtest ML Predictions:**
+   - Backtest ML predictions are now properly stored and used
+   - No special threshold adjustments - uses full `ml_confidence_threshold`
+   - Backtest ML predictions are validated from profitable trades
+
+4. **Quality Filter Thresholds:**
+   - Restored original quality filter thresholds:
+     - `min_backtest_score = 45.0`
+     - `min_win_rate = 65.0%`
+     - `min_avg_profit = 1.5%`
+   - No special adjustments for backtest ML predictions
+
+5. **Code Cleanup:**
+   - Removed all debug logging statements
+   - Removed temporary debugging modifications
+   - Code is now production-ready
+
+---
+
 **Last Updated:** 2025-12-05
-**Version:** 1.0.0
+**Version:** 1.1.0

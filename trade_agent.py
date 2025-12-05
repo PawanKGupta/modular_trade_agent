@@ -567,7 +567,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
         # Use BacktestService (Phase 4)
         # Config is already extracted above
 
-        backtest_service = BacktestService(default_years_back=2, dip_mode=dip_mode)
+        backtest_service = BacktestService(default_years_back=5, dip_mode=dip_mode)
         results = backtest_service.add_backtest_scores_to_results(results, config=config)
         # Re-sort by priority score for better trading decisions
         results = [r for r in results if r is not None]  # Filter out None values
@@ -637,7 +637,20 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
             ]
 
             def _flatten(row):
-                d = {k: row.get(k) for k in cols if k in row}
+                # Always include all columns, even if value is None/empty
+                # This ensures ML predictions are preserved in CSV
+                d = {}
+                for k in cols:
+                    # Get value from row, defaulting to None if not present
+                    value = row.get(k, None)
+                    # Round ml_confidence and combined_score to 2 decimal places
+                    if k in ["ml_confidence", "combined_score"] and value is not None:
+                        try:
+                            value = round(float(value), 2)
+                        except (ValueError, TypeError):
+                            pass  # Keep original value if conversion fails
+                    # Include the key even if value is None (pandas will write empty string)
+                    d[k] = value
                 # Simple stringify for complex fields
                 for k in (
                     "buy_range",
@@ -678,6 +691,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
                 return d
 
             df_final = pd.DataFrame([_flatten(r) for r in results if isinstance(r, dict)])
+
             df_final.to_csv(out_path, index=False)
             logger.info(f"Final post-scored CSV written to: {out_path}")
         except Exception as e:
@@ -690,8 +704,8 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
     # Use final_verdict if backtest scoring was enabled, otherwise use original verdict
     # ALSO include ML buy/strong_buy predictions for monitoring/comparison (2025-11-12)
 
-    # Get ML confidence threshold from config if available, otherwise use default 0.5 (50%)
-    ml_confidence_threshold = 0.5
+    # Get ML confidence threshold from config if available, otherwise use default 1.0 (100%)
+    ml_confidence_threshold = 1.0
     if config and hasattr(config, "ml_confidence_threshold"):
         ml_confidence_threshold = config.ml_confidence_threshold
 
@@ -763,48 +777,26 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
         total_return = backtest.get("total_return_pct", 0)
         backtest_score = backtest.get("score", 0)
 
-        # Debug: Log to diagnose why zero-trades check might not be working
-        logger.debug(
-            f"{result.get('ticker')}: Quality filter - total_trades={total_trades} "
-            f"(type={type(total_trades).__name__}), backtest_score={backtest_score:.1f}, "
-            f"avg_return={avg_return:.2f}%, win_rate={win_rate:.1f}%"
-        )
-
         # When no trades were executed, we can't meaningfully evaluate win_rate or avg_profit
         # Skip these checks but still check backtest_score and total_return if applicable
         if total_trades == 0:
             # Only check backtest_score when no trades (may be based on other factors)
             if backtest_score < min_backtest_score:
-                logger.debug(
-                    f"{result.get('ticker')}: Backtest quality filter failed - no trades executed, backtest_score={backtest_score:.1f} < {min_backtest_score}"
-                )
                 return False
             # If no trades but backtest_score passes, allow it (may be a valid signal that just didn't trigger in backtest period)
             return True
 
         # Check quality filters when trades exist (NO minimum trades requirement)
         if win_rate < min_win_rate:
-            logger.debug(
-                f"{result.get('ticker')}: Backtest quality filter failed - win_rate={win_rate:.1f}% < {min_win_rate}%"
-            )
             return False
 
         if avg_return < min_avg_profit:
-            logger.debug(
-                f"{result.get('ticker')}: Backtest quality filter failed - avg_profit={avg_return:.2f}% < {min_avg_profit}%"
-            )
             return False
 
         if require_positive_return and total_return <= 0:
-            logger.debug(
-                f"{result.get('ticker')}: Backtest quality filter failed - total_return={total_return:.1f}% <= 0%"
-            )
             return False
 
         if backtest_score < min_backtest_score:
-            logger.debug(
-                f"{result.get('ticker')}: Backtest quality filter failed - backtest_score={backtest_score:.1f} < {min_backtest_score}"
-            )
             return False
 
         return True
@@ -834,18 +826,15 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
                 buys.append(r)
             # ENHANCEMENT 3: Check ml_verdict even when combine=true if final_verdict is weak
             # BUT ONLY IF ML IS ENABLED
-            elif ml_enabled and weak_final_verdict and r.get("ml_verdict") in ["buy", "strong_buy"]:
-                ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
-                if (
-                    ml_conf_normalized >= ml_confidence_threshold
-                    and r.get("combined_score", 0) >= ml_score_min
-                ):
-                    buys.append(r)
-                    logger.debug(
-                        f"{r.get('ticker')}: ML-only buy (weak final_verdict={r.get('final_verdict')}): "
-                        f"conf={ml_conf_normalized * 100:.0f}%>={ml_confidence_threshold * 100:.0f}%, "
-                        f"score={r.get('combined_score', 0):.1f}>={ml_score_min}"
-                    )
+            elif ml_enabled and weak_final_verdict:
+                ml_verdict = r.get("ml_verdict")
+                if ml_verdict in ["buy", "strong_buy"]:
+                    ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
+                    if (
+                        ml_conf_normalized >= ml_confidence_threshold
+                        and r.get("combined_score", 0) >= ml_score_min
+                    ):
+                        buys.append(r)
             # ML-only buy/strong_buy (only when ml_combine_with_rules=false AND ml_enabled=true)
             elif (
                 ml_enabled
@@ -853,15 +842,12 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
                 and r.get("ml_verdict") in ["buy", "strong_buy"]
             ):
                 ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
+
                 if (
                     ml_conf_normalized >= ml_confidence_threshold
                     and r.get("combined_score", 0) >= ml_score_min
                 ):
                     buys.append(r)
-                    logger.debug(
-                        f"{r.get('ticker')}: ML-only buy: conf={ml_conf_normalized * 100:.0f}%>={ml_confidence_threshold * 100:.0f}%, "
-                        f"score={r.get('combined_score', 0):.1f}>={ml_score_min}"
-                    )
 
         strong_buys = []
         for r in results:
@@ -887,11 +873,6 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
                     and r.get("combined_score", 0) >= ml_score_min
                 ):
                     strong_buys.append(r)
-                    logger.debug(
-                        f"{r.get('ticker')}: ML-only strong_buy (weak final_verdict={r.get('final_verdict')}): "
-                        f"conf={ml_conf_normalized * 100:.0f}%>={ml_confidence_threshold * 100:.0f}%, "
-                        f"score={r.get('combined_score', 0):.1f}>={ml_score_min}"
-                    )
             # ML-only strong_buy (only when ml_combine_with_rules=false AND ml_enabled=true)
             elif ml_enabled and not ml_combine_with_rules and r.get("ml_verdict") == "strong_buy":
                 ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
@@ -900,10 +881,6 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
                     and r.get("combined_score", 0) >= ml_score_min
                 ):
                     strong_buys.append(r)
-                    logger.debug(
-                        f"{r.get('ticker')}: ML-only strong_buy: conf={ml_conf_normalized * 100:.0f}%>={ml_confidence_threshold * 100:.0f}%, "
-                        f"score={r.get('combined_score', 0):.1f}>={ml_score_min}"
-                    )
     else:
         # Include stocks where EITHER rule OR ML predicts buy/strong_buy
         # BUT ONLY CHECK ML IF ML IS ENABLED
@@ -932,7 +909,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
     ]
     # Create a set of strong_buy tickers for quick lookup
     strong_buy_tickers = {s.get("ticker") for s in strong_buys}
-    
+
     if all_recommendations:
         logger.info(f"=== Recommended Signals ({len(all_recommendations)} total) ===")
         for rec in all_recommendations:
@@ -948,7 +925,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
             # Determine which list the stock is in (strong_buys or buys)
             # This determines the displayed verdict, not just picking the stronger verdict
             is_strong_buy = ticker in strong_buy_tickers
-            
+
             # Determine signal source and verdict based on actual list membership
             if is_strong_buy:
                 # Stock is in strong_buys list
