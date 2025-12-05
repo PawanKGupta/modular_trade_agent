@@ -163,7 +163,7 @@ def calculate_wilder_rsi(prices, period=None, config=None):
 
 
 def run_simple_backtest(
-    stock_symbol: str, years_back: int = 2, dip_mode: bool = False, config=None
+    stock_symbol: str, years_back: int = 5, dip_mode: bool = False, config=None
 ) -> dict:
     """
     Run a simple backtest using configurable RSI oversold strategy.
@@ -419,7 +419,7 @@ def run_simple_backtest(
 
 
 def run_stock_backtest(
-    stock_symbol: str, years_back: int = 2, dip_mode: bool = False, config=None
+    stock_symbol: str, years_back: int = 5, dip_mode: bool = False, config=None
 ) -> dict:
     """
     Run backtest for a stock using available method (integrated or simple).
@@ -435,7 +435,7 @@ def run_stock_backtest(
 
     Args:
         stock_symbol: Stock symbol (e.g., "RELIANCE.NS")
-        years_back: Number of years to backtest (default: 2)
+        years_back: Number of years to backtest (default: 5)
         dip_mode: Enable dip-buying mode
         config: Strategy configuration
 
@@ -503,8 +503,12 @@ def run_stock_backtest(
                 "vs_buy_hold": backtest_results.get("strategy_vs_buy_hold", 0),
                 "execution_rate": backtest_results.get("trade_agent_accuracy", 0),
                 "avg_return": avg_return,  # Calculate from positions
-                "backtest_ml_verdict": backtest_results.get("backtest_ml_verdict"),  # Best ML from backtest
-                "backtest_ml_confidence": backtest_results.get("backtest_ml_confidence"),  # Best ML confidence
+                "backtest_ml_verdict": backtest_results.get(
+                    "backtest_ml_verdict"
+                ),  # Best ML from backtest
+                "backtest_ml_confidence": backtest_results.get(
+                    "backtest_ml_confidence"
+                ),  # Best ML confidence
                 "full_results": backtest_results,
             }
 
@@ -520,7 +524,7 @@ def run_stock_backtest(
 
 
 def add_backtest_scores_to_results(
-    stock_results: list, years_back: int = 2, dip_mode: bool = False, config=None
+    stock_results: list, years_back: int = 5, dip_mode: bool = False, config=None
 ) -> list:
     """
     Add backtest scores to existing stock analysis results.

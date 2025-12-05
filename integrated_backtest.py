@@ -396,9 +396,14 @@ def run_integrated_backtest(
     skipped_signals = 0
     signal_count = 0  # Counter for signal numbering
     reentries_by_date = {}  # {date: count} for daily cap
-    
-    # Track ML predictions during backtest to find the best one
-    backtest_ml_predictions = []  # List of (ml_verdict, ml_confidence) tuples
+
+    # Track ML predictions during backtest with entry dates for reversal strategy
+    # Format: (ml_verdict, ml_confidence, entry_date, position_index)
+    # position_index will be set when position is created
+    backtest_ml_predictions = (
+        []
+    )  # List of (ml_verdict, ml_confidence, entry_date, position_index) tuples
+    ml_prediction_to_position = {}  # Map: entry_date -> position_index (set when position created)
 
     # Iterate through each trading day
     for current_date, row in backtest_data.iterrows():
@@ -436,6 +441,8 @@ def run_integrated_backtest(
                     f"      Entry: {position.entry_date.strftime('%Y-%m-%d')} | Exit: {position.exit_date.strftime('%Y-%m-%d')} | Days: {(position.exit_date - position.entry_date).days}"
                 )
                 print(f"      P&L: ${position.get_pnl():,.0f} ({position.get_return_pct():+.1f}%)")
+                # Store position index before appending (for ML prediction linking)
+                position_index = len(all_positions)
                 all_positions.append(position)  # Save closed position
                 position = None  # Clear position
                 continue
@@ -448,6 +455,8 @@ def run_integrated_backtest(
                     f"      Entry: {position.entry_date.strftime('%Y-%m-%d')} | Exit: {position.exit_date.strftime('%Y-%m-%d')} | Days: {(position.exit_date - position.entry_date).days}"
                 )
                 print(f"      P&L: ${position.get_pnl():,.0f} ({position.get_return_pct():+.1f}%)")
+                # Store position index before appending (for ML prediction linking)
+                position_index = len(all_positions)
                 all_positions.append(position)  # Save closed position
                 position = None  # Clear position
                 continue
@@ -544,7 +553,8 @@ def run_integrated_backtest(
                         stock_name, date_str, rsi, ema200, market_data, config=config
                     )
 
-                # Track ML predictions from validation (if available)
+                # Track ML predictions from validation (if available) with entry date
+                # For reversal strategy: we'll link this to position profitability later
                 if validation:
                     ml_verdict = validation.get("ml_verdict")
                     ml_confidence = validation.get("ml_confidence")
@@ -552,8 +562,11 @@ def run_integrated_backtest(
                         # Normalize confidence to 0-1 range if needed
                         if ml_confidence > 1:
                             ml_confidence = ml_confidence / 100.0
-                        backtest_ml_predictions.append((ml_verdict, ml_confidence))
-                
+                        # Store with entry date (will link to position index when position is created)
+                        backtest_ml_predictions.append(
+                            (ml_verdict, ml_confidence, exec_date_str, None)
+                        )
+
                 if validation and validation.get("approved"):
                     # Execute initial entry
                     # Target is EMA9 (exit condition: High >= EMA9 OR RSI > 50)
@@ -567,6 +580,28 @@ def run_integrated_backtest(
                         capital=capital_per_position,
                         entry_rsi=rsi,  # Pass entry RSI to mark correct levels
                     )
+
+                    # Link ML prediction to this position (for reversal strategy validation)
+                    # Use entry_date as the link (more robust than position_index)
+                    # The position will be matched by entry_date when checking profitability
+                    # Note: We still store position_index for backward compatibility, but use entry_date for matching
+                    if backtest_ml_predictions:
+                        last_pred = backtest_ml_predictions[-1]
+                        if (
+                            len(last_pred) >= 4 and last_pred[3] is None
+                        ):  # position_index not set yet
+                            # Store entry_date in position_index field for now (will be used to find position later)
+                            # entry_date is already in last_pred[2], so we keep it
+                            # We'll match by entry_date when checking profitability
+                            position_index = len(
+                                all_positions
+                            )  # Estimate (will be correct if sequential)
+                            backtest_ml_predictions[-1] = (
+                                last_pred[0],
+                                last_pred[1],
+                                last_pred[2],
+                                position_index,
+                            )
 
                     print(f"   ? INITIAL ENTRY on {exec_date_str}: Buy at {exec_price:.2f}")
                     print(f"      Target: {position.target_price:.2f}")
@@ -582,6 +617,8 @@ def run_integrated_backtest(
         position.close_position(final_date.strftime("%Y-%m-%d"), final_price, "End of period")
         print(f"\n   ? POSITION CLOSED at period end: {final_date.strftime('%Y-%m-%d')}")
         print(f"      P&L: ${position.get_pnl():,.0f} ({position.get_return_pct():+.1f}%)")
+        # Store position index before appending (for ML prediction linking)
+        position_index = len(all_positions)
         all_positions.append(position)
 
     # Generate results
@@ -628,17 +665,123 @@ def run_integrated_backtest(
                 }
             )
 
-        # Find best ML prediction from backtest (highest confidence buy/strong_buy)
+        # REVERSAL STRATEGY: Find best ML prediction using hybrid approach
+        # 1. Primary: Best from profitable trades only (validates actual reversals)
+        # 2. Fallback: Recency-weighted best (if no profitable trades)
+        # 3. Minimum: Require at least 1 signal
         best_ml_verdict = None
         best_ml_confidence = None
+
         if backtest_ml_predictions:
             # Filter to only buy/strong_buy predictions
+            # Format: (verdict, confidence, entry_date, position_index)
             buy_predictions = [
-                (v, c) for v, c in backtest_ml_predictions if v in ["buy", "strong_buy"]
+                pred for pred in backtest_ml_predictions if pred[0] in ["buy", "strong_buy"]
             ]
-            if buy_predictions:
-                # Find the one with highest confidence
-                best_ml_verdict, best_ml_confidence = max(buy_predictions, key=lambda x: x[1])
+
+            if buy_predictions and len(buy_predictions) >= 1:  # Minimum 1 signal required
+                # PRIMARY: Find best from profitable trades only (validates actual reversals)
+                profitable_predictions = []
+                for pred in buy_predictions:
+                    if len(pred) >= 3:  # Has entry_date
+                        verdict, confidence, entry_date = pred[0], pred[1], pred[2]
+                        # Find position by entry_date (more robust than position_index)
+                        matching_position = None
+                        if entry_date:
+                            for pos in all_positions:
+                                if (
+                                    pos.entry_date.strftime("%Y-%m-%d") == entry_date
+                                    and pos.is_closed
+                                ):
+                                    matching_position = pos
+                                    break
+
+                        # Also try position_index as fallback (for backward compatibility)
+                        if not matching_position and len(pred) >= 4:
+                            pos_idx = pred[3]
+                            if pos_idx is not None and pos_idx < len(all_positions):
+                                pos = all_positions[pos_idx]
+                                if pos.is_closed:
+                                    matching_position = pos
+
+                        if matching_position and matching_position.get_return_pct() > 0:
+                            # This ML prediction led to a profitable reversal
+                            profitable_predictions.append((verdict, confidence, entry_date))
+                    else:
+                        # Old format without entry_date or position_index - skip profitability check
+                        verdict, confidence = pred[0], pred[1]
+                        profitable_predictions.append((verdict, confidence, None))
+
+                if profitable_predictions:
+                    # Use best from profitable trades (validated reversals)
+                    best_ml_verdict, best_ml_confidence, _ = max(
+                        profitable_predictions, key=lambda x: x[1]
+                    )
+                    logger.debug(
+                        f"{stock_name}: REVERSAL STRATEGY - Using best from {len(profitable_predictions)} "
+                        f"profitable trades: {best_ml_verdict} ({best_ml_confidence * 100:.1f}%)"
+                    )
+                else:
+                    # FALLBACK: Use recency-weighted best (recent patterns more relevant)
+                    # Calculate recency weights (most recent = 1.0, older = less weight)
+                    end_date_dt = pd.to_datetime(end_date)
+                    # Use ACTUAL data period, not requested period
+                    # If stock only has 600 days but we requested 1825, use 600
+                    actual_data_start = (
+                        backtest_data.index.min()
+                        if not backtest_data.empty
+                        else pd.to_datetime(start_date)
+                    )
+                    actual_data_end = (
+                        backtest_data.index.max() if not backtest_data.empty else end_date_dt
+                    )
+                    actual_data_days = (actual_data_end - actual_data_start).days
+                    # Use actual data period but cap at 5 years (1825 days) for reversal strategy
+                    # Very old patterns (>5 years) are less relevant for mean reversion
+                    max_days = min(actual_data_days, 1825)  # Cap at 5 years
+                    # Don't force minimum - use whatever data is available
+                    # If stock only has 600 days, use 600 (not forced to 365)
+                    # This ensures recency weights are calculated correctly for limited data stocks
+
+                    weighted_predictions = []
+                    for pred in buy_predictions:
+                        if len(pred) >= 3:  # Has entry_date
+                            verdict, confidence, entry_date = pred[0], pred[1], pred[2]
+                            if entry_date:
+                                entry_date_dt = pd.to_datetime(entry_date)
+                                # Calculate days from end date (more recent = higher weight)
+                                days_from_end = (end_date_dt - entry_date_dt).days
+                                # Ensure non-negative (entry_date should be <= end_date in backtest)
+                                days_from_end = max(0, days_from_end)
+                                # Weight: 1.0 for most recent (0 days), decreasing linearly to 0.5 for oldest
+                                # Weight ranges from 1.0 (most recent) to 0.5 (max_days+)
+                                recency_weight = 1.0 - (days_from_end / max_days) * 0.5
+                                recency_weight = max(
+                                    0.5, min(1.0, recency_weight)
+                                )  # Clamp between 0.5 and 1.0
+                                weighted_confidence = confidence * recency_weight
+                                weighted_predictions.append(
+                                    (verdict, weighted_confidence, confidence, entry_date)
+                                )
+                            else:
+                                # No entry_date, use confidence as-is
+                                weighted_predictions.append((verdict, confidence, confidence, None))
+                        else:
+                            # Old format, use confidence as-is
+                            verdict, confidence = pred[0], pred[1]
+                            weighted_predictions.append((verdict, confidence, confidence, None))
+
+                    if weighted_predictions:
+                        # Use recency-weighted best (returns original confidence, not weighted)
+                        best_ml_verdict, weighted_conf, best_ml_confidence, entry_date = max(
+                            weighted_predictions,
+                            key=lambda x: x[1],  # Sort by weighted confidence
+                        )
+                        logger.debug(
+                            f"{stock_name}: REVERSAL STRATEGY - Using recency-weighted best "
+                            f"(no profitable trades): {best_ml_verdict} ({best_ml_confidence * 100:.1f}%) "
+                            f"from {entry_date or 'unknown date'}"
+                        )
 
         results = {
             "stock_name": stock_name,
@@ -659,17 +802,68 @@ def run_integrated_backtest(
             "backtest_ml_confidence": best_ml_confidence,  # Confidence of best prediction
         }
     else:
-        # Find best ML prediction from backtest (highest confidence buy/strong_buy)
+        # REVERSAL STRATEGY: Find best ML prediction using hybrid approach (no positions case)
+        # Same logic as above but no positions to check profitability
         best_ml_verdict = None
         best_ml_confidence = None
+
         if backtest_ml_predictions:
             # Filter to only buy/strong_buy predictions
+            # Format: (verdict, confidence, entry_date, position_index)
             buy_predictions = [
-                (v, c) for v, c in backtest_ml_predictions if v in ["buy", "strong_buy"]
+                pred for pred in backtest_ml_predictions if pred[0] in ["buy", "strong_buy"]
             ]
-            if buy_predictions:
-                # Find the one with highest confidence
-                best_ml_verdict, best_ml_confidence = max(buy_predictions, key=lambda x: x[1])
+
+            if buy_predictions and len(buy_predictions) >= 1:  # Minimum 1 signal required
+                # No positions, so use recency-weighted best
+                end_date_dt = pd.to_datetime(end_date)
+                # Use ACTUAL data period, not requested period
+                # If stock only has 600 days but we requested 1825, use 600
+                actual_data_start = (
+                    backtest_data.index.min()
+                    if not backtest_data.empty
+                    else pd.to_datetime(start_date)
+                )
+                actual_data_end = (
+                    backtest_data.index.max() if not backtest_data.empty else end_date_dt
+                )
+                actual_data_days = (actual_data_end - actual_data_start).days
+                # Use actual data period but cap at 5 years (1825 days) for reversal strategy
+                max_days = min(actual_data_days, 1825)  # Cap at 5 years
+                # Don't force minimum - use whatever data is available
+                # If stock only has 600 days, use 600 (not forced to 365)
+
+                weighted_predictions = []
+                for pred in buy_predictions:
+                    if len(pred) >= 3:  # Has entry_date
+                        verdict, confidence, entry_date = pred[0], pred[1], pred[2]
+                        if entry_date:
+                            entry_date_dt = pd.to_datetime(entry_date)
+                            days_from_end = (end_date_dt - entry_date_dt).days
+                            # Ensure non-negative (entry_date should be <= end_date in backtest)
+                            days_from_end = max(0, days_from_end)
+                            # Weight: 1.0 for most recent (0 days), decreasing linearly to 0.5 for oldest
+                            recency_weight = 1.0 - (days_from_end / max_days) * 0.5
+                            recency_weight = max(0.5, min(1.0, recency_weight))
+                            weighted_confidence = confidence * recency_weight
+                            weighted_predictions.append(
+                                (verdict, weighted_confidence, confidence, entry_date)
+                            )
+                        else:
+                            weighted_predictions.append((verdict, confidence, confidence, None))
+                    else:
+                        verdict, confidence = pred[0], pred[1]
+                        weighted_predictions.append((verdict, confidence, confidence, None))
+
+                if weighted_predictions:
+                    best_ml_verdict, weighted_conf, best_ml_confidence, entry_date = max(
+                        weighted_predictions, key=lambda x: x[1]
+                    )
+                    logger.debug(
+                        f"{stock_name}: REVERSAL STRATEGY - Using recency-weighted best "
+                        f"(no positions): {best_ml_verdict} ({best_ml_confidence * 100:.1f}%) "
+                        f"from {entry_date or 'unknown date'}"
+                    )
 
         results = {
             "stock_name": stock_name,
