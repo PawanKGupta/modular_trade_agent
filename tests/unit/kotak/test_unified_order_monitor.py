@@ -462,13 +462,15 @@ class TestUnifiedOrderMonitor:
         mock_orders_api.get_orders.return_value = {"data": []}
         unified_monitor.orders = mock_orders_api
 
-        stats = unified_monitor.monitor_all_orders()
+        unified_monitor.monitor_all_orders()
 
         # Should have loaded the pending order
         assert len(unified_monitor.active_buy_orders) == 1
         mock_orders_repo.get_pending_amo_orders.assert_called_once()
 
-    def test_monitor_all_orders_checks_new_holdings(self, unified_monitor, mock_sell_manager, mock_orders_repo):
+    def test_monitor_all_orders_checks_new_holdings(
+        self, unified_monitor, mock_sell_manager, mock_orders_repo
+    ):
         """Test that monitor_all_orders calls check_and_place_sell_orders_for_new_holdings"""
         # Mock sell manager
         mock_sell_manager.monitor_and_update.return_value = {
@@ -478,12 +480,14 @@ class TestUnifiedOrderMonitor:
         }
 
         # Mock check_buy_order_status
-        unified_monitor.check_buy_order_status = Mock(return_value={
-            "checked": 0,
-            "executed": 0,
-            "rejected": 0,
-            "cancelled": 0,
-        })
+        unified_monitor.check_buy_order_status = Mock(
+            return_value={
+                "checked": 0,
+                "executed": 0,
+                "rejected": 0,
+                "cancelled": 0,
+            }
+        )
 
         # Mock check_and_place_sell_orders_for_new_holdings
         unified_monitor.check_and_place_sell_orders_for_new_holdings = Mock(return_value=2)
@@ -869,7 +873,9 @@ class TestUnifiedOrderMonitor:
         # Should not raise exception
         unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
 
-    def test_check_and_place_sell_orders_for_new_holdings_no_orders(self, unified_monitor, mock_orders_repo):
+    def test_check_and_place_sell_orders_for_new_holdings_no_orders(
+        self, unified_monitor, mock_orders_repo
+    ):
         """Test checking for new holdings when no orders exist"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
@@ -885,18 +891,20 @@ class TestUnifiedOrderMonitor:
         if call_args.args:
             assert call_args.args[0] == 1  # user_id as positional
         else:
-            assert call_args.kwargs.get('user_id') == 1  # user_id as keyword
+            assert call_args.kwargs.get("user_id") == 1  # user_id as keyword
 
         # Check status parameter (can be positional or keyword)
         status_arg = None
         if len(call_args.args) > 1:
             status_arg = call_args.args[1]
-        elif 'status' in call_args.kwargs:
-            status_arg = call_args.kwargs['status']
+        elif "status" in call_args.kwargs:
+            status_arg = call_args.kwargs["status"]
 
         # Verify status is ONGOING (may be passed as enum or value)
         if status_arg:
-            assert status_arg == DbOrderStatus.ONGOING or (hasattr(status_arg, 'value') and status_arg.value == 'ongoing')
+            assert status_arg == DbOrderStatus.ONGOING or (
+                hasattr(status_arg, "value") and status_arg.value == "ongoing"
+            )
 
     def test_check_and_place_sell_orders_for_new_holdings_no_db(self, unified_monitor):
         """Test checking for new holdings when DB is not available"""
@@ -919,7 +927,6 @@ class TestUnifiedOrderMonitor:
     ):
         """Test placing sell orders for newly executed buy orders"""
         from src.infrastructure.db.timezone_utils import ist_now
-        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
         # Create mock order executed today
         execution_time = ist_now().replace(hour=10, minute=30)  # 10:30 AM today
@@ -975,7 +982,9 @@ class TestUnifiedOrderMonitor:
         mock_orders_repo.list.return_value = [mock_order]
 
         # Mock that symbol already has sell order
-        mock_sell_manager.get_existing_sell_orders.return_value = {"RELIANCE": {"order_id": "EXISTING"}}
+        mock_sell_manager.get_existing_sell_orders.return_value = {
+            "RELIANCE": {"order_id": "EXISTING"}
+        }
         mock_sell_manager.active_sell_orders = {}
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
@@ -1036,6 +1045,7 @@ class TestUnifiedOrderMonitor:
     ):
         """Test that orders executed before today are skipped"""
         from datetime import timedelta
+
         from src.infrastructure.db.timezone_utils import ist_now
 
         # Order executed yesterday
@@ -1302,7 +1312,10 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager.get_existing_sell_orders.return_value = {}
         mock_sell_manager.active_sell_orders = {}
         mock_sell_manager.has_completed_sell_order.return_value = None
-        mock_sell_manager.get_current_ema9.side_effect = [None, 3300.0]  # First fails, second succeeds
+        mock_sell_manager.get_current_ema9.side_effect = [
+            None,
+            3300.0,
+        ]  # First fails, second succeeds
         mock_sell_manager.place_sell_order.return_value = "SELL456"
         mock_sell_manager._register_order = Mock()
         mock_sell_manager.lowest_ema9 = {}
@@ -1313,4 +1326,85 @@ class TestUnifiedOrderMonitor:
         assert count == 1
         assert mock_sell_manager.get_current_ema9.call_count == 2
         assert mock_sell_manager.place_sell_order.call_count == 1
+        assert "TCS" in mock_sell_manager.lowest_ema9
+
+    def test_check_and_place_sell_orders_for_new_holdings_timezone_naive_datetime(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Test that timezone-naive datetimes are handled correctly without comparison errors"""
+        from datetime import datetime
+
+        # Create a timezone-naive datetime (simulating database storage without timezone)
+        # This is the scenario that was causing the error
+        naive_execution_time = datetime.now().replace(hour=10, minute=30, second=0, microsecond=0)
+
+        mock_order = Mock()
+        mock_order.side = "buy"
+        mock_order.symbol = "RELIANCE-EQ"
+        mock_order.execution_price = 2450.50
+        mock_order.execution_qty = 10.0
+        mock_order.quantity = 10.0
+        mock_order.avg_price = 2450.50
+        mock_order.price = 2450.50
+        # Set timezone-naive datetime (this was causing the error)
+        mock_order.execution_time = naive_execution_time
+        mock_order.filled_at = None
+        mock_order.order_metadata = {"ticker": "RELIANCE.NS"}
+
+        mock_orders_repo.list.return_value = [mock_order]
+
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager.get_current_ema9.return_value = 2500.0
+        mock_sell_manager.place_sell_order.return_value = "SELL123"
+        mock_sell_manager._register_order = Mock()
+        mock_sell_manager.lowest_ema9 = {}
+
+        # Should not raise "can't compare offset-naive and offset-aware datetimes" error
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        # Should successfully process the order
+        assert count == 1
+        mock_sell_manager.place_sell_order.assert_called_once()
+        mock_sell_manager._register_order.assert_called_once()
+        assert "RELIANCE" in mock_sell_manager.lowest_ema9
+
+    def test_check_and_place_sell_orders_for_new_holdings_timezone_naive_filled_at(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Test that timezone-naive filled_at is handled correctly"""
+        from datetime import datetime
+
+        # Create a timezone-naive datetime for filled_at
+        naive_filled_at = datetime.now().replace(hour=10, minute=30, second=0, microsecond=0)
+
+        mock_order = Mock()
+        mock_order.side = "buy"
+        mock_order.symbol = "TCS-EQ"
+        mock_order.execution_price = 3200.0
+        mock_order.execution_qty = 5.0
+        mock_order.quantity = 5.0
+        mock_order.avg_price = 3200.0
+        mock_order.price = 3200.0
+        # No execution_time, but filled_at is timezone-naive
+        mock_order.execution_time = None
+        mock_order.filled_at = naive_filled_at
+        mock_order.order_metadata = {"ticker": "TCS.NS"}
+
+        mock_orders_repo.list.return_value = [mock_order]
+
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager.get_current_ema9.return_value = 3300.0
+        mock_sell_manager.place_sell_order.return_value = "SELL456"
+        mock_sell_manager._register_order = Mock()
+        mock_sell_manager.lowest_ema9 = {}
+
+        # Should not raise datetime comparison error
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        assert count == 1
+        mock_sell_manager.place_sell_order.assert_called_once()
         assert "TCS" in mock_sell_manager.lowest_ema9

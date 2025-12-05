@@ -656,13 +656,24 @@ class UnifiedOrderMonitor:
         try:
             from datetime import datetime
 
-            from src.infrastructure.db.timezone_utils import ist_now
+            from src.infrastructure.db.timezone_utils import IST, ist_now
 
             # Get today's date
             today = ist_now().date()
             today_start = datetime.combine(today, datetime.min.time()).replace(
                 tzinfo=ist_now().tzinfo
             )
+
+            # Helper function to normalize datetime to IST timezone-aware
+            def normalize_to_ist(dt: datetime | None) -> datetime | None:
+                """Convert datetime to IST timezone-aware if it's naive"""
+                if dt is None:
+                    return None
+                if dt.tzinfo is None:
+                    # Assume naive datetime is in IST
+                    return dt.replace(tzinfo=IST)
+                # Already timezone-aware, convert to IST if needed
+                return dt.astimezone(IST) if dt.tzinfo != IST else dt
 
             # Get all ONGOING buy orders executed today
             # We'll check orders that have execution_time >= today_start
@@ -678,6 +689,8 @@ class UnifiedOrderMonitor:
                 # Check if order was executed today
                 # Use execution_time if available, otherwise use filled_at
                 execution_time = getattr(order, "execution_time", None) or order.filled_at
+                execution_time = normalize_to_ist(execution_time)
+
                 if execution_time:
                     if execution_time >= today_start:
                         newly_executed_orders.append(order)
@@ -685,10 +698,8 @@ class UnifiedOrderMonitor:
                         skipped_orders.append(
                             f"{order.symbol}: executed {execution_time} (before today)"
                         )
-                elif order.filled_at and order.filled_at >= today_start:
-                    newly_executed_orders.append(order)
                 else:
-                    skipped_orders.append(f"{order.symbol}: no execution_time or filled_at < today")
+                    skipped_orders.append(f"{order.symbol}: no execution_time or filled_at")
 
             if skipped_orders:
                 logger.debug(
@@ -755,6 +766,14 @@ class UnifiedOrderMonitor:
                         )
                         continue
 
+                    # Get execution time for this order (normalize to IST)
+                    order_execution_time = (
+                        getattr(db_order, "execution_time", None) or db_order.filled_at
+                    )
+                    order_execution_time = (
+                        normalize_to_ist(order_execution_time) if order_execution_time else None
+                    )
+
                     # Create trade dict in format expected by place_sell_order
                     trade = {
                         "symbol": base_symbol,
@@ -763,7 +782,9 @@ class UnifiedOrderMonitor:
                         "entry_price": execution_price,
                         "placed_symbol": db_order.symbol,  # Keep original broker symbol
                         "entry_time": (
-                            execution_time.isoformat() if execution_time else ist_now().isoformat()
+                            order_execution_time.isoformat()
+                            if order_execution_time
+                            else ist_now().isoformat()
                         ),
                     }
 
