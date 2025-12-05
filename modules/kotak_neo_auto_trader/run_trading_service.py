@@ -518,6 +518,12 @@ class TradingService:
             logger.info("TASK: PRE-MARKET RETRY (8:00 AM)")
             logger.info("=" * 80)
 
+            # Check if engine is initialized
+            if not self.engine:
+                error_msg = "Trading engine not initialized. Call initialize() first."
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+
             # Retry orders with RETRY_PENDING status from database
             summary = self.engine.retry_pending_orders_from_db()
             logger.info(f"Pre-market retry summary: {summary}")
@@ -545,6 +551,12 @@ class TradingService:
             logger.info("=" * 80)
             logger.info("TASK: PRE-MARKET AMO ADJUSTMENT (9:05 AM)")
             logger.info("=" * 80)
+
+            # Check if engine is initialized
+            if not self.engine:
+                error_msg = "Trading engine not initialized. Call initialize() first."
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
             # Adjust AMO order quantities based on pre-market prices
             summary = self.engine.adjust_amo_quantities_premarket()

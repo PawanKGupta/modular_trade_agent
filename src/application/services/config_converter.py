@@ -154,4 +154,5 @@ def user_config_to_strategy_config(
         exit_on_ema9_or_rsi50=user_config.exit_on_ema9_or_rsi50,
         allow_duplicate_recommendations_same_day=user_config.allow_duplicate_recommendations_same_day,
         min_combined_score=user_config.min_combined_score,
+        enable_premarket_amo_adjustment=user_config.enable_premarket_amo_adjustment,
     )
