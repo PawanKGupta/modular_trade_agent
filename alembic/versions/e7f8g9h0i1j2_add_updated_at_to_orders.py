@@ -29,25 +29,47 @@ def upgrade() -> None:
 
     # Add updated_at column if it doesn't exist
     if "updated_at" not in orders_columns:
-        op.add_column(
-            "orders",
-            sa.Column(
-                "updated_at",
-                sa.DateTime(),
-                nullable=False,
-                server_default=sa.text("CURRENT_TIMESTAMP"),
-            ),
-        )
+        # SQLite doesn't support adding NOT NULL column with default in one step
+        # So we add it as nullable first, then update values, then make it NOT NULL
+        from sqlalchemy.dialects import sqlite
 
-        # For existing records, set updated_at to placed_at (or current timestamp)
-        # This ensures all existing orders have a valid updated_at value
-        op.execute(
-            sa.text("""
-                UPDATE orders
-                SET updated_at = COALESCE(placed_at, CURRENT_TIMESTAMP)
-                WHERE updated_at IS NULL
-            """)
-        )
+        if isinstance(conn.dialect, sqlite.dialect):
+            # For SQLite: Add as nullable, update values, then recreate table with NOT NULL
+            # Actually, SQLite doesn't support ALTER COLUMN, so we'll add as nullable
+            # and the application code will ensure it's always set
+            op.add_column(
+                "orders",
+                sa.Column("updated_at", sa.DateTime(), nullable=True),
+            )
+
+            # For existing records, set updated_at to placed_at (or current timestamp)
+            op.execute(
+                sa.text("""
+                    UPDATE orders
+                    SET updated_at = COALESCE(placed_at, datetime('now'))
+                    WHERE updated_at IS NULL
+                """)
+            )
+        else:
+            # For PostgreSQL and other databases: Can add with NOT NULL and default
+            op.add_column(
+                "orders",
+                sa.Column(
+                    "updated_at",
+                    sa.DateTime(),
+                    nullable=False,
+                    server_default=sa.text("CURRENT_TIMESTAMP"),
+                ),
+            )
+
+            # For existing records, set updated_at to placed_at (or current timestamp)
+            op.execute(
+                sa.text("""
+                    UPDATE orders
+                    SET updated_at = COALESCE(placed_at, CURRENT_TIMESTAMP)
+                    WHERE updated_at IS NULL
+                """)
+            )
 
         # Create index on updated_at for better query performance
         op.create_index("ix_orders_updated_at", "orders", ["updated_at"])
