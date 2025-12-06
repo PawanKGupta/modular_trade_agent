@@ -5002,9 +5002,53 @@ class AutoTradeEngine:
                                     "time": datetime.now().isoformat(),
                                     "order_id": reentry_order_id if reentry_order_id else None,  # Track order_id if available
                                 }
+
+                                # Improvement: Validate reentry data before writing to JSON
+                                # Validate required fields
+                                if not isinstance(reentry_data.get("qty"), int) or reentry_data["qty"] <= 0:
+                                    logger.error(
+                                        f"Invalid qty in reentry data for {symbol}: {reentry_data.get('qty')}"
+                                    )
+                                    continue
+
+                                if not isinstance(reentry_data.get("price"), (int, float)) or reentry_data["price"] <= 0:
+                                    logger.error(
+                                        f"Invalid price in reentry data for {symbol}: {reentry_data.get('price')}"
+                                    )
+                                    continue
+
+                                if not isinstance(reentry_data.get("time"), str):
+                                    logger.error(
+                                        f"Invalid time in reentry data for {symbol}: {reentry_data.get('time')}"
+                                    )
+                                    continue
+
+                                # Validate time format
+                                try:
+                                    datetime.fromisoformat(reentry_data["time"])
+                                except (ValueError, TypeError) as time_err:
+                                    logger.error(
+                                        f"Invalid time format in reentry data for {symbol}: "
+                                        f"{reentry_data.get('time')} - {time_err}"
+                                    )
+                                    continue
+
                                 e["reentries"].append(reentry_data)
+                        except ValueError as e:
+                            logger.error(
+                                f"Invalid data when updating trade history after reentry for {symbol}: {e}",
+                                exc_info=True,
+                            )
+                        except KeyError as e:
+                            logger.error(
+                                f"Missing required field when updating trade history after reentry for {symbol}: {e}",
+                                exc_info=True,
+                            )
                         except Exception as e:
-                            logger.error(f"Error updating trade history after reentry: {e}")
+                            logger.error(
+                                f"Unexpected error updating trade history after reentry for {symbol}: {e}",
+                                exc_info=True,
+                            )
                     else:
                         logger.error(f"Re-entry order placement failed for {symbol}")
 

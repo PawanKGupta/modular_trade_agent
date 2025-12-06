@@ -82,6 +82,10 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
         existing_position.avg_price = 9.00
         existing_position.opened_at = Mock()
         existing_position.entry_rsi = 25.0
+        existing_position.closed_at = None  # Position is open
+        existing_position.reentry_count = 0
+        existing_position.reentries = []
+        existing_position.last_reentry_price = None
 
         mock_positions_repo.get_by_symbol.return_value = existing_position
 
@@ -169,6 +173,10 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
         existing_position.avg_price = 9.00
         existing_position.opened_at = Mock()
         existing_position.entry_rsi = 25.0
+        existing_position.closed_at = None  # Position is open
+        existing_position.reentry_count = 0
+        existing_position.reentries = []
+        existing_position.last_reentry_price = None
 
         mock_positions_repo.get_by_symbol.return_value = existing_position
 
@@ -217,6 +225,10 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
         existing_position.avg_price = 9.00
         existing_position.opened_at = Mock()
         existing_position.entry_rsi = 25.0
+        existing_position.closed_at = None  # Position is open
+        existing_position.reentry_count = 0
+        existing_position.reentries = []
+        existing_position.last_reentry_price = None
 
         mock_positions_repo.get_by_symbol.return_value = existing_position
 

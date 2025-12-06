@@ -129,8 +129,11 @@ class UnifiedOrderMonitor:
 
             return loaded_count
 
+        except ValueError as e:
+            logger.error(f"Invalid data when loading pending buy orders: {e}", exc_info=True)
+            return 0
         except Exception as e:
-            logger.error(f"Error loading pending buy orders: {e}")
+            logger.error(f"Unexpected error loading pending buy orders: {e}", exc_info=True)
             return 0
 
     def register_buy_orders_with_state_manager(self) -> int:
@@ -401,8 +404,12 @@ class UnifiedOrderMonitor:
                     f"{stats['cancelled']} cancelled"
                 )
 
+        except ValueError as e:
+            logger.error(f"Invalid data when checking buy order status: {e}", exc_info=True)
+        except KeyError as e:
+            logger.error(f"Missing required field when checking buy order status: {e}", exc_info=True)
         except Exception as e:
-            logger.error(f"Error checking buy order status: {e}")
+            logger.error(f"Unexpected error checking buy order status: {e}", exc_info=True)
 
         return stats
 
@@ -440,8 +447,10 @@ class UnifiedOrderMonitor:
                 cancelled_reason = OrderFieldExtractor.get_rejection_reason(broker_order)
                 self.orders_repo.mark_cancelled(db_order, cancelled_reason or "Cancelled")
 
+        except ValueError as e:
+            logger.error(f"Invalid data when updating buy order status in DB: {e}", exc_info=True)
         except Exception as e:
-            logger.error(f"Error updating buy order status in DB: {e}")
+            logger.error(f"Unexpected error updating buy order status in DB: {e}", exc_info=True)
 
     def _handle_buy_order_execution(
         self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
@@ -503,6 +512,52 @@ class UnifiedOrderMonitor:
         self._create_position_from_executed_order(
             order_id, order_info, execution_price, execution_qty
         )
+
+    def _validate_reentry_data(self, reentry_data: dict[str, Any]) -> bool:
+        """
+        Validate reentry data structure before writing to database.
+
+        Ensures all required fields are present and have valid types/values.
+
+        Args:
+            reentry_data: Reentry data dictionary to validate
+
+        Returns:
+            True if valid, False otherwise
+        """
+        required_fields = ["qty", "price", "time"]
+        for field in required_fields:
+            if field not in reentry_data:
+                logger.error(f"Missing required field '{field}' in reentry data: {reentry_data}")
+                return False
+
+        # Validate qty
+        qty = reentry_data.get("qty")
+        if not isinstance(qty, int) or qty <= 0:
+            logger.error(f"Invalid qty in reentry data: {qty} (must be positive integer)")
+            return False
+
+        # Validate price
+        price = reentry_data.get("price")
+        if not isinstance(price, (int, float)) or price <= 0:
+            logger.error(f"Invalid price in reentry data: {price} (must be positive number)")
+            return False
+
+        # Validate time format
+        time_str = reentry_data.get("time")
+        if not isinstance(time_str, str):
+            logger.error(f"Invalid time type in reentry data: {type(time_str)} (must be string)")
+            return False
+
+        try:
+            from datetime import datetime
+
+            datetime.fromisoformat(time_str)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid time format in reentry data: {time_str} - {e}")
+            return False
+
+        return True
 
     def _create_position_from_executed_order(
         self,
@@ -656,29 +711,11 @@ class UnifiedOrderMonitor:
                             "order_id": order_id,  # Track which order created this reentry
                         }
 
-                    # Ensure reentries_array is a list
-                    if not isinstance(reentries_array, list):
-                        reentries_array = []
-
-                    # Improvement: Check for duplicate reentry (same order_id or very similar timestamp+qty)
-                    # This prevents duplicate entries if order is processed multiple times
-                    existing_reentry = next(
-                        (
-                            r
-                            for r in reentries_array
-                            if r.get("order_id") == order_id
-                            or (
-                                r.get("time") == reentry_data["time"]
-                                and r.get("qty") == reentry_data["qty"]
-                                and abs(r.get("price", 0) - reentry_data["price"]) < 0.01
-                            )
-                        ),
-                        None,
-                    )
-                    if existing_reentry:
-                        logger.warning(
-                            f"Duplicate reentry detected for {base_symbol} (order_id: {order_id}). "
-                            f"Skipping to prevent duplicate entry."
+                    # Improvement: Validate reentry data before writing
+                    if not self._validate_reentry_data(reentry_data):
+                        logger.error(
+                            f"Invalid reentry data for {base_symbol} (order_id: {order_id}). "
+                            f"Skipping reentry update to prevent data corruption."
                         )
                         # Don't update reentry fields, but still update quantity and avg_price
                         is_reentry = False
@@ -686,10 +723,40 @@ class UnifiedOrderMonitor:
                         reentries_array = existing_pos.reentries if existing_pos.reentries else []
                         last_reentry_price = existing_pos.last_reentry_price
                     else:
-                        # Append new reentry
-                        reentries_array.append(reentry_data)
-                        reentry_count = len(reentries_array)
-                        last_reentry_price = execution_price
+                        # Ensure reentries_array is a list
+                        if not isinstance(reentries_array, list):
+                            reentries_array = []
+
+                        # Improvement: Check for duplicate reentry (same order_id or very similar timestamp+qty)
+                        # This prevents duplicate entries if order is processed multiple times
+                        existing_reentry = next(
+                            (
+                                r
+                                for r in reentries_array
+                                if r.get("order_id") == order_id
+                                or (
+                                    r.get("time") == reentry_data["time"]
+                                    and r.get("qty") == reentry_data["qty"]
+                                    and abs(r.get("price", 0) - reentry_data["price"]) < 0.01
+                                )
+                            ),
+                            None,
+                        )
+                        if existing_reentry:
+                            logger.warning(
+                                f"Duplicate reentry detected for {base_symbol} (order_id: {order_id}). "
+                                f"Skipping to prevent duplicate entry."
+                            )
+                            # Don't update reentry fields, but still update quantity and avg_price
+                            is_reentry = False
+                            reentry_count = existing_pos.reentry_count or 0
+                            reentries_array = existing_pos.reentries if existing_pos.reentries else []
+                            last_reentry_price = existing_pos.last_reentry_price
+                        else:
+                            # Append new reentry (data is validated)
+                            reentries_array.append(reentry_data)
+                            reentry_count = len(reentries_array)
+                            last_reentry_price = execution_price
 
                     logger.info(
                         f"Reentry detected for {base_symbol}: Adding reentry #{reentry_count} "
@@ -796,8 +863,21 @@ class UnifiedOrderMonitor:
                     f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"
                 )
 
+        except ValueError as e:
+            logger.error(
+                f"Invalid data for position update: {base_symbol}, order_id={order_id}: {e}",
+                exc_info=True,
+            )
+        except KeyError as e:
+            logger.error(
+                f"Missing required field in order_info for {base_symbol}, order_id={order_id}: {e}",
+                exc_info=True,
+            )
         except Exception as e:
-            logger.error(f"Error creating/updating position from executed order {order_id}: {e}")
+            logger.error(
+                f"Unexpected error updating position for {base_symbol}, order_id={order_id}: {e}",
+                exc_info=True,
+            )
 
     def _handle_buy_order_rejection(
         self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
@@ -913,8 +993,10 @@ class UnifiedOrderMonitor:
         try:
             orders_response = self.orders.get_orders() if self.orders else None
             broker_orders = orders_response.get("data", []) if orders_response else []
+        except ValueError as e:
+            logger.error(f"Invalid data when fetching broker orders: {e}", exc_info=True)
         except Exception as e:
-            logger.error(f"Error fetching broker orders: {e}")
+            logger.error(f"Unexpected error fetching broker orders: {e}", exc_info=True)
 
         # Monitor buy orders (new functionality) - check for executions first
         buy_stats = self.check_buy_order_status(broker_orders=broker_orders)
@@ -1138,6 +1220,9 @@ class UnifiedOrderMonitor:
 
             return orders_placed
 
+        except ValueError as e:
+            logger.error(f"Invalid data when checking for new holdings: {e}", exc_info=True)
+            return 0
         except Exception as e:
-            logger.error(f"Error checking for new holdings: {e}")
+            logger.error(f"Unexpected error checking for new holdings: {e}", exc_info=True)
             return 0
