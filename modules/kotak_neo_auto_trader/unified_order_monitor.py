@@ -964,6 +964,21 @@ class UnifiedOrderMonitor:
                 # This ensures position update and integrity fix happen together or not at all
                 # If already in a transaction, SQLAlchemy will use savepoints automatically
                 with transaction(self.positions_repo.db):
+                    # Race Condition Fix #4: Re-check if position is closed just before updating
+                    # This prevents reopening a position that was closed during processing
+                    # (e.g., if sell order executed while reentry was being processed)
+                    current_position = self.positions_repo.get_by_symbol_for_update(
+                        self.user_id, base_symbol
+                    )
+                    if current_position and current_position.closed_at is not None:
+                        logger.warning(
+                            f"Reentry order execution aborted for {base_symbol}: "
+                            f"Position was closed at {current_position.closed_at} "
+                            f"while reentry was being processed. Skipping update to prevent reopening closed position."
+                        )
+                        # Transaction will rollback automatically
+                        return
+
                     self.positions_repo.upsert(
                         user_id=self.user_id,
                         symbol=base_symbol,

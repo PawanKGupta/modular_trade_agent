@@ -191,20 +191,23 @@ Time T3: Reentry continues
   - (overwrites the closed status!)
 ```
 
-**Current Code**:
-- `_create_position_from_executed_order()` checks `closed_at` at start
-- But check happens before reading position
-- No re-check after position update starts
+**Status**: ✅ **FIXED** (2025-12-07)
 
-**Impact**:
-- Closed position reopened
-- Reentry added to closed position
-- Data inconsistency
+**Implementation**:
+- Re-check `closed_at` with locked read just before updating position (inside transaction)
+- If position is closed, skip update and return early
+- Transaction rollback ensures no partial updates
+- Lock ensures we see the latest state even if sell order executed during processing
 
-**Recommendation**:
-- Re-check `closed_at` just before updating position
-- Use database constraint or trigger to prevent updates to closed positions
-- Or use transaction with row-level locking
+**Files Changed**:
+- `modules/kotak_neo_auto_trader/unified_order_monitor.py` - Added re-check in `_create_position_from_executed_order()`
+
+**How It Works**:
+1. Initial check for closed position (early exit if already closed)
+2. Process reentry data (calculations, validation, etc.)
+3. **Re-check `closed_at` with locked read just before `upsert()`**
+4. If closed, skip update and return (transaction rolls back)
+5. If still open, proceed with update
 
 ---
 
