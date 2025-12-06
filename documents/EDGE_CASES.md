@@ -917,7 +917,7 @@ if self.reentries_today(symbol) >= 1:
 ## Edge Case #14: Manual Partial Sell of System Holdings
 
 **Severity**: 🔴 **CRITICAL**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-12-06)
 
 ### Problem
 
@@ -958,26 +958,46 @@ Next day: run_at_market_open() runs
 3. **Update positions table** when manual sell detected (reduce quantity)
 4. **Use broker holdings quantity** as source of truth for sell orders
 
-### Business Logic Consideration
+### Implementation
 
-**Current Logic**: System doesn't interfere with manual holdings
-**Issue**: System doesn't detect when manual trades affect **system's own holdings**
+**Fixed on**: 2025-12-06
 
-**Recommended Fix Logic**:
-- ✅ **If broker_qty < positions_qty** (manual sell detected):
-  - Update positions table to match broker holdings (reduce quantity or mark closed)
-  - This ensures system only tracks what it actually owns
-- ❌ **If broker_qty > positions_qty** (manual buy detected):
-  - **IGNORE** - Don't update positions table
-  - Those are manual holdings, not system holdings
-  - System continues to track only its own holdings
+**Current Code** (After Fix):
+
+```python
+# In _reconcile_positions_with_broker_holdings():
+# Case 2: Manual partial sell detected (broker_qty < positions_qty)
+elif broker_qty < positions_qty:
+    sold_qty = positions_qty - broker_qty
+    # Reduce quantity in positions table
+    self.positions_repo.reduce_quantity(
+        user_id=self.user_id,
+        symbol=symbol,
+        sold_quantity=float(sold_qty),
+    )
+```
+
+**How It Works**:
+
+1. **Reconciliation runs before placing sell orders** (`run_at_market_open()`)
+2. **Compares positions table with broker holdings** for each open position
+3. **If broker_qty < positions_qty**: Detects manual partial sell
+4. **Updates positions table** using `reduce_quantity()` method
+5. **If broker_qty = 0**: Marks position as closed (Edge Case #15)
+6. **If broker_qty > positions_qty**: IGNORES (manual buy, not tracked)
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Added `_reconcile_positions_with_broker_holdings()` method
+
+**Test Files**:
+- `tests/unit/kotak/test_sell_engine_manual_sell_detection.py` - Comprehensive tests for manual sell detection
 
 ---
 
 ## Edge Case #15: Manual Full Sell of System Holdings
 
 **Severity**: 🔴 **CRITICAL**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-12-06, as part of Edge Case #14 fix)
 
 ### Problem
 
@@ -1018,18 +1038,38 @@ Next day: run_at_market_open() runs
 3. **Skip sell order placement** for closed positions
 4. **Reconcile before placing orders** to detect manual closures
 
-### Business Logic Consideration
+### Implementation
 
-**Current Logic**: System doesn't interfere with manual holdings
-**Issue**: System doesn't detect when manual trades **close system positions**
+**Fixed on**: 2025-12-06 (as part of Edge Case #14 fix)
 
-**Recommended Fix Logic**:
-- ✅ **If broker_qty = 0 AND positions_qty > 0** (manual full sell detected):
-  - Mark position as closed in positions table (`closed_at = now()`, `quantity = 0`)
-  - This ensures system doesn't try to sell non-existent shares
-- ❌ **If broker_qty > positions_qty** (manual buy detected):
-  - **IGNORE** - Don't update positions table
-  - Those are manual holdings, not system holdings
+**Current Code** (After Fix):
+
+```python
+# In _reconcile_positions_with_broker_holdings():
+# Case 1: Manual full sell detected (broker_qty = 0, positions_qty > 0)
+if broker_qty == 0 and positions_qty > 0:
+    # Mark position as closed
+    self.positions_repo.mark_closed(
+        user_id=self.user_id,
+        symbol=symbol,
+        closed_at=ist_now(),
+        exit_price=None,  # Manual sell, price unknown
+    )
+```
+
+**How It Works**:
+
+1. **Reconciliation checks if symbol exists in broker holdings**
+2. **If symbol not found (broker_qty = 0)**: Detects manual full sell
+3. **Marks position as closed** using `mark_closed()` method
+4. **Sets `closed_at` timestamp** and `quantity = 0`
+5. **Prevents sell order placement** for closed positions
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Added full sell detection in `_reconcile_positions_with_broker_holdings()`
+
+**Test Files**:
+- `tests/unit/kotak/test_sell_engine_manual_sell_detection.py` - Tests for manual full sell detection
 
 ---
 
@@ -1089,7 +1129,7 @@ System places reentry: 10 shares @ Rs 8.50
 ## Edge Case #17: Sell Order Quantity Validation Missing
 
 **Severity**: 🔴 **CRITICAL**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-12-06)
 
 ### Problem
 
@@ -1128,22 +1168,47 @@ System places sell order: 35 shares ❌
 4. **Log warning** when discrepancy detected
 5. **IGNORE** if broker holdings > positions table (manual buy - don't update)
 
-### Business Logic Consideration
+### Implementation
 
-**Recommended Fix Logic**:
-- ✅ **If broker_qty < positions_qty**: Update positions table (manual sell detected)
-- ✅ **If broker_qty = 0**: Mark position as closed
-- ❌ **If broker_qty > positions_qty**: IGNORE (manual buy - don't track)
+**Fixed on**: 2025-12-06
 
-### Business Logic Consideration
+**Current Code** (After Fix):
 
-**Current Logic**: System doesn't interfere with manual holdings
-**Issue**: System doesn't validate that it can actually sell the quantity it thinks it owns
+```python
+# In get_open_positions():
+# Fetch broker holdings for validation
+broker_holdings_map = {}
+holdings_response = self.portfolio.get_holdings()
+# ... build broker_holdings_map ...
 
-**Clarification Needed**:
-- Should system validate against broker holdings before placing orders?
-- Should system use broker holdings quantity if less than positions table?
-- Or should system only place orders and let broker reject if insufficient?
+# For each position:
+positions_qty = int(pos.quantity)
+broker_qty = broker_holdings_map.get(pos.symbol.upper(), positions_qty)
+
+# Use min(positions_qty, broker_qty) for sell order quantity
+sell_qty = min(positions_qty, broker_qty)
+
+if sell_qty < positions_qty:
+    logger.warning(
+        f"Quantity mismatch for {pos.symbol}: "
+        f"positions table shows {positions_qty}, "
+        f"broker has {broker_qty}. Using {sell_qty} for sell order."
+    )
+```
+
+**How It Works**:
+
+1. **Fetches broker holdings** before building open positions list
+2. **Validates each position quantity** against broker holdings
+3. **Uses `min(positions_qty, broker_qty)`** for sell order quantity
+4. **Logs warning** if discrepancy detected (reconciliation should have fixed it)
+5. **Ensures sell orders never exceed available quantity**
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Added validation in `get_open_positions()`
+
+**Test Files**:
+- `tests/unit/kotak/test_sell_engine_manual_sell_detection.py` - Tests for quantity validation
 
 ---
 
@@ -1222,10 +1287,10 @@ System checks for reentry:
 10. ~~**Edge Case #11**: Reentry daily cap check discrepancy~~ ✅ **FIXED**
 11. **Edge Case #12**: Sell order execution while reentry pending
 12. ~~**Edge Case #13**: Multiple reentries same day bypass~~ ✅ **FIXED** (as part of Edge Case #11)
-13. **Edge Case #14**: Manual partial sell of system holdings (CRITICAL - caused by business logic)
-14. **Edge Case #15**: Manual full sell of system holdings (CRITICAL - caused by business logic)
+13. ~~**Edge Case #14**: Manual partial sell of system holdings~~ ✅ **FIXED**
+14. ~~**Edge Case #15**: Manual full sell of system holdings~~ ✅ **FIXED**
 15. **Edge Case #16**: Reentry on mixed holdings (average price calculation - caused by business logic)
-16. **Edge Case #17**: Sell order quantity validation missing (CRITICAL - caused by business logic)
+16. ~~**Edge Case #17**: Sell order quantity validation missing~~ ✅ **FIXED**
 17. **Edge Case #18**: Manual buy of system-tracked symbol (reentry confusion - caused by business logic)
 
 ### Low Issues (🟠)

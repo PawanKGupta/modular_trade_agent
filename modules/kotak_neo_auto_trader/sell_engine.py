@@ -403,6 +403,9 @@ class SellOrderManager:
 
         Database-only: No file fallback. Uses positions table as single source of truth.
 
+        Edge Case #17 fix: Validates quantity against broker holdings and uses
+        min(positions_qty, broker_qty) to ensure we don't try to sell more than available.
+
         Returns:
             List of open trade entries in format expected by sell order placement
         """
@@ -411,6 +414,38 @@ class SellOrderManager:
                 "PositionsRepository and user_id are required for database-only position tracking. "
                 "Please provide positions_repo and user_id when initializing SellOrderManager."
             )
+
+        # Fetch broker holdings for validation (Edge Case #17)
+        broker_holdings_map = {}
+        try:
+            from .utils.symbol_utils import extract_base_symbol
+
+            holdings_response = self.portfolio.get_holdings()
+            if holdings_response and isinstance(holdings_response, dict):
+                holdings_data = holdings_response.get("data", [])
+                for holding in holdings_data:
+                    symbol = (
+                        holding.get("tradingSymbol")
+                        or holding.get("symbol")
+                        or holding.get("securitySymbol")
+                        or ""
+                    )
+                    if not symbol:
+                        continue
+
+                    base_symbol = extract_base_symbol(symbol).upper()
+                    qty = int(
+                        holding.get("quantity")
+                        or holding.get("qty")
+                        or holding.get("netQuantity")
+                        or holding.get("holdingsQuantity")
+                        or 0
+                    )
+
+                    if base_symbol and qty > 0:
+                        broker_holdings_map[base_symbol] = qty
+        except Exception as e:
+            logger.debug(f"Could not fetch broker holdings for validation: {e}")
 
         open_positions = []
         positions = self.positions_repo.list(self.user_id)
@@ -444,12 +479,29 @@ class SellOrderManager:
                     except Exception as e:
                         logger.debug(f"Failed to enrich position metadata from orders: {e}")
 
+                # Edge Case #17: Use min(positions_qty, broker_qty) for sell order quantity
+                # This ensures we don't try to sell more than actually available
+                positions_qty = int(pos.quantity)
+                broker_qty = broker_holdings_map.get(pos.symbol.upper(), positions_qty)
+
+                # Use the minimum to ensure we don't sell more than available
+                # If broker_qty < positions_qty, reconciliation should have updated positions table
+                # But we still validate here as a safety check
+                sell_qty = min(positions_qty, broker_qty)
+
+                if sell_qty < positions_qty:
+                    logger.warning(
+                        f"Quantity mismatch for {pos.symbol}: "
+                        f"positions table shows {positions_qty}, "
+                        f"broker has {broker_qty}. Using {sell_qty} for sell order."
+                    )
+
                 # Convert Positions model to trade dict format
                 open_positions.append(
                     {
                         "symbol": pos.symbol,
                         "ticker": ticker,
-                        "qty": pos.quantity,
+                        "qty": sell_qty,  # Use validated quantity
                         "entry_price": pos.avg_price,
                         "entry_time": pos.opened_at.isoformat(),
                         "status": "open",
@@ -459,6 +511,160 @@ class SellOrderManager:
 
         logger.debug(f"Loaded {len(open_positions)} open positions from database")
         return open_positions
+
+    def _reconcile_positions_with_broker_holdings(self) -> dict[str, int]:
+        """
+        Reconcile positions table with broker holdings to detect manual sells.
+
+        Edge Case #14, #15, #17 fix: Detects when manual trades affect system holdings
+        and updates positions table accordingly.
+
+        Logic:
+        - If broker_qty < positions_qty: Manual sell detected → Update positions table
+        - If broker_qty = 0: Manual full sell → Mark position as closed
+        - If broker_qty > positions_qty: Manual buy → IGNORE (don't update)
+
+        Returns:
+            Dict with reconciliation stats: {
+                'checked': int,
+                'updated': int,
+                'closed': int,
+                'ignored': int
+            }
+        """
+        if not self.positions_repo or not self.user_id:
+            logger.debug("PositionsRepository or user_id not available, skipping reconciliation")
+            return {"checked": 0, "updated": 0, "closed": 0, "ignored": 0}
+
+        stats = {"checked": 0, "updated": 0, "closed": 0, "ignored": 0}
+
+        try:
+            # Fetch broker holdings
+            holdings_response = self.portfolio.get_holdings()
+            if not holdings_response or not isinstance(holdings_response, dict):
+                logger.debug("Could not fetch broker holdings for reconciliation")
+                return stats
+
+            holdings_data = holdings_response.get("data", [])
+            # Note: Empty holdings_data is valid - means all positions were sold
+            # We still need to check positions to detect manual full sells
+
+            # Create broker holdings map: {symbol: quantity}
+            broker_holdings_map = {}
+            for holding in holdings_data:
+                # Extract symbol (handle various field names)
+                symbol = (
+                    holding.get("tradingSymbol")
+                    or holding.get("symbol")
+                    or holding.get("securitySymbol")
+                    or ""
+                )
+                if not symbol:
+                    continue
+
+                # Extract base symbol (remove -EQ suffix)
+                base_symbol = extract_base_symbol(symbol).upper()
+
+                # Extract quantity (handle various field names)
+                qty = int(
+                    holding.get("quantity")
+                    or holding.get("qty")
+                    or holding.get("netQuantity")
+                    or holding.get("holdingsQuantity")
+                    or 0
+                )
+
+                if base_symbol and qty > 0:
+                    broker_holdings_map[base_symbol] = qty
+
+            # Get all open positions from database
+            open_positions = self.positions_repo.list(self.user_id)
+            open_positions = [pos for pos in open_positions if pos.closed_at is None]
+
+            logger.info(
+                f"Reconciling {len(open_positions)} open positions with broker holdings..."
+            )
+
+            for pos in open_positions:
+                stats["checked"] += 1
+                symbol = pos.symbol.upper()
+                positions_qty = int(pos.quantity)
+
+                # Get broker quantity (0 if not in holdings)
+                broker_qty = broker_holdings_map.get(symbol, 0)
+
+                # Case 1: Manual full sell detected (broker_qty = 0, positions_qty > 0)
+                if broker_qty == 0 and positions_qty > 0:
+                    logger.warning(
+                        f"Manual full sell detected for {symbol}: "
+                        f"positions table shows {positions_qty} shares, "
+                        f"but broker has 0 shares. Marking position as closed."
+                    )
+                    try:
+                        from src.infrastructure.db.timezone_utils import ist_now
+
+                        self.positions_repo.mark_closed(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            closed_at=ist_now(),
+                            exit_price=None,  # Manual sell, price unknown
+                        )
+                        stats["closed"] += 1
+                        logger.info(f"Position {symbol} marked as closed due to manual full sell")
+                    except Exception as e:
+                        logger.error(f"Error marking position {symbol} as closed: {e}")
+
+                # Case 2: Manual partial sell detected (broker_qty < positions_qty)
+                elif broker_qty < positions_qty:
+                    sold_qty = positions_qty - broker_qty
+                    logger.warning(
+                        f"Manual partial sell detected for {symbol}: "
+                        f"positions table shows {positions_qty} shares, "
+                        f"but broker has {broker_qty} shares. "
+                        f"Updating positions table (sold {sold_qty} shares)."
+                    )
+                    try:
+                        # Reduce quantity in positions table
+                        self.positions_repo.reduce_quantity(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            sold_quantity=float(sold_qty),
+                        )
+                        stats["updated"] += 1
+                        logger.info(
+                            f"Position {symbol} quantity updated: {positions_qty} -> {broker_qty} "
+                            f"(manual sell of {sold_qty} shares detected)"
+                        )
+                    except Exception as e:
+                        logger.error(f"Error updating position {symbol} quantity: {e}")
+
+                # Case 3: Manual buy detected (broker_qty > positions_qty) - IGNORE
+                elif broker_qty > positions_qty:
+                    stats["ignored"] += 1
+                    logger.debug(
+                        f"Manual buy detected for {symbol}: "
+                        f"broker has {broker_qty} shares, "
+                        f"positions table shows {positions_qty} shares. "
+                        f"Ignoring (manual holdings not tracked by system)."
+                    )
+
+                # Case 4: Perfect match (broker_qty == positions_qty) - No action needed
+                else:
+                    logger.debug(
+                        f"Position {symbol} matches broker holdings: {positions_qty} shares"
+                    )
+
+            if stats["updated"] > 0 or stats["closed"] > 0:
+                logger.info(
+                    f"Reconciliation complete: {stats['checked']} checked, "
+                    f"{stats['updated']} updated, {stats['closed']} closed, "
+                    f"{stats['ignored']} ignored (manual buys)"
+                )
+
+        except Exception as e:
+            logger.error(f"Error during positions reconciliation: {e}", exc_info=True)
+
+        return stats
 
     def get_current_ema9(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
@@ -1402,10 +1608,23 @@ class SellOrderManager:
         Place sell orders for all open positions at market open
         Checks for existing orders to avoid duplicates
 
+        Edge Case #14, #15, #17 fix: Reconciles positions with broker holdings
+        before placing orders to detect manual sells.
+
         Returns:
             Number of orders placed
         """
         logger.info("? Running sell order placement at market open...")
+
+        # Edge Case #14, #15, #17: Reconcile positions with broker holdings
+        # Detect and handle manual sells before placing orders
+        reconciliation_stats = self._reconcile_positions_with_broker_holdings()
+        if reconciliation_stats["updated"] > 0 or reconciliation_stats["closed"] > 0:
+            logger.info(
+                f"Reconciliation detected {reconciliation_stats['updated']} manual partial sells "
+                f"and {reconciliation_stats['closed']} manual full sells. "
+                f"Positions table updated accordingly."
+            )
 
         open_positions = self.get_open_positions()
         if not open_positions:
