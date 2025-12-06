@@ -1320,6 +1320,83 @@ class SellOrderManager:
 
         return cancelled_count
 
+    def _close_buy_orders_for_symbol(self, base_symbol: str) -> int:
+        """
+        Close ONGOING buy orders for a symbol when sell order executes.
+
+        When a sell order executes and closes a position, mark all corresponding
+        ONGOING buy orders as CLOSED with closed_at timestamp.
+
+        Args:
+            base_symbol: Base symbol (e.g., "RELIANCE") for which to close buy orders
+
+        Returns:
+            Number of buy orders closed
+        """
+        if not self.orders_repo or not self.user_id:
+            logger.debug(
+                "OrdersRepository or user_id not available, skipping buy order closure"
+            )
+            return 0
+
+        closed_count = 0
+
+        try:
+            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+            from src.infrastructure.db.timezone_utils import ist_now
+
+            # Query for ONGOING buy orders for this symbol
+            all_orders = self.orders_repo.list(self.user_id)
+            ongoing_buy_orders = [
+                db_order
+                for db_order in all_orders
+                if db_order.side.lower() == "buy"
+                and db_order.status == DbOrderStatus.ONGOING
+                and extract_base_symbol(db_order.symbol).upper() == base_symbol.upper()
+            ]
+
+            if not ongoing_buy_orders:
+                logger.debug(f"No ONGOING buy orders found for {base_symbol}")
+                return 0
+
+            logger.info(
+                f"Found {len(ongoing_buy_orders)} ONGOING buy order(s) for {base_symbol}. "
+                f"Closing them as sell order executed..."
+            )
+
+            for db_order in ongoing_buy_orders:
+                try:
+                    # Mark buy order as CLOSED
+                    self.orders_repo.update(
+                        db_order,
+                        status=DbOrderStatus.CLOSED,
+                        closed_at=ist_now(),
+                        reason="Position closed - sell order executed",
+                    )
+                    closed_count += 1
+                    logger.info(
+                        f"Closed buy order {db_order.id} ({db_order.broker_order_id}) "
+                        f"for {base_symbol} - sell order executed"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Error closing buy order {db_order.id} for {base_symbol}: {e}"
+                    )
+                    # Continue with next order even if one fails
+
+            if closed_count > 0:
+                logger.info(
+                    f"Closed {closed_count} buy order(s) for {base_symbol} after sell execution"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error closing buy orders for {base_symbol}: {e}",
+                exc_info=True,
+            )
+
+        return closed_count
+
     def _update_trade_history_for_manual_sell(
         self, symbol: str, sell_info: dict[str, Any], remaining_qty: int
     ):
@@ -2303,6 +2380,9 @@ class SellOrderManager:
                                     f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
                                 )
 
+                                # Close corresponding ONGOING buy orders
+                                self._close_buy_orders_for_symbol(base_symbol)
+
                                 # Edge Case #12: Cancel pending reentry orders for closed position
                                 self._cancel_pending_reentry_orders(base_symbol)
                             else:
@@ -2353,6 +2433,9 @@ class SellOrderManager:
                             f"Position marked as closed in database: {base_symbol} "
                             f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
                         )
+
+                        # Close corresponding ONGOING buy orders
+                        self._close_buy_orders_for_symbol(base_symbol)
                     except Exception as e:
                         logger.error(
                             f"Error updating positions table for {symbol} after sell execution: {e}"

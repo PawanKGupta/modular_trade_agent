@@ -356,6 +356,9 @@ class OrdersRepository:
         order.status = OrderStatus.FAILED  # Changed from REJECTED
         order.reason = f"Broker rejected: {rejection_reason}"  # Use unified reason field
         order.last_status_check = ist_now()
+        # Set first_failed_at if not already set (for retry logic)
+        if not order.first_failed_at:
+            order.first_failed_at = ist_now()
         return self.update(order)
 
     def mark_cancelled(self, order: Orders, cancelled_reason: str | None = None) -> Orders:
