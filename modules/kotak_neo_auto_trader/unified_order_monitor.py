@@ -1030,6 +1030,7 @@ class UnifiedOrderMonitor:
                 )
 
                 # Edge Case #1 Fix: Update existing sell order if quantity increased (reentry scenario)
+                # Also handles partial sell + reentry: ensures sell order quantity matches position
                 if new_qty > existing_qty and self.sell_manager:
                     try:
                         # Check for existing sell order
@@ -1040,11 +1041,22 @@ class UnifiedOrderMonitor:
                             existing_order_price = existing_order.get("price", 0)
                             existing_order_id = existing_order.get("order_id")
 
-                            if existing_order_id and new_qty > existing_order_qty:
-                                logger.info(
-                                    f"Reentry detected for {base_symbol}: Updating sell order quantity "
-                                    f"from {existing_order_qty} to {new_qty} (Order ID: {existing_order_id})"
-                                )
+                            # Update sell order if quantity doesn't match position
+                            # This handles:
+                            # 1. Reentry increases position (new_qty > existing_order_qty)
+                            # 2. Partial sell + reentry (new_qty may be > or = existing_order_qty)
+                            if existing_order_id and new_qty != existing_order_qty:
+                                if new_qty > existing_order_qty:
+                                    logger.info(
+                                        f"Reentry detected for {base_symbol}: Updating sell order quantity "
+                                        f"from {existing_order_qty} to {new_qty} (Order ID: {existing_order_id})"
+                                    )
+                                else:
+                                    logger.info(
+                                        f"Sell order quantity mismatch for {base_symbol}: Position={new_qty}, "
+                                        f"Sell order={existing_order_qty}. Updating to match position "
+                                        f"(Order ID: {existing_order_id})"
+                                    )
 
                                 # Update sell order with new quantity (keep same price)
                                 if self.sell_manager.update_sell_order(
@@ -1062,6 +1074,10 @@ class UnifiedOrderMonitor:
                                         f"Failed to update sell order for {base_symbol}. "
                                         f"Order will be updated next day by run_at_market_open()."
                                     )
+                            elif existing_order_id and new_qty == existing_order_qty:
+                                logger.debug(
+                                    f"Sell order quantity already matches position for {base_symbol}: {new_qty} shares"
+                                )
                     except Exception as e:
                         # Don't fail position update if sell order update fails
                         logger.warning(

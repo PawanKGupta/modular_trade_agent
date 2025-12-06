@@ -285,13 +285,25 @@ Initial: Position = 100 shares, Sell order = 100 shares
 - Sell order quantity doesn't match position after reentry
 - Partial sell + reentry creates inconsistent state
 
-**Current Code**:
-- `_create_position_from_executed_order()` only updates sell order if it exists
-- Doesn't check if sell order quantity matches position after partial sell
+**Status**: ✅ **FIXED** (2025-12-07)
 
-**Recommendation**:
-- After reentry, check if sell order quantity matches position
-- Update sell order if mismatch detected
+**Implementation**:
+- Updated `_create_position_from_executed_order()` to always sync sell order quantity with position quantity
+- Changed condition from `new_qty > existing_order_qty` to `new_qty != existing_order_qty`
+- Ensures sell order quantity matches position quantity after reentry, regardless of partial sell state
+- Handles both scenarios:
+  1. Reentry increases position (new_qty > existing_order_qty)
+  2. Partial sell + reentry (new_qty may be > or = existing_order_qty, but should match position)
+
+**Files Changed**:
+- `modules/kotak_neo_auto_trader/unified_order_monitor.py` - Updated sell order sync logic in `_create_position_from_executed_order()`
+
+**How It Works**:
+1. After reentry updates position quantity
+2. Check if sell order exists for the symbol
+3. Compare sell order quantity with new position quantity
+4. If mismatch detected (`new_qty != existing_order_qty`), update sell order to match position
+5. This ensures consistency even after partial sell executions
 
 ---
 
