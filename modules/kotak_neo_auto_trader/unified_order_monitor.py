@@ -571,6 +571,15 @@ class UnifiedOrderMonitor:
             # Check if position already exists
             existing_pos = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
 
+            # Improvement: Check if position is closed - don't add reentry to closed positions
+            if existing_pos and existing_pos.closed_at is not None:
+                logger.warning(
+                    f"Reentry order executed for closed position {base_symbol}. "
+                    f"Position was closed at {existing_pos.closed_at}. "
+                    f"Skipping reentry update to prevent reopening closed position."
+                )
+                return
+
             # Calculate execution time (use current time if not available)
             try:
                 from src.infrastructure.db.timezone_utils import ist_now
@@ -634,6 +643,7 @@ class UnifiedOrderMonitor:
                             "rsi": float(reentry_rsi) if reentry_rsi is not None else None,
                             "price": float(reentry_price),
                             "time": execution_time.isoformat(),
+                            "order_id": order_id,  # Track which order created this reentry
                         }
                     else:
                         # Fallback: construct minimal reentry data from execution
@@ -643,16 +653,43 @@ class UnifiedOrderMonitor:
                             "rsi": float(entry_rsi) if entry_rsi else None,
                             "price": float(execution_price),
                             "time": execution_time.isoformat(),
+                            "order_id": order_id,  # Track which order created this reentry
                         }
 
                     # Ensure reentries_array is a list
                     if not isinstance(reentries_array, list):
                         reentries_array = []
 
-                    # Append new reentry
-                    reentries_array.append(reentry_data)
-                    reentry_count = len(reentries_array)
-                    last_reentry_price = execution_price
+                    # Improvement: Check for duplicate reentry (same order_id or very similar timestamp+qty)
+                    # This prevents duplicate entries if order is processed multiple times
+                    existing_reentry = next(
+                        (
+                            r
+                            for r in reentries_array
+                            if r.get("order_id") == order_id
+                            or (
+                                r.get("time") == reentry_data["time"]
+                                and r.get("qty") == reentry_data["qty"]
+                                and abs(r.get("price", 0) - reentry_data["price"]) < 0.01
+                            )
+                        ),
+                        None,
+                    )
+                    if existing_reentry:
+                        logger.warning(
+                            f"Duplicate reentry detected for {base_symbol} (order_id: {order_id}). "
+                            f"Skipping to prevent duplicate entry."
+                        )
+                        # Don't update reentry fields, but still update quantity and avg_price
+                        is_reentry = False
+                        reentry_count = existing_pos.reentry_count or 0
+                        reentries_array = existing_pos.reentries if existing_pos.reentries else []
+                        last_reentry_price = existing_pos.last_reentry_price
+                    else:
+                        # Append new reentry
+                        reentries_array.append(reentry_data)
+                        reentry_count = len(reentries_array)
+                        last_reentry_price = execution_price
 
                     logger.info(
                         f"Reentry detected for {base_symbol}: Adding reentry #{reentry_count} "
@@ -673,6 +710,32 @@ class UnifiedOrderMonitor:
                     reentries=reentries_array if is_reentry else None,
                     last_reentry_price=last_reentry_price if is_reentry else None,
                 )
+
+                # Improvement: Verify data integrity after update
+                if is_reentry:
+                    updated_position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+                    if updated_position:
+                        actual_count = len(updated_position.reentries or [])
+                        if updated_position.reentry_count != actual_count:
+                            logger.warning(
+                                f"Reentry count mismatch for {base_symbol}: "
+                                f"count={updated_position.reentry_count}, array_length={actual_count}. "
+                                f"Fixing..."
+                            )
+                            # Fix the mismatch - preserve the last_reentry_price we just set
+                            self.positions_repo.upsert(
+                                user_id=self.user_id,
+                                symbol=base_symbol,
+                                reentry_count=actual_count,
+                                # Preserve other fields including the newly set last_reentry_price
+                                quantity=updated_position.quantity,
+                                avg_price=updated_position.avg_price,
+                                opened_at=updated_position.opened_at,
+                                entry_rsi=updated_position.entry_rsi,
+                                reentries=updated_position.reentries,
+                                last_reentry_price=last_reentry_price,  # Use the value we just set, not from DB
+                            )
+
                 logger.info(
                     f"Updated position for {base_symbol}: qty {existing_qty} -> {new_qty}, "
                     f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}"
