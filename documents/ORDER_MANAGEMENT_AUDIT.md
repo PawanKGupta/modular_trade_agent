@@ -274,11 +274,14 @@ updated_at: Mapped[datetime] = mapped_column(
 
 - [x] Fix `mark_rejected()` to set `first_failed_at` ✅ **DONE**
 - [x] Set buy order's `closed_at` when sell executes ✅ **DONE**
-- [ ] Add `updated_at` field to Orders model (requires migration)
-- [ ] Update `update()` method to set `updated_at`
+- [x] Add `updated_at` field to Orders model ✅ **DONE**
+- [x] Update `update()` method to set `updated_at` ✅ **DONE**
+- [x] Update `create_amo()` method to set `updated_at` ✅ **DONE**
+- [x] Update `list()` method to include `updated_at` in queries ✅ **DONE**
+- [x] Create Alembic migration for `updated_at` field ✅ **DONE**
+- [ ] Run migration: `alembic upgrade head` (user action required)
 - [ ] Add quantity adjustment timestamp tracking (optional - can use `order_metadata`)
 - [ ] Add manual order detection timestamp tracking (optional - can use `order_metadata`)
-- [ ] Update all `orders_repo.update()` calls to ensure `updated_at` is set
 - [ ] Add tests for timestamp tracking
 - [ ] Update documentation
 

@@ -44,6 +44,9 @@ class OrdersRepository:
             "orig_source",
         ]
         optional_columns = []
+        # Handle updated_at as optional for backward compatibility (until migration runs)
+        if "updated_at" in orders_columns:
+            optional_columns.append("updated_at")
         if "order_id" in orders_columns:
             optional_columns.append("order_id")
         if "broker_order_id" in orders_columns:
@@ -134,6 +137,9 @@ class OrdersRepository:
                 "status": status_enum,
                 "avg_price": row_dict.get("avg_price"),
                 "placed_at": parse_datetime(row_dict["placed_at"]),
+                "updated_at": parse_datetime(
+                    row_dict.get("updated_at") or row_dict.get("placed_at")
+                ),  # Fallback to placed_at if updated_at not present (for existing records)
                 "filled_at": parse_datetime(row_dict.get("filled_at")),
                 "closed_at": parse_datetime(row_dict.get("closed_at")),
                 "orig_source": row_dict.get("orig_source"),
@@ -179,6 +185,10 @@ class OrdersRepository:
                 order_kwargs["execution_qty"] = row_dict.get("execution_qty")
             if "execution_time" in orders_columns:
                 order_kwargs["execution_time"] = parse_datetime(row_dict.get("execution_time"))
+            if "updated_at" in orders_columns:
+                order_kwargs["updated_at"] = parse_datetime(
+                    row_dict.get("updated_at") or row_dict.get("placed_at")
+                )
 
             order = Orders(**order_kwargs)
             orders.append(order)
@@ -199,6 +209,7 @@ class OrdersRepository:
         order_metadata: dict | None = None,
         reason: str | None = None,
     ) -> Orders:
+        now = ist_now()
         order = Orders(
             user_id=user_id,
             symbol=symbol,
@@ -207,7 +218,8 @@ class OrdersRepository:
             quantity=quantity,
             price=price,
             status=OrderStatus.PENDING,  # Changed from AMO
-            placed_at=ist_now(),
+            placed_at=now,
+            updated_at=now,  # Set initial updated_at same as placed_at
             order_id=order_id,
             entry_type=entry_type,
             order_metadata=order_metadata,
@@ -316,6 +328,11 @@ class OrdersRepository:
         for k, v in fields.items():
             if hasattr(order, k) and v is not None:
                 setattr(order, k, v)
+
+        # Always update updated_at timestamp when order is modified
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        order.updated_at = ist_now()
 
         self.db.commit()
         self.db.refresh(order)

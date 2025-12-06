@@ -118,6 +118,9 @@ class Orders(Base):
     placed_at: Mapped[datetime] = mapped_column(
         DateTime, default=ist_now, index=True, nullable=False
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
     filled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     orig_source: Mapped[str | None] = mapped_column(
@@ -151,6 +154,7 @@ class Orders(Base):
     __table_args__ = (
         Index("ix_orders_user_status_symbol_time", "user_id", "status", "symbol", "placed_at"),
         Index("ix_orders_status_last_check", "status", "last_status_check"),
+        Index("ix_orders_updated_at", "updated_at"),
     )
 
 
