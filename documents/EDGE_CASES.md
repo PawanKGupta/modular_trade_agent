@@ -315,40 +315,63 @@ If positions table has different quantity than broker holdings (due to reconcili
 ## Edge Case #5: Reentry Order Edge Case - Quantity Mismatch
 
 **Severity**: 🟡 **MEDIUM**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-12-06, as part of Edge Case #2 fix)
 
 ### Problem
 
 If a reentry order executes while service is down, reconciliation uses **order quantity from DB** instead of checking if partial execution occurred or if holdings quantity matches.
 
-### Current Flow
+### Current Flow (Before Fix)
 
 ```
 Day 1: Reentry order placed: 10 shares
-Day 2: Service down, order executes: 10 shares
+Day 2: Service down, order executes: 7 shares (partial execution)
 Day 3: Service restarts:
   - Reconciliation finds order in holdings
-  - Uses order_qty = 10 (from DB) ✅ (correct in this case)
-  - But what if partial execution? ❌
-  - Or what if holdings quantity doesn't match? ❌
+  - Uses order_qty = 10 (from DB) ❌ (wrong - should use 7)
+  - Position updated with wrong quantity: 10 instead of 7
 ```
 
-### Impact
+### Impact (Before Fix)
 
 - **Incorrect position update**: If partial execution, position updated with wrong quantity
 - **Quantity mismatch**: Positions table doesn't match actual holdings
 
-### Code Location
+### Implementation
 
+**Fixed on**: 2025-12-06 (as part of Edge Case #2 fix)
+
+**How It Works**:
+
+The reconciliation logic in `check_buy_order_status()` applies to **all buy orders**, including reentry orders. It uses priority-based fallback to get actual filled quantity:
+
+1. **Priority 1**: `fldQty` from `order_report()` (same-day orders)
+2. **Priority 2**: `fldQty` from `order_history()` (historical orders, including when service was down)
+3. **Priority 3**: Holdings quantity (actual broker position)
+4. **Priority 4**: DB order quantity (last resort only)
+
+**Code Location**:
 - **File**: `modules/kotak_neo_auto_trader/unified_order_monitor.py`
-- **Lines**: 326-337
+- **Lines**: 398-480 (`check_buy_order_status()` reconciliation logic)
 - **Method**: `check_buy_order_status()` - Reconciliation logic
 
-### Solution
+**Current Flow (After Fix)**:
 
-1. **Check `fldQty` from broker** (if available) for actual filled quantity
-2. **Compare with holdings quantity** to detect discrepancies
-3. **Use actual filled quantity** instead of order quantity
+```
+Day 1: Reentry order placed: 10 shares
+Day 2: Service down, order executes: 7 shares (partial execution)
+Day 3: Service restarts:
+  - Reconciliation finds order in holdings
+  - Priority 1: Checks order_report() (not found - order from previous day)
+  - Priority 2: Checks order_history() → finds fldQty = 7 ✅
+  - Uses execution_qty = 7 (from fldQty) ✅
+  - Position updated with correct quantity: 7 ✅
+```
+
+**Related Edge Cases**:
+- **Edge Case #2**: Partial execution reconciliation (FIXED - covers all buy orders including reentries)
+
+**Note**: Edge Case #5 is a specific case of Edge Case #2 (reentry orders are buy orders with `entry_type == "reentry"`). The fix for Edge Case #2 automatically covers Edge Case #5.
 
 ---
 
@@ -1300,7 +1323,7 @@ System checks for reentry:
 5. ~~**Edge Case #2**: Partial execution reconciliation~~ ✅ **FIXED**
 6. ~~**Edge Case #3**: Manual holdings not reflected in sell orders~~ ✅ **By Design** (system only controls its own holdings)
 7. ~~**Edge Case #4**: Holdings vs positions mismatch~~ ✅ **FIXED** (as part of Edge Cases #14, #15, #17)
-8. **Edge Case #5**: Reentry order edge case - quantity mismatch
+8. ~~**Edge Case #5**: Reentry order edge case - quantity mismatch~~ ✅ **FIXED** (as part of Edge Case #2 fix)
 9. **Edge Case #9**: Partial sell execution not handled
 10. ~~**Edge Case #11**: Reentry daily cap check discrepancy~~ ✅ **FIXED**
 11. **Edge Case #12**: Sell order execution while reentry pending
@@ -1337,7 +1360,7 @@ System checks for reentry:
 
 3. **Priority 3 (Low)**:
    - ~~Fix Edge Case #3: Reconcile manual holdings~~ ✅ **By Design** (not a bug)
-   - Fix Edge Case #5: Improve reentry reconciliation
+   - ~~Fix Edge Case #5: Improve reentry reconciliation~~ ✅ **FIXED** (as part of Edge Case #2 fix)
    - Fix Edge Case #6: Add timing validation
 
 ---
