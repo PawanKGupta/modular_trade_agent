@@ -346,6 +346,7 @@ Day 2:
 
 **Files Changed**:
 - `modules/kotak_neo_auto_trader/sell_engine.py` - Added mismatch detection and fix logic
+- `tests/unit/kotak/test_sell_order_update_failure_handling.py` (new) - 7 tests for failure handling scenarios
 
 **How It Works**:
 1. Every 15 minutes during market hours, check all active sell orders
