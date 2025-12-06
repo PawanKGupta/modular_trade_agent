@@ -911,6 +911,280 @@ if self.reentries_today(symbol) >= 1:
 
 ---
 
+## Edge Case #14: Manual Partial Sell of System Holdings
+
+**Severity**: 🔴 **CRITICAL**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+If user manually sells **some of the system's holdings** (not all), the positions table is **not updated** to reflect the reduced quantity. The system still thinks it owns the full quantity and tries to place sell orders for more shares than are actually available.
+
+### Current Flow
+
+```
+System holdings: 35 shares (tracked in positions table)
+User manually sells: 5 shares of system's holdings
+Broker holdings: 30 shares (35 - 5)
+Positions table: 35 shares (NOT UPDATED!) ❌
+
+Next day: run_at_market_open() runs
+  - Reads positions table: qty = 35 ✅
+  - Places sell order: 35 shares ❌
+  - Broker only has 30 shares
+  - Order rejected or partially executed ❌
+```
+
+### Impact
+
+- **Order rejection**: Sell order rejected due to insufficient quantity
+- **Partial execution**: Order might partially execute (30 shares) but system expects 35
+- **Data inconsistency**: Positions table shows 35, but broker only has 30
+- **Lost tracking**: System loses track of actual holdings
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 400-461, 1380-1520
+- **Methods**: `get_open_positions()`, `run_at_market_open()`
+
+### Solution
+
+1. **Validate against broker holdings** before placing sell orders
+2. **Detect manual partial sells** by comparing positions table vs broker holdings
+3. **Update positions table** when manual sell detected (reduce quantity)
+4. **Use broker holdings quantity** as source of truth for sell orders
+
+### Business Logic Consideration
+
+**Current Logic**: System doesn't interfere with manual holdings
+**Issue**: System doesn't detect when manual trades affect **system's own holdings**
+
+**Clarification Needed**:
+- Should system detect manual sells of **system holdings**?
+- Should system update positions table when manual sell detected?
+- Or should system only validate before placing orders (without updating)?
+
+---
+
+## Edge Case #15: Manual Full Sell of System Holdings
+
+**Severity**: 🔴 **CRITICAL**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+If user manually sells **all of the system's holdings**, the positions table still shows the position as **open**. The system tries to place sell orders for shares that no longer exist.
+
+### Current Flow
+
+```
+System holdings: 35 shares (tracked in positions table)
+User manually sells: 35 shares (all system holdings)
+Broker holdings: 0 shares
+Positions table: 35 shares, closed_at = NULL (STILL OPEN!) ❌
+
+Next day: run_at_market_open() runs
+  - Reads positions table: qty = 35, status = open ✅
+  - Places sell order: 35 shares ❌
+  - Broker has 0 shares
+  - Order rejected ❌
+```
+
+### Impact
+
+- **Order rejection**: Sell order rejected (no shares available)
+- **Wasted API calls**: System keeps trying to place orders
+- **Data inconsistency**: Positions table shows open position, but broker has 0
+- **Resource waste**: System monitors non-existent positions
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 400-461, 1380-1520
+- **Methods**: `get_open_positions()`, `run_at_market_open()`
+
+### Solution
+
+1. **Detect position closure** by comparing positions table vs broker holdings
+2. **Mark position as closed** when broker holdings = 0
+3. **Skip sell order placement** for closed positions
+4. **Reconcile before placing orders** to detect manual closures
+
+### Business Logic Consideration
+
+**Current Logic**: System doesn't interfere with manual holdings
+**Issue**: System doesn't detect when manual trades **close system positions**
+
+**Clarification Needed**:
+- Should system detect manual closure of system positions?
+- Should system mark positions as closed when broker holdings = 0?
+- Or should system only skip orders when holdings = 0 (without updating DB)?
+
+---
+
+## Edge Case #16: Reentry on Mixed Holdings (Average Price Calculation)
+
+**Severity**: 🟡 **MEDIUM**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+If user has manual holdings and system places a reentry, the average price calculation might be incorrect because it doesn't account for manual holdings when calculating the weighted average.
+
+### Current Flow
+
+```
+Manual holdings: 10 shares @ Rs 9.00 (bought manually)
+System holdings: 35 shares @ Rs 9.00 (tracked in positions table)
+Total broker holdings: 45 shares
+
+System places reentry: 10 shares @ Rs 8.50
+  - Positions table: Calculates avg_price for system holdings only
+  - Formula: (35 * 9.00 + 10 * 8.50) / 45 = Rs 8.94 ✅
+  - But broker's actual avg_price might be different if manual holdings have different price
+  - Broker avg_price: (10 * 9.00 + 35 * 9.00 + 10 * 8.50) / 55 = Rs 8.95 ❌
+```
+
+### Impact
+
+- **Incorrect average price**: Positions table avg_price doesn't match broker's actual avg_price
+- **P&L calculation errors**: Unrealized P&L calculations might be wrong
+- **Data inconsistency**: Positions table doesn't reflect true cost basis
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/unified_order_monitor.py`
+- **Lines**: 562-800
+- **Method**: `_create_position_from_executed_order()`
+
+### Solution
+
+1. **Use broker holdings avg_price** as source of truth (if available)
+2. **Calculate weighted average** considering all holdings (manual + system)
+3. **Or track system holdings separately** from manual holdings
+
+### Business Logic Consideration
+
+**Current Logic**: System only tracks its own holdings
+**Issue**: Average price calculation doesn't account for manual holdings in the same symbol
+
+**Clarification Needed**:
+- Should system use broker's avg_price (includes manual holdings)?
+- Or should system track only system holdings' avg_price (current behavior)?
+- Is current behavior acceptable (system avg_price separate from broker avg_price)?
+
+---
+
+## Edge Case #17: Sell Order Quantity Validation Missing
+
+**Severity**: 🔴 **CRITICAL**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+The system places sell orders based on positions table quantity **without validating** against broker holdings. If manual trades occurred, the order might be rejected or partially executed.
+
+### Current Flow
+
+```
+Positions table: 35 shares
+Broker holdings: 30 shares (user manually sold 5)
+System places sell order: 35 shares ❌
+  - No validation against broker holdings
+  - Order might be rejected
+  - Or partially executed (30 shares)
+  - System expects 35, but only 30 executed
+```
+
+### Impact
+
+- **Order rejection**: Sell order rejected due to insufficient quantity
+- **Partial execution**: Order partially executes, system doesn't track correctly
+- **Data inconsistency**: Positions table shows 35, but only 30 sold
+- **Lost profit**: Remaining 5 shares not sold
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 1380-1520
+- **Method**: `run_at_market_open()`
+
+### Solution
+
+1. **Validate quantity against broker holdings** before placing sell orders
+2. **Use min(positions_qty, broker_holdings_qty)** for sell order quantity
+3. **Update positions table** if broker holdings < positions table
+4. **Log warning** when discrepancy detected
+
+### Business Logic Consideration
+
+**Current Logic**: System doesn't interfere with manual holdings
+**Issue**: System doesn't validate that it can actually sell the quantity it thinks it owns
+
+**Clarification Needed**:
+- Should system validate against broker holdings before placing orders?
+- Should system use broker holdings quantity if less than positions table?
+- Or should system only place orders and let broker reject if insufficient?
+
+---
+
+## Edge Case #18: Manual Buy of System-Tracked Symbol (Reentry Confusion)
+
+**Severity**: 🟡 **MEDIUM**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+If user manually buys more shares of a symbol the system is tracking, the system might incorrectly treat it as a reentry or might not account for it when calculating reentry levels.
+
+### Current Flow
+
+```
+System holdings: 35 shares @ Rs 9.00 (tracked)
+User manually buys: 10 shares @ Rs 8.50
+Total broker holdings: 45 shares
+
+System checks for reentry:
+  - Reads positions table: 35 shares ✅
+  - Checks RSI: 18 (below 20, reentry level)
+  - Places reentry order: 10 shares @ Rs 8.50
+  - But user already manually bought 10 shares!
+  - System now owns: 45 shares (35 + 10 reentry)
+  - But broker has: 55 shares (35 + 10 manual + 10 reentry) ❌
+```
+
+### Impact
+
+- **Quantity mismatch**: System thinks it owns less than it actually does
+- **Reentry confusion**: System might place reentry when user already manually bought
+- **Average price calculation**: Incorrect if manual buy price differs
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+- **Lines**: 4168-5000
+- **Method**: `place_reentry_orders()`
+
+### Solution
+
+1. **Reconcile with broker holdings** before placing reentry orders
+2. **Detect manual buys** by comparing positions table vs broker holdings
+3. **Skip reentry** if holdings already increased (user might have manually bought)
+4. **Or update positions table** to include manual buys (if business logic allows)
+
+### Business Logic Consideration
+
+**Current Logic**: System doesn't interfere with manual holdings
+**Issue**: System doesn't detect manual buys that might affect reentry decisions
+
+**Clarification Needed**:
+- Should system detect manual buys before placing reentry?
+- Should system skip reentry if holdings already increased?
+- Or should system proceed with reentry regardless of manual buys?
+
+---
+
 ## Summary
 
 ### Critical Issues (🔴)
@@ -946,12 +1220,14 @@ if self.reentries_today(symbol) >= 1:
    - Fix Edge Case #10: Reduce position quantity after sell
 
 2. **Priority 2 (Medium)**:
-   - Fix Edge Case #11: Fix reentry daily cap check (check `reentries` array)
-   - Fix Edge Case #13: Enforce daily cap correctly
-   - Fix Edge Case #9: Handle partial sell execution
-   - ~~Fix Edge Case #2: Use actual filled quantity from broker~~ ✅ **FIXED**
+   - Fix Edge Case #14: Detect and handle manual partial sell of system holdings (CRITICAL)
+   - Fix Edge Case #15: Detect and handle manual full sell of system holdings (CRITICAL)
+   - Fix Edge Case #17: Validate sell order quantity against broker holdings (CRITICAL)
    - Fix Edge Case #4: Validate positions table against broker holdings
    - Fix Edge Case #12: Cancel pending reentry orders when position closes
+   - Fix Edge Case #9: Handle partial sell execution
+   - Fix Edge Case #18: Handle manual buy of system-tracked symbol
+   - Fix Edge Case #16: Reentry on mixed holdings (average price calculation)
 
 3. **Priority 3 (Low)**:
    - Fix Edge Case #3: Reconcile manual holdings
