@@ -664,6 +664,97 @@ class SellOrderManager:
 
         return stats
 
+    def _reconcile_single_symbol(self, symbol: str) -> bool:
+        """
+        Lightweight reconciliation for a single symbol.
+        
+        Used before critical operations (e.g., updating sell orders) to ensure
+        we have the latest position quantity even if manual trade happened.
+        
+        Args:
+            symbol: Base symbol to reconcile
+            
+        Returns:
+            True if reconciliation was performed, False otherwise
+        """
+        if not self.positions_repo or not self.user_id:
+            return False
+
+        try:
+            # Get position from database
+            position = self.positions_repo.get_by_symbol(self.user_id, symbol)
+            if not position or position.closed_at is not None:
+                return False  # Position doesn't exist or is closed
+
+            # Fetch broker holdings for this symbol
+            holdings_response = self.portfolio.get_holdings()
+            if not holdings_response or not isinstance(holdings_response, dict):
+                return False
+
+            holdings_data = holdings_response.get("data", [])
+            from .utils.symbol_utils import extract_base_symbol
+
+            # Find broker quantity for this symbol
+            broker_qty = 0
+            for holding in holdings_data:
+                holding_symbol = (
+                    holding.get("tradingSymbol")
+                    or holding.get("symbol")
+                    or holding.get("securitySymbol")
+                    or ""
+                )
+                if not holding_symbol:
+                    continue
+
+                base_symbol = extract_base_symbol(holding_symbol).upper()
+                if base_symbol == symbol.upper():
+                    broker_qty = int(
+                        holding.get("quantity")
+                        or holding.get("qty")
+                        or holding.get("netQuantity")
+                        or holding.get("holdingsQuantity")
+                        or 0
+                    )
+                    break
+
+            positions_qty = int(position.quantity)
+
+            # Manual full sell detected
+            if broker_qty == 0 and positions_qty > 0:
+                logger.warning(
+                    f"Manual full sell detected for {symbol} during sell order update. "
+                    f"Marking position as closed."
+                )
+                from src.infrastructure.db.timezone_utils import ist_now
+
+                self.positions_repo.mark_closed(
+                    user_id=self.user_id,
+                    symbol=symbol,
+                    closed_at=ist_now(),
+                    exit_price=None,
+                )
+                return True
+
+            # Manual partial sell detected
+            elif broker_qty < positions_qty:
+                sold_qty = positions_qty - broker_qty
+                logger.warning(
+                    f"Manual partial sell detected for {symbol} during sell order update: "
+                    f"{sold_qty} shares sold. Updating position."
+                )
+                self.positions_repo.reduce_quantity(
+                    user_id=self.user_id,
+                    symbol=symbol,
+                    sold_quantity=float(sold_qty),
+                )
+                return True
+
+            return False  # No reconciliation needed
+
+        except Exception as e:
+            logger.debug(f"Error in lightweight reconciliation for {symbol}: {e}")
+            return False
+
     def get_current_ema9(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
         Calculate real-time daily EMA9 value using current LTP
