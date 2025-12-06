@@ -265,12 +265,30 @@ class TestReentryTrackingInDatabase:
         orders_repo.get = Mock(return_value=reentry_order)
         orders_repo.get_by_broker_order_id = Mock(return_value=reentry_order)
 
-        # Mock get_by_symbol_for_update to return initial_position
+        # Mock get_by_symbol_for_update to return a fresh position each time
         # This will be called twice: once before transaction (line 819), once inside transaction (line 970)
         # Both calls should return the same position (without the new reentry ORDER456)
         # The duplicate check inside transaction should NOT find ORDER456 in latest_reentries
         # CRITICAL: The position returned must NOT have ORDER456 in reentries array
-        positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
+        # IMPORTANT: Return a fresh position object each time to avoid list reference issues in CI
+        import copy
+
+        def get_position_copy():
+            # Create a fresh position with a copy of reentries to avoid modifying the original
+            return Positions(
+                id=initial_position.id,
+                user_id=initial_position.user_id,
+                symbol=initial_position.symbol,
+                quantity=initial_position.quantity,
+                avg_price=initial_position.avg_price,
+                reentry_count=initial_position.reentry_count,
+                reentries=copy.deepcopy(initial_position.reentries),
+                initial_entry_price=initial_position.initial_entry_price,
+                last_reentry_price=initial_position.last_reentry_price,
+                opened_at=initial_position.opened_at,
+            )
+
+        positions_repo.get_by_symbol_for_update = Mock(side_effect=lambda *args, **kwargs: get_position_copy())
 
         upsert_call_args = {}
 
