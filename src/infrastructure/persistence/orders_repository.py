@@ -341,7 +341,7 @@ class OrdersRepository:
 
         if auto_commit:
             self.db.commit()
-            self.db.refresh(order)
+        self.db.refresh(order)
         return order
 
     def cancel(self, order: Orders, auto_commit: bool = True) -> None:
