@@ -279,7 +279,7 @@ updated_at: Mapped[datetime] = mapped_column(
 - [x] Update `create_amo()` method to set `updated_at` ✅ **DONE**
 - [x] Update `list()` method to include `updated_at` in queries ✅ **DONE**
 - [x] Create Alembic migration for `updated_at` field ✅ **DONE**
-- [ ] Run migration: `alembic upgrade head` (user action required)
+- [x] Run migration: `alembic upgrade head` ✅ **DONE**
 - [ ] Add quantity adjustment timestamp tracking (optional - can use `order_metadata`)
 - [ ] Add manual order detection timestamp tracking (optional - can use `order_metadata`)
 - [ ] Add tests for timestamp tracking
