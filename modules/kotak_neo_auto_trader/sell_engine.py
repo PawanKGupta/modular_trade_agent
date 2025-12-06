@@ -425,7 +425,7 @@ class SellOrderManager:
         try:
             from .utils.symbol_utils import extract_base_symbol
 
-            holdings_response = self.portfolio.get_holdings()
+            holdings_response = self._get_holdings_cached()
             if holdings_response and isinstance(holdings_response, dict):
                 holdings_data = holdings_response.get("data", [])
                 for holding in holdings_data:
@@ -544,8 +544,8 @@ class SellOrderManager:
         stats = {"checked": 0, "updated": 0, "closed": 0, "ignored": 0}
 
         try:
-            # Fetch broker holdings
-            holdings_response = self.portfolio.get_holdings()
+            # Fetch broker holdings (with caching to reduce API calls)
+            holdings_response = self._get_holdings_cached()
             if not holdings_response or not isinstance(holdings_response, dict):
                 logger.debug("Could not fetch broker holdings for reconciliation")
                 return stats
@@ -691,8 +691,8 @@ class SellOrderManager:
             if not position or position.closed_at is not None:
                 return False  # Position doesn't exist or is closed
 
-            # Fetch broker holdings for this symbol
-            holdings_response = self.portfolio.get_holdings()
+            # Fetch broker holdings for this symbol (with caching to reduce API calls)
+            holdings_response = self._get_holdings_cached()
             if not holdings_response or not isinstance(holdings_response, dict):
                 return False
 
@@ -759,6 +759,48 @@ class SellOrderManager:
         except Exception as e:
             logger.debug(f"Error in lightweight reconciliation for {symbol}: {e}")
             return False
+
+    def _get_holdings_cached(self) -> dict | None:
+        """
+        Get holdings from broker API with caching to reduce API calls.
+        
+        Cache TTL: 5 minutes (300 seconds)
+        - Reduces API calls while still detecting manual trades within reasonable time
+        - Cache is invalidated on each call after TTL expires
+        
+        Returns:
+            Holdings dictionary or None
+        """
+        from time import time
+
+        cache_key = "holdings"
+        current_time = time()
+
+        # Check cache
+        if cache_key in self._holdings_cache:
+            cached_data, cache_timestamp = self._holdings_cache[cache_key]
+            if current_time - cache_timestamp < self._holdings_cache_ttl:
+                logger.debug("Using cached holdings data (reduces broker API calls)")
+                return cached_data
+            # Cache expired, remove it
+            del self._holdings_cache[cache_key]
+
+        # Fetch from broker API
+        try:
+            holdings_response = self._get_holdings_cached()
+            if holdings_response and isinstance(holdings_response, dict):
+                # Cache the response
+                self._holdings_cache[cache_key] = (holdings_response, current_time)
+                logger.debug("Fetched fresh holdings from broker API and cached")
+            return holdings_response
+        except Exception as e:
+            logger.warning(f"Failed to fetch holdings from broker API: {e}")
+            # Return cached data if available (even if expired) as fallback
+            if cache_key in self._holdings_cache:
+                cached_data, _ = self._holdings_cache[cache_key]
+                logger.debug("Using expired cache as fallback")
+                return cached_data
+            return None
 
     def get_current_ema9(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
