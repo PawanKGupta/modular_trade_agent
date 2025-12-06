@@ -1489,7 +1489,7 @@ If system were to skip reentry when manual buy detected:
    - ~~Fix Edge Case #8: Update positions table when sell order executes~~ ✅ **FIXED**
    - ~~Fix Edge Case #1: Update sell order quantity after reentry~~ ✅ **FIXED**
    - ~~Fix Edge Case #7: Improve existing sell order check logic~~ ✅ **FIXED** (as part of Edge Case #1)
-   - Fix Edge Case #10: Reduce position quantity after sell
+   - ~~Fix Edge Case #10: Reduce position quantity after sell~~ ✅ **FIXED** (as part of Edge Case #8)
 
 2. **Priority 2 (Medium)**:
    - ~~Fix Edge Case #14: Detect and handle manual partial sell of system holdings~~ ✅ **FIXED**
