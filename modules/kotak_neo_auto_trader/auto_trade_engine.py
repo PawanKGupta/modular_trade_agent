@@ -4992,12 +4992,15 @@ class AutoTradeEngine:
                                 # When reentry executes, database is updated via unified_order_monitor.
                                 if "reentries" not in e:
                                     e["reentries"] = []
+                                # Construct reentry data matching database structure
+                                # Note: Database is the source of truth. JSON is backup only.
+                                # This structure must match what unified_order_monitor writes to DB.
                                 e["reentries"].append(
                                     {
-                                        "qty": qty,
-                                        "level": next_level,
-                                        "rsi": rsi,
-                                        "price": price,
+                                        "qty": int(qty),
+                                        "level": int(next_level) if next_level is not None else None,
+                                        "rsi": float(rsi) if rsi is not None else None,
+                                        "price": float(price),
                                         "time": datetime.now().isoformat(),
                                     }
                                 )

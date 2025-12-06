@@ -572,7 +572,14 @@ class UnifiedOrderMonitor:
             existing_pos = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
 
             # Calculate execution time (use current time if not available)
-            execution_time = ist_now()
+            try:
+                from src.infrastructure.db.timezone_utils import ist_now
+
+                execution_time = ist_now()
+            except ImportError:
+                from datetime import datetime
+
+                execution_time = datetime.now()
             if db_order and hasattr(db_order, "filled_at") and db_order.filled_at:
                 execution_time = db_order.filled_at
             elif db_order and hasattr(db_order, "execution_time") and db_order.execution_time:
