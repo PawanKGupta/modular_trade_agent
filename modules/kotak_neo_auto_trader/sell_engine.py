@@ -2615,6 +2615,9 @@ class SellOrderManager:
                                 # Edge Case #12: Cancel pending reentry orders for closed position
                                 # Note: This includes broker API calls, so it's outside the transaction
                                 self._cancel_pending_reentry_orders(base_symbol)
+                                
+                                # Invalidate cache since position was closed (broker holdings changed)
+                                self._invalidate_holdings_cache()
                             else:
                                 # Partial execution - reduce quantity, keep position open
                                 self.positions_repo.reduce_quantity(
@@ -2622,6 +2625,8 @@ class SellOrderManager:
                                     symbol=base_symbol,
                                     sold_quantity=float(filled_qty),
                                 )
+                                # Invalidate cache since position quantity changed (broker holdings changed)
+                                self._invalidate_holdings_cache()
                                 logger.info(
                                     f"Position quantity reduced in database: {base_symbol} "
                                     f"(sold {filled_qty} shares, remaining quantity updated)"
