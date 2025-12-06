@@ -1348,53 +1348,83 @@ if sell_qty < positions_qty:
 ## Edge Case #18: Manual Buy of System-Tracked Symbol (Reentry Confusion)
 
 **Severity**: 🟡 **MEDIUM**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **By Design** (Not a bug - intended behavior)
 
-### Problem
+### Problem Description
 
-If user manually buys more shares of a symbol the system is tracking, the system might incorrectly treat it as a reentry or might not account for it when calculating reentry levels.
+If user manually buys more shares of a symbol the system is tracking, the system might place a reentry order even though the user already manually bought. This could lead to the system tracking less shares than actually exist in the broker account.
 
-### Current Flow
+### Current Flow (By Design)
 
 ```
-System holdings: 35 shares @ Rs 9.00 (tracked)
+System holdings: 35 shares @ Rs 9.00 (tracked in positions table)
 User manually buys: 10 shares @ Rs 8.50
 Total broker holdings: 45 shares
 
 System checks for reentry:
   - Reads positions table: 35 shares ✅
   - Checks RSI: 18 (below 20, reentry level)
-  - Places reentry order: 10 shares @ Rs 8.50
-  - But user already manually bought 10 shares!
-  - System now owns: 45 shares (35 + 10 reentry)
-  - But broker has: 55 shares (35 + 10 manual + 10 reentry) ❌
+  - Places reentry order: 10 shares @ Rs 8.50 ✅
+  - Reentry executes: System updates to 45 shares (35 + 10) ✅
+  - Broker has: 55 shares (35 + 10 manual + 10 reentry)
+  - Reconciliation detects: broker_qty (55) > positions_qty (45)
+  - System IGNORES manual buy (correct behavior) ✅
 ```
 
-### Impact
+### Why This Is By Design
 
-- **Quantity mismatch**: System thinks it owns less than it actually does
-- **Reentry confusion**: System might place reentry when user already manually bought
-- **Average price calculation**: Incorrect if manual buy price differs
+**Business Logic**: System doesn't track manual holdings. Reentry is meant to average down, so it's allowed even when holdings exist (including manual buys).
 
-### Code Location
+**Rationale**:
+- System intentionally allows reentry even when holdings exist (averaging down is the purpose)
+- Code explicitly sets `check_holdings=False` and `allow_reentry=True` for reentry orders
+- System correctly tracks only its own holdings (45 shares), not manual holdings (10 shares)
+- Reconciliation logic (Edge Cases #14, #15, #17) correctly ignores manual buys
+- System avg_price correctly reflects only system's cost basis (not manual buys)
 
-- **File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
-- **Lines**: 4168-5000
-- **Method**: `place_reentry_orders()`
+**Current Implementation**:
+```python
+# In place_reentry_orders():
+is_duplicate, duplicate_reason = (
+    self.order_validation_service.check_duplicate_order(
+        broker_symbol,
+        check_active_buy_order=True,
+        check_holdings=False,  # ✅ Don't check holdings for reentries
+        allow_reentry=True,  # ✅ Allow reentries (buying more of existing position)
+    )
+)
+```
 
-### Solution
+**Comment in code**: "reentries should allow buying more of existing position" - this is intentional.
 
-1. **Reconcile with broker holdings** before placing reentry orders
-2. **Detect manual buys** by comparing positions table vs broker holdings
-3. **Skip reentry** if holdings already increased (user might have manually bought)
-4. **Or update positions table** to include manual buys (if business logic allows)
+### Reconciliation Behavior
 
-### Business Logic Consideration
+**When reentry executes**:
+1. System updates positions table: 35 + 10 = 45 shares ✅
+2. Broker has: 55 shares (35 + 10 manual + 10 reentry)
+3. Reconciliation detects: `broker_qty (55) > positions_qty (45)`
+4. System IGNORES this (manual buy, not tracked) ✅
+5. System correctly tracks only its own 45 shares ✅
 
-**Current Logic**: System doesn't interfere with manual holdings
-**Issue**: System doesn't detect manual buys that might affect reentry decisions
+**Code Location**:
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Method**: `_reconcile_positions_with_broker_holdings()`
+- **Logic**: `if broker_qty > positions_qty: IGNORE (manual buy, not tracked)`
 
-**Clarification Needed**:
+### Impact (If Changed)
+
+If system were to skip reentry when manual buy detected:
+- ❌ System would prevent legitimate averaging down opportunities
+- ❌ User couldn't manually buy and then let system average down further
+- ❌ Violates business logic: "reentry is meant to add more shares"
+
+### Related Edge Cases
+
+- **Edge Case #3**: Manual holdings not reflected in sell orders (By Design - system only controls its own holdings)
+- **Edge Case #16**: Reentry on mixed holdings (By Design - system only tracks its own cost basis)
+- **Edge Cases #14, #15, #17**: Manual sell detection (FIXED - system detects when manual trades affect its own holdings)
+
+**Note**: Edge Case #18 is similar to Edge Case #3 and #16 - all are "By Design" because the system intentionally tracks only its own holdings, not manual holdings. The system correctly allows reentry even when manual buys exist, and reconciliation correctly ignores manual buys.
 - Should system detect manual buys before placing reentry?
 - Should system skip reentry if holdings already increased?
 - Or should system proceed with reentry regardless of manual buys?
@@ -1424,7 +1454,7 @@ System checks for reentry:
 14. ~~**Edge Case #15**: Manual full sell of system holdings~~ ✅ **FIXED**
 15. ~~**Edge Case #16**: Reentry on mixed holdings (average price calculation)~~ ✅ **By Design** (system only tracks its own cost basis)
 16. ~~**Edge Case #17**: Sell order quantity validation missing~~ ✅ **FIXED**
-17. **Edge Case #18**: Manual buy of system-tracked symbol (reentry confusion - caused by business logic)
+17. ~~**Edge Case #18**: Manual buy of system-tracked symbol (reentry confusion)~~ ✅ **By Design** (system allows reentry even when manual buys exist)
 
 ### Low Issues (🟠)
 
@@ -1447,7 +1477,7 @@ System checks for reentry:
    - ~~Fix Edge Case #4: Validate positions table against broker holdings~~ ✅ **FIXED** (as part of Edge Cases #14, #15, #17)
    - Fix Edge Case #12: Cancel pending reentry orders when position closes
    - Fix Edge Case #9: Handle partial sell execution
-   - Fix Edge Case #18: Handle manual buy of system-tracked symbol
+   - ~~Fix Edge Case #18: Handle manual buy of system-tracked symbol~~ ✅ **By Design** (not a bug)
    - ~~Fix Edge Case #16: Reentry on mixed holdings (average price calculation)~~ ✅ **By Design** (not a bug)
 
 3. **Priority 3 (Low)**:
