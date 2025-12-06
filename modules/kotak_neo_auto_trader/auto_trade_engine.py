@@ -1951,30 +1951,40 @@ class AutoTradeEngine:
         return False
 
     def reentries_today(self, base_symbol: str) -> int:
-        """Count successful re-entries recorded today for this symbol (base symbol)."""
+        """
+        Count successful re-entries recorded today for this symbol (base symbol).
+
+        Edge Case #11 Fix: Checks the 'reentries' array within trade entries
+        instead of looking for separate entries with entry_type == 'reentry'.
+        Reentries are stored in the reentries array of existing trade entries.
+        """
         try:
             hist = self._load_trades_history()
             trades = hist.get("trades") or []
             today = datetime.now().date()
             cnt = 0
             for t in trades:
-                if t.get("entry_type") != "reentry":
-                    continue
                 sym = str(t.get("symbol") or "").upper()
                 if sym != base_symbol.upper():
                     continue
-                ts = t.get("entry_time")
-                if not ts:
-                    continue
-                try:
-                    d = datetime.fromisoformat(ts).date()
-                except Exception:
-                    try:
-                        d = datetime.strptime(ts.split("T")[0], "%Y-%m-%d").date()
-                    except Exception:
+                # Edge Case #11 Fix: Check reentries array within the trade
+                # Reentries are stored in the reentries array, not as separate entries
+                reentries = t.get("reentries", [])
+                for reentry in reentries:
+                    reentry_time = reentry.get("time")
+                    if not reentry_time:
                         continue
-                if d == today:
-                    cnt += 1
+                    try:
+                        # Parse ISO format timestamp
+                        d = datetime.fromisoformat(reentry_time).date()
+                    except Exception:
+                        try:
+                            # Fallback: try parsing just the date part
+                            d = datetime.strptime(reentry_time.split("T")[0], "%Y-%m-%d").date()
+                        except Exception:
+                            continue
+                    if d == today:
+                        cnt += 1
             return cnt
         except Exception:
             return 0

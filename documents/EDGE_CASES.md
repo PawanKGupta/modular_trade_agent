@@ -676,13 +676,13 @@ if self.positions_repo and self.user_id:
 ## Edge Case #11: Reentry Daily Cap Check Discrepancy
 
 **Severity**: 🟡 **MEDIUM**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-01-22)
 
 ### Problem
 
-The `reentries_today()` method looks for **separate trade entries** with `entry_type == 'reentry'`, but reentries are actually recorded in the **`reentries` array** within existing trade entries. This means the daily cap check **doesn't work correctly**.
+The `reentries_today()` method looked for **separate trade entries** with `entry_type == 'reentry'`, but reentries are actually recorded in the **`reentries` array** within existing trade entries. This meant the daily cap check **didn't work correctly**.
 
-### Current Flow
+### Original Flow (Before Fix)
 
 ```
 Day 1: Initial entry at RSI 25
@@ -711,50 +711,70 @@ Day 1: Another reentry at RSI 10
 - **Lines**: 1953-1980
 - **Method**: `reentries_today()`
 
-### Current Code
+### Solution
+
+This issue was fixed by updating `reentries_today()` to check the `reentries` array within trade entries instead of looking for separate entries.
+
+### Implementation
+
+**Fixed on**: 2025-01-22
+
+**Current Code** (After Fix):
 
 ```python
 def reentries_today(self, base_symbol: str) -> int:
-    """Count successful re-entries recorded today for this symbol."""
-    for t in trades:
-        if t.get("entry_type") != "reentry":  # ❌ PROBLEM: Looks for separate entries
-            continue
-        # ... count reentries ...
+    """
+    Count successful re-entries recorded today for this symbol (base symbol).
+
+    Edge Case #11 Fix: Checks the 'reentries' array within trade entries
+    instead of looking for separate entries with entry_type == 'reentry'.
+    Reentries are stored in the reentries array of existing trade entries.
+    """
+    try:
+        hist = self._load_trades_history()
+        trades = hist.get("trades") or []
+        today = datetime.now().date()
+        cnt = 0
+        for t in trades:
+            sym = str(t.get("symbol") or "").upper()
+            if sym != base_symbol.upper():
+                continue
+            # ✅ FIX: Check reentries array within the trade
+            reentries = t.get("reentries", [])
+            for reentry in reentries:
+                reentry_time = reentry.get("time")
+                if not reentry_time:
+                    continue
+                try:
+                    d = datetime.fromisoformat(reentry_time).date()
+                except Exception:
+                    try:
+                        d = datetime.strptime(reentry_time.split("T")[0], "%Y-%m-%d").date()
+                    except Exception:
+                        continue
+                if d == today:
+                    cnt += 1
+        return cnt
+    except Exception:
+        return 0
 ```
 
-### Actual Reentry Recording
+**How It Works**:
 
-Reentries are recorded in the `reentries` array (lines 3446-3471):
-```python
-# Update trade history with new total quantity
-for e in entries:
-    e["qty"] = new_total_qty
-    if "reentries" not in e:
-        e["reentries"] = []
-    e["reentries"].append({  # ❌ Added to array, not separate entry
-        "qty": qty,
-        "level": next_level,
-        "time": datetime.now().isoformat(),
-    })
-```
+1. **Iterates through all trades** for the symbol (not just entries with `entry_type == "reentry"`)
+2. **Checks the `reentries` array** within each trade entry
+3. **Filters by date** - only counts reentries from today
+4. **Handles errors gracefully** - returns 0 on exception
 
-### Solution
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/auto_trade_engine.py` - Fixed `reentries_today()` method
 
-1. **Fix `reentries_today()`** to check `reentries` array:
-   ```python
-   for t in trades:
-       sym = str(t.get("symbol") or "").upper()
-       if sym != base_symbol.upper():
-           continue
-       # Check reentries array within the trade
-       reentries = t.get("reentries", [])
-       for reentry in reentries:
-           reentry_time = reentry.get("time")
-           if reentry_time:
-               d = datetime.fromisoformat(reentry_time).date()
-               if d == today:
-                   cnt += 1
-   ```
+**Test Files**:
+- `tests/unit/kotak/test_reentries_today_edge_case_11.py` - Comprehensive tests for the fix
+
+### Related
+
+- Edge Case #13 (Multiple Reentries Same Day Bypass) is a consequence of this issue and is also fixed by this implementation
 
 ---
 
@@ -885,9 +905,9 @@ if self.reentries_today(symbol) >= 1:
 7. **Edge Case #4**: Holdings vs positions mismatch
 8. **Edge Case #5**: Reentry order edge case - quantity mismatch
 9. **Edge Case #9**: Partial sell execution not handled
-10. **Edge Case #11**: Reentry daily cap check discrepancy
+10. ~~**Edge Case #11**: Reentry daily cap check discrepancy~~ ✅ **FIXED**
 11. **Edge Case #12**: Sell order execution while reentry pending
-12. **Edge Case #13**: Multiple reentries same day bypass
+12. ~~**Edge Case #13**: Multiple reentries same day bypass~~ ✅ **FIXED** (as part of Edge Case #11)
 
 ### Low Issues (🟠)
 
