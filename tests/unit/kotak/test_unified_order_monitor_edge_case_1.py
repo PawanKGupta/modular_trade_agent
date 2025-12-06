@@ -87,7 +87,7 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
         existing_position.reentries = []
         existing_position.last_reentry_price = None
 
-        mock_positions_repo.get_by_symbol.return_value = existing_position
+        mock_positions_repo.get_by_symbol_for_update = Mock(return_value=existing_position)
 
         # Mock order info
         order_info = {
@@ -137,7 +137,7 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
     ):
         """Test that _create_position_from_executed_order does not update sell order for new positions"""
         # No existing position (new entry)
-        mock_positions_repo.get_by_symbol.return_value = None
+        mock_positions_repo.get_by_symbol_for_update = Mock(return_value=None)
 
         order_info = {
             "symbol": "RELIANCE-EQ",
@@ -178,7 +178,7 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
         existing_position.reentries = []
         existing_position.last_reentry_price = None
 
-        mock_positions_repo.get_by_symbol.return_value = existing_position
+        mock_positions_repo.get_by_symbol_for_update = Mock(return_value=existing_position)
 
         order_info = {
             "symbol": "RELIANCE-EQ",
@@ -230,7 +230,7 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
         existing_position.reentries = []
         existing_position.last_reentry_price = None
 
-        mock_positions_repo.get_by_symbol.return_value = existing_position
+        mock_positions_repo.get_by_symbol_for_update = Mock(return_value=existing_position)
 
         order_info = {
             "symbol": "RELIANCE-EQ",

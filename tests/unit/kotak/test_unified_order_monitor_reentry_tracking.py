@@ -86,8 +86,8 @@ class TestReentryTrackingInDatabase:
             opened_at=datetime.now(),
         )
 
-        # Mock get_by_symbol to return existing position
-        positions_repo.get_by_symbol = Mock(return_value=initial_position)
+        # Mock get_by_symbol_for_update to return existing position (code now uses locking)
+        positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
 
         # Create reentry order with entry_type="reentry"
         reentry_order = Orders(
@@ -175,7 +175,7 @@ class TestReentryTrackingInDatabase:
             opened_at=datetime.now(),
         )
 
-        positions_repo.get_by_symbol = Mock(return_value=initial_position)
+        positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
 
         # Create order without entry_type (but position exists, so it's a reentry)
         order = Orders(
@@ -239,7 +239,7 @@ class TestReentryTrackingInDatabase:
             opened_at=datetime.now(),
         )
 
-        positions_repo.get_by_symbol = Mock(return_value=initial_position)
+        positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
 
         # Create second reentry order
         reentry_order = Orders(
@@ -296,7 +296,7 @@ class TestReentryTrackingInDatabase:
     ):
         """Test that new positions are not tracked as reentries"""
         # No existing position
-        positions_repo.get_by_symbol = Mock(return_value=None)
+        positions_repo.get_by_symbol_for_update = Mock(return_value=None)
 
         # Create initial entry order
         initial_order = Orders(
@@ -359,7 +359,7 @@ class TestReentryTrackingInDatabase:
             opened_at=datetime.now(),
         )
 
-        positions_repo.get_by_symbol = Mock(return_value=initial_position)
+        positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
 
         # Create order without metadata
         order = Orders(
@@ -422,7 +422,7 @@ class TestReentryTrackingInDatabase:
             opened_at=datetime.now(),
         )
 
-        positions_repo.get_by_symbol = Mock(return_value=initial_position)
+        positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
 
         reentry_order = Orders(
             id=1,
