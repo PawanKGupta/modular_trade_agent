@@ -378,13 +378,13 @@ Day 3: Service restarts:
 ## Edge Case #6: Sell Order Update Timing
 
 **Severity**: 🟠 **LOW**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-12-06, as part of Edge Cases #14, #15, #17)
 
 ### Problem
 
 If reentry executes and position is updated, but `run_at_market_open()` runs **before the position update completes**, it might use old quantity for sell order placement.
 
-### Current Flow
+### Current Flow (Before Fix)
 
 ```
 Time T1: Reentry order executes
@@ -395,22 +395,60 @@ Time T3: run_at_market_open() runs (before T2 completes)
   - Should wait for position update or use broker holdings
 ```
 
-### Impact
+### Impact (Before Fix)
 
 - **Race condition**: Sell order placed with stale quantity
 - **Incorrect quantity**: Sell order doesn't reflect latest position
 
-### Code Location
+### Implementation
 
+**Fixed on**: 2025-12-06 (as part of Edge Cases #14, #15, #17)
+
+**How It Works**:
+
+The race condition is mitigated by multiple layers of protection:
+
+1. **Reconciliation runs first** (`run_at_market_open()` calls `_reconcile_positions_with_broker_holdings()`):
+   - Fetches **fresh broker holdings** from broker API
+   - Updates positions table if there's a mismatch
+   - Ensures positions table is up-to-date before reading
+
+2. **Validation in `get_open_positions()`**:
+   - Fetches broker holdings again for validation
+   - Uses `min(positions_qty, broker_qty)` for sell order quantity
+   - **Broker holdings are used as source of truth**, not just positions table
+   - Even if positions table is stale, broker holdings ensure correct quantity
+
+3. **Edge Case #1 fix** (immediate update):
+   - When reentry executes during market hours, sell orders are updated immediately
+   - Prevents race condition for same-day reentries
+
+**Current Flow (After Fix)**:
+
+```
+Time T1: Reentry order executes
+Time T2: Position update starts (async)
+Time T3: run_at_market_open() runs (before T2 completes)
+  - Step 1: Calls _reconcile_positions_with_broker_holdings()
+    - Fetches fresh broker holdings from API ✅
+    - Updates positions table: 35 → 45 ✅
+  - Step 2: Calls get_open_positions()
+    - Reads positions table: 45 ✅ (now updated)
+    - Validates against broker holdings: min(45, 45) = 45 ✅
+    - Returns qty = 45 ✅
+  - Step 3: Places sell order: 45 shares ✅
+```
+
+**Code Location**:
 - **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
-- **Lines**: 1380-1460
-- **Method**: `run_at_market_open()`
+- **Lines**: 1619-1627 (`run_at_market_open()` reconciliation), 418-490 (`get_open_positions()` validation)
+- **Methods**: `run_at_market_open()`, `_reconcile_positions_with_broker_holdings()`, `get_open_positions()`
 
-### Solution
+**Related Edge Cases**:
+- **Edge Case #14, #15, #17**: Manual sell detection and validation (FIXED)
+- **Edge Case #1**: Immediate sell order update on reentry (FIXED)
 
-1. **Use broker holdings** as source of truth (not positions table)
-2. **Add validation** to ensure positions table is up-to-date
-3. **Reconcile before placing sell orders**
+**Note**: The race condition is mitigated because broker holdings are fetched fresh and used as source of truth, even if positions table update is delayed.
 
 ---
 
@@ -1336,7 +1374,7 @@ System checks for reentry:
 
 ### Low Issues (🟠)
 
-13. **Edge Case #6**: Sell order update timing
+13. ~~**Edge Case #6**: Sell order update timing~~ ✅ **FIXED** (as part of Edge Cases #14, #15, #17)
 
 ---
 
@@ -1361,7 +1399,7 @@ System checks for reentry:
 3. **Priority 3 (Low)**:
    - ~~Fix Edge Case #3: Reconcile manual holdings~~ ✅ **By Design** (not a bug)
    - ~~Fix Edge Case #5: Improve reentry reconciliation~~ ✅ **FIXED** (as part of Edge Case #2 fix)
-   - Fix Edge Case #6: Add timing validation
+   - ~~Fix Edge Case #6: Add timing validation~~ ✅ **FIXED** (as part of Edge Cases #14, #15, #17)
 
 ---
 
