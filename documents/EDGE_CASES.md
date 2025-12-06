@@ -1179,53 +1179,83 @@ if broker_qty == 0 and positions_qty > 0:
 ## Edge Case #16: Reentry on Mixed Holdings (Average Price Calculation)
 
 **Severity**: 🟡 **MEDIUM**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **By Design** (Not a bug - intended behavior)
 
-### Problem
+### Problem Description
 
-If user has manual holdings and system places a reentry, the average price calculation might be incorrect because it doesn't account for manual holdings when calculating the weighted average.
+If user has manual holdings and system places a reentry, the average price calculation only accounts for system holdings, not manual holdings. This means the positions table avg_price might differ from broker's actual avg_price (which includes manual holdings).
 
-### Current Flow
+### Current Flow (By Design)
 
 ```
-Manual holdings: 10 shares @ Rs 9.00 (bought manually)
+Manual holdings: 10 shares @ Rs 9.00 (bought manually, not tracked)
 System holdings: 35 shares @ Rs 9.00 (tracked in positions table)
 Total broker holdings: 45 shares
 
 System places reentry: 10 shares @ Rs 8.50
   - Positions table: Calculates avg_price for system holdings only
   - Formula: (35 * 9.00 + 10 * 8.50) / 45 = Rs 8.94 ✅
-  - But broker's actual avg_price might be different if manual holdings have different price
-  - Broker avg_price: (10 * 9.00 + 35 * 9.00 + 10 * 8.50) / 55 = Rs 8.95 ❌
+  - System avg_price: Rs 8.94 (for system's 45 shares) ✅
+  - Broker avg_price: (10 * 9.00 + 35 * 9.00 + 10 * 8.50) / 55 = Rs 8.95
+  - Broker avg_price includes manual holdings (55 total shares) ✅
 ```
 
-### Impact
+### Why This Is By Design
 
-- **Incorrect average price**: Positions table avg_price doesn't match broker's actual avg_price
-- **P&L calculation errors**: Unrealized P&L calculations might be wrong
-- **Data inconsistency**: Positions table doesn't reflect true cost basis
+**Business Logic**: System doesn't interfere with manual holdings. The system should only track and calculate average price for holdings that it created/tracked.
 
-### Code Location
+**Rationale**:
+- System only tracks its own holdings in the positions table
+- System avg_price reflects only system's cost basis (what system paid)
+- Manual holdings are intentionally excluded from system calculations
+- System avg_price is separate from broker avg_price (which includes manual holdings)
+- This allows system to track its own P&L independently
 
+**Example**:
+- System's cost basis: 45 shares @ Rs 8.94 = Rs 402.30
+- Broker's total cost basis: 55 shares @ Rs 8.95 = Rs 492.25 (includes manual 10 shares)
+- System correctly tracks only its own cost basis ✅
+
+### Current Implementation
+
+**Code Location**:
 - **File**: `modules/kotak_neo_auto_trader/unified_order_monitor.py`
-- **Lines**: 562-800
+- **Lines**: 822-830
 - **Method**: `_create_position_from_executed_order()`
 
-### Solution
+**Current Code**:
+```python
+if existing_pos:
+    # Update existing position (add to quantity, recalculate avg price)
+    existing_qty = existing_pos.quantity
+    existing_avg_price = existing_pos.avg_price
 
-1. **Use broker holdings avg_price** as source of truth (if available)
-2. **Calculate weighted average** considering all holdings (manual + system)
-3. **Or track system holdings separately** from manual holdings
+    # Calculate new average price (system holdings only)
+    total_cost = (existing_qty * existing_avg_price) + (execution_qty * execution_price)
+    new_qty = existing_qty + execution_qty
+    new_avg_price = total_cost / new_qty if new_qty > 0 else execution_price
+    # ✅ Correct: Only calculates for system holdings, not manual holdings
+```
 
-### Business Logic Consideration
+**How It Works**:
+1. System calculates weighted average using only system's holdings
+2. Formula: `(existing_qty * existing_avg_price + execution_qty * execution_price) / new_qty`
+3. This gives system's cost basis per share
+4. Manual holdings are not included in the calculation
 
-**Current Logic**: System only tracks its own holdings
-**Issue**: Average price calculation doesn't account for manual holdings in the same symbol
+### Impact (If Changed)
 
-**Clarification Needed**:
-- Should system use broker's avg_price (includes manual holdings)?
-- Or should system track only system holdings' avg_price (current behavior)?
-- Is current behavior acceptable (system avg_price separate from broker avg_price)?
+If system were to use broker's avg_price (which includes manual holdings):
+- ❌ System would track manual holdings' cost basis (violates business logic)
+- ❌ System P&L would be incorrect (includes manual holdings' gains/losses)
+- ❌ System couldn't track its own performance independently
+
+### Related Edge Cases
+
+- **Edge Case #3**: Manual holdings not reflected in sell orders (By Design - system only controls its own holdings)
+- **Edge Case #14, #15, #17**: Manual sell detection (FIXED - system detects when manual trades affect its own holdings)
+
+**Note**: Edge Case #16 is similar to Edge Case #3 - both are "By Design" because the system intentionally tracks only its own holdings, not manual holdings. The system avg_price correctly reflects only system's cost basis.
 
 ---
 
@@ -1392,7 +1422,7 @@ System checks for reentry:
 12. ~~**Edge Case #13**: Multiple reentries same day bypass~~ ✅ **FIXED** (as part of Edge Case #11)
 13. ~~**Edge Case #14**: Manual partial sell of system holdings~~ ✅ **FIXED**
 14. ~~**Edge Case #15**: Manual full sell of system holdings~~ ✅ **FIXED**
-15. **Edge Case #16**: Reentry on mixed holdings (average price calculation - caused by business logic)
+15. ~~**Edge Case #16**: Reentry on mixed holdings (average price calculation)~~ ✅ **By Design** (system only tracks its own cost basis)
 16. ~~**Edge Case #17**: Sell order quantity validation missing~~ ✅ **FIXED**
 17. **Edge Case #18**: Manual buy of system-tracked symbol (reentry confusion - caused by business logic)
 
@@ -1418,7 +1448,7 @@ System checks for reentry:
    - Fix Edge Case #12: Cancel pending reentry orders when position closes
    - Fix Edge Case #9: Handle partial sell execution
    - Fix Edge Case #18: Handle manual buy of system-tracked symbol
-   - Fix Edge Case #16: Reentry on mixed holdings (average price calculation)
+   - ~~Fix Edge Case #16: Reentry on mixed holdings (average price calculation)~~ ✅ **By Design** (not a bug)
 
 3. **Priority 3 (Low)**:
    - ~~Fix Edge Case #3: Reconcile manual holdings~~ ✅ **By Design** (not a bug)
