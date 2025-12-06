@@ -874,9 +874,9 @@ if self.reentries_today(symbol) >= 1:
 ### Critical Issues (🔴)
 
 1. ~~**Edge Case #1**: Sell order quantity not updated after reentry~~ ✅ **FIXED**
-2. **Edge Case #7**: Existing sell order quantity check logic
+2. ~~**Edge Case #7**: Existing sell order quantity check logic~~ ✅ **FIXED** (as part of Edge Case #1)
 3. ~~**Edge Case #8**: Sell order execution doesn't update positions table~~ ✅ **FIXED**
-4. **Edge Case #10**: Position quantity not reduced after sell
+4. ~~**Edge Case #10**: Position quantity not reduced after sell~~ ✅ **FIXED** (as part of Edge Case #8)
 
 ### Medium Issues (🟡)
 
