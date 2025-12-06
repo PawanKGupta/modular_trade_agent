@@ -1,7 +1,10 @@
 # Edge Cases in Trading Flow
 
 **Date Created**: 2025-01-22
+**Last Updated**: 2025-12-06
 **Status**: ⚠️ Identified - Needs Resolution
+
+**Note**: Edge Cases #14-18 are caused by the business logic where the system doesn't interfere with manual holdings. These require validation and detection mechanisms to ensure system only controls its own holdings correctly.
 
 ---
 
@@ -960,10 +963,14 @@ Next day: run_at_market_open() runs
 **Current Logic**: System doesn't interfere with manual holdings
 **Issue**: System doesn't detect when manual trades affect **system's own holdings**
 
-**Clarification Needed**:
-- Should system detect manual sells of **system holdings**?
-- Should system update positions table when manual sell detected?
-- Or should system only validate before placing orders (without updating)?
+**Recommended Fix Logic**:
+- ✅ **If broker_qty < positions_qty** (manual sell detected):
+  - Update positions table to match broker holdings (reduce quantity or mark closed)
+  - This ensures system only tracks what it actually owns
+- ❌ **If broker_qty > positions_qty** (manual buy detected):
+  - **IGNORE** - Don't update positions table
+  - Those are manual holdings, not system holdings
+  - System continues to track only its own holdings
 
 ---
 
@@ -1007,7 +1014,7 @@ Next day: run_at_market_open() runs
 ### Solution
 
 1. **Detect position closure** by comparing positions table vs broker holdings
-2. **Mark position as closed** when broker holdings = 0
+2. **Mark position as closed** when broker holdings = 0 (for system-tracked symbols)
 3. **Skip sell order placement** for closed positions
 4. **Reconcile before placing orders** to detect manual closures
 
@@ -1016,10 +1023,13 @@ Next day: run_at_market_open() runs
 **Current Logic**: System doesn't interfere with manual holdings
 **Issue**: System doesn't detect when manual trades **close system positions**
 
-**Clarification Needed**:
-- Should system detect manual closure of system positions?
-- Should system mark positions as closed when broker holdings = 0?
-- Or should system only skip orders when holdings = 0 (without updating DB)?
+**Recommended Fix Logic**:
+- ✅ **If broker_qty = 0 AND positions_qty > 0** (manual full sell detected):
+  - Mark position as closed in positions table (`closed_at = now()`, `quantity = 0`)
+  - This ensures system doesn't try to sell non-existent shares
+- ❌ **If broker_qty > positions_qty** (manual buy detected):
+  - **IGNORE** - Don't update positions table
+  - Those are manual holdings, not system holdings
 
 ---
 
@@ -1114,8 +1124,16 @@ System places sell order: 35 shares ❌
 
 1. **Validate quantity against broker holdings** before placing sell orders
 2. **Use min(positions_qty, broker_holdings_qty)** for sell order quantity
-3. **Update positions table** if broker holdings < positions table
+3. **Update positions table** if broker holdings < positions table (manual sell detected)
 4. **Log warning** when discrepancy detected
+5. **IGNORE** if broker holdings > positions table (manual buy - don't update)
+
+### Business Logic Consideration
+
+**Recommended Fix Logic**:
+- ✅ **If broker_qty < positions_qty**: Update positions table (manual sell detected)
+- ✅ **If broker_qty = 0**: Mark position as closed
+- ❌ **If broker_qty > positions_qty**: IGNORE (manual buy - don't track)
 
 ### Business Logic Consideration
 
@@ -1197,13 +1215,18 @@ System checks for reentry:
 ### Medium Issues (🟡)
 
 5. ~~**Edge Case #2**: Partial execution reconciliation~~ ✅ **FIXED**
-6. **Edge Case #3**: Manual holdings not reflected in sell orders
+6. **Edge Case #3**: Manual holdings not reflected in sell orders (By Design - system only controls its own holdings)
 7. **Edge Case #4**: Holdings vs positions mismatch
 8. **Edge Case #5**: Reentry order edge case - quantity mismatch
 9. **Edge Case #9**: Partial sell execution not handled
 10. ~~**Edge Case #11**: Reentry daily cap check discrepancy~~ ✅ **FIXED**
 11. **Edge Case #12**: Sell order execution while reentry pending
 12. ~~**Edge Case #13**: Multiple reentries same day bypass~~ ✅ **FIXED** (as part of Edge Case #11)
+13. **Edge Case #14**: Manual partial sell of system holdings (CRITICAL - caused by business logic)
+14. **Edge Case #15**: Manual full sell of system holdings (CRITICAL - caused by business logic)
+15. **Edge Case #16**: Reentry on mixed holdings (average price calculation - caused by business logic)
+16. **Edge Case #17**: Sell order quantity validation missing (CRITICAL - caused by business logic)
+17. **Edge Case #18**: Manual buy of system-tracked symbol (reentry confusion - caused by business logic)
 
 ### Low Issues (🟠)
 
