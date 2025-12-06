@@ -218,22 +218,18 @@ class TestPositionLoaderLoadOpenPositions:
 
         position_loader_module._position_loader_instance = None
 
-        # Use a unique path that doesn't exist and can't be created
-        # Platform-specific invalid paths to ensure load_history fails
-        import platform
+        # Mock load_history to raise an exception to test error handling
+        # This ensures the test works consistently across all OS and environments
+        with patch(
+            "modules.kotak_neo_auto_trader.services.position_loader.load_history"
+        ) as mock_load_history:
+            mock_load_history.side_effect = IOError("Permission denied: cannot access file")
 
-        if platform.system() == "Windows":
-            # Use a path with invalid characters that Windows cannot create
-            invalid_path = "C:\\<invalid>\\path.json"
-        else:
-            # Use a path in root directory that requires root permissions (will fail for normal users)
-            invalid_path = "/root/nonexistent/test_position_loader_handles_error.json"
-
-        loader = PositionLoader(history_path=invalid_path, enable_caching=False)
-        positions = loader.load_open_positions()
-        # Should return empty list on error, not raise exception
-        assert isinstance(positions, list)
-        assert len(positions) == 0
+            loader = PositionLoader(history_path="any_path.json", enable_caching=False)
+            positions = loader.load_open_positions()
+            # Should return empty list on error, not raise exception
+            assert isinstance(positions, list)
+            assert len(positions) == 0
 
 
 class TestPositionLoaderGetPositionsBySymbol:
