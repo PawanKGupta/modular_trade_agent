@@ -189,13 +189,13 @@ From `client.order_report()` and `client.order_history()`, the `fldQty` field in
 ## Edge Case #3: Manual Holdings Not Reflected in Sell Orders
 
 **Severity**: 🟡 **MEDIUM**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **By Design** (Not a bug - intended behavior)
 
-### Problem
+### Problem Description
 
-If user has manual holdings (bought outside the system) that are not in the positions table, sell orders use positions table quantity which is **less than actual holdings**. This causes selling less than what's actually owned.
+If user has manual holdings (bought outside the system) that are not in the positions table, sell orders use positions table quantity which is **less than total broker holdings**. This means manual holdings are not included in sell orders.
 
-### Current Flow
+### Current Flow (By Design)
 
 ```
 Manual holdings: 10 shares (bought manually, not tracked)
@@ -204,46 +204,49 @@ Total broker holdings: 45 shares
 
 Sell order placement:
   - get_open_positions() reads from positions table
-  - Gets qty = 35 (from positions table) ❌
-  - Should use qty = 45 (from broker holdings) ✅
-  - Places sell order for 35 shares
-  - Result: Only 35 shares sold, 10 shares remain unsold
+  - Gets qty = 35 (from positions table) ✅
+  - Uses qty = 35 (system holdings only) ✅
+  - Places sell order for 35 shares ✅
+  - Result: Only 35 shares sold, 10 manual shares remain unsold ✅
 ```
 
-### Impact
+### Why This Is By Design
 
-- **Partial position exits**: Not selling all available shares
-- **Remaining shares not tracked**: Manual holdings remain unsold
-- **Lost profit opportunity**: Shares not sold at target price
+**Business Logic**: System doesn't interfere with manual holdings. The system should only control and sell holdings that it created/tracked.
 
-### Code Location
+**Rationale**:
+- System only tracks its own holdings in the positions table
+- Manual holdings are intentionally excluded from system control
+- System should not sell shares it didn't buy
+- User maintains full control over manual holdings
 
+### Current Implementation
+
+The current implementation correctly uses `min(positions_qty, broker_qty)`:
+- If `positions_qty = 35` and `broker_qty = 45` (includes manual holdings)
+- Then `min(35, 45) = 35` ✅
+- System only sells its own 35 shares, not the manual 10
+
+**Code Location**:
 - **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
-- **Lines**: 400-461
+- **Lines**: 400-511
 - **Method**: `get_open_positions()`
 
-### Current Code
-
+**Current Code**:
 ```python
-def get_open_positions(self) -> list[dict[str, Any]]:
-    """
-    Get all open positions from database (positions table).
-    Database-only: No file fallback. Uses positions table as single source of truth.
-    """
-    positions = self.positions_repo.list(self.user_id)
-    for pos in positions:
-        if pos.closed_at is None:
-            open_positions.append({
-                "qty": pos.quantity,  # ❌ Uses positions table quantity only
-                # ...
-            })
+# Edge Case #17: Use min(positions_qty, broker_qty) for sell order quantity
+positions_qty = int(pos.quantity)
+broker_qty = broker_holdings_map.get(pos.symbol.upper(), positions_qty)
+sell_qty = min(positions_qty, broker_qty)  # ✅ Correct: Only sells system holdings
 ```
 
-### Solution
+### Related Edge Cases
 
-1. **Reconcile with broker holdings** before placing sell orders
-2. **Use broker holdings quantity** if it's greater than positions table
-3. **Update positions table** to match broker holdings (or track separately)
+- **Edge Case #14**: Manual partial sell of system holdings (FIXED - detects and updates)
+- **Edge Case #15**: Manual full sell of system holdings (FIXED - marks as closed)
+- **Edge Case #17**: Sell order quantity validation (FIXED - validates against broker holdings)
+
+**Note**: Edge Cases #14, #15, #17 handle when manual trades affect **system's own holdings**. Edge Case #3 is about manual holdings that are **separate from system holdings**.
 
 ---
 
@@ -1280,7 +1283,7 @@ System checks for reentry:
 ### Medium Issues (🟡)
 
 5. ~~**Edge Case #2**: Partial execution reconciliation~~ ✅ **FIXED**
-6. **Edge Case #3**: Manual holdings not reflected in sell orders (By Design - system only controls its own holdings)
+6. ~~**Edge Case #3**: Manual holdings not reflected in sell orders~~ ✅ **By Design** (system only controls its own holdings)
 7. **Edge Case #4**: Holdings vs positions mismatch
 8. **Edge Case #5**: Reentry order edge case - quantity mismatch
 9. **Edge Case #9**: Partial sell execution not handled
@@ -1308,9 +1311,9 @@ System checks for reentry:
    - Fix Edge Case #10: Reduce position quantity after sell
 
 2. **Priority 2 (Medium)**:
-   - Fix Edge Case #14: Detect and handle manual partial sell of system holdings (CRITICAL)
-   - Fix Edge Case #15: Detect and handle manual full sell of system holdings (CRITICAL)
-   - Fix Edge Case #17: Validate sell order quantity against broker holdings (CRITICAL)
+   - ~~Fix Edge Case #14: Detect and handle manual partial sell of system holdings~~ ✅ **FIXED**
+   - ~~Fix Edge Case #15: Detect and handle manual full sell of system holdings~~ ✅ **FIXED**
+   - ~~Fix Edge Case #17: Validate sell order quantity against broker holdings~~ ✅ **FIXED**
    - Fix Edge Case #4: Validate positions table against broker holdings
    - Fix Edge Case #12: Cancel pending reentry orders when position closes
    - Fix Edge Case #9: Handle partial sell execution
@@ -1318,7 +1321,7 @@ System checks for reentry:
    - Fix Edge Case #16: Reentry on mixed holdings (average price calculation)
 
 3. **Priority 3 (Low)**:
-   - Fix Edge Case #3: Reconcile manual holdings
+   - ~~Fix Edge Case #3: Reconcile manual holdings~~ ✅ **By Design** (not a bug)
    - Fix Edge Case #5: Improve reentry reconciliation
    - Fix Edge Case #6: Add timing validation
 
