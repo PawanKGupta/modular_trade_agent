@@ -306,6 +306,7 @@ Day 2:
 
 **Files Changed**:
 - `modules/kotak_neo_auto_trader/unified_order_monitor.py` - Updated sell order sync logic in `_create_position_from_executed_order()`
+- `tests/unit/kotak/test_partial_sell_reentry_race.py` (new) - 6 tests for partial sell + reentry scenarios
 
 **How It Works**:
 1. After reentry updates position quantity
