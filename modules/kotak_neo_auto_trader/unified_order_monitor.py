@@ -860,8 +860,10 @@ class UnifiedOrderMonitor:
                 # Reentry tracking: Detect if this is a reentry and update reentry fields
                 is_reentry = False
                 reentry_count = existing_pos.reentry_count or 0
-                reentries_array = existing_pos.reentries if existing_pos.reentries else []
+                # Create a copy to avoid modifying the original list (important for duplicate check later)
+                reentries_array = list(existing_pos.reentries) if existing_pos.reentries else []
                 last_reentry_price = existing_pos.last_reentry_price
+                reentry_data = None  # Initialize to None, will be set if is_reentry is True
 
                 # Check if this is a reentry: existing position OR order marked as reentry
                 if db_order and db_order.entry_type == "reentry":
@@ -912,7 +914,10 @@ class UnifiedOrderMonitor:
                         # Don't update reentry fields, but still update quantity and avg_price
                         is_reentry = False
                         reentry_count = existing_pos.reentry_count or 0
-                        reentries_array = existing_pos.reentries if existing_pos.reentries else []
+                        # Create a copy to avoid modifying the original list
+                        reentries_array = (
+                            list(existing_pos.reentries) if existing_pos.reentries else []
+                        )
                         last_reentry_price = existing_pos.last_reentry_price
                     else:
                         # Ensure reentries_array is a list
@@ -942,8 +947,9 @@ class UnifiedOrderMonitor:
                             # Don't update reentry fields, but still update quantity and avg_price
                             is_reentry = False
                             reentry_count = existing_pos.reentry_count or 0
+                            # Create a copy to avoid modifying the original list
                             reentries_array = (
-                                existing_pos.reentries if existing_pos.reentries else []
+                                list(existing_pos.reentries) if existing_pos.reentries else []
                             )
                             last_reentry_price = existing_pos.last_reentry_price
                         else:
@@ -982,26 +988,29 @@ class UnifiedOrderMonitor:
                     # Flaw #8 Fix: Re-check for duplicate reentry just before updating
                     # This prevents duplicate entries if two processes process the same order concurrently
                     # We already have the locked read from the closed_at check above
-                    if is_reentry and current_position:
+                    if is_reentry and current_position and reentry_data:
                         # Get latest reentries array from the locked position
                         latest_reentries = (
                             current_position.reentries if current_position.reentries else []
                         )
 
                         # Re-check for duplicate using latest data
-                        duplicate_found = next(
-                            (
-                                r
-                                for r in latest_reentries
-                                if r.get("order_id") == order_id
-                                or (
-                                    r.get("time") == reentry_data["time"]
-                                    and r.get("qty") == reentry_data["qty"]
-                                    and abs(r.get("price", 0) - reentry_data["price"]) < 0.01
-                                )
-                            ),
-                            None,
-                        )
+                        # Only check if reentry_data is defined (it should be if is_reentry is True)
+                        duplicate_found = None
+                        if reentry_data:
+                            duplicate_found = next(
+                                (
+                                    r
+                                    for r in latest_reentries
+                                    if r.get("order_id") == order_id
+                                    or (
+                                        r.get("time") == reentry_data["time"]
+                                        and r.get("qty") == reentry_data["qty"]
+                                        and abs(r.get("price", 0) - reentry_data["price"]) < 0.01
+                                    )
+                                ),
+                                None,
+                            )
 
                         if duplicate_found:
                             logger.warning(

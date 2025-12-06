@@ -216,13 +216,16 @@ class TestReentryTrackingInDatabase:
     def test_multiple_reentries_accumulate(self, unified_monitor, positions_repo, orders_repo):
         """Test that multiple reentries accumulate correctly"""
         # Create position with one existing reentry
+        # Note: Existing reentry MUST have order_id set to a DIFFERENT value than the new reentry
+        # to avoid false duplicate detection. Also ensure time/qty/price are different.
         existing_reentries = [
             {
-                "qty": 5,
+                "qty": 5,  # Different from new reentry (3)
                 "level": 30,
                 "rsi": 29.5,
-                "price": 2490.0,
-                "time": "2024-01-01T10:00:00",
+                "price": 2490.0,  # Different from new reentry (2480.0)
+                "time": "2024-01-01T10:00:00",  # Different from new reentry (2024-01-02T10:00:00)
+                "order_id": "ORDER123",  # DIFFERENT from new reentry ("ORDER456")
             }
         ]
 
@@ -239,9 +242,8 @@ class TestReentryTrackingInDatabase:
             opened_at=datetime.now(),
         )
 
-        positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
-
-        # Create second reentry order
+        # Create second reentry order with a specific execution time to avoid time-based duplicate detection
+        execution_time = datetime(2024, 1, 2, 10, 0, 0)  # Different day/time from first reentry
         reentry_order = Orders(
             id=2,
             user_id=1,
@@ -256,29 +258,67 @@ class TestReentryTrackingInDatabase:
                 "price": 2480.0,
                 "reentry_index": 2,
             },
+            filled_at=execution_time,  # Set specific execution time
+            execution_time=None,  # Ensure execution_time is None so filled_at is used
         )
 
         orders_repo.get = Mock(return_value=reentry_order)
         orders_repo.get_by_broker_order_id = Mock(return_value=reentry_order)
 
+        # Mock get_by_symbol_for_update to return initial_position
+        # This will be called twice: once before transaction (line 819), once inside transaction (line 970)
+        # Both calls should return the same position (without the new reentry ORDER456)
+        # The duplicate check inside transaction should NOT find ORDER456 in latest_reentries
+        # CRITICAL: The position returned must NOT have ORDER456 in reentries array
+        positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
+
         upsert_call_args = {}
 
         def capture_upsert(**kwargs):
             upsert_call_args.update(kwargs)
-            return initial_position
+            # Return updated position with new reentry added
+            updated_reentries = kwargs.get("reentries", existing_reentries.copy())
+            updated_position = Positions(
+                id=1,
+                user_id=1,
+                symbol="RELIANCE",
+                quantity=kwargs.get("quantity", 18),  # 15 + 3
+                avg_price=kwargs.get("avg_price", 2495.0),
+                reentry_count=kwargs.get("reentry_count", 2),
+                reentries=updated_reentries,
+                initial_entry_price=2500.0,
+                last_reentry_price=kwargs.get("last_reentry_price", 2480.0),
+                opened_at=initial_position.opened_at,
+            )
+            return updated_position
 
         positions_repo.upsert = Mock(side_effect=capture_upsert)
 
-        # Execute second reentry
-        unified_monitor._create_position_from_executed_order(
-            order_id="ORDER456",
-            order_info={"symbol": "RELIANCE-EQ"},
-            execution_price=2480.0,
-            execution_qty=3.0,
-        )
+        # Mock transaction context manager
+        from unittest.mock import patch
+
+        mock_transaction = Mock()
+        mock_transaction.__enter__ = Mock(return_value=unified_monitor.positions_repo.db)
+        mock_transaction.__exit__ = Mock(return_value=False)
+
+        with patch(
+            "modules.kotak_neo_auto_trader.unified_order_monitor.transaction",
+            return_value=mock_transaction,
+        ):
+            # Execute second reentry
+            unified_monitor._create_position_from_executed_order(
+                order_id="ORDER456",  # Different order_id from first reentry
+                order_info={"symbol": "RELIANCE-EQ"},
+                execution_price=2480.0,
+                execution_qty=3.0,
+            )
 
         # Verify reentry_count increased
-        assert upsert_call_args.get("reentry_count") == 2
+        assert upsert_call_args.get("reentry_count") == 2, (
+            f"Expected reentry_count=2, got {upsert_call_args.get('reentry_count')}. "
+            f"upsert was called: {positions_repo.upsert.called}, "
+            f"call count: {positions_repo.upsert.call_count}"
+        )
 
         # Verify reentries array has both entries
         reentries = upsert_call_args.get("reentries", [])
