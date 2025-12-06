@@ -590,13 +590,13 @@ From `client.order_report()`, check `fldQty` vs `qty`:
 ## Edge Case #10: Position Quantity Not Reduced After Sell
 
 **Severity**: 🔴 **CRITICAL**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-01-22, as part of Edge Case #8 fix)
 
 ### Problem
 
-When a sell order executes (fully or partially), the **position quantity in the positions table is NOT reduced**. It remains at the original quantity even though shares were sold.
+When a sell order executes (fully or partially), the **position quantity in the positions table was NOT reduced**. It remained at the original quantity even though shares were sold.
 
-### Current Flow
+### Original Flow (Before Fix)
 
 ```
 Initial position: 35 shares
@@ -617,26 +617,59 @@ Sell order executes: 35 shares @ Rs 9.50
 ### Code Location
 
 - **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
-- **Lines**: 1860-1906
+- **Lines**: 1960-1993
 - **Method**: `monitor_and_update()`
-
-### Current Code
-
-```python
-if completed_order_info:
-    # Mark position as closed in trade history
-    if self.mark_position_closed(symbol, order_price, completed_order_id):
-        # ❌ PROBLEM: Only updates trade history, not positions table
-        symbols_executed.append(symbol)
-```
 
 ### Solution
 
-1. **Update positions table** when sell order executes:
-   - If full execution: Set `quantity = 0`, `closed_at = execution_time`
-   - If partial execution: Reduce `quantity` by `fldQty`, keep `closed_at = NULL`
-2. **Add method**: `positions_repo.reduce_quantity(user_id, symbol, sold_qty)`
-3. **Call after** `mark_position_closed()`
+This issue was fixed as part of **Edge Case #8** fix. The code now properly updates the positions table for both full and partial sell executions.
+
+### Implementation
+
+**Fixed on**: 2025-01-22 (as part of Edge Case #8)
+
+**Current Code** (After Fix):
+
+```python
+# Update positions table (Edge Case #8 fix)
+if self.positions_repo and self.user_id:
+    if filled_qty >= order_qty:
+        # Full execution - mark position as closed
+        self.positions_repo.mark_closed(
+            user_id=self.user_id,
+            symbol=base_symbol,
+            closed_at=ist_now(),
+            exit_price=order_price,
+        )
+        # Sets quantity = 0 and closed_at ✅
+    else:
+        # Partial execution - reduce quantity, keep position open
+        self.positions_repo.reduce_quantity(
+            user_id=self.user_id,
+            symbol=base_symbol,
+            sold_quantity=float(filled_qty),
+        )
+        # Reduces quantity, marks closed if quantity becomes 0 ✅
+```
+
+**How It Works**:
+
+1. **Full Execution**:
+   - Calls `mark_closed()` which sets `quantity = 0` and `closed_at = execution_time`
+   - Position is properly marked as closed
+
+2. **Partial Execution**:
+   - Calls `reduce_quantity()` which subtracts `sold_quantity` from current quantity
+   - If quantity becomes 0, automatically marks as closed
+   - If quantity > 0, keeps position open with reduced quantity
+
+**Files Modified**:
+- `src/infrastructure/persistence/positions_repository.py` - Added `mark_closed()` and `reduce_quantity()` methods
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Updated `monitor_and_update()` to call these methods
+
+**Related**:
+- This fix is part of the same implementation as Edge Case #8
+- See Edge Case #8 for complete implementation details and tests
 
 ---
 
