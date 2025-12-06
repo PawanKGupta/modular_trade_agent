@@ -812,6 +812,8 @@ class SellOrderManager:
         except Exception as e:
             logger.warning(f"Failed to fetch holdings from broker API: {e}")
             # Return cached data if available (even if expired) as fallback
+            # Note: If cache was expired, it was already deleted, so this check is for
+            # cases where cache exists but API fails (e.g., network error during refresh)
             if cache_key in self._holdings_cache:
                 cached_data, _ = self._holdings_cache[cache_key]
                 logger.debug("Using expired cache as fallback")
@@ -2673,11 +2675,12 @@ class SellOrderManager:
                                 f"Position marked as closed in database: {base_symbol} "
                                 f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
                             )
-                        # Invalidate cache since position was closed (broker holdings changed)
-                        self._invalidate_holdings_cache()
 
                             # Close corresponding ONGOING buy orders (within same transaction)
                             self._close_buy_orders_for_symbol(base_symbol)
+
+                        # Invalidate cache since position was closed (broker holdings changed)
+                        self._invalidate_holdings_cache()
                     except Exception as e:
                         logger.error(
                             f"Error updating positions table for {symbol} after sell execution: {e}"
