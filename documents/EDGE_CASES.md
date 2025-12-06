@@ -942,53 +942,77 @@ if position and position.closed_at is not None:
 ## Edge Case #13: Multiple Reentries Same Day Bypass
 
 **Severity**: 🟡 **MEDIUM**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-01-22, as part of Edge Case #11 fix)
 
 ### Problem
 
-Due to Edge Case #11 (reentry daily cap check discrepancy), multiple reentries can be placed in the same day, bypassing the daily cap of 1 reentry per symbol per day.
+Due to Edge Case #11 (reentry daily cap check discrepancy), multiple reentries could be placed in the same day, bypassing the daily cap of 1 reentry per symbol per day.
 
-### Current Flow
+### Current Flow (Before Fix)
 
 ```
 Day 1: Initial entry at RSI 25
 Day 1: Reentry at RSI 18
   - reentries_today() returns 0 (wrong!) ❌
-  - Daily cap check: 0 < 1 → Allows reentry ✅ (should block!)
+  - Daily cap check: 0 < 1 → Allows reentry ❌ (should block!)
 
 Day 1: Another reentry at RSI 10
   - reentries_today() still returns 0 ❌
-  - Daily cap check: 0 < 1 → Allows reentry ✅ (should block!)
+  - Daily cap check: 0 < 1 → Allows reentry ❌ (should block!)
 
 Result: 2 reentries in same day (should be max 1) ❌
 ```
 
-### Impact
+### Impact (Before Fix)
 
 - **Daily cap bypassed**: Multiple reentries allowed
 - **Risk exposure**: More capital deployed than intended
 - **Feature broken**: Daily cap feature doesn't work
 
-### Code Location
+### Implementation
 
+**Fixed on**: 2025-01-22 (as part of Edge Case #11 fix)
+
+**How It Works**:
+
+Edge Case #13 was a consequence of Edge Case #11. When Edge Case #11 was fixed (updating `reentries_today()` to check the `reentries` array), Edge Case #13 was automatically fixed as well.
+
+**Current Flow (After Fix)**:
+
+```
+Day 1: Initial entry at RSI 25
+Day 1: Reentry at RSI 18
+  - reentries_today() checks reentries array ✅
+  - Finds 1 reentry from today ✅
+  - Daily cap check: 1 >= 1 → Blocks reentry ✅
+
+Day 1: Another reentry at RSI 10
+  - reentries_today() checks reentries array ✅
+  - Finds 1 reentry from today ✅
+  - Daily cap check: 1 >= 1 → Blocks reentry ✅
+
+Result: Only 1 reentry allowed per day ✅
+```
+
+**Code Location**:
 - **File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
-- **Lines**: 4765-4767
-- **Method**: `place_reentry_orders()`
+- **Lines**: 1953-2003 (`reentries_today()` method), 1543-1547 (`place_reentry_orders()` daily cap check)
+- **Method**: `reentries_today()`, `place_reentry_orders()`
 
-### Current Code
+**Current Code** (After Fix):
 
 ```python
 # Daily cap: allow max 1 re-entry per symbol per day
 if self.reentries_today(symbol) >= 1:
     logger.info(f"Re-entry daily cap reached for {symbol}; skipping today")
     continue
-# ❌ PROBLEM: reentries_today() doesn't work correctly (see Edge Case #11)
+# ✅ FIXED: reentries_today() now correctly counts from reentries array
 ```
 
-### Solution
+**Related Edge Cases**:
+- **Edge Case #11**: Reentry daily cap check discrepancy (FIXED - this fix also fixed Edge Case #13)
 
-1. **Fix `reentries_today()`** (see Edge Case #11 solution)
-2. **Add validation** to ensure daily cap is enforced
+**Note**: Edge Case #13 was automatically fixed when Edge Case #11 was fixed. The `reentries_today()` method now correctly counts reentries from the `reentries` array, ensuring the daily cap is properly enforced.
 3. **Test daily cap** with multiple reentries in same day
 
 ---
