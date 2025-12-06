@@ -16,7 +16,7 @@ import pytest
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine  # noqa: E402
 
 
 class TestReentriesTodayEdgeCase11:
