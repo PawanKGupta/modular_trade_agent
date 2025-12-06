@@ -265,20 +265,29 @@ Time T3: Reentry continues
 
 #### 6. **Partial Sell Execution + Reentry Race**
 
-**Problem**: If a sell order partially executes, then a reentry happens, the sell order still has the old quantity.
+**Problem**: If a sell order partially executes, then a reentry happens (next day), the sell order still has the old quantity.
+
+**Timing Context**:
+- **Sell orders**: Placed at 9:15 AM, can execute during market hours (9:15 AM - 3:30 PM)
+- **Reentry orders**: Placed at 4:05 PM (AMO for next day), execute next day during market hours
+- **Scenario spans 2 days**: Partial sell on Day 1, reentry executes on Day 2
 
 **Example Scenario**:
 ```
-Initial: Position = 100 shares, Sell order = 100 shares
+Day 1:
+  Initial: Position = 100 shares, Sell order = 100 shares (placed at 9:15 AM)
+  
+  1. Sell order partially executes during market hours: 50 shares sold
+     - Position updated: quantity = 50
+     - Sell order still active: quantity = 50 (remaining)
+  
+  2. At 4:05 PM: Reentry order placed (AMO for Day 2)
 
-1. Sell order partially executes: 50 shares sold
-   - Position updated: quantity = 50
-   - Sell order still active: quantity = 50 (remaining)
-
-2. Reentry executes: 20 shares bought
-   - Position updated: quantity = 70
-   - Sell order still shows: quantity = 50 ❌
-   - (should be updated to 70)
+Day 2:
+  3. Reentry executes during market hours: 20 shares bought
+     - Position updated: quantity = 70
+     - Sell order still shows: quantity = 50 ❌
+     - (should be updated to 70)
 ```
 
 **Impact**:
