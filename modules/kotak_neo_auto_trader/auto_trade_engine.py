@@ -1957,36 +1957,50 @@ class AutoTradeEngine:
         Edge Case #11 Fix: Checks the 'reentries' array within trade entries
         instead of looking for separate entries with entry_type == 'reentry'.
         Reentries are stored in the reentries array of existing trade entries.
+
+        Updated: Queries directly from database (Positions table) as the single
+        source of truth. JSON file is kept as backup only (write-only for archival).
         """
         try:
-            hist = self._load_trades_history()
-            trades = hist.get("trades") or []
+            # Database is the single source of truth
+            if not self.positions_repo or not self.user_id:
+                logger.warning(
+                    "Cannot query reentries: positions_repo or user_id not available. "
+                    "Returning 0 to prevent incorrect reentry cap checks."
+                )
+                return 0
+
+            position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+            if not position or not position.reentries:
+                return 0
+
+            # Count reentries from today
+            reentries = position.reentries
+            if not isinstance(reentries, list):
+                return 0
+
             today = datetime.now().date()
             cnt = 0
-            for t in trades:
-                sym = str(t.get("symbol") or "").upper()
-                if sym != base_symbol.upper():
+            for reentry in reentries:
+                if not isinstance(reentry, dict):
                     continue
-                # Edge Case #11 Fix: Check reentries array within the trade
-                # Reentries are stored in the reentries array, not as separate entries
-                reentries = t.get("reentries", [])
-                for reentry in reentries:
-                    reentry_time = reentry.get("time")
-                    if not reentry_time:
-                        continue
+                reentry_time = reentry.get("time")
+                if not reentry_time:
+                    continue
+                try:
+                    # Parse ISO format timestamp
+                    d = datetime.fromisoformat(reentry_time).date()
+                except Exception:
                     try:
-                        # Parse ISO format timestamp
-                        d = datetime.fromisoformat(reentry_time).date()
+                        # Fallback: try parsing just the date part
+                        d = datetime.strptime(reentry_time.split("T")[0], "%Y-%m-%d").date()
                     except Exception:
-                        try:
-                            # Fallback: try parsing just the date part
-                            d = datetime.strptime(reentry_time.split("T")[0], "%Y-%m-%d").date()
-                        except Exception:
-                            continue
-                    if d == today:
-                        cnt += 1
+                        continue
+                if d == today:
+                    cnt += 1
             return cnt
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error counting reentries for {base_symbol}: {e}")
             return 0
 
     def _attempt_place_order(
@@ -4973,7 +4987,9 @@ class AutoTradeEngine:
                                 logger.info(
                                     f"Trade history updated: {symbol} qty {old_qty} -> {new_total_qty}"
                                 )
-                                # Also add reentry metadata for tracking
+                                # Also add reentry metadata for tracking (backup to JSON only)
+                                # Note: Database is the source of truth. JSON is kept as backup/archival.
+                                # When reentry executes, database is updated via unified_order_monitor.
                                 if "reentries" not in e:
                                     e["reentries"] = []
                                 e["reentries"].append(

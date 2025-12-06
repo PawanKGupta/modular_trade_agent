@@ -651,6 +651,9 @@ class UnifiedOrderMonitor:
                         f"Reentry detected for {base_symbol}: Adding reentry #{reentry_count} "
                         f"(qty: {execution_qty}, price: Rs {execution_price:.2f})"
                     )
+                    # Note: Database is updated here (source of truth).
+                    # JSON backup is synced during reconciliation via _load_trades_history()
+                    # which reads from database and writes to JSON.
 
                 self.positions_repo.upsert(
                     user_id=self.user_id,
