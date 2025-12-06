@@ -61,14 +61,24 @@ EXPOSE 8000
 
 # Create startup script that runs migrations then starts the server
 RUN echo '#!/bin/bash' > /app/start.sh && \
-    echo 'set -e' >> /app/start.sh && \
+    echo 'set +e' >> /app/start.sh && \
     echo 'echo "Checking database migration status..."' >> /app/start.sh && \
-    echo 'if ! python -c "from sqlalchemy import create_engine, inspect; import os; engine = create_engine(os.getenv(\"DB_URL\", \"sqlite:///./data/app.db\")); inspector = inspect(engine); print(\"alembic_version\" in inspector.get_table_names())" 2>/dev/null | grep -q True; then' >> /app/start.sh && \
-    echo '  echo "Database exists but not tracked by Alembic. Stamping to latest revision..."' >> /app/start.sh && \
-    echo '  python -m alembic stamp head || echo "Warning: Could not stamp database"' >> /app/start.sh && \
-    echo 'fi' >> /app/start.sh && \
     echo 'echo "Running database migrations..."' >> /app/start.sh && \
-    echo 'python -m alembic upgrade head || echo "Warning: Migration failed, continuing anyway..."' >> /app/start.sh && \
+    echo 'MIGRATION_OUTPUT=$(python -m alembic upgrade head 2>&1)' >> /app/start.sh && \
+    echo 'MIGRATION_EXIT=$?' >> /app/start.sh && \
+    echo 'echo "$MIGRATION_OUTPUT"' >> /app/start.sh && \
+    echo 'if [ $MIGRATION_EXIT -ne 0 ]; then' >> /app/start.sh && \
+    echo '  if echo "$MIGRATION_OUTPUT" | grep -q "Can'\''t locate revision"; then' >> /app/start.sh && \
+    echo '    echo "Warning: Database references missing revision. Fixing alembic_version table..."' >> /app/start.sh && \
+    echo '    python -c "import sqlite3; import os; db_url = os.getenv(\"DB_URL\", \"sqlite:///./data/app.db\"); db_path = db_url.replace(\"sqlite:///\", \"\") if db_url.startswith(\"sqlite:///\") else db_url; conn = sqlite3.connect(db_path); cursor = conn.cursor(); cursor.execute(\"DELETE FROM alembic_version\"); conn.commit(); conn.close(); print(\"Cleared alembic_version table\")" 2>/dev/null || echo "Warning: Could not fix alembic_version table"' >> /app/start.sh && \
+    echo '    echo "Stamping database to head..."' >> /app/start.sh && \
+    echo '    python -m alembic stamp head || echo "Warning: Could not stamp database"' >> /app/start.sh && \
+    echo '    echo "Retrying migrations..."' >> /app/start.sh && \
+    echo '    python -m alembic upgrade head || echo "Warning: Migration failed after stamp, continuing anyway..."' >> /app/start.sh && \
+    echo '  else' >> /app/start.sh && \
+    echo '    echo "Warning: Migration failed, continuing anyway..."' >> /app/start.sh && \
+    echo '  fi' >> /app/start.sh && \
+    echo 'fi' >> /app/start.sh && \
     echo 'echo "Starting API server..."' >> /app/start.sh && \
     echo 'exec uvicorn server.app.main:app --host 0.0.0.0 --port 8000' >> /app/start.sh && \
     chmod +x /app/start.sh
