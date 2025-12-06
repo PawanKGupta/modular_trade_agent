@@ -1600,7 +1600,7 @@ If system were to skip reentry when manual buy detected:
 8. ~~**Edge Case #5**: Reentry order edge case - quantity mismatch~~ ✅ **FIXED** (as part of Edge Case #2 fix)
 9. ~~**Edge Case #9**: Partial sell execution not handled~~ ✅ **FIXED** (as part of Edge Case #8 fix)
 10. ~~**Edge Case #11**: Reentry daily cap check discrepancy~~ ✅ **FIXED**
-11. **Edge Case #12**: Sell order execution while reentry pending ⚠️ **PARTIALLY FIXED** (prevention implemented, immediate cancellation pending)
+11. ~~**Edge Case #12**: Sell order execution while reentry pending~~ ✅ **FIXED**
 12. ~~**Edge Case #13**: Multiple reentries same day bypass~~ ✅ **FIXED** (as part of Edge Case #11)
 13. ~~**Edge Case #14**: Manual partial sell of system holdings~~ ✅ **FIXED**
 14. ~~**Edge Case #15**: Manual full sell of system holdings~~ ✅ **FIXED**
