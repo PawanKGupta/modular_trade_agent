@@ -13,7 +13,7 @@
   - Transaction utility implemented
   - All multi-step operations wrapped in transactions
   - 21 tests added and passing
-  
+
 - ✅ **Flaw #2: Race Condition - Concurrent Reentry Executions** - Fixed (2025-12-07)
   - Database-level locking (`SELECT ... FOR UPDATE`) implemented
   - All position update operations use locking
@@ -276,11 +276,11 @@ Time T3: Reentry continues
 ```
 Day 1:
   Initial: Position = 100 shares, Sell order = 100 shares (placed at 9:15 AM)
-  
+
   1. Sell order partially executes during market hours: 50 shares sold
      - Position updated: quantity = 50
      - Sell order still active: quantity = 50 (remaining)
-  
+
   2. At 4:05 PM: Reentry order placed (AMO for Day 2)
 
 Day 2:
@@ -376,19 +376,29 @@ Time T3: Reentry A adds reentry to array
 Time T4: Reentry B adds reentry to array (duplicate!)
 ```
 
-**Current Code**:
-- Duplicate check uses `order_id` or `(time, qty, price)`
-- But check happens before database update
-- No database-level unique constraint
+**Status**: ✅ **FIXED** (2025-12-07)
 
-**Impact**:
-- Duplicate reentry entries in database
-- Incorrect `reentry_count`
+**Implementation**:
+- Re-check for duplicate reentry just before database update using locked read
+- Uses `get_by_symbol_for_update()` to get latest state of reentries array
+- If duplicate found, skip entire update (another process already processed it)
+- Transaction rollback ensures no partial updates
+- Lock ensures we see the latest state even if another process added the reentry
 
-**Recommendation**:
-- Use database-level unique constraint on `(order_id)` in reentries array
-- Or use application-level locking
-- Or use atomic array append operation
+**Files Changed**:
+- `modules/kotak_neo_auto_trader/unified_order_monitor.py` - Added re-check in `_create_position_from_executed_order()`
+
+**How It Works**:
+1. Initial duplicate check (early exit if duplicate found in initial read)
+2. Process reentry data (calculations, validation, etc.)
+3. **Re-check for duplicate with locked read just before `upsert()`**
+4. If duplicate found, skip update and return (transaction rolls back)
+5. If no duplicate, proceed with update
+
+**Benefits**:
+- Prevents duplicate reentry entries even with concurrent processing
+- Uses database-level locking for consistency
+- No database schema changes required
 
 ---
 

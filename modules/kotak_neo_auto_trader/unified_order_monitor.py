@@ -979,6 +979,101 @@ class UnifiedOrderMonitor:
                         # Transaction will rollback automatically
                         return
 
+                    # Flaw #8 Fix: Re-check for duplicate reentry just before updating
+                    # This prevents duplicate entries if two processes process the same order concurrently
+                    # We already have the locked read from the closed_at check above
+                    if is_reentry and current_position:
+                        # Get latest reentries array from the locked position
+                        latest_reentries = (
+                            current_position.reentries if current_position.reentries else []
+                        )
+
+                        # Re-check for duplicate using latest data
+                        duplicate_found = next(
+                            (
+                                r
+                                for r in latest_reentries
+                                if r.get("order_id") == order_id
+                                or (
+                                    r.get("time") == reentry_data["time"]
+                                    and r.get("qty") == reentry_data["qty"]
+                                    and abs(r.get("price", 0) - reentry_data["price"]) < 0.01
+                                )
+                            ),
+                            None,
+                        )
+
+                        if duplicate_found:
+                            logger.warning(
+                                f"Duplicate reentry detected for {base_symbol} (order_id: {order_id}) "
+                                f"during final check. Another process may have already added this reentry. "
+                                f"Skipping entire update to prevent duplicate entry and double-counting."
+                            )
+                            # If duplicate found, another process already processed this order
+                            # and updated the position (including quantity and avg_price)
+                            # Skip the entire update to avoid duplicate entry and double-counting
+                            # Transaction will rollback automatically (no changes made)
+                            return
+
+                    # Flaw #9 Fix: Try broker API call BEFORE updating database
+                    # If broker API fails, we still update position (primary operation - order executed)
+                    # This prevents losing the position update, but creates temporary inconsistency
+                    # The sell order update will be retried later via periodic mismatch check (Flaw #7 fix)
+                    sell_order_update_success = True
+                    if new_qty > existing_qty and self.sell_manager:
+                        try:
+                            # Check for existing sell order
+                            existing_orders = self.sell_manager.get_existing_sell_orders()
+                            if base_symbol.upper() in existing_orders:
+                                existing_order = existing_orders[base_symbol.upper()]
+                                existing_order_qty = existing_order.get("qty", 0)
+                                existing_order_price = existing_order.get("price", 0)
+                                existing_order_id = existing_order.get("order_id")
+
+                                # Update sell order if quantity doesn't match position
+                                if existing_order_id and new_qty != existing_order_qty:
+                                    if new_qty > existing_order_qty:
+                                        logger.info(
+                                            f"Reentry detected for {base_symbol}: Updating sell order quantity "
+                                            f"from {existing_order_qty} to {new_qty} (Order ID: {existing_order_id})"
+                                        )
+                                    else:
+                                        logger.info(
+                                            f"Sell order quantity mismatch for {base_symbol}: Position={new_qty}, "
+                                            f"Sell order={existing_order_qty}. Updating to match position "
+                                            f"(Order ID: {existing_order_id})"
+                                        )
+
+                                    # Flaw #9 Fix: Try broker API call BEFORE updating database
+                                    # If it fails, we'll still update position (primary operation)
+                                    # but log warning for retry later (Flaw #7 fix handles this)
+                                    sell_order_update_success = self.sell_manager.update_sell_order(
+                                        order_id=str(existing_order_id),
+                                        symbol=base_symbol,
+                                        qty=int(new_qty),
+                                        new_price=existing_order_price,
+                                    )
+
+                                    if sell_order_update_success:
+                                        logger.info(
+                                            f"Successfully updated sell order for {base_symbol}: "
+                                            f"{existing_order_qty} -> {new_qty} shares @ Rs {existing_order_price:.2f}"
+                                        )
+                                    else:
+                                        logger.warning(
+                                            f"Failed to update sell order for {base_symbol} via broker API. "
+                                            f"Position will still be updated (primary operation - order executed). "
+                                            f"Sell order will be retried later via periodic mismatch check (Flaw #7 fix)."
+                                        )
+                        except Exception as e:
+                            # Broker API call failed - log warning but continue with position update
+                            logger.warning(
+                                f"Error updating sell order after reentry for {base_symbol}: {e}. "
+                                f"Position will still be updated (primary operation - order executed). "
+                                f"Sell order will be retried later via periodic mismatch check (Flaw #7 fix)."
+                            )
+                            sell_order_update_success = False
+
                     self.positions_repo.upsert(
                         user_id=self.user_id,
                         symbol=base_symbol,
@@ -1028,62 +1123,6 @@ class UnifiedOrderMonitor:
                     f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}"
                     + (f", reentry_count: {reentry_count}" if is_reentry else "")
                 )
-
-                # Edge Case #1 Fix: Update existing sell order if quantity increased (reentry scenario)
-                # Also handles partial sell + reentry: ensures sell order quantity matches position
-                if new_qty > existing_qty and self.sell_manager:
-                    try:
-                        # Check for existing sell order
-                        existing_orders = self.sell_manager.get_existing_sell_orders()
-                        if base_symbol.upper() in existing_orders:
-                            existing_order = existing_orders[base_symbol.upper()]
-                            existing_order_qty = existing_order.get("qty", 0)
-                            existing_order_price = existing_order.get("price", 0)
-                            existing_order_id = existing_order.get("order_id")
-
-                            # Update sell order if quantity doesn't match position
-                            # This handles:
-                            # 1. Reentry increases position (new_qty > existing_order_qty)
-                            # 2. Partial sell + reentry (new_qty may be > or = existing_order_qty)
-                            if existing_order_id and new_qty != existing_order_qty:
-                                if new_qty > existing_order_qty:
-                                    logger.info(
-                                        f"Reentry detected for {base_symbol}: Updating sell order quantity "
-                                        f"from {existing_order_qty} to {new_qty} (Order ID: {existing_order_id})"
-                                    )
-                                else:
-                                    logger.info(
-                                        f"Sell order quantity mismatch for {base_symbol}: Position={new_qty}, "
-                                        f"Sell order={existing_order_qty}. Updating to match position "
-                                        f"(Order ID: {existing_order_id})"
-                                    )
-
-                                # Update sell order with new quantity (keep same price)
-                                if self.sell_manager.update_sell_order(
-                                    order_id=str(existing_order_id),
-                                    symbol=base_symbol,
-                                    qty=int(new_qty),
-                                    new_price=existing_order_price,
-                                ):
-                                    logger.info(
-                                        f"Successfully updated sell order for {base_symbol}: "
-                                        f"{existing_order_qty} -> {new_qty} shares @ Rs {existing_order_price:.2f}"
-                                    )
-                                else:
-                                    logger.warning(
-                                        f"Failed to update sell order for {base_symbol}. "
-                                        f"Order will be updated next day by run_at_market_open()."
-                                    )
-                            elif existing_order_id and new_qty == existing_order_qty:
-                                logger.debug(
-                                    f"Sell order quantity already matches position for {base_symbol}: {new_qty} shares"
-                                )
-                    except Exception as e:
-                        # Don't fail position update if sell order update fails
-                        logger.warning(
-                            f"Error updating sell order after reentry for {base_symbol}: {e}. "
-                            f"Order will be updated next day by run_at_market_open()."
-                        )
             else:
                 # Create new position (wrapped in transaction for consistency)
                 # If already in a transaction, SQLAlchemy will use savepoints automatically

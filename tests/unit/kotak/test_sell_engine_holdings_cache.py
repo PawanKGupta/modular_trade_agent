@@ -161,7 +161,7 @@ class TestHoldingsAPI:
             avg_price=100.0,
         )
         sell_manager.positions_repo = Mock()
-        sell_manager.positions_repo.get_by_symbol = Mock(return_value=position)
+        sell_manager.positions_repo.get_by_symbol_for_update = Mock(return_value=position)
         sell_manager.user_id = 1
 
         # Call with provided holdings response
@@ -190,7 +190,7 @@ class TestHoldingsAPI:
             avg_price=100.0,
         )
         sell_manager.positions_repo = Mock()
-        sell_manager.positions_repo.get_by_symbol = Mock(return_value=position)
+        sell_manager.positions_repo.get_by_symbol_for_update = Mock(return_value=position)
         sell_manager.user_id = 1
 
         # Call without providing holdings response
@@ -199,7 +199,8 @@ class TestHoldingsAPI:
         ):
             result = sell_manager._reconcile_single_symbol("RELIANCE", None)
 
-        # Should fetch from API
+        # Should fetch from API (only if position exists and is not closed)
+        # Position exists and matches, so get_holdings should be called
         mock_portfolio.get_holdings.assert_called_once()
         assert isinstance(result, bool)
 

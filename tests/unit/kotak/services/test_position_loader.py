@@ -215,9 +215,21 @@ class TestPositionLoaderLoadOpenPositions:
         """Test loading handles file errors gracefully"""
         # Reset singleton to ensure test isolation
         import modules.kotak_neo_auto_trader.services.position_loader as position_loader_module
+
         position_loader_module._position_loader_instance = None
 
-        loader = PositionLoader(history_path="/nonexistent/path.json", enable_caching=False)
+        # Use a unique path that doesn't exist and can't be created
+        # Platform-specific invalid paths to ensure load_history fails
+        import platform
+
+        if platform.system() == "Windows":
+            # Use a path with invalid characters that Windows cannot create
+            invalid_path = "C:\\<invalid>\\path.json"
+        else:
+            # Use a path in root directory that requires root permissions (will fail for normal users)
+            invalid_path = "/root/nonexistent/test_position_loader_handles_error.json"
+
+        loader = PositionLoader(history_path=invalid_path, enable_caching=False)
         positions = loader.load_open_positions()
         # Should return empty list on error, not raise exception
         assert isinstance(positions, list)
