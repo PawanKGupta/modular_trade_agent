@@ -7,8 +7,9 @@ Tests verify that:
 3. Locked read prevents stale quantity updates
 """
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
 from src.infrastructure.db.models import Positions
@@ -42,6 +43,9 @@ class TestReentryDuringSellOrderUpdate:
         manager.get_current_ema9 = MagicMock(return_value=100.0)
         manager.orders = MagicMock()
         manager.orders.place_order = MagicMock(return_value={"order_id": "TEST123"})
+        manager.orders.get_orders = MagicMock(
+            return_value={"data": []}
+        )  # Mock for run_at_market_open optimization
         manager._register_order = MagicMock()
         return manager
 
@@ -215,8 +219,8 @@ class TestReentryDuringSellOrderUpdate:
         sell_manager.run_at_market_open()
 
         # Verify locked read was used (not regular get_by_symbol)
-        mock_positions_repo.get_by_symbol_for_update.assert_called_once()
+        # Expected 2 calls: one for re-read before update, one for _reconcile_single_symbol()
+        assert mock_positions_repo.get_by_symbol_for_update.call_count == 2
         # Verify regular get_by_symbol was NOT called
         if hasattr(mock_positions_repo, "get_by_symbol"):
             mock_positions_repo.get_by_symbol.assert_not_called()
-

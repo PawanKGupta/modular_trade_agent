@@ -6,9 +6,9 @@ by the periodic mismatch check in monitor_and_update().
 """
 
 import sys
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
-from datetime import datetime
 
 import pytest
 
@@ -43,6 +43,9 @@ class TestSellOrderUpdateFailureHandling:
             manager.positions_repo = mock_positions_repo
             manager.user_id = 1
             manager.orders = Mock()
+            manager.orders.get_orders = Mock(
+                return_value={"data": []}
+            )  # Mock for monitor_and_update optimization
             manager.get_existing_sell_orders = Mock(return_value={})
             manager.update_sell_order = Mock(return_value=True)
             manager._register_order = Mock()
@@ -331,4 +334,3 @@ class TestSellOrderUpdateFailureHandling:
         # Verify: Exception handled gracefully, no update attempted
         assert fixed_count == 0
         assert not sell_manager.update_sell_order.called
-

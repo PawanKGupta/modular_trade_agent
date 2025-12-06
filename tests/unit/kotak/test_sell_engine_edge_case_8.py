@@ -10,7 +10,6 @@ from unittest.mock import Mock, patch
 import pytest
 
 from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
-from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 from src.infrastructure.db.timezone_utils import ist_now
 
 
@@ -73,6 +72,10 @@ def sell_manager(mock_auth, positions_repo, user_id):
                 positions_repo=positions_repo,
                 user_id=user_id,
             )
+            manager.orders = Mock()
+            manager.orders.get_orders = Mock(
+                return_value={"data": []}
+            )  # Mock for monitor_and_update optimization
             return manager
 
 
@@ -83,9 +86,6 @@ class TestHasCompletedSellOrderReturnsFilledQuantity:
         self, sell_manager
     ):
         """Test that has_completed_sell_order() extracts filled_qty from OrderStatusVerifier"""
-        from modules.kotak_neo_auto_trader.utils.order_field_extractor import (
-            OrderFieldExtractor,
-        )
 
         # Mock OrderStatusVerifier
         mock_verifier = Mock()
@@ -110,9 +110,7 @@ class TestHasCompletedSellOrderReturnsFilledQuantity:
         assert result["order_qty"] == 35
         assert result["price"] == 2550.0
 
-    def test_has_completed_sell_order_returns_filled_qty_from_direct_api(
-        self, sell_manager
-    ):
+    def test_has_completed_sell_order_returns_filled_qty_from_direct_api(self, sell_manager):
         """Test that has_completed_sell_order() extracts filled_qty from direct API call"""
         # Mock orders.get_orders() to return completed order
         mock_orders = Mock()
@@ -140,9 +138,7 @@ class TestHasCompletedSellOrderReturnsFilledQuantity:
         assert result["order_qty"] == 35
         assert result["price"] == 2550.0
 
-    def test_has_completed_sell_order_returns_zero_when_no_filled_qty(
-        self, sell_manager
-    ):
+    def test_has_completed_sell_order_returns_zero_when_no_filled_qty(self, sell_manager):
         """Test that has_completed_sell_order() returns 0 for filled_qty when not available"""
         # Mock orders.get_orders() to return completed order without fldQty
         mock_orders = Mock()
@@ -329,7 +325,6 @@ class TestMonitorAndUpdatePositionTableUpdates:
                     assert sample_position.closed_at is not None
                     assert sample_position.quantity == 0.0
 
-
     def test_monitor_and_update_handles_database_error_gracefully(
         self, sell_manager, user_id, sample_position
     ):
@@ -349,9 +344,7 @@ class TestMonitorAndUpdatePositionTableUpdates:
                 },
             ):
                 with patch.object(sell_manager, "state_manager", None):
-                    with patch.object(
-                        sell_manager, "mark_position_closed", return_value=True
-                    ):
+                    with patch.object(sell_manager, "mark_position_closed", return_value=True):
                         sell_manager.active_sell_orders = {
                             "RELIANCE": {
                                 "order_id": "ORDER123",
@@ -406,4 +399,3 @@ class TestMonitorAndUpdatePositionTableUpdates:
                     positions_repo.db.refresh(position)
                     assert position.closed_at is not None
                     assert position.quantity == 0.0
-

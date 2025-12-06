@@ -1347,6 +1347,13 @@ class UnifiedOrderMonitor:
                 for symbol in self.sell_manager.active_sell_orders.keys()
             }
 
+            # Optimization: Fetch orders once and reuse for has_completed_sell_order checks
+            all_orders_response = None
+            try:
+                all_orders_response = self.sell_manager.orders.get_orders()
+            except Exception as e:
+                logger.debug(f"Failed to fetch orders for place_sell_orders_for_new_positions: {e}")
+
             orders_placed = 0
 
             for db_order in newly_executed_orders:
@@ -1359,7 +1366,10 @@ class UnifiedOrderMonitor:
                         continue
 
                     # Check if position already has a completed sell order
-                    completed_order_info = self.sell_manager.has_completed_sell_order(base_symbol)
+                    # Reuse orders data to avoid duplicate API calls
+                    completed_order_info = self.sell_manager.has_completed_sell_order(
+                        base_symbol, all_orders_response
+                    )
                     if completed_order_info:
                         logger.debug(f"Skipping {base_symbol}: Already has completed sell order")
                         continue

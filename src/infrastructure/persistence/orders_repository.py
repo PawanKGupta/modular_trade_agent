@@ -341,7 +341,8 @@ class OrdersRepository:
 
         if auto_commit:
             self.db.commit()
-        self.db.refresh(order)
+            self.db.refresh(order)  # Only refresh after commit to get database state
+        # When auto_commit=False, don't refresh - changes are only in session
         return order
 
     def cancel(self, order: Orders, auto_commit: bool = True) -> None:

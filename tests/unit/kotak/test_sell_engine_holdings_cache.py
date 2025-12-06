@@ -8,7 +8,7 @@ reused from monitoring cycles instead.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -37,7 +37,10 @@ class TestHoldingsAPI:
     @pytest.fixture
     def sell_manager(self, mock_auth, mock_portfolio):
         """Create SellOrderManager instance with mocks."""
-        with patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoPortfolio", return_value=mock_portfolio):
+        with patch(
+            "modules.kotak_neo_auto_trader.sell_engine.KotakNeoPortfolio",
+            return_value=mock_portfolio,
+        ):
             manager = SellOrderManager(auth=mock_auth, history_path="test_history.json")
             manager.portfolio = mock_portfolio
             return manager
@@ -84,12 +87,14 @@ class TestHoldingsAPI:
 
         assert result == "invalid response"
 
-    def test_reconcile_positions_with_broker_holdings_uses_provided_holdings(self, sell_manager, mock_portfolio):
+    def test_reconcile_positions_with_broker_holdings_uses_provided_holdings(
+        self, sell_manager, mock_portfolio
+    ):
         """Test that _reconcile_positions_with_broker_holdings() uses provided holdings response."""
         from src.infrastructure.db.models import Positions
 
         mock_holdings = {"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 5}]}
-        
+
         # Create a position with more quantity than broker (manual sell detected)
         position = Positions(
             user_id=1,
@@ -102,7 +107,9 @@ class TestHoldingsAPI:
         sell_manager.user_id = 1
 
         # Call with provided holdings response
-        with patch("modules.kotak_neo_auto_trader.sell_engine.extract_base_symbol", return_value="RELIANCE"):
+        with patch(
+            "modules.kotak_neo_auto_trader.sell_engine.extract_base_symbol", return_value="RELIANCE"
+        ):
             result = sell_manager._reconcile_positions_with_broker_holdings(mock_holdings)
 
         # Should detect mismatch and update position
@@ -110,7 +117,9 @@ class TestHoldingsAPI:
         # Should not call portfolio.get_holdings() since we provided the response
         mock_portfolio.get_holdings.assert_not_called()
 
-    def test_reconcile_positions_with_broker_holdings_fetches_when_not_provided(self, sell_manager, mock_portfolio):
+    def test_reconcile_positions_with_broker_holdings_fetches_when_not_provided(
+        self, sell_manager, mock_portfolio
+    ):
         """Test that _reconcile_positions_with_broker_holdings() fetches holdings when not provided."""
         from src.infrastructure.db.models import Positions
 
@@ -129,7 +138,9 @@ class TestHoldingsAPI:
         sell_manager.user_id = 1
 
         # Call without providing holdings response
-        with patch("modules.kotak_neo_auto_trader.sell_engine.extract_base_symbol", return_value="RELIANCE"):
+        with patch(
+            "modules.kotak_neo_auto_trader.sell_engine.extract_base_symbol", return_value="RELIANCE"
+        ):
             result = sell_manager._reconcile_positions_with_broker_holdings(None)
 
         # Should fetch from API
@@ -141,7 +152,7 @@ class TestHoldingsAPI:
         from src.infrastructure.db.models import Positions
 
         mock_holdings = {"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 5}]}
-        
+
         # Create a position with more quantity than broker (manual sell detected)
         position = Positions(
             user_id=1,
@@ -154,7 +165,9 @@ class TestHoldingsAPI:
         sell_manager.user_id = 1
 
         # Call with provided holdings response
-        with patch("modules.kotak_neo_auto_trader.sell_engine.extract_base_symbol", return_value="RELIANCE"):
+        with patch(
+            "modules.kotak_neo_auto_trader.sell_engine.extract_base_symbol", return_value="RELIANCE"
+        ):
             result = sell_manager._reconcile_single_symbol("RELIANCE", mock_holdings)
 
         # Should detect mismatch and update position
@@ -181,7 +194,9 @@ class TestHoldingsAPI:
         sell_manager.user_id = 1
 
         # Call without providing holdings response
-        with patch("modules.kotak_neo_auto_trader.sell_engine.extract_base_symbol", return_value="RELIANCE"):
+        with patch(
+            "modules.kotak_neo_auto_trader.sell_engine.extract_base_symbol", return_value="RELIANCE"
+        ):
             result = sell_manager._reconcile_single_symbol("RELIANCE", None)
 
         # Should fetch from API
@@ -191,6 +206,7 @@ class TestHoldingsAPI:
     def test_reconcile_single_symbol_handles_closed_position(self, sell_manager, mock_portfolio):
         """Test that _reconcile_single_symbol() handles closed positions."""
         from datetime import datetime
+
         from src.infrastructure.db.models import Positions
 
         # Create a closed position
@@ -227,7 +243,6 @@ class TestHoldingsAPI:
 
     def test_get_open_positions_fetches_holdings(self, sell_manager, mock_portfolio):
         """Test that get_open_positions() fetches holdings for validation."""
-        from datetime import datetime
         from src.infrastructure.db.models import Positions
         from src.infrastructure.db.timezone_utils import ist_now
 
@@ -249,7 +264,9 @@ class TestHoldingsAPI:
         sell_manager.orders_repo.list = Mock(return_value=[])
 
         # Call get_open_positions
-        with patch("modules.kotak_neo_auto_trader.sell_engine.extract_base_symbol", return_value="RELIANCE"):
+        with patch(
+            "modules.kotak_neo_auto_trader.sell_engine.extract_base_symbol", return_value="RELIANCE"
+        ):
             result = sell_manager.get_open_positions()
 
         # Should fetch holdings for validation

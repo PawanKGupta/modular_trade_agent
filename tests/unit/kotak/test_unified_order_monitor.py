@@ -24,6 +24,9 @@ class TestUnifiedOrderMonitor:
         """Create mock SellOrderManager"""
         sell_manager = Mock()
         sell_manager.orders = Mock()
+        sell_manager.orders.get_orders = Mock(
+            return_value={"data": []}
+        )  # Mock for place_sell_orders_for_new_positions optimization
         sell_manager.monitor_and_update = Mock(
             return_value={"checked": 5, "updated": 2, "executed": 1}
         )

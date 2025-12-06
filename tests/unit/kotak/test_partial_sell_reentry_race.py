@@ -82,7 +82,7 @@ class TestPartialSellReentryRace:
     ):
         """
         Test that after partial sell (50 shares), reentry (20 shares) updates sell order correctly.
-        
+
         Scenario:
         - Initial: Position = 100, Sell order = 100
         - Partial sell: 50 shares → Position = 50, Sell order = 50 (remaining)
@@ -156,7 +156,7 @@ class TestPartialSellReentryRace:
     ):
         """
         Test that the condition correctly detects mismatch after partial sell.
-        
+
         Even if new_qty (70) > existing_order_qty (50), it should still update
         because they don't match (new_qty != existing_order_qty).
         """
@@ -212,7 +212,7 @@ class TestPartialSellReentryRace:
     ):
         """
         Test that if sell order quantity already matches position, no update is needed.
-        
+
         Scenario:
         - Position = 50, Sell order = 50 (already in sync)
         - Reentry: 20 shares → Position = 70
@@ -270,7 +270,7 @@ class TestPartialSellReentryRace:
     ):
         """
         Test various partial sell + reentry scenarios with different quantities.
-        
+
         Scenario 1: Large partial sell, small reentry
         - Position: 100 → 30 (partial sell 70), then 30 → 40 (reentry 10)
         - Sell order: 30 → should be updated to 40
@@ -331,7 +331,7 @@ class TestPartialSellReentryRace:
     ):
         """
         Test that if no sell order exists, no update is attempted.
-        
+
         Scenario: Partial sell happened, but sell order was fully executed or cancelled.
         Reentry should still work, but no sell order update needed.
         """
@@ -380,7 +380,7 @@ class TestPartialSellReentryRace:
     ):
         """
         Test that if sell order update fails, position update still succeeds.
-        
+
         The position update should not fail if sell order update fails.
         """
         # Setup: Position after partial sell
@@ -434,4 +434,3 @@ class TestPartialSellReentryRace:
 
         # Verify: Sell order update was attempted (but failed)
         assert mock_sell_manager.update_sell_order.called
-

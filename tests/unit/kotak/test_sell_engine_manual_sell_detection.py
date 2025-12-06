@@ -6,7 +6,7 @@ Edge Cases #14, #15, #17: Manual sell detection and positions table updates.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -41,13 +41,20 @@ class TestManualSellDetection:
     @pytest.fixture
     def sell_manager(self, mock_auth, mock_positions_repo, mock_portfolio):
         """Create SellOrderManager instance with mocks."""
-        with patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoPortfolio", return_value=mock_portfolio):
+        with patch(
+            "modules.kotak_neo_auto_trader.sell_engine.KotakNeoPortfolio",
+            return_value=mock_portfolio,
+        ):
             manager = SellOrderManager(
                 auth=mock_auth,
                 positions_repo=mock_positions_repo,
                 user_id=1,
             )
             manager.portfolio = mock_portfolio
+            manager.orders = Mock()
+            manager.orders.get_orders = Mock(
+                return_value={"data": []}
+            )  # Mock for run_at_market_open optimization
             return manager
 
     def test_reconcile_manual_full_sell(self, sell_manager, mock_positions_repo, mock_portfolio):
@@ -173,7 +180,9 @@ class TestManualSellDetection:
         mock_positions_repo.reduce_quantity.assert_not_called()
         mock_positions_repo.mark_closed.assert_not_called()
 
-    def test_get_open_positions_validates_quantity(self, sell_manager, mock_positions_repo, mock_portfolio):
+    def test_get_open_positions_validates_quantity(
+        self, sell_manager, mock_positions_repo, mock_portfolio
+    ):
         """Test get_open_positions uses min(positions_qty, broker_qty) for sell orders."""
         # Setup: Position in DB shows 35 shares, broker has 30
         position = Mock(spec=Positions)
@@ -204,7 +213,9 @@ class TestManualSellDetection:
         assert open_positions[0]["symbol"] == "RELIANCE"
         assert open_positions[0]["qty"] == 30  # Uses broker_qty (30), not positions_qty (35)
 
-    def test_get_open_positions_uses_positions_qty_when_broker_more(self, sell_manager, mock_positions_repo, mock_portfolio):
+    def test_get_open_positions_uses_positions_qty_when_broker_more(
+        self, sell_manager, mock_positions_repo, mock_portfolio
+    ):
         """Test get_open_positions uses positions_qty when broker has more (manual buy ignored)."""
         # Setup: Position in DB shows 35 shares, broker has 45
         position = Mock(spec=Positions)
@@ -235,7 +246,9 @@ class TestManualSellDetection:
         assert open_positions[0]["symbol"] == "RELIANCE"
         assert open_positions[0]["qty"] == 35  # Uses positions_qty (35), ignores manual buy
 
-    def test_reconcile_handles_missing_portfolio_gracefully(self, sell_manager, mock_positions_repo):
+    def test_reconcile_handles_missing_portfolio_gracefully(
+        self, sell_manager, mock_positions_repo
+    ):
         """Test reconciliation handles missing portfolio gracefully."""
         sell_manager.portfolio = None
 
@@ -243,7 +256,9 @@ class TestManualSellDetection:
 
         assert stats == {"checked": 0, "updated": 0, "closed": 0, "ignored": 0}
 
-    def test_reconcile_handles_holdings_api_error(self, sell_manager, mock_positions_repo, mock_portfolio):
+    def test_reconcile_handles_holdings_api_error(
+        self, sell_manager, mock_positions_repo, mock_portfolio
+    ):
         """Test reconciliation handles holdings API errors gracefully."""
         mock_portfolio.get_holdings.side_effect = Exception("API Error")
 
@@ -252,7 +267,9 @@ class TestManualSellDetection:
         # Should return empty stats without crashing
         assert stats == {"checked": 0, "updated": 0, "closed": 0, "ignored": 0}
 
-    def test_run_at_market_open_calls_reconciliation(self, sell_manager, mock_positions_repo, mock_portfolio):
+    def test_run_at_market_open_calls_reconciliation(
+        self, sell_manager, mock_positions_repo, mock_portfolio
+    ):
         """Test run_at_market_open calls reconciliation before placing orders."""
         # Setup: No open positions
         mock_positions_repo.list.return_value = []
@@ -267,4 +284,3 @@ class TestManualSellDetection:
         # Verify: Reconciliation was called
         assert mock_portfolio.get_holdings.called
         assert orders_placed == 0
-
