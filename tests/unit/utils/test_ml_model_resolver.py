@@ -14,9 +14,9 @@ import pytest
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.infrastructure.db.models import MLModel, MLTrainingJob, Users
-from src.infrastructure.db.timezone_utils import ist_now
-from utils.ml_model_resolver import (
+from src.infrastructure.db.models import MLModel, MLTrainingJob, Users  # noqa: E402
+from src.infrastructure.db.timezone_utils import ist_now  # noqa: E402
+from utils.ml_model_resolver import (  # noqa: E402
     get_active_model_path,
     get_model_path_from_version,
 )
@@ -237,6 +237,7 @@ class TestMLModelResolver:
         try:
             # Should get v1.0 when requested
             result_v1 = get_model_path_from_version(db_session, "verdict_classifier", "v1.0")
+            assert result_v1 is not None, "v1.0 model path should not be None"
             expected_v1 = str(Path("models/verdict_model_v1.0.pkl"))
             assert (
                 result_v1 == expected_v1
@@ -248,6 +249,7 @@ class TestMLModelResolver:
             model_path_v2.touch()
             try:
                 result_v2 = get_model_path_from_version(db_session, "verdict_classifier", "v2.0")
+                assert result_v2 is not None, "v2.0 model path should not be None"
                 expected_v2 = str(Path("models/verdict_model_v2.0.pkl"))
                 assert (
                     result_v2 == expected_v2

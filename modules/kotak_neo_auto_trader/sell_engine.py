@@ -403,6 +403,9 @@ class SellOrderManager:
 
         Database-only: No file fallback. Uses positions table as single source of truth.
 
+        Edge Case #17 fix: Validates quantity against broker holdings and uses
+        min(positions_qty, broker_qty) to ensure we don't try to sell more than available.
+
         Returns:
             List of open trade entries in format expected by sell order placement
         """
@@ -411,6 +414,38 @@ class SellOrderManager:
                 "PositionsRepository and user_id are required for database-only position tracking. "
                 "Please provide positions_repo and user_id when initializing SellOrderManager."
             )
+
+        # Fetch broker holdings for validation (Edge Case #17)
+        broker_holdings_map = {}
+        try:
+            from .utils.symbol_utils import extract_base_symbol
+
+            holdings_response = self.portfolio.get_holdings()
+            if holdings_response and isinstance(holdings_response, dict):
+                holdings_data = holdings_response.get("data", [])
+                for holding in holdings_data:
+                    symbol = (
+                        holding.get("tradingSymbol")
+                        or holding.get("symbol")
+                        or holding.get("securitySymbol")
+                        or ""
+                    )
+                    if not symbol:
+                        continue
+
+                    base_symbol = extract_base_symbol(symbol).upper()
+                    qty = int(
+                        holding.get("quantity")
+                        or holding.get("qty")
+                        or holding.get("netQuantity")
+                        or holding.get("holdingsQuantity")
+                        or 0
+                    )
+
+                    if base_symbol and qty > 0:
+                        broker_holdings_map[base_symbol] = qty
+        except Exception as e:
+            logger.debug(f"Could not fetch broker holdings for validation: {e}")
 
         open_positions = []
         positions = self.positions_repo.list(self.user_id)
@@ -444,12 +479,29 @@ class SellOrderManager:
                     except Exception as e:
                         logger.debug(f"Failed to enrich position metadata from orders: {e}")
 
+                # Edge Case #17: Use min(positions_qty, broker_qty) for sell order quantity
+                # This ensures we don't try to sell more than actually available
+                positions_qty = int(pos.quantity)
+                broker_qty = broker_holdings_map.get(pos.symbol.upper(), positions_qty)
+
+                # Use the minimum to ensure we don't sell more than available
+                # If broker_qty < positions_qty, reconciliation should have updated positions table
+                # But we still validate here as a safety check
+                sell_qty = min(positions_qty, broker_qty)
+
+                if sell_qty < positions_qty:
+                    logger.warning(
+                        f"Quantity mismatch for {pos.symbol}: "
+                        f"positions table shows {positions_qty}, "
+                        f"broker has {broker_qty}. Using {sell_qty} for sell order."
+                    )
+
                 # Convert Positions model to trade dict format
                 open_positions.append(
                     {
                         "symbol": pos.symbol,
                         "ticker": ticker,
-                        "qty": pos.quantity,
+                        "qty": sell_qty,  # Use validated quantity
                         "entry_price": pos.avg_price,
                         "entry_time": pos.opened_at.isoformat(),
                         "status": "open",
@@ -459,6 +511,160 @@ class SellOrderManager:
 
         logger.debug(f"Loaded {len(open_positions)} open positions from database")
         return open_positions
+
+    def _reconcile_positions_with_broker_holdings(self) -> dict[str, int]:
+        """
+        Reconcile positions table with broker holdings to detect manual sells.
+
+        Edge Case #14, #15, #17 fix: Detects when manual trades affect system holdings
+        and updates positions table accordingly.
+
+        Logic:
+        - If broker_qty < positions_qty: Manual sell detected → Update positions table
+        - If broker_qty = 0: Manual full sell → Mark position as closed
+        - If broker_qty > positions_qty: Manual buy → IGNORE (don't update)
+
+        Returns:
+            Dict with reconciliation stats: {
+                'checked': int,
+                'updated': int,
+                'closed': int,
+                'ignored': int
+            }
+        """
+        if not self.positions_repo or not self.user_id:
+            logger.debug("PositionsRepository or user_id not available, skipping reconciliation")
+            return {"checked": 0, "updated": 0, "closed": 0, "ignored": 0}
+
+        stats = {"checked": 0, "updated": 0, "closed": 0, "ignored": 0}
+
+        try:
+            # Fetch broker holdings
+            holdings_response = self.portfolio.get_holdings()
+            if not holdings_response or not isinstance(holdings_response, dict):
+                logger.debug("Could not fetch broker holdings for reconciliation")
+                return stats
+
+            holdings_data = holdings_response.get("data", [])
+            # Note: Empty holdings_data is valid - means all positions were sold
+            # We still need to check positions to detect manual full sells
+
+            # Create broker holdings map: {symbol: quantity}
+            broker_holdings_map = {}
+            for holding in holdings_data:
+                # Extract symbol (handle various field names)
+                symbol = (
+                    holding.get("tradingSymbol")
+                    or holding.get("symbol")
+                    or holding.get("securitySymbol")
+                    or ""
+                )
+                if not symbol:
+                    continue
+
+                # Extract base symbol (remove -EQ suffix)
+                base_symbol = extract_base_symbol(symbol).upper()
+
+                # Extract quantity (handle various field names)
+                qty = int(
+                    holding.get("quantity")
+                    or holding.get("qty")
+                    or holding.get("netQuantity")
+                    or holding.get("holdingsQuantity")
+                    or 0
+                )
+
+                if base_symbol and qty > 0:
+                    broker_holdings_map[base_symbol] = qty
+
+            # Get all open positions from database
+            open_positions = self.positions_repo.list(self.user_id)
+            open_positions = [pos for pos in open_positions if pos.closed_at is None]
+
+            logger.info(
+                f"Reconciling {len(open_positions)} open positions with broker holdings..."
+            )
+
+            for pos in open_positions:
+                stats["checked"] += 1
+                symbol = pos.symbol.upper()
+                positions_qty = int(pos.quantity)
+
+                # Get broker quantity (0 if not in holdings)
+                broker_qty = broker_holdings_map.get(symbol, 0)
+
+                # Case 1: Manual full sell detected (broker_qty = 0, positions_qty > 0)
+                if broker_qty == 0 and positions_qty > 0:
+                    logger.warning(
+                        f"Manual full sell detected for {symbol}: "
+                        f"positions table shows {positions_qty} shares, "
+                        f"but broker has 0 shares. Marking position as closed."
+                    )
+                    try:
+                        from src.infrastructure.db.timezone_utils import ist_now
+
+                        self.positions_repo.mark_closed(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            closed_at=ist_now(),
+                            exit_price=None,  # Manual sell, price unknown
+                        )
+                        stats["closed"] += 1
+                        logger.info(f"Position {symbol} marked as closed due to manual full sell")
+                    except Exception as e:
+                        logger.error(f"Error marking position {symbol} as closed: {e}")
+
+                # Case 2: Manual partial sell detected (broker_qty < positions_qty)
+                elif broker_qty < positions_qty:
+                    sold_qty = positions_qty - broker_qty
+                    logger.warning(
+                        f"Manual partial sell detected for {symbol}: "
+                        f"positions table shows {positions_qty} shares, "
+                        f"but broker has {broker_qty} shares. "
+                        f"Updating positions table (sold {sold_qty} shares)."
+                    )
+                    try:
+                        # Reduce quantity in positions table
+                        self.positions_repo.reduce_quantity(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            sold_quantity=float(sold_qty),
+                        )
+                        stats["updated"] += 1
+                        logger.info(
+                            f"Position {symbol} quantity updated: {positions_qty} -> {broker_qty} "
+                            f"(manual sell of {sold_qty} shares detected)"
+                        )
+                    except Exception as e:
+                        logger.error(f"Error updating position {symbol} quantity: {e}")
+
+                # Case 3: Manual buy detected (broker_qty > positions_qty) - IGNORE
+                elif broker_qty > positions_qty:
+                    stats["ignored"] += 1
+                    logger.debug(
+                        f"Manual buy detected for {symbol}: "
+                        f"broker has {broker_qty} shares, "
+                        f"positions table shows {positions_qty} shares. "
+                        f"Ignoring (manual holdings not tracked by system)."
+                    )
+
+                # Case 4: Perfect match (broker_qty == positions_qty) - No action needed
+                else:
+                    logger.debug(
+                        f"Position {symbol} matches broker holdings: {positions_qty} shares"
+                    )
+
+            if stats["updated"] > 0 or stats["closed"] > 0:
+                logger.info(
+                    f"Reconciliation complete: {stats['checked']} checked, "
+                    f"{stats['updated']} updated, {stats['closed']} closed, "
+                    f"{stats['ignored']} ignored (manual buys)"
+                )
+
+        except Exception as e:
+            logger.error(f"Error during positions reconciliation: {e}", exc_info=True)
+
+        return stats
 
     def get_current_ema9(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
@@ -1007,6 +1213,190 @@ class SellOrderManager:
             except Exception as e:
                 logger.warning(f"Failed to cancel order {order_id}: {e}")
 
+    def _cancel_pending_reentry_orders(self, base_symbol: str) -> int:
+        """
+        Cancel pending reentry orders for a closed position.
+
+        Edge Case #12 fix: When a sell order executes and closes a position,
+        cancel any pending reentry orders to prevent position from being reopened.
+
+        Args:
+            base_symbol: Base symbol (e.g., "RELIANCE") for which to cancel reentry orders
+
+        Returns:
+            Number of reentry orders cancelled
+        """
+        if not self.orders_repo or not self.user_id:
+            logger.debug(
+                "OrdersRepository or user_id not available, skipping reentry order cancellation"
+            )
+            return 0
+
+        cancelled_count = 0
+
+        try:
+            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+            # Query for pending reentry orders for this symbol
+            all_orders = self.orders_repo.list(self.user_id)
+            reentry_orders = [
+                db_order
+                for db_order in all_orders
+                if db_order.side.lower() == "buy"
+                and db_order.status == DbOrderStatus.PENDING
+                and db_order.entry_type == "reentry"
+                and extract_base_symbol(db_order.symbol).upper() == base_symbol.upper()
+            ]
+
+            if not reentry_orders:
+                logger.debug(f"No pending reentry orders found for {base_symbol}")
+                return 0
+
+            logger.info(
+                f"Found {len(reentry_orders)} pending reentry order(s) for closed position {base_symbol}. "
+                f"Cancelling them..."
+            )
+
+            for db_order in reentry_orders:
+                try:
+                    if not db_order.broker_order_id:
+                        logger.warning(
+                            f"Reentry order {db_order.id} for {base_symbol} has no broker_order_id. "
+                            f"Updating DB status only."
+                        )
+                        # Update DB status even without broker_order_id
+                        self.orders_repo.update(
+                            db_order,
+                            status=DbOrderStatus.CANCELLED,
+                            reason="Position closed",
+                        )
+                        cancelled_count += 1
+                        continue
+
+                    # Cancel via broker API
+                    cancel_result = self.orders.cancel_order(db_order.broker_order_id)
+                    if cancel_result:
+                        logger.info(
+                            f"Cancelled reentry order {db_order.broker_order_id} "
+                            f"for closed position {base_symbol}"
+                        )
+                        # Update DB order status
+                        self.orders_repo.update(
+                            db_order,
+                            status=DbOrderStatus.CANCELLED,
+                            reason="Position closed",
+                        )
+                        cancelled_count += 1
+                    else:
+                        logger.warning(
+                            f"Failed to cancel reentry order {db_order.broker_order_id} "
+                            f"for {base_symbol} via broker API. Order may have already executed."
+                        )
+                        # Still update DB status to reflect intent
+                        self.orders_repo.update(
+                            db_order,
+                            status=DbOrderStatus.CANCELLED,
+                            reason="Position closed (cancellation attempted)",
+                        )
+                        cancelled_count += 1
+
+                except Exception as e:
+                    logger.warning(
+                        f"Error cancelling reentry order {db_order.broker_order_id} "
+                        f"for {base_symbol}: {e}"
+                    )
+                    # Continue with next order even if one fails
+
+            if cancelled_count > 0:
+                logger.info(
+                    f"Cancelled {cancelled_count} pending reentry order(s) for closed position {base_symbol}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error cancelling pending reentry orders for {base_symbol}: {e}",
+                exc_info=True,
+            )
+
+        return cancelled_count
+
+    def _close_buy_orders_for_symbol(self, base_symbol: str) -> int:
+        """
+        Close ONGOING buy orders for a symbol when sell order executes.
+
+        When a sell order executes and closes a position, mark all corresponding
+        ONGOING buy orders as CLOSED with closed_at timestamp.
+
+        Args:
+            base_symbol: Base symbol (e.g., "RELIANCE") for which to close buy orders
+
+        Returns:
+            Number of buy orders closed
+        """
+        if not self.orders_repo or not self.user_id:
+            logger.debug(
+                "OrdersRepository or user_id not available, skipping buy order closure"
+            )
+            return 0
+
+        closed_count = 0
+
+        try:
+            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+            from src.infrastructure.db.timezone_utils import ist_now
+
+            # Query for ONGOING buy orders for this symbol
+            all_orders = self.orders_repo.list(self.user_id)
+            ongoing_buy_orders = [
+                db_order
+                for db_order in all_orders
+                if db_order.side.lower() == "buy"
+                and db_order.status == DbOrderStatus.ONGOING
+                and extract_base_symbol(db_order.symbol).upper() == base_symbol.upper()
+            ]
+
+            if not ongoing_buy_orders:
+                logger.debug(f"No ONGOING buy orders found for {base_symbol}")
+                return 0
+
+            logger.info(
+                f"Found {len(ongoing_buy_orders)} ONGOING buy order(s) for {base_symbol}. "
+                f"Closing them as sell order executed..."
+            )
+
+            for db_order in ongoing_buy_orders:
+                try:
+                    # Mark buy order as CLOSED
+                    self.orders_repo.update(
+                        db_order,
+                        status=DbOrderStatus.CLOSED,
+                        closed_at=ist_now(),
+                        reason="Position closed - sell order executed",
+                    )
+                    closed_count += 1
+                    logger.info(
+                        f"Closed buy order {db_order.id} ({db_order.broker_order_id}) "
+                        f"for {base_symbol} - sell order executed"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Error closing buy order {db_order.id} for {base_symbol}: {e}"
+                    )
+                    # Continue with next order even if one fails
+
+            if closed_count > 0:
+                logger.info(
+                    f"Closed {closed_count} buy order(s) for {base_symbol} after sell execution"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error closing buy orders for {base_symbol}: {e}",
+                exc_info=True,
+            )
+
+        return closed_count
+
     def _update_trade_history_for_manual_sell(
         self, symbol: str, sell_info: dict[str, Any], remaining_qty: int
     ):
@@ -1402,10 +1792,23 @@ class SellOrderManager:
         Place sell orders for all open positions at market open
         Checks for existing orders to avoid duplicates
 
+        Edge Case #14, #15, #17 fix: Reconciles positions with broker holdings
+        before placing orders to detect manual sells.
+
         Returns:
             Number of orders placed
         """
         logger.info("? Running sell order placement at market open...")
+
+        # Edge Case #14, #15, #17: Reconcile positions with broker holdings
+        # Detect and handle manual sells before placing orders
+        reconciliation_stats = self._reconcile_positions_with_broker_holdings()
+        if reconciliation_stats["updated"] > 0 or reconciliation_stats["closed"] > 0:
+            logger.info(
+                f"Reconciliation detected {reconciliation_stats['updated']} manual partial sells "
+                f"and {reconciliation_stats['closed']} manual full sells. "
+                f"Positions table updated accordingly."
+            )
 
         open_positions = self.get_open_positions()
         if not open_positions:
@@ -1446,28 +1849,85 @@ class SellOrderManager:
                     )
                 continue
 
-            # Check for existing order with same symbol and quantity (avoid duplicate)
+            # Check for existing order with same symbol (avoid duplicate or update if quantity changed)
             if symbol.upper() in existing_orders:
                 existing = existing_orders[symbol.upper()]
-                if existing["qty"] == qty:
+                existing_qty = existing["qty"]
+                existing_price = existing["price"]
+
+                if existing_qty == qty:
+                    # Same quantity - just track the existing order
                     logger.info(
-                        f"Skipping {symbol}: Existing sell order found (Order ID: {existing['order_id']}, Qty: {qty}, Price: Rs {existing['price']:.2f})"
+                        f"Skipping {symbol}: Existing sell order found (Order ID: {existing['order_id']}, Qty: {qty}, Price: Rs {existing_price:.2f})"
                     )
                     # Track the existing order for monitoring
                     # IMPORTANT: Must include ticker for monitoring to work
                     self._register_order(
                         symbol=symbol,
                         order_id=existing["order_id"],
-                        target_price=existing["price"],
+                        target_price=existing_price,
                         qty=qty,
                         ticker=ticker,  # From trade history (e.g., GLENMARK.NS)
                         placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
                     )
-                    self.lowest_ema9[symbol] = existing["price"]
+                    self.lowest_ema9[symbol] = existing_price
                     orders_placed += 1  # Count as placed (existing)
                     logger.debug(
                         f"Tracked {symbol}: ticker={ticker}, order_id={existing['order_id']}"
                     )
+                    continue
+                elif qty > existing_qty:
+                    # Quantity increased (reentry happened) - update existing order
+                    logger.info(
+                        f"Updating sell order for {symbol}: quantity increased from {existing_qty} to {qty} "
+                        f"(reentry detected, Order ID: {existing['order_id']})"
+                    )
+
+                    # Update the sell order with new quantity (keep same price)
+                    if self.update_sell_order(
+                        order_id=existing["order_id"],
+                        symbol=symbol,
+                        qty=qty,
+                        new_price=existing_price,  # Keep same price
+                    ):
+                        logger.info(
+                            f"Successfully updated sell order for {symbol}: {existing_qty} -> {qty} shares "
+                            f"@ Rs {existing_price:.2f}"
+                        )
+                        # Update tracking with new quantity
+                        self._register_order(
+                            symbol=symbol,
+                            order_id=existing["order_id"],
+                            target_price=existing_price,
+                            qty=qty,  # Updated quantity
+                            ticker=ticker,
+                            placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
+                        )
+                        self.lowest_ema9[symbol] = existing_price
+                        orders_placed += 1  # Count as updated
+                    else:
+                        logger.warning(
+                            f"Failed to update sell order for {symbol}. "
+                            f"Order may need manual update or will be replaced next day."
+                        )
+                    continue
+                else:
+                    # Quantity decreased (partial sell or manual adjustment)
+                    logger.warning(
+                        f"Sell order quantity decreased for {symbol}: {existing_qty} -> {qty}. "
+                        f"This might indicate a partial sell execution. Skipping update for safety."
+                    )
+                    # Still track the existing order with its current quantity
+                    self._register_order(
+                        symbol=symbol,
+                        order_id=existing["order_id"],
+                        target_price=existing_price,
+                        qty=existing_qty,  # Keep existing quantity
+                        ticker=ticker,
+                        placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
+                    )
+                    self.lowest_ema9[symbol] = existing_price
+                    orders_placed += 1
                     continue
 
             # Get current EMA9 as target (real-time with LTP)
@@ -1919,6 +2379,12 @@ class SellOrderManager:
                                     f"Position marked as closed in database: {base_symbol} "
                                     f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
                                 )
+
+                                # Close corresponding ONGOING buy orders
+                                self._close_buy_orders_for_symbol(base_symbol)
+
+                                # Edge Case #12: Cancel pending reentry orders for closed position
+                                self._cancel_pending_reentry_orders(base_symbol)
                             else:
                                 # Partial execution - reduce quantity, keep position open
                                 self.positions_repo.reduce_quantity(
@@ -1967,6 +2433,9 @@ class SellOrderManager:
                             f"Position marked as closed in database: {base_symbol} "
                             f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
                         )
+
+                        # Close corresponding ONGOING buy orders
+                        self._close_buy_orders_for_symbol(base_symbol)
                     except Exception as e:
                         logger.error(
                             f"Error updating positions table for {symbol} after sell execution: {e}"

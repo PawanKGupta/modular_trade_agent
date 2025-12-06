@@ -12,8 +12,6 @@ from typing import Any
 from utils.logger import logger
 
 try:
-    from .order_state_manager import OrderStateManager
-    from .orders import KotakNeoOrders
     from .sell_engine import SellOrderManager
     from .utils.order_field_extractor import OrderFieldExtractor
     from .utils.symbol_utils import extract_base_symbol
@@ -131,8 +129,11 @@ class UnifiedOrderMonitor:
 
             return loaded_count
 
+        except ValueError as e:
+            logger.error(f"Invalid data when loading pending buy orders: {e}", exc_info=True)
+            return 0
         except Exception as e:
-            logger.error(f"Error loading pending buy orders: {e}")
+            logger.error(f"Unexpected error loading pending buy orders: {e}", exc_info=True)
             return 0
 
     def register_buy_orders_with_state_manager(self) -> int:
@@ -184,6 +185,85 @@ class UnifiedOrderMonitor:
             )
 
         return registered_count
+
+    def _get_filled_quantity_from_order_history(self, order_id: str) -> dict[str, Any] | None:
+        """
+        Get filled quantity from order_history API (Edge Case #2 fix).
+
+        Handles partial execution by extracting actual filled quantity (fldQty)
+        from order_history response.
+
+        Args:
+            order_id: Order ID to look up
+
+        Returns:
+            Dict with 'filled_qty' and 'execution_price', or None if not found
+        """
+        if not self.orders:
+            return None
+
+        try:
+            # Try specific order first (more efficient)
+            response = self.orders.get_order_history(order_id=order_id)
+
+            if not response:
+                # Fallback: fetch full history and search
+                response = self.orders.get_order_history()
+
+            if not response or "data" not in response:
+                return None
+
+            # Handle nested data structure: response["data"]["data"]
+            data_wrapper = response.get("data", {})
+            if not isinstance(data_wrapper, dict):
+                return None
+
+            orders_list = data_wrapper.get("data", [])
+            if not isinstance(orders_list, list):
+                return None
+
+            # Filter orders by order_id
+            matching_orders = [
+                order
+                for order in orders_list
+                if OrderFieldExtractor.get_order_id(order) == order_id
+            ]
+
+            if not matching_orders:
+                return None
+
+            # Find latest "complete" entry (highest updRecvTm with ordSt="complete")
+            complete_orders = [
+                order
+                for order in matching_orders
+                if OrderFieldExtractor.get_status(order) == "complete"
+            ]
+
+            if not complete_orders:
+                # Order not complete yet
+                return None
+
+            # Get latest complete entry (highest timestamp)
+            latest_complete = max(complete_orders, key=lambda o: o.get("updRecvTm", 0))
+
+            filled_qty = OrderFieldExtractor.get_filled_quantity(latest_complete)
+            avg_price_str = latest_complete.get("avgPrc", "0")
+            avg_price = (
+                float(avg_price_str) if avg_price_str and avg_price_str != "0.00" else 0.0
+            )
+
+            if filled_qty > 0:
+                return {
+                    "filled_qty": filled_qty,
+                    "execution_price": avg_price,
+                    "order_status": "complete",
+                }
+
+            return None
+
+        except Exception as e:
+            logger.warning(f"Error fetching order_history for {order_id}: {e}")
+            return None
 
     def check_buy_order_status(
         self, broker_orders: list[dict[str, Any]] | None = None
@@ -254,6 +334,15 @@ class UnifiedOrderMonitor:
                     # Handle different statuses
                     if status_lower in ["executed", "filled", "complete"]:
                         stats["executed"] += 1
+                        # Edge Case #2: Use fldQty from broker_order if available (partial execution)
+                        filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+                        if filled_qty > 0:
+                            # Override execution quantity with actual filled quantity
+                            order_info["execution_qty"] = float(filled_qty)
+                            logger.info(
+                                f"Using fldQty from order_report() for {order_id}: "
+                                f"qty={filled_qty} (handles partial execution)"
+                            )
                         self._handle_buy_order_execution(order_id, order_info, broker_order)
                         order_ids_to_remove.append(order_id)
                     elif status_lower in ["rejected", "reject"]:
@@ -306,46 +395,110 @@ class UnifiedOrderMonitor:
                                         if not db_order:
                                             continue
 
-                                        # Extract execution details from holdings
-                                        # For execution_price: prefer order price if available (limit order),
-                                        # otherwise use averagePrice from holdings (approximation)
-                                        order_price = order_info.get("price") or (
-                                            float(db_order.price) if db_order.price else None
-                                        )
-                                        execution_price = (
-                                            float(order_price)
-                                            if order_price and float(order_price) > 0
-                                            else (
-                                                float(holding_info.get("averagePrice", 0))
-                                                or float(holding_info.get("avgPrice", 0))
-                                                or float(holding_info.get("closingPrice", 0))
-                                                or 0.0
-                                            )
-                                        )
-                                        # For execution_qty, prefer order quantity from DB if available
-                                        # (holdings quantity is total position, not just this order)
-                                        order_qty = (
-                                            order_info.get("quantity", 0) or db_order.quantity
-                                        )
-                                        execution_qty = (
-                                            float(order_qty)
-                                            if order_qty and float(order_qty) > 0
-                                            else (
-                                                float(holding_info.get("quantity", 0))
-                                                or float(holding_info.get("qty", 0))
-                                                or 0.0
-                                            )
-                                        )
+                                        # Edge Case #2 Fix: Use priority order for execution details
+                                        # Priority 1: Try order_report() first (same-day orders)
+                                        broker_order_from_report = None
+                                        if broker_orders:
+                                            for bo in broker_orders:
+                                                if OrderFieldExtractor.get_order_id(bo) == order_id:
+                                                    broker_order_from_report = bo
+                                                    break
 
-                                        # Mark as executed using holdings data
-                                        if execution_price > 0 and execution_qty > 0:
+                                        execution_qty = None
+                                        execution_price = None
+                                        source = None
+
+                                        # Priority 1: fldQty from order_report() (if found)
+                                        if broker_order_from_report:
+                                            filled_qty = OrderFieldExtractor.get_filled_quantity(
+                                                broker_order_from_report
+                                            )
+                                            if filled_qty > 0:
+                                                execution_qty = float(filled_qty)
+                                                execution_price = OrderFieldExtractor.get_price(
+                                                    broker_order_from_report
+                                                )
+                                                source = "order_report"
+                                                logger.info(
+                                                    f"Using fldQty from order_report() for {order_id}: "
+                                                    f"qty={execution_qty}, price={execution_price:.2f}"
+                                                )
+
+                                        # Priority 2: fldQty from order_history() (if not found in order_report)
+                                        if execution_qty is None:
+                                            history_data = self._get_filled_quantity_from_order_history(
+                                                order_id
+                                            )
+                                            if history_data and history_data.get("filled_qty", 0) > 0:
+                                                execution_qty = float(history_data["filled_qty"])
+                                                execution_price = history_data.get(
+                                                    "execution_price", 0.0
+                                                )
+                                                source = "order_history"
+                                                logger.info(
+                                                    f"Using fldQty from order_history() for {order_id}: "
+                                                    f"qty={execution_qty}, price={execution_price:.2f}"
+                                                )
+
+                                        # Priority 3: Holdings quantity (actual broker position)
+                                        if execution_qty is None:
+                                            holdings_qty = float(
+                                                holding_info.get("quantity", 0)
+                                                or holding_info.get("qty", 0)
+                                                or 0.0
+                                            )
+                                            if holdings_qty > 0:
+                                                execution_qty = holdings_qty
+                                                execution_price = (
+                                                    float(holding_info.get("averagePrice", 0))
+                                                    or float(holding_info.get("avgPrice", 0))
+                                                    or float(holding_info.get("closingPrice", 0))
+                                                    or 0.0
+                                                )
+                                                source = "holdings"
+                                                logger.info(
+                                                    f"Using holdings quantity for {order_id}: "
+                                                    f"qty={execution_qty}, price={execution_price:.2f} "
+                                                    f"(Note: This is total position, not just this order)"
+                                                )
+
+                                        # Priority 4: DB order quantity (last resort)
+                                        if execution_qty is None:
+                                            order_qty = (
+                                                order_info.get("quantity", 0) or db_order.quantity
+                                            )
+                                            if order_qty and float(order_qty) > 0:
+                                                execution_qty = float(order_qty)
+                                                order_price = order_info.get("price") or (
+                                                    float(db_order.price) if db_order.price else None
+                                                )
+                                                execution_price = (
+                                                    float(order_price)
+                                                    if order_price and float(order_price) > 0
+                                                    else (
+                                                        float(holding_info.get("averagePrice", 0))
+                                                        or float(holding_info.get("avgPrice", 0))
+                                                        or float(holding_info.get("closingPrice", 0))
+                                                        or 0.0
+                                                    )
+                                                )
+                                                source = "db_order"
+                                                logger.warning(
+                                                    f"Using DB order quantity for {order_id} "
+                                                    f"(least reliable): qty={execution_qty}, "
+                                                    f"price={execution_price:.2f}. "
+                                                    f"Consider manual verification."
+                                                )
+
+                                        # Mark as executed using extracted data
+                                        if execution_price and execution_price > 0 and execution_qty and execution_qty > 0:
                                             self.orders_repo.mark_executed(
                                                 db_order,
                                                 execution_price=execution_price,
                                                 execution_qty=execution_qty,
                                             )
                                             logger.info(
-                                                f"Reconciled order {order_id}: "
+                                                f"Reconciled order {order_id} (source: {source}): "
                                                 f"executed at Rs {execution_price:.2f}, qty {execution_qty}"
                                             )
 
@@ -403,8 +556,12 @@ class UnifiedOrderMonitor:
                     f"{stats['cancelled']} cancelled"
                 )
 
+        except ValueError as e:
+            logger.error(f"Invalid data when checking buy order status: {e}", exc_info=True)
+        except KeyError as e:
+            logger.error(f"Missing required field when checking buy order status: {e}", exc_info=True)
         except Exception as e:
-            logger.error(f"Error checking buy order status: {e}")
+            logger.error(f"Unexpected error checking buy order status: {e}", exc_info=True)
 
         return stats
 
@@ -429,11 +586,16 @@ class UnifiedOrderMonitor:
             # Map broker status to our status
             if status in ["executed", "filled", "complete"]:
                 execution_price = OrderFieldExtractor.get_price(broker_order)
-                execution_qty = OrderFieldExtractor.get_quantity(broker_order)
+                # Edge Case #2: Use fldQty (filled quantity) if available, otherwise use order quantity
+                filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+                if filled_qty > 0:
+                    execution_qty = float(filled_qty)
+                else:
+                    execution_qty = OrderFieldExtractor.get_quantity(broker_order) or db_order.quantity
                 self.orders_repo.mark_executed(
                     db_order,
                     execution_price=execution_price,
-                    execution_qty=execution_qty or db_order.quantity,
+                    execution_qty=execution_qty,
                 )
             elif status in ["rejected", "reject"]:
                 rejection_reason = OrderFieldExtractor.get_rejection_reason(broker_order)
@@ -442,8 +604,10 @@ class UnifiedOrderMonitor:
                 cancelled_reason = OrderFieldExtractor.get_rejection_reason(broker_order)
                 self.orders_repo.mark_cancelled(db_order, cancelled_reason or "Cancelled")
 
+        except ValueError as e:
+            logger.error(f"Invalid data when updating buy order status in DB: {e}", exc_info=True)
         except Exception as e:
-            logger.error(f"Error updating buy order status in DB: {e}")
+            logger.error(f"Unexpected error updating buy order status in DB: {e}", exc_info=True)
 
     def _handle_buy_order_execution(
         self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
@@ -453,6 +617,7 @@ class UnifiedOrderMonitor:
 
         Phase 4: Integrates with OrderStateManager for unified state tracking.
         Phase 9: Sends notification for order execution.
+        Edge Case #2: Uses fldQty (filled quantity) to handle partial execution.
 
         Args:
             order_id: Order ID
@@ -461,9 +626,20 @@ class UnifiedOrderMonitor:
         """
         symbol = order_info.get("symbol", "")
         execution_price = OrderFieldExtractor.get_price(broker_order)
-        execution_qty = OrderFieldExtractor.get_quantity(broker_order) or order_info.get(
-            "quantity", 0
-        )
+
+        # Edge Case #2: Use fldQty (filled quantity) if available, otherwise use order quantity
+        # Check if execution_qty was already set from order_report (handles partial execution)
+        execution_qty = order_info.get("execution_qty")
+        if execution_qty is None:
+            # Try to get filled quantity from broker_order
+            filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+            if filled_qty > 0:
+                execution_qty = float(filled_qty)
+            else:
+                # Fallback to order quantity
+                execution_qty = OrderFieldExtractor.get_quantity(broker_order) or order_info.get(
+                    "quantity", 0
+                )
 
         logger.info(
             f"Buy order executed: {symbol} - Order ID {order_id}, "
@@ -505,6 +681,52 @@ class UnifiedOrderMonitor:
         self._create_position_from_executed_order(
             order_id, order_info, execution_price, execution_qty
         )
+
+    def _validate_reentry_data(self, reentry_data: dict[str, Any]) -> bool:
+        """
+        Validate reentry data structure before writing to database.
+
+        Ensures all required fields are present and have valid types/values.
+
+        Args:
+            reentry_data: Reentry data dictionary to validate
+
+        Returns:
+            True if valid, False otherwise
+        """
+        required_fields = ["qty", "price", "time"]
+        for field in required_fields:
+            if field not in reentry_data:
+                logger.error(f"Missing required field '{field}' in reentry data: {reentry_data}")
+                return False
+
+        # Validate qty
+        qty = reentry_data.get("qty")
+        if not isinstance(qty, int) or qty <= 0:
+            logger.error(f"Invalid qty in reentry data: {qty} (must be positive integer)")
+            return False
+
+        # Validate price
+        price = reentry_data.get("price")
+        if not isinstance(price, (int, float)) or price <= 0:
+            logger.error(f"Invalid price in reentry data: {price} (must be positive number)")
+            return False
+
+        # Validate time format
+        time_str = reentry_data.get("time")
+        if not isinstance(time_str, str):
+            logger.error(f"Invalid time type in reentry data: {type(time_str)} (must be string)")
+            return False
+
+        try:
+            from datetime import datetime
+
+            datetime.fromisoformat(time_str)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid time format in reentry data: {time_str} - {e}")
+            return False
+
+        return True
 
     def _create_position_from_executed_order(
         self,
@@ -573,11 +795,24 @@ class UnifiedOrderMonitor:
             # Check if position already exists
             existing_pos = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
 
+            # Improvement: Check if position is closed - don't add reentry to closed positions
+            if existing_pos and existing_pos.closed_at is not None:
+                logger.warning(
+                    f"Reentry order executed for closed position {base_symbol}. "
+                    f"Position was closed at {existing_pos.closed_at}. "
+                    f"Skipping reentry update to prevent reopening closed position."
+                )
+                return
+
             # Calculate execution time (use current time if not available)
+            try:
+                from src.infrastructure.db.timezone_utils import ist_now
 
-            from src.infrastructure.db.timezone_utils import ist_now
+                execution_time = ist_now()
+            except ImportError:
+                from datetime import datetime
 
-            execution_time = ist_now()
+                execution_time = datetime.now()
             if db_order and hasattr(db_order, "filled_at") and db_order.filled_at:
                 execution_time = db_order.filled_at
             elif db_order and hasattr(db_order, "execution_time") and db_order.execution_time:
@@ -599,6 +834,107 @@ class UnifiedOrderMonitor:
                 if existing_pos.entry_rsi is None:
                     entry_rsi_to_set = entry_rsi
 
+                # Reentry tracking: Detect if this is a reentry and update reentry fields
+                is_reentry = False
+                reentry_count = existing_pos.reentry_count or 0
+                reentries_array = existing_pos.reentries if existing_pos.reentries else []
+                last_reentry_price = existing_pos.last_reentry_price
+
+                # Check if this is a reentry: existing position OR order marked as reentry
+                if db_order and db_order.entry_type == "reentry":
+                    is_reentry = True
+                elif existing_pos:  # Position already exists, so this is likely a reentry
+                    is_reentry = True
+
+                if is_reentry:
+                    # Extract reentry data from order metadata or construct from execution data
+                    reentry_data = None
+                    if db_order and db_order.order_metadata:
+                        metadata = (
+                            db_order.order_metadata
+                            if isinstance(db_order.order_metadata, dict)
+                            else {}
+                        )
+                        # Extract reentry fields from metadata
+                        reentry_level = metadata.get("rsi_level") or metadata.get("level")
+                        reentry_rsi = metadata.get("rsi") or metadata.get("rsi10") or entry_rsi
+                        reentry_price = metadata.get("price") or execution_price
+
+                        # Construct reentry data matching trade history structure
+                        reentry_data = {
+                            "qty": int(execution_qty),
+                            "level": int(reentry_level) if reentry_level is not None else None,
+                            "rsi": float(reentry_rsi) if reentry_rsi is not None else None,
+                            "price": float(reentry_price),
+                            "time": execution_time.isoformat(),
+                            "order_id": order_id,  # Track which order created this reentry
+                        }
+                    else:
+                        # Fallback: construct minimal reentry data from execution
+                        reentry_data = {
+                            "qty": int(execution_qty),
+                            "level": None,
+                            "rsi": float(entry_rsi) if entry_rsi else None,
+                            "price": float(execution_price),
+                            "time": execution_time.isoformat(),
+                            "order_id": order_id,  # Track which order created this reentry
+                        }
+
+                    # Improvement: Validate reentry data before writing
+                    if not self._validate_reentry_data(reentry_data):
+                        logger.error(
+                            f"Invalid reentry data for {base_symbol} (order_id: {order_id}). "
+                            f"Skipping reentry update to prevent data corruption."
+                        )
+                        # Don't update reentry fields, but still update quantity and avg_price
+                        is_reentry = False
+                        reentry_count = existing_pos.reentry_count or 0
+                        reentries_array = existing_pos.reentries if existing_pos.reentries else []
+                        last_reentry_price = existing_pos.last_reentry_price
+                    else:
+                        # Ensure reentries_array is a list
+                        if not isinstance(reentries_array, list):
+                            reentries_array = []
+
+                        # Improvement: Check for duplicate reentry (same order_id or very similar timestamp+qty)
+                        # This prevents duplicate entries if order is processed multiple times
+                        existing_reentry = next(
+                            (
+                                r
+                                for r in reentries_array
+                                if r.get("order_id") == order_id
+                                or (
+                                    r.get("time") == reentry_data["time"]
+                                    and r.get("qty") == reentry_data["qty"]
+                                    and abs(r.get("price", 0) - reentry_data["price"]) < 0.01
+                                )
+                            ),
+                            None,
+                        )
+                        if existing_reentry:
+                            logger.warning(
+                                f"Duplicate reentry detected for {base_symbol} (order_id: {order_id}). "
+                                f"Skipping to prevent duplicate entry."
+                            )
+                            # Don't update reentry fields, but still update quantity and avg_price
+                            is_reentry = False
+                            reentry_count = existing_pos.reentry_count or 0
+                            reentries_array = existing_pos.reentries if existing_pos.reentries else []
+                            last_reentry_price = existing_pos.last_reentry_price
+                        else:
+                            # Append new reentry (data is validated)
+                            reentries_array.append(reentry_data)
+                            reentry_count = len(reentries_array)
+                            last_reentry_price = execution_price
+
+                    logger.info(
+                        f"Reentry detected for {base_symbol}: Adding reentry #{reentry_count} "
+                        f"(qty: {execution_qty}, price: Rs {execution_price:.2f})"
+                    )
+                    # Note: Database is updated here (source of truth).
+                    # JSON backup is synced during reconciliation via _load_trades_history()
+                    # which reads from database and writes to JSON.
+
                 self.positions_repo.upsert(
                     user_id=self.user_id,
                     symbol=base_symbol,
@@ -606,11 +942,81 @@ class UnifiedOrderMonitor:
                     avg_price=new_avg_price,
                     opened_at=existing_pos.opened_at,  # Preserve original open time
                     entry_rsi=entry_rsi_to_set,  # Only set if not already set
+                    reentry_count=reentry_count if is_reentry else None,
+                    reentries=reentries_array if is_reentry else None,
+                    last_reentry_price=last_reentry_price if is_reentry else None,
                 )
+
+                # Improvement: Verify data integrity after update
+                if is_reentry:
+                    updated_position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+                    if updated_position:
+                        actual_count = len(updated_position.reentries or [])
+                        if updated_position.reentry_count != actual_count:
+                            logger.warning(
+                                f"Reentry count mismatch for {base_symbol}: "
+                                f"count={updated_position.reentry_count}, array_length={actual_count}. "
+                                f"Fixing..."
+                            )
+                            # Fix the mismatch - preserve the last_reentry_price we just set
+                            self.positions_repo.upsert(
+                                user_id=self.user_id,
+                                symbol=base_symbol,
+                                reentry_count=actual_count,
+                                # Preserve other fields including the newly set last_reentry_price
+                                quantity=updated_position.quantity,
+                                avg_price=updated_position.avg_price,
+                                opened_at=updated_position.opened_at,
+                                entry_rsi=updated_position.entry_rsi,
+                                reentries=updated_position.reentries,
+                                last_reentry_price=last_reentry_price,  # Use the value we just set, not from DB
+                            )
+
                 logger.info(
                     f"Updated position for {base_symbol}: qty {existing_qty} -> {new_qty}, "
                     f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}"
+                    + (f", reentry_count: {reentry_count}" if is_reentry else "")
                 )
+
+                # Edge Case #1 Fix: Update existing sell order if quantity increased (reentry scenario)
+                if new_qty > existing_qty and self.sell_manager:
+                    try:
+                        # Check for existing sell order
+                        existing_orders = self.sell_manager.get_existing_sell_orders()
+                        if base_symbol.upper() in existing_orders:
+                            existing_order = existing_orders[base_symbol.upper()]
+                            existing_order_qty = existing_order.get("qty", 0)
+                            existing_order_price = existing_order.get("price", 0)
+                            existing_order_id = existing_order.get("order_id")
+
+                            if existing_order_id and new_qty > existing_order_qty:
+                                logger.info(
+                                    f"Reentry detected for {base_symbol}: Updating sell order quantity "
+                                    f"from {existing_order_qty} to {new_qty} (Order ID: {existing_order_id})"
+                                )
+
+                                # Update sell order with new quantity (keep same price)
+                                if self.sell_manager.update_sell_order(
+                                    order_id=str(existing_order_id),
+                                    symbol=base_symbol,
+                                    qty=int(new_qty),
+                                    new_price=existing_order_price,
+                                ):
+                                    logger.info(
+                                        f"Successfully updated sell order for {base_symbol}: "
+                                        f"{existing_order_qty} -> {new_qty} shares @ Rs {existing_order_price:.2f}"
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Failed to update sell order for {base_symbol}. "
+                                        f"Order will be updated next day by run_at_market_open()."
+                                    )
+                    except Exception as e:
+                        # Don't fail position update if sell order update fails
+                        logger.warning(
+                            f"Error updating sell order after reentry for {base_symbol}: {e}. "
+                            f"Order will be updated next day by run_at_market_open()."
+                        )
             else:
                 # Create new position
                 self.positions_repo.upsert(
@@ -626,8 +1032,21 @@ class UnifiedOrderMonitor:
                     f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"
                 )
 
+        except ValueError as e:
+            logger.error(
+                f"Invalid data for position update: {base_symbol}, order_id={order_id}: {e}",
+                exc_info=True,
+            )
+        except KeyError as e:
+            logger.error(
+                f"Missing required field in order_info for {base_symbol}, order_id={order_id}: {e}",
+                exc_info=True,
+            )
         except Exception as e:
-            logger.error(f"Error creating/updating position from executed order {order_id}: {e}")
+            logger.error(
+                f"Unexpected error updating position for {base_symbol}, order_id={order_id}: {e}",
+                exc_info=True,
+            )
 
     def _handle_buy_order_rejection(
         self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
@@ -743,8 +1162,10 @@ class UnifiedOrderMonitor:
         try:
             orders_response = self.orders.get_orders() if self.orders else None
             broker_orders = orders_response.get("data", []) if orders_response else []
+        except ValueError as e:
+            logger.error(f"Invalid data when fetching broker orders: {e}", exc_info=True)
         except Exception as e:
-            logger.error(f"Error fetching broker orders: {e}")
+            logger.error(f"Unexpected error fetching broker orders: {e}", exc_info=True)
 
         # Monitor buy orders (new functionality) - check for executions first
         buy_stats = self.check_buy_order_status(broker_orders=broker_orders)
@@ -968,6 +1389,9 @@ class UnifiedOrderMonitor:
 
             return orders_placed
 
+        except ValueError as e:
+            logger.error(f"Invalid data when checking for new holdings: {e}", exc_info=True)
+            return 0
         except Exception as e:
-            logger.error(f"Error checking for new holdings: {e}")
+            logger.error(f"Unexpected error checking for new holdings: {e}", exc_info=True)
             return 0

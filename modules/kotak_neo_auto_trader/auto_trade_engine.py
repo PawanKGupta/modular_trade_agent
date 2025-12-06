@@ -1951,32 +1951,56 @@ class AutoTradeEngine:
         return False
 
     def reentries_today(self, base_symbol: str) -> int:
-        """Count successful re-entries recorded today for this symbol (base symbol)."""
+        """
+        Count successful re-entries recorded today for this symbol (base symbol).
+
+        Edge Case #11 Fix: Checks the 'reentries' array within trade entries
+        instead of looking for separate entries with entry_type == 'reentry'.
+        Reentries are stored in the reentries array of existing trade entries.
+
+        Updated: Queries directly from database (Positions table) as the single
+        source of truth. JSON file is kept as backup only (write-only for archival).
+        """
         try:
-            hist = self._load_trades_history()
-            trades = hist.get("trades") or []
+            # Database is the single source of truth
+            if not self.positions_repo or not self.user_id:
+                logger.warning(
+                    "Cannot query reentries: positions_repo or user_id not available. "
+                    "Returning 0 to prevent incorrect reentry cap checks."
+                )
+                return 0
+
+            position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+            if not position or not position.reentries:
+                return 0
+
+            # Count reentries from today
+            reentries = position.reentries
+            if not isinstance(reentries, list):
+                return 0
+
             today = datetime.now().date()
             cnt = 0
-            for t in trades:
-                if t.get("entry_type") != "reentry":
+            for reentry in reentries:
+                if not isinstance(reentry, dict):
                     continue
-                sym = str(t.get("symbol") or "").upper()
-                if sym != base_symbol.upper():
-                    continue
-                ts = t.get("entry_time")
-                if not ts:
+                reentry_time = reentry.get("time")
+                if not reentry_time:
                     continue
                 try:
-                    d = datetime.fromisoformat(ts).date()
+                    # Parse ISO format timestamp
+                    d = datetime.fromisoformat(reentry_time).date()
                 except Exception:
                     try:
-                        d = datetime.strptime(ts.split("T")[0], "%Y-%m-%d").date()
+                        # Fallback: try parsing just the date part
+                        d = datetime.strptime(reentry_time.split("T")[0], "%Y-%m-%d").date()
                     except Exception:
                         continue
                 if d == today:
                     cnt += 1
             return cnt
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error counting reentries for {base_symbol}: {e}")
             return 0
 
     def _attempt_place_order(
@@ -4963,20 +4987,68 @@ class AutoTradeEngine:
                                 logger.info(
                                     f"Trade history updated: {symbol} qty {old_qty} -> {new_total_qty}"
                                 )
-                                # Also add reentry metadata for tracking
+                                # Also add reentry metadata for tracking (backup to JSON only)
+                                # Note: Database is the source of truth. JSON is kept as backup/archival.
+                                # When reentry executes, database is updated via unified_order_monitor.
                                 if "reentries" not in e:
                                     e["reentries"] = []
-                                e["reentries"].append(
-                                    {
-                                        "qty": qty,
-                                        "level": next_level,
-                                        "rsi": rsi,
-                                        "price": price,
-                                        "time": datetime.now().isoformat(),
-                                    }
-                                )
+                                # Construct reentry data matching database structure
+                                # This structure must match what unified_order_monitor writes to DB.
+                                reentry_data = {
+                                    "qty": int(qty),
+                                    "level": int(next_level) if next_level is not None else None,
+                                    "rsi": float(rsi) if rsi is not None else None,
+                                    "price": float(price),
+                                    "time": datetime.now().isoformat(),
+                                    "order_id": reentry_order_id if reentry_order_id else None,  # Track order_id if available
+                                }
+
+                                # Improvement: Validate reentry data before writing to JSON
+                                # Validate required fields
+                                if not isinstance(reentry_data.get("qty"), int) or reentry_data["qty"] <= 0:
+                                    logger.error(
+                                        f"Invalid qty in reentry data for {symbol}: {reentry_data.get('qty')}"
+                                    )
+                                    continue
+
+                                if not isinstance(reentry_data.get("price"), (int, float)) or reentry_data["price"] <= 0:
+                                    logger.error(
+                                        f"Invalid price in reentry data for {symbol}: {reentry_data.get('price')}"
+                                    )
+                                    continue
+
+                                if not isinstance(reentry_data.get("time"), str):
+                                    logger.error(
+                                        f"Invalid time in reentry data for {symbol}: {reentry_data.get('time')}"
+                                    )
+                                    continue
+
+                                # Validate time format
+                                try:
+                                    datetime.fromisoformat(reentry_data["time"])
+                                except (ValueError, TypeError) as time_err:
+                                    logger.error(
+                                        f"Invalid time format in reentry data for {symbol}: "
+                                        f"{reentry_data.get('time')} - {time_err}"
+                                    )
+                                    continue
+
+                                e["reentries"].append(reentry_data)
+                        except ValueError as e:
+                            logger.error(
+                                f"Invalid data when updating trade history after reentry for {symbol}: {e}",
+                                exc_info=True,
+                            )
+                        except KeyError as e:
+                            logger.error(
+                                f"Missing required field when updating trade history after reentry for {symbol}: {e}",
+                                exc_info=True,
+                            )
                         except Exception as e:
-                            logger.error(f"Error updating trade history after reentry: {e}")
+                            logger.error(
+                                f"Unexpected error updating trade history after reentry for {symbol}: {e}",
+                                exc_info=True,
+                            )
                     else:
                         logger.error(f"Re-entry order placement failed for {symbol}")
 
