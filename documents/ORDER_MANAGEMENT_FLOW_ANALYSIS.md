@@ -230,13 +230,22 @@ Time T3: Reentry continues
 - Sell orders placed with wrong quantities
 - Reentry orders placed when position already reduced
 
-**Current Code**:
-- `_reconcile_positions_with_broker_holdings()` only called in `run_at_market_open()`
-- No periodic reconciliation during market hours
+**Status**: ✅ **FIXED** (2025-12-07)
 
-**Recommendation**:
-- Run reconciliation periodically during market hours (e.g., every 30 minutes)
-- Or run reconciliation before critical operations (reentry placement, sell order updates)
+**Implementation**:
+- Added reconciliation before `place_reentry_orders()` (pre-market, ensures positions are up-to-date)
+- Added periodic reconciliation in `monitor_and_update()` (every 30 minutes during market hours)
+- Added lightweight reconciliation before updating sell orders (for specific symbol being updated)
+- Ensures manual trades are detected within 30 minutes during market hours
+
+**Files Changed**:
+- `modules/kotak_neo_auto_trader/auto_trade_engine.py` - Reconciliation before reentry placement
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Periodic reconciliation and lightweight reconciliation
+
+**How It Works**:
+1. **Before reentry placement**: Full reconciliation ensures positions are up-to-date
+2. **During market hours**: Periodic reconciliation every 30 minutes (at :00 and :30)
+3. **Before sell order updates**: Lightweight reconciliation for specific symbol
 
 ---
 

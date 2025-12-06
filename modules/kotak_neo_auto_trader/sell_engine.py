@@ -1917,6 +1917,14 @@ class SellOrderManager:
                         f"(reentry detected, Order ID: {existing['order_id']})"
                     )
 
+                    # Manual Trade Detection Timing Fix: Lightweight reconciliation for this symbol
+                    # before updating sell order to ensure we have latest quantity
+                    try:
+                        # Quick check: reconcile this specific symbol
+                        self._reconcile_single_symbol(symbol)
+                    except Exception as e:
+                        logger.debug(f"Lightweight reconciliation for {symbol} failed: {e}. Continuing...")
+
                     # Update the sell order with new quantity (keep same price)
                     if self.update_sell_order(
                         order_id=existing["order_id"],
@@ -2353,6 +2361,23 @@ class SellOrderManager:
             "converted_to_market": 0,
             "circuit_retried": 0,
         }
+
+        # Manual Trade Detection Timing Fix: Periodic reconciliation during market hours
+        # Run reconciliation every 30 minutes to detect manual trades
+        from datetime import datetime
+
+        now = datetime.now()
+        # Run reconciliation at :00, :30 minutes of each hour
+        if now.minute in [0, 30] and now.second < 10:
+            try:
+                reconciliation_stats = self._reconcile_positions_with_broker_holdings()
+                if reconciliation_stats.get("updated", 0) > 0 or reconciliation_stats.get("closed", 0) > 0:
+                    logger.info(
+                        f"Periodic reconciliation: {reconciliation_stats.get('updated', 0)} positions updated, "
+                        f"{reconciliation_stats.get('closed', 0)} positions closed"
+                    )
+            except Exception as e:
+                logger.debug(f"Periodic reconciliation failed (non-critical): {e}")
 
         # Clean up any rejected/cancelled orders before monitoring
         self._cleanup_rejected_orders()
