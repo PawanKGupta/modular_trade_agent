@@ -186,6 +186,85 @@ class UnifiedOrderMonitor:
 
         return registered_count
 
+    def _get_filled_quantity_from_order_history(self, order_id: str) -> dict[str, Any] | None:
+        """
+        Get filled quantity from order_history API (Edge Case #2 fix).
+
+        Handles partial execution by extracting actual filled quantity (fldQty)
+        from order_history response.
+
+        Args:
+            order_id: Order ID to look up
+
+        Returns:
+            Dict with 'filled_qty' and 'execution_price', or None if not found
+        """
+        if not self.orders:
+            return None
+
+        try:
+            # Try specific order first (more efficient)
+            response = self.orders.get_order_history(order_id=order_id)
+
+            if not response:
+                # Fallback: fetch full history and search
+                response = self.orders.get_order_history()
+
+            if not response or "data" not in response:
+                return None
+
+            # Handle nested data structure: response["data"]["data"]
+            data_wrapper = response.get("data", {})
+            if not isinstance(data_wrapper, dict):
+                return None
+
+            orders_list = data_wrapper.get("data", [])
+            if not isinstance(orders_list, list):
+                return None
+
+            # Filter orders by order_id
+            matching_orders = [
+                order
+                for order in orders_list
+                if OrderFieldExtractor.get_order_id(order) == order_id
+            ]
+
+            if not matching_orders:
+                return None
+
+            # Find latest "complete" entry (highest updRecvTm with ordSt="complete")
+            complete_orders = [
+                order
+                for order in matching_orders
+                if OrderFieldExtractor.get_status(order) == "complete"
+            ]
+
+            if not complete_orders:
+                # Order not complete yet
+                return None
+
+            # Get latest complete entry (highest timestamp)
+            latest_complete = max(complete_orders, key=lambda o: o.get("updRecvTm", 0))
+
+            filled_qty = OrderFieldExtractor.get_filled_quantity(latest_complete)
+            avg_price_str = latest_complete.get("avgPrc", "0")
+            avg_price = (
+                float(avg_price_str) if avg_price_str and avg_price_str != "0.00" else 0.0
+            )
+
+            if filled_qty > 0:
+                return {
+                    "filled_qty": filled_qty,
+                    "execution_price": avg_price,
+                    "order_status": "complete",
+                }
+
+            return None
+
+        except Exception as e:
+            logger.warning(f"Error fetching order_history for {order_id}: {e}")
+            return None
+
     def check_buy_order_status(
         self, broker_orders: list[dict[str, Any]] | None = None
     ) -> dict[str, int]:
@@ -255,6 +334,15 @@ class UnifiedOrderMonitor:
                     # Handle different statuses
                     if status_lower in ["executed", "filled", "complete"]:
                         stats["executed"] += 1
+                        # Edge Case #2: Use fldQty from broker_order if available (partial execution)
+                        filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+                        if filled_qty > 0:
+                            # Override execution quantity with actual filled quantity
+                            order_info["execution_qty"] = float(filled_qty)
+                            logger.info(
+                                f"Using fldQty from order_report() for {order_id}: "
+                                f"qty={filled_qty} (handles partial execution)"
+                            )
                         self._handle_buy_order_execution(order_id, order_info, broker_order)
                         order_ids_to_remove.append(order_id)
                     elif status_lower in ["rejected", "reject"]:
@@ -307,46 +395,110 @@ class UnifiedOrderMonitor:
                                         if not db_order:
                                             continue
 
-                                        # Extract execution details from holdings
-                                        # For execution_price: prefer order price if available (limit order),
-                                        # otherwise use averagePrice from holdings (approximation)
-                                        order_price = order_info.get("price") or (
-                                            float(db_order.price) if db_order.price else None
-                                        )
-                                        execution_price = (
-                                            float(order_price)
-                                            if order_price and float(order_price) > 0
-                                            else (
-                                                float(holding_info.get("averagePrice", 0))
-                                                or float(holding_info.get("avgPrice", 0))
-                                                or float(holding_info.get("closingPrice", 0))
-                                                or 0.0
-                                            )
-                                        )
-                                        # For execution_qty, prefer order quantity from DB if available
-                                        # (holdings quantity is total position, not just this order)
-                                        order_qty = (
-                                            order_info.get("quantity", 0) or db_order.quantity
-                                        )
-                                        execution_qty = (
-                                            float(order_qty)
-                                            if order_qty and float(order_qty) > 0
-                                            else (
-                                                float(holding_info.get("quantity", 0))
-                                                or float(holding_info.get("qty", 0))
-                                                or 0.0
-                                            )
-                                        )
+                                        # Edge Case #2 Fix: Use priority order for execution details
+                                        # Priority 1: Try order_report() first (same-day orders)
+                                        broker_order_from_report = None
+                                        if broker_orders:
+                                            for bo in broker_orders:
+                                                if OrderFieldExtractor.get_order_id(bo) == order_id:
+                                                    broker_order_from_report = bo
+                                                    break
 
-                                        # Mark as executed using holdings data
-                                        if execution_price > 0 and execution_qty > 0:
+                                        execution_qty = None
+                                        execution_price = None
+                                        source = None
+
+                                        # Priority 1: fldQty from order_report() (if found)
+                                        if broker_order_from_report:
+                                            filled_qty = OrderFieldExtractor.get_filled_quantity(
+                                                broker_order_from_report
+                                            )
+                                            if filled_qty > 0:
+                                                execution_qty = float(filled_qty)
+                                                execution_price = OrderFieldExtractor.get_price(
+                                                    broker_order_from_report
+                                                )
+                                                source = "order_report"
+                                                logger.info(
+                                                    f"Using fldQty from order_report() for {order_id}: "
+                                                    f"qty={execution_qty}, price={execution_price:.2f}"
+                                                )
+
+                                        # Priority 2: fldQty from order_history() (if not found in order_report)
+                                        if execution_qty is None:
+                                            history_data = self._get_filled_quantity_from_order_history(
+                                                order_id
+                                            )
+                                            if history_data and history_data.get("filled_qty", 0) > 0:
+                                                execution_qty = float(history_data["filled_qty"])
+                                                execution_price = history_data.get(
+                                                    "execution_price", 0.0
+                                                )
+                                                source = "order_history"
+                                                logger.info(
+                                                    f"Using fldQty from order_history() for {order_id}: "
+                                                    f"qty={execution_qty}, price={execution_price:.2f}"
+                                                )
+
+                                        # Priority 3: Holdings quantity (actual broker position)
+                                        if execution_qty is None:
+                                            holdings_qty = float(
+                                                holding_info.get("quantity", 0)
+                                                or holding_info.get("qty", 0)
+                                                or 0.0
+                                            )
+                                            if holdings_qty > 0:
+                                                execution_qty = holdings_qty
+                                                execution_price = (
+                                                    float(holding_info.get("averagePrice", 0))
+                                                    or float(holding_info.get("avgPrice", 0))
+                                                    or float(holding_info.get("closingPrice", 0))
+                                                    or 0.0
+                                                )
+                                                source = "holdings"
+                                                logger.info(
+                                                    f"Using holdings quantity for {order_id}: "
+                                                    f"qty={execution_qty}, price={execution_price:.2f} "
+                                                    f"(Note: This is total position, not just this order)"
+                                                )
+
+                                        # Priority 4: DB order quantity (last resort)
+                                        if execution_qty is None:
+                                            order_qty = (
+                                                order_info.get("quantity", 0) or db_order.quantity
+                                            )
+                                            if order_qty and float(order_qty) > 0:
+                                                execution_qty = float(order_qty)
+                                                order_price = order_info.get("price") or (
+                                                    float(db_order.price) if db_order.price else None
+                                                )
+                                                execution_price = (
+                                                    float(order_price)
+                                                    if order_price and float(order_price) > 0
+                                                    else (
+                                                        float(holding_info.get("averagePrice", 0))
+                                                        or float(holding_info.get("avgPrice", 0))
+                                                        or float(holding_info.get("closingPrice", 0))
+                                                        or 0.0
+                                                    )
+                                                )
+                                                source = "db_order"
+                                                logger.warning(
+                                                    f"Using DB order quantity for {order_id} "
+                                                    f"(least reliable): qty={execution_qty}, "
+                                                    f"price={execution_price:.2f}. "
+                                                    f"Consider manual verification."
+                                                )
+
+                                        # Mark as executed using extracted data
+                                        if execution_price and execution_price > 0 and execution_qty and execution_qty > 0:
                                             self.orders_repo.mark_executed(
                                                 db_order,
                                                 execution_price=execution_price,
                                                 execution_qty=execution_qty,
                                             )
                                             logger.info(
-                                                f"Reconciled order {order_id}: "
+                                                f"Reconciled order {order_id} (source: {source}): "
                                                 f"executed at Rs {execution_price:.2f}, qty {execution_qty}"
                                             )
 
@@ -434,11 +586,16 @@ class UnifiedOrderMonitor:
             # Map broker status to our status
             if status in ["executed", "filled", "complete"]:
                 execution_price = OrderFieldExtractor.get_price(broker_order)
-                execution_qty = OrderFieldExtractor.get_quantity(broker_order)
+                # Edge Case #2: Use fldQty (filled quantity) if available, otherwise use order quantity
+                filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+                if filled_qty > 0:
+                    execution_qty = float(filled_qty)
+                else:
+                    execution_qty = OrderFieldExtractor.get_quantity(broker_order) or db_order.quantity
                 self.orders_repo.mark_executed(
                     db_order,
                     execution_price=execution_price,
-                    execution_qty=execution_qty or db_order.quantity,
+                    execution_qty=execution_qty,
                 )
             elif status in ["rejected", "reject"]:
                 rejection_reason = OrderFieldExtractor.get_rejection_reason(broker_order)
@@ -460,6 +617,7 @@ class UnifiedOrderMonitor:
 
         Phase 4: Integrates with OrderStateManager for unified state tracking.
         Phase 9: Sends notification for order execution.
+        Edge Case #2: Uses fldQty (filled quantity) to handle partial execution.
 
         Args:
             order_id: Order ID
@@ -468,9 +626,20 @@ class UnifiedOrderMonitor:
         """
         symbol = order_info.get("symbol", "")
         execution_price = OrderFieldExtractor.get_price(broker_order)
-        execution_qty = OrderFieldExtractor.get_quantity(broker_order) or order_info.get(
-            "quantity", 0
-        )
+
+        # Edge Case #2: Use fldQty (filled quantity) if available, otherwise use order quantity
+        # Check if execution_qty was already set from order_report (handles partial execution)
+        execution_qty = order_info.get("execution_qty")
+        if execution_qty is None:
+            # Try to get filled quantity from broker_order
+            filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+            if filled_qty > 0:
+                execution_qty = float(filled_qty)
+            else:
+                # Fallback to order quantity
+                execution_qty = OrderFieldExtractor.get_quantity(broker_order) or order_info.get(
+                    "quantity", 0
+                )
 
         logger.info(
             f"Buy order executed: {symbol} - Order ID {order_id}, "

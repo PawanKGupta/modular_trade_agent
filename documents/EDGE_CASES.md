@@ -94,13 +94,13 @@ Day 3: run_at_market_open() runs
 ## Edge Case #2: Partial Execution Reconciliation
 
 **Severity**: 🟡 **MEDIUM**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-12-06)
 
 ### Problem
 
 When reconciling orders that executed while service was down, the code uses **order quantity from DB** instead of **actual filled quantity from broker**. This can cause incorrect position updates if partial execution occurred.
 
-### Current Flow
+### Current Flow (Before Fix)
 
 ```
 Order placed: 10 shares
@@ -122,35 +122,55 @@ Service restarts:
 ### Code Location
 
 - **File**: `modules/kotak_neo_auto_trader/unified_order_monitor.py`
-- **Lines**: 326-337
+- **Lines**: 189-266 (new method), 320-500 (reconciliation logic), 568-594 (status update)
 - **Method**: `check_buy_order_status()` - Reconciliation logic
-
-### Current Code
-
-```python
-# For execution_qty, prefer order quantity from DB if available
-# (holdings quantity is total position, not just this order)
-order_qty = order_info.get("quantity", 0) or db_order.quantity
-execution_qty = (
-    float(order_qty)  # ❌ Uses order quantity, not actual filled quantity
-    if order_qty and float(order_qty) > 0
-    else (
-        float(holding_info.get("quantity", 0))  # Fallback to holdings
-        or float(holding_info.get("qty", 0))
-        or 0.0
-    )
-)
-```
 
 ### Solution
 
-1. **Extract `fldQty` from broker order** (if available in order_report)
-2. **Use `fldQty` as execution_qty** (actual filled quantity)
-3. **Fallback to order quantity** only if `fldQty` not available
+Implemented priority-based fallback logic to extract actual filled quantity (`fldQty`) from broker APIs:
+
+1. **Priority 1**: `fldQty` from `order_report()` (same-day orders)
+2. **Priority 2**: `fldQty` from `order_history()` (historical orders)
+3. **Priority 3**: Holdings quantity (actual broker position)
+4. **Priority 4**: DB order quantity (last resort)
+
+### Implementation
+
+**Fixed on**: 2025-12-06
+
+**Changes Made**:
+
+1. **Added `_get_filled_quantity_from_order_history()` method**:
+   - Extracts `fldQty` from `order_history()` API response
+   - Handles nested response structure: `response["data"]["data"]`
+   - Finds latest "complete" entry (highest `updRecvTm`)
+   - Returns `filled_qty` and `execution_price`
+
+2. **Updated reconciliation logic in `check_buy_order_status()`**:
+   - Implements priority order for execution quantity extraction
+   - Uses `fldQty` from `order_report()` when order is found
+   - Falls back to `order_history()` if not in `order_report()`
+   - Falls back to holdings quantity if not in history
+   - Falls back to DB quantity as last resort
+   - Logs which source was used for reconciliation
+
+3. **Updated `_update_buy_order_status()` method**:
+   - Uses `fldQty` (filled quantity) instead of order quantity
+   - Handles partial execution correctly
+
+4. **Updated `_handle_buy_order_execution()` method**:
+   - Uses `fldQty` when available (handles partial execution)
+   - Falls back to order quantity if `fldQty` not available
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/unified_order_monitor.py` - Added priority-based reconciliation logic
+
+**Test Files**:
+- `tests/unit/kotak/test_unified_order_monitor_edge_case_2.py` - Comprehensive tests for partial execution reconciliation
 
 ### Broker API Response
 
-From `client.order_report()`, the `fldQty` field indicates filled quantity:
+From `client.order_report()` and `client.order_history()`, the `fldQty` field indicates filled quantity:
 ```json
 {
     "fldQty": 7,  // Actual filled quantity
@@ -158,6 +178,8 @@ From `client.order_report()`, the `fldQty` field indicates filled quantity:
     "avgPrc": "9.50"  // Average execution price
 }
 ```
+
+**Note**: `order_history()` response has nested structure: `response["data"]["data"]` contains the orders array.
 
 ---
 
@@ -900,7 +922,7 @@ if self.reentries_today(symbol) >= 1:
 
 ### Medium Issues (🟡)
 
-5. **Edge Case #2**: Partial execution reconciliation
+5. ~~**Edge Case #2**: Partial execution reconciliation~~ ✅ **FIXED**
 6. **Edge Case #3**: Manual holdings not reflected in sell orders
 7. **Edge Case #4**: Holdings vs positions mismatch
 8. **Edge Case #5**: Reentry order edge case - quantity mismatch
@@ -927,7 +949,7 @@ if self.reentries_today(symbol) >= 1:
    - Fix Edge Case #11: Fix reentry daily cap check (check `reentries` array)
    - Fix Edge Case #13: Enforce daily cap correctly
    - Fix Edge Case #9: Handle partial sell execution
-   - Fix Edge Case #2: Use actual filled quantity from broker
+   - ~~Fix Edge Case #2: Use actual filled quantity from broker~~ ✅ **FIXED**
    - Fix Edge Case #4: Validate positions table against broker holdings
    - Fix Edge Case #12: Cancel pending reentry orders when position closes
 
