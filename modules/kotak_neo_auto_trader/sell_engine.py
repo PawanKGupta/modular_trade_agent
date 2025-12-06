@@ -2673,6 +2673,8 @@ class SellOrderManager:
                                 f"Position marked as closed in database: {base_symbol} "
                                 f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
                             )
+                        # Invalidate cache since position was closed (broker holdings changed)
+                        self._invalidate_holdings_cache()
 
                             # Close corresponding ONGOING buy orders (within same transaction)
                             self._close_buy_orders_for_symbol(base_symbol)
