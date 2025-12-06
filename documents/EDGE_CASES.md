@@ -1553,7 +1553,7 @@ If system were to skip reentry when manual buy detected:
 8. ~~**Edge Case #5**: Reentry order edge case - quantity mismatch~~ ✅ **FIXED** (as part of Edge Case #2 fix)
 9. ~~**Edge Case #9**: Partial sell execution not handled~~ ✅ **FIXED** (as part of Edge Case #8 fix)
 10. ~~**Edge Case #11**: Reentry daily cap check discrepancy~~ ✅ **FIXED**
-11. **Edge Case #12**: Sell order execution while reentry pending
+11. **Edge Case #12**: Sell order execution while reentry pending ⚠️ **PARTIALLY FIXED** (prevention implemented, immediate cancellation pending)
 12. ~~**Edge Case #13**: Multiple reentries same day bypass~~ ✅ **FIXED** (as part of Edge Case #11)
 13. ~~**Edge Case #14**: Manual partial sell of system holdings~~ ✅ **FIXED**
 14. ~~**Edge Case #15**: Manual full sell of system holdings~~ ✅ **FIXED**
@@ -1580,7 +1580,7 @@ If system were to skip reentry when manual buy detected:
    - ~~Fix Edge Case #15: Detect and handle manual full sell of system holdings~~ ✅ **FIXED**
    - ~~Fix Edge Case #17: Validate sell order quantity against broker holdings~~ ✅ **FIXED**
    - ~~Fix Edge Case #4: Validate positions table against broker holdings~~ ✅ **FIXED** (as part of Edge Cases #14, #15, #17)
-   - Fix Edge Case #12: Cancel pending reentry orders when position closes
+   - ~~Fix Edge Case #12: Cancel pending reentry orders when position closes~~ ⚠️ **PARTIALLY FIXED** (prevention implemented, immediate cancellation during market hours pending)
    - ~~Fix Edge Case #9: Handle partial sell execution~~ ✅ **FIXED** (as part of Edge Case #8 fix)
    - ~~Fix Edge Case #18: Handle manual buy of system-tracked symbol~~ ✅ **By Design** (not a bug)
    - ~~Fix Edge Case #16: Reentry on mixed holdings (average price calculation)~~ ✅ **By Design** (not a bug)
