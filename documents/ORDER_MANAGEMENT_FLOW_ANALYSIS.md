@@ -2,7 +2,7 @@
 
 **Date**: 2025-12-06
 **Last Updated**: 2025-12-07
-**Status**: Analysis Complete - Critical Flaws Fixed
+**Status**: Analysis Complete - All Critical Flaws Fixed
 
 ---
 
@@ -19,9 +19,23 @@
   - All position update operations use locking
   - 5 tests added and passing
 
+- ✅ **Flaw #3: Race Condition - Reentry During Sell Order Update** - Fixed (2025-12-07)
+  - Re-read position with locked read before updating sell order
+  - Ensures latest quantity is used even if reentry executes concurrently
+  - 4 tests added and passing
+
+- ✅ **Flaw #4: Race Condition - Sell Execution During Reentry** - Fixed (2025-12-07)
+  - Re-check `closed_at` with locked read before position update
+  - Prevents closed positions from being reopened by concurrent reentry
+  - 4 tests added and passing
+
+- ✅ **Flaw #5: Manual Trade Detection Timing** - Fixed (2025-12-07)
+  - Reconciliation before reentry placement
+  - Periodic reconciliation every 30 minutes during market hours
+  - Lightweight reconciliation before sell order updates
+  - Holdings API caching implemented to reduce broker API calls
+
 **Remaining Issues**:
-- ⚠️ **Flaw #3: Race Condition - Reentry During Sell Order Update** - Partial fix (re-read recommended)
-- ⚠️ **Flaw #4: Race Condition - Sell Execution During Reentry** - Partial fix (closed position check added)
 - 🟡 **Medium Flaws**: Various timing and validation issues (see details below)
 
 **See Also**:
@@ -398,9 +412,11 @@ After reentry:
    - **Implementation**: `get_by_symbol_for_update()` method, all position operations use locking
    - **Files**: `src/infrastructure/persistence/positions_repository.py`, `unified_order_monitor.py`
    - **Tests**: 5 tests for locking behavior
-3. ⚠️ **PARTIAL**: **Add Race Condition Protection**: Re-check position status before updates
-   - **Status**: Partially addressed (closed position check added in `_create_position_from_executed_order()`)
-   - **Remaining**: Sell order update race condition (Flaw #3) - re-read recommended
+3. ✅ **FIXED**: **Add Race Condition Protection**: Re-check position status before updates
+   - **Status**: Fully implemented (2025-12-07)
+   - Closed position check added in `_create_position_from_executed_order()` (Flaw #4)
+   - Re-read position with lock before sell order update (Flaw #3)
+   - **Tests**: 8 tests covering race condition scenarios
 
 ### Priority 2 (High):
 4. ✅ **Periodic Reconciliation**: Run reconciliation during market hours, not just at open
@@ -419,7 +435,9 @@ After reentry:
 **Immediate (Before Production)** - ✅ **COMPLETED**:
 - ✅ Transaction wrapping for critical operations (Fixed 2025-12-07)
 - ✅ Database locking for position updates (Fixed 2025-12-07)
-- ⚠️ Race condition protection in reentry flow (Partially fixed - closed position check added)
+- ✅ Race condition protection in reentry flow (Fixed 2025-12-07)
+- ✅ Manual trade detection timing improvements (Fixed 2025-12-07)
+- ✅ Holdings API caching to reduce broker API calls (Fixed 2025-12-07)
 
 **Short-term (Next Sprint)**:
 - Periodic reconciliation during market hours
