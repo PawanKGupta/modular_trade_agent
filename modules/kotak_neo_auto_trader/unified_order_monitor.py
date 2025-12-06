@@ -12,8 +12,6 @@ from typing import Any
 from utils.logger import logger
 
 try:
-    from .order_state_manager import OrderStateManager
-    from .orders import KotakNeoOrders
     from .sell_engine import SellOrderManager
     from .utils.order_field_extractor import OrderFieldExtractor
     from .utils.symbol_utils import extract_base_symbol
@@ -574,9 +572,6 @@ class UnifiedOrderMonitor:
             existing_pos = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
 
             # Calculate execution time (use current time if not available)
-
-            from src.infrastructure.db.timezone_utils import ist_now
-
             execution_time = ist_now()
             if db_order and hasattr(db_order, "filled_at") and db_order.filled_at:
                 execution_time = db_order.filled_at
@@ -599,6 +594,64 @@ class UnifiedOrderMonitor:
                 if existing_pos.entry_rsi is None:
                     entry_rsi_to_set = entry_rsi
 
+                # Reentry tracking: Detect if this is a reentry and update reentry fields
+                is_reentry = False
+                reentry_count = existing_pos.reentry_count or 0
+                reentries_array = existing_pos.reentries if existing_pos.reentries else []
+                last_reentry_price = existing_pos.last_reentry_price
+
+                # Check if this is a reentry: existing position OR order marked as reentry
+                if db_order and db_order.entry_type == "reentry":
+                    is_reentry = True
+                elif existing_pos:  # Position already exists, so this is likely a reentry
+                    is_reentry = True
+
+                if is_reentry:
+                    # Extract reentry data from order metadata or construct from execution data
+                    reentry_data = None
+                    if db_order and db_order.order_metadata:
+                        metadata = (
+                            db_order.order_metadata
+                            if isinstance(db_order.order_metadata, dict)
+                            else {}
+                        )
+                        # Extract reentry fields from metadata
+                        reentry_level = metadata.get("rsi_level") or metadata.get("level")
+                        reentry_rsi = metadata.get("rsi") or metadata.get("rsi10") or entry_rsi
+                        reentry_price = metadata.get("price") or execution_price
+
+                        # Construct reentry data matching trade history structure
+                        reentry_data = {
+                            "qty": int(execution_qty),
+                            "level": int(reentry_level) if reentry_level is not None else None,
+                            "rsi": float(reentry_rsi) if reentry_rsi is not None else None,
+                            "price": float(reentry_price),
+                            "time": execution_time.isoformat(),
+                        }
+                    else:
+                        # Fallback: construct minimal reentry data from execution
+                        reentry_data = {
+                            "qty": int(execution_qty),
+                            "level": None,
+                            "rsi": float(entry_rsi) if entry_rsi else None,
+                            "price": float(execution_price),
+                            "time": execution_time.isoformat(),
+                        }
+
+                    # Ensure reentries_array is a list
+                    if not isinstance(reentries_array, list):
+                        reentries_array = []
+
+                    # Append new reentry
+                    reentries_array.append(reentry_data)
+                    reentry_count = len(reentries_array)
+                    last_reentry_price = execution_price
+
+                    logger.info(
+                        f"Reentry detected for {base_symbol}: Adding reentry #{reentry_count} "
+                        f"(qty: {execution_qty}, price: Rs {execution_price:.2f})"
+                    )
+
                 self.positions_repo.upsert(
                     user_id=self.user_id,
                     symbol=base_symbol,
@@ -606,10 +659,14 @@ class UnifiedOrderMonitor:
                     avg_price=new_avg_price,
                     opened_at=existing_pos.opened_at,  # Preserve original open time
                     entry_rsi=entry_rsi_to_set,  # Only set if not already set
+                    reentry_count=reentry_count if is_reentry else None,
+                    reentries=reentries_array if is_reentry else None,
+                    last_reentry_price=last_reentry_price if is_reentry else None,
                 )
                 logger.info(
                     f"Updated position for {base_symbol}: qty {existing_qty} -> {new_qty}, "
                     f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}"
+                    + (f", reentry_count: {reentry_count}" if is_reentry else "")
                 )
 
                 # Edge Case #1 Fix: Update existing sell order if quantity increased (reentry scenario)
