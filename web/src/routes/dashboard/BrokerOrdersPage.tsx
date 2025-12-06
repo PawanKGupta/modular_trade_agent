@@ -200,29 +200,29 @@ export function BrokerOrdersPage() {
 						<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
 							<div className="flex flex-col">
 								{(() => {
-									const brokerError = formatBrokerError(error);
-									return (
+						const brokerError = formatBrokerError(error);
+						return (
 										<>
-											<span className="text-xs sm:text-sm text-red-400">
-												Failed to load orders: {brokerError.message}
-												{brokerError.statusCode && ` (${brokerError.statusCode})`}
-											</span>
+									<span className="text-xs sm:text-sm text-red-400">
+										Failed to load orders: {brokerError.message}
+										{brokerError.statusCode && ` (${brokerError.statusCode})`}
+									</span>
 											{brokerError.retryable && ordersQuery.failureCount && ordersQuery.failureCount > 0 && (
-												<span className="text-xs text-yellow-400">
+										<span className="text-xs text-yellow-400">
 													Retrying... (Attempt {ordersQuery.failureCount}/3)
-												</span>
-											)}
+										</span>
+									)}
 										</>
 									);
 								})()}
-							</div>
-							<button
+								</div>
+								<button
 								onClick={() => ordersQuery.refetch()}
-								className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 min-h-[32px] sm:min-h-0"
-							>
-								Retry Now
-							</button>
-						</div>
+									className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 min-h-[32px] sm:min-h-0"
+								>
+									Retry Now
+								</button>
+							</div>
 					)}
 				</div>
 				<div className="overflow-x-auto -mx-2 sm:mx-0">

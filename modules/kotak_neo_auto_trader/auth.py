@@ -117,10 +117,10 @@ class KotakNeoAuth:
                 if not self._complete_2fa():
                     return False
 
-            self.is_logged_in = True
-            self.logger.info("Login completed successfully!")
-            self.logger.info("Session will remain active for the entire trading day")
-            return True
+                self.is_logged_in = True
+                self.logger.info("Login completed successfully!")
+                self.logger.info("Session will remain active for the entire trading day")
+                return True
 
         except Exception as e:
             # Sanitize error message in case it contains token info
