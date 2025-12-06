@@ -615,6 +615,8 @@ class SellOrderManager:
                         )
                         stats["closed"] += 1
                         logger.info(f"Position {symbol} marked as closed due to manual full sell")
+                        # Invalidate cache since position was updated
+                        self._invalidate_holdings_cache()
                     except Exception as e:
                         logger.error(f"Error marking position {symbol} as closed: {e}")
 
