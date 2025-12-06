@@ -463,7 +463,8 @@ class TestPositionMonitorBackwardCompatibility:
 
         mock_position_loader = Mock()
         mock_position_loader.load_open_positions.return_value = []
-        mock_position_loader.get_positions_by_symbol.return_value = {}
+        # Ensure get_positions_by_symbol returns empty dict (not None or cached data)
+        mock_position_loader.get_positions_by_symbol = Mock(return_value={})
         mock_get_position_loader.return_value = mock_position_loader
 
         monitor = PositionMonitor(
@@ -472,7 +473,9 @@ class TestPositionMonitorBackwardCompatibility:
             enable_realtime_prices=False,
         )
         # Set the mocked position_loader (required for the mock to work)
+        # Also ensure the method is properly mocked
         monitor.position_loader = mock_position_loader
+        monitor.position_loader.get_positions_by_symbol = Mock(return_value={})
 
         results = monitor.monitor_all_positions()
 

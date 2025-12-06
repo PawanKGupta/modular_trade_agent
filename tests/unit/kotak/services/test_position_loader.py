@@ -216,7 +216,7 @@ class TestPositionLoaderLoadOpenPositions:
         # Reset singleton to ensure test isolation
         import modules.kotak_neo_auto_trader.services.position_loader as position_loader_module
         position_loader_module._position_loader_instance = None
-        
+
         loader = PositionLoader(history_path="/nonexistent/path.json", enable_caching=False)
         positions = loader.load_open_positions()
         # Should return empty list on error, not raise exception
