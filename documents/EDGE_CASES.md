@@ -629,13 +629,13 @@ if completed_order_info:
 ## Edge Case #9: Partial Sell Execution Not Handled
 
 **Severity**: 🟡 **MEDIUM**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-01-22, as part of Edge Case #8 fix)
 
 ### Problem
 
-If a sell order **partially executes** (e.g., 20 out of 35 shares), the system treats it as **fully executed** and marks the position as closed. The remaining 15 shares are still in holdings but not tracked.
+If a sell order **partially executes** (e.g., 20 out of 35 shares), the system was treating it as **fully executed** and marking the position as closed. The remaining 15 shares were still in holdings but not tracked.
 
-### Current Flow
+### Original Flow (Before Fix)
 
 ```
 Sell order placed: 35 shares @ Rs 9.50
@@ -646,48 +646,69 @@ Partial execution: Only 20 shares executed (fldQty=20)
   - Result: Position closed, but 15 shares remain unsold
 ```
 
-### Impact
+### Impact (Before Fix)
 
 - **Position incorrectly closed**: Position marked as closed even though shares remain
 - **Remaining shares not tracked**: 15 shares remain unsold and untracked
 - **Lost profit opportunity**: Remaining shares not sold at target price
 - **Data inconsistency**: Holdings show 15 shares, but position shows closed
 
-### Code Location
-
-- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
-- **Lines**: 1864-1886
-- **Method**: `monitor_and_update()`
-
-### Current Code
-
-```python
-completed_order_info = self.has_completed_sell_order(symbol)
-if completed_order_info:
-    # ❌ PROBLEM: Treats as fully executed, doesn't check partial fill
-    logger.info(f"{symbol} sell order completed - removing from monitoring")
-    # Marks position as closed
-    if self.mark_position_closed(symbol, order_price, completed_order_id):
-        symbols_executed.append(symbol)
-```
-
 ### Solution
 
-1. **Check `fldQty` vs `qty`** to detect partial execution
-2. **If partial**: Update position quantity (reduce by `fldQty`), keep position open
+1. **Check `filled_qty` vs `order_qty`** to detect partial execution
+2. **If partial**: Update position quantity (reduce by `filled_qty`), keep position open
 3. **If full**: Mark position as closed
-4. **Update sell order quantity** if partial execution detected
+4. **Use `reduce_quantity()`** for partial executions, `mark_closed()` for full executions
 
-### Broker API Response
+### Implementation
 
-From `client.order_report()`, check `fldQty` vs `qty`:
-```json
-{
-    "fldQty": 20,  // Actual filled quantity (partial)
-    "qty": 35,     // Order quantity
-    "stat": "open" // Still open (partial fill)
-}
+**Fixed on**: 2025-01-22 (as part of Edge Case #8 fix)
+
+**Current Code** (After Fix):
+
+```python
+# In monitor_and_update() (lines 2175-2208):
+# Get filled quantity and order quantity to determine if partial or full execution
+filled_qty = completed_order_info.get("filled_qty", 0) or order_info.get("qty", 0)
+order_qty = completed_order_info.get("order_qty", 0) or order_info.get("qty", 0)
+
+if filled_qty > 0:
+    if filled_qty >= order_qty or filled_qty >= order_info.get("qty", 0):
+        # Full execution - mark position as closed
+        self.positions_repo.mark_closed(
+            user_id=self.user_id,
+            symbol=base_symbol,
+            closed_at=ist_now(),
+            exit_price=order_price,
+        )
+    else:
+        # Partial execution - reduce quantity, keep position open
+        self.positions_repo.reduce_quantity(
+            user_id=self.user_id,
+            symbol=base_symbol,
+            sold_quantity=float(filled_qty),
+        )
 ```
+
+**How It Works**:
+
+1. **Extracts `filled_qty` and `order_qty`** from completed order info
+2. **Compares `filled_qty` with `order_qty`** to determine if execution is partial or full
+3. **If `filled_qty >= order_qty`**: Full execution → calls `mark_closed()`
+4. **If `filled_qty < order_qty`**: Partial execution → calls `reduce_quantity()` to keep position open
+5. **Position remains open** with reduced quantity for partial executions
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Updated `monitor_and_update()` to handle partial executions
+- `src/infrastructure/persistence/positions_repository.py` - `reduce_quantity()` method (added for Edge Case #8)
+
+**Test Files**:
+- `tests/unit/infrastructure/test_positions_repository_edge_case_8.py` - Tests for `reduce_quantity()` method
+
+### Related Edge Cases
+
+- **Edge Case #8**: Sell order execution doesn't update positions table (FIXED - added `mark_closed()` and `reduce_quantity()`)
+- **Edge Case #10**: Position quantity not reduced after sell (FIXED - as part of Edge Case #8 fix)
 
 ---
 
@@ -1446,7 +1467,7 @@ If system were to skip reentry when manual buy detected:
 6. ~~**Edge Case #3**: Manual holdings not reflected in sell orders~~ ✅ **By Design** (system only controls its own holdings)
 7. ~~**Edge Case #4**: Holdings vs positions mismatch~~ ✅ **FIXED** (as part of Edge Cases #14, #15, #17)
 8. ~~**Edge Case #5**: Reentry order edge case - quantity mismatch~~ ✅ **FIXED** (as part of Edge Case #2 fix)
-9. **Edge Case #9**: Partial sell execution not handled
+9. ~~**Edge Case #9**: Partial sell execution not handled~~ ✅ **FIXED** (as part of Edge Case #8 fix)
 10. ~~**Edge Case #11**: Reentry daily cap check discrepancy~~ ✅ **FIXED**
 11. **Edge Case #12**: Sell order execution while reentry pending
 12. ~~**Edge Case #13**: Multiple reentries same day bypass~~ ✅ **FIXED** (as part of Edge Case #11)
@@ -1476,7 +1497,7 @@ If system were to skip reentry when manual buy detected:
    - ~~Fix Edge Case #17: Validate sell order quantity against broker holdings~~ ✅ **FIXED**
    - ~~Fix Edge Case #4: Validate positions table against broker holdings~~ ✅ **FIXED** (as part of Edge Cases #14, #15, #17)
    - Fix Edge Case #12: Cancel pending reentry orders when position closes
-   - Fix Edge Case #9: Handle partial sell execution
+   - ~~Fix Edge Case #9: Handle partial sell execution~~ ✅ **FIXED** (as part of Edge Case #8 fix)
    - ~~Fix Edge Case #18: Handle manual buy of system-tracked symbol~~ ✅ **By Design** (not a bug)
    - ~~Fix Edge Case #16: Reentry on mixed holdings (average price calculation)~~ ✅ **By Design** (not a bug)
 
