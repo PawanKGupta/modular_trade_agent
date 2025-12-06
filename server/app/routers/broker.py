@@ -587,17 +587,18 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
             # Get account limits/margins for available cash
             try:
                 account_limits = broker.get_account_limits()
-                # Extract available cash from account limits
-                # Structure may vary by broker, adjust as needed
-                available_cash = float(
-                    account_limits.get("available_margin", {}).get("cash", 0.0)
-                    or account_limits.get("cash", 0.0)
-                    or 0.0
+                # Extract available cash from account limits (returns Money objects)
+                available_cash_money = account_limits.get("available_cash") or account_limits.get(
+                    "net"
                 )
-            except Exception:
+                if available_cash_money and hasattr(available_cash_money, "amount"):
+                    available_cash = float(available_cash_money.amount)
+                else:
+                    available_cash = 0.0
+            except Exception as e:
                 # If account limits not available, set to 0
                 available_cash = 0.0
-                logger.warning("Could not fetch account limits for broker portfolio")
+                logger.warning(f"Could not fetch account limits for broker portfolio: {e}")
 
             # Convert broker holdings to paper trading format
             portfolio_holdings = []

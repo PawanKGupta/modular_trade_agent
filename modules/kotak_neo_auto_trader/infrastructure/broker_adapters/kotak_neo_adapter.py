@@ -234,19 +234,62 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
     # Account Management
 
     def get_account_limits(self) -> dict[str, Any]:
-        """Get account limits and margins"""
+        """
+        Get account limits and margins
+
+        Handles Kotak Neo API response format:
+        {
+            "Net": "19.41",  # Available cash/net balance
+            "MarginUsed": "18.78",
+            "CollateralValue": "38.19",
+            "Collateral": "0",
+            ...
+        }
+        """
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
 
         try:
-            response = self._client.limits(segment="ALL", exchange="ALL")
-            if isinstance(response, dict) and "data" in response:
-                data = response["data"]
+            response = self._client.limits(segment="ALL", exchange="ALL", product="ALL")
+
+            # Response is a flat dict, not wrapped in {"data": {...}}
+            if isinstance(response, dict):
+                # Extract available cash from "Net" field (net balance)
+                # Fallback to other cash-like fields if Net is not available
+                net_balance = response.get("Net") or response.get("net") or "0"
+                margin_used = response.get("MarginUsed") or response.get("marginUsed") or "0"
+                collateral_value = (
+                    response.get("CollateralValue")
+                    or response.get("collateralValue")
+                    or response.get("Collateral")
+                    or response.get("collateral")
+                    or "0"
+                )
+
+                # Try to parse as float, default to 0 if parsing fails
+                try:
+                    available_cash = float(str(net_balance))
+                except (ValueError, TypeError):
+                    available_cash = 0.0
+
+                try:
+                    margin_used_val = float(str(margin_used))
+                except (ValueError, TypeError):
+                    margin_used_val = 0.0
+
+                try:
+                    collateral_val = float(str(collateral_value))
+                except (ValueError, TypeError):
+                    collateral_val = 0.0
+
                 return {
-                    "available_cash": Money.from_float(float(data.get("cash", 0))),
-                    "margin_used": Money.from_float(float(data.get("marginUsed", 0))),
-                    "margin_available": Money.from_float(float(data.get("marginAvailable", 0))),
-                    "collateral": Money.from_float(float(data.get("collateral", 0))),
+                    "available_cash": Money.from_float(available_cash),
+                    "margin_used": Money.from_float(margin_used_val),
+                    "margin_available": Money.from_float(
+                        max(0.0, available_cash - margin_used_val)
+                    ),  # Calculate available margin
+                    "collateral": Money.from_float(collateral_val),
+                    "net": Money.from_float(available_cash),  # Alias for available_cash
                 }
             return {}
         except Exception as e:
@@ -508,39 +551,111 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         return orders
 
     def _parse_holdings_response(self, data: list) -> list[Holding]:
-        """Parse holdings from API response"""
+        """
+        Parse holdings from API response
+
+        Handles Kotak Neo API response format:
+        {
+            "data": [
+                {
+                    "displaySymbol": "IDEA",
+                    "symbol": "IDEA",
+                    "averagePrice": 9.5699,
+                    "quantity": 35,
+                    "closingPrice": 9.36,
+                    "mktValue": 327.6,
+                    "holdingCost": 334.9475,
+                    ...
+                }
+            ]
+        }
+        """
         holdings = []
         for item in data:
             try:
+                # Symbol: prioritize displaySymbol (Kotak API format) then symbol
                 symbol = self._extract_field(
-                    item, ["tradingSymbol", "symbol", "instrumentName", "securitySymbol"]
+                    item,
+                    [
+                        "displaySymbol",  # Primary: Kotak API uses "displaySymbol"
+                        "symbol",  # Fallback: Generic symbol field
+                        "tradingSymbol",  # Legacy/compatibility
+                        "instrumentName",  # Alternative field
+                        "securitySymbol",  # Alternative field
+                    ],
                 )
+                if not symbol:
+                    logger.warning(f"Skipping holding with empty symbol: {item}")
+                    continue
+
+                # Quantity: prioritize quantity (Kotak API format)
                 quantity = int(
                     self._extract_field(
-                        item, ["quantity", "qty", "netQuantity", "holdingsQuantity"], 0
-                    )
-                )
-                avg_price = float(
-                    self._extract_field(
-                        item, ["avgPrice", "averagePrice", "buyAvg", "buyAvgPrice"], 0
-                    )
-                )
-                ltp = float(
-                    self._extract_field(
-                        item, ["ltp", "lastPrice", "lastTradedPrice", "ltpPrice"], 0
+                        item,
+                        [
+                            "quantity",  # Primary: Kotak API uses "quantity"
+                            "qty",  # Fallback: Short form
+                            "netQuantity",  # Alternative
+                            "holdingsQuantity",  # Alternative
+                        ],
+                        0,
                     )
                 )
 
+                # Average price: prioritize averagePrice (Kotak API format)
+                avg_price = float(
+                    self._extract_field(
+                        item,
+                        [
+                            "averagePrice",  # Primary: Kotak API uses "averagePrice"
+                            "avgPrice",  # Fallback: Short form
+                            "buyAvg",  # Alternative
+                            "buyAvgPrice",  # Alternative
+                        ],
+                        0,
+                    )
+                )
+
+                # Current price: prioritize closingPrice (Kotak API format) then ltp
+                current_price = float(
+                    self._extract_field(
+                        item,
+                        [
+                            "closingPrice",  # Primary: Kotak API uses "closingPrice"
+                            "ltp",  # Fallback: Last traded price
+                            "lastPrice",  # Alternative
+                            "lastTradedPrice",  # Alternative
+                            "ltpPrice",  # Alternative
+                        ],
+                        0,
+                    )
+                )
+
+                # If current_price is 0, try to calculate from mktValue / quantity
+                if current_price == 0 and quantity > 0:
+                    mkt_value = float(
+                        self._extract_field(
+                            item,
+                            ["mktValue", "marketValue", "market_value"],
+                            0,
+                        )
+                    )
+                    if mkt_value > 0:
+                        current_price = mkt_value / quantity
+                        logger.debug(
+                            f"{symbol}: Calculated current_price from mktValue: {current_price:.2f}"
+                        )
+
                 holding = Holding(
-                    symbol=symbol,
+                    symbol=str(symbol).strip(),
                     quantity=quantity,
                     average_price=Money.from_float(avg_price),
-                    current_price=Money.from_float(ltp),
+                    current_price=Money.from_float(current_price),
                     last_updated=datetime.now(),
                 )
                 holdings.append(holding)
             except Exception as e:
-                logger.warning(f"[WARN]? Failed to parse holding: {e}")
+                logger.warning(f"[WARN]? Failed to parse holding: {e}, item: {item}")
                 continue
         return holdings
 

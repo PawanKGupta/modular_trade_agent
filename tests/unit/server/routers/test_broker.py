@@ -1214,8 +1214,9 @@ def test_get_broker_portfolio_success(monkeypatch):
     mock_broker = MagicMock()
     mock_broker.connect.return_value = True
     mock_broker.get_holdings.return_value = [mock_holding]
+    # Fix: Return structure matches what code expects - available_cash as Money object
     mock_broker.get_account_limits.return_value = {
-        "available_margin": {"cash": 100000.0},
+        "available_cash": Money(Decimal("100000.0")),
     }
 
     def mock_broker_factory(broker_type, auth_handler):

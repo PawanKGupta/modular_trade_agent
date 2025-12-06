@@ -78,19 +78,33 @@ class OrderFieldExtractor:
     @staticmethod
     def get_quantity(order: dict[str, Any]) -> int:
         """
-        Extract quantity with fallbacks.
+        Extract order quantity (not filled quantity) with fallbacks.
 
         Args:
             order: Order dict from broker API
 
         Returns:
-            Quantity as integer, 0 if not found
+            Order quantity as integer, 0 if not found
+        """
+        return int(order.get("qty") or order.get("quantity") or order.get("orderQty") or 0)
+
+    @staticmethod
+    def get_filled_quantity(order: dict[str, Any]) -> int:
+        """
+        Extract filled quantity (actual executed quantity) with fallbacks.
+
+        Args:
+            order: Order dict from broker API
+
+        Returns:
+            Filled quantity as integer, 0 if not found
         """
         return int(
-            order.get("qty")
-            or order.get("quantity")
-            or order.get("fldQty")
+            order.get("fldQty")
             or order.get("filledQty")
+            or order.get("filled_quantity")
+            or order.get("executedQty")
+            or order.get("executed_qty")
             or 0
         )
 

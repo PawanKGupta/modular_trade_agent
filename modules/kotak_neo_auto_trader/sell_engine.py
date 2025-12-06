@@ -1277,11 +1277,23 @@ class SellOrderManager:
                             order_price = OrderFieldExtractor.get_price(broker_order) or 0.0
 
                         order_id = result.get("order_id", "")
+                        # Try to get filled quantity from broker_order if available
+                        filled_qty = 0
+                        order_qty = 0
+                        if broker_order:
+                            filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+                            order_qty = OrderFieldExtractor.get_quantity(broker_order)
                         logger.info(
                             f"Found completed sell order for {symbol} from OrderStatusVerifier: "
-                            f"Order ID {order_id}, Price: Rs {order_price:.2f}"
+                            f"Order ID {order_id}, Price: Rs {order_price:.2f}, "
+                            f"Filled: {filled_qty}/{order_qty}"
                         )
-                        return {"order_id": order_id, "price": order_price}
+                        return {
+                            "order_id": order_id,
+                            "price": order_price,
+                            "filled_qty": filled_qty,
+                            "order_qty": order_qty,
+                        }
             except Exception as e:
                 logger.debug(f"Error checking OrderStatusVerifier results for {symbol}: {e}")
                 # Fall through to direct API call
@@ -1314,12 +1326,20 @@ class SellOrderManager:
                 if OrderStatusParser.is_completed(order):
                     order_id = OrderFieldExtractor.get_order_id(order)
                     order_price = OrderFieldExtractor.get_price(order)
+                    filled_qty = OrderFieldExtractor.get_filled_quantity(order)
+                    order_qty = OrderFieldExtractor.get_quantity(order)
 
                     logger.info(
-                        f"Found completed sell order for {base_symbol}: Order ID {order_id}, Price: Rs {order_price:.2f}"
+                        f"Found completed sell order for {base_symbol}: Order ID {order_id}, "
+                        f"Price: Rs {order_price:.2f}, Filled: {filled_qty}/{order_qty}"
                     )
 
-                    return {"order_id": order_id, "price": order_price}
+                    return {
+                        "order_id": order_id,
+                        "price": order_price,
+                        "filled_qty": filled_qty,
+                        "order_qty": order_qty,
+                    }
 
             return None
 
@@ -1876,6 +1896,45 @@ class SellOrderManager:
                 if not completed_order_id:
                     completed_order_id = order_id or "completed"
 
+                # Get filled quantity and order quantity to determine if partial or full execution
+                filled_qty = completed_order_info.get("filled_qty", 0) or order_info.get("qty", 0)
+                order_qty = completed_order_info.get("order_qty", 0) or order_info.get("qty", 0)
+
+                # Update positions table (Edge Case #8 fix)
+                if self.positions_repo and self.user_id:
+                    try:
+                        from src.infrastructure.db.timezone_utils import ist_now
+
+                        base_symbol = extract_base_symbol(symbol).upper()
+                        if filled_qty > 0:
+                            if filled_qty >= order_qty or filled_qty >= order_info.get("qty", 0):
+                                # Full execution - mark position as closed
+                                self.positions_repo.mark_closed(
+                                    user_id=self.user_id,
+                                    symbol=base_symbol,
+                                    closed_at=ist_now(),
+                                    exit_price=order_price,
+                                )
+                                logger.info(
+                                    f"Position marked as closed in database: {base_symbol} "
+                                    f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
+                                )
+                            else:
+                                # Partial execution - reduce quantity, keep position open
+                                self.positions_repo.reduce_quantity(
+                                    user_id=self.user_id,
+                                    symbol=base_symbol,
+                                    sold_quantity=float(filled_qty),
+                                )
+                                logger.info(
+                                    f"Position quantity reduced in database: {base_symbol} "
+                                    f"(sold {filled_qty} shares, remaining quantity updated)"
+                                )
+                    except Exception as e:
+                        logger.error(
+                            f"Error updating positions table for {symbol} after sell execution: {e}"
+                        )
+
                 if self.state_manager:
                     if self._mark_order_executed(symbol, completed_order_id, order_price):
                         symbols_executed.append(symbol)
@@ -1889,6 +1948,30 @@ class SellOrderManager:
             if order_id in executed_ids:
                 # Mark position as closed in trade history
                 current_price = order_info.get("target_price", 0)
+                sold_qty = order_info.get("qty", 0)
+
+                # Update positions table (Edge Case #8 fix)
+                if self.positions_repo and self.user_id:
+                    try:
+                        from src.infrastructure.db.timezone_utils import ist_now
+
+                        base_symbol = extract_base_symbol(symbol).upper()
+                        # Assume full execution if we don't have filled_qty info
+                        self.positions_repo.mark_closed(
+                            user_id=self.user_id,
+                            symbol=base_symbol,
+                            closed_at=ist_now(),
+                            exit_price=current_price,
+                        )
+                        logger.info(
+                            f"Position marked as closed in database: {base_symbol} "
+                            f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error updating positions table for {symbol} after sell execution: {e}"
+                        )
+
                 if self.state_manager:
                     if self._mark_order_executed(symbol, order_id, current_price):
                         symbols_executed.append(symbol)
@@ -2167,8 +2250,6 @@ class SellOrderManager:
             rsi10: Current RSI10 value
         """
         try:
-            from modules.kotak_neo_auto_trader.telegram_notifier import send_telegram
-
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             error_messages = {
                 "cancel_failed": "Failed to cancel limit order",
@@ -2185,7 +2266,34 @@ class SellOrderManager:
                 f"_Time: {timestamp}_"
             )
 
-            send_telegram(message)
+            # Use TelegramNotifier to respect notification preferences
+            try:
+                from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
+
+                telegram_notifier = get_telegram_notifier(
+                    db_session=None,  # SellOrderManager doesn't have db_session
+                )
+                if telegram_notifier and telegram_notifier.enabled:
+                    telegram_notifier.notify_system_alert(
+                        alert_type="RSI_EXIT_CONVERSION_FAILED",
+                        message_text=message,
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                else:
+                    # Fallback to old method if telegram_notifier not available
+                    from modules.kotak_neo_auto_trader.telegram_notifier import send_telegram
+
+                    send_telegram(message)
+            except Exception as notify_err:
+                logger.warning(f"Failed to send RSI exit error notification: {notify_err}")
+                # Fallback to old method on error
+                try:
+                    from modules.kotak_neo_auto_trader.telegram_notifier import send_telegram
+
+                    send_telegram(message)
+                except Exception:
+                    pass  # Already logged
         except Exception as e:
             logger.warning(f"Failed to send RSI exit error notification: {e}")
 
