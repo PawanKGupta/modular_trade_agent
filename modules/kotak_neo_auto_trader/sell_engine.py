@@ -113,11 +113,8 @@ class SellOrderManager:
         self.user_id = user_id
         self.order_verifier = order_verifier  # Phase 3.2: OrderStatusVerifier for shared results
 
-        # Cache for holdings to reduce broker API calls
-        # Cache TTL: 2 minutes (120 seconds) - balances freshness with API call reduction
-        # Reduced from 5 minutes to ensure manual trades are detected faster
-        self._holdings_cache: dict[str, tuple[dict, float]] = {}
-        self._holdings_cache_ttl = 120  # 2 minutes
+        # Holdings cache removed - we now fetch holdings when needed and reuse data
+        # from monitoring cycles instead of maintaining a separate cache
 
         # Initialize OrderStateManager if not provided (for backward compatibility)
         self.state_manager = order_state_manager
@@ -426,7 +423,14 @@ class SellOrderManager:
         try:
             from .utils.symbol_utils import extract_base_symbol
 
-            holdings_response = self._get_holdings_cached()
+            # Fetch holdings directly (no cache - fetch when needed)
+            holdings_response = None
+            if self.portfolio:
+                try:
+                    holdings_response = self.portfolio.get_holdings()
+                except Exception as e:
+                    logger.debug(f"Failed to fetch holdings for validation: {e}")
+            
             if holdings_response and isinstance(holdings_response, dict):
                 holdings_data = holdings_response.get("data", [])
                 for holding in holdings_data:
@@ -518,7 +522,7 @@ class SellOrderManager:
         logger.debug(f"Loaded {len(open_positions)} open positions from database")
         return open_positions
 
-    def _reconcile_positions_with_broker_holdings(self) -> dict[str, int]:
+    def _reconcile_positions_with_broker_holdings(self, holdings_response: dict[str, Any] | None = None) -> dict[str, int]:
         """
         Reconcile positions table with broker holdings to detect manual sells.
 
@@ -545,10 +549,21 @@ class SellOrderManager:
         stats = {"checked": 0, "updated": 0, "closed": 0, "ignored": 0}
 
         try:
-            # Fetch broker holdings (with caching to reduce API calls)
-            holdings_response = self._get_holdings_cached()
+            # Use provided holdings response if available (from monitoring cycle), otherwise fetch
             if not holdings_response or not isinstance(holdings_response, dict):
-                logger.debug("Could not fetch broker holdings for reconciliation")
+                # Fallback: Fetch if not provided (for backward compatibility)
+                if self.portfolio:
+                    try:
+                        holdings_response = self.portfolio.get_holdings()
+                    except Exception as e:
+                        logger.debug(f"Failed to fetch holdings for reconciliation: {e}")
+                        return stats
+                else:
+                    logger.debug("Portfolio not available, cannot fetch holdings for reconciliation")
+                    return stats
+            
+            if not isinstance(holdings_response, dict):
+                logger.debug("Invalid holdings response for reconciliation")
                 return stats
 
             holdings_data = holdings_response.get("data", [])
@@ -615,8 +630,6 @@ class SellOrderManager:
                         )
                         stats["closed"] += 1
                         logger.info(f"Position {symbol} marked as closed due to manual full sell")
-                        # Invalidate cache since position was updated
-                        self._invalidate_holdings_cache()
                     except Exception as e:
                         logger.error(f"Error marking position {symbol} as closed: {e}")
 
@@ -641,8 +654,6 @@ class SellOrderManager:
                             f"Position {symbol} quantity updated: {positions_qty} -> {broker_qty} "
                             f"(manual sell of {sold_qty} shares detected)"
                         )
-                        # Invalidate cache since position was updated
-                        self._invalidate_holdings_cache()
                     except Exception as e:
                         logger.error(f"Error updating position {symbol} quantity: {e}")
 
@@ -674,7 +685,7 @@ class SellOrderManager:
 
         return stats
 
-    def _reconcile_single_symbol(self, symbol: str) -> bool:
+    def _reconcile_single_symbol(self, symbol: str, holdings_response: dict[str, Any] | None = None) -> bool:
         """
         Lightweight reconciliation for a single symbol.
 
@@ -696,10 +707,19 @@ class SellOrderManager:
             if not position or position.closed_at is not None:
                 return False  # Position doesn't exist or is closed
 
-            # Fetch broker holdings for this symbol
-            # Use force_refresh=True for critical operations to ensure fresh data
-            holdings_response = self._get_holdings_cached(force_refresh=True)
+            # Use provided holdings response if available, otherwise fetch fresh
             if not holdings_response or not isinstance(holdings_response, dict):
+                # Fetch fresh for critical operations
+                if self.portfolio:
+                    try:
+                        holdings_response = self.portfolio.get_holdings()
+                    except Exception as e:
+                        logger.debug(f"Failed to fetch holdings for single symbol reconciliation: {e}")
+                        return False
+                else:
+                    return False
+            
+            if not isinstance(holdings_response, dict):
                 return False
 
             holdings_data = holdings_response.get("data", [])
@@ -758,8 +778,6 @@ class SellOrderManager:
                     symbol=symbol,
                     sold_quantity=float(sold_qty),
                 )
-                # Invalidate cache since position was updated
-                self._invalidate_holdings_cache()
                 return True
 
             return False  # No reconciliation needed
@@ -768,68 +786,27 @@ class SellOrderManager:
             logger.debug(f"Error in lightweight reconciliation for {symbol}: {e}")
             return False
 
-    def _get_holdings_cached(self, force_refresh: bool = False) -> dict | None:
+    def _get_holdings(self) -> dict | None:
         """
-        Get holdings from broker API with caching to reduce API calls.
-
-        Cache TTL: 2 minutes (120 seconds) - reduced for better freshness
-        - Reduces API calls while still detecting manual trades within reasonable time
-        - Cache is invalidated on each call after TTL expires
-
-        Args:
-            force_refresh: If True, bypass cache and fetch fresh data (for critical operations)
+        Get holdings from broker API.
+        
+        Simplified: No cache mechanism - fetch when needed.
+        Holdings data is reused from monitoring cycles where possible.
 
         Returns:
             Holdings dictionary or None
         """
-        from time import time
-
-        cache_key = "holdings"
-        current_time = time()
-
-        # For critical operations, bypass cache to ensure fresh data
-        if not force_refresh:
-            # Check cache
-            if cache_key in self._holdings_cache:
-                cached_data, cache_timestamp = self._holdings_cache[cache_key]
-                if current_time - cache_timestamp < self._holdings_cache_ttl:
-                    logger.debug("Using cached holdings data (reduces broker API calls)")
-                    return cached_data
-                # Cache expired, remove it
-                del self._holdings_cache[cache_key]
-
-        # Fetch from broker API
+        if not self.portfolio:
+            return None
+        
         try:
             holdings_response = self.portfolio.get_holdings()
             if holdings_response and isinstance(holdings_response, dict):
-                # Cache the response
-                self._holdings_cache[cache_key] = (holdings_response, current_time)
-                if force_refresh:
-                    logger.debug("Fetched fresh holdings from broker API (forced refresh) and cached")
-                else:
-                    logger.debug("Fetched fresh holdings from broker API and cached")
+                logger.debug("Fetched holdings from broker API")
             return holdings_response
         except Exception as e:
             logger.warning(f"Failed to fetch holdings from broker API: {e}")
-            # Return cached data if available (even if expired) as fallback
-            # Note: If cache was expired, it was already deleted, so this check is for
-            # cases where cache exists but API fails (e.g., network error during refresh)
-            if cache_key in self._holdings_cache:
-                cached_data, _ = self._holdings_cache[cache_key]
-                logger.debug("Using expired cache as fallback")
-                return cached_data
             return None
-
-    def _invalidate_holdings_cache(self) -> None:
-        """
-        Invalidate holdings cache.
-
-        Call this when positions are updated to ensure next reconciliation
-        uses fresh data from broker API.
-        """
-        if "holdings" in self._holdings_cache:
-            del self._holdings_cache["holdings"]
-            logger.debug("Holdings cache invalidated (position updated)")
 
     def get_current_ema9(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
@@ -2086,9 +2063,10 @@ class SellOrderManager:
 
                     # Manual Trade Detection Timing Fix: Lightweight reconciliation for this symbol
                     # before updating sell order to ensure we have latest quantity
+                    # Note: holdings_response not available here, so it will fetch fresh if needed
                     try:
                         # Quick check: reconcile this specific symbol
-                        self._reconcile_single_symbol(symbol)
+                        self._reconcile_single_symbol(symbol, holdings_response=None)
                     except Exception as e:
                         logger.debug(f"Lightweight reconciliation for {symbol} failed: {e}. Continuing...")
 
@@ -2422,15 +2400,15 @@ class SellOrderManager:
     def _check_and_fix_sell_order_mismatches(self, all_orders_response: dict[str, Any] | None = None) -> int:
         """
         Check for sell order quantity mismatches with position quantities and fix them.
-        
+
         Flaw #7 Fix: Detects and fixes mismatches caused by failed sell order updates
         (e.g., after reentry execution when update_sell_order() fails).
-        
+
         Args:
             all_orders_response: Optional orders response from get_orders() API call.
                                  If provided, uses this data instead of making a new API call.
                                  This allows reusing data from frequent monitoring calls.
-        
+
         Returns:
             Number of mismatches fixed
         """
@@ -2438,26 +2416,26 @@ class SellOrderManager:
             return 0
 
         fixed_count = 0
-        
+
         # Extract pending sell orders from the provided orders response (if available)
         # Otherwise, fall back to get_existing_sell_orders() for backward compatibility
         if all_orders_response and isinstance(all_orders_response, dict):
             existing_orders = {}
             orders_data = all_orders_response.get("data", [])
-            
+
             for order in orders_data:
                 try:
                     if not OrderFieldExtractor.is_sell_order(order):
                         continue
-                    
+
                     # Extract symbol (remove -EQ suffix)
                     symbol = extract_base_symbol(OrderFieldExtractor.get_symbol(order))
-                    
+
                     # Extract order details
                     qty = OrderFieldExtractor.get_quantity(order)
                     price = OrderFieldExtractor.get_price(order)
                     order_id = OrderFieldExtractor.get_order_id(order)
-                    
+
                     # Only include pending/open orders (not completed ones)
                     if not OrderStatusParser.is_completed(order) and symbol and qty > 0:
                         existing_orders[symbol.upper()] = {
@@ -2475,7 +2453,7 @@ class SellOrderManager:
         for symbol, order_info in list(self.active_sell_orders.items()):
             try:
                 base_symbol = extract_base_symbol(symbol).upper()
-                
+
                 # Get position quantity from database
                 position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
                 if not position or position.closed_at:
@@ -2653,10 +2631,21 @@ class SellOrderManager:
         from datetime import datetime
 
         now = datetime.now()
+        
+        # Flaw #7 Optimization: Fetch holdings once and reuse for reconciliation and mismatch check
+        # This eliminates the need for separate cache mechanism - we reuse data from monitoring cycle
+        holdings_response = None
+        if now.minute in [0, 30] and now.second < 10:
+            # Fetch holdings once for reconciliation (reused for mismatch check if needed)
+            try:
+                holdings_response = self.portfolio.get_holdings() if self.portfolio else None
+            except Exception as e:
+                logger.debug(f"Failed to fetch holdings for reconciliation: {e}")
+        
         # Run reconciliation at :00, :30 minutes of each hour
         if now.minute in [0, 30] and now.second < 10:
             try:
-                reconciliation_stats = self._reconcile_positions_with_broker_holdings()
+                reconciliation_stats = self._reconcile_positions_with_broker_holdings(holdings_response)
                 if reconciliation_stats.get("updated", 0) > 0 or reconciliation_stats.get("closed", 0) > 0:
                     logger.info(
                         f"Periodic reconciliation: {reconciliation_stats.get('updated', 0)} positions updated, "
@@ -2754,8 +2743,7 @@ class SellOrderManager:
                                 # Note: This includes broker API calls, so it's outside the transaction
                                 self._cancel_pending_reentry_orders(base_symbol)
 
-                                # Invalidate cache since position was closed (broker holdings changed)
-                                self._invalidate_holdings_cache()
+                                # Cache removed - holdings fetched when needed
                             else:
                                 # Partial execution - reduce quantity, keep position open
                                 self.positions_repo.reduce_quantity(
@@ -2763,8 +2751,7 @@ class SellOrderManager:
                                     symbol=base_symbol,
                                     sold_quantity=float(filled_qty),
                                 )
-                                # Invalidate cache since position quantity changed (broker holdings changed)
-                                self._invalidate_holdings_cache()
+                                # Cache removed - holdings fetched when needed
                                 logger.info(
                                     f"Position quantity reduced in database: {base_symbol} "
                                     f"(sold {filled_qty} shares, remaining quantity updated)"
