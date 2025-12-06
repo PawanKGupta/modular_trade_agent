@@ -209,6 +209,20 @@ class UnifiedOrderMonitor:
                 orders_response = self.orders.get_orders() if self.orders else None
                 broker_orders = orders_response.get("data", []) if orders_response else []
 
+            # Fetch holdings once for reconciliation (if needed)
+            holdings_data = None
+            if self.sell_manager and hasattr(self.sell_manager, "portfolio"):
+                try:
+                    holdings_response = self.sell_manager.portfolio.get_holdings()
+                    holdings_data = (
+                        holdings_response.get("data", [])
+                        if isinstance(holdings_response, dict)
+                        else []
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not fetch holdings for reconciliation: {e}")
+                    holdings_data = []
+
             # Check each active buy order
             order_ids_to_remove = []
 
@@ -252,12 +266,129 @@ class UnifiedOrderMonitor:
                         order_ids_to_remove.append(order_id)
                 else:
                     # Order not found in broker - might be executed or cancelled
-                    # Check if it's been a while since placement (could be executed)
-                    placed_at = order_info.get("placed_at")
-                    if placed_at:
-                        # If order was placed more than 1 hour ago and not found, assume executed
-                        # (This is a heuristic - in production, we'd check executed orders API)
-                        logger.debug(f"Buy order {order_id} not found in broker orders")
+                    # Use holdings() API to check if order was executed
+                    # If symbol appears in holdings, order likely executed while service was down
+                    symbol = order_info.get("symbol", "")
+                    base_symbol = extract_base_symbol(symbol).upper() if symbol else ""
+
+                    if base_symbol and holdings_data is not None:
+                        try:
+                            # Look for symbol in holdings (indicates order was executed)
+                            found_in_holdings = False
+                            holding_info = None
+
+                            for holding in holdings_data:
+                                # Try multiple field names for symbol matching
+                                holding_symbol = (
+                                    holding.get("displaySymbol")
+                                    or holding.get("symbol")
+                                    or holding.get("tradingSymbol")
+                                    or ""
+                                )
+                                holding_base = extract_base_symbol(holding_symbol).upper()
+
+                                if holding_base == base_symbol:
+                                    found_in_holdings = True
+                                    holding_info = holding
+                                    break
+
+                            if found_in_holdings and holding_info:
+                                # Order was executed - symbol is in holdings
+                                logger.info(
+                                    f"Order {order_id} not in order_report but found in holdings - "
+                                    f"order was executed while service was down. Reconciling..."
+                                )
+
+                                # Update order status in database
+                                if self.orders_repo and order_info.get("db_order_id"):
+                                    try:
+                                        db_order = self.orders_repo.get(order_info["db_order_id"])
+                                        if not db_order:
+                                            continue
+
+                                        # Extract execution details from holdings
+                                        # For execution_price: prefer order price if available (limit order),
+                                        # otherwise use averagePrice from holdings (approximation)
+                                        order_price = (
+                                            order_info.get("price")
+                                            or (float(db_order.price) if db_order.price else None)
+                                        )
+                                        execution_price = (
+                                            float(order_price)
+                                            if order_price and float(order_price) > 0
+                                            else (
+                                                float(holding_info.get("averagePrice", 0))
+                                                or float(holding_info.get("avgPrice", 0))
+                                                or float(holding_info.get("closingPrice", 0))
+                                                or 0.0
+                                            )
+                                        )
+                                        # For execution_qty, prefer order quantity from DB if available
+                                        # (holdings quantity is total position, not just this order)
+                                        order_qty = order_info.get("quantity", 0) or db_order.quantity
+                                        execution_qty = (
+                                            float(order_qty)
+                                            if order_qty and float(order_qty) > 0
+                                            else (
+                                                float(holding_info.get("quantity", 0))
+                                                or float(holding_info.get("qty", 0))
+                                                or 0.0
+                                            )
+                                        )
+
+                                        # Mark as executed using holdings data
+                                        if execution_price > 0 and execution_qty > 0:
+                                            self.orders_repo.mark_executed(
+                                                db_order,
+                                                execution_price=execution_price,
+                                                execution_qty=execution_qty,
+                                            )
+                                            logger.info(
+                                                f"Reconciled order {order_id}: "
+                                                f"executed at Rs {execution_price:.2f}, qty {execution_qty}"
+                                            )
+
+                                            # Create/update position
+                                            self._create_position_from_executed_order(
+                                                order_id,
+                                                order_info,
+                                                execution_price,
+                                                execution_qty,
+                                            )
+
+                                            stats["executed"] += 1
+                                            order_ids_to_remove.append(order_id)
+                                        else:
+                                            logger.warning(
+                                                f"Holdings found for {base_symbol} but missing "
+                                                f"price/qty data - cannot reconcile order {order_id}"
+                                            )
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Error reconciling order {order_id} from holdings: {e}"
+                                        )
+                            else:
+                                # Order not in holdings either - might be rejected/cancelled
+                                # or holdings API unavailable
+                                placed_at = order_info.get("placed_at")
+                                if placed_at:
+                                    logger.debug(
+                                        f"Buy order {order_id} not found in broker orders or holdings"
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                f"Error checking holdings for order {order_id}: {e}. "
+                                "Falling back to default behavior."
+                            )
+                            # Fallback to original behavior
+                            placed_at = order_info.get("placed_at")
+                            if placed_at:
+                                logger.debug(f"Buy order {order_id} not found in broker orders")
+                    else:
+                        # No portfolio access or symbol info - use original behavior
+                        placed_at = order_info.get("placed_at")
+                        if placed_at:
+                            logger.debug(f"Buy order {order_id} not found in broker orders")
 
             # Remove processed orders from tracking
             for order_id in order_ids_to_remove:

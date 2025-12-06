@@ -298,7 +298,11 @@ class OrderValidationService:
         return (True, 0, 999)
 
     def check_duplicate_order(
-        self, symbol: str, check_active_buy_order: bool = True, check_holdings: bool = True
+        self,
+        symbol: str,
+        check_active_buy_order: bool = True,
+        check_holdings: bool = True,
+        allow_reentry: bool = False,
     ) -> tuple[bool, str | None]:
         """
         Check if order would be duplicate
@@ -307,6 +311,7 @@ class OrderValidationService:
             symbol: Symbol to check
             check_active_buy_order: Check for active buy orders (broker API + database)
             check_holdings: Check if already in holdings
+            allow_reentry: If True, skip holdings check (allows buying more of existing position)
 
         Returns:
             Tuple of (is_duplicate, reason)
@@ -359,13 +364,43 @@ class OrderValidationService:
             except Exception as e:
                 logger.warning(f"Error checking database for duplicate orders: {e}")
 
-        # Check if already in holdings
-        if check_holdings and self.portfolio_service:
+        # Check if already in holdings (broker API)
+        # Skip holdings check if allow_reentry=True (reentries should allow buying more)
+        if check_holdings and not allow_reentry and self.portfolio_service:
             try:
                 if self.portfolio_service.has_position(symbol):
                     return (True, f"Already in holdings: {symbol}")
             except Exception as e:
                 logger.warning(f"Error checking holdings for duplicates: {e}")
+
+        # Also check positions table (includes pre-existing holdings)
+        # Skip positions check if allow_reentry=True (reentries should allow buying more)
+        if check_holdings and not allow_reentry and self.orders_repo and self.user_id:
+            try:
+                from src.infrastructure.persistence.positions_repository import (
+                    PositionsRepository,
+                )
+
+                # Get positions repository from orders_repo's db session
+                if hasattr(self.orders_repo, "db"):
+                    positions_repo = PositionsRepository(self.orders_repo.db)
+                    symbol_base = (
+                        symbol.upper()
+                        .replace("-EQ", "")
+                        .replace("-BE", "")
+                        .replace("-BL", "")
+                        .replace("-BZ", "")
+                    )
+                    existing_position = positions_repo.get_by_symbol(
+                        self.user_id, symbol_base
+                    )
+                    if existing_position and existing_position.closed_at is None:
+                        return (
+                            True,
+                            f"Already in positions table: {symbol} (qty: {existing_position.quantity})",
+                        )
+            except Exception as e:
+                logger.warning(f"Error checking positions table for duplicates: {e}")
 
         return (False, None)
 

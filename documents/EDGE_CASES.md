@@ -1,0 +1,874 @@
+# Edge Cases in Trading Flow
+
+**Date Created**: 2025-01-22
+**Status**: ⚠️ Identified - Needs Resolution
+
+---
+
+## Overview
+
+This document identifies edge cases in the current trading flow that could lead to incorrect order placement, quantity mismatches, or data inconsistencies.
+
+---
+
+## Edge Case #1: Sell Order Quantity Not Updated After Reentry
+
+**Severity**: 🔴 **CRITICAL**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+When a reentry order executes (averaging down), the positions table is updated with the new total quantity, but existing sell orders are **not updated** to reflect the increased quantity.
+
+### Current Flow
+
+```
+Day 1: Initial Entry
+  - Buy: 35 shares @ Rs 9.00
+  - Positions table: quantity=35
+  - Sell order placed: 35 shares @ Rs 9.50 ✅
+
+Day 2: Reentry Executes
+  - Buy: 10 shares @ Rs 9.50
+  - Positions table updated: quantity=45 ✅
+  - Sell order: Still 35 shares ❌ (NOT UPDATED!)
+
+Day 3: run_at_market_open() runs
+  - Checks existing sell order: 35 shares
+  - Current position: 45 shares
+  - existing["qty"] != qty → Doesn't match
+  - Skips placing new order (line 1451)
+  - But doesn't update existing order! ❌
+```
+
+### Impact
+
+- **Partial position exits**: Only original quantity sold, remaining shares not tracked
+- **Incomplete trade execution**: Shares remain unsold
+- **Data inconsistency**: Positions table shows 45, but sell order shows 35
+- **Lost profit opportunity**: Remaining shares not sold at target price
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 1429-1451
+- **Method**: `run_at_market_open()`
+
+### Current Code
+
+```python
+# Check for existing order with same symbol and quantity (avoid duplicate)
+if symbol.upper() in existing_orders:
+    existing = existing_orders[symbol.upper()]
+    if existing["qty"] == qty:
+        # Skip - order exists with same quantity ✅
+        continue
+    # ❌ PROBLEM: If qty changed (reentry), skips without updating!
+```
+
+### Solution
+
+1. **Check if quantity increased** (reentry happened)
+2. **Update existing sell order** with new quantity
+3. **Use `update_sell_order()` or `modify_order()`** to update broker order
+
+### Related Code
+
+- `evaluate_reentries_and_exits()` has logic to update sell orders (lines 4863-4933), but `place_reentry_orders()` doesn't
+- `place_reentry_orders()` is the new method but lacks sell order update logic
+
+---
+
+## Edge Case #2: Partial Execution Reconciliation
+
+**Severity**: 🟡 **MEDIUM**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+When reconciling orders that executed while service was down, the code uses **order quantity from DB** instead of **actual filled quantity from broker**. This can cause incorrect position updates if partial execution occurred.
+
+### Current Flow
+
+```
+Order placed: 10 shares
+Partial execution: Only 7 shares executed (fldQty=7)
+Service down during execution
+Service restarts:
+  - Reconciliation finds order in holdings
+  - Uses order_qty = 10 (from DB) ❌
+  - Should use fldQty = 7 (from broker) ✅
+  - Position updated with wrong quantity: 10 instead of 7
+```
+
+### Impact
+
+- **Incorrect position quantity**: Positions table shows more shares than actually owned
+- **Sell order quantity mismatch**: Sell orders try to sell more than available
+- **Data inconsistency**: Positions table doesn't match broker holdings
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/unified_order_monitor.py`
+- **Lines**: 326-337
+- **Method**: `check_buy_order_status()` - Reconciliation logic
+
+### Current Code
+
+```python
+# For execution_qty, prefer order quantity from DB if available
+# (holdings quantity is total position, not just this order)
+order_qty = order_info.get("quantity", 0) or db_order.quantity
+execution_qty = (
+    float(order_qty)  # ❌ Uses order quantity, not actual filled quantity
+    if order_qty and float(order_qty) > 0
+    else (
+        float(holding_info.get("quantity", 0))  # Fallback to holdings
+        or float(holding_info.get("qty", 0))
+        or 0.0
+    )
+)
+```
+
+### Solution
+
+1. **Extract `fldQty` from broker order** (if available in order_report)
+2. **Use `fldQty` as execution_qty** (actual filled quantity)
+3. **Fallback to order quantity** only if `fldQty` not available
+
+### Broker API Response
+
+From `client.order_report()`, the `fldQty` field indicates filled quantity:
+```json
+{
+    "fldQty": 7,  // Actual filled quantity
+    "qty": 10,    // Order quantity
+    "avgPrc": "9.50"  // Average execution price
+}
+```
+
+---
+
+## Edge Case #3: Manual Holdings Not Reflected in Sell Orders
+
+**Severity**: 🟡 **MEDIUM**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+If user has manual holdings (bought outside the system) that are not in the positions table, sell orders use positions table quantity which is **less than actual holdings**. This causes selling less than what's actually owned.
+
+### Current Flow
+
+```
+Manual holdings: 10 shares (bought manually, not tracked)
+System holdings: 35 shares (tracked in positions table)
+Total broker holdings: 45 shares
+
+Sell order placement:
+  - get_open_positions() reads from positions table
+  - Gets qty = 35 (from positions table) ❌
+  - Should use qty = 45 (from broker holdings) ✅
+  - Places sell order for 35 shares
+  - Result: Only 35 shares sold, 10 shares remain unsold
+```
+
+### Impact
+
+- **Partial position exits**: Not selling all available shares
+- **Remaining shares not tracked**: Manual holdings remain unsold
+- **Lost profit opportunity**: Shares not sold at target price
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 400-461
+- **Method**: `get_open_positions()`
+
+### Current Code
+
+```python
+def get_open_positions(self) -> list[dict[str, Any]]:
+    """
+    Get all open positions from database (positions table).
+    Database-only: No file fallback. Uses positions table as single source of truth.
+    """
+    positions = self.positions_repo.list(self.user_id)
+    for pos in positions:
+        if pos.closed_at is None:
+            open_positions.append({
+                "qty": pos.quantity,  # ❌ Uses positions table quantity only
+                # ...
+            })
+```
+
+### Solution
+
+1. **Reconcile with broker holdings** before placing sell orders
+2. **Use broker holdings quantity** if it's greater than positions table
+3. **Update positions table** to match broker holdings (or track separately)
+
+---
+
+## Edge Case #4: Holdings vs Positions Mismatch
+
+**Severity**: 🟡 **MEDIUM**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+If positions table has different quantity than broker holdings (due to reconciliation issues, manual trades, or data inconsistencies), sell orders use positions table quantity which might be **incorrect**.
+
+### Scenarios
+
+1. **Manual sell executed**: User manually sold 5 shares
+   - Broker holdings: 30 shares
+   - Positions table: 35 shares (not updated)
+   - Sell order uses: 35 shares ❌ (tries to sell more than available)
+
+2. **Reconciliation failure**: Reconciliation didn't update positions table correctly
+   - Broker holdings: 45 shares
+   - Positions table: 35 shares (stale)
+   - Sell order uses: 35 shares ❌ (sells less than available)
+
+3. **Partial execution not tracked**: Partial execution not properly recorded
+   - Broker holdings: 7 shares
+   - Positions table: 10 shares (full order quantity)
+   - Sell order uses: 10 shares ❌ (tries to sell more than available)
+
+### Impact
+
+- **Order rejection**: Sell order rejected due to insufficient quantity
+- **Incomplete exits**: Not selling all available shares
+- **Data inconsistency**: Positions table doesn't match reality
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 400-461, 509-560
+- **Methods**: `get_open_positions()`, `place_sell_order()`
+
+### Solution
+
+1. **Validate positions table against broker holdings** before placing sell orders
+2. **Use broker holdings quantity** as source of truth
+3. **Update positions table** to match broker holdings if mismatch detected
+4. **Add reconciliation check** in `run_at_market_open()`
+
+---
+
+## Edge Case #5: Reentry Order Edge Case - Quantity Mismatch
+
+**Severity**: 🟡 **MEDIUM**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+If a reentry order executes while service is down, reconciliation uses **order quantity from DB** instead of checking if partial execution occurred or if holdings quantity matches.
+
+### Current Flow
+
+```
+Day 1: Reentry order placed: 10 shares
+Day 2: Service down, order executes: 10 shares
+Day 3: Service restarts:
+  - Reconciliation finds order in holdings
+  - Uses order_qty = 10 (from DB) ✅ (correct in this case)
+  - But what if partial execution? ❌
+  - Or what if holdings quantity doesn't match? ❌
+```
+
+### Impact
+
+- **Incorrect position update**: If partial execution, position updated with wrong quantity
+- **Quantity mismatch**: Positions table doesn't match actual holdings
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/unified_order_monitor.py`
+- **Lines**: 326-337
+- **Method**: `check_buy_order_status()` - Reconciliation logic
+
+### Solution
+
+1. **Check `fldQty` from broker** (if available) for actual filled quantity
+2. **Compare with holdings quantity** to detect discrepancies
+3. **Use actual filled quantity** instead of order quantity
+
+---
+
+## Edge Case #6: Sell Order Update Timing
+
+**Severity**: 🟠 **LOW**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+If reentry executes and position is updated, but `run_at_market_open()` runs **before the position update completes**, it might use old quantity for sell order placement.
+
+### Current Flow
+
+```
+Time T1: Reentry order executes
+Time T2: Position update starts (async)
+Time T3: run_at_market_open() runs (before T2 completes)
+  - Reads positions table: Still shows old quantity (35) ❌
+  - Places sell order: 35 shares ❌
+  - Should wait for position update or use broker holdings
+```
+
+### Impact
+
+- **Race condition**: Sell order placed with stale quantity
+- **Incorrect quantity**: Sell order doesn't reflect latest position
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 1380-1460
+- **Method**: `run_at_market_open()`
+
+### Solution
+
+1. **Use broker holdings** as source of truth (not positions table)
+2. **Add validation** to ensure positions table is up-to-date
+3. **Reconcile before placing sell orders**
+
+---
+
+## Edge Case #7: Existing Sell Order Quantity Check Logic
+
+**Severity**: 🔴 **CRITICAL**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+`run_at_market_open()` only checks if `existing["qty"] == qty`. If quantity changed (due to reentry), it **skips without updating** the existing order.
+
+### Current Code
+
+```python
+# Check for existing order with same symbol and quantity (avoid duplicate)
+if symbol.upper() in existing_orders:
+    existing = existing_orders[symbol.upper()]
+    if existing["qty"] == qty:
+        # Skip - order exists with same quantity ✅
+        continue
+    # ❌ PROBLEM: If qty changed, skips without updating!
+```
+
+### Impact
+
+- **Stale sell orders**: Sell orders don't reflect current position
+- **Partial exits**: Only original quantity sold
+- **Data inconsistency**: Sell order quantity doesn't match position
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 1429-1451
+- **Method**: `run_at_market_open()`
+
+### Solution
+
+1. **Check if quantity increased** (reentry happened)
+2. **Update existing sell order** with new quantity
+3. **Use `update_sell_order()` or `modify_order()`** to update broker order
+
+### Example Fix
+
+```python
+if symbol.upper() in existing_orders:
+    existing = existing_orders[symbol.upper()]
+    if existing["qty"] == qty:
+        # Same quantity - skip
+        continue
+    elif qty > existing["qty"]:
+        # Quantity increased (reentry) - update order
+        logger.info(f"Updating sell order for {symbol}: {existing['qty']} -> {qty}")
+        self.update_sell_order(
+            order_id=existing["order_id"],
+            symbol=symbol,
+            qty=qty,
+            new_price=existing["price"]  # Keep same price
+        )
+        continue
+    else:
+        # Quantity decreased - might be partial sell, skip for now
+        logger.warning(f"Sell order quantity decreased for {symbol}: {existing['qty']} -> {qty}")
+        continue
+```
+
+---
+
+## Edge Case #8: Sell Order Execution Doesn't Update Positions Table
+
+**Severity**: 🔴 **CRITICAL**
+**Status**: ✅ **FIXED** (2025-01-22)
+
+### Problem
+
+When a sell order executes, the system only marks the position as closed in **trade history JSON** (`mark_position_closed()`), but **does NOT update the positions table** in the database. The `closed_at` field remains `NULL` and `quantity` is not reduced.
+
+### Current Flow
+
+```
+Sell order executes: 35 shares @ Rs 9.50
+  - mark_position_closed() updates trades_history.json ✅
+  - Position marked as "closed" in JSON ✅
+  - Positions table: closed_at = NULL ❌ (NOT UPDATED!)
+  - Positions table: quantity = 35 ❌ (NOT REDUCED!)
+  - Result: Position still appears as "open" in database queries
+```
+
+### Impact
+
+- **Position appears open**: Database queries show position as open (`closed_at IS NULL`)
+- **Incorrect portfolio view**: Frontend/API shows position as still open
+- **Data inconsistency**: Trade history says closed, but positions table says open
+- **Reentry logic broken**: System might try to place reentry orders for "closed" positions
+- **Sell order placement**: System might try to place another sell order for already-sold position
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 1860-1906
+- **Method**: `monitor_and_update()`
+
+### Current Code
+
+```python
+if completed_order_info:
+    logger.info(f"{symbol} sell order completed - removing from monitoring")
+    # Mark position as closed in trade history
+    if self.state_manager:
+        if self._mark_order_executed(symbol, completed_order_id, order_price):
+            symbols_executed.append(symbol)
+            logger.info(f"Position closed: {symbol} - removing from tracking")
+    elif self.mark_position_closed(symbol, order_price, completed_order_id):
+        # ❌ PROBLEM: Only updates trade history JSON, not positions table!
+        symbols_executed.append(symbol)
+        logger.info(f"Position closed: {symbol} - removing from tracking")
+```
+
+### Solution
+
+1. **Update positions table** when sell order executes:
+   - Set `closed_at = execution_time`
+   - Set `quantity = 0` (or reduce by sold quantity if partial)
+2. **Add method to positions_repo**: `mark_closed(user_id, symbol, closed_at, exit_price)`
+3. **Call positions_repo.mark_closed()** after `mark_position_closed()`
+
+### Implementation
+
+**Fixed on**: 2025-01-22
+
+**Changes Made**:
+1. Added `mark_closed()` method to `PositionsRepository`:
+   - Sets `closed_at` timestamp
+   - Sets `quantity = 0` for full execution
+   - Called when sell order fully executes
+
+2. Added `reduce_quantity()` method to `PositionsRepository`:
+   - Reduces position quantity for partial sells
+   - Automatically marks as closed if quantity becomes 0
+   - Keeps position open if quantity > 0
+
+3. Updated `OrderFieldExtractor`:
+   - Separated `get_quantity()` (order quantity) from `get_filled_quantity()` (filled quantity)
+   - Enables detection of partial vs full execution
+
+4. Updated `SellOrderManager.monitor_and_update()`:
+   - Calls `positions_repo.mark_closed()` for full executions
+   - Calls `positions_repo.reduce_quantity()` for partial executions
+   - Handles both execution detection paths
+
+**Files Modified**:
+- `src/infrastructure/persistence/positions_repository.py` - Added `mark_closed()` and `reduce_quantity()` methods
+- `modules/kotak_neo_auto_trader/utils/order_field_extractor.py` - Added `get_filled_quantity()` method
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Updated `monitor_and_update()` to update positions table
+
+### Related Code
+
+- `src/infrastructure/persistence/positions_repository.py` - `mark_closed()` and `reduce_quantity()` methods added
+- `Positions` model `closed_at` field is now properly set on sell execution
+
+---
+
+## Edge Case #9: Partial Sell Execution Not Handled
+
+**Severity**: 🟡 **MEDIUM**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+If a sell order **partially executes** (e.g., 20 out of 35 shares), the system treats it as **fully executed** and marks the position as closed. The remaining 15 shares are still in holdings but not tracked.
+
+### Current Flow
+
+```
+Sell order placed: 35 shares @ Rs 9.50
+Partial execution: Only 20 shares executed (fldQty=20)
+  - System detects "completed" order
+  - Marks position as closed ❌ (should remain open!)
+  - Remaining 15 shares: Still in holdings but not tracked ❌
+  - Result: Position closed, but 15 shares remain unsold
+```
+
+### Impact
+
+- **Position incorrectly closed**: Position marked as closed even though shares remain
+- **Remaining shares not tracked**: 15 shares remain unsold and untracked
+- **Lost profit opportunity**: Remaining shares not sold at target price
+- **Data inconsistency**: Holdings show 15 shares, but position shows closed
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 1864-1886
+- **Method**: `monitor_and_update()`
+
+### Current Code
+
+```python
+completed_order_info = self.has_completed_sell_order(symbol)
+if completed_order_info:
+    # ❌ PROBLEM: Treats as fully executed, doesn't check partial fill
+    logger.info(f"{symbol} sell order completed - removing from monitoring")
+    # Marks position as closed
+    if self.mark_position_closed(symbol, order_price, completed_order_id):
+        symbols_executed.append(symbol)
+```
+
+### Solution
+
+1. **Check `fldQty` vs `qty`** to detect partial execution
+2. **If partial**: Update position quantity (reduce by `fldQty`), keep position open
+3. **If full**: Mark position as closed
+4. **Update sell order quantity** if partial execution detected
+
+### Broker API Response
+
+From `client.order_report()`, check `fldQty` vs `qty`:
+```json
+{
+    "fldQty": 20,  // Actual filled quantity (partial)
+    "qty": 35,     // Order quantity
+    "stat": "open" // Still open (partial fill)
+}
+```
+
+---
+
+## Edge Case #10: Position Quantity Not Reduced After Sell
+
+**Severity**: 🔴 **CRITICAL**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+When a sell order executes (fully or partially), the **position quantity in the positions table is NOT reduced**. It remains at the original quantity even though shares were sold.
+
+### Current Flow
+
+```
+Initial position: 35 shares
+Sell order executes: 35 shares @ Rs 9.50
+  - Trade history: Position marked as "closed" ✅
+  - Positions table: quantity = 35 ❌ (NOT REDUCED!)
+  - Positions table: closed_at = NULL ❌ (NOT SET!)
+  - Result: Position still shows 35 shares in database
+```
+
+### Impact
+
+- **Incorrect position quantity**: Database shows wrong quantity
+- **Sell order placement**: System might try to place another sell order
+- **Portfolio view**: Frontend shows incorrect holdings
+- **Data inconsistency**: Positions table doesn't match reality
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 1860-1906
+- **Method**: `monitor_and_update()`
+
+### Current Code
+
+```python
+if completed_order_info:
+    # Mark position as closed in trade history
+    if self.mark_position_closed(symbol, order_price, completed_order_id):
+        # ❌ PROBLEM: Only updates trade history, not positions table
+        symbols_executed.append(symbol)
+```
+
+### Solution
+
+1. **Update positions table** when sell order executes:
+   - If full execution: Set `quantity = 0`, `closed_at = execution_time`
+   - If partial execution: Reduce `quantity` by `fldQty`, keep `closed_at = NULL`
+2. **Add method**: `positions_repo.reduce_quantity(user_id, symbol, sold_qty)`
+3. **Call after** `mark_position_closed()`
+
+---
+
+## Edge Case #11: Reentry Daily Cap Check Discrepancy
+
+**Severity**: 🟡 **MEDIUM**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+The `reentries_today()` method looks for **separate trade entries** with `entry_type == 'reentry'`, but reentries are actually recorded in the **`reentries` array** within existing trade entries. This means the daily cap check **doesn't work correctly**.
+
+### Current Flow
+
+```
+Day 1: Initial entry at RSI 25
+  - Trade entry created: entry_type="initial" ✅
+
+Day 1: Reentry at RSI 18
+  - Reentry added to reentries array ✅
+  - reentries_today() checks for entry_type=="reentry" ❌
+  - Finds 0 reentries (wrong!) ❌
+  - Allows another reentry (should block!) ❌
+
+Day 1: Another reentry at RSI 10
+  - reentries_today() still finds 0 ❌
+  - Allows reentry (should block!) ❌
+```
+
+### Impact
+
+- **Daily cap bypassed**: Multiple reentries allowed in same day
+- **Risk exposure**: More capital deployed than intended
+- **Logic broken**: Daily cap feature doesn't work as designed
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+- **Lines**: 1953-1980
+- **Method**: `reentries_today()`
+
+### Current Code
+
+```python
+def reentries_today(self, base_symbol: str) -> int:
+    """Count successful re-entries recorded today for this symbol."""
+    for t in trades:
+        if t.get("entry_type") != "reentry":  # ❌ PROBLEM: Looks for separate entries
+            continue
+        # ... count reentries ...
+```
+
+### Actual Reentry Recording
+
+Reentries are recorded in the `reentries` array (lines 3446-3471):
+```python
+# Update trade history with new total quantity
+for e in entries:
+    e["qty"] = new_total_qty
+    if "reentries" not in e:
+        e["reentries"] = []
+    e["reentries"].append({  # ❌ Added to array, not separate entry
+        "qty": qty,
+        "level": next_level,
+        "time": datetime.now().isoformat(),
+    })
+```
+
+### Solution
+
+1. **Fix `reentries_today()`** to check `reentries` array:
+   ```python
+   for t in trades:
+       sym = str(t.get("symbol") or "").upper()
+       if sym != base_symbol.upper():
+           continue
+       # Check reentries array within the trade
+       reentries = t.get("reentries", [])
+       for reentry in reentries:
+           reentry_time = reentry.get("time")
+           if reentry_time:
+               d = datetime.fromisoformat(reentry_time).date()
+               if d == today:
+                   cnt += 1
+   ```
+
+---
+
+## Edge Case #12: Sell Order Execution While Reentry Pending
+
+**Severity**: 🟡 **MEDIUM**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+If a sell order executes while a reentry order is still pending, the reentry order should be cancelled, but the position might already be marked as closed. This can lead to:
+1. Reentry order executing after position is closed
+2. Position reopened with reentry shares
+3. Data inconsistency
+
+### Current Flow
+
+```
+Time T1: Reentry order placed: 10 shares (pending)
+Time T2: Sell order executes: 35 shares (full position)
+  - Position marked as closed ✅
+  - Reentry order: Still pending ❌ (NOT CANCELLED!)
+
+Time T3: Reentry order executes: 10 shares
+  - Position reopened with 10 shares ❌ (shouldn't happen!)
+  - Position shows as "open" again ❌
+  - Data inconsistency: Position closed then reopened
+```
+
+### Impact
+
+- **Position reopened**: Closed position reopened by pending reentry
+- **Data inconsistency**: Position closed_at set, then cleared
+- **Unexpected behavior**: System might place another sell order
+- **Logic confusion**: Position state unclear (closed or open?)
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+- **Lines**: 3061-3083
+- **Method**: `evaluate_reentries_and_exits()`
+
+### Current Code
+
+```python
+# Check if position is closed - cancel re-entry order if closed
+if position and position.closed_at is not None:
+    # Cancel reentry order
+    # ✅ This check exists, but what if position closes AFTER reentry is placed?
+```
+
+### Solution
+
+1. **Check position status** before placing reentry order
+2. **Cancel pending reentry orders** when sell order executes
+3. **Add validation** in reentry placement: Skip if position is closed
+4. **Monitor pending reentry orders** and cancel if position closes
+
+---
+
+## Edge Case #13: Multiple Reentries Same Day Bypass
+
+**Severity**: 🟡 **MEDIUM**
+**Status**: ⚠️ **Not Fixed**
+
+### Problem
+
+Due to Edge Case #11 (reentry daily cap check discrepancy), multiple reentries can be placed in the same day, bypassing the daily cap of 1 reentry per symbol per day.
+
+### Current Flow
+
+```
+Day 1: Initial entry at RSI 25
+Day 1: Reentry at RSI 18
+  - reentries_today() returns 0 (wrong!) ❌
+  - Daily cap check: 0 < 1 → Allows reentry ✅ (should block!)
+
+Day 1: Another reentry at RSI 10
+  - reentries_today() still returns 0 ❌
+  - Daily cap check: 0 < 1 → Allows reentry ✅ (should block!)
+
+Result: 2 reentries in same day (should be max 1) ❌
+```
+
+### Impact
+
+- **Daily cap bypassed**: Multiple reentries allowed
+- **Risk exposure**: More capital deployed than intended
+- **Feature broken**: Daily cap feature doesn't work
+
+### Code Location
+
+- **File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+- **Lines**: 4765-4767
+- **Method**: `place_reentry_orders()`
+
+### Current Code
+
+```python
+# Daily cap: allow max 1 re-entry per symbol per day
+if self.reentries_today(symbol) >= 1:
+    logger.info(f"Re-entry daily cap reached for {symbol}; skipping today")
+    continue
+# ❌ PROBLEM: reentries_today() doesn't work correctly (see Edge Case #11)
+```
+
+### Solution
+
+1. **Fix `reentries_today()`** (see Edge Case #11 solution)
+2. **Add validation** to ensure daily cap is enforced
+3. **Test daily cap** with multiple reentries in same day
+
+---
+
+## Summary
+
+### Critical Issues (🔴)
+
+1. **Edge Case #1**: Sell order quantity not updated after reentry
+2. **Edge Case #7**: Existing sell order quantity check logic
+3. ~~**Edge Case #8**: Sell order execution doesn't update positions table~~ ✅ **FIXED**
+4. **Edge Case #10**: Position quantity not reduced after sell
+
+### Medium Issues (🟡)
+
+5. **Edge Case #2**: Partial execution reconciliation
+6. **Edge Case #3**: Manual holdings not reflected in sell orders
+7. **Edge Case #4**: Holdings vs positions mismatch
+8. **Edge Case #5**: Reentry order edge case - quantity mismatch
+9. **Edge Case #9**: Partial sell execution not handled
+10. **Edge Case #11**: Reentry daily cap check discrepancy
+11. **Edge Case #12**: Sell order execution while reentry pending
+12. **Edge Case #13**: Multiple reentries same day bypass
+
+### Low Issues (🟠)
+
+13. **Edge Case #6**: Sell order update timing
+
+---
+
+## Recommended Fixes Priority
+
+1. **Priority 1 (Critical)**:
+   - Fix Edge Case #8: Update positions table when sell order executes
+   - Fix Edge Case #10: Reduce position quantity after sell
+   - Fix Edge Case #1: Update sell order quantity after reentry
+   - Fix Edge Case #7: Improve existing sell order check logic
+
+2. **Priority 2 (Medium)**:
+   - Fix Edge Case #11: Fix reentry daily cap check (check `reentries` array)
+   - Fix Edge Case #13: Enforce daily cap correctly
+   - Fix Edge Case #9: Handle partial sell execution
+   - Fix Edge Case #2: Use actual filled quantity from broker
+   - Fix Edge Case #4: Validate positions table against broker holdings
+   - Fix Edge Case #12: Cancel pending reentry orders when position closes
+
+3. **Priority 3 (Low)**:
+   - Fix Edge Case #3: Reconcile manual holdings
+   - Fix Edge Case #5: Improve reentry reconciliation
+   - Fix Edge Case #6: Add timing validation
+
+---
+
+## Related Files
+
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Sell order placement
+- `modules/kotak_neo_auto_trader/unified_order_monitor.py` - Order reconciliation
+- `modules/kotak_neo_auto_trader/auto_trade_engine.py` - Reentry logic
+- `modules/kotak_neo_auto_trader/services/order_validation_service.py` - Duplicate checking
+
+---
+
+## Notes
+
+- Some edge cases might be acceptable trade-offs depending on business requirements
+- Manual holdings tracking might be intentionally excluded from system tracking
+- Partial execution handling might require broker API support for filled quantity

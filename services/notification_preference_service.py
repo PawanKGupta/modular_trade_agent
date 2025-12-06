@@ -29,6 +29,7 @@ class NotificationEventType:
     ORDER_EXECUTED = "order_executed"
     ORDER_CANCELLED = "order_cancelled"
     ORDER_MODIFIED = "order_modified"
+    ORDER_SKIPPED = "order_skipped"
     RETRY_QUEUE_ADDED = "retry_queue_added"
     RETRY_QUEUE_UPDATED = "retry_queue_updated"
     RETRY_QUEUE_REMOVED = "retry_queue_removed"
@@ -60,6 +61,7 @@ class NotificationEventType:
             cls.ORDER_EXECUTED,
             cls.ORDER_CANCELLED,
             cls.ORDER_MODIFIED,
+            cls.ORDER_SKIPPED,
             cls.RETRY_QUEUE_ADDED,
             cls.RETRY_QUEUE_UPDATED,
             cls.RETRY_QUEUE_REMOVED,
@@ -292,6 +294,8 @@ class NotificationPreferenceService:
             NotificationEventType.ORDER_EXECUTED: preferences.notify_order_executed,
             NotificationEventType.ORDER_CANCELLED: preferences.notify_order_cancelled,
             NotificationEventType.ORDER_MODIFIED: preferences.notify_order_modified,
+            # ORDER_SKIPPED: Map to notify_trading_events for now (until dedicated field is added)
+            NotificationEventType.ORDER_SKIPPED: preferences.notify_trading_events,
             NotificationEventType.RETRY_QUEUE_ADDED: preferences.notify_retry_queue_added,
             NotificationEventType.RETRY_QUEUE_UPDATED: preferences.notify_retry_queue_updated,
             NotificationEventType.RETRY_QUEUE_REMOVED: preferences.notify_retry_queue_removed,

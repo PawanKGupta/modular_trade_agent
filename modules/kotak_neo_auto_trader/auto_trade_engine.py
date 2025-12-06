@@ -3586,6 +3586,17 @@ class AutoTradeEngine:
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "already_in_holdings"
                 summary["ticker_attempts"].append(ticker_attempt)
+                # Send notification for skipped order
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_order_skipped(
+                            symbol=broker_symbol,
+                            reason="already_in_holdings",
+                            additional_info={"base_symbol": broker_symbol_base},
+                            user_id=self.user_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send skipped order notification: {e}")
                 continue
 
             # Use OrderValidationService for duplicate check (includes holdings + active buy orders)
@@ -3598,13 +3609,28 @@ class AutoTradeEngine:
                     "System does not track existing holdings - keeping portfolios separate."
                 )
                 summary["skipped_duplicates"] += 1
-                ticker_attempt["status"] = "skipped"
-                ticker_attempt["reason"] = (
+                skip_reason = (
                     "already_in_holdings"
                     if "holdings" in duplicate_reason.lower()
                     else "duplicate_order"
                 )
+                ticker_attempt["status"] = "skipped"
+                ticker_attempt["reason"] = skip_reason
                 summary["ticker_attempts"].append(ticker_attempt)
+                # Send notification for skipped order
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_order_skipped(
+                            symbol=broker_symbol,
+                            reason=skip_reason,
+                            additional_info={
+                                "base_symbol": broker_symbol_base,
+                                "details": duplicate_reason,
+                            },
+                            user_id=self.user_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send skipped order notification: {e}")
                 continue
             # 2) Check for manual AMO orders -> link to DB and skip placing
             manual_order_info = self._check_for_manual_orders(broker_symbol)
@@ -4227,44 +4253,21 @@ class AutoTradeEngine:
                     f"current_rsi={current_rsi:.2f}, next_level={next_level}"
                 )
 
-                # Check for duplicates (holdings or active buy orders)
+                # Check for duplicates (only active buy orders, NOT holdings - reentries allow buying more)
                 broker_symbol = self.parse_symbol_for_broker(ticker)
                 if not broker_symbol:
                     logger.warning(f"Could not parse broker symbol for {symbol}")
                     summary["skipped_missing_data"] += 1
                     continue
 
-                # Check if already in holdings (shouldn't happen for open positions, but check anyway)
-                holdings = self.portfolio.get_holdings()
-                if holdings and isinstance(holdings, dict) and "data" in holdings:
-                    holdings_data = holdings.get("data", [])
-                    broker_symbol_base = (
-                        broker_symbol.upper()
-                        .replace("-EQ", "")
-                        .replace("-BE", "")
-                        .replace("-BL", "")
-                        .replace("-BZ", "")
-                    )
-                    for holding in holdings_data:
-                        holding_symbol = holding.get("symbol", "").upper()
-                        holding_symbol_base = (
-                            holding_symbol.replace("-EQ", "")
-                            .replace("-BE", "")
-                            .replace("-BL", "")
-                            .replace("-BZ", "")
-                        )
-                        if holding_symbol_base == broker_symbol_base:
-                            logger.info(f"Skipping {symbol}: already in holdings")
-                            summary["skipped_duplicates"] += 1
-                            break
-                    else:
-                        continue  # Continue outer loop if break was hit
-
-                # Check for active buy orders
+                # Check for active buy orders only (reentries should allow buying more of existing position)
                 if self.order_validation_service:
                     is_duplicate, duplicate_reason = (
                         self.order_validation_service.check_duplicate_order(
-                            broker_symbol, check_active_buy_order=True, check_holdings=False
+                            broker_symbol,
+                            check_active_buy_order=True,
+                            check_holdings=False,  # Don't check holdings for reentries
+                            allow_reentry=True,  # Allow reentries (buying more of existing position)
                         )
                     )
                     if is_duplicate:
