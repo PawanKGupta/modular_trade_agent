@@ -1,7 +1,8 @@
 # Order Management Flow - Flaw Analysis
 
 **Date**: 2025-12-06
-**Status**: Analysis of Current Implementation
+**Last Updated**: 2025-12-07
+**Status**: Analysis Complete - Critical Flaws Fixed
 
 ---
 
@@ -26,15 +27,23 @@
 - Order status updated but position not created
 - Reentry data added but position quantity not updated
 
-**Current Code**:
-- `positions_repo.upsert()` calls `self.db.commit()` immediately
-- `orders_repo.mark_executed()` calls `self.db.commit()` immediately
-- No transaction wrapping for multi-step operations
+**Status**: ✅ **FIXED** (2025-12-07)
 
-**Recommendation**:
-- Wrap related operations in database transactions
-- Use `db.begin()` and `db.commit()` / `db.rollback()` for atomicity
-- Or use context managers for automatic rollback on exception
+**Implementation**:
+- Added transaction utility context manager (`src/infrastructure/db/transaction.py`)
+- Added `auto_commit` parameter to repository methods (PositionsRepository, OrdersRepository)
+- Wrapped multi-step operations in transactions:
+  - Order execution + position creation
+  - Reentry processing (position update + integrity check)
+  - Sell execution (position close + order closure)
+- All operations are now atomic (all succeed or all fail)
+
+**Files Changed**:
+- `src/infrastructure/db/transaction.py` (new)
+- `src/infrastructure/persistence/positions_repository.py`
+- `src/infrastructure/persistence/orders_repository.py`
+- `modules/kotak_neo_auto_trader/unified_order_monitor.py`
+- `modules/kotak_neo_auto_trader/sell_engine.py`
 
 ---
 
@@ -335,10 +344,20 @@ After reentry:
 
 ## Summary of Recommendations
 
-### Priority 1 (Critical):
-1. ✅ **Add Transaction Wrapping**: Wrap multi-step operations in database transactions
-2. ✅ **Add Database Locking**: Use `SELECT ... FOR UPDATE` for position reads
-3. ✅ **Add Race Condition Protection**: Re-check position status before updates
+### Priority 1 (Critical) - ✅ **COMPLETED**:
+1. ✅ **FIXED**: **Add Transaction Wrapping**: Wrap multi-step operations in database transactions
+   - **Status**: Implemented (2025-12-07)
+   - **Implementation**: Transaction utility, repository methods updated, operations wrapped
+   - **Files**: `src/infrastructure/db/transaction.py`, repository files, order monitor, sell engine
+   - **Tests**: 21 tests covering all scenarios
+2. ✅ **FIXED**: **Add Database Locking**: Use `SELECT ... FOR UPDATE` for position reads
+   - **Status**: Implemented (2025-12-07)
+   - **Implementation**: `get_by_symbol_for_update()` method, all position operations use locking
+   - **Files**: `src/infrastructure/persistence/positions_repository.py`, `unified_order_monitor.py`
+   - **Tests**: 5 tests for locking behavior
+3. ⚠️ **PARTIAL**: **Add Race Condition Protection**: Re-check position status before updates
+   - **Status**: Partially addressed (closed position check added in `_create_position_from_executed_order()`)
+   - **Remaining**: Sell order update race condition (Flaw #3) - re-read recommended
 
 ### Priority 2 (High):
 4. ✅ **Periodic Reconciliation**: Run reconciliation during market hours, not just at open

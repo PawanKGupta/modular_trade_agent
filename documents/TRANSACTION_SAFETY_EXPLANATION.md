@@ -369,21 +369,38 @@ def upsert(self, ..., auto_commit=True):
 
 **Priority**: 🔴 **HIGH** (should be fixed before production)
 
-**Approach**:
-1. Implement transaction context manager
-2. Modify repository methods to support transaction mode
-3. Wrap multi-step operations in transactions
-4. Add tests for transaction rollback scenarios
+**Status**: ✅ **FIXED** (2025-12-07)
 
-**Estimated Effort**: 2-3 days
-- 1 day: Implement transaction support
-- 1 day: Refactor critical operations
-- 0.5-1 day: Testing and validation
+**Approach** (Implemented):
+1. ✅ Implemented transaction context manager (`src/infrastructure/db/transaction.py`)
+2. ✅ Modified repository methods to support `auto_commit` parameter
+3. ✅ Wrapped multi-step operations in transactions
+4. ✅ Added comprehensive tests (21 tests) for transaction rollback scenarios
+
+**Implementation Details**:
+- **Transaction Utility**: `src/infrastructure/db/transaction.py` - Context manager for atomic operations
+- **Repository Updates**: Added `auto_commit` parameter to all critical methods
+- **Wrapped Operations**:
+  - Order execution + position creation
+  - Reentry processing (position update + integrity check)
+  - Sell execution (position close + order closure)
+- **Tests**: 21 tests covering all scenarios
+
+**Files Changed**:
+- `src/infrastructure/db/transaction.py` (new)
+- `src/infrastructure/persistence/positions_repository.py`
+- `src/infrastructure/persistence/orders_repository.py`
+- `modules/kotak_neo_auto_trader/unified_order_monitor.py`
+- `modules/kotak_neo_auto_trader/sell_engine.py`
+- `tests/unit/infrastructure/test_transaction_safety.py` (new)
+- `tests/unit/kotak/test_transaction_safety_integration.py` (new)
 
 ---
 
 ## Summary
 
-The **Lack of Transaction Safety** means that when multiple database operations need to happen together (like updating a position AND updating a sell order), if one fails, the others have already been committed and can't be rolled back. This leads to **data inconsistency** where some parts of the operation succeeded and others didn't.
+The **Lack of Transaction Safety** meant that when multiple database operations needed to happen together (like updating a position AND updating a sell order), if one failed, the others had already been committed and couldn't be rolled back. This led to **data inconsistency** where some parts of the operation succeeded and others didn't.
 
-**The fix** is to wrap related operations in database transactions so they all succeed together or all fail together, ensuring the database is always in a consistent state.
+**The fix** wraps related operations in database transactions so they all succeed together or all fail together, ensuring the database is always in a consistent state.
+
+**Status**: ✅ **FIXED** - All critical multi-step operations are now atomic and transaction-safe.
