@@ -748,10 +748,7 @@ class TelegramNotifier:
             reason_display = "Portfolio Limit Reached"
 
         message = (
-            f"ORDER SKIPPED\n\n"
-            f"Symbol: `{symbol}`\n"
-            f"Reason: {reason_display}\n"
-            f"Time: {timestamp}\n"
+            f"ORDER SKIPPED\n\nSymbol: `{symbol}`\nReason: {reason_display}\nTime: {timestamp}\n"
         )
 
         if reason == "already_in_holdings":

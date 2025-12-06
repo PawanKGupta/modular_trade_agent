@@ -309,9 +309,8 @@ class UnifiedOrderMonitor:
                                         # Extract execution details from holdings
                                         # For execution_price: prefer order price if available (limit order),
                                         # otherwise use averagePrice from holdings (approximation)
-                                        order_price = (
-                                            order_info.get("price")
-                                            or (float(db_order.price) if db_order.price else None)
+                                        order_price = order_info.get("price") or (
+                                            float(db_order.price) if db_order.price else None
                                         )
                                         execution_price = (
                                             float(order_price)
@@ -325,7 +324,9 @@ class UnifiedOrderMonitor:
                                         )
                                         # For execution_qty, prefer order quantity from DB if available
                                         # (holdings quantity is total position, not just this order)
-                                        order_qty = order_info.get("quantity", 0) or db_order.quantity
+                                        order_qty = (
+                                            order_info.get("quantity", 0) or db_order.quantity
+                                        )
                                         execution_qty = (
                                             float(order_qty)
                                             if order_qty and float(order_qty) > 0

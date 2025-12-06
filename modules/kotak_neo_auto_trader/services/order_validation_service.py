@@ -106,21 +106,13 @@ def get_order_validation_service(
             _order_validation_service_instance.portfolio_service != portfolio_service
         ):
             _order_validation_service_instance.portfolio_service = portfolio_service
-        if portfolio and (
-            _order_validation_service_instance.portfolio != portfolio
-        ):
+        if portfolio and (_order_validation_service_instance.portfolio != portfolio):
             _order_validation_service_instance.portfolio = portfolio
-        if orders and (
-            _order_validation_service_instance.orders != orders
-        ):
+        if orders and (_order_validation_service_instance.orders != orders):
             _order_validation_service_instance.orders = orders
-        if orders_repo and (
-            _order_validation_service_instance.orders_repo != orders_repo
-        ):
+        if orders_repo and (_order_validation_service_instance.orders_repo != orders_repo):
             _order_validation_service_instance.orders_repo = orders_repo
-        if user_id is not None and (
-            _order_validation_service_instance.user_id != user_id
-        ):
+        if user_id is not None and (_order_validation_service_instance.user_id != user_id):
             _order_validation_service_instance.user_id = user_id
 
         return _order_validation_service_instance
@@ -248,8 +240,7 @@ class OrderValidationService:
                 logger.warning(f"Error parsing available cash: {e}")
 
         logger.debug(
-            f"Available balance: Rs {avail:.2f} "
-            f"(from limits API; key={used_key or 'n/a'})"
+            f"Available balance: Rs {avail:.2f} (from limits API; key={used_key or 'n/a'})"
         )
         return avail
 
@@ -272,9 +263,7 @@ class OrderValidationService:
         except Exception:
             return 0
 
-    def check_portfolio_capacity(
-        self, include_pending: bool = True
-    ) -> tuple[bool, int, int]:
+    def check_portfolio_capacity(self, include_pending: bool = True) -> tuple[bool, int, int]:
         """
         Check portfolio capacity
 
@@ -287,9 +276,7 @@ class OrderValidationService:
             Tuple of (has_capacity, current_count, max_size)
         """
         if self.portfolio_service:
-            return self.portfolio_service.check_portfolio_capacity(
-                include_pending=include_pending
-            )
+            return self.portfolio_service.check_portfolio_capacity(include_pending=include_pending)
 
         # Fallback: assume capacity available if PortfolioService not available
         logger.warning(
@@ -331,16 +318,18 @@ class OrderValidationService:
                 logger.warning(f"Error checking pending orders for duplicates: {e}")
 
         # Database fallback: Check for PENDING/ONGOING buy orders
-        if (
-            check_active_buy_order
-            and self.orders_repo
-            and self.user_id
-        ):
+        if check_active_buy_order and self.orders_repo and self.user_id:
             try:
                 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                 existing_orders = self.orders_repo.list(self.user_id)
-                symbol_base = symbol.upper().replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "")
+                symbol_base = (
+                    symbol.upper()
+                    .replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                )
 
                 for existing_order in existing_orders:
                     order_symbol_base = (
@@ -353,8 +342,7 @@ class OrderValidationService:
 
                     if (
                         existing_order.side == "buy"
-                        and existing_order.status
-                        in [DbOrderStatus.PENDING, DbOrderStatus.ONGOING]
+                        and existing_order.status in [DbOrderStatus.PENDING, DbOrderStatus.ONGOING]
                         and order_symbol_base == symbol_base
                     ):
                         return (
@@ -391,9 +379,7 @@ class OrderValidationService:
                         .replace("-BL", "")
                         .replace("-BZ", "")
                     )
-                    existing_position = positions_repo.get_by_symbol(
-                        self.user_id, symbol_base
-                    )
+                    existing_position = positions_repo.get_by_symbol(self.user_id, symbol_base)
                     if existing_position and existing_position.closed_at is None:
                         return (
                             True,
@@ -448,8 +434,7 @@ class OrderValidationService:
             return (False, ratio, tier_used)
 
         logger.debug(
-            f"{symbol}: Volume check passed "
-            f"(ratio={ratio:.2%} of daily volume, tier={tier_used})"
+            f"{symbol}: Volume check passed (ratio={ratio:.2%} of daily volume, tier={tier_used})"
         )
         return (True, ratio, tier_used)
 
@@ -486,9 +471,7 @@ class OrderValidationService:
 
         # Check balance
         if check_balance:
-            has_sufficient, available_cash, affordable_qty = self.check_balance(
-                price, qty
-            )
+            has_sufficient, available_cash, affordable_qty = self.check_balance(price, qty)
             result.data["available_cash"] = available_cash
             result.data["affordable_qty"] = affordable_qty
             result.data["required_cash"] = qty * price
@@ -509,9 +492,7 @@ class OrderValidationService:
             result.data["max_portfolio_size"] = max_size
 
             if not has_capacity:
-                result.add_error(
-                    f"Portfolio at capacity: {current_count}/{max_size} positions"
-                )
+                result.add_error(f"Portfolio at capacity: {current_count}/{max_size} positions")
 
         # Check duplicate order
         if check_duplicate:
@@ -540,4 +521,3 @@ class OrderValidationService:
         """Generate symbol variants for matching"""
         base = base.upper()
         return [base, f"{base}-EQ", f"{base}-BE", f"{base}-BL", f"{base}-BZ"]
-
