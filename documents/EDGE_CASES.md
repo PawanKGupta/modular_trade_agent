@@ -351,13 +351,13 @@ Time T3: run_at_market_open() runs (before T2 completes)
 ## Edge Case #7: Existing Sell Order Quantity Check Logic
 
 **Severity**: 🔴 **CRITICAL**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-01-22, as part of Edge Case #1 fix)
 
 ### Problem
 
-`run_at_market_open()` only checks if `existing["qty"] == qty`. If quantity changed (due to reentry), it **skips without updating** the existing order.
+`run_at_market_open()` only checked if `existing["qty"] == qty`. If quantity changed (due to reentry), it **skipped without updating** the existing order.
 
-### Current Code
+### Original Code (Before Fix)
 
 ```python
 # Check for existing order with same symbol and quantity (avoid duplicate)
@@ -378,38 +378,53 @@ if symbol.upper() in existing_orders:
 ### Code Location
 
 - **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
-- **Lines**: 1429-1451
+- **Lines**: 1449-1523
 - **Method**: `run_at_market_open()`
 
 ### Solution
 
-1. **Check if quantity increased** (reentry happened)
-2. **Update existing sell order** with new quantity
-3. **Use `update_sell_order()` or `modify_order()`** to update broker order
+This issue was fixed as part of **Edge Case #1** fix. The code now handles all three scenarios:
 
-### Example Fix
+1. **Same quantity**: Skip (already correct)
+2. **Quantity increased**: Update existing sell order with new quantity
+3. **Quantity decreased**: Handle gracefully (might indicate partial sell)
+
+### Implementation
+
+**Fixed on**: 2025-01-22 (as part of Edge Case #1)
+
+**Current Code** (After Fix):
 
 ```python
 if symbol.upper() in existing_orders:
     existing = existing_orders[symbol.upper()]
-    if existing["qty"] == qty:
-        # Same quantity - skip
+    existing_qty = existing["qty"]
+    existing_price = existing["price"]
+
+    if existing_qty == qty:
+        # Same quantity - just track the existing order ✅
         continue
-    elif qty > existing["qty"]:
-        # Quantity increased (reentry) - update order
-        logger.info(f"Updating sell order for {symbol}: {existing['qty']} -> {qty}")
+    elif qty > existing_qty:
+        # Quantity increased (reentry happened) - update existing order ✅
         self.update_sell_order(
             order_id=existing["order_id"],
             symbol=symbol,
             qty=qty,
-            new_price=existing["price"]  # Keep same price
+            new_price=existing_price  # Keep same price
         )
         continue
     else:
-        # Quantity decreased - might be partial sell, skip for now
-        logger.warning(f"Sell order quantity decreased for {symbol}: {existing['qty']} -> {qty}")
+        # Quantity decreased (partial sell or manual adjustment) ✅
+        # Handle gracefully - keep existing order, log warning
         continue
 ```
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Updated `run_at_market_open()` to handle all quantity change scenarios
+
+**Related**:
+- This fix is part of the same implementation as Edge Case #1
+- See Edge Case #1 for complete implementation details and tests
 
 ---
 
@@ -852,8 +867,8 @@ if self.reentries_today(symbol) >= 1:
 1. **Priority 1 (Critical)**:
    - ~~Fix Edge Case #8: Update positions table when sell order executes~~ ✅ **FIXED**
    - ~~Fix Edge Case #1: Update sell order quantity after reentry~~ ✅ **FIXED**
+   - ~~Fix Edge Case #7: Improve existing sell order check logic~~ ✅ **FIXED** (as part of Edge Case #1)
    - Fix Edge Case #10: Reduce position quantity after sell
-   - Fix Edge Case #7: Improve existing sell order check logic
 
 2. **Priority 2 (Medium)**:
    - Fix Edge Case #11: Fix reentry daily cap check (check `reentries` array)
