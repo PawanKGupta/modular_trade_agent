@@ -906,7 +906,7 @@ def reentries_today(self, base_symbol: str) -> int:
 ## Edge Case #12: Sell Order Execution While Reentry Pending
 
 **Severity**: 🟡 **MEDIUM**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **PARTIALLY FIXED** (Prevention implemented, cancellation during market hours pending)
 
 ### Problem
 
@@ -915,7 +915,7 @@ If a sell order executes while a reentry order is still pending, the reentry ord
 2. Position reopened with reentry shares
 3. Data inconsistency
 
-### Current Flow
+### Original Flow (Before Fixes)
 
 ```
 Time T1: Reentry order placed: 10 shares (pending)
@@ -936,27 +936,111 @@ Time T3: Reentry order executes: 10 shares
 - **Unexpected behavior**: System might place another sell order
 - **Logic confusion**: Position state unclear (closed or open?)
 
-### Code Location
+### Current Implementation (Partial Fix)
 
-- **File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
-- **Lines**: 3061-3083
-- **Method**: `evaluate_reentries_and_exits()`
+**Status**: ✅ **Prevention implemented**, ⚠️ **Cancellation during market hours pending**
 
-### Current Code
+**What's Fixed**:
 
-```python
-# Check if position is closed - cancel re-entry order if closed
-if position and position.closed_at is not None:
-    # Cancel reentry order
-    # ✅ This check exists, but what if position closes AFTER reentry is placed?
+1. **Prevention in `_create_position_from_executed_order()`** (lines 798-805):
+   - Checks if position is closed before adding reentry
+   - Prevents position from being reopened if reentry executes after position closes
+   - Logs warning and skips reentry update
+
+2. **Pre-market cancellation in `adjust_amo_quantities_premarket()`** (lines 3085-3113):
+   - Runs at 9:05 AM (pre-market)
+   - Checks all pending reentry orders
+   - Cancels reentry orders for closed positions
+   - Updates database order status to CANCELLED
+
+**What's Missing**:
+
+- **Immediate cancellation during market hours**: When a sell order executes and closes a position during market hours, pending reentry orders are not cancelled immediately. They will be cancelled at the next pre-market run (9:05 AM next day).
+
+### Current Flow (After Partial Fix)
+
+```
+Time T1: Reentry order placed: 10 shares (pending)
+Time T2: Sell order executes: 35 shares (full position)
+  - Position marked as closed ✅
+  - Reentry order: Still pending ⚠️ (Will be cancelled at 9:05 AM next day)
+
+Time T3: Reentry order executes: 10 shares
+  - _create_position_from_executed_order() checks: position.closed_at is not None ✅
+  - Logs warning and SKIPS reentry update ✅
+  - Position remains closed ✅
+  - No data inconsistency ✅
+
+Next Day 9:05 AM: adjust_amo_quantities_premarket() runs
+  - Finds pending reentry order for closed position ✅
+  - Cancels reentry order ✅
+  - Updates DB order status to CANCELLED ✅
 ```
 
-### Solution
+### Code Location
 
-1. **Check position status** before placing reentry order
-2. **Cancel pending reentry orders** when sell order executes
-3. **Add validation** in reentry placement: Skip if position is closed
-4. **Monitor pending reentry orders** and cancel if position closes
+- **File**: `modules/kotak_neo_auto_trader/unified_order_monitor.py`
+- **Lines**: 798-805
+- **Method**: `_create_position_from_executed_order()` - Prevention check
+
+- **File**: `modules/kotak_neo_auto_trader/auto_trade_engine.py`
+- **Lines**: 3085-3113
+- **Method**: `adjust_amo_quantities_premarket()` - Pre-market cancellation
+
+- **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- **Lines**: 2186-2197
+- **Method**: `monitor_and_update()` - Missing: Cancel pending reentry orders when position closes
+
+### Current Code (Prevention)
+
+```python
+# In _create_position_from_executed_order() (lines 798-805):
+# Improvement: Check if position is closed - don't add reentry to closed positions
+if existing_pos and existing_pos.closed_at is not None:
+    logger.warning(
+        f"Reentry order executed for closed position {base_symbol}. "
+        f"Position was closed at {existing_pos.closed_at}. "
+        f"Skipping reentry update to prevent reopening closed position."
+    )
+    return  # ✅ Prevents position from being reopened
+```
+
+### Current Code (Pre-market Cancellation)
+
+```python
+# In adjust_amo_quantities_premarket() (lines 3085-3113):
+for db_order in reentry_orders_from_db:
+    # Check if position is closed - cancel re-entry order if closed
+    if self.positions_repo:
+        position = self.positions_repo.get_by_symbol(self.user_id, db_order.symbol)
+        if position and position.closed_at is not None:
+            logger.info(
+                f"Position {db_order.symbol} is closed - cancelling re-entry order {db_order.broker_order_id}"
+            )
+            try:
+                if db_order.broker_order_id:
+                    cancel_result = self.orders.cancel_order(db_order.broker_order_id)
+                    if cancel_result:
+                        # Update DB order status to CANCELLED
+                        self.orders_repo.update(
+                            db_order,
+                            status=DbOrderStatus.CANCELLED,
+                            reason="Position closed",
+                        )
+            except Exception as e:
+                logger.warning(f"Error cancelling re-entry order: {e}")
+            continue
+```
+
+### Remaining Solution
+
+**To fully fix**: Add logic in `monitor_and_update()` to cancel pending reentry orders when a sell order executes and closes the position:
+
+1. **After marking position as closed** (line 2188), query for pending reentry orders for that symbol
+2. **Cancel each pending reentry order** via broker API
+3. **Update database order status** to CANCELLED with reason "Position closed"
+
+**Note**: The current prevention mechanism ensures no data inconsistency even if cancellation is delayed. The reentry order will execute but won't reopen the closed position. However, immediate cancellation would be cleaner and prevent unnecessary order execution.
 
 ---
 
