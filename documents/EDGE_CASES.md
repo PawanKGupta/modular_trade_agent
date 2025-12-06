@@ -14,13 +14,13 @@ This document identifies edge cases in the current trading flow that could lead 
 ## Edge Case #1: Sell Order Quantity Not Updated After Reentry
 
 **Severity**: 🔴 **CRITICAL**
-**Status**: ⚠️ **Not Fixed**
+**Status**: ✅ **FIXED** (2025-01-22)
 
 ### Problem
 
 When a reentry order executes (averaging down), the positions table is updated with the new total quantity, but existing sell orders are **not updated** to reflect the increased quantity.
 
-### Current Flow
+### Current Flow (Before Fix)
 
 ```
 Day 1: Initial Entry
@@ -51,31 +51,43 @@ Day 3: run_at_market_open() runs
 ### Code Location
 
 - **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
-- **Lines**: 1429-1451
+- **Lines**: 1449-1520
 - **Method**: `run_at_market_open()`
-
-### Current Code
-
-```python
-# Check for existing order with same symbol and quantity (avoid duplicate)
-if symbol.upper() in existing_orders:
-    existing = existing_orders[symbol.upper()]
-    if existing["qty"] == qty:
-        # Skip - order exists with same quantity ✅
-        continue
-    # ❌ PROBLEM: If qty changed (reentry), skips without updating!
-```
 
 ### Solution
 
-1. **Check if quantity increased** (reentry happened)
-2. **Update existing sell order** with new quantity
-3. **Use `update_sell_order()` or `modify_order()`** to update broker order
+1. **Immediate update when reentry executes**: When a reentry order executes during market hours, `UnifiedOrderMonitor._create_position_from_executed_order()` now checks for existing sell orders and updates them immediately.
+2. **Next-day update in `run_at_market_open()`**: When `run_at_market_open()` detects an existing sell order with quantity less than current position quantity, it updates the order instead of skipping.
+
+### Implementation
+
+**Fixed on**: 2025-01-22
+
+**Changes Made**:
+
+1. **Updated `run_at_market_open()` in `sell_engine.py`**:
+   - Added logic to detect when existing sell order quantity is less than current position quantity
+   - Calls `update_sell_order()` to modify the broker order with new quantity
+   - Handles quantity decrease gracefully (might indicate partial sell)
+   - Keeps same price when updating quantity
+
+2. **Updated `_create_position_from_executed_order()` in `unified_order_monitor.py`**:
+   - After updating position quantity (reentry scenario), checks for existing sell orders
+   - Updates sell order immediately with new quantity if found
+   - Handles errors gracefully (logs warning, order will be updated next day)
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Updated `run_at_market_open()` to update existing orders
+- `modules/kotak_neo_auto_trader/unified_order_monitor.py` - Added sell order update logic in `_create_position_from_executed_order()`
+
+**Test Files**:
+- `tests/unit/kotak/test_sell_engine_edge_case_1.py` - Tests for `run_at_market_open()` updates
+- `tests/unit/kotak/test_unified_order_monitor_edge_case_1.py` - Tests for immediate updates on reentry execution
 
 ### Related Code
 
-- `evaluate_reentries_and_exits()` has logic to update sell orders (lines 4863-4933), but `place_reentry_orders()` doesn't
-- `place_reentry_orders()` is the new method but lacks sell order update logic
+- `evaluate_reentries_and_exits()` has similar logic to update sell orders (lines 4863-4933)
+- `update_sell_order()` method handles order modification via `modify_order()` API
 
 ---
 
@@ -813,7 +825,7 @@ if self.reentries_today(symbol) >= 1:
 
 ### Critical Issues (🔴)
 
-1. **Edge Case #1**: Sell order quantity not updated after reentry
+1. ~~**Edge Case #1**: Sell order quantity not updated after reentry~~ ✅ **FIXED**
 2. **Edge Case #7**: Existing sell order quantity check logic
 3. ~~**Edge Case #8**: Sell order execution doesn't update positions table~~ ✅ **FIXED**
 4. **Edge Case #10**: Position quantity not reduced after sell
@@ -838,9 +850,9 @@ if self.reentries_today(symbol) >= 1:
 ## Recommended Fixes Priority
 
 1. **Priority 1 (Critical)**:
-   - Fix Edge Case #8: Update positions table when sell order executes
+   - ~~Fix Edge Case #8: Update positions table when sell order executes~~ ✅ **FIXED**
+   - ~~Fix Edge Case #1: Update sell order quantity after reentry~~ ✅ **FIXED**
    - Fix Edge Case #10: Reduce position quantity after sell
-   - Fix Edge Case #1: Update sell order quantity after reentry
    - Fix Edge Case #7: Improve existing sell order check logic
 
 2. **Priority 2 (Medium)**:

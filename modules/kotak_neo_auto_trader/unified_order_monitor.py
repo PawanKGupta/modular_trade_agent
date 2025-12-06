@@ -611,6 +611,46 @@ class UnifiedOrderMonitor:
                     f"Updated position for {base_symbol}: qty {existing_qty} -> {new_qty}, "
                     f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}"
                 )
+
+                # Edge Case #1 Fix: Update existing sell order if quantity increased (reentry scenario)
+                if new_qty > existing_qty and self.sell_manager:
+                    try:
+                        # Check for existing sell order
+                        existing_orders = self.sell_manager.get_existing_sell_orders()
+                        if base_symbol.upper() in existing_orders:
+                            existing_order = existing_orders[base_symbol.upper()]
+                            existing_order_qty = existing_order.get("qty", 0)
+                            existing_order_price = existing_order.get("price", 0)
+                            existing_order_id = existing_order.get("order_id")
+
+                            if existing_order_id and new_qty > existing_order_qty:
+                                logger.info(
+                                    f"Reentry detected for {base_symbol}: Updating sell order quantity "
+                                    f"from {existing_order_qty} to {new_qty} (Order ID: {existing_order_id})"
+                                )
+
+                                # Update sell order with new quantity (keep same price)
+                                if self.sell_manager.update_sell_order(
+                                    order_id=str(existing_order_id),
+                                    symbol=base_symbol,
+                                    qty=int(new_qty),
+                                    new_price=existing_order_price,
+                                ):
+                                    logger.info(
+                                        f"Successfully updated sell order for {base_symbol}: "
+                                        f"{existing_order_qty} -> {new_qty} shares @ Rs {existing_order_price:.2f}"
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Failed to update sell order for {base_symbol}. "
+                                        f"Order will be updated next day by run_at_market_open()."
+                                    )
+                    except Exception as e:
+                        # Don't fail position update if sell order update fails
+                        logger.warning(
+                            f"Error updating sell order after reentry for {base_symbol}: {e}. "
+                            f"Order will be updated next day by run_at_market_open()."
+                        )
             else:
                 # Create new position
                 self.positions_repo.upsert(

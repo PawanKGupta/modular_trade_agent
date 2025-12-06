@@ -1446,28 +1446,85 @@ class SellOrderManager:
                     )
                 continue
 
-            # Check for existing order with same symbol and quantity (avoid duplicate)
+            # Check for existing order with same symbol (avoid duplicate or update if quantity changed)
             if symbol.upper() in existing_orders:
                 existing = existing_orders[symbol.upper()]
-                if existing["qty"] == qty:
+                existing_qty = existing["qty"]
+                existing_price = existing["price"]
+
+                if existing_qty == qty:
+                    # Same quantity - just track the existing order
                     logger.info(
-                        f"Skipping {symbol}: Existing sell order found (Order ID: {existing['order_id']}, Qty: {qty}, Price: Rs {existing['price']:.2f})"
+                        f"Skipping {symbol}: Existing sell order found (Order ID: {existing['order_id']}, Qty: {qty}, Price: Rs {existing_price:.2f})"
                     )
                     # Track the existing order for monitoring
                     # IMPORTANT: Must include ticker for monitoring to work
                     self._register_order(
                         symbol=symbol,
                         order_id=existing["order_id"],
-                        target_price=existing["price"],
+                        target_price=existing_price,
                         qty=qty,
                         ticker=ticker,  # From trade history (e.g., GLENMARK.NS)
                         placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
                     )
-                    self.lowest_ema9[symbol] = existing["price"]
+                    self.lowest_ema9[symbol] = existing_price
                     orders_placed += 1  # Count as placed (existing)
                     logger.debug(
                         f"Tracked {symbol}: ticker={ticker}, order_id={existing['order_id']}"
                     )
+                    continue
+                elif qty > existing_qty:
+                    # Quantity increased (reentry happened) - update existing order
+                    logger.info(
+                        f"Updating sell order for {symbol}: quantity increased from {existing_qty} to {qty} "
+                        f"(reentry detected, Order ID: {existing['order_id']})"
+                    )
+
+                    # Update the sell order with new quantity (keep same price)
+                    if self.update_sell_order(
+                        order_id=existing["order_id"],
+                        symbol=symbol,
+                        qty=qty,
+                        new_price=existing_price,  # Keep same price
+                    ):
+                        logger.info(
+                            f"Successfully updated sell order for {symbol}: {existing_qty} -> {qty} shares "
+                            f"@ Rs {existing_price:.2f}"
+                        )
+                        # Update tracking with new quantity
+                        self._register_order(
+                            symbol=symbol,
+                            order_id=existing["order_id"],
+                            target_price=existing_price,
+                            qty=qty,  # Updated quantity
+                            ticker=ticker,
+                            placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
+                        )
+                        self.lowest_ema9[symbol] = existing_price
+                        orders_placed += 1  # Count as updated
+                    else:
+                        logger.warning(
+                            f"Failed to update sell order for {symbol}. "
+                            f"Order may need manual update or will be replaced next day."
+                        )
+                    continue
+                else:
+                    # Quantity decreased (partial sell or manual adjustment)
+                    logger.warning(
+                        f"Sell order quantity decreased for {symbol}: {existing_qty} -> {qty}. "
+                        f"This might indicate a partial sell execution. Skipping update for safety."
+                    )
+                    # Still track the existing order with its current quantity
+                    self._register_order(
+                        symbol=symbol,
+                        order_id=existing["order_id"],
+                        target_price=existing_price,
+                        qty=existing_qty,  # Keep existing quantity
+                        ticker=ticker,
+                        placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
+                    )
+                    self.lowest_ema9[symbol] = existing_price
+                    orders_placed += 1
                     continue
 
             # Get current EMA9 as target (real-time with LTP)
