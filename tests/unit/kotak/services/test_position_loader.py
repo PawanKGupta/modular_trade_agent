@@ -218,26 +218,22 @@ class TestPositionLoaderLoadOpenPositions:
 
         position_loader_module._position_loader_instance = None
 
-        # Use OS-specific invalid paths that will fail when trying to open/read the file
-        # These paths will cause load_history() to raise an exception
-        import platform
-        import tempfile
+        # Mock load_history to raise an exception to reliably test error handling
+        # This ensures the test works consistently across all OS and environments
+        # Using real file paths can be unreliable because:
+        # - load_history() catches all exceptions and returns default template
+        # - Some paths might exist or be readable in CI environments
+        # - Directory paths might be resolved differently
+        with patch(
+            "modules.kotak_neo_auto_trader.services.position_loader.load_history"
+        ) as mock_load_history:
+            mock_load_history.side_effect = IOError("Permission denied: cannot access file")
 
-        if platform.system() == "Windows":
-            # Windows: Use a reserved device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
-            # These cannot be created as files, so load_history() will fail
-            invalid_path = "C:\\CON.json"  # CON is a reserved device name on Windows
-        else:
-            # Linux/Unix: Use a path pointing to a directory (not a file)
-            # When load_history() tries to open it as a file, it will fail with IsADirectoryError
-            # Use /tmp which always exists and is a directory
-            invalid_path = "/tmp"  # This is a directory, not a file, so opening as file will fail
-
-        loader = PositionLoader(history_path=invalid_path, enable_caching=False)
-        positions = loader.load_open_positions()
-        # Should return empty list on error, not raise exception
-        assert isinstance(positions, list)
-        assert len(positions) == 0
+            loader = PositionLoader(history_path="any_path.json", enable_caching=False)
+            positions = loader.load_open_positions()
+            # Should return empty list on error, not raise exception
+            assert isinstance(positions, list)
+            assert len(positions) == 0
 
 
 class TestPositionLoaderGetPositionsBySymbol:

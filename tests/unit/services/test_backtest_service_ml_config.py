@@ -159,47 +159,46 @@ class TestBacktestServiceMLConfig:
 
     def test_integrated_backtest_passes_config_to_validation(self, config_ml_enabled):
         """Test that run_integrated_backtest passes config to validate_initial_entry_with_trade_agent"""
-        # Patch fetch_ohlcv_yf where it's used in integrated_backtest module
-        # This works across different OS because we patch where it's imported
-        with patch("integrated_backtest.fetch_ohlcv_yf") as mock_fetch:
-            # Mock market data
-            import pandas as pd
+        # Mock market data
+        import pandas as pd
 
-            dates = pd.date_range("2024-01-01", periods=300, freq="D")
-            mock_df = pd.DataFrame(
-                {
-                    "Open": [100.0] * 300,
-                    "High": [105.0] * 300,
-                    "Low": [95.0] * 300,
-                    "Close": [100.0] * 300,
-                    "Volume": [1000000] * 300,
-                },
-                index=dates,
+        dates = pd.date_range("2024-01-01", periods=300, freq="D")
+        mock_df = pd.DataFrame(
+            {
+                "Open": [100.0] * 300,
+                "High": [105.0] * 300,
+                "Low": [95.0] * 300,
+                "Close": [100.0] * 300,
+                "Volume": [1000000] * 300,
+            },
+            index=dates,
+        )
+
+        # Patch both fetch_ohlcv_yf and validate_initial_entry_with_trade_agent
+        # Need to patch where they're used in integrated_backtest module
+        with (
+            patch("integrated_backtest.fetch_ohlcv_yf", return_value=mock_df) as mock_fetch,
+            patch(
+                "integrated_backtest.validate_initial_entry_with_trade_agent",
+                return_value={"approved": True, "target": 110.0},
+            ) as mock_validate,
+        ):
+            # Import after patching to ensure patches are in place
+            from integrated_backtest import run_integrated_backtest
+
+            run_integrated_backtest(
+                stock_name="TEST.NS",
+                date_range=("2024-01-01", "2024-01-31"),
+                capital_per_position=50000,
+                config=config_ml_enabled,
             )
-            mock_fetch.return_value = mock_df
 
-            # Patch validate_initial_entry_with_trade_agent where it's defined
-            with patch(
-                "integrated_backtest.validate_initial_entry_with_trade_agent"
-            ) as mock_validate:
-                mock_validate.return_value = {"approved": True, "target": 110.0}
-
-                # Import after patching to ensure patches are in place
-                from integrated_backtest import run_integrated_backtest
-
-                run_integrated_backtest(
-                    stock_name="TEST.NS",
-                    date_range=("2024-01-01", "2024-01-31"),
-                    capital_per_position=50000,
-                    config=config_ml_enabled,
-                )
-
-                # Verify config was passed to validate_initial_entry_with_trade_agent
-                if mock_validate.called:
-                    call_kwargs = mock_validate.call_args[1]
-                    assert "config" in call_kwargs
-                    assert call_kwargs["config"] == config_ml_enabled
-                    assert call_kwargs["config"].ml_enabled is True
+            # Verify config was passed to validate_initial_entry_with_trade_agent
+            if mock_validate.called:
+                call_kwargs = mock_validate.call_args[1]
+                assert "config" in call_kwargs
+                assert call_kwargs["config"] == config_ml_enabled
+                assert call_kwargs["config"].ml_enabled is True
 
     def test_validate_initial_entry_uses_config_for_analysis_service(self, config_ml_enabled):
         """Test that validate_initial_entry_with_trade_agent uses config for AnalysisService"""
