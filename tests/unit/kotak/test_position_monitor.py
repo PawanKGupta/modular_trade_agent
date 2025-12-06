@@ -467,6 +467,8 @@ class TestPositionMonitorBackwardCompatibility:
             enable_alerts=False,
             enable_realtime_prices=False,
         )
+        # Set the mocked position_loader (required for the mock to work)
+        monitor.position_loader = mock_position_loader
 
         results = monitor.monitor_all_positions()
 
