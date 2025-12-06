@@ -457,6 +457,10 @@ class TestPositionMonitorBackwardCompatibility:
     @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
     def test_monitor_handles_no_positions(self, mock_get_position_loader):
         """Test that monitor handles no open positions correctly"""
+        # Reset singleton to ensure test isolation
+        import modules.kotak_neo_auto_trader.services.position_loader as position_loader_module
+        position_loader_module._position_loader_instance = None
+
         mock_position_loader = Mock()
         mock_position_loader.load_open_positions.return_value = []
         mock_position_loader.get_positions_by_symbol.return_value = {}
