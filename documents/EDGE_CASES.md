@@ -1032,15 +1032,62 @@ for db_order in reentry_orders_from_db:
             continue
 ```
 
-### Remaining Solution
+### Solution
 
-**To fully fix**: Add logic in `monitor_and_update()` to cancel pending reentry orders when a sell order executes and closes the position:
+**Fixed on**: 2025-12-06
 
-1. **After marking position as closed** (line 2188), query for pending reentry orders for that symbol
-2. **Cancel each pending reentry order** via broker API
-3. **Update database order status** to CANCELLED with reason "Position closed"
+**Implementation**:
 
-**Note**: The current prevention mechanism ensures no data inconsistency even if cancellation is delayed. The reentry order will execute but won't reopen the closed position. However, immediate cancellation would be cleaner and prevent unnecessary order execution.
+1. **Added `_cancel_pending_reentry_orders()` method** in `SellOrderManager`:
+   - Queries for pending reentry orders for the closed position's symbol
+   - Filters by: `side == "buy"`, `status == PENDING`, `entry_type == "reentry"`, matching symbol
+   - Cancels each pending reentry order via broker API
+   - Updates database order status to CANCELLED with reason "Position closed"
+   - Handles edge cases gracefully (missing broker_order_id, cancellation failures, exceptions)
+
+2. **Integrated into `monitor_and_update()`**:
+   - Called immediately after marking position as closed (full execution scenario)
+   - Ensures pending reentry orders are cancelled as soon as position closes
+   - Works in conjunction with prevention mechanism for complete protection
+
+**Files Modified**:
+- `modules/kotak_neo_auto_trader/sell_engine.py`:
+  - Added `_cancel_pending_reentry_orders()` method (lines 1216-1320)
+  - Integrated call in `monitor_and_update()` after position closure (line 2307)
+
+**Test Files**:
+- `tests/unit/kotak/test_sell_engine_edge_case_12.py` - Comprehensive tests for the fix
+
+**How It Works**:
+
+1. **When sell order executes and closes position**:
+   - Position is marked as closed in database
+   - `_cancel_pending_reentry_orders()` is called immediately
+   - Queries database for pending reentry orders matching the symbol
+   - Cancels each order via broker API
+   - Updates database order status to CANCELLED
+
+2. **Multiple layers of protection**:
+   - **Immediate cancellation**: Pending reentry orders cancelled as soon as position closes
+   - **Prevention mechanism**: If reentry order executes before cancellation, it won't reopen the position
+   - **Pre-market cancellation**: Backup check at 9:05 AM for any missed orders
+
+**Current Flow (After Fix)**:
+
+```
+Time T1: Reentry order placed: 10 shares (pending)
+Time T2: Sell order executes: 35 shares (full position)
+  - Position marked as closed ✅
+  - _cancel_pending_reentry_orders() called immediately ✅
+  - Reentry order cancelled via broker API ✅
+  - DB order status updated to CANCELLED ✅
+
+Time T3: (If reentry order somehow executes before cancellation)
+  - _create_position_from_executed_order() checks: position.closed_at is not None ✅
+  - Logs warning and SKIPS reentry update ✅
+  - Position remains closed ✅
+  - No data inconsistency ✅
+```
 
 ---
 
@@ -1580,7 +1627,7 @@ If system were to skip reentry when manual buy detected:
    - ~~Fix Edge Case #15: Detect and handle manual full sell of system holdings~~ ✅ **FIXED**
    - ~~Fix Edge Case #17: Validate sell order quantity against broker holdings~~ ✅ **FIXED**
    - ~~Fix Edge Case #4: Validate positions table against broker holdings~~ ✅ **FIXED** (as part of Edge Cases #14, #15, #17)
-   - ~~Fix Edge Case #12: Cancel pending reentry orders when position closes~~ ⚠️ **PARTIALLY FIXED** (prevention implemented, immediate cancellation during market hours pending)
+   - ~~Fix Edge Case #12: Cancel pending reentry orders when position closes~~ ✅ **FIXED**
    - ~~Fix Edge Case #9: Handle partial sell execution~~ ✅ **FIXED** (as part of Edge Case #8 fix)
    - ~~Fix Edge Case #18: Handle manual buy of system-tracked symbol~~ ✅ **By Design** (not a bug)
    - ~~Fix Edge Case #16: Reentry on mixed holdings (average price calculation)~~ ✅ **By Design** (not a bug)

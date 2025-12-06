@@ -1213,6 +1213,113 @@ class SellOrderManager:
             except Exception as e:
                 logger.warning(f"Failed to cancel order {order_id}: {e}")
 
+    def _cancel_pending_reentry_orders(self, base_symbol: str) -> int:
+        """
+        Cancel pending reentry orders for a closed position.
+
+        Edge Case #12 fix: When a sell order executes and closes a position,
+        cancel any pending reentry orders to prevent position from being reopened.
+
+        Args:
+            base_symbol: Base symbol (e.g., "RELIANCE") for which to cancel reentry orders
+
+        Returns:
+            Number of reentry orders cancelled
+        """
+        if not self.orders_repo or not self.user_id:
+            logger.debug(
+                "OrdersRepository or user_id not available, skipping reentry order cancellation"
+            )
+            return 0
+
+        cancelled_count = 0
+
+        try:
+            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+            # Query for pending reentry orders for this symbol
+            all_orders = self.orders_repo.list(self.user_id)
+            reentry_orders = [
+                db_order
+                for db_order in all_orders
+                if db_order.side.lower() == "buy"
+                and db_order.status == DbOrderStatus.PENDING
+                and db_order.entry_type == "reentry"
+                and extract_base_symbol(db_order.symbol).upper() == base_symbol.upper()
+            ]
+
+            if not reentry_orders:
+                logger.debug(f"No pending reentry orders found for {base_symbol}")
+                return 0
+
+            logger.info(
+                f"Found {len(reentry_orders)} pending reentry order(s) for closed position {base_symbol}. "
+                f"Cancelling them..."
+            )
+
+            for db_order in reentry_orders:
+                try:
+                    if not db_order.broker_order_id:
+                        logger.warning(
+                            f"Reentry order {db_order.id} for {base_symbol} has no broker_order_id. "
+                            f"Updating DB status only."
+                        )
+                        # Update DB status even without broker_order_id
+                        self.orders_repo.update(
+                            db_order,
+                            status=DbOrderStatus.CANCELLED,
+                            reason="Position closed",
+                        )
+                        cancelled_count += 1
+                        continue
+
+                    # Cancel via broker API
+                    cancel_result = self.orders.cancel_order(db_order.broker_order_id)
+                    if cancel_result:
+                        logger.info(
+                            f"Cancelled reentry order {db_order.broker_order_id} "
+                            f"for closed position {base_symbol}"
+                        )
+                        # Update DB order status
+                        self.orders_repo.update(
+                            db_order,
+                            status=DbOrderStatus.CANCELLED,
+                            reason="Position closed",
+                        )
+                        cancelled_count += 1
+                    else:
+                        logger.warning(
+                            f"Failed to cancel reentry order {db_order.broker_order_id} "
+                            f"for {base_symbol} via broker API. Order may have already executed."
+                        )
+                        # Still update DB status to reflect intent
+                        self.orders_repo.update(
+                            db_order,
+                            status=DbOrderStatus.CANCELLED,
+                            reason="Position closed (cancellation attempted)",
+                        )
+                        cancelled_count += 1
+
+                except Exception as e:
+                    logger.warning(
+                        f"Error cancelling reentry order {db_order.broker_order_id} "
+                        f"for {base_symbol}: {e}"
+                    )
+                    # Continue with next order even if one fails
+
+            if cancelled_count > 0:
+                logger.info(
+                    f"Cancelled {cancelled_count} pending reentry order(s) for closed position {base_symbol}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error cancelling pending reentry orders for {base_symbol}: {e}",
+                exc_info=True,
+            )
+
+        return cancelled_count
+
     def _update_trade_history_for_manual_sell(
         self, symbol: str, sell_info: dict[str, Any], remaining_qty: int
     ):
@@ -2195,6 +2302,9 @@ class SellOrderManager:
                                     f"Position marked as closed in database: {base_symbol} "
                                     f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
                                 )
+
+                                # Edge Case #12: Cancel pending reentry orders for closed position
+                                self._cancel_pending_reentry_orders(base_symbol)
                             else:
                                 # Partial execution - reduce quantity, keep position open
                                 self.positions_repo.reduce_quantity(
