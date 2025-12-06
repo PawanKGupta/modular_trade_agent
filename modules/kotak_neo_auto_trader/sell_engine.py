@@ -771,14 +771,14 @@ class SellOrderManager:
     def _get_holdings_cached(self, force_refresh: bool = False) -> dict | None:
         """
         Get holdings from broker API with caching to reduce API calls.
-        
+
         Cache TTL: 2 minutes (120 seconds) - reduced for better freshness
         - Reduces API calls while still detecting manual trades within reasonable time
         - Cache is invalidated on each call after TTL expires
-        
+
         Args:
             force_refresh: If True, bypass cache and fetch fresh data (for critical operations)
-        
+
         Returns:
             Holdings dictionary or None
         """
@@ -823,7 +823,7 @@ class SellOrderManager:
     def _invalidate_holdings_cache(self) -> None:
         """
         Invalidate holdings cache.
-        
+
         Call this when positions are updated to ensure next reconciliation
         uses fresh data from broker API.
         """
@@ -2419,6 +2419,88 @@ class SellOrderManager:
 
         return result
 
+    def _check_and_fix_sell_order_mismatches(self) -> int:
+        """
+        Check for sell order quantity mismatches with position quantities and fix them.
+        
+        Flaw #7 Fix: Detects and fixes mismatches caused by failed sell order updates
+        (e.g., after reentry execution when update_sell_order() fails).
+        
+        Returns:
+            Number of mismatches fixed
+        """
+        if not self.active_sell_orders or not self.positions_repo or not self.user_id:
+            return 0
+
+        fixed_count = 0
+        existing_orders = self.get_existing_sell_orders()
+
+        for symbol, order_info in list(self.active_sell_orders.items()):
+            try:
+                base_symbol = extract_base_symbol(symbol).upper()
+                
+                # Get position quantity from database
+                position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+                if not position or position.closed_at:
+                    # Position doesn't exist or is closed - skip
+                    continue
+
+                position_qty = position.quantity
+
+                # Get sell order quantity from broker
+                if base_symbol not in existing_orders:
+                    # Sell order doesn't exist in broker (might have been executed/cancelled)
+                    continue
+
+                sell_order = existing_orders[base_symbol]
+                sell_order_qty = sell_order.get("qty", 0)
+                sell_order_id = sell_order.get("order_id")
+                sell_order_price = sell_order.get("price", 0)
+
+                # Check for mismatch
+                if sell_order_id and position_qty != sell_order_qty:
+                    logger.info(
+                        f"Detected sell order quantity mismatch for {base_symbol}: "
+                        f"Position={position_qty}, Sell order={sell_order_qty}. "
+                        f"Attempting to fix..."
+                    )
+
+                    # Update sell order to match position quantity
+                    if self.update_sell_order(
+                        order_id=str(sell_order_id),
+                        symbol=base_symbol,
+                        qty=int(position_qty),
+                        new_price=sell_order_price,
+                    ):
+                        logger.info(
+                            f"Fixed sell order quantity mismatch for {base_symbol}: "
+                            f"{sell_order_qty} -> {position_qty} shares"
+                        )
+                        # Update tracking with new quantity
+                        self._register_order(
+                            symbol=symbol,
+                            order_id=sell_order_id,
+                            target_price=sell_order_price,
+                            qty=position_qty,
+                            ticker=order_info.get("ticker"),
+                            placed_symbol=order_info.get("placed_symbol") or f"{base_symbol}-EQ",
+                        )
+                        fixed_count += 1
+                    else:
+                        logger.warning(
+                            f"Failed to fix sell order quantity mismatch for {base_symbol}. "
+                            f"Will retry in next check cycle."
+                        )
+
+            except Exception as e:
+                logger.debug(f"Error checking sell order mismatch for {symbol}: {e}")
+                continue
+
+        if fixed_count > 0:
+            logger.info(f"Fixed {fixed_count} sell order quantity mismatch(es)")
+
+        return fixed_count
+
     def _check_and_retry_circuit_expansion(self) -> int:
         """
         Check if EMA9 has dropped within circuit limits for waiting symbols and retry placing orders.
@@ -2559,6 +2641,15 @@ class SellOrderManager:
 
         logger.debug(f"Monitoring {len(self.active_sell_orders)} active sell orders in parallel...")
 
+        # Flaw #7 Fix: Periodic check for sell order quantity mismatches
+        # Detects and fixes mismatches caused by failed sell order updates (e.g., after reentry)
+        # Runs every 15 minutes (:00, :15, :30, :45) to catch failures quickly without excessive API calls
+        if now.minute % 15 == 0 and now.second < 10:
+            try:
+                self._check_and_fix_sell_order_mismatches()
+            except Exception as e:
+                logger.debug(f"Failed to check sell order mismatches (non-critical): {e}")
+
         # Check for executed orders first (single API call)
         executed_ids = self.check_order_execution()
 
@@ -2617,7 +2708,7 @@ class SellOrderManager:
                                 # Edge Case #12: Cancel pending reentry orders for closed position
                                 # Note: This includes broker API calls, so it's outside the transaction
                                 self._cancel_pending_reentry_orders(base_symbol)
-                                
+
                                 # Invalidate cache since position was closed (broker holdings changed)
                                 self._invalidate_holdings_cache()
                             else:

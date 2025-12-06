@@ -331,19 +331,34 @@ Day 2:
 3. Result: Position = 110, Sell order = 100 (mismatch)
 ```
 
-**Current Code**:
-- Error is logged but no retry mechanism
-- Relies on next-day `run_at_market_open()` to fix
-- No immediate retry or queue for failed updates
-
 **Impact**:
 - Temporary inconsistency until next day
 - Potential for missed sell opportunities
 
-**Recommendation**:
-- Implement retry mechanism for failed sell order updates
-- Queue failed updates for retry
-- Or add periodic check to detect and fix mismatches
+**Status**: ✅ **FIXED** (2025-12-07)
+
+**Implementation**:
+- Added `_check_and_fix_sell_order_mismatches()` method to detect and fix quantity mismatches
+- Periodic check runs every 15 minutes during market hours in `monitor_and_update()`
+- Compares position quantity with sell order quantity from broker
+- Automatically updates sell order if mismatch detected
+- Retries failed updates in next check cycle (within 15 minutes, not next day)
+
+**Files Changed**:
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Added mismatch detection and fix logic
+
+**How It Works**:
+1. Every 15 minutes during market hours, check all active sell orders
+2. For each sell order, compare position quantity (from database) with sell order quantity (from broker)
+3. If mismatch detected, update sell order to match position quantity
+4. If update fails, retry in next check cycle (within 15 minutes)
+5. This ensures mismatches are fixed quickly, not just at next day's market open
+
+**Benefits**:
+- Mismatches fixed within 15 minutes (not next day)
+- Automatic recovery from failed updates
+- No manual intervention needed
+- Minimal API overhead (runs every 15 minutes, only checks active orders)
 
 ---
 
