@@ -49,6 +49,7 @@ class PositionsRepository:
         initial_entry_price: float | None = None,
         last_reentry_price: float | None = None,
         entry_rsi: float | None = None,
+        auto_commit: bool = True,
     ) -> Positions:
         pos = self.get_by_symbol(user_id, symbol)
         if pos:
@@ -80,8 +81,9 @@ class PositionsRepository:
                 entry_rsi=entry_rsi,
             )
             self.db.add(pos)
-        self.db.commit()
-        self.db.refresh(pos)
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(pos)
         return pos
 
     def count_open(self, user_id: int) -> int:
@@ -107,6 +109,7 @@ class PositionsRepository:
         symbol: str,
         closed_at: datetime | None = None,
         exit_price: float | None = None,
+        auto_commit: bool = True,
     ) -> Positions | None:
         """
         Mark a position as closed in the positions table.
@@ -118,6 +121,7 @@ class PositionsRepository:
             symbol: Base symbol (without suffix)
             closed_at: Closing timestamp (defaults to current time)
             exit_price: Exit price (optional, for future use)
+            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
 
         Returns:
             Updated Positions object, or None if position not found
@@ -129,8 +133,9 @@ class PositionsRepository:
 
         pos.closed_at = closed_at or ist_now()
         pos.quantity = 0.0  # Set quantity to 0 when fully closed
-        self.db.commit()
-        self.db.refresh(pos)
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(pos)
         logger.info(f"Position marked as closed: {symbol} (closed_at: {pos.closed_at})")
         return pos
 
@@ -139,6 +144,7 @@ class PositionsRepository:
         user_id: int,
         symbol: str,
         sold_quantity: float,
+        auto_commit: bool = True,
     ) -> Positions | None:
         """
         Reduce position quantity after partial sell execution.
@@ -149,6 +155,7 @@ class PositionsRepository:
             user_id: User ID
             symbol: Base symbol (without suffix)
             sold_quantity: Quantity sold (to subtract from current quantity)
+            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
 
         Returns:
             Updated Positions object, or None if position not found
@@ -175,6 +182,7 @@ class PositionsRepository:
                 f"(sold {sold_quantity}, remaining: {new_quantity})"
             )
 
-        self.db.commit()
-        self.db.refresh(pos)
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(pos)
         return pos

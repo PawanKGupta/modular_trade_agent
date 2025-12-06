@@ -24,6 +24,7 @@ try:
     from sqlalchemy.orm import Session
 
     from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+    from src.infrastructure.db.transaction import transaction
     from src.infrastructure.persistence.orders_repository import OrdersRepository
     from src.infrastructure.persistence.positions_repository import PositionsRepository
 
@@ -248,9 +249,7 @@ class UnifiedOrderMonitor:
 
             filled_qty = OrderFieldExtractor.get_filled_quantity(latest_complete)
             avg_price_str = latest_complete.get("avgPrc", "0")
-            avg_price = (
-                float(avg_price_str) if avg_price_str and avg_price_str != "0.00" else 0.0
-            )
+            avg_price = float(avg_price_str) if avg_price_str and avg_price_str != "0.00" else 0.0
 
             if filled_qty > 0:
                 return {
@@ -426,10 +425,15 @@ class UnifiedOrderMonitor:
 
                                         # Priority 2: fldQty from order_history() (if not found in order_report)
                                         if execution_qty is None:
-                                            history_data = self._get_filled_quantity_from_order_history(
-                                                order_id
+                                            history_data = (
+                                                self._get_filled_quantity_from_order_history(
+                                                    order_id
+                                                )
                                             )
-                                            if history_data and history_data.get("filled_qty", 0) > 0:
+                                            if (
+                                                history_data
+                                                and history_data.get("filled_qty", 0) > 0
+                                            ):
                                                 execution_qty = float(history_data["filled_qty"])
                                                 execution_price = history_data.get(
                                                     "execution_price", 0.0
@@ -470,7 +474,9 @@ class UnifiedOrderMonitor:
                                             if order_qty and float(order_qty) > 0:
                                                 execution_qty = float(order_qty)
                                                 order_price = order_info.get("price") or (
-                                                    float(db_order.price) if db_order.price else None
+                                                    float(db_order.price)
+                                                    if db_order.price
+                                                    else None
                                                 )
                                                 execution_price = (
                                                     float(order_price)
@@ -478,7 +484,9 @@ class UnifiedOrderMonitor:
                                                     else (
                                                         float(holding_info.get("averagePrice", 0))
                                                         or float(holding_info.get("avgPrice", 0))
-                                                        or float(holding_info.get("closingPrice", 0))
+                                                        or float(
+                                                            holding_info.get("closingPrice", 0)
+                                                        )
                                                         or 0.0
                                                     )
                                                 )
@@ -491,24 +499,34 @@ class UnifiedOrderMonitor:
                                                 )
 
                                         # Mark as executed using extracted data
-                                        if execution_price and execution_price > 0 and execution_qty and execution_qty > 0:
-                                            self.orders_repo.mark_executed(
-                                                db_order,
-                                                execution_price=execution_price,
-                                                execution_qty=execution_qty,
-                                            )
-                                            logger.info(
-                                                f"Reconciled order {order_id} (source: {source}): "
-                                                f"executed at Rs {execution_price:.2f}, qty {execution_qty}"
-                                            )
+                                        if (
+                                            execution_price
+                                            and execution_price > 0
+                                            and execution_qty
+                                            and execution_qty > 0
+                                        ):
+                                            # Wrap order execution and position creation in transaction
+                                            # Both repositories share the same db_session, so one transaction covers both
+                                            with transaction(self.orders_repo.db):
+                                                self.orders_repo.mark_executed(
+                                                    db_order,
+                                                    execution_price=execution_price,
+                                                    execution_qty=execution_qty,
+                                                    auto_commit=False,  # Transaction handles commit
+                                                )
+                                                logger.info(
+                                                    f"Reconciled order {order_id} (source: {source}): "
+                                                    f"executed at Rs {execution_price:.2f}, qty {execution_qty}"
+                                                )
 
-                                            # Create/update position
-                                            self._create_position_from_executed_order(
-                                                order_id,
-                                                order_info,
-                                                execution_price,
-                                                execution_qty,
-                                            )
+                                                # Create/update position (within same transaction)
+                                                # SQLAlchemy will use savepoints for nested transactions automatically
+                                                self._create_position_from_executed_order(
+                                                    order_id,
+                                                    order_info,
+                                                    execution_price,
+                                                    execution_qty,
+                                                )
 
                                             stats["executed"] += 1
                                             order_ids_to_remove.append(order_id)
@@ -559,7 +577,9 @@ class UnifiedOrderMonitor:
         except ValueError as e:
             logger.error(f"Invalid data when checking buy order status: {e}", exc_info=True)
         except KeyError as e:
-            logger.error(f"Missing required field when checking buy order status: {e}", exc_info=True)
+            logger.error(
+                f"Missing required field when checking buy order status: {e}", exc_info=True
+            )
         except Exception as e:
             logger.error(f"Unexpected error checking buy order status: {e}", exc_info=True)
 
@@ -591,7 +611,9 @@ class UnifiedOrderMonitor:
                 if filled_qty > 0:
                     execution_qty = float(filled_qty)
                 else:
-                    execution_qty = OrderFieldExtractor.get_quantity(broker_order) or db_order.quantity
+                    execution_qty = (
+                        OrderFieldExtractor.get_quantity(broker_order) or db_order.quantity
+                    )
                 self.orders_repo.mark_executed(
                     db_order,
                     execution_price=execution_price,
@@ -919,7 +941,9 @@ class UnifiedOrderMonitor:
                             # Don't update reentry fields, but still update quantity and avg_price
                             is_reentry = False
                             reentry_count = existing_pos.reentry_count or 0
-                            reentries_array = existing_pos.reentries if existing_pos.reentries else []
+                            reentries_array = (
+                                existing_pos.reentries if existing_pos.reentries else []
+                            )
                             last_reentry_price = existing_pos.last_reentry_price
                         else:
                             # Append new reentry (data is validated)
@@ -935,42 +959,52 @@ class UnifiedOrderMonitor:
                     # JSON backup is synced during reconciliation via _load_trades_history()
                     # which reads from database and writes to JSON.
 
-                self.positions_repo.upsert(
-                    user_id=self.user_id,
-                    symbol=base_symbol,
-                    quantity=new_qty,
-                    avg_price=new_avg_price,
-                    opened_at=existing_pos.opened_at,  # Preserve original open time
-                    entry_rsi=entry_rsi_to_set,  # Only set if not already set
-                    reentry_count=reentry_count if is_reentry else None,
-                    reentries=reentries_array if is_reentry else None,
-                    last_reentry_price=last_reentry_price if is_reentry else None,
-                )
+                # Wrap position updates in a transaction for atomicity
+                # This ensures position update and integrity fix happen together or not at all
+                # If already in a transaction, SQLAlchemy will use savepoints automatically
+                with transaction(self.positions_repo.db):
+                    self.positions_repo.upsert(
+                        user_id=self.user_id,
+                        symbol=base_symbol,
+                        quantity=new_qty,
+                        avg_price=new_avg_price,
+                        opened_at=existing_pos.opened_at,  # Preserve original open time
+                        entry_rsi=entry_rsi_to_set,  # Only set if not already set
+                        reentry_count=reentry_count if is_reentry else None,
+                        reentries=reentries_array if is_reentry else None,
+                        last_reentry_price=last_reentry_price if is_reentry else None,
+                        auto_commit=False,  # Transaction handles commit
+                    )
 
-                # Improvement: Verify data integrity after update
-                if is_reentry:
-                    updated_position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
-                    if updated_position:
-                        actual_count = len(updated_position.reentries or [])
-                        if updated_position.reentry_count != actual_count:
-                            logger.warning(
-                                f"Reentry count mismatch for {base_symbol}: "
-                                f"count={updated_position.reentry_count}, array_length={actual_count}. "
-                                f"Fixing..."
-                            )
-                            # Fix the mismatch - preserve the last_reentry_price we just set
-                            self.positions_repo.upsert(
-                                user_id=self.user_id,
-                                symbol=base_symbol,
-                                reentry_count=actual_count,
-                                # Preserve other fields including the newly set last_reentry_price
-                                quantity=updated_position.quantity,
-                                avg_price=updated_position.avg_price,
-                                opened_at=updated_position.opened_at,
-                                entry_rsi=updated_position.entry_rsi,
-                                reentries=updated_position.reentries,
-                                last_reentry_price=last_reentry_price,  # Use the value we just set, not from DB
-                            )
+                    # Improvement: Verify data integrity after update
+                    if is_reentry:
+                        updated_position = self.positions_repo.get_by_symbol(
+                            self.user_id, base_symbol
+                        )
+                        if updated_position:
+                            actual_count = len(updated_position.reentries or [])
+                            if updated_position.reentry_count != actual_count:
+                                logger.warning(
+                                    f"Reentry count mismatch for {base_symbol}: "
+                                    f"count={updated_position.reentry_count}, array_length={actual_count}. "
+                                    f"Fixing..."
+                                )
+                                # Fix the mismatch - preserve the last_reentry_price we just set
+                                self.positions_repo.upsert(
+                                    user_id=self.user_id,
+                                    symbol=base_symbol,
+                                    reentry_count=actual_count,
+                                    # Preserve other fields including the newly set last_reentry_price
+                                    quantity=updated_position.quantity,
+                                    avg_price=updated_position.avg_price,
+                                    opened_at=updated_position.opened_at,
+                                    entry_rsi=updated_position.entry_rsi,
+                                    reentries=updated_position.reentries,
+                                    last_reentry_price=last_reentry_price,  # Use the value we just set, not from DB
+                                    auto_commit=False,  # Transaction handles commit
+                                )
+                                # Refresh position after fix
+                                self.positions_repo.db.refresh(updated_position)
 
                 logger.info(
                     f"Updated position for {base_symbol}: qty {existing_qty} -> {new_qty}, "
@@ -1018,15 +1052,18 @@ class UnifiedOrderMonitor:
                             f"Order will be updated next day by run_at_market_open()."
                         )
             else:
-                # Create new position
-                self.positions_repo.upsert(
-                    user_id=self.user_id,
-                    symbol=base_symbol,
-                    quantity=execution_qty,
-                    avg_price=execution_price,
-                    opened_at=execution_time,
-                    entry_rsi=entry_rsi,
-                )
+                # Create new position (wrapped in transaction for consistency)
+                # If already in a transaction, SQLAlchemy will use savepoints automatically
+                with transaction(self.positions_repo.db):
+                    self.positions_repo.upsert(
+                        user_id=self.user_id,
+                        symbol=base_symbol,
+                        quantity=execution_qty,
+                        avg_price=execution_price,
+                        opened_at=execution_time,
+                        entry_rsi=entry_rsi,
+                        auto_commit=False,  # Transaction handles commit
+                    )
                 logger.info(
                     f"Created position for {base_symbol}: qty={execution_qty}, "
                     f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"

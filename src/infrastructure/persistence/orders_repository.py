@@ -302,7 +302,7 @@ class OrdersRepository:
             self.db.refresh(order)
         return created_orders
 
-    def update(self, order: Orders, **fields) -> Orders:
+    def update(self, order: Orders, auto_commit: bool = True, **fields) -> Orders:
         """
         Update an order with the given fields.
 
@@ -311,6 +311,11 @@ class OrdersRepository:
 
         Only updates the fields explicitly passed, avoiding accidental updates
         to datetime fields that might be strings from raw SQL queries.
+
+        Args:
+            order: Order to update
+            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+            **fields: Fields to update on the order
         """
         # Merge order into current session if it's detached
         # This handles cases where the order was loaded in a different session
@@ -334,15 +339,23 @@ class OrdersRepository:
 
         order.updated_at = ist_now()
 
-        self.db.commit()
-        self.db.refresh(order)
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(order)
         return order
 
-    def cancel(self, order: Orders) -> None:
+    def cancel(self, order: Orders, auto_commit: bool = True) -> None:
+        """Cancel an order (mark as closed without fills)
+
+        Args:
+            order: Order to cancel
+            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+        """
         # For AMO orders, cancel means remove or mark closed without fills
         order.status = OrderStatus.CLOSED
         order.closed_at = ist_now()
-        self.db.commit()
+        if auto_commit:
+            self.db.commit()
 
     def mark_failed(
         self,
@@ -391,8 +404,16 @@ class OrdersRepository:
         order: Orders,
         execution_price: float,
         execution_qty: float | None = None,
+        auto_commit: bool = True,
     ) -> Orders:
-        """Mark an order as executed with execution details"""
+        """Mark an order as executed with execution details
+
+        Args:
+            order: Order to mark as executed
+            execution_price: Price at which order executed
+            execution_qty: Quantity executed (defaults to order quantity)
+            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+        """
         order.status = OrderStatus.ONGOING
         order.execution_price = execution_price
         order.execution_qty = execution_qty or order.quantity
@@ -400,7 +421,7 @@ class OrdersRepository:
         order.filled_at = ist_now()
         order.last_status_check = ist_now()
         order.reason = f"Order executed at Rs {execution_price:.2f}"  # Set reason
-        return self.update(order)
+        return self.update(order, auto_commit=auto_commit)
 
     def update_status_check(self, order: Orders) -> Orders:
         """Update the last status check timestamp"""

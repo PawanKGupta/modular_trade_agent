@@ -581,9 +581,7 @@ class SellOrderManager:
             open_positions = self.positions_repo.list(self.user_id)
             open_positions = [pos for pos in open_positions if pos.closed_at is None]
 
-            logger.info(
-                f"Reconciling {len(open_positions)} open positions with broker holdings..."
-            )
+            logger.info(f"Reconciling {len(open_positions)} open positions with broker holdings...")
 
             for pos in open_positions:
                 stats["checked"] += 1
@@ -1257,6 +1255,10 @@ class SellOrderManager:
                 f"Cancelling them..."
             )
 
+            # Group database updates in transaction, but broker API calls happen outside
+            # This ensures all DB updates succeed or fail together
+            db_updates = []  # Track orders that need DB updates
+
             for db_order in reentry_orders:
                 try:
                     if not db_order.broker_order_id:
@@ -1264,28 +1266,20 @@ class SellOrderManager:
                             f"Reentry order {db_order.id} for {base_symbol} has no broker_order_id. "
                             f"Updating DB status only."
                         )
-                        # Update DB status even without broker_order_id
-                        self.orders_repo.update(
-                            db_order,
-                            status=DbOrderStatus.CANCELLED,
-                            reason="Position closed",
-                        )
+                        # Queue for DB update
+                        db_updates.append((db_order, "Position closed"))
                         cancelled_count += 1
                         continue
 
-                    # Cancel via broker API
+                    # Cancel via broker API (outside transaction)
                     cancel_result = self.orders.cancel_order(db_order.broker_order_id)
                     if cancel_result:
                         logger.info(
                             f"Cancelled reentry order {db_order.broker_order_id} "
                             f"for closed position {base_symbol}"
                         )
-                        # Update DB order status
-                        self.orders_repo.update(
-                            db_order,
-                            status=DbOrderStatus.CANCELLED,
-                            reason="Position closed",
-                        )
+                        # Queue for DB update
+                        db_updates.append((db_order, "Position closed"))
                         cancelled_count += 1
                     else:
                         logger.warning(
@@ -1293,11 +1287,7 @@ class SellOrderManager:
                             f"for {base_symbol} via broker API. Order may have already executed."
                         )
                         # Still update DB status to reflect intent
-                        self.orders_repo.update(
-                            db_order,
-                            status=DbOrderStatus.CANCELLED,
-                            reason="Position closed (cancellation attempted)",
-                        )
+                        db_updates.append((db_order, "Position closed (cancellation attempted)"))
                         cancelled_count += 1
 
                 except Exception as e:
@@ -1306,6 +1296,25 @@ class SellOrderManager:
                         f"for {base_symbol}: {e}"
                     )
                     # Continue with next order even if one fails
+
+            # Apply all DB updates in a single transaction
+            if db_updates:
+                from src.infrastructure.db.transaction import transaction
+
+                with transaction(self.orders_repo.db):
+                    for db_order, reason in db_updates:
+                        try:
+                            self.orders_repo.update(
+                                db_order,
+                                status=DbOrderStatus.CANCELLED,
+                                reason=reason,
+                                auto_commit=False,  # Transaction handles commit
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Error updating DB status for reentry order {db_order.id}: {e}"
+                            )
+                            # Transaction will rollback if exception propagates
 
             if cancelled_count > 0:
                 logger.info(
@@ -1334,9 +1343,7 @@ class SellOrderManager:
             Number of buy orders closed
         """
         if not self.orders_repo or not self.user_id:
-            logger.debug(
-                "OrdersRepository or user_id not available, skipping buy order closure"
-            )
+            logger.debug("OrdersRepository or user_id not available, skipping buy order closure")
             return 0
 
         closed_count = 0
@@ -1364,25 +1371,31 @@ class SellOrderManager:
                 f"Closing them as sell order executed..."
             )
 
-            for db_order in ongoing_buy_orders:
-                try:
-                    # Mark buy order as CLOSED
-                    self.orders_repo.update(
-                        db_order,
-                        status=DbOrderStatus.CLOSED,
-                        closed_at=ist_now(),
-                        reason="Position closed - sell order executed",
-                    )
-                    closed_count += 1
-                    logger.info(
-                        f"Closed buy order {db_order.id} ({db_order.broker_order_id}) "
-                        f"for {base_symbol} - sell order executed"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Error closing buy order {db_order.id} for {base_symbol}: {e}"
-                    )
-                    # Continue with next order even if one fails
+            # Wrap all order closures in a single transaction
+            from src.infrastructure.db.transaction import transaction
+
+            with transaction(self.orders_repo.db):
+                for db_order in ongoing_buy_orders:
+                    try:
+                        # Mark buy order as CLOSED
+                        self.orders_repo.update(
+                            db_order,
+                            status=DbOrderStatus.CLOSED,
+                            closed_at=ist_now(),
+                            reason="Position closed - sell order executed",
+                            auto_commit=False,  # Transaction handles commit
+                        )
+                        closed_count += 1
+                        logger.info(
+                            f"Closed buy order {db_order.id} ({db_order.broker_order_id}) "
+                            f"for {base_symbol} - sell order executed"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Error closing buy order {db_order.id} for {base_symbol}: {e}"
+                        )
+                        # Continue with next order even if one fails
+                        # Transaction will rollback if exception propagates
 
             if closed_count > 0:
                 logger.info(
@@ -2369,21 +2382,27 @@ class SellOrderManager:
                         if filled_qty > 0:
                             if filled_qty >= order_qty or filled_qty >= order_info.get("qty", 0):
                                 # Full execution - mark position as closed
-                                self.positions_repo.mark_closed(
-                                    user_id=self.user_id,
-                                    symbol=base_symbol,
-                                    closed_at=ist_now(),
-                                    exit_price=order_price,
-                                )
-                                logger.info(
-                                    f"Position marked as closed in database: {base_symbol} "
-                                    f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
-                                )
+                                # Wrap position and order updates in transaction for atomicity
+                                from src.infrastructure.db.transaction import transaction
 
-                                # Close corresponding ONGOING buy orders
-                                self._close_buy_orders_for_symbol(base_symbol)
+                                with transaction(self.positions_repo.db):
+                                    self.positions_repo.mark_closed(
+                                        user_id=self.user_id,
+                                        symbol=base_symbol,
+                                        closed_at=ist_now(),
+                                        exit_price=order_price,
+                                        auto_commit=False,  # Transaction handles commit
+                                    )
+                                    logger.info(
+                                        f"Position marked as closed in database: {base_symbol} "
+                                        f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
+                                    )
+
+                                    # Close corresponding ONGOING buy orders (within same transaction)
+                                    self._close_buy_orders_for_symbol(base_symbol)
 
                                 # Edge Case #12: Cancel pending reentry orders for closed position
+                                # Note: This includes broker API calls, so it's outside the transaction
                                 self._cancel_pending_reentry_orders(base_symbol)
                             else:
                                 # Partial execution - reduce quantity, keep position open
@@ -2423,19 +2442,24 @@ class SellOrderManager:
 
                         base_symbol = extract_base_symbol(symbol).upper()
                         # Assume full execution if we don't have filled_qty info
-                        self.positions_repo.mark_closed(
-                            user_id=self.user_id,
-                            symbol=base_symbol,
-                            closed_at=ist_now(),
-                            exit_price=current_price,
-                        )
-                        logger.info(
-                            f"Position marked as closed in database: {base_symbol} "
-                            f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
-                        )
+                        # Wrap position and order updates in transaction for atomicity
+                        from src.infrastructure.db.transaction import transaction
 
-                        # Close corresponding ONGOING buy orders
-                        self._close_buy_orders_for_symbol(base_symbol)
+                        with transaction(self.positions_repo.db):
+                            self.positions_repo.mark_closed(
+                                user_id=self.user_id,
+                                symbol=base_symbol,
+                                closed_at=ist_now(),
+                                exit_price=current_price,
+                                auto_commit=False,  # Transaction handles commit
+                            )
+                            logger.info(
+                                f"Position marked as closed in database: {base_symbol} "
+                                f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
+                            )
+
+                            # Close corresponding ONGOING buy orders (within same transaction)
+                            self._close_buy_orders_for_symbol(base_symbol)
                     except Exception as e:
                         logger.error(
                             f"Error updating positions table for {symbol} after sell execution: {e}"
