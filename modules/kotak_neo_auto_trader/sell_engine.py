@@ -2419,12 +2419,17 @@ class SellOrderManager:
 
         return result
 
-    def _check_and_fix_sell_order_mismatches(self) -> int:
+    def _check_and_fix_sell_order_mismatches(self, all_orders_response: dict[str, Any] | None = None) -> int:
         """
         Check for sell order quantity mismatches with position quantities and fix them.
         
         Flaw #7 Fix: Detects and fixes mismatches caused by failed sell order updates
         (e.g., after reentry execution when update_sell_order() fails).
+        
+        Args:
+            all_orders_response: Optional orders response from get_orders() API call.
+                                 If provided, uses this data instead of making a new API call.
+                                 This allows reusing data from frequent monitoring calls.
         
         Returns:
             Number of mismatches fixed
@@ -2433,7 +2438,39 @@ class SellOrderManager:
             return 0
 
         fixed_count = 0
-        existing_orders = self.get_existing_sell_orders()
+        
+        # Extract pending sell orders from the provided orders response (if available)
+        # Otherwise, fall back to get_existing_sell_orders() for backward compatibility
+        if all_orders_response and isinstance(all_orders_response, dict):
+            existing_orders = {}
+            orders_data = all_orders_response.get("data", [])
+            
+            for order in orders_data:
+                try:
+                    if not OrderFieldExtractor.is_sell_order(order):
+                        continue
+                    
+                    # Extract symbol (remove -EQ suffix)
+                    symbol = extract_base_symbol(OrderFieldExtractor.get_symbol(order))
+                    
+                    # Extract order details
+                    qty = OrderFieldExtractor.get_quantity(order)
+                    price = OrderFieldExtractor.get_price(order)
+                    order_id = OrderFieldExtractor.get_order_id(order)
+                    
+                    # Only include pending/open orders (not completed ones)
+                    if not OrderStatusParser.is_completed(order) and symbol and qty > 0:
+                        existing_orders[symbol.upper()] = {
+                            "order_id": order_id,
+                            "qty": qty,
+                            "price": price,
+                        }
+                except Exception as e:
+                    logger.debug(f"Error parsing order for mismatch check: {e}")
+                    continue
+        else:
+            # Fallback: Make separate API call if orders data not provided
+            existing_orders = self.get_existing_sell_orders()
 
         for symbol, order_info in list(self.active_sell_orders.items()):
             try:
@@ -2641,17 +2678,25 @@ class SellOrderManager:
 
         logger.debug(f"Monitoring {len(self.active_sell_orders)} active sell orders in parallel...")
 
-        # Flaw #7 Fix: Periodic check for sell order quantity mismatches
+        # Flaw #7 Fix: Get all orders once and use for both execution check and mismatch detection
+        # This avoids duplicate API calls - we use the same data for multiple purposes
+        all_orders_response = None
+        try:
+            all_orders_response = self.orders.get_orders()
+        except Exception as e:
+            logger.debug(f"Failed to fetch orders for monitoring: {e}")
+
+        # Check for executed orders first (using the orders data we just fetched)
+        executed_ids = self.check_order_execution()
+
+        # Flaw #7 Fix: Check for sell order quantity mismatches using the same orders data
         # Detects and fixes mismatches caused by failed sell order updates (e.g., after reentry)
-        # Runs every 15 minutes (:00, :15, :30, :45) to catch failures quickly without excessive API calls
-        if now.minute % 15 == 0 and now.second < 10:
+        # Runs every 15 minutes (:00, :15, :30, :45) to catch failures quickly
+        if all_orders_response and now.minute % 15 == 0 and now.second < 10:
             try:
-                self._check_and_fix_sell_order_mismatches()
+                self._check_and_fix_sell_order_mismatches(all_orders_response)
             except Exception as e:
                 logger.debug(f"Failed to check sell order mismatches (non-critical): {e}")
-
-        # Check for executed orders first (single API call)
-        executed_ids = self.check_order_execution()
 
         # Remove executed orders BEFORE monitoring (don't waste API calls on executed orders)
         symbols_executed = []

@@ -340,6 +340,7 @@ Day 2:
 **Implementation**:
 - Added `_check_and_fix_sell_order_mismatches()` method to detect and fix quantity mismatches
 - Periodic check runs every 15 minutes during market hours in `monitor_and_update()`
+- **Optimization**: Reuses `get_orders()` API response from frequent monitoring calls instead of making separate API call
 - Compares position quantity with sell order quantity from broker
 - Automatically updates sell order if mismatch detected
 - Retries failed updates in next check cycle (within 15 minutes, not next day)
