@@ -24,7 +24,7 @@ class StubBacktestService:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
 
-    def add_backtest_scores_to_results(self, results):
+    def add_backtest_scores_to_results(self, results, config=None):
         return results
 
 
@@ -364,7 +364,7 @@ def test_process_results_backtest_exports_csv(monkeypatch):
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def add_backtest_scores_to_results(self, results):
+        def add_backtest_scores_to_results(self, results, config=None):
             return results
 
     captured = {}
@@ -514,8 +514,9 @@ def test_main_async_runs_full_flow(monkeypatch):
     async_mod = types.ModuleType("services.async_analysis_service")
 
     class DummyAsyncAnalysisService:
-        def __init__(self, max_concurrent):
+        def __init__(self, max_concurrent, config=None):
             self.max_concurrent = max_concurrent
+            self.config = config
 
         async def analyze_batch_async(self, **kwargs):
             return [

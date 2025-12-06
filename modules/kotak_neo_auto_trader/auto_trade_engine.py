@@ -109,6 +109,7 @@ class Recommendation:
     verdict: str  # strong_buy|buy|watch
     last_close: float
     execution_capital: float | None = None  # Phase 11: Dynamic capital based on liquidity
+    priority_score: float | None = None  # Priority score for sorting (higher = higher priority)
 
 
 class OrderPlacementError(RuntimeError):
@@ -399,6 +400,20 @@ class AutoTradeEngine:
             if existing_pos and existing_pos.initial_entry_price:
                 initial_entry_price = existing_pos.initial_entry_price
 
+            # Extract entry RSI from trade metadata or order metadata
+            entry_rsi = None
+            if trade.get("entry_rsi") is not None:
+                entry_rsi = trade.get("entry_rsi")
+            elif trade.get("rsi_entry_level") is not None:
+                entry_rsi = trade.get("rsi_entry_level")
+            elif trade.get("rsi10") is not None:
+                entry_rsi = trade.get("rsi10")
+
+            # Only set entry_rsi for new positions (preserve original entry RSI)
+            # If position exists and already has entry_rsi, don't overwrite it
+            if existing_pos and existing_pos.entry_rsi is not None:
+                entry_rsi = None  # Don't update existing entry_rsi
+
             self.positions_repo.upsert(
                 user_id=self.user_id,
                 symbol=symbol,
@@ -411,6 +426,7 @@ class AutoTradeEngine:
                     initial_entry_price if not existing_pos else None
                 ),  # Only set for new positions
                 last_reentry_price=last_reentry_price,
+                entry_rsi=entry_rsi,  # Set entry RSI for new positions
             )
         elif status == "closed":
             # Close position
@@ -824,15 +840,59 @@ class AutoTradeEngine:
                         )
                     except (ValueError, TypeError):
                         execution_capital = None
+                # Load priority_score from CSV if available (for sorting)
+                priority_score = row.get("priority_score")
+                if priority_score is not None:
+                    try:
+                        priority_score = float(priority_score) if priority_score != "" else None
+                    except (ValueError, TypeError):
+                        priority_score = None
+                else:
+                    # Fallback to combined_score if priority_score not available
+                    combined_score = row.get("combined_score")
+                    if combined_score is not None:
+                        try:
+                            priority_score = float(combined_score) if combined_score != "" else None
+                        except (ValueError, TypeError):
+                            priority_score = None
+                    else:
+                        priority_score = None
+
+                # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
+                # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
+                ml_confidence = row.get("ml_confidence")
+                if ml_confidence is not None and priority_score is not None:
+                    try:
+                        ml_confidence = float(ml_confidence) if ml_confidence != "" else None
+                        if ml_confidence is not None and ml_confidence > 0:
+                            # Boost priority based on ML confidence bands:
+                            # - High confidence (>=70%): +20 points (strong ML conviction)
+                            # - Medium confidence (60-70%): +10 points (good ML conviction)
+                            # - Low confidence (50-60%): +5 points (moderate ML conviction)
+                            if ml_confidence >= 0.70:
+                                priority_score += 20  # High ML confidence boost
+                            elif ml_confidence >= 0.60:
+                                priority_score += 10  # Medium ML confidence boost
+                            elif ml_confidence >= 0.50:
+                                priority_score += 5  # Low ML confidence boost
+                            # ML confidence < 50%: No boost (below threshold)
+                    except (ValueError, TypeError):
+                        pass  # Ignore ML confidence if invalid
+
                 recs.append(
                     Recommendation(
                         ticker=ticker,
                         verdict=row[verdict_col],
                         last_close=last_close,
                         execution_capital=execution_capital,
+                        priority_score=priority_score,
                     )
                 )
-            logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path}")
+            # Sort by priority_score (descending) - higher priority stocks placed first
+            recs.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
+            logger.info(
+                f"Loaded {len(recs)} BUY recommendations from {csv_path} (sorted by priority_score)"
+            )
             return recs
         # Otherwise, DO NOT recompute; trust the CSV that trade_agent produced
         if "verdict" in df.columns:
@@ -850,15 +910,59 @@ class AutoTradeEngine:
                         )
                     except (ValueError, TypeError):
                         execution_capital = None
+                # Load priority_score from CSV if available (for sorting)
+                priority_score = row.get("priority_score")
+                if priority_score is not None:
+                    try:
+                        priority_score = float(priority_score) if priority_score != "" else None
+                    except (ValueError, TypeError):
+                        priority_score = None
+                else:
+                    # Fallback to combined_score if priority_score not available
+                    combined_score = row.get("combined_score")
+                    if combined_score is not None:
+                        try:
+                            priority_score = float(combined_score) if combined_score != "" else None
+                        except (ValueError, TypeError):
+                            priority_score = None
+                    else:
+                        priority_score = None
+
+                # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
+                # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
+                ml_confidence = row.get("ml_confidence")
+                if ml_confidence is not None and priority_score is not None:
+                    try:
+                        ml_confidence = float(ml_confidence) if ml_confidence != "" else None
+                        if ml_confidence is not None and ml_confidence > 0:
+                            # Boost priority based on ML confidence bands:
+                            # - High confidence (>=70%): +20 points (strong ML conviction)
+                            # - Medium confidence (60-70%): +10 points (good ML conviction)
+                            # - Low confidence (50-60%): +5 points (moderate ML conviction)
+                            if ml_confidence >= 0.70:
+                                priority_score += 20  # High ML confidence boost
+                            elif ml_confidence >= 0.60:
+                                priority_score += 10  # Medium ML confidence boost
+                            elif ml_confidence >= 0.50:
+                                priority_score += 5  # Low ML confidence boost
+                            # ML confidence < 50%: No boost (below threshold)
+                    except (ValueError, TypeError):
+                        pass  # Ignore ML confidence if invalid
+
                 recs.append(
                     Recommendation(
                         ticker=ticker,
                         verdict=str(row.get("verdict", "")).lower(),
                         last_close=last_close,
                         execution_capital=execution_capital,
+                        priority_score=priority_score,
                     )
                 )
-            logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path} (raw verdicts)")
+            # Sort by priority_score (descending) - higher priority stocks placed first
+            recs.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
+            logger.info(
+                f"Loaded {len(recs)} BUY recommendations from {csv_path} (raw verdicts, sorted by priority_score)"
+            )
             return recs
         logger.warning(
             f"CSV {csv_path} missing 'final_verdict' and 'verdict' columns; no recommendations loaded"
@@ -972,17 +1076,44 @@ class AutoTradeEngine:
                             elif signal.trading_params and isinstance(signal.trading_params, dict):
                                 execution_capital = signal.trading_params.get("execution_capital")
 
+                            # Extract priority_score from signal (for sorting)
+                            priority_score = signal.priority_score
+                            if priority_score is None:
+                                # Fallback to combined_score if priority_score not available
+                                priority_score = signal.combined_score or 0.0
+
+                            # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
+                            # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
+                            ml_confidence = signal.ml_confidence
+                            if ml_confidence is not None and ml_confidence > 0:
+                                # Boost priority based on ML confidence bands:
+                                # - High confidence (>=70%): +20 points (strong ML conviction)
+                                # - Medium confidence (60-70%): +10 points (good ML conviction)
+                                # - Low confidence (50-60%): +5 points (moderate ML conviction)
+                                if ml_confidence >= 0.70:
+                                    priority_score += 20  # High ML confidence boost
+                                elif ml_confidence >= 0.60:
+                                    priority_score += 10  # Medium ML confidence boost
+                                elif ml_confidence >= 0.50:
+                                    priority_score += 5  # Low ML confidence boost
+                                # ML confidence < 50%: No boost (below threshold)
+
                             # Create Recommendation object
                             rec = Recommendation(
                                 ticker=ticker,
                                 verdict=verdict,
                                 last_close=last_close,
                                 execution_capital=execution_capital,
+                                priority_score=priority_score,
                             )
                             recommendations.append(rec)
 
+                    # Sort by priority_score (descending) - higher priority stocks placed first
+                    recommendations.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
+
                     logger.info(
-                        f"Converted {len(recommendations)} buy/strong_buy recommendations from database"
+                        f"Converted {len(recommendations)} buy/strong_buy recommendations from database "
+                        f"(sorted by priority_score)"
                     )
                     return recommendations
 
@@ -1456,7 +1587,11 @@ class AutoTradeEngine:
             logger.error(f"Failed to initialize Phase 2 modules: {e}", exc_info=True)
             logger.warning("Continuing without Phase 2 features")
 
-    def monitor_positions(self, live_price_manager=None) -> dict[str, Any]:
+    def monitor_positions(
+        self, live_price_manager=None
+    ) -> dict[
+        str, Any
+    ]:  # Deprecated: Position monitoring removed, exit in sell monitor, re-entry in buy order service
         """
         Monitor all open positions for reentry/exit signals.
 
@@ -2032,10 +2167,8 @@ class AutoTradeEngine:
                     f"No order ID and not found in order book"
                 )
                 # Send notification about uncertain order
-                from core.telegram import send_telegram
-
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                send_telegram(
+                telegram_msg = (
                     f"⚠️ *Order Placement Uncertain*\n\n"
                     f"Symbol: `{broker_symbol}`\n"
                     f"Qty: {qty}\n"
@@ -2043,6 +2176,24 @@ class AutoTradeEngine:
                     f"Please check broker app manually.\n\n"
                     f"_Time: {timestamp}_"
                 )
+                # Use TelegramNotifier to respect notification preferences
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_system_alert(
+                            alert_type="ORDER_PLACEMENT_UNCERTAIN",
+                            message_text=telegram_msg,
+                            severity="WARNING",
+                            user_id=self.user_id,
+                        )
+                    except Exception as notify_err:
+                        logger.warning(
+                            f"Failed to send order placement uncertain notification: {notify_err}"
+                        )
+                else:
+                    # Fallback to old method if telegram_notifier not available
+                    from core.telegram import send_telegram
+
+                    send_telegram(telegram_msg)
                 return (False, None)
 
         # Order successfully placed with order_id
@@ -2332,7 +2483,26 @@ class AutoTradeEngine:
                                 f"Please check broker app.\n\n"
                                 f"_Time: {timestamp}_"
                             )
-                            send_telegram(telegram_msg)
+                            # Use TelegramNotifier to respect notification preferences
+                            if self.telegram_notifier and self.telegram_notifier.enabled:
+                                try:
+                                    # Use notify_order_rejection for order rejections
+                                    self.telegram_notifier.notify_order_rejection(
+                                        symbol=symbol,
+                                        order_id=order_id,
+                                        quantity=0,  # Quantity not available in this context
+                                        reason=rejection_reason,
+                                        user_id=self.user_id,
+                                    )
+                                except Exception as notify_err:
+                                    logger.warning(
+                                        f"Failed to send rejection notification: {notify_err}"
+                                    )
+                            else:
+                                # Fallback to old method if telegram_notifier not available
+                                from core.telegram import send_telegram
+
+                                send_telegram(telegram_msg)
                         except Exception as e:
                             logger.warning(f"Failed to send rejection notification: {e}")
 
@@ -2843,7 +3013,7 @@ class AutoTradeEngine:
                 logger.info("No pending orders found - nothing to adjust")
                 return summary
 
-            # Filter only AMO/pending orders
+            # Filter only AMO/pending orders (including re-entry orders)
             amo_orders = [
                 order
                 for order in pending_orders
@@ -2852,11 +3022,91 @@ class AutoTradeEngine:
                 and order.get("transactionType", "").upper() == "BUY"
             ]
 
+            # Also get re-entry orders from database (if available)
+            reentry_orders_from_db = []
+            if self.orders_repo and self.user_id:
+                try:
+                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                    all_orders = self.orders_repo.list(self.user_id)
+                    reentry_orders_from_db = [
+                        db_order
+                        for db_order in all_orders
+                        if db_order.side == "buy"
+                        and db_order.status == DbOrderStatus.PENDING
+                        and db_order.entry_type == "reentry"
+                    ]
+
+                    if reentry_orders_from_db:
+                        logger.info(
+                            f"Found {len(reentry_orders_from_db)} re-entry orders in database"
+                        )
+                except Exception as e:
+                    logger.warning(f"Error fetching re-entry orders from database: {e}")
+
             if not amo_orders:
                 logger.info("No pending AMO buy orders found - nothing to adjust")
                 return summary
 
             logger.info(f"Found {len(amo_orders)} pending AMO buy orders")
+
+            # Add re-entry orders from database to processing list
+            # Match them with broker orders by order_id
+            reentry_order_ids = {
+                db_order.broker_order_id
+                for db_order in reentry_orders_from_db
+                if db_order.broker_order_id
+            }
+            for db_order in reentry_orders_from_db:
+                # Check if position is closed - cancel re-entry order if closed
+                if self.positions_repo:
+                    position = self.positions_repo.get_by_symbol(self.user_id, db_order.symbol)
+                    if position and position.closed_at is not None:
+                        logger.info(
+                            f"Position {db_order.symbol} is closed - cancelling re-entry order {db_order.broker_order_id}"
+                        )
+                        try:
+                            if db_order.broker_order_id:
+                                cancel_result = self.orders.cancel_order(db_order.broker_order_id)
+                                if cancel_result:
+                                    logger.info(
+                                        f"Cancelled re-entry order {db_order.broker_order_id} for closed position"
+                                    )
+                                    # Update DB order status
+                                    from src.infrastructure.db.models import (
+                                        OrderStatus as DbOrderStatus,
+                                    )
+
+                                    self.orders_repo.update(
+                                        db_order,
+                                        status=DbOrderStatus.CANCELLED,
+                                        reason="Position closed",
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                f"Error cancelling re-entry order {db_order.broker_order_id}: {e}"
+                            )
+                        continue
+
+                # If re-entry order not in broker orders list, add it for processing
+                if db_order.broker_order_id and db_order.broker_order_id not in reentry_order_ids:
+                    # Try to find matching broker order
+                    matching_broker_order = None
+                    for broker_order in pending_orders:
+                        broker_order_id = broker_order.get(
+                            "nOrdNo", broker_order.get("orderId", "")
+                        )
+                        if broker_order_id == db_order.broker_order_id:
+                            matching_broker_order = broker_order
+                            break
+
+                    if matching_broker_order:
+                        amo_orders.append(matching_broker_order)
+                    else:
+                        logger.warning(
+                            f"Re-entry order {db_order.broker_order_id} not found in broker orders - may have been executed or cancelled"
+                        )
+
             summary["total_orders"] = len(amo_orders)
 
             # 2. Process each AMO order
@@ -3336,6 +3586,17 @@ class AutoTradeEngine:
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "already_in_holdings"
                 summary["ticker_attempts"].append(ticker_attempt)
+                # Send notification for skipped order
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_order_skipped(
+                            symbol=broker_symbol,
+                            reason="already_in_holdings",
+                            additional_info={"base_symbol": broker_symbol_base},
+                            user_id=self.user_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send skipped order notification: {e}")
                 continue
 
             # Use OrderValidationService for duplicate check (includes holdings + active buy orders)
@@ -3348,13 +3609,28 @@ class AutoTradeEngine:
                     "System does not track existing holdings - keeping portfolios separate."
                 )
                 summary["skipped_duplicates"] += 1
-                ticker_attempt["status"] = "skipped"
-                ticker_attempt["reason"] = (
+                skip_reason = (
                     "already_in_holdings"
                     if "holdings" in duplicate_reason.lower()
                     else "duplicate_order"
                 )
+                ticker_attempt["status"] = "skipped"
+                ticker_attempt["reason"] = skip_reason
                 summary["ticker_attempts"].append(ticker_attempt)
+                # Send notification for skipped order
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_order_skipped(
+                            symbol=broker_symbol,
+                            reason=skip_reason,
+                            additional_info={
+                                "base_symbol": broker_symbol_base,
+                                "details": duplicate_reason,
+                            },
+                            user_id=self.user_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send skipped order notification: {e}")
                 continue
             # 2) Check for manual AMO orders -> link to DB and skip placing
             manual_order_info = self._check_for_manual_orders(broker_symbol)
@@ -3742,7 +4018,22 @@ class AutoTradeEngine:
                     f"Order status updated in database. Will be retried at scheduled time (8:00 AM) or manually.\n\n"
                     f"_Time: {timestamp}_"
                 )
-                send_telegram(telegram_msg)
+                # Use TelegramNotifier to respect notification preferences
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_system_alert(
+                            alert_type="BALANCE_SHORTFALL",
+                            message_text=telegram_msg,
+                            severity="WARNING",
+                            user_id=self.user_id,
+                        )
+                    except Exception as notify_err:
+                        logger.warning(
+                            f"Failed to send balance shortfall notification: {notify_err}"
+                        )
+                else:
+                    # Fallback to old method if telegram_notifier not available (backward compatibility)
+                    send_telegram(telegram_msg)
 
                 # Logger message without emojis
                 logger.warning(
@@ -3850,6 +4141,299 @@ class AutoTradeEngine:
         return summary
 
     # ---------------------- Re-entry and exit ----------------------
+    def place_reentry_orders(self) -> dict[str, int]:
+        """
+        Check re-entry conditions and place AMO orders for re-entries.
+
+        Called at 4:05 PM (with buy orders).
+
+        Re-entry logic based on entry RSI level:
+        - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
+        - Entry at RSI < 20 → Re-entry at RSI < 10 → Reset
+        - Entry at RSI < 10 → Only Reset
+
+        Reset mechanism:
+        - When RSI > 30: Set reset_ready = True
+        - When RSI drops < 30 after reset_ready: Reset all levels
+
+        Returns:
+            Summary dict with re-entry statistics
+        """
+        summary = {
+            "attempted": 0,
+            "placed": 0,
+            "failed_balance": 0,
+            "skipped_no_position": 0,
+            "skipped_duplicates": 0,
+            "skipped_invalid_rsi": 0,
+            "skipped_missing_data": 0,
+            "skipped_invalid_qty": 0,
+        }
+
+        # Check if authenticated
+        if not self.auth or not self.auth.is_authenticated():
+            logger.warning("Session expired - attempting re-authentication...")
+            if not self.login():
+                logger.error("Re-authentication failed - cannot proceed")
+                return summary
+            logger.info("Re-authentication successful - proceeding with re-entry check")
+
+        if not self.orders or not self.portfolio:
+            logger.error("Orders or portfolio not initialized - attempting login...")
+            if not self.login():
+                logger.error("Login failed - cannot proceed")
+                return summary
+
+        # Load all open positions from database
+        if not self.positions_repo or not self.user_id:
+            logger.warning(
+                "Positions repository or user_id not available - skipping re-entry check"
+            )
+            return summary
+
+        open_positions = self.positions_repo.list(self.user_id)
+        open_positions = [pos for pos in open_positions if pos.closed_at is None]
+
+        if not open_positions:
+            logger.info("No open positions for re-entry check")
+            return summary
+
+        logger.info(f"Checking re-entry conditions for {len(open_positions)} open positions...")
+
+        # Get portfolio snapshot for capacity checks
+        if self.portfolio_service:
+            if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
+                self.portfolio_service.portfolio = self.portfolio
+            if self.orders and self.portfolio_service.orders != self.orders:
+                self.portfolio_service.orders = self.orders
+
+        for position in open_positions:
+            symbol = position.symbol
+            entry_rsi = position.entry_rsi
+
+            # Default entry RSI to 29.5 if not available (assume entry at RSI < 30)
+            if entry_rsi is None:
+                entry_rsi = 29.5
+                logger.debug(f"Position {symbol} missing entry_rsi, defaulting to 29.5")
+
+            summary["attempted"] += 1
+
+            try:
+                # Construct ticker from symbol
+                ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+
+                # Get current indicators
+                ind = self.get_daily_indicators(ticker)
+                if not ind:
+                    logger.warning(f"Skipping {symbol}: missing indicators for re-entry evaluation")
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                current_rsi = ind.get("rsi10")
+                current_price = ind.get("close")
+                avg_volume = ind.get("avg_volume", 0)
+
+                if current_rsi is None or current_price is None:
+                    logger.warning(f"Skipping {symbol}: invalid indicators (RSI or price missing)")
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                # Determine next re-entry level based on entry RSI
+                next_level = self._determine_reentry_level(entry_rsi, current_rsi, position)
+
+                if next_level is None:
+                    logger.debug(
+                        f"No re-entry opportunity for {symbol} (entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})"
+                    )
+                    summary["skipped_invalid_rsi"] += 1
+                    continue
+
+                logger.info(
+                    f"Re-entry opportunity for {symbol}: entry_rsi={entry_rsi:.2f}, "
+                    f"current_rsi={current_rsi:.2f}, next_level={next_level}"
+                )
+
+                # Check for duplicates (only active buy orders, NOT holdings - reentries allow buying more)
+                broker_symbol = self.parse_symbol_for_broker(ticker)
+                if not broker_symbol:
+                    logger.warning(f"Could not parse broker symbol for {symbol}")
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                # Check for active buy orders only (reentries should allow buying more of existing position)
+                if self.order_validation_service:
+                    is_duplicate, duplicate_reason = (
+                        self.order_validation_service.check_duplicate_order(
+                            broker_symbol,
+                            check_active_buy_order=True,
+                            check_holdings=False,  # Don't check holdings for reentries
+                            allow_reentry=True,  # Allow reentries (buying more of existing position)
+                        )
+                    )
+                    if is_duplicate:
+                        logger.info(f"Skipping {symbol}: {duplicate_reason}")
+                        summary["skipped_duplicates"] += 1
+                        continue
+
+                # Calculate execution capital and quantity
+                execution_capital = self._calculate_execution_capital(
+                    ticker, current_price, avg_volume
+                )
+                qty = int(execution_capital / current_price)
+
+                if qty <= 0:
+                    logger.warning(f"Skipping {symbol}: invalid quantity ({qty})")
+                    summary["skipped_invalid_qty"] += 1
+                    continue
+
+                # Check balance and adjust quantity if needed
+                affordable_qty = self.get_affordable_qty(current_price)
+                if affordable_qty < qty:
+                    logger.warning(
+                        f"Insufficient balance for {symbol}: requested={qty}, affordable={affordable_qty}"
+                    )
+                    qty = affordable_qty
+                    if qty <= 0:
+                        # Save as failed order for retry
+                        failed_order_info = {
+                            "symbol": broker_symbol,
+                            "ticker": ticker,
+                            "close": current_price,
+                            "qty": qty,
+                            "required_cash": execution_capital,
+                            "shortfall": execution_capital - (affordable_qty * current_price),
+                            "reason": "insufficient_balance",
+                            "rsi10": current_rsi,
+                            "ema9": ind.get("ema9"),
+                            "ema200": ind.get("ema200"),
+                            "execution_capital": execution_capital,
+                            "entry_type": "reentry",
+                            "entry_rsi": entry_rsi,
+                            "reentry_level": next_level,
+                        }
+                        try:
+                            self._add_failed_order(failed_order_info)
+                            summary["failed_balance"] += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to save re-entry order to failed orders: {e}")
+                        continue
+
+                # Place re-entry order (AMO-like)
+                rec_source = "reentry"
+                success, order_id = self._attempt_place_order(
+                    broker_symbol,
+                    ticker,
+                    qty,
+                    current_price,
+                    ind,
+                    recommendation_source=rec_source,
+                    entry_type="reentry",
+                    order_metadata={
+                        "placed_symbol": broker_symbol,
+                        "ticker": ticker,
+                        "rsi10": current_rsi,
+                        "ema9": ind.get("ema9"),
+                        "ema200": ind.get("ema200"),
+                        "capital": execution_capital,
+                        "entry_type": "reentry",
+                        "entry_rsi": entry_rsi,
+                        "reentry_level": next_level,
+                    },
+                )
+
+                if success:
+                    summary["placed"] += 1
+                    logger.info(
+                        f"Re-entry order placed: {symbol} (order_id: {order_id}, "
+                        f"qty: {qty}, level: {next_level})"
+                    )
+                else:
+                    logger.warning(f"Failed to place re-entry order for {symbol}")
+
+            except Exception as e:
+                logger.error(f"Error checking re-entry for {symbol}: {e}", exc_info=True)
+                continue
+
+        logger.info(
+            f"Re-entry check complete: attempted={summary['attempted']}, "
+            f"placed={summary['placed']}, failed_balance={summary['failed_balance']}, "
+            f"skipped={summary['skipped_no_position'] + summary['skipped_duplicates'] + summary['skipped_invalid_rsi'] + summary['skipped_missing_data'] + summary['skipped_invalid_qty']}"
+        )
+
+        return summary
+
+    def _determine_reentry_level(
+        self, entry_rsi: float, current_rsi: float, position: Any
+    ) -> int | None:
+        """
+        Determine next re-entry level based on entry RSI and current RSI.
+
+        Logic:
+        - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
+        - Entry at RSI < 20 → Re-entry at RSI < 10 → Reset
+        - Entry at RSI < 10 → Only Reset
+
+        Reset mechanism:
+        - When RSI > 30: Set reset_ready = True (track in position metadata)
+        - When RSI drops < 30 after reset_ready: Reset all levels
+
+        Args:
+            entry_rsi: RSI10 value at initial entry
+            current_rsi: Current RSI10 value
+            position: Position object (for tracking reset state)
+
+        Returns:
+            Next re-entry level (30, 20, or 10), or None if no re-entry opportunity
+        """
+        # Get reset state from position metadata (stored in reentries JSON or separate field)
+        # For now, we'll track reset_ready in a simple way
+        # TODO: Store reset_ready in position metadata or separate field
+
+        reset_ready = False
+        levels_taken = {"30": False, "20": False, "10": False}
+
+        # Determine initial levels_taken based on entry_rsi
+        if entry_rsi < 10:
+            # Entry at RSI < 10: All levels taken
+            levels_taken = {"30": True, "20": True, "10": True}
+        elif entry_rsi < 20:
+            # Entry at RSI < 20: 30 and 20 taken
+            levels_taken = {"30": True, "20": True, "10": False}
+        elif entry_rsi < 30:
+            # Entry at RSI < 30: Only 30 taken
+            levels_taken = {"30": True, "20": False, "10": False}
+        else:
+            # Entry at RSI >= 30: No levels taken (shouldn't happen, but handle it)
+            levels_taken = {"30": False, "20": False, "10": False}
+
+        # Check reset mechanism
+        # TODO: Track reset_ready in database (could use position metadata or separate field)
+        # For now, we'll check if RSI was > 30 recently by checking if we have any reentry data
+        # This is a simplified approach - in production, we'd track reset_ready explicitly
+
+        # Reset handling: if RSI > 30, mark reset_ready
+        if current_rsi > 30:
+            reset_ready = True
+            # TODO: Store reset_ready in position metadata
+
+        # If reset_ready and RSI drops < 30 again, trigger NEW CYCLE reentry at RSI<30
+        if current_rsi < 30 and reset_ready:
+            # Reset all levels, treat as new cycle
+            levels_taken = {"30": False, "20": False, "10": False}
+            reset_ready = False
+            # TODO: Update reset_ready in position metadata
+            # Immediately trigger reentry at RSI<30 level
+            return 30
+
+        # Normal progression through levels
+        next_level = None
+        if levels_taken.get("30") and not levels_taken.get("20") and current_rsi < 20:
+            next_level = 20  # Re-entry at RSI < 20
+        elif levels_taken.get("20") and not levels_taken.get("10") and current_rsi < 10:
+            next_level = 10  # Re-entry at RSI < 10
+
+        return next_level
+
     def evaluate_reentries_and_exits(self) -> dict[str, int]:
         summary = {"symbols_evaluated": 0, "exits": 0, "reentries": 0}
 
@@ -4008,7 +4592,27 @@ class AutoTradeEngine:
                                             f"Manual intervention may be required.\n\n"
                                             f"_Time: {timestamp}_"
                                         )
-                                        send_telegram(telegram_msg)
+                                        # Use TelegramNotifier to respect notification preferences
+                                        if (
+                                            self.telegram_notifier
+                                            and self.telegram_notifier.enabled
+                                        ):
+                                            try:
+                                                self.telegram_notifier.notify_system_alert(
+                                                    alert_type="SELL_ORDER_RETRY_FAILED",
+                                                    message_text=telegram_msg,
+                                                    severity="ERROR",
+                                                    user_id=self.user_id,
+                                                )
+                                            except Exception as notify_err:
+                                                logger.warning(
+                                                    f"Failed to send sell order retry failed notification: {notify_err}"
+                                                )
+                                        else:
+                                            # Fallback to old method if telegram_notifier not available
+                                            from core.telegram import send_telegram
+
+                                            send_telegram(telegram_msg)
                                         logger.error(
                                             f"Sell order retry FAILED for {symbol} - Telegram alert sent"
                                         )
@@ -4031,7 +4635,24 @@ class AutoTradeEngine:
                                         f"Manual check required.\n\n"
                                         f"_Time: {timestamp}_"
                                     )
-                                    send_telegram(telegram_msg)
+                                    # Use TelegramNotifier to respect notification preferences
+                                    if self.telegram_notifier and self.telegram_notifier.enabled:
+                                        try:
+                                            self.telegram_notifier.notify_system_alert(
+                                                alert_type="SELL_ORDER_NO_HOLDINGS",
+                                                message_text=telegram_msg,
+                                                severity="ERROR",
+                                                user_id=self.user_id,
+                                            )
+                                        except Exception as notify_err:
+                                            logger.warning(
+                                                f"Failed to send no holdings notification: {notify_err}"
+                                            )
+                                    else:
+                                        # Fallback to old method if telegram_notifier not available
+                                        from core.telegram import send_telegram
+
+                                        send_telegram(telegram_msg)
                                     logger.error(
                                         f"No holdings found for {symbol} - cannot retry sell order - Telegram alert sent"
                                     )
@@ -4048,7 +4669,24 @@ class AutoTradeEngine:
                                     f"Manual intervention required.\n\n"
                                     f"_Time: {timestamp}_"
                                 )
-                                send_telegram(telegram_msg)
+                                # Use TelegramNotifier to respect notification preferences
+                                if self.telegram_notifier and self.telegram_notifier.enabled:
+                                    try:
+                                        self.telegram_notifier.notify_system_alert(
+                                            alert_type="SELL_ORDER_HOLDINGS_FETCH_FAILED",
+                                            message_text=telegram_msg,
+                                            severity="ERROR",
+                                            user_id=self.user_id,
+                                        )
+                                    except Exception as notify_err:
+                                        logger.warning(
+                                            f"Failed to send holdings fetch failed notification: {notify_err}"
+                                        )
+                                else:
+                                    # Fallback to old method if telegram_notifier not available
+                                    from core.telegram import send_telegram
+
+                                    send_telegram(telegram_msg)
                                 logger.error(
                                     f"Failed to fetch holdings for retry - cannot determine actual quantity for {symbol} - Telegram alert sent"
                                 )
@@ -4064,7 +4702,24 @@ class AutoTradeEngine:
                                 f"Manual intervention required.\n\n"
                                 f"_Time: {timestamp}_"
                             )
-                            send_telegram(telegram_msg)
+                            # Use TelegramNotifier to respect notification preferences
+                            if self.telegram_notifier and self.telegram_notifier.enabled:
+                                try:
+                                    self.telegram_notifier.notify_system_alert(
+                                        alert_type="SELL_ORDER_RETRY_EXCEPTION",
+                                        message_text=telegram_msg,
+                                        severity="ERROR",
+                                        user_id=self.user_id,
+                                    )
+                                except Exception as notify_err:
+                                    logger.warning(
+                                        f"Failed to send sell order retry exception notification: {notify_err}"
+                                    )
+                            else:
+                                # Fallback to old method if telegram_notifier not available
+                                from core.telegram import send_telegram
+
+                                send_telegram(telegram_msg)
                             logger.error(
                                 f"Error during sell order retry for {symbol}: {e} - Telegram alert sent"
                             )

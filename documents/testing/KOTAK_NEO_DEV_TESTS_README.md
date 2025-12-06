@@ -57,10 +57,10 @@ Test live WebSocket connections and real-time data streaming.
   - Test WebSocket subscribe for live LTP
   - **Use case**: Verify WebSocket connectivity
 
-- **test_realtime_position_monitor.py** (5.1KB)
-  - Test real-time position monitoring
+- **test_realtime_position_monitor.py** (5.1KB) - DEPRECATED
+  - Test real-time position monitoring (position monitor removed in Phase 3)
   - WebSocket LTP + EMA9 calculation
-  - **Use case**: Verify live price streaming
+  - **Use case**: Verify live price streaming (no longer used)
 
 ### 4. Volume Filtering Tests
 Test volume-based filtering for different stock types.
@@ -136,7 +136,7 @@ python modules/kotak_neo_auto_trader/dev_tests/test_order_modification.py
 |-----------|------|---------|-----------|
 | test_order_modification.py | 9.7KB | Order modify/cancel | Place, Modify, Cancel orders |
 | test_websocket_subscribe.py | 6.0KB | WebSocket streaming | WebSocket subscribe |
-| test_realtime_position_monitor.py | 5.1KB | Real-time monitoring | WebSocket + positions |
+| test_realtime_position_monitor.py | 5.1KB | Real-time monitoring (DEPRECATED) | WebSocket + positions |
 | test_ltp_kotak.py | 4.5KB | LTP retrieval | Quote API |
 | test_quotes_method.py | 3.6KB | Quotes API | Quotes (plural) |
 | test_real_stocks.py | 3.3KB | Portfolio stocks | Volume filtering |
@@ -244,7 +244,7 @@ If a dev test fails:
 
 ---
 
-**Directory Created**: January 2025  
-**Purpose**: Development & Integration Testing  
-**Test Count**: 15 files  
+**Directory Created**: January 2025
+**Purpose**: Development & Integration Testing
+**Test Count**: 15 files
 **Status**: Active development tests

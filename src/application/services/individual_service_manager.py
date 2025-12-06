@@ -51,7 +51,6 @@ from src.infrastructure.persistence.individual_service_task_execution_repository
 from src.infrastructure.persistence.notification_repository import NotificationRepository
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
-from src.infrastructure.persistence.signals_repository import SignalsRepository
 from src.infrastructure.persistence.user_trading_config_repository import (
     UserTradingConfigRepository,
 )
@@ -400,7 +399,7 @@ class IndividualServiceManager:
 
             # Load configuration
             user_config = self._config_repo.get_or_create_default(user_id)
-            strategy_config = user_config_to_strategy_config(user_config)
+            strategy_config = user_config_to_strategy_config(user_config, db_session=self.db)
 
             # Get broker credentials if needed
             broker_creds = None
@@ -574,9 +573,6 @@ class IndividualServiceManager:
         elif task_name == "sell_monitor":
             service.run_sell_monitor()
             return {"task": "sell_monitor", "status": "completed"}
-        elif task_name == "position_monitor":
-            service.run_position_monitor()
-            return {"task": "position_monitor", "status": "completed"}
         elif task_name == "buy_orders":
             logger.info(
                 "About to call service.run_buy_orders()", action="execute_task", task_name=task_name
@@ -626,6 +622,23 @@ class IndividualServiceManager:
                         task_name="analysis",
                     )
 
+            # Load user config to pass to trade_agent
+            user_config = self._config_repo.get_or_create_default(user_id)
+            from src.application.services.config_converter import (
+                user_config_to_strategy_config,
+            )
+
+            strategy_config = user_config_to_strategy_config(
+                user_config, db_session=self.db
+            )
+
+            # Pass user_id as environment variable so trade_agent can load config
+            # Note: trade_agent.py will need to be updated to read user_id from env
+            import os
+
+            env = os.environ.copy()
+            env["TRADE_AGENT_USER_ID"] = str(user_id)
+
             cmd = [
                 sys.executable,
                 str(trade_agent_path),
@@ -664,6 +677,7 @@ class IndividualServiceManager:
                             encoding="utf-8",
                             errors="replace",
                             timeout=timeout_seconds,
+                            env=env,  # Pass environment with user_id
                         )
 
                         task_context["return_code"] = result.returncode
@@ -695,7 +709,9 @@ class IndividualServiceManager:
                                 analysis_results = self._load_analysis_results(
                                     results_json_path, logger
                                 )
-                                summary = self._persist_analysis_results(analysis_results, logger)
+                                summary = self._persist_analysis_results(
+                                    analysis_results, logger, user_id
+                                )
                                 logger.info(
                                     f"Analysis results persisted: {summary}",
                                     action="run_analysis",
@@ -826,8 +842,10 @@ class IndividualServiceManager:
             )
             return []
 
-    def _persist_analysis_results(self, results: list[dict], logger) -> dict[str, int]:
-        """Persist analysis results to Signals table using deduplication rules"""
+    def _persist_analysis_results(
+        self, results: list[dict], logger, user_id: int | None = None
+    ) -> dict[str, int]:
+        """Persist analysis results to Signals table using smart deduplication rules"""
         logger.info(
             f"Starting persistence: {len(results)} results to process",
             action="run_analysis",
@@ -852,6 +870,7 @@ class IndividualServiceManager:
             "inserted": 0,
             "updated": 0,
             "skipped": len(results) - len(processed_rows),
+            "expired": 0,
         }
 
         logger.info(
@@ -869,7 +888,8 @@ class IndividualServiceManager:
             return summary
 
         try:
-            dedup_service = AnalysisDeduplicationService(self.db)
+            # Pass user_id to deduplication service for per-user TRADED status checking
+            dedup_service = AnalysisDeduplicationService(self.db, user_id=user_id)
 
             should_update = dedup_service.should_update_signals()
             logger.info(
@@ -910,19 +930,12 @@ class IndividualServiceManager:
                 summary["skipped"] = len(processed_rows)
                 return summary
 
-            # Mark old signals as expired before adding new ones
-            signals_repo = SignalsRepository(self.db)
-            expired_count = signals_repo.mark_old_signals_as_expired()
-            if expired_count > 0:
-                logger.info(
-                    f"Marked {expired_count} old signals as EXPIRED",
-                    action="run_analysis",
-                    task_name="analysis",
-                )
-                summary["expired"] = expired_count
-
+            # Smart expiration is now handled inside deduplicate_and_update_signals
+            # It will update existing signals that reappear, and only expire signals
+            # that don't appear in new analysis
             logger.info(
-                f"Calling deduplicate_and_update_signals with {len(processed_rows)} signals",
+                f"Calling deduplicate_and_update_signals with {len(processed_rows)} signals "
+                f"(user_id={user_id})",
                 action="run_analysis",
                 task_name="analysis",
             )
@@ -1237,16 +1250,7 @@ class IndividualServiceManager:
                 "is_continuous": True,
                 "end_time": time(15, 30),
                 "schedule_type": "daily",
-                "description": "Place sell orders and monitor continuously",
-            },
-            {
-                "task_name": "position_monitor",
-                "schedule_time": time(9, 30),
-                "enabled": True,
-                "is_hourly": True,
-                "is_continuous": False,
-                "schedule_type": "daily",
-                "description": "Monitor positions for reentry/exit signals (hourly)",
+                "description": "Monitors sell orders continuously, converts to market on RSI exit",
             },
             {
                 "task_name": "analysis",
@@ -1307,9 +1311,12 @@ class IndividualServiceManager:
         service_statuses = {s.task_name: s for s in services}
 
         result = {}
-        # Return status for all scheduled tasks
+        # Return status for all scheduled tasks (excluding removed position_monitor)
         for schedule in schedules:
             task_name = schedule.task_name
+            # Skip position_monitor (removed in Phase 3: RSI Exit & Re-entry integration)
+            if task_name == "position_monitor":
+                continue
             service = service_statuses.get(task_name)
             # Query fresh from database to get latest execution status
             # Use raw SQL to bypass session cache and see commits from other threads

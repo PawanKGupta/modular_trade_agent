@@ -1,102 +1,117 @@
 """
-Unit tests for Sell Monitor PositionLoader integration
+Unit tests for Sell Monitor - Database-Only Position Tracking
 
-Tests verify the migration to use PositionLoader
-while maintaining backward compatibility.
+Tests verify the migration from PositionLoader (file-based) to database-only tracking.
+PositionLoader is no longer used - positions are loaded from database only.
 """
 
 from unittest.mock import Mock, patch
 
+import pytest
+
 from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
+from src.infrastructure.db.timezone_utils import ist_now
 
 
-class TestSellOrderManagerPositionLoaderInitialization:
-    """Test SellOrderManager initialization with PositionLoader"""
-
-    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
-    def test_init_with_position_loader(self, mock_auth):
-        """Test that SellOrderManager initializes PositionLoader"""
-        mock_auth_instance = Mock()
-        mock_auth_instance.is_authenticated.return_value = True
-        mock_auth.return_value = mock_auth_instance
-
-        manager = SellOrderManager(
-            auth=mock_auth_instance, history_path="test_history.json"
-        )
-
-        assert manager.position_loader is not None
-        assert manager.position_loader.history_path == "test_history.json"
-        assert manager.position_loader.enable_caching is True
-
-    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
-    def test_position_loader_uses_correct_history_path(self, mock_auth):
-        """Test that PositionLoader uses the provided history path"""
-        mock_auth_instance = Mock()
-        mock_auth_instance.is_authenticated.return_value = True
-        mock_auth.return_value = mock_auth_instance
-
-        custom_path = "custom/path/history.json"
-        manager = SellOrderManager(auth=mock_auth_instance, history_path=custom_path)
-
-        assert manager.position_loader.history_path == custom_path
-
-
-class TestSellOrderManagerPositionLoaderMethods:
-    """Test SellOrderManager methods that use PositionLoader"""
+class TestSellOrderManagerDatabaseOnlyInitialization:
+    """Test SellOrderManager initialization - PositionLoader removed"""
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
-    def test_get_open_positions_uses_position_loader(self, mock_scrip_master, mock_auth):
-        """Test that get_open_positions() uses PositionLoader.load_open_positions()"""
+    def test_init_without_position_loader(self, mock_scrip_master, mock_auth):
+        """Test that SellOrderManager no longer initializes PositionLoader"""
         mock_auth_instance = Mock()
-        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth_instance.client = None
         mock_auth.return_value = mock_auth_instance
 
-        # Mock PositionLoader
-        mock_loader = Mock()
-        expected_positions = [
-            {
-                "symbol": "RELIANCE",
-                "ticker": "RELIANCE.NS",
-                "entry_price": 2500.0,
-                "qty": 10,
-                "status": "open",
-            }
-        ]
-        mock_loader.load_open_positions = Mock(return_value=expected_positions)
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # PositionLoader should not exist (removed)
+        assert not hasattr(manager, "position_loader")
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_init_with_database_repos(self, mock_scrip_master, mock_auth):
+        """Test that SellOrderManager can be initialized with database repositories"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        mock_positions_repo = Mock()
+        mock_orders_repo = Mock()
 
         manager = SellOrderManager(
-            auth=mock_auth_instance, history_path="test_history.json"
+            auth=mock_auth_instance,
+            positions_repo=mock_positions_repo,
+            user_id=2,
+            orders_repo=mock_orders_repo,
         )
-        # Replace the actual PositionLoader with mock
-        manager.position_loader = mock_loader
+
+        assert manager.positions_repo == mock_positions_repo
+        assert manager.orders_repo == mock_orders_repo
+        assert manager.user_id == 2
+        # PositionLoader should not exist
+        assert not hasattr(manager, "position_loader")
+
+
+class TestSellOrderManagerDatabaseOnlyMethods:
+    """Test SellOrderManager methods with database-only implementation"""
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_open_positions_uses_database_repos(self, mock_scrip_master, mock_auth):
+        """Test that get_open_positions() uses PositionsRepository (database-only)"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        # Create mock position
+        mock_position = Mock()
+        mock_position.symbol = "RELIANCE"
+        mock_position.quantity = 10.0
+        mock_position.avg_price = 2500.0
+        mock_position.opened_at = ist_now()
+        mock_position.closed_at = None  # Open position
+
+        # Create mock positions repository
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+
+        manager = SellOrderManager(
+            auth=mock_auth_instance,
+            positions_repo=mock_positions_repo,
+            user_id=2,
+        )
 
         # Call get_open_positions
         result = manager.get_open_positions()
 
-        # Verify PositionLoader was called
-        mock_loader.load_open_positions.assert_called_once()
+        # Verify PositionsRepository was called (not PositionLoader)
+        mock_positions_repo.list.assert_called_once_with(2)
 
         # Verify result
-        assert result == expected_positions
         assert len(result) == 1
         assert result[0]["symbol"] == "RELIANCE"
+        assert result[0]["qty"] == 10.0
+        assert result[0]["entry_price"] == 2500.0
+        assert result[0]["status"] == "open"
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
-    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
-    def test_get_open_positions_handles_empty_positions(self, mock_get_loader, mock_auth):
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_open_positions_handles_empty_positions(self, mock_scrip_master, mock_auth):
         """Test get_open_positions() handles empty positions correctly"""
         mock_auth_instance = Mock()
-        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth_instance.client = None
         mock_auth.return_value = mock_auth_instance
 
-        # Mock PositionLoader with empty positions
-        mock_loader = Mock()
-        mock_loader.load_open_positions = Mock(return_value=[])
-        mock_get_loader.return_value = mock_loader
+        # Create mock positions repository with empty list
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = []
 
         manager = SellOrderManager(
-            auth=mock_auth_instance, history_path="test_history.json"
+            auth=mock_auth_instance,
+            positions_repo=mock_positions_repo,
+            user_id=2,
         )
 
         # Call get_open_positions
@@ -107,78 +122,54 @@ class TestSellOrderManagerPositionLoaderMethods:
         assert isinstance(result, list)
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
-    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
-    def test_get_open_positions_handles_errors(self, mock_get_loader, mock_auth):
-        """Test get_open_positions() handles errors gracefully"""
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_open_positions_raises_error_without_repos(self, mock_scrip_master, mock_auth):
+        """Test get_open_positions() raises ValueError without database repos"""
         mock_auth_instance = Mock()
-        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth_instance.client = None
         mock_auth.return_value = mock_auth_instance
 
-        # Mock PositionLoader to raise exception
-        mock_loader = Mock()
-        mock_loader.load_open_positions = Mock(side_effect=Exception("Test error"))
-        mock_get_loader.return_value = mock_loader
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
 
-        manager = SellOrderManager(
-            auth=mock_auth_instance, history_path="test_history.json"
-        )
+        # Call get_open_positions - should raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            manager.get_open_positions()
 
-        # Call get_open_positions - should return empty list on error
-        result = manager.get_open_positions()
-
-        # Verify result is empty list (error handling)
-        assert result == []
-        assert isinstance(result, list)
+        assert "PositionsRepository and user_id are required" in str(exc_info.value)
 
 
-class TestSellOrderManagerPositionLoaderBackwardCompatibility:
-    """Test backward compatibility of SellOrderManager with PositionLoader"""
-
-    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
-    @patch("modules.kotak_neo_auto_trader.services.position_loader.get_position_loader")
-    def test_get_open_positions_backward_compatibility(self, mock_get_loader, mock_auth):
-        """Test that get_open_positions() maintains backward compatibility"""
-        mock_auth_instance = Mock()
-        mock_auth_instance.is_authenticated.return_value = True
-        mock_auth.return_value = mock_auth_instance
-
-        # Mock PositionLoader
-        mock_loader = Mock()
-        mock_loader.load_open_positions = Mock(return_value=[])
-        mock_get_loader.return_value = mock_loader
-
-        manager = SellOrderManager(
-            auth=mock_auth_instance, history_path="test_history.json"
-        )
-
-        # Call get_open_positions
-        result = manager.get_open_positions()
-
-        # Verify result type and structure (backward compatibility)
-        assert isinstance(result, list)
-        assert result == []
+class TestSellOrderManagerDatabaseOnlyBackwardCompatibility:
+    """Test backward compatibility - old code can still instantiate but will fail
+    when calling get_open_positions()"""
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
-    def test_position_loader_caching_enabled(self, mock_scrip_master, mock_auth):
-        """Test that PositionLoader caching is enabled"""
+    def test_init_backward_compatibility(self, mock_scrip_master, mock_auth):
+        """Test that old code can still instantiate SellOrderManager without database repos"""
         mock_auth_instance = Mock()
-        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth_instance.client = None
         mock_auth.return_value = mock_auth_instance
 
-        mock_loader = Mock()
-        mock_loader.load_open_positions = Mock(return_value=[])
+        # Old code can still instantiate (backward compatible)
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
 
-        manager = SellOrderManager(
-            auth=mock_auth_instance, history_path="test_history.json"
-        )
-        # Replace the actual PositionLoader with mock
-        manager.position_loader = mock_loader
+        # Should not raise error during init
+        assert manager.positions_repo is None
+        assert manager.user_id is None
 
-        # Call get_open_positions twice
-        manager.get_open_positions()
-        manager.get_open_positions()
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_open_positions_requires_database_repos(self, mock_scrip_master, mock_auth):
+        """Test that get_open_positions() requires database repos (will fail for old code)"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
 
-        # Verify PositionLoader was called (caching should work)
-        assert mock_loader.load_open_positions.call_count == 2
+        # Old code can instantiate
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
 
+        # But calling get_open_positions() will raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            manager.get_open_positions()
+
+        assert "PositionsRepository and user_id are required" in str(exc_info.value)

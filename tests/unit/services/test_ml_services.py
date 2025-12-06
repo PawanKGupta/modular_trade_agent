@@ -115,8 +115,9 @@ class TestMLVerdictService:
         # REMOVED FEATURES (Phase 5 cleanup): volume, price, ema200
         # These were redundant/not useful for ML
         assert "volume" not in features  # Removed: absolute volume not useful
-        # Default volume_exhaustion_lookback_daily = 10, so feature is avg_volume_10
-        assert "avg_volume_10" in features  # Kept: relative metric
+        # Model expects 'avg_volume_20' (not dynamic avg_volume_{volume_lookback})
+        # Always create avg_volume_20 to match training data (43 features)
+        assert "avg_volume_20" in features  # Model expects this exact feature name
         assert "volume_ratio" in features  # Kept: relative metric
         assert "recent_high_20" in features  # Kept: useful
         assert "recent_low_20" in features  # Kept: useful

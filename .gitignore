@@ -30,6 +30,8 @@ modules/kotak_neo_auto_trader/dev_tests/*_tokens.txt
 # Paper trading test runtime data
 paper_trading/test/
 paper_trading/test/*.json
+paper_trading/test_amo/
+paper_trading/test_amo/*.json
 
 # Paper trading runtime data (user-specific files)
 paper_trading/user_*/account.json
@@ -40,6 +42,13 @@ paper_trading/user_*/transactions.json
 paper_trading/user_*/position_metadata.json
 paper_trading/user_*/active_sell_orders.json
 paper_trading/user_*/reports/*.json
+
+# Paper trading unified service runtime data
+paper_trading/unified_service/account.json
+paper_trading/unified_service/holdings.json
+paper_trading/unified_service/orders.json
+paper_trading/unified_service/transactions.json
+paper_trading/unified_service/reports/*.json
 
 # Paper trading config files (all instances)
 paper_trading/**/config.json
@@ -54,6 +63,7 @@ data/
 # Test coverage
 .coverage
 .coverage.*
+coverage.json
 htmlcov/
 .pytest_cache/
 

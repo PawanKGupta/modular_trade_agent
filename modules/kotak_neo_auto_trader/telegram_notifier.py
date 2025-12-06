@@ -711,6 +711,60 @@ class TelegramNotifier:
         logger.info(f"Sending order modification notification for {symbol}")
         return self.send_message(message, user_id=user_id)
 
+    def notify_order_skipped(
+        self,
+        symbol: str,
+        reason: str,
+        additional_info: dict[str, Any] | None = None,
+        user_id: int | None = None,
+    ) -> bool:
+        """
+        Send notification for skipped order.
+
+        Phase 3: Added user_id parameter for preference checking.
+
+        Args:
+            symbol: Trading symbol that was skipped
+            reason: Reason for skipping (e.g., "already_in_holdings", "duplicate_order")
+            additional_info: Optional additional details
+            user_id: Optional user ID for preference checking
+
+        Returns:
+            True if sent successfully
+        """
+        # Phase 3: Check preferences
+        if not self._should_send_notification(user_id, NotificationEventType.ORDER_SKIPPED):
+            return False
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Format reason for display
+        reason_display = reason.replace("_", " ").title()
+        if reason == "already_in_holdings":
+            reason_display = "Already in Holdings"
+        elif reason == "duplicate_order":
+            reason_display = "Duplicate Order"
+        elif reason == "portfolio_limit_reached":
+            reason_display = "Portfolio Limit Reached"
+
+        message = (
+            f"ORDER SKIPPED\n\nSymbol: `{symbol}`\nReason: {reason_display}\nTime: {timestamp}\n"
+        )
+
+        if reason == "already_in_holdings":
+            message += (
+                "\n*Note:* You already own this stock. "
+                "The system avoids placing duplicate buy orders for symbols already in your portfolio.\n"
+            )
+
+        if additional_info:
+            message += "\n*Additional Info:*\n"
+            for key, value in additional_info.items():
+                message += f"  - {key}: {value}\n"
+
+        logger.info(f"Sending order skipped notification for {symbol}: {reason}")
+        return self.send_message(message, user_id=user_id)
+
     def notify_retry_queue_updated(
         self,
         symbol: str,

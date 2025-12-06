@@ -12,8 +12,10 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Signals
+from src.infrastructure.db.models import Signals, SignalStatus
 from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.persistence.orders_repository import OrdersRepository
+from src.infrastructure.persistence.positions_repository import PositionsRepository
 from src.infrastructure.persistence.signals_repository import SignalsRepository
 
 # Constants
@@ -23,9 +25,12 @@ WEEKEND_START_WEEKDAY = 5  # Saturday
 class AnalysisDeduplicationService:
     """Service for deduplicating analysis results based on trading day windows"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: int | None = None):
         self.db = db
-        self._signals_repo = SignalsRepository(db)
+        self._signals_repo = SignalsRepository(db, user_id=user_id)
+        self._positions_repo = PositionsRepository(db)
+        self._orders_repo = OrdersRepository(db)
+        self.user_id = user_id
 
     def get_current_trading_day_window(self) -> tuple[datetime, datetime]:
         """
@@ -123,31 +128,45 @@ class AnalysisDeduplicationService:
         self, new_signals: list[dict], skip_time_check: bool = False
     ) -> dict[str, int]:
         """
-        Update existing signals or insert new ones based on trading day window.
+        Update existing signals or insert new ones with smart expiration logic.
+
+        Smart expiration rules:
+        - ACTIVE signals: Update if verdict matches, expire if different
+        - REJECTED signals: Create new signal (fresh chance)
+        - EXPIRED signals: Create new signal (fresh start)
+        - TRADED signals: Keep original, create new for non-traded users (if user_id provided)
 
         Args:
             new_signals: List of signal dictionaries from analysis
             skip_time_check: If True, skip the should_update_signals() check (already checked upstream)
 
         Returns:
-            dict with 'updated' and 'inserted' counts
+            dict with 'updated', 'inserted', 'skipped', and 'expired' counts
         """
         if not skip_time_check and not self.should_update_signals():
-            return {"updated": 0, "inserted": 0, "skipped": len(new_signals)}
+            return {"updated": 0, "inserted": 0, "skipped": len(new_signals), "expired": 0}
 
-        window_start, window_end = self.get_current_trading_day_window()
+        # Get ALL existing signals (not just within window) to check for matches
+        # We'll find the latest signal for each symbol
+        all_existing_signals = list(self.db.execute(select(Signals)).scalars().all())
 
-        # Get existing signals in window
-        stmt = select(Signals).where(
-            Signals.ts >= window_start,
-            Signals.ts < window_end,
-        )
-        existing_signals = list(self.db.execute(stmt).scalars().all())
-        existing_symbols = {s.symbol for s in existing_signals}
+        # Create a map of symbol -> latest signal
+        symbol_to_signal = {}
+        for signal in all_existing_signals:
+            if signal.symbol not in symbol_to_signal:
+                symbol_to_signal[signal.symbol] = signal
+            elif signal.ts > symbol_to_signal[signal.symbol].ts:
+                symbol_to_signal[signal.symbol] = signal
 
         updated_count = 0
         inserted_count = 0
         skipped_count = 0
+        expired_count = 0
+        symbols_in_new_analysis = set()
+
+        # Extract verdict from signal data
+        def get_verdict(data: dict) -> str | None:
+            return data.get("final_verdict") or data.get("verdict") or data.get("ml_verdict")
 
         for signal_data in new_signals:
             symbol = signal_data.get("symbol") or signal_data.get("ticker", "").replace(".NS", "")
@@ -155,20 +174,146 @@ class AnalysisDeduplicationService:
                 skipped_count += 1
                 continue
 
+            symbols_in_new_analysis.add(symbol)
+            new_verdict = get_verdict(signal_data)
+            is_buy_signal = new_verdict in {"buy", "strong_buy"}
+
             try:
-                if symbol in existing_symbols:
-                    # Update existing signal
-                    existing = next(s for s in existing_signals if s.symbol == symbol)
-                    self._update_signal_from_data(existing, signal_data)
-                    updated_count += 1
-                else:
-                    # Insert new signal
+                existing_signal = symbol_to_signal.get(symbol)
+
+                if existing_signal:
+                    # Check if user has TRADED this signal (per-user status)
+                    # AND if they have a successful order (not failed/cancelled/rejected)
+                    # AND if they still have an open position
+                    user_has_traded = False
+                    user_has_successful_order = False
+                    user_has_open_position = False
+                    if self.user_id and existing_signal:
+                        user_status = self._signals_repo.get_user_signal_status(
+                            existing_signal.id, self.user_id
+                        )
+                        user_has_traded = user_status == SignalStatus.TRADED
+
+                        # If user has TRADED status, check if they have an ONGOING order
+                        # ONGOING = order executed and user still holds the stock (position is open)
+                        # If order is ONGOING, we can assume position is open
+                        # If order is CLOSED/FAILED/CANCELLED, treat as if not traded
+                        if user_has_traded:
+                            user_has_ongoing_order = self._orders_repo.has_ongoing_buy_order(
+                                self.user_id, symbol
+                            )
+
+                            # If order is ONGOING, user has open position (can skip duplicate signal)
+                            # If order is not ONGOING (CLOSED/FAILED/CANCELLED), treat as if not traded
+                            if not user_has_ongoing_order:
+                                user_has_traded = False
+                            else:
+                                # Order is ONGOING, so position should be open
+                                # Double-check position status for safety
+                                position = self._positions_repo.get_by_symbol(self.user_id, symbol)
+                                user_has_open_position = (
+                                    position is not None and position.closed_at is None
+                                )
+
+                                # If position is closed (edge case), treat as if not traded
+                                if not user_has_open_position:
+                                    user_has_traded = False
+
+                    # Handle based on existing signal status
+                    if existing_signal.status == SignalStatus.ACTIVE:
+                        # ACTIVE signal: Update if verdict matches, expire if different
+                        existing_verdict = (
+                            existing_signal.final_verdict
+                            or existing_signal.verdict
+                            or existing_signal.ml_verdict
+                        )
+                        existing_is_buy = existing_verdict in {"buy", "strong_buy"}
+
+                        if is_buy_signal and existing_is_buy:
+                            # Same verdict (both BUY): Update signal
+                            # Always update base signal (for other users), even if this user has TRADED it
+                            self._update_signal_from_data(existing_signal, signal_data)
+                            updated_count += 1
+                            # Note: If user has TRADED it, they won't see the updated signal
+                            # (filtered out when loading), but base signal is updated for other users
+                        elif is_buy_signal and not existing_is_buy:
+                            # Verdict changed to BUY: Expire old, create new
+                            existing_signal.status = SignalStatus.EXPIRED
+                            expired_count += 1
+                            new_signal = self._create_signal_from_data(signal_data)
+                            if new_signal:
+                                self.db.add(new_signal)
+                                inserted_count += 1
+                        else:
+                            # Verdict changed away from BUY: Expire old signal
+                            existing_signal.status = SignalStatus.EXPIRED
+                            expired_count += 1
+                            skipped_count += 1
+
+                    elif existing_signal.status == SignalStatus.REJECTED:
+                        # REJECTED signal: Create new signal (fresh chance)
+                        if is_buy_signal:
+                            new_signal = self._create_signal_from_data(signal_data)
+                            if new_signal:
+                                self.db.add(new_signal)
+                                inserted_count += 1
+                        else:
+                            skipped_count += 1
+
+                    elif existing_signal.status == SignalStatus.EXPIRED:
+                        # EXPIRED signal: Create new signal (fresh start)
+                        if is_buy_signal:
+                            new_signal = self._create_signal_from_data(signal_data)
+                            if new_signal:
+                                self.db.add(new_signal)
+                                inserted_count += 1
+                        else:
+                            skipped_count += 1
+
+                    elif existing_signal.status == SignalStatus.TRADED:
+                        # TRADED signal (base status): Keep original, create new for non-traded users
+                        # Check if THIS user has an ONGOING order (which implies position is open)
+                        if is_buy_signal:
+                            # Check if user has ONGOING buy order
+                            user_has_ongoing_order = False
+                            if self.user_id:
+                                user_has_ongoing_order = self._orders_repo.has_ongoing_buy_order(
+                                    self.user_id, symbol
+                                )
+
+                                if user_has_ongoing_order:
+                                    # If ONGOING order exists, check if position is explicitly closed
+                                    # (ONGOING order implies position is open unless explicitly closed)
+                                    position = self._positions_repo.get_by_symbol(
+                                        self.user_id, symbol
+                                    )
+                                    if position is not None and position.closed_at is not None:
+                                        # Position exists but is closed: allow new signal
+                                        user_has_ongoing_order = False
+
+                            if user_has_ongoing_order:
+                                # User has ONGOING order (and position is open or not yet recorded):
+                                # Skip (don't create duplicate)
+                                skipped_count += 1
+                            else:
+                                # User doesn't have ONGOING order OR position is explicitly closed:
+                                # Create new signal
+                                new_signal = self._create_signal_from_data(signal_data)
+                                if new_signal:
+                                    self.db.add(new_signal)
+                                    inserted_count += 1
+                        else:
+                            skipped_count += 1
+
+                # No existing signal: Create new signal
+                elif is_buy_signal:
                     new_signal = self._create_signal_from_data(signal_data)
                     if new_signal:
                         self.db.add(new_signal)
                         inserted_count += 1
-                    else:
-                        skipped_count += 1
+                else:
+                    skipped_count += 1
+
             except Exception as signal_error:
                 logger = logging.getLogger(__name__)
                 logger.error(
@@ -176,6 +321,15 @@ class AnalysisDeduplicationService:
                     exc_info=signal_error,
                 )
                 skipped_count += 1
+
+        # Expire ACTIVE signals that don't appear in new analysis
+        # This is done after processing new signals to know which symbols to exclude
+        # Flush pending changes (like RELIANCE timestamp update) so they're visible to the SQL query
+        self.db.flush()
+        expired_from_missing = self._signals_repo.mark_old_signals_as_expired(
+            exclude_symbols=symbols_in_new_analysis
+        )
+        expired_count += expired_from_missing
 
         try:
             self.db.commit()
@@ -194,6 +348,7 @@ class AnalysisDeduplicationService:
             "updated": updated_count,
             "inserted": inserted_count,
             "skipped": skipped_count,
+            "expired": expired_count,
         }
 
     @staticmethod
@@ -334,7 +489,9 @@ class AnalysisDeduplicationService:
             signal.trading_params = data["trading_params"]
 
         # Update timestamp to current time
-        signal.ts = ist_now()
+        # Convert to naive datetime for SQLite storage consistency
+        current_time = ist_now()
+        signal.ts = current_time.replace(tzinfo=None) if current_time.tzinfo else current_time
 
     def _create_signal_from_data(self, data: dict) -> Signals | None:
         """Create new signal from analysis data"""

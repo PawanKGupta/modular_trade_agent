@@ -231,6 +231,53 @@ class OrdersRepository:
         stmt = select(Orders).where(Orders.user_id == user_id, Orders.order_id == order_id)
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def has_successful_buy_order(self, user_id: int, symbol: str) -> bool:
+        """
+        Check if user has a successful buy order for a symbol.
+
+        A successful order is one that was executed:
+        - side = 'buy'
+        - status in (ONGOING, CLOSED) - meaning it was executed
+
+        Returns:
+            True if user has a successful buy order, False otherwise
+        """
+        stmt = (
+            select(Orders)
+            .where(
+                Orders.user_id == user_id,
+                Orders.symbol == symbol,
+                Orders.side == "buy",
+                Orders.status.in_([OrderStatus.ONGOING, OrderStatus.CLOSED]),
+            )
+            .limit(1)
+        )
+        result = self.db.execute(stmt).scalar_one_or_none()
+        return result is not None
+
+    def has_ongoing_buy_order(self, user_id: int, symbol: str) -> bool:
+        """
+        Check if user has an ONGOING buy order for a symbol.
+
+        ONGOING means the order was executed and user still holds the stock.
+        This is more specific than has_successful_buy_order (which includes CLOSED).
+
+        Returns:
+            True if user has an ONGOING buy order, False otherwise
+        """
+        stmt = (
+            select(Orders)
+            .where(
+                Orders.user_id == user_id,
+                Orders.symbol == symbol,
+                Orders.side == "buy",
+                Orders.status == OrderStatus.ONGOING,
+            )
+            .limit(1)
+        )
+        result = self.db.execute(stmt).scalar_one_or_none()
+        return result is not None
+
     def bulk_create(self, orders: list[dict]) -> list[Orders]:
         """Bulk create orders (for migration)"""
         created_orders = []

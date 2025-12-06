@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import func, outerjoin, select, update
+from sqlalchemy import bindparam, func, outerjoin, select, text, update
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus
@@ -66,7 +66,9 @@ class SignalsRepository:
         self.db.commit()
         return len(signals)
 
-    def mark_old_signals_as_expired(self, before_timestamp: datetime | None = None) -> int:
+    def mark_old_signals_as_expired(
+        self, before_timestamp: datetime | None = None, exclude_symbols: set[str] | None = None
+    ) -> int:
         """
         Mark old signals as EXPIRED.
 
@@ -75,6 +77,8 @@ class SignalsRepository:
 
         Args:
             before_timestamp: Mark signals before this time as expired (defaults to current time)
+            exclude_symbols: Set of symbols to exclude from expiration
+                (e.g., symbols that appear in new analysis)
 
         Returns:
             Number of signals marked as expired
@@ -82,14 +86,62 @@ class SignalsRepository:
         if before_timestamp is None:
             before_timestamp = ist_now()
 
-        # Mark all ACTIVE signals before the timestamp as EXPIRED
-        result = self.db.execute(
-            update(Signals)
-            .where(Signals.status == SignalStatus.ACTIVE, Signals.ts < before_timestamp)
-            .values(status=SignalStatus.EXPIRED)
-        )
+        # Convert to naive datetime for database comparison (SQLite stores as naive)
+        if before_timestamp.tzinfo is not None:
+            before_timestamp = before_timestamp.replace(tzinfo=None)
+
+        # Format timestamp for SQL (SQLite datetime format)
+        # SQLite's julianday() can parse various formats, but we'll use a consistent format
+        # Use the format that matches what SQLite stores:
+        # YYYY-MM-DD HH:MM:SS or YYYY-MM-DD HH:MM:SS.ffffff
+        # julianday() handles both formats correctly
+        timestamp_str = before_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        if before_timestamp.microsecond:
+            timestamp_str += f".{before_timestamp.microsecond:06d}"
+
+        # Build SQL query to avoid Python-side datetime comparison issues
+        # Use julianday() for reliable numeric comparison
+        # This handles both with and without microseconds correctly
+        # Note: Use LOWER() for case-insensitive status comparison
+        # since SQLite stores enums as strings
+        if exclude_symbols:
+            # Use SQLAlchemy update() to avoid SQL injection warnings
+            # Symbols come from internal code, not user input, but using ORM is safer
+            # Use bindparam() to properly bind the timestamp parameter
+            before_timestamp_param = bindparam("before_timestamp", timestamp_str)
+            stmt = (
+                update(Signals)
+                .where(
+                    Signals.status == SignalStatus.ACTIVE,
+                    func.julianday(Signals.ts) < func.julianday(before_timestamp_param),
+                    ~Signals.symbol.in_(exclude_symbols),
+                )
+                .values(status=SignalStatus.EXPIRED)
+            )
+            result = self.db.execute(stmt)
+        else:
+            sql = text(
+                """
+                UPDATE signals
+                SET status = :status
+                WHERE status = :active_status
+                  AND julianday(ts) < julianday(:before_timestamp)
+                """
+            )
+            result = self.db.execute(
+                sql,
+                {
+                    "status": SignalStatus.EXPIRED.value,  # "expired"
+                    "active_status": SignalStatus.ACTIVE.value,  # "active"
+                    "before_timestamp": timestamp_str,
+                },
+            )
+        # Commit the expiration update
+        # Note: This commit happens within the same transaction as signal updates,
+        # so updated signal timestamps are visible when checking for expiration
         self.db.commit()
-        return result.rowcount
+        rowcount = result.rowcount
+        return rowcount
 
     def mark_as_traded(self, symbol: str, user_id: int | None = None) -> bool:
         """
@@ -351,7 +403,9 @@ class SignalsRepository:
         if signal_date <= day_before_yesterday_date:
             return True  # Signal from day before yesterday or earlier is expired
 
-        if signal_date == yesterday_date and now >= datetime.combine(today_date, market_close_time).replace(tzinfo=IST):
+        if signal_date == yesterday_date and now >= datetime.combine(
+            today_date, market_close_time
+        ).replace(tzinfo=IST):
             return True  # Signal from yesterday but past today's 3:30 PM is expired
 
         return False  # Signal is still active
@@ -380,6 +434,24 @@ class SignalsRepository:
         ).scalar_one_or_none()
 
         return user_status.status if user_status else None
+
+    def get_user_signal_status_by_symbol(self, symbol: str, user_id: int) -> SignalStatus | None:
+        """
+        Get user-specific status for a signal by symbol (checks latest signal for that symbol).
+
+        Returns:
+            User's status if they have one, otherwise None (uses base signal status)
+        """
+        # Find the latest signal for this symbol
+        signal = self.db.execute(
+            select(Signals).where(Signals.symbol == symbol).order_by(Signals.ts.desc()).limit(1)
+        ).scalar_one_or_none()
+
+        if not signal:
+            return None
+
+        # Get user status for this signal
+        return self.get_user_signal_status(signal.id, user_id)
 
     def get_signals_with_user_status(
         self, user_id: int, limit: int = 100, status_filter: SignalStatus | None = None

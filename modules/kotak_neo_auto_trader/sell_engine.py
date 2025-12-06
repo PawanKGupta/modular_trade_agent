@@ -71,12 +71,13 @@ class SellOrderManager:
     def __init__(
         self,
         auth: KotakNeoAuth,
-        history_path: str = None,
+        positions_repo=None,  # Optional: PositionsRepository for database-only position tracking
+        user_id: int | None = None,  # Optional: User ID for database operations
+        orders_repo=None,  # Optional: OrdersRepository for metadata enrichment
+        history_path: str = None,  # Deprecated: Kept for backward compatibility only
         max_workers: int = 10,
         price_manager=None,
         order_state_manager: OrderStateManager | None = None,
-        positions_repo=None,
-        user_id: int | None = None,
         order_verifier=None,  # Phase 3.2: Optional OrderStatusVerifier for shared results
     ):
         """
@@ -84,21 +85,31 @@ class SellOrderManager:
 
         Args:
             auth: Authenticated Kotak Neo session
-            history_path: Path to trade history JSON
+            positions_repo: PositionsRepository (optional) - required for database-only position tracking via get_open_positions()
+            user_id: User ID (optional) - required for database operations via get_open_positions()
+            orders_repo: OrdersRepository (optional) - for enriching position metadata
+            history_path: Deprecated - kept for backward compatibility only, not used for position tracking
             max_workers: Maximum threads for parallel monitoring
             price_manager: Optional LivePriceManager for real-time prices
             order_state_manager: Optional OrderStateManager for unified state management
-            positions_repo: Optional PositionsRepository for direct DB updates
-            user_id: Optional user ID for DB operations
+            order_verifier: Optional OrderStatusVerifier for shared results
+
+        Note:
+            positions_repo and user_id are required when calling get_open_positions().
+            They are optional in __init__ for backward compatibility with test files and standalone scripts.
         """
+
         self.auth = auth
         self.orders = KotakNeoOrders(auth)
         self.portfolio = KotakNeoPortfolio(auth, price_manager=price_manager)
         self.market_data = KotakNeoMarketData(auth)
-        self.history_path = history_path or config.TRADES_HISTORY_PATH
+        self.history_path = (
+            history_path or config.TRADES_HISTORY_PATH
+        )  # Deprecated, kept for OrderStateManager
         self.max_workers = max_workers
         self.price_manager = price_manager
         self.positions_repo = positions_repo
+        self.orders_repo = orders_repo  # For metadata enrichment
         self.user_id = user_id
         self.order_verifier = order_verifier  # Phase 3.2: OrderStatusVerifier for shared results
 
@@ -135,12 +146,7 @@ class SellOrderManager:
         self.indicator_service = get_indicator_service(
             price_service=self.price_service, enable_caching=True
         )
-        # Initialize PositionLoader (Phase 2.2: Portfolio & Position Services)
-        from modules.kotak_neo_auto_trader.services import get_position_loader
-
-        self.position_loader = get_position_loader(
-            history_path=self.history_path, enable_caching=True
-        )
+        # PositionLoader removed - using database-only tracking via PositionsRepository
 
         # Track active sell orders {symbol: {'order_id': str, 'target_price': float}}
         # Legacy mode: Used when OrderStateManager is not available
@@ -148,6 +154,18 @@ class SellOrderManager:
 
         # Track lowest EMA9 values {symbol: float}
         self.lowest_ema9: dict[str, float] = {}
+
+        # RSI Exit: Cache for RSI10 values {symbol: rsi10_value}
+        # Cached at market open (previous day's RSI10), updated with real-time if available
+        self.rsi10_cache: dict[str, float] = {}
+
+        # RSI Exit: Track orders converted to market {symbol}
+        # Prevents duplicate conversion attempts
+        self.converted_to_market: set[str] = set()
+
+        # Circuit limit tracking: Symbols waiting for circuit expansion
+        # Format: {symbol: {'upper_circuit': float, 'ema9_target': float, 'trade': dict, 'last_checked': datetime}}
+        self.waiting_for_circuit_expansion: dict[str, dict[str, Any]] = {}
 
         logger.info(f"SellOrderManager initialized with {max_workers} worker threads")
 
@@ -381,26 +399,66 @@ class SellOrderManager:
 
     def get_open_positions(self) -> list[dict[str, Any]]:
         """
-        Get all open positions from trade history.
+        Get all open positions from database (positions table).
 
-        .. deprecated:: Phase 2.2
-           Use :meth:`position_loader.load_open_positions` instead.
-           This method is kept for backward compatibility and delegates to PositionLoader.
-           Will be removed in a future version.
+        Database-only: No file fallback. Uses positions table as single source of truth.
 
         Returns:
-            List of open trade entries from trade history
+            List of open trade entries in format expected by sell order placement
         """
-        import warnings
+        if not self.positions_repo or not self.user_id:
+            raise ValueError(
+                "PositionsRepository and user_id are required for database-only position tracking. "
+                "Please provide positions_repo and user_id when initializing SellOrderManager."
+            )
 
-        warnings.warn(
-            "get_open_positions() is deprecated. "
-            "Use position_loader.load_open_positions() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        # Use PositionLoader to get open positions (Phase 2.2)
-        return self.position_loader.load_open_positions()
+        open_positions = []
+        positions = self.positions_repo.list(self.user_id)
+
+        for pos in positions:
+            if pos.closed_at is None:  # Open position
+                # Get ticker and placed_symbol from matching ONGOING order if available
+                ticker = f"{pos.symbol}.NS"
+                placed_symbol = f"{pos.symbol}-EQ"
+
+                # Try to get ticker and placed_symbol from most recent ONGOING order
+                if self.orders_repo:
+                    try:
+                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                        from .utils.symbol_utils import extract_base_symbol
+
+                        ongoing_orders = self.orders_repo.list(
+                            self.user_id, status=DbOrderStatus.ONGOING
+                        )
+                        for order in ongoing_orders:
+                            if (
+                                order.side.lower() == "buy"
+                                and extract_base_symbol(order.symbol).upper() == pos.symbol.upper()
+                            ):
+                                # Found matching order - use its metadata
+                                if order.order_metadata and isinstance(order.order_metadata, dict):
+                                    ticker = order.order_metadata.get("ticker", ticker)
+                                placed_symbol = order.symbol  # Full broker symbol
+                                break
+                    except Exception as e:
+                        logger.debug(f"Failed to enrich position metadata from orders: {e}")
+
+                # Convert Positions model to trade dict format
+                open_positions.append(
+                    {
+                        "symbol": pos.symbol,
+                        "ticker": ticker,
+                        "qty": pos.quantity,
+                        "entry_price": pos.avg_price,
+                        "entry_time": pos.opened_at.isoformat(),
+                        "status": "open",
+                        "placed_symbol": placed_symbol,
+                    }
+                )
+
+        logger.debug(f"Loaded {len(open_positions)} open positions from database")
+        return open_positions
 
     def get_current_ema9(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
@@ -690,7 +748,7 @@ class SellOrderManager:
 
                     # Check OrderStatusVerifier result for this order
                     result = self.order_verifier.get_verification_result(order_id)
-                    if result and result.get('status') == 'EXECUTED':
+                    if result and result.get("status") == "EXECUTED":
                         executed_ids.append(str(order_id))
                         logger.info(
                             f"Sell order executed (from OrderStatusVerifier): Order ID {order_id}"
@@ -1048,9 +1106,42 @@ class SellOrderManager:
 
         return total_value / total_qty if total_qty > 0 else 0.0
 
+    def _parse_circuit_limits_from_rejection(
+        self, rejection_reason: str
+    ) -> dict[str, float] | None:
+        """
+        Parse circuit limits from rejection message.
+
+        Example message: "RMS:Rule: Check circuit limit including square off order exceeds :
+        Circuit breach, Order Price :34.65, Low Price Range:30.32 High Price Range:33.51"
+
+        Returns:
+            Dict with 'upper' and 'lower' circuit limits, or None if not found
+        """
+        if not rejection_reason:
+            return None
+
+        import re
+
+        # Try to extract High Price Range and Low Price Range
+        # Pattern: "High Price Range:33.51" or "High Price Range: 33.51"
+        high_match = re.search(r"High Price Range[:\s]+([\d.]+)", rejection_reason, re.IGNORECASE)
+        low_match = re.search(r"Low Price Range[:\s]+([\d.]+)", rejection_reason, re.IGNORECASE)
+
+        if high_match and low_match:
+            try:
+                upper = float(high_match.group(1))
+                lower = float(low_match.group(1))
+                return {"upper": upper, "lower": lower}
+            except (ValueError, AttributeError):
+                pass
+
+        return None
+
     def _remove_rejected_orders(self):
         """
         Remove rejected/cancelled orders from active tracking.
+        Also checks for circuit limit rejections and stores them for retry.
         """
         all_orders = self.orders.get_orders()
         if not all_orders or "data" not in all_orders:
@@ -1071,6 +1162,45 @@ class SellOrderManager:
                     broker_order
                 ):
                     status = OrderStatusParser.parse_status(broker_order)
+
+                    # Check if rejection is due to circuit limit breach
+                    from .utils.order_field_extractor import OrderFieldExtractor
+
+                    rejection_reason = OrderFieldExtractor.get_rejection_reason(broker_order) or ""
+
+                    if (
+                        "circuit" in rejection_reason.lower()
+                        or "circuit limit" in rejection_reason.lower()
+                    ):
+                        # Parse circuit limits
+                        circuit_limits = self._parse_circuit_limits_from_rejection(rejection_reason)
+                        ema9_target = order_info.get("target_price", 0)
+
+                        if circuit_limits and ema9_target > circuit_limits.get("upper", 0):
+                            # EMA9 exceeds upper circuit - wait for expansion
+                            base_symbol = symbol.upper()
+                            self.waiting_for_circuit_expansion[base_symbol] = {
+                                "upper_circuit": circuit_limits["upper"],
+                                "lower_circuit": circuit_limits["lower"],
+                                "ema9_target": ema9_target,
+                                "trade": {
+                                    "symbol": symbol,
+                                    "placed_symbol": order_info.get("placed_symbol", symbol),
+                                    "ticker": order_info.get("ticker", ""),
+                                    "qty": order_info.get("qty", 0),
+                                },
+                                "rejection_reason": rejection_reason,
+                            }
+                            logger.info(
+                                f"{base_symbol}: Order rejected due to circuit limit breach. "
+                                f"EMA9 (Rs {ema9_target:.2f}) > Upper Circuit (Rs {circuit_limits['upper']:.2f}). "
+                                f"Waiting for circuit expansion..."
+                            )
+                            # Remove from active tracking but keep in waiting list
+                            self._remove_from_tracking(symbol)
+                            continue
+
+                    # Regular rejection (not circuit limit) - remove from tracking
                     rejected_symbols.append(symbol)
                     logger.info(
                         f"Removing {symbol} from tracking: order {order_id} is {status.value}"
@@ -1133,23 +1263,37 @@ class SellOrderManager:
         if self.order_verifier:
             try:
                 # Get verification results for this symbol
-                verification_results = self.order_verifier.get_verification_results_for_symbol(symbol)
+                verification_results = self.order_verifier.get_verification_results_for_symbol(
+                    symbol
+                )
 
                 # Check if any result shows EXECUTED status (completed sell order)
                 for result in verification_results:
-                    if result.get('status') == 'EXECUTED':
+                    if result.get("status") == "EXECUTED":
                         # Extract price from broker_order if available
-                        broker_order = result.get('broker_order')
+                        broker_order = result.get("broker_order")
                         order_price = 0.0
                         if broker_order:
                             order_price = OrderFieldExtractor.get_price(broker_order) or 0.0
 
-                        order_id = result.get('order_id', '')
+                        order_id = result.get("order_id", "")
+                        # Try to get filled quantity from broker_order if available
+                        filled_qty = 0
+                        order_qty = 0
+                        if broker_order:
+                            filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+                            order_qty = OrderFieldExtractor.get_quantity(broker_order)
                         logger.info(
                             f"Found completed sell order for {symbol} from OrderStatusVerifier: "
-                            f"Order ID {order_id}, Price: Rs {order_price:.2f}"
+                            f"Order ID {order_id}, Price: Rs {order_price:.2f}, "
+                            f"Filled: {filled_qty}/{order_qty}"
                         )
-                        return {"order_id": order_id, "price": order_price}
+                        return {
+                            "order_id": order_id,
+                            "price": order_price,
+                            "filled_qty": filled_qty,
+                            "order_qty": order_qty,
+                        }
             except Exception as e:
                 logger.debug(f"Error checking OrderStatusVerifier results for {symbol}: {e}")
                 # Fall through to direct API call
@@ -1182,12 +1326,20 @@ class SellOrderManager:
                 if OrderStatusParser.is_completed(order):
                     order_id = OrderFieldExtractor.get_order_id(order)
                     order_price = OrderFieldExtractor.get_price(order)
+                    filled_qty = OrderFieldExtractor.get_filled_quantity(order)
+                    order_qty = OrderFieldExtractor.get_quantity(order)
 
                     logger.info(
-                        f"Found completed sell order for {base_symbol}: Order ID {order_id}, Price: Rs {order_price:.2f}"
+                        f"Found completed sell order for {base_symbol}: Order ID {order_id}, "
+                        f"Price: Rs {order_price:.2f}, Filled: {filled_qty}/{order_qty}"
                     )
 
-                    return {"order_id": order_id, "price": order_price}
+                    return {
+                        "order_id": order_id,
+                        "price": order_price,
+                        "filled_qty": filled_qty,
+                        "order_qty": order_qty,
+                    }
 
             return None
 
@@ -1352,8 +1504,154 @@ class SellOrderManager:
         # Clean up any rejected orders from tracking
         self._cleanup_rejected_orders()
 
+        # Initialize RSI10 cache for all open positions (previous day's RSI10)
+        self._initialize_rsi10_cache(open_positions)
+
         logger.info(f"Placed {orders_placed} sell orders at market open")
         return orders_placed
+
+    def _initialize_rsi10_cache(self, open_positions: list[dict[str, Any]]) -> None:
+        """
+        Initialize RSI10 cache with previous day's RSI10 for all open positions.
+        Called at market open (9:15 AM).
+
+        Args:
+            open_positions: List of open position dictionaries
+        """
+        if not open_positions:
+            return
+
+        logger.info(f"Initializing RSI10 cache for {len(open_positions)} positions...")
+
+        for position in open_positions:
+            symbol = position.get("symbol")
+            ticker = position.get("ticker")
+
+            if not symbol or not ticker:
+                continue
+
+            try:
+                # Get previous day's RSI10
+                previous_rsi = self._get_previous_day_rsi10(ticker)
+                if previous_rsi is not None:
+                    self.rsi10_cache[symbol] = previous_rsi
+                    logger.debug(f"Cached previous day RSI10 for {symbol}: {previous_rsi:.2f}")
+                else:
+                    logger.warning(
+                        f"Could not get previous day RSI10 for {symbol}, will use real-time when available"
+                    )
+            except Exception as e:
+                logger.warning(f"Error caching RSI10 for {symbol}: {e}")
+
+        logger.info(f"RSI10 cache initialized for {len(self.rsi10_cache)} positions")
+
+    def _get_previous_day_rsi10(self, ticker: str) -> float | None:
+        """
+        Get previous day's RSI10 value.
+
+        Args:
+            ticker: Stock ticker (e.g., 'RELIANCE.NS')
+
+        Returns:
+            Previous day's RSI10 value, or None if unavailable
+        """
+        try:
+            # Get price data (exclude current day to get previous day's data)
+            df = self.price_service.get_price(
+                ticker, days=200, interval="1d", add_current_day=False
+            )
+
+            if df is None or df.empty or len(df) < 2:
+                return None
+
+            # Calculate indicators
+            df = self.indicator_service.calculate_all_indicators(df)
+
+            if df is None or df.empty or len(df) < 2:
+                return None
+
+            # Get second-to-last row (previous day)
+            previous_day = df.iloc[-2]
+            previous_rsi = previous_day.get("rsi10", None)
+
+            if previous_rsi is not None:
+                # Check if NaN - use simple check since pandas may not be imported
+                try:
+                    import pandas as pd
+
+                    is_na = pd.isna(previous_rsi)
+                except (ImportError, AttributeError):
+                    # Fallback: check if value is None or NaN-like
+                    is_na = previous_rsi is None or (
+                        isinstance(previous_rsi, float) and str(previous_rsi).lower() == "nan"
+                    )
+
+                if not is_na:
+                    return float(previous_rsi)
+
+            return None
+        except Exception as e:
+            logger.debug(f"Error getting previous day RSI10 for {ticker}: {e}")
+            return None
+
+    def _get_current_rsi10(self, symbol: str, ticker: str) -> float | None:
+        """
+        Get current RSI10 value with real-time calculation and fallback to cache.
+
+        Priority:
+        1. Try to calculate real-time RSI10 (update cache if available)
+        2. Fallback to cached previous day's RSI10
+
+        Args:
+            symbol: Stock symbol (for cache lookup)
+            ticker: Stock ticker (e.g., 'RELIANCE.NS')
+
+        Returns:
+            Current RSI10 value, or None if unavailable
+        """
+        try:
+            # Try to get real-time RSI10 (include current day)
+            df = self.price_service.get_price(ticker, days=200, interval="1d", add_current_day=True)
+
+            if df is not None and not df.empty:
+                # Calculate indicators
+                df = self.indicator_service.calculate_all_indicators(df)
+
+                if df is not None and not df.empty:
+                    # Get latest row (current day)
+                    latest = df.iloc[-1]
+                    current_rsi = latest.get("rsi10", None)
+
+                    if current_rsi is not None:
+                        # Check if NaN - use simple check since pandas may not be imported
+                        try:
+                            import pandas as pd
+
+                            is_na = pd.isna(current_rsi)
+                        except (ImportError, AttributeError):
+                            # Fallback: check if value is None or NaN-like
+                            is_na = current_rsi is None or (
+                                isinstance(current_rsi, float) and str(current_rsi).lower() == "nan"
+                            )
+
+                        if not is_na:
+                            # Update cache with real-time value
+                            self.rsi10_cache[symbol] = float(current_rsi)
+                            logger.debug(
+                                f"Updated RSI10 cache for {symbol} with real-time value: {current_rsi:.2f}"
+                            )
+                            return float(current_rsi)
+        except Exception as e:
+            logger.debug(f"Error calculating real-time RSI10 for {symbol}: {e}")
+
+        # Fallback to cached previous day's RSI10
+        cached_rsi = self.rsi10_cache.get(symbol)
+        if cached_rsi is not None:
+            logger.debug(f"Using cached RSI10 for {symbol}: {cached_rsi:.2f}")
+            return cached_rsi
+
+        logger.debug(f"RSI10 unavailable for {symbol} (no cache, real-time failed)")
+        return None
 
     def _check_and_update_single_stock(
         self, symbol: str, order_info: dict[str, Any], executed_ids: list[str]
@@ -1452,6 +1750,101 @@ class SellOrderManager:
 
         return result
 
+    def _check_and_retry_circuit_expansion(self) -> int:
+        """
+        Check if EMA9 has dropped within circuit limits for waiting symbols and retry placing orders.
+        Only retries when EMA9 is within the stored upper circuit limit.
+
+        Returns:
+            Number of orders successfully retried
+        """
+        if not self.waiting_for_circuit_expansion:
+            return 0
+
+        retried_count = 0
+
+        for base_symbol, wait_info in list(self.waiting_for_circuit_expansion.items()):
+            try:
+                trade = wait_info["trade"]
+                ticker = trade.get("ticker", "")
+                broker_symbol = trade.get("placed_symbol", trade.get("symbol", ""))
+
+                if not ticker and broker_symbol:
+                    # Try to extract ticker from symbol
+                    ticker = (
+                        broker_symbol.replace("-EQ", "")
+                        .replace("-BE", "")
+                        .replace("-BL", "")
+                        .replace("-BZ", "")
+                        + ".NS"
+                    )
+
+                if not ticker:
+                    logger.debug(f"{base_symbol}: No ticker available for circuit check")
+                    continue
+
+                # Get current EMA9
+                current_ema9 = self.get_current_ema9(ticker, broker_symbol=broker_symbol)
+                if not current_ema9:
+                    continue
+
+                upper_circuit = wait_info["upper_circuit"]
+                ema9_target = wait_info["ema9_target"]
+
+                # Check if current EMA9 is now within the upper circuit limit
+                if current_ema9 > upper_circuit:
+                    # EMA9 still exceeds circuit - wait
+                    logger.debug(
+                        f"{base_symbol}: EMA9 (Rs {current_ema9:.2f}) still exceeds upper circuit "
+                        f"(Rs {upper_circuit:.2f}). Waiting..."
+                    )
+                    continue
+
+                # EMA9 is now within circuit limits - retry placing order
+                # Use current EMA9 if it's lower than stored target (better price), otherwise use stored target
+                target_price = min(current_ema9, ema9_target)
+
+                logger.info(
+                    f"{base_symbol}: EMA9 (Rs {current_ema9:.2f}) is now within circuit limit "
+                    f"(Rs {upper_circuit:.2f}). Retrying order placement at Rs {target_price:.2f}..."
+                )
+
+                # Place order - if it succeeds, remove from waiting list
+                # If it fails again with circuit limit, it will be re-added with updated limits
+                order_id = self.place_sell_order(trade, target_price)
+
+                if order_id:
+                    # Order placed successfully - remove from waiting list
+                    logger.info(
+                        f"{base_symbol}: Order placed successfully at Rs {target_price:.2f}, "
+                        f"Order ID: {order_id}"
+                    )
+                    del self.waiting_for_circuit_expansion[base_symbol]
+                    retried_count += 1
+
+                    # Register the order for tracking
+                    qty = trade.get("qty", 0)
+                    ticker = trade.get("ticker", "")
+                    placed_symbol = trade.get("placed_symbol", trade.get("symbol", base_symbol))
+                    self._register_order(
+                        symbol=placed_symbol,
+                        order_id=order_id,
+                        target_price=target_price,
+                        qty=qty,
+                        ticker=ticker,
+                        placed_symbol=placed_symbol,
+                    )
+                else:
+                    logger.debug(
+                        f"{base_symbol}: Order placement failed. Will check again on next cycle."
+                    )
+
+            except Exception as e:
+                logger.error(f"Error checking circuit expansion for {base_symbol}: {e}")
+                continue
+
+        return retried_count
+
     def monitor_and_update(self) -> dict[str, int]:  # noqa: PLR0912, PLR0915
         """
         Monitor EMA9 and update sell orders if lower value found (parallel processing)
@@ -1459,10 +1852,20 @@ class SellOrderManager:
         Returns:
             Dict with statistics
         """
-        stats = {"checked": 0, "updated": 0, "executed": 0}
+        stats = {
+            "checked": 0,
+            "updated": 0,
+            "executed": 0,
+            "converted_to_market": 0,
+            "circuit_retried": 0,
+        }
 
         # Clean up any rejected/cancelled orders before monitoring
         self._cleanup_rejected_orders()
+
+        # Check for circuit expansion and retry waiting orders
+        circuit_retried = self._check_and_retry_circuit_expansion()
+        stats["circuit_retried"] = circuit_retried
 
         if not self.active_sell_orders:
             logger.debug("No active sell orders to monitor")
@@ -1493,6 +1896,45 @@ class SellOrderManager:
                 if not completed_order_id:
                     completed_order_id = order_id or "completed"
 
+                # Get filled quantity and order quantity to determine if partial or full execution
+                filled_qty = completed_order_info.get("filled_qty", 0) or order_info.get("qty", 0)
+                order_qty = completed_order_info.get("order_qty", 0) or order_info.get("qty", 0)
+
+                # Update positions table (Edge Case #8 fix)
+                if self.positions_repo and self.user_id:
+                    try:
+                        from src.infrastructure.db.timezone_utils import ist_now
+
+                        base_symbol = extract_base_symbol(symbol).upper()
+                        if filled_qty > 0:
+                            if filled_qty >= order_qty or filled_qty >= order_info.get("qty", 0):
+                                # Full execution - mark position as closed
+                                self.positions_repo.mark_closed(
+                                    user_id=self.user_id,
+                                    symbol=base_symbol,
+                                    closed_at=ist_now(),
+                                    exit_price=order_price,
+                                )
+                                logger.info(
+                                    f"Position marked as closed in database: {base_symbol} "
+                                    f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
+                                )
+                            else:
+                                # Partial execution - reduce quantity, keep position open
+                                self.positions_repo.reduce_quantity(
+                                    user_id=self.user_id,
+                                    symbol=base_symbol,
+                                    sold_quantity=float(filled_qty),
+                                )
+                                logger.info(
+                                    f"Position quantity reduced in database: {base_symbol} "
+                                    f"(sold {filled_qty} shares, remaining quantity updated)"
+                                )
+                    except Exception as e:
+                        logger.error(
+                            f"Error updating positions table for {symbol} after sell execution: {e}"
+                        )
+
                 if self.state_manager:
                     if self._mark_order_executed(symbol, completed_order_id, order_price):
                         symbols_executed.append(symbol)
@@ -1506,6 +1948,30 @@ class SellOrderManager:
             if order_id in executed_ids:
                 # Mark position as closed in trade history
                 current_price = order_info.get("target_price", 0)
+                sold_qty = order_info.get("qty", 0)
+
+                # Update positions table (Edge Case #8 fix)
+                if self.positions_repo and self.user_id:
+                    try:
+                        from src.infrastructure.db.timezone_utils import ist_now
+
+                        base_symbol = extract_base_symbol(symbol).upper()
+                        # Assume full execution if we don't have filled_qty info
+                        self.positions_repo.mark_closed(
+                            user_id=self.user_id,
+                            symbol=base_symbol,
+                            closed_at=ist_now(),
+                            exit_price=current_price,
+                        )
+                        logger.info(
+                            f"Position marked as closed in database: {base_symbol} "
+                            f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error updating positions table for {symbol} after sell execution: {e}"
+                        )
+
                 if self.state_manager:
                     if self._mark_order_executed(symbol, order_id, current_price):
                         symbols_executed.append(symbol)
@@ -1529,9 +1995,24 @@ class SellOrderManager:
                 logger.info(f"Monitor cycle: {stats['executed']} executed, all orders completed")
             return stats
 
-        # Process remaining active stocks in parallel
+        # Check RSI exit condition FIRST (priority over EMA9 check)
+        stats["converted_to_market"] = 0
+        symbols_to_skip_ema = []
+        for symbol, order_info in list(self.active_sell_orders.items()):
+            # Skip if already converted
+            if symbol in self.converted_to_market:
+                symbols_to_skip_ema.append(symbol)
+                continue
+
+            # Check RSI exit condition
+            if self._check_rsi_exit_condition(symbol, order_info):
+                stats["converted_to_market"] += 1
+                symbols_to_skip_ema.append(symbol)
+                continue  # Skip EMA9 check (order already converted)
+
+        # Process remaining active stocks in parallel (EMA9 monitoring)
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all monitoring tasks (only for non-executed orders)
+            # Submit all monitoring tasks (only for non-executed, non-converted orders)
             future_to_symbol = {
                 executor.submit(
                     self._check_and_update_single_stock,
@@ -1540,6 +2021,7 @@ class SellOrderManager:
                     [],  # Empty list - executed orders already removed
                 ): symbol
                 for symbol, order_info in self.active_sell_orders.items()
+                if symbol not in symbols_to_skip_ema
             }
 
             # Process results as they complete
@@ -1568,6 +2050,257 @@ class SellOrderManager:
                     self.lowest_ema9[symbol] = ema9
 
         logger.info(
-            f"Monitor cycle: {stats['checked']} checked, {stats['updated']} updated, {stats['executed']} executed"
+            f"Monitor cycle: {stats['checked']} checked, {stats['updated']} updated, "
+            f"{stats['executed']} executed, {stats.get('converted_to_market', 0)} converted to market"
         )
         return stats
+
+    def _check_rsi_exit_condition(self, symbol: str, order_info: dict[str, Any]) -> bool:
+        """
+        Check if RSI10 > 50 and convert limit order to market order.
+
+        Priority:
+        1. Check previous day's RSI10 (cached)
+        2. Then check real-time RSI10 (update cache if available)
+        3. If RSI10 > 50: Convert limit order to market order
+
+        Args:
+            symbol: Stock symbol
+            order_info: Order information dictionary
+
+        Returns:
+            True if order was converted to market, False otherwise
+        """
+        # Skip if already converted
+        if symbol in self.converted_to_market:
+            return False
+
+        # Get ticker for RSI calculation
+        ticker = order_info.get("ticker")
+        if not ticker:
+            logger.debug(f"No ticker found for {symbol}, skipping RSI exit check")
+            return False
+
+        # Get current RSI10 (previous day first, then real-time)
+        rsi10 = self._get_current_rsi10(symbol, ticker)
+        if rsi10 is None:
+            logger.debug(f"RSI10 unavailable for {symbol}, skipping exit check")
+            return False
+
+        # Check exit condition
+        if rsi10 > 50:
+            logger.info(f"RSI Exit triggered for {symbol}: RSI10={rsi10:.2f} > 50")
+            return self._convert_to_market_sell(symbol, order_info, rsi10)
+
+        return False
+
+    def _convert_to_market_sell(
+        self, symbol: str, order_info: dict[str, Any], rsi10: float
+    ) -> bool:
+        """
+        Convert existing limit sell order to market sell order.
+
+        Primary: Try to modify existing order (change order_type from LIMIT to MARKET)
+        Fallback: If modify fails, cancel existing order and place new market order
+
+        Args:
+            symbol: Stock symbol
+            order_info: Order information dictionary
+            rsi10: Current RSI10 value (for logging)
+
+        Returns:
+            True if conversion successful, False otherwise
+        """
+        order_id = order_info.get("order_id")
+        qty = order_info.get("qty")
+        placed_symbol = order_info.get("placed_symbol") or f"{symbol}-EQ"
+
+        if not order_id or not qty:
+            logger.error(f"Missing order_id or qty for {symbol}, cannot convert to market")
+            return False
+
+        try:
+            # Primary: Try to modify existing order (LIMIT → MARKET)
+            logger.info(f"Attempting to modify order {order_id} for {symbol} (LIMIT → MARKET)")
+            modify_result = self.orders.modify_order(
+                order_id=order_id,
+                quantity=qty,
+                order_type="MKT",  # Change to MARKET order
+            )
+
+            # Check if modify succeeded
+            if modify_result and modify_result.get("stat", "").lower() == "ok":
+                logger.info(f"Successfully modified order {order_id} for {symbol} to MARKET order")
+                self.converted_to_market.add(symbol)
+                self._remove_order(symbol, reason="Converted to market (RSI > 50)")
+                return True
+
+            # Modify failed, try fallback: cancel + place
+            logger.warning(
+                f"Modify order failed for {symbol}, falling back to cancel+place: {modify_result}"
+            )
+
+        except Exception as e:
+            logger.warning(f"Error modifying order for {symbol}, falling back to cancel+place: {e}")
+
+        # Fallback: Cancel existing order and place new market order
+        try:
+            # Cancel existing limit order
+            logger.info(f"Cancelling limit order {order_id} for {symbol}")
+            cancel_result = self.orders.cancel_order(order_id)
+
+            if not cancel_result:
+                logger.error(f"Failed to cancel limit order {order_id} for {symbol}")
+                # Send notification but don't retry
+                self._send_rsi_exit_error_notification(symbol, "cancel_failed", rsi10)
+                return False
+
+            # Place new market sell order
+            logger.info(f"Placing market sell order for {symbol}: qty={qty}")
+            market_order_resp = self.orders.place_market_sell(
+                symbol=placed_symbol,
+                quantity=qty,
+                variety=self._get_order_variety_for_market_hours(),
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
+
+            # Verify order placement
+            if self._is_valid_order_response(market_order_resp):
+                market_order_id = self._extract_order_id(market_order_resp)
+                logger.info(f"Placed market sell order for {symbol}: {market_order_id}")
+
+                # Track conversion
+                self.converted_to_market.add(symbol)
+
+                # Remove from limit order monitoring
+                self._remove_order(symbol, reason="Converted to market (RSI > 50)")
+
+                return True
+            else:
+                logger.error(f"Failed to place market sell order for {symbol}: {market_order_resp}")
+                self._send_rsi_exit_error_notification(symbol, "place_failed", rsi10)
+                return False
+
+        except Exception as e:
+            logger.error(f"Error converting {symbol} to market sell (fallback): {e}")
+            self._send_rsi_exit_error_notification(symbol, "conversion_error", rsi10)
+            return False
+
+    def _is_valid_order_response(self, response: Any) -> bool:
+        """
+        Check if order response is valid (order was placed successfully).
+
+        Args:
+            response: Order response from broker API
+
+        Returns:
+            True if order was placed successfully
+        """
+        if not response:
+            return False
+
+        if isinstance(response, dict):
+            # Check for error indicators
+            keys_lower = {str(k).lower() for k in response.keys()}
+            if any(k in keys_lower for k in ("error", "errors", "not_ok")):
+                return False
+
+            # Check for order ID indicators
+            has_order_id = any(
+                key in response for key in ["nOrdNo", "orderId", "order_id", "neoOrdNo", "data"]
+            )
+            return has_order_id
+
+        return False
+
+    def _extract_order_id(self, response: Any) -> str | None:
+        """
+        Extract order ID from broker response.
+
+        Args:
+            response: Order response from broker API
+
+        Returns:
+            Order ID string, or None if not found
+        """
+        if not response or not isinstance(response, dict):
+            return None
+
+        # Try various order ID fields
+        order_id = (
+            response.get("nOrdNo")
+            or response.get("orderId")
+            or response.get("order_id")
+            or response.get("neoOrdNo")
+            or response.get("data", {}).get("nOrdNo")
+            or response.get("data", {}).get("orderId")
+            or response.get("order", {}).get("neoOrdNo")
+        )
+
+        return str(order_id) if order_id else None
+
+    def _send_rsi_exit_error_notification(self, symbol: str, error_type: str, rsi10: float) -> None:
+        """
+        Send Telegram notification for RSI exit conversion errors.
+
+        Args:
+            symbol: Stock symbol
+            error_type: Type of error (cancel_failed, place_failed, conversion_error)
+            rsi10: Current RSI10 value
+        """
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            error_messages = {
+                "cancel_failed": "Failed to cancel limit order",
+                "place_failed": "Failed to place market order",
+                "conversion_error": "Error during order conversion",
+            }
+
+            message = (
+                f"❌ *RSI Exit Conversion Failed*\n\n"
+                f"Symbol: `{symbol}`\n"
+                f"RSI10: {rsi10:.2f}\n"
+                f"Error: {error_messages.get(error_type, 'Unknown error')}\n\n"
+                f"Limit order remains active. Manual intervention may be required.\n\n"
+                f"_Time: {timestamp}_"
+            )
+
+            # Use TelegramNotifier to respect notification preferences
+            try:
+                from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
+
+                telegram_notifier = get_telegram_notifier(
+                    db_session=None,  # SellOrderManager doesn't have db_session
+                )
+                if telegram_notifier and telegram_notifier.enabled:
+                    telegram_notifier.notify_system_alert(
+                        alert_type="RSI_EXIT_CONVERSION_FAILED",
+                        message_text=message,
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                else:
+                    # Fallback to old method if telegram_notifier not available
+                    from modules.kotak_neo_auto_trader.telegram_notifier import send_telegram
+
+                    send_telegram(message)
+            except Exception as notify_err:
+                logger.warning(f"Failed to send RSI exit error notification: {notify_err}")
+                # Fallback to old method on error
+                try:
+                    from modules.kotak_neo_auto_trader.telegram_notifier import send_telegram
+
+                    send_telegram(message)
+                except Exception:
+                    pass  # Already logged
+        except Exception as e:
+            logger.warning(f"Failed to send RSI exit error notification: {e}")
+
+    def _get_order_variety_for_market_hours(self) -> str:
+        """Get order variety based on market hours."""
+        from core.volume_analysis import is_market_hours
+
+        if is_market_hours():
+            return "REGULAR"
+        return config.DEFAULT_VARIETY

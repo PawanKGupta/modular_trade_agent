@@ -100,7 +100,7 @@ class StartIndividualServiceRequest(BaseModel):
     task_name: str = Field(
         ...,
         description=(
-            "Task name: premarket_retry, sell_monitor, position_monitor, buy_orders, eod_cleanup"
+            "Task name: premarket_retry, sell_monitor, buy_orders, eod_cleanup"
         ),
     )
 

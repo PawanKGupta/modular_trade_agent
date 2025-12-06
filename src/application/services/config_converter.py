@@ -10,13 +10,58 @@ from config.strategy_config import StrategyConfig
 from src.infrastructure.db.models import UserTradingConfig
 
 
-def user_config_to_strategy_config(user_config: UserTradingConfig) -> StrategyConfig:
+def _resolve_ml_model_path(
+    ml_model_version: str | None,
+    model_type: str,
+    db_session: object | None,
+) -> str:
+    """
+    Resolve ML model path from version string.
+
+    Args:
+        ml_model_version: Version string like "v1.0" or None
+        model_type: "verdict_classifier" or "price_regressor"
+        db_session: Optional database session for querying model versions
+
+    Returns:
+        Model path string (defaults to standard path if version not found)
+    """
+    default_path = "models/verdict_model_random_forest.pkl"
+
+    if not ml_model_version or not db_session:
+        return default_path
+
+    try:
+        from utils.ml_model_resolver import get_model_path_from_version
+
+        resolved_path = get_model_path_from_version(db_session, model_type, ml_model_version)
+        if resolved_path:
+            return resolved_path
+        else:
+            # If version specified but not found, log warning but use default
+            from utils.logger import logger
+
+            logger.warning(
+                f"ML model version {ml_model_version} not found in database, using default model"
+            )
+            return default_path
+    except Exception as e:
+        from utils.logger import logger
+
+        logger.warning(f"Error resolving ML model path from version {ml_model_version}: {e}")
+        return default_path
+
+
+def user_config_to_strategy_config(
+    user_config: UserTradingConfig, db_session: object | None = None
+) -> StrategyConfig:
     """
     Convert UserTradingConfig database model to StrategyConfig dataclass.
-    
+
     Args:
         user_config: UserTradingConfig from database
-        
+        db_session: Optional database session for resolving ML model paths from versions
+
     Returns:
         StrategyConfig instance with user-specific values
     """
@@ -90,10 +135,13 @@ def user_config_to_strategy_config(user_config: UserTradingConfig) -> StrategyCo
         news_sentiment_min_articles=user_config.news_sentiment_min_articles,
         news_sentiment_pos_threshold=user_config.news_sentiment_pos_threshold,
         news_sentiment_neg_threshold=user_config.news_sentiment_neg_threshold,
-        # ML Configuration (use defaults - not fully in StrategyConfig yet)
-        ml_enabled=False,  # User config has ml_enabled but StrategyConfig uses different structure
-        ml_verdict_model_path="models/verdict_model_random_forest.pkl",
-        ml_price_model_path="models/price_model_random_forest.pkl",
+        # ML Configuration
+        ml_enabled=user_config.ml_enabled,  # Use user's ML enabled setting from UI
+        # Resolve model path from ml_model_version if provided and db_session is available
+        ml_verdict_model_path=_resolve_ml_model_path(
+            user_config.ml_model_version, "verdict_classifier", db_session
+        ),
+        ml_price_model_path="models/price_model_random_forest.pkl",  # TODO: Add price model version support
         ml_confidence_threshold=user_config.ml_confidence_threshold,
         ml_combine_with_rules=user_config.ml_combine_with_rules,
         # Order Defaults
@@ -106,5 +154,5 @@ def user_config_to_strategy_config(user_config: UserTradingConfig) -> StrategyCo
         exit_on_ema9_or_rsi50=user_config.exit_on_ema9_or_rsi50,
         allow_duplicate_recommendations_same_day=user_config.allow_duplicate_recommendations_same_day,
         min_combined_score=user_config.min_combined_score,
+        enable_premarket_amo_adjustment=user_config.enable_premarket_amo_adjustment,
     )
-

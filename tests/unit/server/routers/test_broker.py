@@ -1,7 +1,15 @@
 import json
+from datetime import datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
+
+# Import domain entities for broker tests
+from modules.kotak_neo_auto_trader.domain.entities import Holding
+from modules.kotak_neo_auto_trader.domain.value_objects import Exchange, Money
 from server.app.routers import broker
 from server.app.routers.broker import KotakNeoCreds, _extract_error_message
 from server.app.schemas.user import BrokerCredsRequest
@@ -35,9 +43,18 @@ class DummySettingsRepo:
         self.settings = DummySettings(user_id=1)
         self.ensure_default_called = []
         self.update_called = []
+        self.get_by_user_id_called = []
 
     def ensure_default(self, user_id):
         self.ensure_default_called.append(user_id)
+        self.settings.user_id = user_id
+        return self.settings
+
+    def get_by_user_id(self, user_id):
+        """Get settings by user ID (used by broker endpoints)"""
+        self.get_by_user_id_called.append(user_id)
+        if self.settings is None:
+            return None
         self.settings.user_id = user_id
         return self.settings
 
@@ -77,7 +94,7 @@ def test_extract_error_message_string():
 
 # POST /creds tests
 def test_save_broker_creds_basic(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -105,7 +122,7 @@ def test_save_broker_creds_basic(monkeypatch):
 
 
 def test_save_broker_creds_full(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -143,7 +160,7 @@ def test_save_broker_creds_full(monkeypatch):
 
 
 def test_save_broker_creds_partial(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -218,7 +235,10 @@ def test_test_broker_connection_no_sdk(monkeypatch):
 
     assert result.ok is False
     # Should return user-friendly message without installation instructions
-    assert "not available" in result.message.lower() or "system administrator" in result.message.lower()
+    assert (
+        "not available" in result.message.lower()
+        or "system administrator" in result.message.lower()
+    )
     assert "pip install" not in result.message.lower()  # No installation commands for users
 
 
@@ -232,7 +252,7 @@ def test_test_broker_connection_sdk_available_basic(monkeypatch):
 
     monkeypatch.setattr(broker, "NeoAPI", mock_neo_api)
 
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -272,7 +292,7 @@ def test_test_broker_connection_success_updates_settings(monkeypatch):
     mock_client = MagicMock()
     monkeypatch.setattr(broker, "NeoAPI", lambda *args, **kwargs: mock_client)
 
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -303,7 +323,7 @@ def test_test_broker_connection_failure_no_update(monkeypatch):
 
     monkeypatch.setattr(broker, "NeoAPI", mock_neo_api)
 
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -375,7 +395,7 @@ def test_test_kotak_neo_connection_full_creds(monkeypatch):
 
 # GET /status tests
 def test_broker_status(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     repo.settings.broker = "kotak-neo"
     repo.settings.broker_status = "Connected"
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
@@ -388,7 +408,7 @@ def test_broker_status(monkeypatch):
 
 
 def test_broker_status_none(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     repo.settings.broker = None
     repo.settings.broker_status = None
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
@@ -399,9 +419,175 @@ def test_broker_status_none(monkeypatch):
     assert result == {"broker": None, "status": None}
 
 
+def test_broker_status_with_cached_authenticated_auth(monkeypatch):
+    """Test status endpoint uses cached authenticated auth without creating new instances"""
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker = "kotak-neo"
+    repo.settings.broker_status = "Disconnected"  # Will be updated to Connected
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    # Mock cached auth that is authenticated
+    mock_auth = MagicMock()
+    mock_auth.is_authenticated.return_value = True
+
+    # Clear cache and add mock auth
+    broker._broker_auth_cache.clear()
+    broker._broker_auth_cache[42] = mock_auth
+
+    # Mock decrypt function
+    mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
+
+    user = DummyUser(id=42)
+    db_session = MagicMock()
+    result = broker.broker_status(db=db_session, current=user)
+
+    # Should return Connected and update database
+    assert result == {"broker": "kotak-neo", "status": "Connected"}
+    assert len(repo.update_called) == 1
+    assert repo.update_called[0][1]["broker_status"] == "Connected"
+    db_session.commit.assert_called_once()
+
+    # Verify is_authenticated was called (not login)
+    mock_auth.is_authenticated.assert_called_once()
+    mock_auth.login.assert_not_called()
+
+
+def test_broker_status_with_cached_non_authenticated_auth(monkeypatch):
+    """Test status endpoint returns stored status when cached auth is not authenticated"""
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker = "kotak-neo"
+    repo.settings.broker_status = "Disconnected"
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    # Mock cached auth that is NOT authenticated
+    mock_auth = MagicMock()
+    mock_auth.is_authenticated.return_value = False
+
+    # Clear cache and add mock auth
+    broker._broker_auth_cache.clear()
+    broker._broker_auth_cache[42] = mock_auth
+
+    # Mock decrypt function
+    mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
+
+    user = DummyUser(id=42)
+    db_session = MagicMock()
+    result = broker.broker_status(db=db_session, current=user)
+
+    # Should return stored status without updating
+    assert result == {"broker": "kotak-neo", "status": "Disconnected"}
+    assert len(repo.update_called) == 0  # No update when not authenticated
+    db_session.commit.assert_not_called()
+
+    # Verify is_authenticated was called
+    mock_auth.is_authenticated.assert_called_once()
+    mock_auth.login.assert_not_called()
+
+
+def test_broker_status_without_cached_auth(monkeypatch):
+    """Test status endpoint returns stored status when no cached auth exists"""
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker = "kotak-neo"
+    repo.settings.broker_status = "Disconnected"
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    # Clear cache - no cached auth
+    broker._broker_auth_cache.clear()
+
+    # Mock decrypt function
+    mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
+
+    # Mock KotakNeoAuth import to verify it's NOT created
+    # Since KotakNeoAuth is imported inside the function, we patch the module import
+    with patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth") as mock_auth_class:
+        user = DummyUser(id=42)
+        db_session = MagicMock()
+        result = broker.broker_status(db=db_session, current=user)
+
+        # Should return stored status without creating new auth instance
+        assert result == {"broker": "kotak-neo", "status": "Disconnected"}
+        assert len(repo.update_called) == 0
+        db_session.commit.assert_not_called()
+
+        # Verify KotakNeoAuth was NOT instantiated (status endpoint doesn't create it)
+        mock_auth_class.assert_not_called()
+
+
+def test_broker_status_paper_mode(monkeypatch):
+    """Test status endpoint returns stored status in paper mode"""
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.PAPER
+    repo.settings.broker = None
+    repo.settings.broker_status = None
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    user = DummyUser(id=42)
+    result = broker.broker_status(db=None, current=user)
+
+    assert result == {"broker": None, "status": None}
+    assert len(repo.update_called) == 0
+
+
+def test_broker_status_no_broker_creds(monkeypatch):
+    """Test status endpoint returns stored status when no broker credentials"""
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker = "kotak-neo"
+    repo.settings.broker_status = "Disconnected"
+    repo.settings.broker_creds_encrypted = None  # No credentials
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    user = DummyUser(id=42)
+    result = broker.broker_status(db=None, current=user)
+
+    assert result == {"broker": "kotak-neo", "status": "Disconnected"}
+    assert len(repo.update_called) == 0
+
+
+def test_broker_status_updates_to_connected_when_cached_auth_valid(monkeypatch):
+    """Test status endpoint updates database when cached auth becomes authenticated"""
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker = "kotak-neo"
+    repo.settings.broker_status = "Disconnected"  # Will be updated
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    # Mock cached auth that is authenticated
+    mock_auth = MagicMock()
+    mock_auth.is_authenticated.return_value = True
+
+    # Clear cache and add mock auth
+    broker._broker_auth_cache.clear()
+    broker._broker_auth_cache[42] = mock_auth
+
+    # Mock decrypt function
+    mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
+
+    user = DummyUser(id=42)
+    db_session = MagicMock()
+    result = broker.broker_status(db=db_session, current=user)
+
+    # Should update status to Connected
+    assert result == {"broker": "kotak-neo", "status": "Connected"}
+    assert len(repo.update_called) == 1
+    assert repo.update_called[0][1]["broker_status"] == "Connected"
+    db_session.commit.assert_called_once()
+
+
 # GET /creds/info tests
 def test_get_broker_creds_info_no_creds(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     repo.settings.broker_creds_encrypted = None
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
@@ -414,7 +600,7 @@ def test_get_broker_creds_info_no_creds(monkeypatch):
 
 
 def test_get_broker_creds_info_masked(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     creds_dict = {"api_key": "test_key_12345", "api_secret": "test_secret_67890"}
     encrypted_blob = json.dumps(creds_dict).encode("utf-8")
     repo.settings.broker_creds_encrypted = encrypted_blob
@@ -436,7 +622,7 @@ def test_get_broker_creds_info_masked(monkeypatch):
 
 
 def test_get_broker_creds_info_full(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     creds_dict = {
         "api_key": "test_key_12345",
         "api_secret": "test_secret_67890",
@@ -468,7 +654,7 @@ def test_get_broker_creds_info_full(monkeypatch):
 
 
 def test_get_broker_creds_info_decrypt_fails(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     repo.settings.broker_creds_encrypted = b"invalid_encrypted_data"
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
@@ -484,7 +670,7 @@ def test_get_broker_creds_info_decrypt_fails(monkeypatch):
 
 
 def test_get_broker_creds_info_invalid_json(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     # Invalid JSON that can't be parsed
     repo.settings.broker_creds_encrypted = b"not json data"
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
@@ -502,7 +688,7 @@ def test_get_broker_creds_info_invalid_json(monkeypatch):
 
 
 def test_get_broker_creds_info_old_format(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     # Old format using Python dict literal
     old_format = "{'api_key': 'test_key', 'api_secret': 'test_secret'}"
     repo.settings.broker_creds_encrypted = old_format.encode("utf-8")
@@ -520,8 +706,27 @@ def test_get_broker_creds_info_old_format(monkeypatch):
     assert result.has_creds is True or result.has_creds is False
 
 
+def test_get_broker_creds_info_invalid_json_no_brace(monkeypatch):
+    """Test when JSON decode fails and string doesn't start with '{'"""
+    repo = DummySettingsRepo(object())
+    repo.settings.broker_creds_encrypted = b"invalid_data"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(blob):
+        # Return data that's not JSON and doesn't start with '{'
+        return b"not a dict or json"
+
+    monkeypatch.setattr(broker, "decrypt_blob", mock_decrypt)
+
+    user = DummyUser(id=42)
+    result = broker.get_broker_creds_info(show_full=False, db=None, current=user)
+
+    # Should return has_creds=False when can't parse
+    assert result.has_creds is False
+
+
 def test_get_broker_creds_info_mask_short_values(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     creds_dict = {"api_key": "abc", "api_secret": "12"}  # Too short to mask
     encrypted_blob = json.dumps(creds_dict).encode("utf-8")
     repo.settings.broker_creds_encrypted = encrypted_blob
@@ -541,7 +746,7 @@ def test_get_broker_creds_info_mask_short_values(monkeypatch):
 
 
 def test_get_broker_creds_info_exception_handling(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     repo.settings.broker_creds_encrypted = b"some_data"
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
@@ -824,7 +1029,7 @@ def test_test_kotak_neo_2fa_other_exception(monkeypatch):
 
 
 def test_save_broker_creds_with_totp_secret(monkeypatch):
-    repo = DummySettingsRepo(db_marker := object())
+    repo = DummySettingsRepo(object())
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
     user = DummyUser(id=42)
@@ -850,3 +1055,835 @@ def test_save_broker_creds_with_totp_secret(monkeypatch):
     assert result == {"status": "ok"}
     creds_dict = json.loads(encrypted_data.decode("utf-8"))
     assert creds_dict["totp_secret"] == "totp123"
+
+
+# GET /portfolio tests
+def test_get_broker_portfolio_no_settings(monkeypatch):
+    """Test broker portfolio endpoint when user settings don't exist"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings = None
+
+    def mock_get_by_user_id(user_id):
+        return None
+
+    repo.get_by_user_id = mock_get_by_user_id
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_portfolio(db=db_session, current=user)
+
+    assert exc.value.status_code == 404
+    assert "User settings not found" in exc.value.detail
+
+
+def test_get_broker_portfolio_paper_mode(monkeypatch):
+    """Test broker portfolio endpoint when user is in paper mode"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.PAPER
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_portfolio(db=db_session, current=user)
+
+    assert exc.value.status_code == 400
+    assert "broker mode" in exc.value.detail.lower()
+
+
+def test_get_broker_portfolio_no_credentials(monkeypatch):
+    """Test broker portfolio endpoint when credentials are not configured"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = None
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_portfolio(db=db_session, current=user)
+
+    assert exc.value.status_code == 400
+    assert "credentials not configured" in exc.value.detail.lower()
+
+
+def test_get_broker_portfolio_decrypt_fails(monkeypatch):
+    """Test broker portfolio endpoint when credential decryption fails"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"invalid_encrypted"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return None
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_portfolio(db=db_session, current=user)
+
+    assert exc.value.status_code == 400
+    assert "Failed to decrypt" in exc.value.detail
+
+
+def test_get_broker_portfolio_auth_fails(monkeypatch):
+    """Test broker portfolio endpoint when authentication fails"""
+    user = DummyUser(id=42)
+
+    # Clear cache to ensure fresh auth attempt
+    broker._broker_auth_cache.clear()
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Mock KotakNeoAuth to fail login
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = False
+    mock_auth.is_authenticated.return_value = False
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    with patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init):
+        db_session = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            broker.get_broker_portfolio(db=db_session, current=user)
+
+        assert exc.value.status_code == 503
+        assert "Failed to connect to broker" in exc.value.detail
+
+
+def test_get_broker_portfolio_success(monkeypatch):
+    """Test broker portfolio endpoint success case"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    temp_env_file = "/tmp/test_broker_portfolio.env"
+
+    def mock_create_temp_env(creds):
+        return temp_env_file
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Mock KotakNeoAuth
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = True
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    # Mock BrokerFactory and broker gateway
+    mock_holding = Holding(
+        symbol="RELIANCE.NS",
+        exchange=Exchange.NSE,
+        quantity=10,
+        average_price=Money(Decimal("2500.00")),
+        current_price=Money(Decimal("2600.00")),
+        last_updated=datetime.now(),
+    )
+
+    mock_broker = MagicMock()
+    mock_broker.connect.return_value = True
+    mock_broker.get_holdings.return_value = [mock_holding]
+    # Fix: Return structure matches what code expects - available_cash as Money object
+    mock_broker.get_account_limits.return_value = {
+        "available_cash": Money(Decimal("100000.0")),
+    }
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    # Mock yfinance
+    mock_ticker = MagicMock()
+    mock_ticker.info = {"currentPrice": 2600.0}
+
+    def mock_yf_ticker(symbol):
+        return mock_ticker
+
+    # Patch at the import location (inside the function)
+    with (
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+        patch("yfinance.Ticker", mock_yf_ticker),
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_portfolio(db=db_session, current=user)
+
+        assert result.account.available_cash == 100000.0
+        assert len(result.holdings) == 1
+        assert result.holdings[0].symbol == "RELIANCE.NS"
+        assert result.holdings[0].quantity == 10
+        assert result.holdings[0].average_price == 2500.0
+        assert result.holdings[0].current_price == 2600.0
+        assert result.holdings[0].pnl == 1000.0  # 10 * (2600 - 2500)
+        assert result.holdings[0].pnl_percentage == pytest.approx(4.0, rel=0.1)  # (1000/25000)*100
+        assert result.account.portfolio_value > 0
+        assert result.account.unrealized_pnl > 0
+
+
+def test_get_broker_orders_decrypt_fails(monkeypatch):
+    """Test broker orders endpoint when credential decryption fails"""
+    user = DummyUser(id=42)
+
+    # Clear cache
+    broker._broker_auth_cache.clear()
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return None  # Decrypt fails
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_orders(db=db_session, current=user)
+
+    assert exc.value.status_code == 400
+    assert "Failed to decrypt broker credentials" in exc.value.detail
+
+
+def test_get_broker_orders_no_settings(monkeypatch):
+    """Test broker orders endpoint when user settings don't exist"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings = None
+
+    def mock_get_by_user_id(user_id):
+        return None
+
+    repo.get_by_user_id = mock_get_by_user_id
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_orders(db=db_session, current=user)
+
+    assert exc.value.status_code == 404
+    assert "User settings not found" in exc.value.detail
+
+
+def test_get_broker_orders_paper_mode(monkeypatch):
+    """Test broker orders endpoint when user is in paper mode"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.PAPER
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_orders(db=db_session, current=user)
+
+    assert exc.value.status_code == 400
+    assert "broker mode" in exc.value.detail.lower()
+
+
+def test_get_broker_orders_no_credentials(monkeypatch):
+    """Test broker orders endpoint when credentials are not configured"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = None
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    db_session = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        broker.get_broker_orders(db=db_session, current=user)
+
+    assert exc.value.status_code == 400
+    assert "credentials not configured" in exc.value.detail.lower()
+
+
+def test_get_broker_orders_success(monkeypatch):
+    """Test broker orders endpoint success case"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    temp_env_file = "/tmp/test_broker_orders.env"
+
+    def mock_create_temp_env(creds):
+        return temp_env_file
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Mock KotakNeoAuth
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = True
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    # Mock BrokerFactory and broker gateway
+    mock_order = MagicMock()
+    mock_order.order_id = "ORDER123"
+    mock_order.symbol = "RELIANCE.NS"
+    mock_order.quantity = 10
+    mock_order.transaction_type.value = "BUY"
+    mock_order.status.value = "OPEN"
+    mock_order.created_at = datetime.now()
+    # Create mock Money object
+    mock_price = MagicMock()
+    mock_price.amount = Decimal("2500.00")
+    mock_order.price = mock_price
+    # Fixed: Use correct field names (executed_price, executed_quantity)
+    mock_executed_price = MagicMock()
+    mock_executed_price.amount = Decimal("2500.50")
+    mock_order.executed_price = mock_executed_price
+    mock_order.executed_quantity = 10
+
+    mock_broker = MagicMock()
+    mock_broker.connect.return_value = True
+    mock_broker.get_all_orders.return_value = [mock_order]
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_orders(db=db_session, current=user)
+
+        assert len(result) == 1
+        assert result[0]["broker_order_id"] == "ORDER123"
+        assert result[0]["symbol"] == "RELIANCE.NS"
+        assert result[0]["quantity"] == 10
+        assert result[0]["side"] == "buy"
+        assert result[0]["status"] == "pending"
+        assert result[0]["price"] == 2500.0
+        # Test that executed_price and execution_qty are correctly mapped
+        assert result[0]["execution_price"] == 2500.50
+        assert result[0]["execution_qty"] == 10
+
+
+def test_get_broker_orders_with_executed_fields(monkeypatch):
+    """Test broker orders endpoint with executed_price and executed_quantity"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = True
+    mock_auth.is_authenticated.return_value = True
+    mock_client = MagicMock()
+    mock_auth.get_client.return_value = mock_client
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    # Create order with executed fields
+    mock_order = MagicMock()
+    mock_order.order_id = "ORDER456"
+    mock_order.symbol = "TCS-EQ"
+    mock_order.quantity = 5
+    mock_order.transaction_type.value = "SELL"
+    mock_order.status.value = "EXECUTED"
+    mock_order.created_at = datetime.now()
+
+    mock_price = MagicMock()
+    mock_price.amount = Decimal("3500.00")
+    mock_order.price = mock_price
+
+    # Test executed_price and executed_quantity
+    mock_executed_price = MagicMock()
+    mock_executed_price.amount = Decimal("3500.75")
+    mock_order.executed_price = mock_executed_price
+    mock_order.executed_quantity = 5
+
+    mock_broker = MagicMock()
+    mock_broker.get_all_orders.return_value = [mock_order]
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_orders(db=db_session, current=user)
+
+        assert len(result) == 1
+        assert result[0]["broker_order_id"] == "ORDER456"
+        assert result[0]["symbol"] == "TCS-EQ"
+        assert result[0]["side"] == "sell"
+        assert result[0]["status"] == "ongoing"  # EXECUTED -> ongoing
+        assert result[0]["execution_price"] == 3500.75
+        assert result[0]["execution_qty"] == 5
+
+
+def test_get_broker_orders_conversion_error_handling(monkeypatch):
+    """Test that order conversion errors are handled gracefully"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    mock_auth = MagicMock()
+    mock_auth.is_authenticated.return_value = True
+    mock_client = MagicMock()
+    mock_auth.get_client.return_value = mock_client
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    # Create invalid order that will cause conversion error
+    mock_order_invalid = MagicMock()
+    mock_order_invalid.order_id = "INVALID"
+    # Missing required attributes will cause AttributeError
+    del mock_order_invalid.symbol
+
+    mock_order_valid = MagicMock()
+    mock_order_valid.order_id = "VALID"
+    mock_order_valid.symbol = "RELIANCE-EQ"
+    mock_order_valid.quantity = 10
+    mock_order_valid.transaction_type.value = "BUY"
+    mock_order_valid.status.value = "OPEN"
+    mock_order_valid.created_at = datetime.now()
+    mock_price = MagicMock()
+    mock_price.amount = Decimal("2500.00")
+    mock_order_valid.price = mock_price
+    mock_order_valid.executed_price = None
+    mock_order_valid.executed_quantity = None
+
+    mock_broker = MagicMock()
+    mock_broker.get_all_orders.return_value = [mock_order_invalid, mock_order_valid]
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_orders(db=db_session, current=user)
+
+        # Should return only the valid order, invalid one should be skipped
+        assert len(result) == 1
+        assert result[0]["broker_order_id"] == "VALID"
+
+
+def test_get_broker_orders_auth_fails(monkeypatch):
+    """Test broker orders endpoint when authentication fails"""
+    user = DummyUser(id=42)
+
+    # Clear the cache to ensure a fresh test
+    broker._broker_auth_cache.clear()
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Mock KotakNeoAuth to fail login
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = False
+    mock_auth.is_authenticated.return_value = False  # Not authenticated
+
+    def mock_auth_init(env_file):
+        return mock_auth
+
+    with patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init):
+        db_session = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            broker.get_broker_orders(db=db_session, current=user)
+
+        assert exc.value.status_code == 503
+        assert "Failed to connect to broker" in exc.value.detail
+
+
+def test_get_broker_portfolio_cache_reuse_prevents_multiple_otp(monkeypatch):
+    """Test that portfolio endpoint reuses cached auth and prevents multiple OTP requests"""
+    user = DummyUser(id=42)
+
+    # Clear cache
+    broker._broker_auth_cache.clear()
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    temp_env_file = "/tmp/test_portfolio_cache.env"
+
+    def mock_create_temp_env(creds):
+        return temp_env_file
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Mock KotakNeoAuth - login should only be called once
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = True
+    mock_auth.is_authenticated.return_value = True
+    mock_client = MagicMock()
+    mock_auth.get_client.return_value = mock_client
+
+    auth_instance_created = []
+
+    def mock_auth_init(env_file):
+        auth_instance_created.append(1)  # Track how many times auth is created
+        return mock_auth
+
+    # Mock broker gateway
+    mock_holding = Holding(
+        symbol="RELIANCE.NS",
+        exchange=Exchange.NSE,
+        quantity=10,
+        average_price=Money(Decimal("2500.00")),
+        current_price=Money(Decimal("2600.00")),
+        last_updated=datetime.now(),
+    )
+
+    mock_broker = MagicMock()
+    mock_broker.get_holdings.return_value = [mock_holding]
+    mock_broker.get_account_limits.return_value = {
+        "available_margin": {"cash": 100000.0},
+    }
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    # Mock yfinance
+    mock_ticker = MagicMock()
+    mock_ticker.info = {"currentPrice": 2600.0}
+
+    def mock_yf_ticker(symbol):
+        return mock_ticker
+
+    with (
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+        patch("yfinance.Ticker", mock_yf_ticker),
+    ):
+        db_session = MagicMock()
+
+        # First call - should create auth and call login once
+        result1 = broker.get_broker_portfolio(db=db_session, current=user)
+        assert len(result1.holdings) == 1
+        assert len(auth_instance_created) == 1  # Auth created once
+        assert mock_auth.login.call_count == 1  # Login called once
+
+        # Second call - should reuse cached auth, NO login call
+        result2 = broker.get_broker_portfolio(db=db_session, current=user)
+        assert len(result2.holdings) == 1
+        assert len(auth_instance_created) == 1  # Auth NOT created again
+        assert mock_auth.login.call_count == 1  # Login NOT called again
+
+        # Third call - should still reuse cached auth
+        result3 = broker.get_broker_portfolio(db=db_session, current=user)
+        assert len(result3.holdings) == 1
+        assert len(auth_instance_created) == 1  # Auth NOT created again
+        assert mock_auth.login.call_count == 1  # Login still only called once
+
+
+def test_get_broker_orders_cache_reuse_prevents_multiple_otp(monkeypatch):
+    """Test that orders endpoint reuses cached auth and prevents multiple OTP requests"""
+    user = DummyUser(id=42)
+
+    # Clear cache
+    broker._broker_auth_cache.clear()
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    temp_env_file = "/tmp/test_orders_cache.env"
+
+    def mock_create_temp_env(creds):
+        return temp_env_file
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Mock KotakNeoAuth - login should only be called once
+    mock_auth = MagicMock()
+    mock_auth.login.return_value = True
+    mock_auth.is_authenticated.return_value = True
+    mock_client = MagicMock()
+    mock_auth.get_client.return_value = mock_client
+
+    auth_instance_created = []
+
+    def mock_auth_init(env_file):
+        auth_instance_created.append(1)  # Track how many times auth is created
+        return mock_auth
+
+    # Mock broker gateway
+    mock_order = MagicMock()
+    mock_order.order_id = "ORDER123"
+    mock_order.symbol = "RELIANCE.NS"
+    mock_order.quantity = 10
+    mock_order.transaction_type.value = "BUY"
+    mock_order.status.value = "OPEN"
+    mock_order.created_at = datetime.now()
+    mock_price = MagicMock()
+    mock_price.amount = Decimal("2500.00")
+    mock_order.price = mock_price
+    mock_order.execution_price = None
+    mock_order.execution_qty = None
+
+    mock_broker = MagicMock()
+    mock_broker.get_all_orders.return_value = [mock_order]
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+
+        # First call - should create auth and call login once
+        result1 = broker.get_broker_orders(db=db_session, current=user)
+        assert len(result1) == 1
+        assert len(auth_instance_created) == 1  # Auth created once
+        assert mock_auth.login.call_count == 1  # Login called once
+
+        # Second call - should reuse cached auth, NO login call
+        result2 = broker.get_broker_orders(db=db_session, current=user)
+        assert len(result2) == 1
+        assert len(auth_instance_created) == 1  # Auth NOT created again
+        assert mock_auth.login.call_count == 1  # Login NOT called again
+
+        # Third call - should still reuse cached auth
+        result3 = broker.get_broker_orders(db=db_session, current=user)
+        assert len(result3) == 1
+        assert len(auth_instance_created) == 1  # Auth NOT created again
+        assert mock_auth.login.call_count == 1  # Login still only called once
+
+
+def test_get_broker_portfolio_cached_auth_authenticated_skips_login(monkeypatch):
+    """Test that portfolio endpoint skips login when cached auth is already authenticated"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    # Pre-populate cache with authenticated auth
+    mock_auth = MagicMock()
+    mock_auth.is_authenticated.return_value = True
+    mock_client = MagicMock()
+    mock_auth.get_client.return_value = mock_client
+
+    broker._broker_auth_cache.clear()
+    broker._broker_auth_cache[42] = mock_auth
+
+    # Mock broker gateway
+    mock_holding = Holding(
+        symbol="RELIANCE.NS",
+        exchange=Exchange.NSE,
+        quantity=10,
+        average_price=Money(Decimal("2500.00")),
+        current_price=Money(Decimal("2600.00")),
+        last_updated=datetime.now(),
+    )
+
+    mock_broker = MagicMock()
+    mock_broker.get_holdings.return_value = [mock_holding]
+    mock_broker.get_account_limits.return_value = {
+        "available_margin": {"cash": 100000.0},
+    }
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    # Mock yfinance
+    mock_ticker = MagicMock()
+    mock_ticker.info = {"currentPrice": 2600.0}
+
+    def mock_yf_ticker(symbol):
+        return mock_ticker
+
+    with (
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+        patch("yfinance.Ticker", mock_yf_ticker),
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_portfolio(db=db_session, current=user)
+
+        assert len(result.holdings) == 1
+        # Verify login was NOT called (auth was already authenticated)
+        mock_auth.login.assert_not_called()
+        # Verify is_authenticated was checked
+        mock_auth.is_authenticated.assert_called()
+        # Verify get_client was called to set broker client
+        mock_auth.get_client.assert_called()
+
+
+def test_get_broker_orders_cached_auth_authenticated_skips_login(monkeypatch):
+    """Test that orders endpoint skips login when cached auth is already authenticated"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    # Pre-populate cache with authenticated auth
+    mock_auth = MagicMock()
+    mock_auth.is_authenticated.return_value = True
+    mock_client = MagicMock()
+    mock_auth.get_client.return_value = mock_client
+
+    broker._broker_auth_cache.clear()
+    broker._broker_auth_cache[42] = mock_auth
+
+    # Mock broker gateway
+    mock_order = MagicMock()
+    mock_order.order_id = "ORDER123"
+    mock_order.symbol = "RELIANCE.NS"
+    mock_order.quantity = 10
+    mock_order.transaction_type.value = "BUY"
+    mock_order.status.value = "OPEN"
+    mock_order.created_at = datetime.now()
+    mock_price = MagicMock()
+    mock_price.amount = Decimal("2500.00")
+    mock_order.price = mock_price
+    mock_order.execution_price = None
+    mock_order.execution_qty = None
+
+    mock_broker = MagicMock()
+    mock_broker.get_all_orders.return_value = [mock_order]
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with patch(
+        "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+        mock_broker_factory,
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_orders(db=db_session, current=user)
+
+        assert len(result) == 1
+        # Verify login was NOT called (auth was already authenticated)
+        mock_auth.login.assert_not_called()
+        # Verify is_authenticated was checked
+        mock_auth.is_authenticated.assert_called()
+        # Verify get_client was called to set broker client
+        mock_auth.get_client.assert_called()

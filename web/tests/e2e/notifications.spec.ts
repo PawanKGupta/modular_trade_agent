@@ -39,7 +39,7 @@ test.describe('Notifications', () => {
 
 		if (buttonCount > 0) {
 			// Get initial unread count if displayed (for future use if needed)
-			// eslint-disable-next-line @typescript-eslint/no-unused-vars
+
 			const unreadCountElement = authenticatedPage.getByText(/\d+/).first();
 			if (await unreadCountElement.isVisible().catch(() => false)) {
 				// Unread count available if needed - captured for future assertions

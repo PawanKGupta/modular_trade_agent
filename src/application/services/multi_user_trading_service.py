@@ -178,33 +178,8 @@ class MultiUserTradingService:
                                     action="scheduler",
                                 )
 
-                    # Position monitoring (hourly, uses DB schedule)
-                    position_schedule = self._schedule_manager.get_schedule("position_monitor")
-                    if (
-                        position_schedule
-                        and position_schedule.enabled
-                        and position_schedule.is_hourly
-                    ):
-                        start_time = position_schedule.schedule_time
-                        # Run hourly at the scheduled minute (e.g., every hour at :30)
-                        if (
-                            current_time.minute == start_time.minute
-                            and start_time.hour <= now.hour <= 15
-                        ):  # noqa: PLR2004
-                            hour_key = now.strftime("%Y-%m-%d %H")
-                            if not service.tasks_completed.get("position_monitor", {}).get(
-                                hour_key
-                            ):
-                                try:
-                                    service.run_position_monitor()
-                                except Exception as e:
-                                    user_logger.error(
-                                        f"Position monitoring failed: {e}",
-                                        exc_info=True,
-                                        action="scheduler",
-                                    )
-
-                    # 4:00 PM - Analysis (check custom schedule from DB and trigger via Individual Service Manager)
+                    # 4:00 PM - Analysis (check custom schedule from DB and trigger via
+                    # Individual Service Manager)
                     analysis_schedule = self._schedule_manager.get_schedule("analysis")
                     if analysis_schedule and analysis_schedule.enabled:
                         analysis_time = analysis_schedule.schedule_time
@@ -355,11 +330,10 @@ class MultiUserTradingService:
         Returns:
             True if service started successfully, False otherwise
         """
-        # Get or create lock for this user
-        if user_id not in self._locks:
-            self._locks[user_id] = threading.Lock()
+        # Get or create lock for this user (thread-safe using setdefault)
+        lock = self._locks.setdefault(user_id, threading.Lock())
 
-        with self._locks[user_id]:
+        with lock:
             # Check if service already running
             if user_id in self._services:
                 # Service already exists - check if it's actually running
@@ -441,7 +415,7 @@ class MultiUserTradingService:
 
                 # Load user trading configuration and convert to StrategyConfig
                 user_config = self._config_repo.get_or_create_default(user_id)
-                strategy_config = user_config_to_strategy_config(user_config)
+                strategy_config = user_config_to_strategy_config(user_config, db_session=self.db)
 
                 # Create appropriate service based on mode
                 if settings.trade_mode.value == "paper":
@@ -541,11 +515,10 @@ class MultiUserTradingService:
         Returns:
             True if service stopped successfully, False otherwise
         """
-        if user_id not in self._locks:
-            # Create lock to make stop idempotent even if service was never started
-            self._locks[user_id] = threading.Lock()
+        # Get or create lock for this user (thread-safe using setdefault)
+        lock = self._locks.setdefault(user_id, threading.Lock())
 
-        with self._locks[user_id]:
+        with lock:
             service = self._services.pop(user_id, None)
             service_thread = self._service_threads.pop(user_id, None)
 

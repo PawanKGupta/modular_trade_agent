@@ -75,13 +75,13 @@ class TradingService:
 
         Args:
             user_id: User ID for this service instance
-            db_session: SQLAlchemy database session
+            db_session: SQLAlchemy database session (used for initialization only, thread-local session created in run())
             broker_creds: Decrypted broker credentials dict (None for paper trading mode)
             strategy_config: User-specific StrategyConfig (optional, will be loaded if not provided)
             env_file: Deprecated - kept for backward compatibility only
         """
         self.user_id = user_id
-        self.db = db_session
+        self.db = db_session  # Initial session (for setup only)
         self.broker_creds = broker_creds
         self.skip_execution_tracking = skip_execution_tracking
 
@@ -96,7 +96,9 @@ class TradingService:
 
             config_repo = UserTradingConfigRepository(db_session)
             user_config = config_repo.get_or_create_default(user_id)
-            self.strategy_config = user_config_to_strategy_config(user_config)
+            self.strategy_config = user_config_to_strategy_config(
+                user_config, db_session=db_session
+            )
         else:
             self.strategy_config = strategy_config
 
@@ -126,7 +128,6 @@ class TradingService:
             "premarket_retry": False,
             "premarket_amo_adjustment": False,
             "sell_monitor_started": False,
-            "position_monitor": {},  # Track hourly runs
         }
 
         # User-scoped logger
@@ -135,9 +136,20 @@ class TradingService:
         self.logger = get_user_logger(user_id=user_id, db=db_session, module="TradingService")
 
     def setup_signal_handlers(self):
-        """Setup graceful shutdown handlers"""
-        signal.signal(signal.SIGINT, self._handle_shutdown)
-        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        """
+        Setup graceful shutdown handlers.
+
+        Note: signal.signal() may not work in background threads on some platforms.
+        This is expected and non-critical - the service can still be stopped via
+        shutdown_requested flag or through the service management API.
+        """
+        try:
+            signal.signal(signal.SIGINT, self._handle_shutdown)
+            signal.signal(signal.SIGTERM, self._handle_shutdown)
+        except (ValueError, OSError, RuntimeError):
+            # Signal handlers can only be set from main thread on some platforms
+            # This is expected behavior for background threads - re-raise to be handled by caller
+            raise
 
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signal"""
@@ -150,14 +162,18 @@ class TradingService:
         Returns True if successful
         """
         try:
-            logger.info("=" * 80)
-            logger.info("TRADING SERVICE INITIALIZATION")
-            logger.info("=" * 80)
+            self.logger.info("=" * 80, action="initialize")
+            self.logger.info("TRADING SERVICE INITIALIZATION", action="initialize")
+            self.logger.info("=" * 80, action="initialize")
 
             # Check for service conflicts (prevent running with old services)
+            self.logger.info("Checking for service conflicts...", action="initialize")
             if not prevent_service_conflict("run_trading_service.py", is_unified=True):
-                logger.error("Service initialization aborted due to conflicts.")
+                self.logger.error(
+                    "Service initialization aborted due to conflicts.", action="initialize"
+                )
                 return False
+            self.logger.info("No service conflicts detected", action="initialize")
 
             # Initialize authentication
             self.logger.info("Authenticating with Kotak Neo...", action="initialize")
@@ -201,14 +217,16 @@ class TradingService:
             # Initialize engine (creates portfolio, orders, etc.)
             # Since auth is already logged in, this just initializes components without re-auth
             if not self.engine.login():
-                logger.error("Engine initialization failed")
+                self.logger.error("Engine initialization failed", action="initialize")
                 return False
+            self.logger.info("Trading engine initialized successfully", action="initialize")
 
             # Initialize live prices (WebSocket for real-time LTP)
             # For buy_orders task, WebSocket is not needed (AMO orders don't need real-time prices)
             # Skip WebSocket initialization to avoid blocking - buy orders use yfinance for prices
-            logger.info(
-                "Skipping WebSocket initialization for buy_orders (not needed for AMO orders)"
+            self.logger.info(
+                "Skipping WebSocket initialization for buy_orders (not needed for AMO orders)",
+                action="initialize",
             )
             self.price_cache = None
             self.scrip_master = None
@@ -220,12 +238,30 @@ class TradingService:
             # Initialize sell order manager (will be started at market open)
             # For buy_orders task, this is not needed, but initialize it anyway for consistency
             try:
-                logger.info("Initializing sell order manager...")
-                # Pass positions_repo and user_id if available for direct DB updates
+                self.logger.info("Initializing sell order manager...", action="initialize")
+                # Get positions_repo and orders_repo from engine (required for database-only tracking)
                 positions_repo = (
                     self.engine.positions_repo if hasattr(self.engine, "positions_repo") else None
                 )
+                orders_repo = (
+                    self.engine.orders_repo if hasattr(self.engine, "orders_repo") else None
+                )
                 user_id = self.user_id
+
+                if not positions_repo:
+                    self.logger.error(
+                        "PositionsRepository not available - sell order placement will fail. "
+                        "Ensure AutoTradeEngine has positions_repo initialized.",
+                        action="initialize",
+                    )
+                    # Don't raise - let it fail gracefully when get_open_positions() is called
+                if not user_id:
+                    self.logger.error(
+                        "user_id not available - sell order placement will fail.",
+                        action="initialize",
+                    )
+                    # Don't raise - let it fail gracefully when get_open_positions() is called
+
                 # Phase 3.2: Pass OrderStatusVerifier to SellOrderManager for shared results
                 order_verifier = (
                     self.engine.order_verifier
@@ -234,9 +270,10 @@ class TradingService:
                 )
                 self.sell_manager = SellOrderManager(
                     self.auth,
-                    price_manager=self.price_cache,
                     positions_repo=positions_repo,
                     user_id=user_id,
+                    orders_repo=orders_repo,  # For metadata enrichment
+                    price_manager=self.price_cache,
                     order_verifier=order_verifier,  # Phase 3.2: Share OrderStatusVerifier results
                 )
 
@@ -256,13 +293,17 @@ class TradingService:
                         user_id=self.user_id,
                         telegram_notifier=telegram_notifier,
                     )
-                    logger.info("Unified order monitor initialized")
+                    self.logger.info("Unified order monitor initialized", action="initialize")
                 except Exception as e:
-                    logger.warning(f"Unified order monitor initialization failed: {e}")
+                    self.logger.warning(
+                        f"Unified order monitor initialization failed: {e}",
+                        action="initialize",
+                    )
                     self.unified_order_monitor = None
             except Exception as e:
-                logger.warning(
-                    f"Sell order manager initialization failed (non-critical for buy orders): {e}"
+                self.logger.warning(
+                    f"Sell order manager initialization failed (non-critical for buy orders): {e}",
+                    action="initialize",
                 )
                 self.sell_manager = None
                 self.unified_order_monitor = None
@@ -270,18 +311,23 @@ class TradingService:
             # Subscribe to open positions immediately to avoid reconnect loops
             # For buy_orders task, this is not needed (AMO orders don't need real-time prices)
             # Skip it to avoid blocking
-            logger.info("Skipping position subscription for buy_orders (not needed for AMO orders)")
+            self.logger.info(
+                "Skipping position subscription for buy_orders (not needed for AMO orders)",
+                action="initialize",
+            )
             # try:
             #     self._subscribe_to_open_positions()
             # except Exception as e:
-            #     logger.warning(f"Position subscription failed (non-critical for buy orders): {e}")
+            #     self.logger.warning(f"Position subscription failed (non-critical for buy orders): {e}")
 
-            logger.info("Service initialized successfully")
-            logger.info("=" * 80)
+            self.logger.info("Service initialized successfully", action="initialize")
+            self.logger.info("=" * 80, action="initialize")
             return True
 
         except Exception as e:
-            logger.error(f"Service initialization failed: {e}")
+            self.logger.error(
+                f"Service initialization failed: {e}", exc_info=True, action="initialize"
+            )
             import traceback
 
             traceback.print_exc()
@@ -472,6 +518,12 @@ class TradingService:
             logger.info("TASK: PRE-MARKET RETRY (8:00 AM)")
             logger.info("=" * 80)
 
+            # Check if engine is initialized
+            if not self.engine:
+                error_msg = "Trading engine not initialized. Call initialize() first."
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+
             # Retry orders with RETRY_PENDING status from database
             summary = self.engine.retry_pending_orders_from_db()
             logger.info(f"Pre-market retry summary: {summary}")
@@ -499,6 +551,12 @@ class TradingService:
             logger.info("=" * 80)
             logger.info("TASK: PRE-MARKET AMO ADJUSTMENT (9:05 AM)")
             logger.info("=" * 80)
+
+            # Check if engine is initialized
+            if not self.engine:
+                error_msg = "Trading engine not initialized. Call initialize() first."
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
             # Adjust AMO order quantities based on pre-market prices
             summary = self.engine.adjust_amo_quantities_premarket()
@@ -671,46 +729,6 @@ class TradingService:
                         f"Market closed - {len(self.unified_order_monitor.active_buy_orders)} "
                         "buy orders still pending (will be tracked next market open)"
                     )
-
-    def run_position_monitor(self):
-        """9:30 AM (hourly) - Monitor positions for reentry/exit signals"""
-        from src.application.services.task_execution_wrapper import execute_task
-
-        current_hour = datetime.now().hour
-
-        # Run once per hour, skip if already done this hour
-        if self.tasks_completed["position_monitor"].get(current_hour):
-            from src.application.services.task_execution_wrapper import skip_task
-
-            skip_task(
-                self.user_id,
-                self.db,
-                "position_monitor",
-                f"Already executed for hour {current_hour}",
-                self.logger,
-            )
-            return
-
-        with execute_task(
-            self.user_id,
-            self.db,
-            "position_monitor",
-            self.logger,
-            track_execution=not self.skip_execution_tracking,
-        ) as task_context:
-            logger.info("")
-            logger.info("=" * 80)
-            logger.info(f"TASK: POSITION MONITOR ({current_hour}:30)")
-            logger.info("=" * 80)
-
-            # Monitor positions for signals (pass shared price_cache to avoid duplicate auth)
-            summary = self.engine.monitor_positions(live_price_manager=self.price_cache)
-            logger.info(f"Position monitor summary: {summary}")
-            task_context["hour"] = current_hour
-            task_context["summary"] = summary
-
-            self.tasks_completed["position_monitor"][current_hour] = True
-            logger.info("Position monitoring completed")
 
     def run_analysis(self):
         """4:00 PM - Analyze stocks and generate recommendations"""
@@ -904,6 +922,7 @@ class TradingService:
                     f"Processing {len(recs)} recommendations...", action="run_buy_orders"
                 )
                 try:
+                    # Place fresh entry orders
                     summary = self.engine.place_new_entries(recs)
                     self.logger.info(f"Buy orders summary: {summary}", action="run_buy_orders")
                     # Log detailed summary
@@ -943,6 +962,19 @@ class TradingService:
                 )
                 task_context["recommendations_count"] = 0
                 task_context["summary"] = summary  # Return empty summary
+
+            # Check and place re-entry orders (regardless of whether there are fresh entry recommendations)
+            # Re-entry should be checked independently of fresh entry orders
+            self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
+            reentry_summary = self.engine.place_reentry_orders()
+            self.logger.info(f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders")
+            self.logger.info(
+                f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
+                f"Placed: {reentry_summary.get('placed', 0)}, "
+                f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
+                f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
+                action="run_buy_orders",
+            )
 
             self.tasks_completed["buy_orders"] = True
             self.logger.info("Buy orders placement completed", action="run_buy_orders")
@@ -1008,7 +1040,6 @@ class TradingService:
             self.tasks_completed["premarket_retry"] = False
             self.tasks_completed["premarket_amo_adjustment"] = False
             self.tasks_completed["sell_monitor_started"] = False
-            self.tasks_completed["position_monitor"] = {}
             task_context["tasks_reset"] = True
             logger.info("Service ready for next trading day")
 
@@ -1036,6 +1067,7 @@ class TradingService:
 
         last_minute = -1
         loop_count = 0
+        heartbeat_counter = 0  # Track heartbeat updates
 
         while not self.shutdown_requested:
             loop_count += 1
@@ -1046,8 +1078,9 @@ class TradingService:
 
                 # Log first few loops to confirm it's running
                 if loop_count <= 3:
-                    logger.info(
-                        f"Scheduler loop iteration #{loop_count} at {now.strftime('%H:%M:%S')}"
+                    self.logger.info(
+                        f"Scheduler loop iteration #{loop_count} at {now.strftime('%H:%M:%S')}",
+                        action="scheduler",
                     )
 
                 # Run tasks only once per minute (on trading days only)
@@ -1085,20 +1118,6 @@ class TradingService:
                             ) and current_time <= dt_time(end_time.hour, end_time.minute):
                                 self.run_sell_monitor()
 
-                        # Position monitoring (hourly, uses DB schedule)
-                        position_schedule = self._schedule_manager.get_schedule("position_monitor")
-                        if (
-                            position_schedule
-                            and position_schedule.enabled
-                            and position_schedule.is_hourly
-                        ):
-                            start_time = position_schedule.schedule_time
-                            if (
-                                current_time.minute == start_time.minute
-                                and start_time.hour <= current_time.hour <= 15
-                            ):
-                                self.run_position_monitor()
-
                         # Analysis (uses DB schedule)
                         analysis_schedule = self._schedule_manager.get_schedule("analysis")
                         if analysis_schedule and analysis_schedule.enabled:
@@ -1126,11 +1145,27 @@ class TradingService:
                             ):
                                 self.run_eod_cleanup()
 
-                # Periodic heartbeat log (every 5 minutes to show service is alive)
-                if now.minute % 5 == 0 and now.second < 30:
-                    logger.info(
-                        f"Scheduler heartbeat: {now.strftime('%Y-%m-%d %H:%M:%S')} - Service running (loop #{loop_count})..."
+                # Update heartbeat every minute using thread-local session
+                try:
+                    from src.infrastructure.persistence.service_status_repository import (
+                        ServiceStatusRepository,
                     )
+
+                    # Use ServiceStatusRepository with thread-local session
+                    status_repo = ServiceStatusRepository(self.db)
+                    status_repo.update_heartbeat(self.user_id)
+                    self.db.commit()
+
+                    # Log heartbeat every 5 minutes
+                    heartbeat_counter += 1
+                    if heartbeat_counter == 1 or heartbeat_counter % 300 == 0:
+                        self.logger.info(
+                            f"💓 Scheduler heartbeat (running for {heartbeat_counter // 60} minutes)",
+                            action="scheduler",
+                        )
+                except Exception as e:
+                    self.logger.warning(f"Failed to update heartbeat: {e}", action="scheduler")
+                    self.db.rollback()
 
                 # Sleep for 30 seconds between checks
                 time.sleep(30)
@@ -1178,30 +1213,88 @@ class TradingService:
             logger.error(f"Error during shutdown: {e}")
 
     def run(self):
-        """Main entry point - Runs continuously"""
-        logger.info("Setting up signal handlers...")
-        self.setup_signal_handlers()
+        """
+        Main entry point - Runs continuously in background thread.
 
-        # Initialize service (single login)
-        logger.info("Starting service initialization...")
-        if not self.initialize():
-            logger.error("Failed to initialize service - service will exit")
-            return
+        CRITICAL: Creates its own database session to avoid thread-safety issues.
+        SQLAlchemy sessions are NOT thread-safe and cannot be shared across threads.
+        """
+        # Create a new database session for this thread
+        from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
 
-        logger.info("Initialization complete - entering scheduler loop...")
+        thread_db = SessionLocal()
 
         try:
-            # Run scheduler continuously
-            self.run_scheduler()
-        except Exception as e:
-            logger.error(f"Fatal error in scheduler: {e}")
-            import traceback
+            # Recreate logger with thread-local database session
+            from src.infrastructure.logging import get_user_logger  # noqa: PLC0415
 
-            traceback.print_exc()
+            self.logger = get_user_logger(
+                user_id=self.user_id, db=thread_db, module="TradingService"
+            )
+
+            # Update self.db to use thread-local session
+            self.db = thread_db
+
+            # Also update schedule manager to use thread-local session
+            from src.application.services.schedule_manager import ScheduleManager  # noqa: PLC0415
+
+            self._schedule_manager = ScheduleManager(thread_db)
+            self.logger.info("Schedule manager recreated with thread-local session", action="run")
+
+            self.logger.info("Setting up signal handlers...", action="run")
+            try:
+                self.setup_signal_handlers()
+                self.logger.info("Signal handlers setup complete", action="run")
+            except Exception as e:
+                # Signal handlers may fail in background threads (expected on some platforms)
+                # This is non-critical - service can still be stopped via shutdown_requested flag
+                self.logger.warning(
+                    f"Signal handlers setup failed (non-critical in background thread): {e}",
+                    action="run",
+                )
+                # Continue anyway - signal handlers are not required for service operation
+
+            # Initialize service (single login)
+            self.logger.info("Starting service initialization...", action="run")
+            try:
+                if not self.initialize():
+                    self.logger.error(
+                        "Failed to initialize service - service will exit", action="run"
+                    )
+                    return
+            except Exception as e:
+                self.logger.error(
+                    f"Exception during service initialization: {e}",
+                    exc_info=True,
+                    action="run",
+                )
+                return
+
+            self.logger.info("Initialization complete - entering scheduler loop...", action="run")
+
+            try:
+                # Run scheduler continuously
+                self.run_scheduler()
+            except Exception as e:
+                self.logger.error(f"Fatal error in scheduler: {e}", exc_info=True, action="run")
+                import traceback
+
+                traceback.print_exc()
+            finally:
+                # Always cleanup on exit
+                self.logger.info("Entering shutdown sequence...", action="run")
+                self.shutdown()
         finally:
-            # Always cleanup on exit
-            logger.info("Entering shutdown sequence...")
-            self.shutdown()
+            # Clean up thread-local session
+            try:
+                # Rollback any pending transaction
+                thread_db.rollback()
+            except Exception:
+                pass  # Ignore rollback errors (session may already be closed/rolled back)
+            try:
+                thread_db.close()
+            except Exception:
+                pass  # Ignore close errors if session is in bad state
 
 
 def main():

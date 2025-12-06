@@ -27,6 +27,7 @@ try:
 
     from src.infrastructure.db.models import OrderStatus as DbOrderStatus
     from src.infrastructure.persistence.orders_repository import OrdersRepository
+    from src.infrastructure.persistence.positions_repository import PositionsRepository
 
     DB_AVAILABLE = True
 except ImportError:
@@ -72,6 +73,7 @@ class UnifiedOrderMonitor:
 
         # Initialize orders repository if DB is available
         self.orders_repo = None
+        self.positions_repo = None
         if DB_AVAILABLE and db_session:
             try:
                 self.orders_repo = OrdersRepository(db_session)
@@ -79,6 +81,13 @@ class UnifiedOrderMonitor:
             except Exception as e:
                 logger.warning(f"Failed to initialize OrdersRepository: {e}")
                 self.orders_repo = None
+
+            try:
+                self.positions_repo = PositionsRepository(db_session)
+                logger.info("PositionsRepository initialized for position tracking")
+            except Exception as e:
+                logger.warning(f"Failed to initialize PositionsRepository: {e}")
+                self.positions_repo = None
 
         logger.info("UnifiedOrderMonitor initialized")
 
@@ -200,6 +209,20 @@ class UnifiedOrderMonitor:
                 orders_response = self.orders.get_orders() if self.orders else None
                 broker_orders = orders_response.get("data", []) if orders_response else []
 
+            # Fetch holdings once for reconciliation (if needed)
+            holdings_data = None
+            if self.sell_manager and hasattr(self.sell_manager, "portfolio"):
+                try:
+                    holdings_response = self.sell_manager.portfolio.get_holdings()
+                    holdings_data = (
+                        holdings_response.get("data", [])
+                        if isinstance(holdings_response, dict)
+                        else []
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not fetch holdings for reconciliation: {e}")
+                    holdings_data = []
+
             # Check each active buy order
             order_ids_to_remove = []
 
@@ -243,12 +266,130 @@ class UnifiedOrderMonitor:
                         order_ids_to_remove.append(order_id)
                 else:
                     # Order not found in broker - might be executed or cancelled
-                    # Check if it's been a while since placement (could be executed)
-                    placed_at = order_info.get("placed_at")
-                    if placed_at:
-                        # If order was placed more than 1 hour ago and not found, assume executed
-                        # (This is a heuristic - in production, we'd check executed orders API)
-                        logger.debug(f"Buy order {order_id} not found in broker orders")
+                    # Use holdings() API to check if order was executed
+                    # If symbol appears in holdings, order likely executed while service was down
+                    symbol = order_info.get("symbol", "")
+                    base_symbol = extract_base_symbol(symbol).upper() if symbol else ""
+
+                    if base_symbol and holdings_data is not None:
+                        try:
+                            # Look for symbol in holdings (indicates order was executed)
+                            found_in_holdings = False
+                            holding_info = None
+
+                            for holding in holdings_data:
+                                # Try multiple field names for symbol matching
+                                holding_symbol = (
+                                    holding.get("displaySymbol")
+                                    or holding.get("symbol")
+                                    or holding.get("tradingSymbol")
+                                    or ""
+                                )
+                                holding_base = extract_base_symbol(holding_symbol).upper()
+
+                                if holding_base == base_symbol:
+                                    found_in_holdings = True
+                                    holding_info = holding
+                                    break
+
+                            if found_in_holdings and holding_info:
+                                # Order was executed - symbol is in holdings
+                                logger.info(
+                                    f"Order {order_id} not in order_report but found in holdings - "
+                                    f"order was executed while service was down. Reconciling..."
+                                )
+
+                                # Update order status in database
+                                if self.orders_repo and order_info.get("db_order_id"):
+                                    try:
+                                        db_order = self.orders_repo.get(order_info["db_order_id"])
+                                        if not db_order:
+                                            continue
+
+                                        # Extract execution details from holdings
+                                        # For execution_price: prefer order price if available (limit order),
+                                        # otherwise use averagePrice from holdings (approximation)
+                                        order_price = order_info.get("price") or (
+                                            float(db_order.price) if db_order.price else None
+                                        )
+                                        execution_price = (
+                                            float(order_price)
+                                            if order_price and float(order_price) > 0
+                                            else (
+                                                float(holding_info.get("averagePrice", 0))
+                                                or float(holding_info.get("avgPrice", 0))
+                                                or float(holding_info.get("closingPrice", 0))
+                                                or 0.0
+                                            )
+                                        )
+                                        # For execution_qty, prefer order quantity from DB if available
+                                        # (holdings quantity is total position, not just this order)
+                                        order_qty = (
+                                            order_info.get("quantity", 0) or db_order.quantity
+                                        )
+                                        execution_qty = (
+                                            float(order_qty)
+                                            if order_qty and float(order_qty) > 0
+                                            else (
+                                                float(holding_info.get("quantity", 0))
+                                                or float(holding_info.get("qty", 0))
+                                                or 0.0
+                                            )
+                                        )
+
+                                        # Mark as executed using holdings data
+                                        if execution_price > 0 and execution_qty > 0:
+                                            self.orders_repo.mark_executed(
+                                                db_order,
+                                                execution_price=execution_price,
+                                                execution_qty=execution_qty,
+                                            )
+                                            logger.info(
+                                                f"Reconciled order {order_id}: "
+                                                f"executed at Rs {execution_price:.2f}, qty {execution_qty}"
+                                            )
+
+                                            # Create/update position
+                                            self._create_position_from_executed_order(
+                                                order_id,
+                                                order_info,
+                                                execution_price,
+                                                execution_qty,
+                                            )
+
+                                            stats["executed"] += 1
+                                            order_ids_to_remove.append(order_id)
+                                        else:
+                                            logger.warning(
+                                                f"Holdings found for {base_symbol} but missing "
+                                                f"price/qty data - cannot reconcile order {order_id}"
+                                            )
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Error reconciling order {order_id} from holdings: {e}"
+                                        )
+                            else:
+                                # Order not in holdings either - might be rejected/cancelled
+                                # or holdings API unavailable
+                                placed_at = order_info.get("placed_at")
+                                if placed_at:
+                                    logger.debug(
+                                        f"Buy order {order_id} not found in broker orders or holdings"
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                f"Error checking holdings for order {order_id}: {e}. "
+                                "Falling back to default behavior."
+                            )
+                            # Fallback to original behavior
+                            placed_at = order_info.get("placed_at")
+                            if placed_at:
+                                logger.debug(f"Buy order {order_id} not found in broker orders")
+                    else:
+                        # No portfolio access or symbol info - use original behavior
+                        placed_at = order_info.get("placed_at")
+                        if placed_at:
+                            logger.debug(f"Buy order {order_id} not found in broker orders")
 
             # Remove processed orders from tracking
             for order_id in order_ids_to_remove:
@@ -359,6 +500,134 @@ class UnifiedOrderMonitor:
                 logger.warning(f"Failed to update OrderStateManager for executed buy order: {e}")
 
         # Update in database (already done in _update_buy_order_status)
+
+        # Create/update position with entry RSI from order metadata
+        self._create_position_from_executed_order(
+            order_id, order_info, execution_price, execution_qty
+        )
+
+    def _create_position_from_executed_order(
+        self,
+        order_id: str,
+        order_info: dict[str, Any],
+        execution_price: float,
+        execution_qty: float,
+    ) -> None:
+        """
+        Create or update position from executed buy order with entry RSI tracking.
+
+        Phase 2: Entry RSI Tracking - Extracts entry RSI from order metadata and stores in position.
+
+        Args:
+            order_id: Order ID
+            order_info: Order tracking info
+            execution_price: Execution price
+            execution_qty: Execution quantity
+        """
+        if not self.positions_repo or not self.user_id:
+            logger.debug("Cannot create position: positions_repo or user_id not available")
+            return
+
+        if not self.orders_repo:
+            logger.debug("Cannot create position: orders_repo not available")
+            return
+
+        try:
+            symbol = order_info.get("symbol", "").upper()
+            if not symbol:
+                logger.warning("Cannot create position: symbol not found in order_info")
+                return
+
+            # Extract base symbol (remove -EQ suffix if present)
+            base_symbol = extract_base_symbol(symbol).upper()
+
+            # Get order from database to extract metadata
+            db_order = None
+            if order_info.get("db_order_id"):
+                db_order = self.orders_repo.get(order_info["db_order_id"])
+            else:
+                # Try to find order by broker_order_id
+                db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
+
+            # Extract entry RSI from order metadata
+            entry_rsi = None
+            if db_order and db_order.order_metadata:
+                metadata = (
+                    db_order.order_metadata if isinstance(db_order.order_metadata, dict) else {}
+                )
+                # Priority: rsi_entry_level > entry_rsi > rsi10
+                if metadata.get("rsi_entry_level") is not None:
+                    entry_rsi = float(metadata["rsi_entry_level"])
+                elif metadata.get("entry_rsi") is not None:
+                    entry_rsi = float(metadata["entry_rsi"])
+                elif metadata.get("rsi10") is not None:
+                    entry_rsi = float(metadata["rsi10"])
+
+            # Default to 29.5 if no RSI data available (assume entry at RSI < 30)
+            if entry_rsi is None:
+                entry_rsi = 29.5
+                logger.debug(
+                    f"No entry RSI found in order metadata for {base_symbol}, defaulting to 29.5"
+                )
+
+            # Check if position already exists
+            existing_pos = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+
+            # Calculate execution time (use current time if not available)
+
+            from src.infrastructure.db.timezone_utils import ist_now
+
+            execution_time = ist_now()
+            if db_order and hasattr(db_order, "filled_at") and db_order.filled_at:
+                execution_time = db_order.filled_at
+            elif db_order and hasattr(db_order, "execution_time") and db_order.execution_time:
+                execution_time = db_order.execution_time
+
+            # Create or update position
+            if existing_pos:
+                # Update existing position (add to quantity, recalculate avg price)
+                existing_qty = existing_pos.quantity
+                existing_avg_price = existing_pos.avg_price
+
+                # Calculate new average price
+                total_cost = (existing_qty * existing_avg_price) + (execution_qty * execution_price)
+                new_qty = existing_qty + execution_qty
+                new_avg_price = total_cost / new_qty if new_qty > 0 else execution_price
+
+                # Only update entry_rsi if it's not already set (preserve original entry RSI)
+                entry_rsi_to_set = None
+                if existing_pos.entry_rsi is None:
+                    entry_rsi_to_set = entry_rsi
+
+                self.positions_repo.upsert(
+                    user_id=self.user_id,
+                    symbol=base_symbol,
+                    quantity=new_qty,
+                    avg_price=new_avg_price,
+                    opened_at=existing_pos.opened_at,  # Preserve original open time
+                    entry_rsi=entry_rsi_to_set,  # Only set if not already set
+                )
+                logger.info(
+                    f"Updated position for {base_symbol}: qty {existing_qty} -> {new_qty}, "
+                    f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}"
+                )
+            else:
+                # Create new position
+                self.positions_repo.upsert(
+                    user_id=self.user_id,
+                    symbol=base_symbol,
+                    quantity=execution_qty,
+                    avg_price=execution_price,
+                    opened_at=execution_time,
+                    entry_rsi=entry_rsi,
+                )
+                logger.info(
+                    f"Created position for {base_symbol}: qty={execution_qty}, "
+                    f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"
+                )
+
+        except Exception as e:
+            logger.error(f"Error creating/updating position from executed order {order_id}: {e}")
 
     def _handle_buy_order_rejection(
         self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
@@ -517,18 +786,33 @@ class UnifiedOrderMonitor:
             return 0
 
         try:
-            from datetime import datetime, timedelta
-            from src.infrastructure.db.timezone_utils import ist_now
+            from datetime import datetime
+
+            from src.infrastructure.db.timezone_utils import IST, ist_now
 
             # Get today's date
             today = ist_now().date()
-            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=ist_now().tzinfo)
+            today_start = datetime.combine(today, datetime.min.time()).replace(
+                tzinfo=ist_now().tzinfo
+            )
+
+            # Helper function to normalize datetime to IST timezone-aware
+            def normalize_to_ist(dt: datetime | None) -> datetime | None:
+                """Convert datetime to IST timezone-aware if it's naive"""
+                if dt is None:
+                    return None
+                if dt.tzinfo is None:
+                    # Assume naive datetime is in IST
+                    return dt.replace(tzinfo=IST)
+                # Already timezone-aware, convert to IST if needed
+                return dt.astimezone(IST) if dt.tzinfo != IST else dt
 
             # Get all ONGOING buy orders executed today
             # We'll check orders that have execution_time >= today_start
             all_orders = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
 
             newly_executed_orders = []
+            skipped_orders = []
             for order in all_orders:
                 # Only process buy orders
                 if order.side.lower() != "buy":
@@ -537,11 +821,23 @@ class UnifiedOrderMonitor:
                 # Check if order was executed today
                 # Use execution_time if available, otherwise use filled_at
                 execution_time = getattr(order, "execution_time", None) or order.filled_at
+                execution_time = normalize_to_ist(execution_time)
+
                 if execution_time:
                     if execution_time >= today_start:
                         newly_executed_orders.append(order)
-                elif order.filled_at and order.filled_at >= today_start:
-                    newly_executed_orders.append(order)
+                    else:
+                        skipped_orders.append(
+                            f"{order.symbol}: executed {execution_time} (before today)"
+                        )
+                else:
+                    skipped_orders.append(f"{order.symbol}: no execution_time or filled_at")
+
+            if skipped_orders:
+                logger.debug(
+                    f"Skipped {len(skipped_orders)} ONGOING orders (not executed today): "
+                    f"{', '.join(skipped_orders[:5])}"
+                )
 
             if not newly_executed_orders:
                 return 0
@@ -550,11 +846,14 @@ class UnifiedOrderMonitor:
 
             # Get existing sell orders to avoid duplicates
             existing_sell_orders = self.sell_manager.get_existing_sell_orders()
-            existing_symbols = {extract_base_symbol(symbol).upper() for symbol in existing_sell_orders.keys()}
+            existing_symbols = {
+                extract_base_symbol(symbol).upper() for symbol in existing_sell_orders.keys()
+            }
 
             # Get currently tracked sell orders
             active_sell_symbols = {
-                extract_base_symbol(symbol).upper() for symbol in self.sell_manager.active_sell_orders.keys()
+                extract_base_symbol(symbol).upper()
+                for symbol in self.sell_manager.active_sell_orders.keys()
             }
 
             orders_placed = 0
@@ -565,7 +864,7 @@ class UnifiedOrderMonitor:
 
                     # Skip if already has sell order
                     if base_symbol in existing_symbols or base_symbol in active_sell_symbols:
-                        logger.debug(f"Skipping {base_symbol}: Already has sell order")
+                        logger.info(f"Skipping {base_symbol}: Already has sell order")
                         continue
 
                     # Check if position already has a completed sell order
@@ -586,12 +885,26 @@ class UnifiedOrderMonitor:
                         ticker = f"{base_sym}.NS"
 
                     # Get execution price and quantity
-                    execution_price = getattr(db_order, "execution_price", None) or db_order.avg_price or db_order.price
+                    execution_price = (
+                        getattr(db_order, "execution_price", None)
+                        or db_order.avg_price
+                        or db_order.price
+                    )
                     execution_qty = getattr(db_order, "execution_qty", None) or db_order.quantity
 
                     if not execution_price or execution_qty <= 0:
-                        logger.warning(f"Skipping {base_symbol}: Invalid execution price or quantity")
+                        logger.warning(
+                            f"Skipping {base_symbol}: Invalid execution price or quantity"
+                        )
                         continue
+
+                    # Get execution time for this order (normalize to IST)
+                    order_execution_time = (
+                        getattr(db_order, "execution_time", None) or db_order.filled_at
+                    )
+                    order_execution_time = (
+                        normalize_to_ist(order_execution_time) if order_execution_time else None
+                    )
 
                     # Create trade dict in format expected by place_sell_order
                     trade = {
@@ -600,7 +913,11 @@ class UnifiedOrderMonitor:
                         "qty": int(execution_qty),
                         "entry_price": execution_price,
                         "placed_symbol": db_order.symbol,  # Keep original broker symbol
-                        "entry_time": execution_time.isoformat() if execution_time else ist_now().isoformat(),
+                        "entry_time": (
+                            order_execution_time.isoformat()
+                            if order_execution_time
+                            else ist_now().isoformat()
+                        ),
                     }
 
                     # Get current EMA9 as target
@@ -619,9 +936,14 @@ class UnifiedOrderMonitor:
                         continue
 
                     # Place sell order
+                    logger.info(
+                        f"Placing sell order for {base_symbol}: qty={int(execution_qty)}, "
+                        f"entry_price={execution_price:.2f}, ema9={ema9:.2f}"
+                    )
                     order_id = self.sell_manager.place_sell_order(trade, ema9)
 
                     if order_id:
+                        logger.info(f"Successfully placed sell order for {base_symbol}: {order_id}")
                         # Track the order
                         self.sell_manager._register_order(
                             symbol=base_symbol,

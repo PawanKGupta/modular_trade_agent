@@ -57,39 +57,57 @@ class AnalysisService:
         self.indicator_service = indicator_service or IndicatorService(self.config)
         self.signal_service = signal_service or SignalService(self.config)
 
-        # Two-Stage Approach: Use MLVerdictService if ML model is available
+        # Two-Stage Approach: Use MLVerdictService if ML is enabled and model is available
         # Stage 1: Chart quality filter (hard filter)
         # Stage 2: ML model prediction (only if chart quality passed)
         if verdict_service is None:
-            # Try to use MLVerdictService if ML model is available
-            try:
-                from pathlib import Path
+            # Check if ML is enabled in config (respects UI setting)
+            ml_enabled = getattr(self.config, "ml_enabled", False)
 
-                from services.ml_verdict_service import MLVerdictService
+            # Debug logging to trace config value
+            logger.debug(f"AnalysisService init: ml_enabled={ml_enabled}, config type={type(self.config)}, config.ml_enabled={getattr(self.config, 'ml_enabled', 'NOT_SET')}")
 
-                # Check if ML model exists
-                ml_model_path = getattr(
-                    self.config, "ml_verdict_model_path", "models/verdict_model_random_forest.pkl"
-                )
-                if Path(ml_model_path).exists():
-                    self.verdict_service = MLVerdictService(
-                        model_path=ml_model_path, config=self.config
-                    )
-                    if self.verdict_service.model_loaded:
-                        logger.info(
-                            f"? Using MLVerdictService with model: {ml_model_path} (two-stage: chart quality + ML)"
-                        )
-                    else:
-                        logger.warning(
-                            f"[WARN]? ML model file exists but failed to load: {ml_model_path}, using VerdictService"
-                        )
-                        self.verdict_service = VerdictService(self.config)
-                else:
-                    self.verdict_service = VerdictService(self.config)
-                    logger.debug(f"Using VerdictService (no ML model found at: {ml_model_path})")
-            except Exception as e:
-                logger.debug(f"Could not initialize MLVerdictService: {e}, using VerdictService")
+            if not ml_enabled:
+                logger.debug("ML is disabled in config, using VerdictService")
                 self.verdict_service = VerdictService(self.config)
+            else:
+                # Try to use MLVerdictService if ML is enabled
+                try:
+                    from pathlib import Path
+
+                    from services.ml_verdict_service import MLVerdictService
+
+                    # Get model path from config
+                    ml_model_path = getattr(
+                        self.config,
+                        "ml_verdict_model_path",
+                        "models/verdict_model_random_forest.pkl",
+                    )
+
+                    # Check if model path exists
+                    if Path(ml_model_path).exists():
+                        self.verdict_service = MLVerdictService(
+                            model_path=ml_model_path, config=self.config
+                        )
+                        if self.verdict_service.model_loaded:
+                            logger.info(
+                                f"? Using MLVerdictService with model: {ml_model_path} (two-stage: chart quality + ML)"
+                            )
+                        else:
+                            logger.warning(
+                                f"[WARN]? ML model file exists but failed to load: {ml_model_path}, using VerdictService"
+                            )
+                            self.verdict_service = VerdictService(self.config)
+                    else:
+                        self.verdict_service = VerdictService(self.config)
+                        logger.debug(
+                            f"ML enabled but model not found at: {ml_model_path}, using VerdictService"
+                        )
+                except Exception as e:
+                    logger.debug(
+                        f"Could not initialize MLVerdictService: {e}, using VerdictService"
+                    )
+                    self.verdict_service = VerdictService(self.config)
         else:
             self.verdict_service = verdict_service
 
@@ -635,6 +653,10 @@ class AnalysisService:
 
                 # Also append to master CSV for historical tracking
                 csv_exporter.append_to_master_csv(result)
+
+            # Store config in result for backtest to use (for ML support)
+            # This allows backtest to use the same config that was used for analysis
+            result['_config'] = self.config
 
             return result
 

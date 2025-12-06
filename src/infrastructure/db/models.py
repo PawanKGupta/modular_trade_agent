@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+from .case_insensitive_enum import CaseInsensitiveEnum
 from .timezone_utils import ist_now
 
 
@@ -171,6 +172,8 @@ class Positions(Base):
     )  # Array of reentry details
     initial_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_reentry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Entry RSI tracking (for re-entry level progression)
+    entry_rsi: Mapped[float | None] = mapped_column(Float, nullable=True)  # RSI10 at entry
 
     __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_positions_user_symbol"),)
 
@@ -198,7 +201,10 @@ class Signals(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     status: Mapped[SignalStatus] = mapped_column(
-        SAEnum(SignalStatus), default=SignalStatus.ACTIVE, index=True, nullable=False
+        CaseInsensitiveEnum(SignalStatus),
+        default=SignalStatus.ACTIVE,
+        index=True,
+        nullable=False,
     )
     # Technical indicators
     rsi10: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -285,14 +291,19 @@ class UserSignalStatus(Base):
     Allows each user to have their own status for signals (TRADED, REJECTED)
     while keeping the base signal data shared across users.
     """
+
     __tablename__ = "user_signal_status"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), index=True, nullable=False)
-    symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)  # Denormalized for faster queries
+    symbol: Mapped[str] = mapped_column(
+        String(32), index=True, nullable=False
+    )  # Denormalized for faster queries
     status: Mapped[SignalStatus] = mapped_column(
-        SAEnum(SignalStatus), index=True, nullable=False
+        CaseInsensitiveEnum(SignalStatus),
+        index=True,
+        nullable=False,
     )  # TRADED, REJECTED (per user)
     marked_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
 
@@ -643,7 +654,7 @@ class ServiceSchedule(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     task_name: Mapped[str] = mapped_column(
         String(64), unique=True, index=True, nullable=False
-    )  # premarket_retry, sell_monitor, position_monitor, analysis, buy_orders, eod_cleanup
+    )  # premarket_retry, sell_monitor, analysis, buy_orders, eod_cleanup
     schedule_time: Mapped[time] = mapped_column(Time, nullable=False)  # HH:MM in IST
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_hourly: Mapped[bool] = mapped_column(
