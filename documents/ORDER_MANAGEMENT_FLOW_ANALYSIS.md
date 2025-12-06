@@ -154,14 +154,21 @@ Time T3: run_at_market_open() updates sell order: quantity = 100 ❌
 - Sell order has incorrect quantity
 - Position and sell order out of sync
 
-**Current Code**:
-- `run_at_market_open()` reads position once at start
-- No re-read before updating sell order
-- No check if position changed during processing
+**Status**: ✅ **FIXED** (2025-12-07)
 
-**Recommendation**:
-- Re-read position quantity just before updating sell order
-- Or use a transaction that locks the position row
+**Implementation**:
+- Re-read position quantity with locked read (`get_by_symbol_for_update()`) just before updating sell order
+- Ensures we get the latest quantity even if reentry executed during processing
+- Lock prevents concurrent modifications during the read
+
+**Files Changed**:
+- `modules/kotak_neo_auto_trader/sell_engine.py` - Added re-read in `run_at_market_open()` before sell order update
+
+**How It Works**:
+1. `run_at_market_open()` reads all positions at start
+2. When quantity increased (reentry detected), re-read position with lock
+3. Use latest quantity from database for sell order update
+4. Lock ensures no concurrent modifications during read
 
 ---
 

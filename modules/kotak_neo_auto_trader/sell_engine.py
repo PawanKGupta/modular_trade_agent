@@ -1891,6 +1891,27 @@ class SellOrderManager:
                     continue
                 elif qty > existing_qty:
                     # Quantity increased (reentry happened) - update existing order
+                    # Race Condition Fix: Re-read position quantity just before updating
+                    # to ensure we have the latest value (in case reentry executed during processing)
+                    current_position = None
+                    if self.positions_repo and self.user_id:
+                        try:
+                            current_position = self.positions_repo.get_by_symbol_for_update(
+                                self.user_id, symbol
+                            )
+                            if current_position:
+                                # Use the latest quantity from database
+                                qty = current_position.quantity
+                                logger.debug(
+                                    f"Re-read position {symbol}: quantity = {qty} "
+                                    f"(was {trade.get('qty', 0)} in initial read)"
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to re-read position {symbol} before sell order update: {e}. "
+                                f"Using quantity from initial read."
+                            )
+
                     logger.info(
                         f"Updating sell order for {symbol}: quantity increased from {existing_qty} to {qty} "
                         f"(reentry detected, Order ID: {existing['order_id']})"
@@ -1900,7 +1921,7 @@ class SellOrderManager:
                     if self.update_sell_order(
                         order_id=existing["order_id"],
                         symbol=symbol,
-                        qty=qty,
+                        qty=int(qty),  # Ensure integer for order quantity
                         new_price=existing_price,  # Keep same price
                     ):
                         logger.info(
