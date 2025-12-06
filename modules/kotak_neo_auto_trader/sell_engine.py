@@ -113,6 +113,11 @@ class SellOrderManager:
         self.user_id = user_id
         self.order_verifier = order_verifier  # Phase 3.2: OrderStatusVerifier for shared results
 
+        # Cache for holdings to reduce broker API calls
+        # Cache TTL: 5 minutes (300 seconds) - balances freshness with API call reduction
+        self._holdings_cache: dict[str, tuple[dict, float]] = {}
+        self._holdings_cache_ttl = 300  # 5 minutes
+
         # Initialize OrderStateManager if not provided (for backward compatibility)
         self.state_manager = order_state_manager
         if self.state_manager is None:
