@@ -815,7 +815,8 @@ class UnifiedOrderMonitor:
                 )
 
             # Check if position already exists
-            existing_pos = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+            # Use FOR UPDATE lock to prevent race conditions with concurrent reentry executions
+            existing_pos = self.positions_repo.get_by_symbol_for_update(self.user_id, base_symbol)
 
             # Improvement: Check if position is closed - don't add reentry to closed positions
             if existing_pos and existing_pos.closed_at is not None:
@@ -977,8 +978,9 @@ class UnifiedOrderMonitor:
                     )
 
                     # Improvement: Verify data integrity after update
+                    # Use FOR UPDATE lock to prevent race conditions during integrity check
                     if is_reentry:
-                        updated_position = self.positions_repo.get_by_symbol(
+                        updated_position = self.positions_repo.get_by_symbol_for_update(
                             self.user_id, base_symbol
                         )
                         if updated_position:

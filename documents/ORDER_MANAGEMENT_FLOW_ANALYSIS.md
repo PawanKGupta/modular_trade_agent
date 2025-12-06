@@ -40,16 +40,38 @@
 
 #### 2. **Race Condition: Concurrent Reentry Executions**
 
-**Problem**: If two reentry orders execute simultaneously for the same symbol, both will read the same `existing_pos.quantity`, calculate new quantity independently, and both will update. The second update will overwrite the first.
+**Problem**: Even though the daily cap (max 1 reentry per symbol per day) prevents multiple reentry orders from being placed, concurrent execution processing can still cause race conditions:
+
+1. **Same order processed multiple times**: If `check_buy_order_status()` is called concurrently (multiple threads, rapid polling), the same order could be detected as executed multiple times, leading to multiple calls to `_create_position_from_executed_order()`.
+
+2. **Position quantity read-modify-write race**: The position update uses a read-modify-write pattern without locking:
+   ```python
+   existing_qty = existing_pos.quantity  # Read: 100
+   new_qty = existing_qty + execution_qty  # Calculate: 110
+   positions_repo.upsert(quantity=new_qty)  # Write: 110
+   ```
+   If two threads process concurrently (even the same order twice), both read the same starting quantity, calculate independently, and the second write overwrites the first.
 
 **Example Scenario**:
 ```
-Time T1: Reentry A executes (qty: 10)
+Time T1: Thread A processes reentry order (qty: 10)
   - Reads position: quantity = 100
   - Calculates: new_qty = 100 + 10 = 110
   - Updates position: quantity = 110 ✅
 
-Time T2: Reentry B executes (qty: 15) [concurrent]
+Time T2: Thread B processes same reentry order (qty: 10) [concurrent]
+  - Reads position: quantity = 100 (before A's update committed)
+  - Calculates: new_qty = 100 + 10 = 110
+  - Updates position: quantity = 110 ❌ (duplicate processing, but quantity OK)
+
+OR
+
+Time T1: Thread A processes reentry order (qty: 10)
+  - Reads position: quantity = 100
+  - Calculates: new_qty = 100 + 10 = 110
+  - (Transaction not committed yet)
+
+Time T2: Thread B processes different reentry (qty: 15) [concurrent, rare but possible]
   - Reads position: quantity = 100 (before A's update committed)
   - Calculates: new_qty = 100 + 15 = 115
   - Updates position: quantity = 115 ❌ (overwrites A's update!)
@@ -57,20 +79,29 @@ Time T2: Reentry B executes (qty: 15) [concurrent]
 Result: Position shows 115, but should be 125 (100 + 10 + 15)
 ```
 
+**Note on Daily Cap**: The daily cap (`reentries_today() >= 1`) prevents placing multiple reentry orders per day, which significantly reduces the likelihood of concurrent executions from different orders. However, it doesn't prevent:
+- Same order being processed multiple times concurrently
+- Position quantity calculation race condition (read-modify-write)
+
 **Impact**:
-- Lost quantity updates
+- Lost quantity updates (if different orders execute concurrently)
 - Incorrect average price calculation
-- Missing reentry data
+- Duplicate reentry entries (mitigated by duplicate check, but quantity race remains)
 
 **Current Code**:
-- No locking mechanism
-- No optimistic locking (version field)
-- No database-level locking (SELECT FOR UPDATE)
+- Duplicate reentry check by `order_id` (lines 921-947) prevents duplicate entries
+- Transaction safety ensures atomicity of operations
+- ✅ **FIXED**: Database-level locking added (`SELECT ... FOR UPDATE`)
+- ✅ **FIXED**: `get_by_symbol_for_update()` method added to PositionsRepository
+- ✅ **FIXED**: All position update operations use locking
 
-**Recommendation**:
-- Add database-level locking: `SELECT ... FOR UPDATE` when reading position
-- Or use optimistic locking with version field
-- Or use application-level locking (thread locks)
+**Status**: ✅ **FIXED** (2025-12-07)
+
+**Implementation**:
+- Added `get_by_symbol_for_update()` method to PositionsRepository
+- Updated `_create_position_from_executed_order()` to use locked read
+- Updated `upsert()`, `mark_closed()`, and `reduce_quantity()` to use locking
+- Lock is held for the duration of the transaction, preventing concurrent modifications
 
 ---
 

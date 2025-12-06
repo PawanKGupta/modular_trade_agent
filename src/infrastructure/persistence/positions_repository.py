@@ -28,6 +28,27 @@ class PositionsRepository:
             .first()
         )
 
+    def get_by_symbol_for_update(self, user_id: int, symbol: str) -> Positions | None:
+        """
+        Get position by symbol with row-level lock (SELECT ... FOR UPDATE).
+
+        This prevents concurrent modifications by locking the row until the transaction commits.
+        Use this when you need to read and then update a position to prevent race conditions.
+
+        Args:
+            user_id: User ID
+            symbol: Base symbol (without suffix)
+
+        Returns:
+            Positions object with row lock, or None if not found
+        """
+        stmt = (
+            select(Positions)
+            .where(Positions.user_id == user_id, Positions.symbol == symbol)
+            .with_for_update()
+        )
+        return self.db.execute(stmt).scalar_one_or_none()
+
     def list(self, user_id: int) -> builtins.list[Positions]:
         stmt = (
             select(Positions)
@@ -51,7 +72,9 @@ class PositionsRepository:
         entry_rsi: float | None = None,
         auto_commit: bool = True,
     ) -> Positions:
-        pos = self.get_by_symbol(user_id, symbol)
+        # Use FOR UPDATE lock when updating existing position to prevent race conditions
+        # This ensures atomic read-modify-write operations
+        pos = self.get_by_symbol_for_update(user_id, symbol)
         if pos:
             pos.quantity = quantity
             pos.avg_price = avg_price
@@ -126,7 +149,8 @@ class PositionsRepository:
         Returns:
             Updated Positions object, or None if position not found
         """
-        pos = self.get_by_symbol(user_id, symbol)
+        # Use FOR UPDATE lock to prevent race conditions with concurrent operations
+        pos = self.get_by_symbol_for_update(user_id, symbol)
         if not pos:
             logger.warning(f"Position not found for {symbol} (user_id: {user_id})")
             return None
@@ -160,7 +184,8 @@ class PositionsRepository:
         Returns:
             Updated Positions object, or None if position not found
         """
-        pos = self.get_by_symbol(user_id, symbol)
+        # Use FOR UPDATE lock to prevent race conditions with concurrent operations
+        pos = self.get_by_symbol_for_update(user_id, symbol)
         if not pos:
             logger.warning(f"Position not found for {symbol} (user_id: {user_id})")
             return None
