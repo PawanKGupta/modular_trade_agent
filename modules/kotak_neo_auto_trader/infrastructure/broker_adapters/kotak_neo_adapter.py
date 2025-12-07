@@ -68,6 +68,165 @@ except ImportError:
         pass  # No-op if import fails
 
 
+class BrokerServiceUnavailableError(Exception):
+    """
+    Exception raised when broker API is unavailable (maintenance, downtime, etc.)
+    This should be caught by API endpoints and returned as 503 Service Unavailable
+    """
+
+    def __init__(
+        self,
+        message: str = "Broker service is temporarily unavailable",
+        original_error: Exception | None = None,
+    ):
+        self.message = message
+        self.original_error = original_error
+        # Note: The message passed here is already the extracted API error message
+        # (if available) or the default message, as extracted by _get_service_unavailable_message()
+        super().__init__(self.message)
+
+
+
+def _get_service_unavailable_message(error: Exception, default_message: str) -> str:
+    """
+    Get error message for service unavailable, preferring actual API error message.
+
+    Args:
+        error: The original exception from the API
+        default_message: Default message to use if API error cannot be extracted
+
+    Returns:
+        Error message to display (API error if available, otherwise default)
+    """
+    api_error_msg = _extract_api_error_message(error)
+    return api_error_msg if api_error_msg else default_message
+
+
+def _extract_api_error_message(error: Exception) -> str | None:
+    """
+    Extract error message from API response if available.
+
+    Args:
+        error: The original exception from the API
+
+    Returns:
+        Extracted error message from API response, or None if not available
+    """
+    try:
+        error_str = str(error)
+
+        # Check if error has response attribute (HTTP errors from requests/urllib3)
+        if hasattr(error, "response"):
+            response = getattr(error, "response", None)
+            if response:
+                # Try to get response data
+                if hasattr(response, "json"):
+                    try:
+                        data = response.json()
+                        if isinstance(data, dict):
+                            # Try error array first (before checking simple error field)
+                            # This handles cases like {"error": [{"message": "..."}]}
+                            if "error" in data and isinstance(data["error"], list) and len(data["error"]) > 0:
+                                err_item = data["error"][0]
+                                if isinstance(err_item, dict):
+                                    return err_item.get("message", str(err_item))
+                                return str(err_item)
+                            # Try common error message fields (excluding "error" if it's not a list)
+                            for field in ["message", "description", "detail", "msg"]:
+                                if field in data and data[field]:
+                                    return str(data[field])
+                            # Try "error" field only if it's not a list (already handled above)
+                            if "error" in data and not isinstance(data["error"], list) and data["error"]:
+                                return str(data["error"])
+                    except Exception:
+                        pass
+                # Try response text
+                if hasattr(response, "text"):
+                    try:
+                        text = response.text
+                        if text and len(text) < 500:  # Reasonable length
+                            return text
+                    except Exception:
+                        pass
+
+        # Check if error message contains structured data
+        # Look for JSON-like patterns in error string
+        if "{" in error_str and "}" in error_str:
+            try:
+                import json
+                # Try to find JSON in error string
+                start = error_str.find("{")
+                end = error_str.rfind("}") + 1
+                if start >= 0 and end > start:
+                    json_str = error_str[start:end]
+                    data = json.loads(json_str)
+                    if isinstance(data, dict):
+                        for field in ["message", "error", "description", "detail", "msg"]:
+                            if field in data and data[field]:
+                                return str(data[field])
+            except Exception:
+                pass
+
+        # Return the error string itself if it looks like an API message
+        # (not just a generic connection error)
+        if error_str and len(error_str) < 200 and not any(
+            generic in error_str.lower()
+            for generic in ["connection refused", "network is unreachable", "failed to establish"]
+        ):
+            return error_str
+
+    except Exception:
+        pass
+
+    return None
+
+
+def _is_service_unavailable_error(error: Exception) -> bool:
+    """
+    Check if an error indicates broker service is unavailable (maintenance, downtime, etc.)
+
+    Args:
+        error: Exception to check
+
+    Returns:
+        True if error indicates service unavailable, False otherwise
+    """
+    error_str = str(error).lower()
+    error_type = type(error).__name__.lower()
+
+    # Check for service unavailable indicators
+    service_unavailable_indicators = [
+        "service unavailable",
+        "503",
+        "502",
+        "504",
+        "gateway timeout",
+        "bad gateway",
+        "maintenance",
+        "downtime",
+        "server error",
+        "internal server error",
+        "connection refused",
+        "network is unreachable",
+        "failed to establish",
+        "name resolution failed",
+        "dns",
+    ]
+
+    # Check error message
+    for indicator in service_unavailable_indicators:
+        if indicator in error_str:
+            return True
+
+    # Check error type
+    if "httperror" in error_type or "connectionerror" in error_type:
+        # Check if it's a 5xx error
+        if "50" in error_str:
+            return True
+
+    return False
+
+
 class KotakNeoBrokerAdapter(IBrokerGateway):
     """
     Adapter for Kotak Neo API
@@ -188,6 +347,18 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                             f"SDK call timed out in place_order: {timeout_error}. "
                             "This may indicate broker API is slow or unreachable."
                         )
+                        # Check if this is a service unavailable scenario (timeout after retries)
+                        if attempt >= max_retries:
+                            # After all retries, timeout likely means service is unavailable
+                            error_message = _get_service_unavailable_message(
+                                timeout_error,
+                                "Broker service is temporarily unavailable. "
+                                "The API did not respond within the expected time. "
+                                "This may be due to maintenance or high load. Please try again later.",
+                            )
+                            raise BrokerServiceUnavailableError(
+                                error_message, original_error=timeout_error
+                            ) from timeout_error
                         # If timeout occurs, try refreshing client from auth handler
                         # The client might be stale even if auth handler reports authenticated
                         if self.auth_handler and self.auth_handler.is_authenticated():
@@ -202,6 +373,22 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                             break  # Retry outer loop
                         continue  # Try next method
                     except Exception as call_error:
+                        # Check if it's a service unavailable error (maintenance, downtime, etc.)
+                        if _is_service_unavailable_error(call_error):
+                            logger.error(
+                                f"Broker service unavailable detected in place_order: {call_error}"
+                            )
+                            # Extract actual API error message if available
+                            error_message = _get_service_unavailable_message(
+                                call_error,
+                                "Broker service is temporarily unavailable. "
+                                "This may be due to scheduled maintenance or service issues. "
+                                "Please try again later.",
+                            )
+                            raise BrokerServiceUnavailableError(
+                                error_message, original_error=call_error
+                            ) from call_error
+
                         # Check if it's a connection error (might indicate missing session)
                         error_str = str(call_error).lower()
                         is_connection_error = (
@@ -278,6 +465,14 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                     "Max retries reached or no auth handler for place_order"
                                 )
                                 raise RuntimeError("Failed to place order: max retries reached")
+                        # After all retries, if it's still a connection error, treat as service unavailable
+                        if is_connection_error and attempt >= max_retries:
+                            raise BrokerServiceUnavailableError(
+                                "Broker service is temporarily unavailable. "
+                                "Unable to establish connection to the broker API. "
+                                "This may be due to maintenance or network issues. Please try again later."
+                            ) from call_error
+
                         # Re-raise non-auth exceptions
                         raise
 
@@ -402,6 +597,14 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                 f"SDK call timed out in cancel_order: {timeout_error}. "
                                 "This may indicate broker API is slow or unreachable."
                             )
+                            # Check if this is a service unavailable scenario (timeout after retries)
+                            if attempt >= max_retries:
+                                # After all retries, timeout likely means service is unavailable
+                                raise BrokerServiceUnavailableError(
+                                    "Broker service is temporarily unavailable. "
+                                    "The API did not respond within the expected time. "
+                                    "This may be due to maintenance or high load. Please try again later."
+                                ) from timeout_error
                             # If timeout occurs, try refreshing client from auth handler
                             # The client might be stale even if auth handler reports authenticated
                             if self.auth_handler and self.auth_handler.is_authenticated():
@@ -416,6 +619,17 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                 break  # Retry outer loop
                             continue  # Try next method
                         except Exception as call_error:
+                            # Check if it's a service unavailable error (maintenance, downtime, etc.)
+                            if _is_service_unavailable_error(call_error):
+                                logger.error(
+                                    f"Broker service unavailable detected in cancel_order: {call_error}"
+                                )
+                                raise BrokerServiceUnavailableError(
+                                    "Broker service is temporarily unavailable. "
+                                    "This may be due to scheduled maintenance or service issues. "
+                                    "Please try again later."
+                                ) from call_error
+
                             # Check if it's a connection error (might indicate missing session)
                             error_str = str(call_error).lower()
                             is_connection_error = (
@@ -490,8 +704,16 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                         "Max retries reached or no auth handler for cancel_order"
                                     )
                                     return False
-                            # Re-raise non-auth exceptions
-                            raise
+                        # After all retries, if it's still a connection error, treat as service unavailable
+                        if is_connection_error and attempt >= max_retries:
+                            raise BrokerServiceUnavailableError(
+                                "Broker service is temporarily unavailable. "
+                                "Unable to establish connection to the broker API. "
+                                "This may be due to maintenance or network issues. Please try again later."
+                            ) from call_error
+
+                        # Re-raise non-auth exceptions
+                        raise
 
                         logger.info(f"? Cancelled order: {order_id}")
                         return True
@@ -572,6 +794,14 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                 f"SDK call timed out in get_all_orders: {timeout_error}. "
                                 "This may indicate broker API is slow or unreachable."
                             )
+                            # Check if this is a service unavailable scenario (timeout after retries)
+                            if attempt >= max_retries:
+                                # After all retries, timeout likely means service is unavailable
+                                raise BrokerServiceUnavailableError(
+                                    "Broker service is temporarily unavailable. "
+                                    "The API did not respond within the expected time. "
+                                    "This may be due to maintenance or high load. Please try again later."
+                                ) from timeout_error
                             # If timeout occurs, try refreshing client from auth handler
                             # The client might be stale even if auth handler reports authenticated
                             if self.auth_handler and self.auth_handler.is_authenticated():
@@ -586,6 +816,17 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                 break  # Retry outer loop
                             continue  # Try next method
                         except Exception as call_error:
+                            # Check if it's a service unavailable error (maintenance, downtime, etc.)
+                            if _is_service_unavailable_error(call_error):
+                                logger.error(
+                                    f"Broker service unavailable detected in get_all_orders: {call_error}"
+                                )
+                                raise BrokerServiceUnavailableError(
+                                    "Broker service is temporarily unavailable. "
+                                    "This may be due to scheduled maintenance or service issues. "
+                                    "Please try again later."
+                                ) from call_error
+
                             # Check if it's a connection error (might indicate missing session)
                             error_str = str(call_error).lower()
                             is_connection_error = (
@@ -660,6 +901,18 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                         "Max retries reached or no auth handler for get_all_orders"
                                     )
                                     return []
+                            # After all retries, if it's still a connection error, treat as service unavailable
+                            if is_connection_error and attempt >= max_retries:
+                                error_message = _get_service_unavailable_message(
+                                    call_error,
+                                    "Broker service is temporarily unavailable. "
+                                    "Unable to establish connection to the broker API. "
+                                    "This may be due to maintenance or network issues. Please try again later.",
+                                )
+                                raise BrokerServiceUnavailableError(
+                                    error_message, original_error=call_error
+                                ) from call_error
+
                             # Re-raise non-auth exceptions
                             raise
 
@@ -873,6 +1126,14 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                 f"SDK call timed out in get_holdings: {timeout_error}. "
                                 "This may indicate broker API is slow or unreachable."
                             )
+                            # Check if this is a service unavailable scenario (timeout after retries)
+                            if attempt >= max_retries:
+                                # After all retries, timeout likely means service is unavailable
+                                raise BrokerServiceUnavailableError(
+                                    "Broker service is temporarily unavailable. "
+                                    "The API did not respond within the expected time. "
+                                    "This may be due to maintenance or high load. Please try again later."
+                                ) from timeout_error
                             # If timeout occurs, try refreshing client from auth handler
                             # The client might be stale even if auth handler reports authenticated
                             if self.auth_handler and self.auth_handler.is_authenticated():
@@ -882,9 +1143,22 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                     logger.info("Refreshed client after timeout in get_holdings")
                                     if attempt < max_retries:
                                         continue  # Retry with fresh client
-                            # Treat timeout as non-auth error - return empty result
-                            return []
+                            # Try next method or retry after re-auth
+                            if attempt < max_retries:
+                                continue  # Retry outer loop
+                            continue  # Try next method
                         except Exception as call_error:
+                            # Check if it's a service unavailable error (maintenance, downtime, etc.)
+                            if _is_service_unavailable_error(call_error):
+                                logger.error(
+                                    f"Broker service unavailable detected in get_holdings: {call_error}"
+                                )
+                                raise BrokerServiceUnavailableError(
+                                    "Broker service is temporarily unavailable. "
+                                    "This may be due to scheduled maintenance or service issues. "
+                                    "Please try again later."
+                                ) from call_error
+
                             # Check if it's a connection error (might indicate missing session)
                             error_str = str(call_error).lower()
                             is_connection_error = (
@@ -959,6 +1233,18 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                         "Max retries reached or no auth handler for get_holdings"
                                     )
                                     return []
+                            # After all retries, if it's still a connection error, treat as service unavailable
+                            if is_connection_error and attempt >= max_retries:
+                                error_message = _get_service_unavailable_message(
+                                    call_error,
+                                    "Broker service is temporarily unavailable. "
+                                    "Unable to establish connection to the broker API. "
+                                    "This may be due to maintenance or network issues. Please try again later.",
+                                )
+                                raise BrokerServiceUnavailableError(
+                                    error_message, original_error=call_error
+                                ) from call_error
+
                             # Re-raise non-auth exceptions
                             raise
 
@@ -1250,6 +1536,18 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                     f"SDK call timed out in get_account_limits: {timeout_error}. "
                     "This may indicate broker API is slow or unreachable."
                 )
+                # Check if this is a service unavailable scenario (timeout after retries)
+                if attempt >= max_retries:
+                    # After all retries, timeout likely means service is unavailable
+                    error_message = _get_service_unavailable_message(
+                        timeout_error,
+                        "Broker service is temporarily unavailable. "
+                        "The API did not respond within the expected time. "
+                        "This may be due to maintenance or high load. Please try again later.",
+                    )
+                    raise BrokerServiceUnavailableError(
+                        error_message, original_error=timeout_error
+                    ) from timeout_error
                 # If timeout occurs, try refreshing client from auth handler
                 # The client might be stale even if auth handler reports authenticated
                 if self.auth_handler and self.auth_handler.is_authenticated():
@@ -1259,9 +1557,35 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         logger.info("Refreshed client after timeout in get_account_limits")
                         if attempt < max_retries:
                             continue  # Retry with fresh client
-                # Treat timeout as non-auth error - return empty result
-                return {}
+                # Try next retry
+                if attempt < max_retries:
+                    continue
+                # After all retries, raise service unavailable
+                error_message = _get_service_unavailable_message(
+                    timeout_error,
+                    "Broker service is temporarily unavailable. "
+                    "The API did not respond within the expected time. "
+                    "This may be due to maintenance or high load. Please try again later.",
+                )
+                raise BrokerServiceUnavailableError(
+                    error_message, original_error=timeout_error
+                ) from timeout_error
             except Exception as e:
+                # Check if it's a service unavailable error (maintenance, downtime, etc.)
+                if _is_service_unavailable_error(e):
+                    logger.error(
+                        f"Broker service unavailable detected in get_account_limits: {e}"
+                    )
+                    error_message = _get_service_unavailable_message(
+                        e,
+                        "Broker service is temporarily unavailable. "
+                        "This may be due to scheduled maintenance or service issues. "
+                        "Please try again later.",
+                    )
+                    raise BrokerServiceUnavailableError(
+                        error_message, original_error=e
+                    ) from e
+
                 # Check if it's a connection error (might indicate missing session)
                 error_str = str(e).lower()
                 is_connection_error = (
