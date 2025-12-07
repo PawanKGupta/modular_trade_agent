@@ -3005,6 +3005,7 @@ class AutoTradeEngine:
             "price_unavailable": 0,
             "modification_failed": 0,
             "skipped_not_enabled": 0,
+            "cancelled_above_ema9": 0,
         }
 
         # Check if feature is enabled
@@ -3162,6 +3163,111 @@ class AutoTradeEngine:
 
                 logger.info(f"{base_symbol}: Pre-market price = Rs {premarket_price:.2f}")
 
+                # 3.5. Check if pre-market price is above EMA9-1% (cancel order if so)
+                # Get ticker from order metadata or construct from symbol
+                ticker = None
+                if self.orders_repo and self.user_id:
+                    try:
+                        db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
+                        if db_order and db_order.order_metadata:
+                            ticker = db_order.order_metadata.get(
+                                "ticker"
+                            ) or db_order.order_metadata.get("original_ticker")
+                    except Exception as e:
+                        logger.debug(f"Error fetching order metadata for {base_symbol}: {e}")
+
+                # Construct ticker if not found in metadata
+                if not ticker:
+                    ticker = f"{base_symbol}.NS"
+
+                # Calculate EMA9
+                ema9 = None
+                try:
+                    ema9 = self.indicator_service.calculate_ema9_realtime(
+                        ticker=ticker,
+                        broker_symbol=symbol,
+                        current_ltp=premarket_price,
+                    )
+                except Exception as e:
+                    logger.warning(f"{base_symbol}: Failed to calculate EMA9: {e}")
+
+                # Check if pre-market price > EMA9 - 1%
+                if ema9 and ema9 > 0:
+                    ema9_threshold = ema9 * 0.99  # EMA9 - 1%
+                    if premarket_price > ema9_threshold:
+                        logger.warning(
+                            f"{base_symbol}: Pre-market price (Rs {premarket_price:.2f}) > EMA9-1% "
+                            f"(Rs {ema9_threshold:.2f}, EMA9: Rs {ema9:.2f}) - Cancelling order"
+                        )
+                        try:
+                            cancel_result = self.orders.cancel_order(order_id)
+                            if cancel_result:
+                                logger.info(
+                                    f"✅ {base_symbol}: Order cancelled due to gap-up above EMA9-1%"
+                                )
+                                summary["cancelled_above_ema9"] += 1
+
+                                # Update database order status
+                                if self.db and self.orders_repo:
+                                    try:
+                                        db_order = self.orders_repo.get_by_broker_order_id(
+                                            self.user_id, order_id
+                                        )
+                                        if db_order:
+                                            from src.infrastructure.db.models import (
+                                                OrderStatus as DbOrderStatus,
+                                            )
+
+                                            self.orders_repo.update(
+                                                db_order,
+                                                status=DbOrderStatus.CANCELLED,
+                                                reason=f"Pre-market price (Rs {premarket_price:.2f}) > EMA9-1% (Rs {ema9_threshold:.2f})",
+                                            )
+                                            logger.info(
+                                                f"{base_symbol}: DB order record updated - cancelled due to EMA9 validation"
+                                            )
+                                    except Exception as db_err:
+                                        logger.warning(
+                                            f"{base_symbol}: Failed to update DB record: {db_err}"
+                                        )
+
+                                # Send Telegram notification
+                                if self.telegram_notifier and self.telegram_notifier.enabled:
+                                    try:
+                                        message_text = (
+                                            f"🚫 *Order Cancelled - Gap Up Above EMA9*\n\n"
+                                            f"Symbol: `{base_symbol}`\n"
+                                            f"Pre-market: Rs {premarket_price:.2f}\n"
+                                            f"EMA9: Rs {ema9:.2f}\n"
+                                            f"Threshold: Rs {ema9_threshold:.2f} (EMA9 - 1%)\n"
+                                            f"Reason: Price gap-up above entry target"
+                                        )
+                                        self.telegram_notifier.notify_system_alert(
+                                            alert_type="ORDER_CANCELLED_EMA9",
+                                            message_text=message_text,
+                                            severity="WARNING",
+                                            user_id=self.user_id,
+                                        )
+                                    except Exception as notify_err:
+                                        logger.warning(
+                                            f"Failed to send Telegram notification: {notify_err}"
+                                        )
+
+                                continue  # Skip quantity adjustment for cancelled order
+                            else:
+                                logger.error(f"{base_symbol}: Failed to cancel order above EMA9-1%")
+                                summary["modification_failed"] += 1
+                        except Exception as cancel_err:
+                            logger.error(
+                                f"{base_symbol}: Error cancelling order above EMA9-1%: {cancel_err}",
+                                exc_info=True,
+                            )
+                            summary["modification_failed"] += 1
+                elif ema9 is None:
+                    logger.warning(
+                        f"{base_symbol}: EMA9 calculation failed - proceeding with quantity adjustment"
+                    )
+
                 # 4. Recalculate quantity to keep capital constant
                 target_capital = self.strategy_config.user_capital
                 new_qty = max(config.MIN_QTY, floor(target_capital / premarket_price))
@@ -3256,7 +3362,8 @@ class AutoTradeEngine:
                 f"{summary['adjusted']} adjusted, "
                 f"{summary['no_adjustment_needed']} unchanged, "
                 f"{summary['price_unavailable']} price N/A, "
-                f"{summary['modification_failed']} failed"
+                f"{summary['modification_failed']} failed, "
+                f"{summary['cancelled_above_ema9']} cancelled (above EMA9-1%)"
             )
 
             return summary
@@ -4220,14 +4327,19 @@ class AutoTradeEngine:
         if hasattr(self, "sell_manager") and self.sell_manager:
             try:
                 reconciliation_stats = self.sell_manager._reconcile_positions_with_broker_holdings()
-                if reconciliation_stats.get("updated", 0) > 0 or reconciliation_stats.get("closed", 0) > 0:
+                if (
+                    reconciliation_stats.get("updated", 0) > 0
+                    or reconciliation_stats.get("closed", 0) > 0
+                ):
                     logger.info(
                         f"Reconciliation before reentry placement: "
                         f"{reconciliation_stats.get('updated', 0)} positions updated, "
                         f"{reconciliation_stats.get('closed', 0)} positions closed"
                     )
             except Exception as e:
-                logger.warning(f"Reconciliation before reentry placement failed: {e}. Continuing...")
+                logger.warning(
+                    f"Reconciliation before reentry placement failed: {e}. Continuing..."
+                )
 
         open_positions = self.positions_repo.list(self.user_id)
         open_positions = [pos for pos in open_positions if pos.closed_at is None]
@@ -5014,18 +5126,26 @@ class AutoTradeEngine:
                                     "rsi": float(rsi) if rsi is not None else None,
                                     "price": float(price),
                                     "time": datetime.now().isoformat(),
-                                    "order_id": reentry_order_id if reentry_order_id else None,  # Track order_id if available
+                                    "order_id": (
+                                        reentry_order_id if reentry_order_id else None
+                                    ),  # Track order_id if available
                                 }
 
                                 # Improvement: Validate reentry data before writing to JSON
                                 # Validate required fields
-                                if not isinstance(reentry_data.get("qty"), int) or reentry_data["qty"] <= 0:
+                                if (
+                                    not isinstance(reentry_data.get("qty"), int)
+                                    or reentry_data["qty"] <= 0
+                                ):
                                     logger.error(
                                         f"Invalid qty in reentry data for {symbol}: {reentry_data.get('qty')}"
                                     )
                                     continue
 
-                                if not isinstance(reentry_data.get("price"), (int, float)) or reentry_data["price"] <= 0:
+                                if (
+                                    not isinstance(reentry_data.get("price"), (int, float))
+                                    or reentry_data["price"] <= 0
+                                ):
                                     logger.error(
                                         f"Invalid price in reentry data for {symbol}: {reentry_data.get('price')}"
                                     )

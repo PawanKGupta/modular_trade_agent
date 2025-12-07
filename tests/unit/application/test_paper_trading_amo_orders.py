@@ -674,3 +674,264 @@ class TestCompleteAMOFlow:
         # Verify capital: 1980 × 101 = 199,980 ≈ 200,000 ✅
         final_capital = adjusted_order.executed_quantity * adjusted_order.executed_price.amount
         assert abs(final_capital - 200000.0) < 1000.0  # Within reasonable range
+
+
+class TestEMAPreMarketValidation:
+    """Test EMA9 validation during pre-market adjustment"""
+
+    def test_cancel_order_when_premarket_price_above_ema9_minus_1_percent(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that order is cancelled when pre-market price > EMA9 - 1%"""
+        from config.strategy_config import StrategyConfig
+
+        strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+        )
+        adapter.broker = mock_paper_broker
+
+        # Create pending AMO order
+        pending_order = Order(
+            symbol="RELIANCE",
+            quantity=2000,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+            variety=OrderVariety.AMO,
+            order_id="ORDER_123",
+            status=OrderStatus.OPEN,
+        )
+        pending_order._metadata = {"original_ticker": "RELIANCE.NS"}
+
+        mock_paper_broker.get_pending_orders.return_value = [pending_order]
+
+        # Pre-market price: Rs 101.00
+        premarket_price = 101.0
+        mock_paper_broker.price_provider.get_price.return_value = premarket_price
+
+        # EMA9 = Rs 100.00, so EMA9 - 1% = Rs 99.00
+        # Pre-market price (101.00) > EMA9 - 1% (99.00) → Should cancel
+        ema9 = 100.0
+        with patch.object(adapter, "_calculate_ema9", return_value=ema9):
+            summary = adapter.adjust_amo_quantities_premarket()
+
+        # Verify order was cancelled
+        assert summary["cancelled_above_ema9"] == 1
+        assert summary["adjusted"] == 0
+        assert summary["total_orders"] == 1
+
+        # Verify cancel was called
+        assert mock_paper_broker.cancel_order.called
+        assert mock_paper_broker.cancel_order.call_args[0][0] == "ORDER_123"
+
+        # Verify new order was NOT placed
+        assert not mock_paper_broker.place_order.called
+
+    def test_proceed_when_premarket_price_below_ema9_minus_1_percent(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that order proceeds when pre-market price <= EMA9 - 1%"""
+        from config.strategy_config import StrategyConfig
+
+        strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+        )
+        adapter.broker = mock_paper_broker
+
+        # Create pending AMO order
+        pending_order = Order(
+            symbol="RELIANCE",
+            quantity=2000,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+            variety=OrderVariety.AMO,
+            order_id="ORDER_123",
+            status=OrderStatus.OPEN,
+        )
+        pending_order._metadata = {"original_ticker": "RELIANCE.NS"}
+
+        mock_paper_broker.get_pending_orders.return_value = [pending_order]
+
+        # Pre-market price: Rs 98.00
+        premarket_price = 98.0
+        mock_paper_broker.price_provider.get_price.return_value = premarket_price
+
+        # EMA9 = Rs 100.00, so EMA9 - 1% = Rs 99.00
+        # Pre-market price (98.00) <= EMA9 - 1% (99.00) → Should proceed
+        ema9 = 100.0
+        mock_paper_broker.cancel_order.return_value = True
+        mock_paper_broker.place_order.return_value = "ORDER_456"
+
+        with patch.object(adapter, "_calculate_ema9", return_value=ema9):
+            summary = adapter.adjust_amo_quantities_premarket()
+
+        # Verify order was NOT cancelled
+        assert summary["cancelled_above_ema9"] == 0
+        assert summary["adjusted"] == 1  # Should proceed with adjustment
+
+        # Verify new order was placed (normal adjustment flow)
+        assert mock_paper_broker.place_order.called
+
+    def test_proceed_when_premarket_price_exactly_at_ema9_minus_1_percent(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that order proceeds when pre-market price exactly equals EMA9 - 1%"""
+        from config.strategy_config import StrategyConfig
+
+        strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+        )
+        adapter.broker = mock_paper_broker
+
+        # Create pending AMO order
+        pending_order = Order(
+            symbol="RELIANCE",
+            quantity=2000,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+            variety=OrderVariety.AMO,
+            order_id="ORDER_123",
+            status=OrderStatus.OPEN,
+        )
+        pending_order._metadata = {"original_ticker": "RELIANCE.NS"}
+
+        mock_paper_broker.get_pending_orders.return_value = [pending_order]
+
+        # Pre-market price: Rs 99.00 (exactly EMA9 - 1%)
+        premarket_price = 99.0
+        mock_paper_broker.price_provider.get_price.return_value = premarket_price
+
+        # EMA9 = Rs 100.00, so EMA9 - 1% = Rs 99.00
+        # Pre-market price (99.00) == EMA9 - 1% (99.00) → Should proceed (not cancelled)
+        ema9 = 100.0
+        mock_paper_broker.cancel_order.return_value = True
+        mock_paper_broker.place_order.return_value = "ORDER_456"
+
+        with patch.object(adapter, "_calculate_ema9", return_value=ema9):
+            summary = adapter.adjust_amo_quantities_premarket()
+
+        # Verify order was NOT cancelled (exact match should proceed)
+        assert summary["cancelled_above_ema9"] == 0
+        assert summary["adjusted"] == 1
+
+        # Verify new order was placed
+        assert mock_paper_broker.place_order.called
+
+    def test_proceed_when_ema9_calculation_fails(self, db_session, test_user, mock_paper_broker):
+        """Test that order proceeds when EMA9 calculation fails"""
+        from config.strategy_config import StrategyConfig
+
+        strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+        )
+        adapter.broker = mock_paper_broker
+
+        # Create pending AMO order
+        pending_order = Order(
+            symbol="RELIANCE",
+            quantity=2000,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+            variety=OrderVariety.AMO,
+            order_id="ORDER_123",
+            status=OrderStatus.OPEN,
+        )
+        pending_order._metadata = {"original_ticker": "RELIANCE.NS"}
+
+        mock_paper_broker.get_pending_orders.return_value = [pending_order]
+
+        # Pre-market price available
+        premarket_price = 101.0
+        mock_paper_broker.price_provider.get_price.return_value = premarket_price
+
+        # EMA9 calculation fails (returns None)
+        mock_paper_broker.cancel_order.return_value = True
+        mock_paper_broker.place_order.return_value = "ORDER_456"
+
+        with patch.object(adapter, "_calculate_ema9", return_value=None):
+            summary = adapter.adjust_amo_quantities_premarket()
+
+        # Verify order was NOT cancelled (proceeds when EMA9 unavailable)
+        assert summary["cancelled_above_ema9"] == 0
+        assert summary["adjusted"] == 1
+
+        # Verify new order was placed
+        assert mock_paper_broker.place_order.called
+
+    def test_cancel_order_updates_database_status(self, db_session, test_user, mock_paper_broker):
+        """Test that cancelled order updates database status"""
+        from config.strategy_config import StrategyConfig
+        from src.infrastructure.db.models import Orders
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+        from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+        strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+        )
+        adapter.broker = mock_paper_broker
+
+        # Create database order
+        orders_repo = OrdersRepository(db_session)
+        db_order = Orders(
+            user_id=test_user.id,
+            symbol="RELIANCE",
+            side="buy",
+            order_type="market",
+            quantity=2000,
+            status=DbOrderStatus.PENDING,
+            broker_order_id="ORDER_123",
+            order_metadata={"ticker": "RELIANCE.NS"},
+        )
+        db_session.add(db_order)
+        db_session.commit()
+        db_session.refresh(db_order)
+
+        # Create pending AMO order matching database order
+        pending_order = Order(
+            symbol="RELIANCE",
+            quantity=2000,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+            variety=OrderVariety.AMO,
+            order_id="ORDER_123",
+            status=OrderStatus.OPEN,
+        )
+        pending_order._metadata = {"original_ticker": "RELIANCE.NS"}
+
+        mock_paper_broker.get_pending_orders.return_value = [pending_order]
+
+        # Pre-market price above EMA9 - 1%
+        premarket_price = 101.0
+        mock_paper_broker.price_provider.get_price.return_value = premarket_price
+
+        ema9 = 100.0  # EMA9 - 1% = 99.00, pre-market (101.00) > threshold
+
+        with patch.object(adapter, "_calculate_ema9", return_value=ema9):
+            summary = adapter.adjust_amo_quantities_premarket()
+
+        # Verify order was cancelled
+        assert summary["cancelled_above_ema9"] == 1
+
+        # Verify database order status updated
+        db_session.refresh(db_order)
+        assert db_order.status == DbOrderStatus.CANCELLED
+        assert "EMA9" in db_order.reason or "Pre-market price" in db_order.reason

@@ -396,6 +396,7 @@ class PaperTradingServiceAdapter:
             "price_unavailable": 0,
             "modification_failed": 0,
             "skipped_not_enabled": 0,
+            "cancelled_above_ema9": 0,
         }
 
         with execute_task(
@@ -486,6 +487,77 @@ class PaperTradingServiceAdapter:
                         f"current qty = {original_qty}",
                         action="adjust_amo_quantities_premarket",
                     )
+
+                    # Check if pre-market price is above EMA9-1% (cancel order if so)
+                    ema9 = None
+                    try:
+                        ema9 = self._calculate_ema9(price_symbol)
+                    except Exception as e:
+                        self.logger.warning(
+                            f"{order.symbol}: Failed to calculate EMA9: {e}",
+                            action="adjust_amo_quantities_premarket",
+                        )
+
+                    # Check if pre-market price > EMA9 - 1%
+                    if ema9 and ema9 > 0:
+                        ema9_threshold = ema9 * 0.99  # EMA9 - 1%
+                        if premarket_price > ema9_threshold:
+                            self.logger.warning(
+                                f"{order.symbol}: Pre-market price (Rs {premarket_price:.2f}) > EMA9-1% "
+                                f"(Rs {ema9_threshold:.2f}, EMA9: Rs {ema9:.2f}) - Cancelling order",
+                                action="adjust_amo_quantities_premarket",
+                            )
+                            try:
+                                self.broker.cancel_order(order.order_id)
+                                self.logger.info(
+                                    f"✅ {order.symbol}: Order cancelled due to gap-up above EMA9-1%",
+                                    action="adjust_amo_quantities_premarket",
+                                )
+                                summary["cancelled_above_ema9"] += 1
+
+                                # Update database order status if available
+                                if self.db:
+                                    try:
+                                        from src.infrastructure.db.models import (
+                                            OrderStatus as DbOrderStatus,
+                                        )
+                                        from src.infrastructure.persistence.orders_repository import (
+                                            OrdersRepository,
+                                        )
+
+                                        orders_repo = OrdersRepository(self.db)
+                                        db_order = orders_repo.get_by_broker_order_id(
+                                            self.user_id, order.order_id
+                                        )
+                                        if db_order:
+                                            orders_repo.update(
+                                                db_order,
+                                                status=DbOrderStatus.CANCELLED,
+                                                reason=f"Pre-market price (Rs {premarket_price:.2f}) > EMA9-1% (Rs {ema9_threshold:.2f})",
+                                            )
+                                            self.logger.info(
+                                                f"{order.symbol}: DB order record updated - cancelled due to EMA9 validation",
+                                                action="adjust_amo_quantities_premarket",
+                                            )
+                                    except Exception as db_err:
+                                        self.logger.warning(
+                                            f"{order.symbol}: Failed to update DB record: {db_err}",
+                                            action="adjust_amo_quantities_premarket",
+                                        )
+
+                                continue  # Skip quantity adjustment for cancelled order
+                            except Exception as cancel_err:
+                                self.logger.error(
+                                    f"{order.symbol}: Error cancelling order above EMA9-1%: {cancel_err}",
+                                    exc_info=True,
+                                    action="adjust_amo_quantities_premarket",
+                                )
+                                summary["modification_failed"] += 1
+                    elif ema9 is None:
+                        self.logger.warning(
+                            f"{order.symbol}: EMA9 calculation failed - proceeding with quantity adjustment",
+                            action="adjust_amo_quantities_premarket",
+                        )
 
                     # Recalculate quantity to keep capital constant
                     new_qty = max(1, floor(target_capital / premarket_price))
