@@ -86,7 +86,6 @@ class BrokerServiceUnavailableError(Exception):
         super().__init__(self.message)
 
 
-
 def _get_service_unavailable_message(error: Exception, default_message: str) -> str:
     """
     Get error message for service unavailable, preferring actual API error message.
@@ -126,7 +125,11 @@ def _extract_api_error_message(error: Exception) -> str | None:
                         if isinstance(data, dict):
                             # Try error array first (before checking simple error field)
                             # This handles cases like {"error": [{"message": "..."}]}
-                            if "error" in data and isinstance(data["error"], list) and len(data["error"]) > 0:
+                            if (
+                                "error" in data
+                                and isinstance(data["error"], list)
+                                and len(data["error"]) > 0
+                            ):
                                 err_item = data["error"][0]
                                 if isinstance(err_item, dict):
                                     return err_item.get("message", str(err_item))
@@ -136,7 +139,11 @@ def _extract_api_error_message(error: Exception) -> str | None:
                                 if field in data and data[field]:
                                     return str(data[field])
                             # Try "error" field only if it's not a list (already handled above)
-                            if "error" in data and not isinstance(data["error"], list) and data["error"]:
+                            if (
+                                "error" in data
+                                and not isinstance(data["error"], list)
+                                and data["error"]
+                            ):
                                 return str(data["error"])
                     except Exception:
                         pass
@@ -154,6 +161,7 @@ def _extract_api_error_message(error: Exception) -> str | None:
         if "{" in error_str and "}" in error_str:
             try:
                 import json
+
                 # Try to find JSON in error string
                 start = error_str.find("{")
                 end = error_str.rfind("}") + 1
@@ -169,9 +177,17 @@ def _extract_api_error_message(error: Exception) -> str | None:
 
         # Return the error string itself if it looks like an API message
         # (not just a generic connection error)
-        if error_str and len(error_str) < 200 and not any(
-            generic in error_str.lower()
-            for generic in ["connection refused", "network is unreachable", "failed to establish"]
+        if (
+            error_str
+            and len(error_str) < 200
+            and not any(
+                generic in error_str.lower()
+                for generic in [
+                    "connection refused",
+                    "network is unreachable",
+                    "failed to establish",
+                ]
+            )
         ):
             return error_str
 
@@ -465,16 +481,21 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                     "Max retries reached or no auth handler for place_order"
                                 )
                                 raise RuntimeError("Failed to place order: max retries reached")
-                        # After all retries, if it's still a connection error, treat as service unavailable
-                        if is_connection_error and attempt >= max_retries:
-                            raise BrokerServiceUnavailableError(
-                                "Broker service is temporarily unavailable. "
-                                "Unable to establish connection to the broker API. "
-                                "This may be due to maintenance or network issues. Please try again later."
-                            ) from call_error
 
-                        # Re-raise non-auth exceptions
-                        raise
+                            # After all retries, if it's still a connection error, treat as service unavailable
+                            if is_connection_error and attempt >= max_retries:
+                                error_message = _get_service_unavailable_message(
+                                    call_error,
+                                    "Broker service is temporarily unavailable. "
+                                    "Unable to establish connection to the broker API. "
+                                    "This may be due to maintenance or network issues. Please try again later.",
+                                )
+                                raise BrokerServiceUnavailableError(
+                                    error_message, original_error=call_error
+                                ) from call_error
+
+                            # Re-raise non-auth exceptions
+                            raise
 
                     # Check response for auth errors
                     if isinstance(response, dict) and is_auth_error(response):
@@ -704,16 +725,21 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                         "Max retries reached or no auth handler for cancel_order"
                                     )
                                     return False
-                        # After all retries, if it's still a connection error, treat as service unavailable
-                        if is_connection_error and attempt >= max_retries:
-                            raise BrokerServiceUnavailableError(
-                                "Broker service is temporarily unavailable. "
-                                "Unable to establish connection to the broker API. "
-                                "This may be due to maintenance or network issues. Please try again later."
-                            ) from call_error
 
-                        # Re-raise non-auth exceptions
-                        raise
+                            # After all retries, if it's still a connection error, treat as service unavailable
+                            if is_connection_error and attempt >= max_retries:
+                                error_message = _get_service_unavailable_message(
+                                    call_error,
+                                    "Broker service is temporarily unavailable. "
+                                    "Unable to establish connection to the broker API. "
+                                    "This may be due to maintenance or network issues. Please try again later.",
+                                )
+                                raise BrokerServiceUnavailableError(
+                                    error_message, original_error=call_error
+                                ) from call_error
+
+                            # Re-raise non-auth exceptions
+                            raise
 
                         logger.info(f"? Cancelled order: {order_id}")
                         return True
@@ -1573,18 +1599,14 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
             except Exception as e:
                 # Check if it's a service unavailable error (maintenance, downtime, etc.)
                 if _is_service_unavailable_error(e):
-                    logger.error(
-                        f"Broker service unavailable detected in get_account_limits: {e}"
-                    )
+                    logger.error(f"Broker service unavailable detected in get_account_limits: {e}")
                     error_message = _get_service_unavailable_message(
                         e,
                         "Broker service is temporarily unavailable. "
                         "This may be due to scheduled maintenance or service issues. "
                         "Please try again later.",
                     )
-                    raise BrokerServiceUnavailableError(
-                        error_message, original_error=e
-                    ) from e
+                    raise BrokerServiceUnavailableError(error_message, original_error=e) from e
 
                 # Check if it's a connection error (might indicate missing session)
                 error_str = str(e).lower()

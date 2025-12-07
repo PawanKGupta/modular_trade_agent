@@ -10,7 +10,6 @@ Tests cover:
 """
 
 from unittest.mock import MagicMock, PropertyMock
-from types import SimpleNamespace
 
 import pytest
 
@@ -63,9 +62,7 @@ class TestExtractApiErrorMessage:
     def test_extract_from_response_json_with_error_array(self):
         """Test extracting error message from response.json() with error array"""
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "error": [{"message": "Service unavailable"}]
-        }
+        mock_response.json.return_value = {"error": [{"message": "Service unavailable"}]}
         # Ensure text attribute doesn't interfere
         type(mock_response).text = PropertyMock(return_value=None)
 
@@ -90,11 +87,12 @@ class TestExtractApiErrorMessage:
 
     def test_extract_from_response_text_too_long(self):
         """Test that response.text is ignored if too long"""
+
         # Create a simple mock object that behaves like a response
         class MockResponse:
             def json(self):
                 raise ValueError("Not JSON")
-            
+
             @property
             def text(self):
                 return "x" * 600  # Too long (> 500)
@@ -147,6 +145,7 @@ class TestExtractApiErrorMessage:
 
     def test_response_without_json_or_text(self):
         """Test handling response without json() or text attributes"""
+
         # Create a simple object without json or text attributes
         class ResponseWithoutText:
             pass
@@ -162,11 +161,12 @@ class TestExtractApiErrorMessage:
 
     def test_json_parsing_exception(self):
         """Test handling JSON parsing exceptions gracefully"""
+
         # Create a simple class to properly mock response behavior
         class MockResponse:
             def json(self):
                 raise Exception("JSON parse error")
-            
+
             @property
             def text(self):
                 return None  # No text available
@@ -264,4 +264,3 @@ class TestBrokerServiceUnavailableError:
 
         assert exc_info.value.message == message
         assert str(exc_info.value) == message
-

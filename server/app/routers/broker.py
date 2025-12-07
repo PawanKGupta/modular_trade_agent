@@ -505,11 +505,11 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
         try:
             # Import broker components
             from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
-            from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (
-                BrokerFactory,
-            )
             from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter import (
                 BrokerServiceUnavailableError,
+            )
+            from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (
+                BrokerFactory,
             )
 
             # Thread-safe session caching - similar to trading service pattern
@@ -773,11 +773,11 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
         try:
             # Import broker components
             from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
-            from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (
-                BrokerFactory,
-            )
             from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter import (
                 BrokerServiceUnavailableError,
+            )
+            from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (
+                BrokerFactory,
             )
 
             # Thread-safe session caching - similar to trading service pattern
