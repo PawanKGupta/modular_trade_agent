@@ -56,13 +56,15 @@ class KotakNeoAuth:
         """Load credentials from environment file"""
         load_dotenv(self.config_file)
 
-        self.consumer_key = os.getenv("KOTAK_CONSUMER_KEY", "")
-        self.consumer_secret = os.getenv("KOTAK_CONSUMER_SECRET", "")
-        self.mobile_number = os.getenv("KOTAK_MOBILE_NUMBER", "")
-        self.password = os.getenv("KOTAK_PASSWORD", "")
-        self.totp_secret = os.getenv("KOTAK_TOTP_SECRET", "")
-        self.mpin = os.getenv("KOTAK_MPIN", "")
-        self.environment = os.getenv("KOTAK_ENVIRONMENT", "prod")
+        # Ensure all credentials are strings (not None) to prevent SDK concatenation errors
+        # os.getenv can return None if the variable is set to empty string in some cases
+        self.consumer_key = str(os.getenv("KOTAK_CONSUMER_KEY", "") or "")
+        self.consumer_secret = str(os.getenv("KOTAK_CONSUMER_SECRET", "") or "")
+        self.mobile_number = str(os.getenv("KOTAK_MOBILE_NUMBER", "") or "")
+        self.password = str(os.getenv("KOTAK_PASSWORD", "") or "")
+        self.totp_secret = str(os.getenv("KOTAK_TOTP_SECRET", "") or "")
+        self.mpin = str(os.getenv("KOTAK_MPIN", "") or "")
+        self.environment = str(os.getenv("KOTAK_ENVIRONMENT", "prod") or "prod")
 
         # Validate required credentials (TOTP or MPIN accepted for 2FA)
         required_fields = [
@@ -151,17 +153,40 @@ class KotakNeoAuth:
         try:
             from neo_api_client import NeoAPI  # noqa: PLC0415
 
+            # Ensure all credentials are strings (not None) before passing to SDK
+            # SDK may try to concatenate strings internally, causing TypeError if None
+            consumer_key = str(self.consumer_key) if self.consumer_key is not None else ""
+            consumer_secret = str(self.consumer_secret) if self.consumer_secret is not None else ""
+            environment = str(self.environment) if self.environment is not None else "prod"
+
+            if not consumer_key or not consumer_secret:
+                self.logger.error(
+                    "Client initialization failed: consumer_key or consumer_secret is missing or empty"
+                )
+                return None
+
             # Output suppression is handled at login() level
             client = NeoAPI(
-                consumer_key=self.consumer_key,
-                consumer_secret=self.consumer_secret,
-                environment=self.environment,
+                consumer_key=consumer_key,
+                consumer_secret=consumer_secret,
+                environment=environment,
                 neo_fin_key="neotradeapi",
             )
 
             self.logger.info("NeoAPI client initialized successfully")
             return client
 
+        except TypeError as te:
+            # Handle SDK internal errors where it tries to concatenate None with string
+            error_msg = str(te) if te else "Type error in SDK"
+            if "NoneType" in error_msg or "concatenate" in error_msg.lower():
+                self.logger.error(
+                    "Client initialization error: SDK received None value. "
+                    "Please check that KOTAK_CONSUMER_KEY and KOTAK_CONSUMER_SECRET are set correctly."
+                )
+            else:
+                self.logger.error(f"Client initialization error (TypeError): {error_msg}")
+            return None
         except Exception as init_error:
             self.logger.error(f"Client initialization failed: {init_error}")
             return None
@@ -170,24 +195,87 @@ class KotakNeoAuth:
         """Perform username/password login"""
         try:
             self.logger.info("Attempting login...")
-            # Output suppression is handled at login() level
-            login_response = self.client.login(
-                mobilenumber=self.mobile_number, password=self.password
+
+            # Ensure credentials are strings (not None) before passing to SDK
+            # SDK may try to concatenate strings internally, causing TypeError if None
+            mobile = str(self.mobile_number) if self.mobile_number is not None else ""
+            password = str(self.password) if self.password is not None else ""
+
+            # Validate credentials before attempting login
+            if not mobile or not password:
+                self.logger.error("Login failed: Mobile number or password is missing or empty")
+                return False
+
+            # Additional validation: ensure client has valid credentials
+            if not self.client:
+                self.logger.error("Login failed: Client is not initialized")
+                return False
+
+            # Log credential status for debugging (without exposing actual values)
+            self.logger.debug(
+                f"Login attempt - Mobile length: {len(mobile)}, "
+                f"Password length: {len(password)}, "
+                f"Consumer key set: {bool(self.consumer_key)}, "
+                f"Consumer secret set: {bool(self.consumer_secret)}"
             )
+
+            # Output suppression is handled at login() level
+            login_response = self.client.login(mobilenumber=mobile, password=password)
 
             if login_response is None:
                 self.logger.error("Login failed: No response from server")
                 return False
 
             if isinstance(login_response, dict) and "error" in login_response:
-                self.logger.error(f"Login failed: {login_response['error'][0]['message']}")
+                error_msg = "Unknown error"
+                try:
+                    if (
+                        isinstance(login_response["error"], list)
+                        and len(login_response["error"]) > 0
+                    ):
+                        if isinstance(login_response["error"][0], dict):
+                            error_msg = login_response["error"][0].get("message", "Unknown error")
+                        else:
+                            error_msg = str(login_response["error"][0])
+                    else:
+                        error_msg = str(login_response["error"])
+                except Exception:
+                    error_msg = "Unknown error (failed to parse error message)"
+                self.logger.error(f"Login failed: {error_msg}")
                 return False
 
             self.logger.info("Login successful, proceeding with 2FA...")
             return True
 
+        except TypeError as te:
+            # Handle SDK internal errors where it tries to concatenate None with string
+            error_msg = str(te) if te else "Type error in SDK"
+            if "NoneType" in error_msg or "concatenate" in error_msg.lower():
+                # Log which credentials might be None for debugging
+                cred_status = {
+                    "mobile_number": "set" if mobile else "missing/empty",
+                    "password": "set" if password else "missing/empty",
+                    "consumer_key": "set" if self.consumer_key else "missing/empty",
+                    "consumer_secret": "set" if self.consumer_secret else "missing/empty",
+                }
+                self.logger.error(
+                    f"Login error: SDK received None value. "
+                    f"Credential status: {cred_status}. "
+                    "Please check that all credentials are set correctly in kotak_neo.env"
+                )
+            else:
+                self.logger.error(f"Login error (TypeError): {error_msg}")
+            return False
         except Exception as e:
-            self.logger.error(f"Login error: {e}")
+            # Sanitize error message to avoid logging sensitive info
+            try:
+                error_str = str(e) if e is not None else "Unknown error"
+                if error_str is None:
+                    error_str = "Unknown error (exception string is None)"
+                error_msg = sanitize_log_message(error_str)
+            except Exception:
+                error_msg = "Unknown error (failed to format error message)"
+            self.logger.error(f"Login error: {error_msg}")
             return False
 
     def _complete_2fa(self) -> bool:  # noqa: PLR0911

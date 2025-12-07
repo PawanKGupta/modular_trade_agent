@@ -1562,18 +1562,6 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                     f"SDK call timed out in get_account_limits: {timeout_error}. "
                     "This may indicate broker API is slow or unreachable."
                 )
-                # Check if this is a service unavailable scenario (timeout after retries)
-                if attempt >= max_retries:
-                    # After all retries, timeout likely means service is unavailable
-                    error_message = _get_service_unavailable_message(
-                        timeout_error,
-                        "Broker service is temporarily unavailable. "
-                        "The API did not respond within the expected time. "
-                        "This may be due to maintenance or high load. Please try again later.",
-                    )
-                    raise BrokerServiceUnavailableError(
-                        error_message, original_error=timeout_error
-                    ) from timeout_error
                 # If timeout occurs, try refreshing client from auth handler
                 # The client might be stale even if auth handler reports authenticated
                 if self.auth_handler and self.auth_handler.is_authenticated():
@@ -1586,16 +1574,12 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 # Try next retry
                 if attempt < max_retries:
                     continue
-                # After all retries, raise service unavailable
-                error_message = _get_service_unavailable_message(
-                    timeout_error,
-                    "Broker service is temporarily unavailable. "
-                    "The API did not respond within the expected time. "
-                    "This may be due to maintenance or high load. Please try again later.",
+                # After all retries, return empty dict for backward compatibility
+                # (Read operations return empty collections on timeout, unlike write operations)
+                logger.warning(
+                    "get_account_limits timed out after all retries. Returning empty dict."
                 )
-                raise BrokerServiceUnavailableError(
-                    error_message, original_error=timeout_error
-                ) from timeout_error
+                return {}
             except Exception as e:
                 # Check if it's a service unavailable error (maintenance, downtime, etc.)
                 if _is_service_unavailable_error(e):
