@@ -161,6 +161,8 @@ class TestBacktestServiceMLConfig:
         """Test that run_integrated_backtest passes config to validate_initial_entry_with_trade_agent"""
         # Mock market data
         import pandas as pd
+        import sys
+        import importlib
 
         dates = pd.date_range("2024-01-01", periods=300, freq="D")
         mock_df = pd.DataFrame(
@@ -173,6 +175,11 @@ class TestBacktestServiceMLConfig:
             },
             index=dates,
         )
+
+        # Ensure we have the real integrated_backtest module (not a mock from another test)
+        # Reload the module to clear any previous mocks
+        if "integrated_backtest" in sys.modules:
+            importlib.reload(sys.modules["integrated_backtest"])
 
         # Patch both fetch_ohlcv_yf and validate_initial_entry_with_trade_agent
         # Need to patch where they're used in integrated_backtest module
