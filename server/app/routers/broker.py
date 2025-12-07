@@ -605,31 +605,15 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
             portfolio_value = 0.0
             unrealized_pnl_total = 0.0
 
-            # Fetch live prices using yfinance
-            import yfinance as yf  # noqa: PLC0415
-
+            # Use broker's current price directly (faster, no external API calls)
+            # Broker API already provides current_price, so we don't need yfinance
             for holding in holdings:
                 if holding.quantity == 0:
                     continue
 
-                # Get live price
+                # Use broker's current price directly (avoids slow yfinance API calls)
                 symbol = holding.symbol
-                ticker = (
-                    f"{symbol}.NS"
-                    if not symbol.endswith(".NS") and not symbol.endswith(".BO")
-                    else symbol
-                )
-                try:
-                    stock = yf.Ticker(ticker)
-                    live_price = stock.info.get("currentPrice") or stock.info.get(
-                        "regularMarketPrice"
-                    )
-                    current_price = (
-                        float(live_price) if live_price else float(holding.current_price.amount)
-                    )
-                except Exception:
-                    # Fallback to holding's current price
-                    current_price = float(holding.current_price.amount)
+                current_price = float(holding.current_price.amount)
 
                 # Calculate values
                 avg_price = float(holding.average_price.amount)
