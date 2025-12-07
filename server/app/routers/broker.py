@@ -505,6 +505,9 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
         try:
             # Import broker components
             from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+            from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter import (
+                BrokerServiceUnavailableError,
+            )
             from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (
                 BrokerFactory,
             )
@@ -697,6 +700,15 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
 
     except HTTPException:
         raise
+    except BrokerServiceUnavailableError as e:
+        # Broker service is unavailable (maintenance, downtime, etc.)
+        # Use the actual error message from the API if available, otherwise use default
+        error_message = e.message if hasattr(e, "message") else str(e)
+        logger.warning(f"Broker service unavailable for user {current.id}: {error_message}")
+        raise HTTPException(
+            status_code=503,
+            detail=error_message,
+        ) from e
     except Exception as e:
         logger.exception(f"Error fetching broker portfolio for user {current.id}: {e}")
         raise HTTPException(
@@ -761,6 +773,9 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
         try:
             # Import broker components
             from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
+            from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter import (
+                BrokerServiceUnavailableError,
+            )
             from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (
                 BrokerFactory,
             )
@@ -912,6 +927,15 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
 
     except HTTPException:
         raise
+    except BrokerServiceUnavailableError as e:
+        # Broker service is unavailable (maintenance, downtime, etc.)
+        # Use the actual error message from the API if available, otherwise use default
+        error_message = e.message if hasattr(e, "message") else str(e)
+        logger.warning(f"Broker service unavailable for user {current.id}: {error_message}")
+        raise HTTPException(
+            status_code=503,
+            detail=error_message,
+        ) from e
     except Exception as e:
         logger.exception(f"Error fetching broker orders for user {current.id}: {e}")
         raise HTTPException(

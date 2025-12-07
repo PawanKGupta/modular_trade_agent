@@ -7,6 +7,38 @@ import traceback
 import uuid
 from logging.handlers import RotatingFileHandler
 
+
+class SafeRotatingFileHandler(RotatingFileHandler):
+    """
+    RotatingFileHandler that gracefully handles permission errors during rotation.
+
+    In Docker containers with mounted volumes, log rotation can fail due to permission
+    issues. This handler catches those errors and continues logging without breaking
+    the application.
+    """
+
+    def doRollover(self):
+        """
+        Override doRollover to handle permission errors gracefully.
+        """
+        try:
+            super().doRollover()
+        except (OSError, PermissionError) as e:
+            # Log the error but don't break the application
+            # Use a simple print to avoid recursion if logging itself fails
+            try:
+                import sys
+
+                print(
+                    f"Warning: Log rotation failed due to permission error: {e}. "
+                    "Continuing to log to current file.",
+                    file=sys.stderr,
+                )
+            except Exception:
+                pass  # If even stderr fails, just continue silently
+            # Don't re-raise - allow logging to continue to the current file
+
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -50,13 +82,15 @@ app = FastAPI(title="Rebound API", version="1.0.0", debug=True)
 LOG_DIR = os.path.abspath(os.path.join(ROOT_DIR, "logs"))
 os.makedirs(LOG_DIR, exist_ok=True)
 log_path = os.path.join(LOG_DIR, "server_api.log")
-file_handler = RotatingFileHandler(log_path, maxBytes=2 * 1024 * 1024, backupCount=3)
+# Use SafeRotatingFileHandler to handle permission errors in Docker containers
+file_handler = SafeRotatingFileHandler(log_path, maxBytes=2 * 1024 * 1024, backupCount=3)
 file_handler.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 file_handler.setFormatter(formatter)
 root_logger = logging.getLogger()
 if not any(
-    isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "") == log_path
+    isinstance(h, (RotatingFileHandler, SafeRotatingFileHandler))
+    and getattr(h, "baseFilename", "") == log_path
     for h in root_logger.handlers
 ):
     root_logger.addHandler(file_handler)
@@ -112,28 +146,36 @@ async def ensure_db_schema():
                 from src.infrastructure.db.models import IndividualServiceStatus, ServiceStatus
 
                 # Mark all unified services as stopped
-                running_unified = db.query(ServiceStatus).filter(
-                    ServiceStatus.service_running == True
-                ).all()
+                running_unified = (
+                    db.query(ServiceStatus).filter(ServiceStatus.service_running == True).all()
+                )
 
                 if running_unified:
                     print(f"[Startup] Found {len(running_unified)} orphaned unified service(s)")
                     for status in running_unified:
                         status.service_running = False
-                        print(f"[Startup] Marked unified service as stopped for user {status.user_id}")
+                        print(
+                            f"[Startup] Marked unified service as stopped for user {status.user_id}"
+                        )
                     db.commit()
 
                 # Mark all individual services as stopped
-                running_individual = db.query(IndividualServiceStatus).filter(
-                    IndividualServiceStatus.is_running == True
-                ).all()
+                running_individual = (
+                    db.query(IndividualServiceStatus)
+                    .filter(IndividualServiceStatus.is_running == True)
+                    .all()
+                )
 
                 if running_individual:
-                    print(f"[Startup] Found {len(running_individual)} orphaned individual service(s)")
+                    print(
+                        f"[Startup] Found {len(running_individual)} orphaned individual service(s)"
+                    )
                     for status in running_individual:
                         status.is_running = False
                         status.process_id = None
-                        print(f"[Startup] Marked {status.task_name} as stopped for user {status.user_id}")
+                        print(
+                            f"[Startup] Marked {status.task_name} as stopped for user {status.user_id}"
+                        )
                     db.commit()
 
                 if running_unified or running_individual:
