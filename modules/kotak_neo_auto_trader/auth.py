@@ -124,7 +124,15 @@ class KotakNeoAuth:
 
         except Exception as e:
             # Sanitize error message in case it contains token info
-            error_msg = sanitize_log_message(str(e))
+            # Handle case where str(e) might return None or fail
+            try:
+                error_str = str(e) if e is not None else "Unknown error"
+                if error_str is None:
+                    error_str = "Unknown error (exception string is None)"
+                error_msg = sanitize_log_message(error_str)
+            except Exception as sanitize_error:
+                # Fallback if sanitization fails
+                error_msg = f"Error during login (sanitization failed: {sanitize_error})"
             self.logger.error(f"Login failed with exception: {error_msg}")
             return False
         finally:
@@ -297,7 +305,15 @@ class KotakNeoAuth:
 
         except Exception as e:
             # Sanitize error message in case it contains token info
-            error_msg = sanitize_log_message(str(e))
+            # Handle case where str(e) might return None or fail
+            try:
+                error_str = str(e) if e is not None else "Unknown error"
+                if error_str is None:
+                    error_str = "Unknown error (exception string is None)"
+                error_msg = sanitize_log_message(error_str)
+            except Exception as sanitize_error:
+                # Fallback if sanitization fails
+                error_msg = f"Error extracting token (sanitization failed: {sanitize_error})"
             self.logger.debug(f"Error extracting token from response: {error_msg}")
             return None
 

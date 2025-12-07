@@ -15,6 +15,20 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger  # noqa: E402
 
+# Import timeout utilities for SDK call protection
+try:
+    from modules.kotak_neo_auto_trader.utils.timeout_utils import (  # noqa: E402, PLC0415
+        DEFAULT_SDK_TIMEOUT,
+        call_with_timeout,
+    )
+except ImportError:
+    # Fallback if timeout_utils not available
+    def call_with_timeout(func, timeout=30.0, timeout_error_message="SDK call timed out"):
+        # No timeout protection - call directly
+        return func()
+
+    DEFAULT_SDK_TIMEOUT = 30.0
+
 from ...domain import (  # noqa: E402
     Exchange,
     Holding,
@@ -26,6 +40,32 @@ from ...domain import (  # noqa: E402
     OrderVariety,
     TransactionType,
 )
+
+# Import auth handler utilities for re-authentication
+try:
+    from modules.kotak_neo_auto_trader.auth_handler import (  # noqa: E402, PLC0415
+        _attempt_reauth_thread_safe,
+        _check_reauth_failure_rate,
+        _record_reauth_failure,
+        is_auth_error,
+        is_auth_exception,
+    )
+except ImportError:
+    # Fallback if auth_handler not available (shouldn't happen in normal usage)
+    def is_auth_error(response):  # noqa: ARG001
+        return False
+
+    def is_auth_exception(exception):  # noqa: ARG001
+        return False
+
+    def _attempt_reauth_thread_safe(auth, method_name):  # noqa: ARG001
+        return False
+
+    def _check_reauth_failure_rate(auth):  # noqa: ARG001
+        return False  # Don't block if import fails
+
+    def _record_reauth_failure(auth):  # noqa: ARG001
+        pass  # No-op if import fails
 
 
 class KotakNeoBrokerAdapter(IBrokerGateway):
@@ -53,10 +93,15 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         """Establish connection to broker"""
         try:
             if self.auth_handler.login():
-                self._client = self.auth_handler.get_client()
-                self._connected = True
-                logger.info("? Connected to Kotak Neo broker")
-                return True
+                client = self.auth_handler.get_client()
+                if client and self.auth_handler.is_authenticated():
+                    self._client = client
+                    self._connected = True
+                    logger.info("? Connected to Kotak Neo broker")
+                    return True
+                else:
+                    logger.error("? Connection failed: Client not authenticated after login")
+                    return False
             return False
         except Exception as e:
             logger.error(f"? Connection failed: {e}")
@@ -82,80 +127,381 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
     # Order Management
 
     def place_order(self, order: Order) -> str:
-        """Place an order and return order ID"""
+        """
+        Place an order and return order ID with automatic re-authentication on session expiry.
+
+        Returns:
+            Order ID string
+
+        Raises:
+            RuntimeError: If order placement fails after all retries
+        """
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
+
+        # Refresh client from auth handler before API calls to ensure latest session is used
+        # The session (sId) is embedded in the SDK client when created during login
+        # Since session is valid for ~1 hour, we reuse it but always get fresh client to ensure session is present
+        # After re-auth, auth.client becomes a NEW object, so we need to refresh to get the new session
+        # Strategy: Always refresh if client changed (re-auth) or if no client exists
+        # In production: auth.get_client() returns auth.client (same object until re-auth, then new object)
+        # In tests: Tests should configure auth_handler.get_client() to return the same mock_client
+        if self.auth_handler and self.auth_handler.is_authenticated():
+            fresh_client = self.auth_handler.get_client()
+            if fresh_client:
+                # Always refresh if: (1) no client, OR (2) client changed (re-auth happened)
+                # Same client object = no-op refresh (ensures we have latest session)
+                if self._client is None or fresh_client is not self._client:
+                    self._client = fresh_client
+                    logger.debug(
+                        "Refreshed client from auth handler for place_order to ensure session is used"
+                    )
 
         # Build payload from domain order
         payload = self._build_order_payload(order)
 
-        # Try multiple SDK method names (resilience pattern from legacy code)
-        for method_name in ["place_order", "order_place", "placeorder"]:
-            try:
-                if not hasattr(self._client, method_name):
-                    continue
+        max_retries = 1  # Retry once after re-auth
+        for attempt in range(max_retries + 1):
+            # Try multiple SDK method names (resilience pattern from legacy code)
+            for method_name in ["place_order", "order_place", "placeorder"]:
+                try:
+                    if not hasattr(self._client, method_name):
+                        continue
 
-                method = getattr(self._client, method_name)
-                params = self._adapt_payload_to_method(method, payload)
+                    method = getattr(self._client, method_name)
+                    params = self._adapt_payload_to_method(method, payload)
 
-                logger.info(
-                    f"? Placing {order.transaction_type.value} order: "
-                    f"{order.symbol} x{order.quantity}"
-                )
-                response = method(**params)
+                    logger.info(
+                        f"? Placing {order.transaction_type.value} order: "
+                        f"{order.symbol} x{order.quantity}"
+                    )
 
-                # Check for errors
-                if self._is_error_response(response):
-                    logger.error(f"? Order rejected: {response}")
-                    continue
+                    # Call with timeout protection (SDK might hang)
+                    try:
+                        response = call_with_timeout(
+                            lambda: method(**params),
+                            timeout=DEFAULT_SDK_TIMEOUT,
+                            timeout_error_message=f"place_order() call to {method_name}() timed out",
+                        )
+                    except TimeoutError as timeout_error:
+                        logger.error(
+                            f"SDK call timed out in place_order: {timeout_error}. "
+                            "This may indicate broker API is slow or unreachable."
+                        )
+                        # If timeout occurs, try refreshing client from auth handler
+                        # The client might be stale even if auth handler reports authenticated
+                        if self.auth_handler and self.auth_handler.is_authenticated():
+                            fresh_client = self.auth_handler.get_client()
+                            if fresh_client:
+                                self._client = fresh_client
+                                logger.info("Refreshed client after timeout in place_order")
+                                if attempt < max_retries:
+                                    break  # Retry outer loop with fresh client
+                        # Try next method or retry after re-auth
+                        if attempt < max_retries:
+                            break  # Retry outer loop
+                        continue  # Try next method
+                    except Exception as call_error:
+                        # Check if it's a connection error (might indicate missing session)
+                        error_str = str(call_error).lower()
+                        is_connection_error = (
+                            "connection refused" in error_str
+                            or "connection error" in error_str
+                            or "newconnectionerror" in error_str
+                            or "failed to establish" in error_str
+                        )
 
-                # Extract order ID
-                order_id = self._extract_order_id(response)
-                if order_id:
-                    logger.info(f"? Order placed: {order_id}")
-                    return order_id
+                        # If connection error, try refreshing client from auth handler
+                        # The client might be missing the session (empty sId in URL)
+                        if (
+                            is_connection_error
+                            and self.auth_handler
+                            and self.auth_handler.is_authenticated()
+                        ):
+                            fresh_client = self.auth_handler.get_client()
+                            if fresh_client:
+                                self._client = fresh_client
+                                logger.warning(
+                                    f"Connection error detected in place_order: {call_error}. "
+                                    "Refreshed client from auth handler to ensure session is used."
+                                )
+                                if attempt < max_retries:
+                                    break  # Retry outer loop with fresh client
 
-            except Exception as e:
-                logger.warning(f"[WARN]? Method {method_name} failed: {e}")
-                continue
+                        # Check if it's an auth error
+                        if is_auth_exception(call_error):
+                            logger.warning(
+                                f"Authentication error in place_order: {call_error}. "
+                                "Checking re-authentication failure rate..."
+                            )
+                            # Check if re-auth should be blocked due to recent failures
+                            if self.auth_handler and _check_reauth_failure_rate(self.auth_handler):
+                                logger.error(
+                                    "Re-authentication blocked for place_order due to recent failures. "
+                                    "Please check authentication credentials or API status."
+                                )
+                                raise RuntimeError(
+                                    "Failed to place order: re-authentication blocked"
+                                )
+
+                            # Attempt re-auth and retry
+                            if (
+                                attempt < max_retries
+                                and self.auth_handler
+                                and hasattr(self.auth_handler, "force_relogin")
+                            ):
+                                if _attempt_reauth_thread_safe(self.auth_handler, "place_order"):
+                                    # Update client after re-auth - ensure it's authenticated
+                                    new_client = self.auth_handler.get_client()
+                                    if new_client and self.auth_handler.is_authenticated():
+                                        self._client = new_client
+                                        logger.info(
+                                            "Re-authentication successful, client updated, retrying place_order..."
+                                        )
+                                        break  # Retry the outer loop
+                                    else:
+                                        logger.error(
+                                            "Re-authentication reported success but client is not authenticated"
+                                        )
+                                        _record_reauth_failure(self.auth_handler)
+                                        raise RuntimeError(
+                                            "Failed to place order: re-authentication failed"
+                                        )
+                                else:
+                                    logger.error("Re-authentication failed for place_order")
+                                    _record_reauth_failure(self.auth_handler)
+                                    raise RuntimeError(
+                                        "Failed to place order: re-authentication failed"
+                                    )
+                            else:
+                                logger.error(
+                                    "Max retries reached or no auth handler for place_order"
+                                )
+                                raise RuntimeError("Failed to place order: max retries reached")
+                        # Re-raise non-auth exceptions
+                        raise
+
+                    # Check response for auth errors
+                    if isinstance(response, dict) and is_auth_error(response):
+                        logger.warning(
+                            "Authentication error detected in place_order response. "
+                            "Checking re-authentication failure rate..."
+                        )
+                        # Check if re-auth should be blocked due to recent failures
+                        if self.auth_handler and _check_reauth_failure_rate(self.auth_handler):
+                            logger.error(
+                                "Re-authentication blocked for place_order due to recent failures. "
+                                "Please check authentication credentials or API status."
+                            )
+                            raise RuntimeError("Failed to place order: re-authentication blocked")
+
+                        # Attempt re-auth and retry
+                        if (
+                            attempt < max_retries
+                            and self.auth_handler
+                            and hasattr(self.auth_handler, "force_relogin")
+                        ):
+                            if _attempt_reauth_thread_safe(self.auth_handler, "place_order"):
+                                # Update client after re-auth
+                                self._client = self.auth_handler.get_client()
+                                logger.info("Re-authentication successful, retrying place_order...")
+                                break  # Retry the outer loop
+                            else:
+                                logger.error("Re-authentication failed for place_order")
+                                _record_reauth_failure(self.auth_handler)
+                                raise RuntimeError(
+                                    "Failed to place order: re-authentication failed"
+                                )
+                        else:
+                            logger.error("Max retries reached or no auth handler for place_order")
+                            raise RuntimeError("Failed to place order: max retries reached")
+
+                    # Check for errors
+                    if self._is_error_response(response):
+                        logger.error(f"? Order rejected: {response}")
+                        continue  # Try next method
+
+                    # Extract order ID
+                    order_id = self._extract_order_id(response)
+                    if order_id:
+                        logger.info(f"? Order placed: {order_id}")
+                        return order_id
+
+                except RuntimeError:
+                    # Re-raise RuntimeError (from re-auth failures)
+                    raise
+                except Exception as e:
+                    logger.warning(f"[WARN]? Method {method_name} failed: {e}")
+                    continue  # Try next method
 
         raise RuntimeError("Failed to place order with all available methods")
 
     def cancel_order(self, order_id: str) -> bool:
-        """Cancel an order"""
+        """
+        Cancel an order with automatic re-authentication on session expiry.
+
+        Returns:
+            True if order was cancelled successfully, False otherwise
+        """
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
 
-        for method_name in ["cancel_order", "order_cancel", "cancelOrder"]:
-            try:
-                if not hasattr(self._client, method_name):
-                    continue
+        # Refresh client from auth handler before API calls to ensure latest session is used
+        # The session (sId) is embedded in the SDK client when created during login
+        # Since session is valid for ~1 hour, we reuse it but always get fresh client to ensure session is present
+        # After re-auth, auth.client becomes a NEW object, so we need to refresh to get the new session
+        # Strategy: Always refresh if client changed (re-auth) or if no client exists
+        # In production: auth.get_client() returns auth.client (same object until re-auth, then new object)
+        # In tests: Tests should configure auth_handler.get_client() to return the same mock_client
+        if self.auth_handler and self.auth_handler.is_authenticated():
+            fresh_client = self.auth_handler.get_client()
+            if fresh_client:
+                # Always refresh if: (1) no client, OR (2) client changed (re-auth happened)
+                # Same client object = no-op refresh (ensures we have latest session)
+                if self._client is None or fresh_client is not self._client:
+                    self._client = fresh_client
+                    logger.debug(
+                        "Refreshed client from auth handler for cancel_order to ensure session is used"
+                    )
 
-                method = getattr(self._client, method_name)
-
-                # Try to determine parameter name
+        max_retries = 1  # Retry once after re-auth
+        for attempt in range(max_retries + 1):
+            for method_name in ["cancel_order", "order_cancel", "cancelOrder"]:
                 try:
-                    params = set(inspect.signature(method).parameters.keys())
-                    payload = {}
-                    for key in ["order_id", "orderId", "neoOrdNo", "ordId", "id"]:
-                        if key in params:
-                            payload[key] = order_id
-                            break
-                    if not payload:
-                        # Try positional
-                        method(order_id)
-                    else:
-                        method(**payload)
+                    if not hasattr(self._client, method_name):
+                        continue
 
-                    logger.info(f"? Cancelled order: {order_id}")
-                    return True
+                    method = getattr(self._client, method_name)
+
+                    # Try to determine parameter name
+                    try:
+                        params = set(inspect.signature(method).parameters.keys())
+                        payload = {}
+                        for key in ["order_id", "orderId", "neoOrdNo", "ordId", "id"]:
+                            if key in params:
+                                payload[key] = order_id
+                                break
+
+                        # Call with timeout protection (SDK might hang)
+                        try:
+                            if not payload:
+                                # Try positional
+                                call_with_timeout(
+                                    lambda: method(order_id),
+                                    timeout=DEFAULT_SDK_TIMEOUT,
+                                    timeout_error_message=f"cancel_order() call to {method_name}() timed out",
+                                )
+                            else:
+                                call_with_timeout(
+                                    lambda: method(**payload),
+                                    timeout=DEFAULT_SDK_TIMEOUT,
+                                    timeout_error_message=f"cancel_order() call to {method_name}() timed out",
+                                )
+                        except TimeoutError as timeout_error:
+                            logger.error(
+                                f"SDK call timed out in cancel_order: {timeout_error}. "
+                                "This may indicate broker API is slow or unreachable."
+                            )
+                            # If timeout occurs, try refreshing client from auth handler
+                            # The client might be stale even if auth handler reports authenticated
+                            if self.auth_handler and self.auth_handler.is_authenticated():
+                                fresh_client = self.auth_handler.get_client()
+                                if fresh_client:
+                                    self._client = fresh_client
+                                    logger.info("Refreshed client after timeout in cancel_order")
+                                    if attempt < max_retries:
+                                        break  # Retry outer loop with fresh client
+                            # Try next method or retry after re-auth
+                            if attempt < max_retries:
+                                break  # Retry outer loop
+                            continue  # Try next method
+                        except Exception as call_error:
+                            # Check if it's a connection error (might indicate missing session)
+                            error_str = str(call_error).lower()
+                            is_connection_error = (
+                                "connection refused" in error_str
+                                or "connection error" in error_str
+                                or "newconnectionerror" in error_str
+                                or "failed to establish" in error_str
+                            )
+
+                            # If connection error, try refreshing client from auth handler
+                            # The client might be missing the session (empty sId in URL)
+                            if (
+                                is_connection_error
+                                and self.auth_handler
+                                and self.auth_handler.is_authenticated()
+                            ):
+                                fresh_client = self.auth_handler.get_client()
+                                if fresh_client:
+                                    self._client = fresh_client
+                                    logger.warning(
+                                        f"Connection error detected in cancel_order: {call_error}. "
+                                        "Refreshed client from auth handler to ensure session is used."
+                                    )
+                                    if attempt < max_retries:
+                                        break  # Retry outer loop with fresh client
+
+                            # Check if it's an auth error
+                            if is_auth_exception(call_error):
+                                logger.warning(
+                                    f"Authentication error in cancel_order: {call_error}. "
+                                    "Checking re-authentication failure rate..."
+                                )
+                                # Check if re-auth should be blocked due to recent failures
+                                if self.auth_handler and _check_reauth_failure_rate(
+                                    self.auth_handler
+                                ):
+                                    logger.error(
+                                        "Re-authentication blocked for cancel_order due to recent failures. "
+                                        "Please check authentication credentials or API status."
+                                    )
+                                    return False
+
+                                # Attempt re-auth and retry
+                                if (
+                                    attempt < max_retries
+                                    and self.auth_handler
+                                    and hasattr(self.auth_handler, "force_relogin")
+                                ):
+                                    if _attempt_reauth_thread_safe(
+                                        self.auth_handler, "cancel_order"
+                                    ):
+                                        # Update client after re-auth - ensure it's authenticated
+                                        new_client = self.auth_handler.get_client()
+                                        if new_client and self.auth_handler.is_authenticated():
+                                            self._client = new_client
+                                            logger.info(
+                                                "Re-authentication successful, client updated, retrying cancel_order..."
+                                            )
+                                            break  # Retry the outer loop
+                                        else:
+                                            logger.error(
+                                                "Re-authentication reported success but client is not authenticated"
+                                            )
+                                            _record_reauth_failure(self.auth_handler)
+                                            return False
+                                    else:
+                                        logger.error("Re-authentication failed for cancel_order")
+                                        _record_reauth_failure(self.auth_handler)
+                                        return False
+                                else:
+                                    logger.error(
+                                        "Max retries reached or no auth handler for cancel_order"
+                                    )
+                                    return False
+                            # Re-raise non-auth exceptions
+                            raise
+
+                        logger.info(f"? Cancelled order: {order_id}")
+                        return True
+                    except Exception as e:
+                        logger.debug(f"Cancel order method failed: {e}")
+                        continue
+
                 except Exception as e:
-                    logger.debug(f"Cancel order method failed: {e}")
+                    logger.warning(f"[WARN]? Cancel via {method_name} failed: {e}")
                     continue
-
-            except Exception as e:
-                logger.warning(f"[WARN]? Cancel via {method_name} failed: {e}")
-                continue
 
         return False
 
@@ -168,36 +514,297 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         return None
 
     def get_all_orders(self) -> list[Order]:
-        """Get all orders"""
+        """
+        Get all orders with automatic re-authentication on session expiry.
+
+        Returns:
+            List of Order objects, or empty list on error
+        """
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
 
-        try:
-            # Try multiple method names
-            for method_name in ["order_report", "get_order_report", "orderBook", "orders"]:
-                if hasattr(self._client, method_name):
-                    response = getattr(self._client, method_name)()
+        # Refresh client from auth handler before API calls to ensure latest session is used
+        # The session (sId) is embedded in the SDK client when created during login
+        # Since session is valid for ~1 hour, we reuse it but always get fresh client to ensure session is present
+        # After re-auth, auth.client becomes a NEW object, so we need to refresh to get the new session
+        # Strategy: Always refresh if client changed (re-auth) or if no client exists
+        # In production: auth.get_client() returns auth.client (same object until re-auth, then new object)
+        # In tests: Tests should configure auth_handler.get_client() to return the same mock_client
+        if self.auth_handler and self.auth_handler.is_authenticated():
+            fresh_client = self.auth_handler.get_client()
+            if fresh_client:
+                # Always refresh if: (1) no client, OR (2) client changed (re-auth happened)
+                # Same client object = no-op refresh (ensures we have latest session)
+                if self._client is None or fresh_client is not self._client:
+                    self._client = fresh_client
+                    logger.debug(
+                        "Refreshed client from auth handler for get_all_orders to ensure session is used"
+                    )
 
-                    # Handle different response formats
-                    data = None
-                    if isinstance(response, dict):
-                        # Try "data" key first
-                        if "data" in response:
-                            data = response["data"]
-                        # Try other common keys
-                        elif "orders" in response:
-                            data = response["orders"]
-                        elif "orderList" in response:
-                            data = response["orderList"]
-                    elif isinstance(response, list):
-                        data = response
+        max_retries = 1  # Retry once after re-auth
+        for attempt in range(max_retries + 1):
+            try:
+                # Ensure client is available before making API calls
+                if not self._client:
+                    # Try to get fresh client from auth handler if available
+                    if self.auth_handler and self.auth_handler.is_authenticated():
+                        self._client = self.auth_handler.get_client()
+                    if not self._client:
+                        logger.error("No client available for get_all_orders")
+                        if attempt < max_retries:
+                            continue
+                        return []
 
-                    if data is not None and isinstance(data, list):
-                        return self._parse_orders_response(data)
-            return []
-        except Exception as e:
-            logger.error(f"? Failed to get orders: {e}", exc_info=True)
-            return []
+                # Try multiple method names
+                for method_name in ["order_report", "get_order_report", "orderBook", "orders"]:
+                    if hasattr(self._client, method_name):
+                        method = getattr(self._client, method_name)
+
+                        # Call with timeout protection (SDK might hang)
+                        try:
+                            response = call_with_timeout(
+                                method,
+                                timeout=DEFAULT_SDK_TIMEOUT,
+                                timeout_error_message=f"get_all_orders() call to {method_name}() timed out",
+                            )
+                        except TimeoutError as timeout_error:
+                            logger.error(
+                                f"SDK call timed out in get_all_orders: {timeout_error}. "
+                                "This may indicate broker API is slow or unreachable."
+                            )
+                            # If timeout occurs, try refreshing client from auth handler
+                            # The client might be stale even if auth handler reports authenticated
+                            if self.auth_handler and self.auth_handler.is_authenticated():
+                                fresh_client = self.auth_handler.get_client()
+                                if fresh_client:
+                                    self._client = fresh_client
+                                    logger.info("Refreshed client after timeout in get_all_orders")
+                                    if attempt < max_retries:
+                                        break  # Retry outer loop with fresh client
+                            # Try next method or retry after re-auth
+                            if attempt < max_retries:
+                                break  # Retry outer loop
+                            continue  # Try next method
+                        except Exception as call_error:
+                            # Check if it's a connection error (might indicate missing session)
+                            error_str = str(call_error).lower()
+                            is_connection_error = (
+                                "connection refused" in error_str
+                                or "connection error" in error_str
+                                or "newconnectionerror" in error_str
+                                or "failed to establish" in error_str
+                            )
+
+                            # If connection error, try refreshing client from auth handler
+                            # The client might be missing the session (empty sId in URL)
+                            if (
+                                is_connection_error
+                                and self.auth_handler
+                                and self.auth_handler.is_authenticated()
+                            ):
+                                fresh_client = self.auth_handler.get_client()
+                                if fresh_client:
+                                    self._client = fresh_client
+                                    logger.warning(
+                                        f"Connection error detected in get_all_orders: {call_error}. "
+                                        "Refreshed client from auth handler to ensure session is used."
+                                    )
+                                    if attempt < max_retries:
+                                        break  # Retry outer loop with fresh client
+
+                            # Check if it's an auth error
+                            if is_auth_exception(call_error):
+                                logger.warning(
+                                    f"Authentication error in get_all_orders: {call_error}. "
+                                    "Checking re-authentication failure rate..."
+                                )
+                                # Check if re-auth should be blocked due to recent failures
+                                if self.auth_handler and _check_reauth_failure_rate(
+                                    self.auth_handler
+                                ):
+                                    logger.error(
+                                        "Re-authentication blocked for get_all_orders due to recent failures. "
+                                        "Please check authentication credentials or API status."
+                                    )
+                                    return []
+
+                                # Attempt re-auth and retry
+                                if (
+                                    attempt < max_retries
+                                    and self.auth_handler
+                                    and hasattr(self.auth_handler, "force_relogin")
+                                ):
+                                    if _attempt_reauth_thread_safe(
+                                        self.auth_handler, "get_all_orders"
+                                    ):
+                                        # Update client after re-auth - ensure it's authenticated
+                                        new_client = self.auth_handler.get_client()
+                                        if new_client and self.auth_handler.is_authenticated():
+                                            self._client = new_client
+                                            logger.info(
+                                                "Re-authentication successful, client updated, retrying get_all_orders..."
+                                            )
+                                            break  # Retry the outer loop
+                                        else:
+                                            logger.error(
+                                                "Re-authentication reported success but client is not authenticated"
+                                            )
+                                            _record_reauth_failure(self.auth_handler)
+                                            return []
+                                    else:
+                                        logger.error("Re-authentication failed for get_all_orders")
+                                        _record_reauth_failure(self.auth_handler)
+                                        return []
+                                else:
+                                    logger.error(
+                                        "Max retries reached or no auth handler for get_all_orders"
+                                    )
+                                    return []
+                            # Re-raise non-auth exceptions
+                            raise
+
+                        # Check response for auth errors
+                        if isinstance(response, dict) and is_auth_error(response):
+                            logger.warning(
+                                "Authentication error detected in get_all_orders response. "
+                                "Checking re-authentication failure rate..."
+                            )
+                            # Check if re-auth should be blocked due to recent failures
+                            if self.auth_handler and _check_reauth_failure_rate(self.auth_handler):
+                                logger.error(
+                                    "Re-authentication blocked for get_all_orders due to recent failures. "
+                                    "Please check authentication credentials or API status."
+                                )
+                                return []
+
+                            # Attempt re-auth and retry
+                            if (
+                                attempt < max_retries
+                                and self.auth_handler
+                                and hasattr(self.auth_handler, "force_relogin")
+                            ):
+                                if _attempt_reauth_thread_safe(self.auth_handler, "get_all_orders"):
+                                    # Update client after re-auth - ensure it's authenticated
+                                    new_client = self.auth_handler.get_client()
+                                    if new_client and self.auth_handler.is_authenticated():
+                                        self._client = new_client
+                                        logger.info(
+                                            "Re-authentication successful, client updated, retrying get_all_orders..."
+                                        )
+                                    else:
+                                        logger.error(
+                                            "Re-authentication reported success but client is not authenticated"
+                                        )
+                                        _record_reauth_failure(self.auth_handler)
+                                        return []
+                                    break  # Retry the outer loop
+                                else:
+                                    logger.error("Re-authentication failed for get_all_orders")
+                                    _record_reauth_failure(self.auth_handler)
+                                    return []
+                            else:
+                                logger.error(
+                                    "Max retries reached or no auth handler for get_all_orders"
+                                )
+                                return []
+
+                        # Handle different response formats
+                        data = None
+                        if isinstance(response, dict):
+                            # Try "data" key first
+                            if "data" in response:
+                                data = response["data"]
+                            # Try other common keys
+                            elif "orders" in response:
+                                data = response["orders"]
+                            elif "orderList" in response:
+                                data = response["orderList"]
+                        elif isinstance(response, list):
+                            data = response
+
+                        if data is not None and isinstance(data, list):
+                            return self._parse_orders_response(data)
+
+                # If we get here, no method worked
+                if attempt < max_retries:
+                    continue
+                return []
+
+            except Exception as e:
+                # Check if it's a connection error (might indicate missing session)
+                error_str = str(e).lower()
+                is_connection_error = (
+                    "connection refused" in error_str
+                    or "connection error" in error_str
+                    or "newconnectionerror" in error_str
+                    or "failed to establish" in error_str
+                )
+
+                # If connection error, try refreshing client from auth handler
+                # The client might be missing the session (empty sId in URL)
+                if (
+                    is_connection_error
+                    and self.auth_handler
+                    and self.auth_handler.is_authenticated()
+                ):
+                    fresh_client = self.auth_handler.get_client()
+                    if fresh_client:
+                        self._client = fresh_client
+                        logger.warning(
+                            f"Connection error detected in get_all_orders: {e}. "
+                            "Refreshed client from auth handler to ensure session is used."
+                        )
+                        if attempt < max_retries:
+                            continue  # Retry with fresh client
+
+                # Check if it's an auth error
+                if is_auth_exception(e):
+                    logger.warning(
+                        f"Authentication error in get_all_orders: {e}. "
+                        "Checking re-authentication failure rate..."
+                    )
+                    # Check if re-auth should be blocked due to recent failures
+                    if self.auth_handler and _check_reauth_failure_rate(self.auth_handler):
+                        logger.error(
+                            "Re-authentication blocked for get_all_orders due to recent failures. "
+                            "Please check authentication credentials or API status."
+                        )
+                        return []
+
+                    # Attempt re-auth and retry
+                    if (
+                        attempt < max_retries
+                        and self.auth_handler
+                        and hasattr(self.auth_handler, "force_relogin")
+                    ):
+                        if _attempt_reauth_thread_safe(self.auth_handler, "get_all_orders"):
+                            # Update client after re-auth - ensure it's authenticated
+                            new_client = self.auth_handler.get_client()
+                            if new_client and self.auth_handler.is_authenticated():
+                                self._client = new_client
+                                logger.info(
+                                    "Re-authentication successful, client updated, retrying get_all_orders..."
+                                )
+                                continue  # Retry
+                            else:
+                                logger.error(
+                                    "Re-authentication reported success but client is not authenticated"
+                                )
+                                _record_reauth_failure(self.auth_handler)
+                                return []
+                        else:
+                            logger.error("Re-authentication failed for get_all_orders")
+                            _record_reauth_failure(self.auth_handler)
+                            return []
+                    else:
+                        logger.error("Max retries reached or no auth handler for get_all_orders")
+                        return []
+
+                # Non-auth errors - log and return empty
+                logger.error(f"? Failed to get orders: {e}", exc_info=True)
+                return []
+
+        return []
 
     def get_pending_orders(self) -> list[Order]:
         """Get pending/open orders"""
@@ -207,21 +814,289 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
     # Portfolio Management
 
     def get_holdings(self) -> list[Holding]:
-        """Get portfolio holdings"""
+        """
+        Get portfolio holdings with automatic re-authentication on session expiry.
+
+        Returns:
+            List of Holding objects, or empty list on error
+        """
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
 
-        try:
-            # Try multiple method names
-            for method_name in ["holdings", "get_holdings", "portfolio_holdings"]:
-                if hasattr(self._client, method_name):
-                    response = getattr(self._client, method_name)()
-                    if isinstance(response, dict) and "data" in response:
-                        return self._parse_holdings_response(response["data"])
-            return []
-        except Exception as e:
-            logger.error(f"? Failed to get holdings: {e}")
-            return []
+        # Refresh client from auth handler before API calls to ensure latest session is used
+        # The session (sId) is embedded in the SDK client when created during login
+        # Since session is valid for ~1 hour, we reuse it but always get fresh client to ensure session is present
+        # After re-auth, auth.client becomes a NEW object, so we need to refresh to get the new session
+        # Strategy: Always refresh if client changed (re-auth) or if no client exists
+        # In production: auth.get_client() returns auth.client (same object until re-auth, then new object)
+        # In tests: Tests should configure auth_handler.get_client() to return the same mock_client
+        if self.auth_handler and self.auth_handler.is_authenticated():
+            fresh_client = self.auth_handler.get_client()
+            if fresh_client:
+                # Always refresh if: (1) no client, OR (2) client changed (re-auth happened)
+                # Same client object = no-op refresh (ensures we have latest session)
+                if self._client is None or fresh_client is not self._client:
+                    self._client = fresh_client
+                    logger.debug(
+                        "Refreshed client from auth handler for get_holdings to ensure session is used"
+                    )
+
+        max_retries = 1  # Retry once after re-auth
+        for attempt in range(max_retries + 1):
+            try:
+                # Ensure client is available before making API calls
+                if not self._client:
+                    # Try to get fresh client from auth handler if available
+                    if self.auth_handler and self.auth_handler.is_authenticated():
+                        self._client = self.auth_handler.get_client()
+                    if not self._client:
+                        logger.error("No client available for get_holdings")
+                        if attempt < max_retries:
+                            continue
+                        return []
+
+                # Try multiple method names
+                for method_name in ["holdings", "get_holdings", "portfolio_holdings"]:
+                    if hasattr(self._client, method_name):
+                        method = getattr(self._client, method_name)
+
+                        # Call with timeout protection (SDK might hang)
+                        try:
+                            # Wrap SDK call with timeout to prevent hanging
+                            response = call_with_timeout(
+                                method,
+                                timeout=DEFAULT_SDK_TIMEOUT,
+                                timeout_error_message=f"get_holdings() call to {method_name}() timed out",
+                            )
+                        except TimeoutError as timeout_error:
+                            logger.error(
+                                f"SDK call timed out in get_holdings: {timeout_error}. "
+                                "This may indicate broker API is slow or unreachable."
+                            )
+                            # If timeout occurs, try refreshing client from auth handler
+                            # The client might be stale even if auth handler reports authenticated
+                            if self.auth_handler and self.auth_handler.is_authenticated():
+                                fresh_client = self.auth_handler.get_client()
+                                if fresh_client:
+                                    self._client = fresh_client
+                                    logger.info("Refreshed client after timeout in get_holdings")
+                                    if attempt < max_retries:
+                                        continue  # Retry with fresh client
+                            # Treat timeout as non-auth error - return empty result
+                            return []
+                        except Exception as call_error:
+                            # Check if it's a connection error (might indicate missing session)
+                            error_str = str(call_error).lower()
+                            is_connection_error = (
+                                "connection refused" in error_str
+                                or "connection error" in error_str
+                                or "newconnectionerror" in error_str
+                                or "failed to establish" in error_str
+                            )
+
+                            # If connection error, try refreshing client from auth handler
+                            # The client might be missing the session (empty sId in URL)
+                            if (
+                                is_connection_error
+                                and self.auth_handler
+                                and self.auth_handler.is_authenticated()
+                            ):
+                                fresh_client = self.auth_handler.get_client()
+                                if fresh_client:
+                                    self._client = fresh_client
+                                    logger.warning(
+                                        f"Connection error detected in get_holdings: {call_error}. "
+                                        "Refreshed client from auth handler to ensure session is used."
+                                    )
+                                    if attempt < max_retries:
+                                        continue  # Retry with fresh client
+
+                            # Check if it's an auth error
+                            if is_auth_exception(call_error):
+                                logger.warning(
+                                    f"Authentication error in get_holdings: {call_error}. "
+                                    "Checking re-authentication failure rate..."
+                                )
+                                # Check if re-auth should be blocked due to recent failures
+                                if self.auth_handler and _check_reauth_failure_rate(
+                                    self.auth_handler
+                                ):
+                                    logger.error(
+                                        "Re-authentication blocked for get_holdings due to recent failures. "
+                                        "Please check authentication credentials or API status."
+                                    )
+                                    return []
+
+                                # Attempt re-auth and retry
+                                if (
+                                    attempt < max_retries
+                                    and self.auth_handler
+                                    and hasattr(self.auth_handler, "force_relogin")
+                                ):
+                                    if _attempt_reauth_thread_safe(
+                                        self.auth_handler, "get_holdings"
+                                    ):
+                                        # Update client after re-auth - ensure it's authenticated
+                                        new_client = self.auth_handler.get_client()
+                                        if new_client and self.auth_handler.is_authenticated():
+                                            self._client = new_client
+                                            logger.info(
+                                                "Re-authentication successful, client updated, retrying get_holdings..."
+                                            )
+                                            break  # Retry the outer loop
+                                        else:
+                                            logger.error(
+                                                "Re-authentication reported success but client is not authenticated"
+                                            )
+                                            _record_reauth_failure(self.auth_handler)
+                                            return []
+                                    else:
+                                        logger.error("Re-authentication failed for get_holdings")
+                                        _record_reauth_failure(self.auth_handler)
+                                        return []
+                                else:
+                                    logger.error(
+                                        "Max retries reached or no auth handler for get_holdings"
+                                    )
+                                    return []
+                            # Re-raise non-auth exceptions
+                            raise
+
+                        # Check response for auth errors
+                        if isinstance(response, dict):
+                            # Check for auth error in response
+                            if is_auth_error(response):
+                                logger.warning(
+                                    "Authentication error detected in get_holdings response. "
+                                    "Checking re-authentication failure rate..."
+                                )
+                                # Check if re-auth should be blocked due to recent failures
+                                if self.auth_handler and _check_reauth_failure_rate(
+                                    self.auth_handler
+                                ):
+                                    logger.error(
+                                        "Re-authentication blocked for get_holdings due to recent failures. "
+                                        "Please check authentication credentials or API status."
+                                    )
+                                    return []
+
+                                # Attempt re-auth and retry
+                                if (
+                                    attempt < max_retries
+                                    and self.auth_handler
+                                    and hasattr(self.auth_handler, "force_relogin")
+                                ):
+                                    if _attempt_reauth_thread_safe(
+                                        self.auth_handler, "get_holdings"
+                                    ):
+                                        # Update client after re-auth - ensure it's authenticated
+                                        new_client = self.auth_handler.get_client()
+                                        if new_client and self.auth_handler.is_authenticated():
+                                            self._client = new_client
+                                            logger.info(
+                                                "Re-authentication successful, client updated, retrying get_holdings..."
+                                            )
+                                            break  # Retry the outer loop
+                                        else:
+                                            logger.error(
+                                                "Re-authentication reported success but client is not authenticated"
+                                            )
+                                            _record_reauth_failure(self.auth_handler)
+                                            return []
+                                    else:
+                                        logger.error("Re-authentication failed for get_holdings")
+                                        _record_reauth_failure(self.auth_handler)
+                                        return []
+                                else:
+                                    logger.error(
+                                        "Max retries reached or no auth handler for get_holdings"
+                                    )
+                                    return []
+
+                            # Success - parse and return
+                            if "data" in response:
+                                return self._parse_holdings_response(response["data"])
+
+                # If we get here, no method worked
+                if attempt < max_retries:
+                    continue
+                return []
+
+            except Exception as e:
+                # Check if it's a connection error (might indicate missing session)
+                error_str = str(e).lower()
+                is_connection_error = (
+                    "connection refused" in error_str
+                    or "connection error" in error_str
+                    or "newconnectionerror" in error_str
+                    or "failed to establish" in error_str
+                )
+
+                # If connection error, try refreshing client from auth handler
+                # The client might be missing the session (empty sId in URL)
+                if (
+                    is_connection_error
+                    and self.auth_handler
+                    and self.auth_handler.is_authenticated()
+                ):
+                    fresh_client = self.auth_handler.get_client()
+                    if fresh_client:
+                        self._client = fresh_client
+                        logger.warning(
+                            f"Connection error detected in get_holdings: {e}. "
+                            "Refreshed client from auth handler to ensure session is used."
+                        )
+                        if attempt < max_retries:
+                            continue  # Retry with fresh client
+
+                # Check if it's an auth error
+                if is_auth_exception(e):
+                    logger.warning(
+                        f"Authentication error in get_holdings: {e}. "
+                        "Checking re-authentication failure rate..."
+                    )
+                    # Check if re-auth should be blocked due to recent failures
+                    if self.auth_handler and _check_reauth_failure_rate(self.auth_handler):
+                        logger.error(
+                            "Re-authentication blocked for get_holdings due to recent failures. "
+                            "Please check authentication credentials or API status."
+                        )
+                        return []
+
+                    # Attempt re-auth and retry
+                    if (
+                        attempt < max_retries
+                        and self.auth_handler
+                        and hasattr(self.auth_handler, "force_relogin")
+                    ):
+                        if _attempt_reauth_thread_safe(self.auth_handler, "get_holdings"):
+                            # Update client after re-auth - ensure it's authenticated
+                            new_client = self.auth_handler.get_client()
+                            if new_client and self.auth_handler.is_authenticated():
+                                self._client = new_client
+                                logger.info(
+                                    "Re-authentication successful, client updated, retrying get_holdings..."
+                                )
+                                continue  # Retry
+                            else:
+                                logger.error(
+                                    "Re-authentication reported success but client is not authenticated"
+                                )
+                                _record_reauth_failure(self.auth_handler)
+                                return []
+                        else:
+                            logger.error("Re-authentication failed for get_holdings")
+                            _record_reauth_failure(self.auth_handler)
+                            return []
+                    else:
+                        logger.error("Max retries reached or no auth handler for get_holdings")
+                        return []
+
+                # Non-auth errors - log and return empty
+                logger.error(f"? Failed to get holdings: {e}")
+                return []
+
+        return []
 
     def get_holding(self, symbol: str) -> Holding | None:
         """Get holding for specific symbol"""
@@ -235,7 +1110,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
 
     def get_account_limits(self) -> dict[str, Any]:
         """
-        Get account limits and margins
+        Get account limits and margins with automatic re-authentication on session expiry.
 
         Handles Kotak Neo API response format:
         {
@@ -245,56 +1120,216 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
             "Collateral": "0",
             ...
         }
+
+        Returns:
+            Dictionary with account limits, or empty dict on error
         """
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
 
-        try:
-            response = self._client.limits(segment="ALL", exchange="ALL", product="ALL")
+        # Refresh client from auth handler before API calls to ensure latest session is used
+        # The session (sId) is embedded in the SDK client when created during login
+        # Since session is valid for ~1 hour, we reuse it but always get fresh client to ensure session is present
+        # After re-auth, auth.client becomes a NEW object, so we need to refresh to get the new session
+        # Strategy: Always refresh if client changed (re-auth) or if no client exists
+        # In production: auth.get_client() returns auth.client (same object until re-auth, then new object)
+        # In tests: Tests should configure auth_handler.get_client() to return the same mock_client
+        if self.auth_handler and self.auth_handler.is_authenticated():
+            fresh_client = self.auth_handler.get_client()
+            if fresh_client:
+                # Always refresh if: (1) no client, OR (2) client changed (re-auth happened)
+                # Same client object = no-op refresh (ensures we have latest session)
+                if self._client is None or fresh_client is not self._client:
+                    self._client = fresh_client
+                    logger.debug(
+                        "Refreshed client from auth handler for get_account_limits to ensure session is used"
+                    )
 
-            # Response is a flat dict, not wrapped in {"data": {...}}
-            if isinstance(response, dict):
-                # Extract available cash from "Net" field (net balance)
-                # Fallback to other cash-like fields if Net is not available
-                net_balance = response.get("Net") or response.get("net") or "0"
-                margin_used = response.get("MarginUsed") or response.get("marginUsed") or "0"
-                collateral_value = (
-                    response.get("CollateralValue")
-                    or response.get("collateralValue")
-                    or response.get("Collateral")
-                    or response.get("collateral")
-                    or "0"
+        max_retries = 1  # Retry once after re-auth
+        for attempt in range(max_retries + 1):
+            try:
+                # Call limits API with timeout protection
+                response = call_with_timeout(
+                    lambda: self._client.limits(segment="ALL", exchange="ALL", product="ALL"),
+                    timeout=DEFAULT_SDK_TIMEOUT,
+                    timeout_error_message="get_account_limits() call to limits() timed out",
                 )
 
-                # Try to parse as float, default to 0 if parsing fails
-                try:
-                    available_cash = float(str(net_balance))
-                except (ValueError, TypeError):
-                    available_cash = 0.0
+                # Check response for auth errors
+                if isinstance(response, dict):
+                    # Check for auth error in response
+                    if is_auth_error(response):
+                        logger.warning(
+                            "Authentication error detected in get_account_limits response. "
+                            "Checking re-authentication failure rate..."
+                        )
+                        # Check if re-auth should be blocked due to recent failures
+                        if self.auth_handler and _check_reauth_failure_rate(self.auth_handler):
+                            logger.error(
+                                "Re-authentication blocked for get_account_limits due to recent failures. "
+                                "Please check authentication credentials or API status."
+                            )
+                            return {}
 
-                try:
-                    margin_used_val = float(str(margin_used))
-                except (ValueError, TypeError):
-                    margin_used_val = 0.0
+                        # Attempt re-auth and retry
+                        if (
+                            attempt < max_retries
+                            and self.auth_handler
+                            and hasattr(self.auth_handler, "force_relogin")
+                        ):
+                            if _attempt_reauth_thread_safe(self.auth_handler, "get_account_limits"):
+                                # Update client after re-auth - ensure it's authenticated
+                                new_client = self.auth_handler.get_client()
+                                if new_client and self.auth_handler.is_authenticated():
+                                    self._client = new_client
+                                    logger.info(
+                                        "Re-authentication successful, client updated, retrying get_account_limits..."
+                                    )
+                                    continue  # Retry
+                                else:
+                                    logger.error(
+                                        "Re-authentication reported success but client is not authenticated"
+                                    )
+                                    _record_reauth_failure(self.auth_handler)
+                                    return {}
+                            else:
+                                logger.error("Re-authentication failed for get_account_limits")
+                                _record_reauth_failure(self.auth_handler)
+                                return {}
+                        else:
+                            logger.error(
+                                "Max retries reached or no auth handler for get_account_limits"
+                            )
+                            return {}
 
-                try:
-                    collateral_val = float(str(collateral_value))
-                except (ValueError, TypeError):
-                    collateral_val = 0.0
+                    # Success - parse response
+                    # Response is a flat dict, not wrapped in {"data": {...}}
+                    # Extract available cash from "Net" field (net balance)
+                    # Fallback to other cash-like fields if Net is not available
+                    net_balance = response.get("Net") or response.get("net") or "0"
+                    margin_used = response.get("MarginUsed") or response.get("marginUsed") or "0"
+                    collateral_value = (
+                        response.get("CollateralValue")
+                        or response.get("collateralValue")
+                        or response.get("Collateral")
+                        or response.get("collateral")
+                        or "0"
+                    )
 
-                return {
-                    "available_cash": Money.from_float(available_cash),
-                    "margin_used": Money.from_float(margin_used_val),
-                    "margin_available": Money.from_float(
-                        max(0.0, available_cash - margin_used_val)
-                    ),  # Calculate available margin
-                    "collateral": Money.from_float(collateral_val),
-                    "net": Money.from_float(available_cash),  # Alias for available_cash
-                }
-            return {}
-        except Exception as e:
-            logger.error(f"? Failed to get account limits: {e}")
-            return {}
+                    # Try to parse as float, default to 0 if parsing fails
+                    try:
+                        available_cash = float(str(net_balance))
+                    except (ValueError, TypeError):
+                        available_cash = 0.0
+
+                    try:
+                        margin_used_val = float(str(margin_used))
+                    except (ValueError, TypeError):
+                        margin_used_val = 0.0
+
+                    try:
+                        collateral_val = float(str(collateral_value))
+                    except (ValueError, TypeError):
+                        collateral_val = 0.0
+
+                    return {
+                        "available_cash": Money.from_float(available_cash),
+                        "margin_used": Money.from_float(margin_used_val),
+                        "margin_available": Money.from_float(
+                            max(0.0, available_cash - margin_used_val)
+                        ),  # Calculate available margin
+                        "collateral": Money.from_float(collateral_val),
+                        "net": Money.from_float(available_cash),  # Alias for available_cash
+                    }
+
+                # Non-dict response
+                return {}
+
+            except TimeoutError as timeout_error:
+                logger.error(
+                    f"SDK call timed out in get_account_limits: {timeout_error}. "
+                    "This may indicate broker API is slow or unreachable."
+                )
+                # If timeout occurs, try refreshing client from auth handler
+                # The client might be stale even if auth handler reports authenticated
+                if self.auth_handler and self.auth_handler.is_authenticated():
+                    fresh_client = self.auth_handler.get_client()
+                    if fresh_client:
+                        self._client = fresh_client
+                        logger.info("Refreshed client after timeout in get_account_limits")
+                        if attempt < max_retries:
+                            continue  # Retry with fresh client
+                # Treat timeout as non-auth error - return empty result
+                return {}
+            except Exception as e:
+                # Check if it's a connection error (might indicate missing session)
+                error_str = str(e).lower()
+                is_connection_error = (
+                    "connection refused" in error_str
+                    or "connection error" in error_str
+                    or "newconnectionerror" in error_str
+                    or "failed to establish" in error_str
+                )
+
+                # If connection error, try refreshing client from auth handler
+                # The client might be missing the session (empty sId in URL)
+                if (
+                    is_connection_error
+                    and self.auth_handler
+                    and self.auth_handler.is_authenticated()
+                ):
+                    fresh_client = self.auth_handler.get_client()
+                    if fresh_client:
+                        self._client = fresh_client
+                        logger.warning(
+                            f"Connection error detected in get_account_limits: {e}. "
+                            "Refreshed client from auth handler to ensure session is used."
+                        )
+                        if attempt < max_retries:
+                            continue  # Retry with fresh client
+
+                # Check if it's an auth error
+                if is_auth_exception(e):
+                    logger.warning(
+                        f"Authentication error in get_account_limits: {e}. "
+                        "Checking re-authentication failure rate..."
+                    )
+                    # Check if re-auth should be blocked due to recent failures
+                    if self.auth_handler and _check_reauth_failure_rate(self.auth_handler):
+                        logger.error(
+                            "Re-authentication blocked for get_account_limits due to recent failures. "
+                            "Please check authentication credentials or API status."
+                        )
+                        return {}
+
+                    # Attempt re-auth and retry
+                    if (
+                        attempt < max_retries
+                        and self.auth_handler
+                        and hasattr(self.auth_handler, "force_relogin")
+                    ):
+                        if _attempt_reauth_thread_safe(self.auth_handler, "get_account_limits"):
+                            # Update client after re-auth
+                            self._client = self.auth_handler.get_client()
+                            logger.info(
+                                "Re-authentication successful, retrying get_account_limits..."
+                            )
+                            continue  # Retry
+                        else:
+                            logger.error("Re-authentication failed for get_account_limits")
+                            _record_reauth_failure(self.auth_handler)
+                            return {}
+                    else:
+                        logger.error(
+                            "Max retries reached or no auth handler for get_account_limits"
+                        )
+                        return {}
+
+                # Non-auth errors - log and return empty
+                logger.error(f"? Failed to get account limits: {e}")
+                return {}
+
+        return {}
 
     def get_available_balance(self) -> Money:
         """Get available cash balance"""

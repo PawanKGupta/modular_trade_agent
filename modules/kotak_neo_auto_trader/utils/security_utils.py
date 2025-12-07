@@ -98,15 +98,24 @@ def sanitize_log_message(message: str) -> str:
     Remove potential tokens/secrets from log messages using pattern matching.
 
     Args:
-        message: Log message that might contain sensitive data
+        message: Log message that might contain sensitive data (can be None)
 
     Returns:
-        Sanitized message with tokens masked
+        Sanitized message with tokens masked, or safe fallback if input is invalid
 
     Example:
         >>> sanitize_log_message("Got token: Bearer eyJ0eXAiOiJK...")
         "Got token: Bearer eyJ...***"
     """
+    # Handle None or non-string inputs
+    if message is None:
+        return "None"
+    if not isinstance(message, str):
+        try:
+            message = str(message)
+        except Exception:
+            return "Unable to convert message to string"
+
     # Pattern for JWT tokens
     message = re.sub(
         r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}", "eyJ...***", message
