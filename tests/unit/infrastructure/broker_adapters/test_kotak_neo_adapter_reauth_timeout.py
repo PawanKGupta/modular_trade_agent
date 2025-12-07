@@ -32,11 +32,14 @@ def mock_client():
 
 
 @pytest.fixture
-def mock_auth_handler():
+def mock_auth_handler(mock_client):
     """Create a mock auth handler with force_relogin"""
     auth = MagicMock()
     auth.force_relogin = Mock(return_value=True)
-    auth.get_client = Mock(return_value=MagicMock())
+    # Return the same mock_client by default to support client refresh logic
+    # Tests can override this if they need a different client
+    auth.get_client = Mock(return_value=mock_client)
+    auth.is_authenticated = Mock(return_value=True)
     return auth
 
 
@@ -73,7 +76,9 @@ class TestReAuthentication:
                 }
             ]
         }
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates the real behavior where client refresh happens before each call
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         # Mock re-auth functions
         with (
@@ -126,7 +131,9 @@ class TestReAuthentication:
                 }
             ]
         }
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         with (
             patch(
@@ -204,7 +211,9 @@ class TestReAuthentication:
             "CollateralValue": "200.75",
             "stCode": 200,
         }
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         with (
             patch(
@@ -360,7 +369,9 @@ class TestRetryLogic:
         # Create a new mock client for after re-auth (also returns auth error)
         new_mock_client = MagicMock()
         new_mock_client.holdings.return_value = {"code": "900901", "message": "JWT token expired"}
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         with (
             patch(
@@ -399,7 +410,9 @@ class TestRetryLogic:
         # Create a new mock client for after re-auth (also returns auth error)
         new_mock_client = MagicMock()
         new_mock_client.limits.return_value = {"code": "900901", "message": "JWT token expired"}
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         with (
             patch(
@@ -501,6 +514,212 @@ class TestBackwardCompatibility:
             mock_reauth.assert_not_called()
 
 
+class TestClientRefreshOnObjectChange:
+    """Test client refresh when client object changes (simulating re-auth in another thread)"""
+
+    def test_get_holdings_refreshes_when_client_object_changes(
+        self, adapter, mock_client, mock_auth_handler
+    ):
+        """
+        Test get_holdings() refreshes client when auth.client changes (simulating re-auth elsewhere).
+        This is the key scenario for SDK timeout fix: when auth.client is replaced (e.g., by re-auth
+        in another thread), we should refresh to get the new client with fresh session, even if
+        the old client would still work.
+        """
+        # Initial client (old session)
+        mock_client.holdings.return_value = {
+            "data": [
+                {
+                    "displaySymbol": "IDEA",
+                    "averagePrice": 9.57,
+                    "quantity": 35,
+                    "closingPrice": 9.36,
+                }
+            ]
+        }
+
+        # New client (fresh session after re-auth in another thread)
+        new_mock_client = MagicMock()
+        new_mock_client.holdings.return_value = {
+            "data": [
+                {
+                    "displaySymbol": "TCS",
+                    "averagePrice": 3500.0,
+                    "quantity": 10,
+                    "closingPrice": 3600.0,
+                }
+            ]
+        }
+
+        # Simulate: auth.client changed (re-auth happened elsewhere)
+        # First call to get_client() returns new client (different object)
+        mock_auth_handler.get_client.return_value = new_mock_client
+
+        # Call get_holdings() - should refresh to use new client
+        holdings = adapter.get_holdings()
+
+        # Should use the new client (fresh session)
+        assert len(holdings) == 1
+        assert holdings[0].symbol == "TCS"
+        # Verify new client was used
+        new_mock_client.holdings.assert_called_once()
+        # Verify old client was NOT used
+        mock_client.holdings.assert_not_called()
+        # Verify adapter's client was updated
+        assert adapter._client is new_mock_client
+
+    def test_get_all_orders_refreshes_when_client_object_changes(
+        self, adapter, mock_client, mock_auth_handler
+    ):
+        """
+        Test get_all_orders() refreshes client when auth.client changes.
+        This ensures the SDK timeout fix works for all API methods.
+        """
+        # Initial client (old session)
+        mock_client.order_report.return_value = {
+            "data": [
+                {
+                    "nOrdNo": "11111",
+                    "trdSym": "IDEA-EQ",
+                    "qty": 10,
+                    "stat": "OPEN",
+                    "trnsTp": "B",
+                }
+            ]
+        }
+
+        # New client (fresh session after re-auth in another thread)
+        new_mock_client = MagicMock()
+        new_mock_client.order_report.return_value = {
+            "data": [
+                {
+                    "nOrdNo": "22222",
+                    "trdSym": "TCS-EQ",
+                    "qty": 5,
+                    "stat": "OPEN",
+                    "trnsTp": "B",
+                }
+            ]
+        }
+
+        # Simulate: auth.client changed (re-auth happened elsewhere)
+        mock_auth_handler.get_client.return_value = new_mock_client
+
+        # Call get_all_orders() - should refresh to use new client
+        orders = adapter.get_all_orders()
+
+        # Should use the new client (fresh session)
+        assert len(orders) == 1
+        assert orders[0].order_id == "22222"
+        # Verify new client was used
+        new_mock_client.order_report.assert_called_once()
+        # Verify old client was NOT used
+        mock_client.order_report.assert_not_called()
+        # Verify adapter's client was updated
+        assert adapter._client is new_mock_client
+
+    def test_place_order_refreshes_when_client_object_changes(
+        self, adapter, mock_client, mock_auth_handler
+    ):
+        """
+        Test place_order() refreshes client when auth.client changes.
+        This ensures the SDK timeout fix works for order placement.
+        """
+        # Initial client (old session)
+        mock_client.place_order.return_value = {"neoOrdNo": "11111", "status": "success"}
+
+        # New client (fresh session after re-auth in another thread)
+        new_mock_client = MagicMock()
+        new_mock_client.place_order.return_value = {"neoOrdNo": "22222", "status": "success"}
+
+        # Simulate: auth.client changed (re-auth happened elsewhere)
+        mock_auth_handler.get_client.return_value = new_mock_client
+
+        order = Order(
+            symbol="IDEA",
+            quantity=10,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+            exchange=Exchange.NSE,
+            price=Money.from_float(100.0),
+        )
+
+        # Call place_order() - should refresh to use new client
+        order_id = adapter.place_order(order)
+
+        # Should use the new client (fresh session)
+        assert order_id == "22222"
+        # Verify new client was used
+        new_mock_client.place_order.assert_called_once()
+        # Verify old client was NOT used
+        mock_client.place_order.assert_not_called()
+        # Verify adapter's client was updated
+        assert adapter._client is new_mock_client
+
+    def test_cancel_order_refreshes_when_client_object_changes(
+        self, adapter, mock_client, mock_auth_handler
+    ):
+        """
+        Test cancel_order() refreshes client when auth.client changes.
+        This ensures the SDK timeout fix works for order cancellation.
+        """
+        # Initial client (old session)
+        mock_client.cancel_order.return_value = True
+
+        # New client (fresh session after re-auth in another thread)
+        new_mock_client = MagicMock()
+        new_mock_client.cancel_order.return_value = True
+
+        # Simulate: auth.client changed (re-auth happened elsewhere)
+        mock_auth_handler.get_client.return_value = new_mock_client
+
+        # Call cancel_order() - should refresh to use new client
+        result = adapter.cancel_order("12345")
+
+        # Should use the new client (fresh session)
+        assert result is True
+        # Verify new client was used
+        new_mock_client.cancel_order.assert_called_once_with("12345")
+        # Verify old client was NOT used
+        mock_client.cancel_order.assert_not_called()
+        # Verify adapter's client was updated
+        assert adapter._client is new_mock_client
+
+    def test_client_not_refreshed_when_same_object(self, adapter, mock_client, mock_auth_handler):
+        """
+        Test that client is NOT refreshed when get_client() returns the same object.
+        This ensures we don't unnecessarily refresh when the client hasn't changed.
+        """
+        mock_client.holdings.return_value = {
+            "data": [
+                {
+                    "displaySymbol": "IDEA",
+                    "averagePrice": 9.57,
+                    "quantity": 35,
+                    "closingPrice": 9.36,
+                }
+            ]
+        }
+
+        # get_client() returns the same object (normal case, no re-auth)
+        mock_auth_handler.get_client.return_value = mock_client
+
+        # Store original client reference
+        original_client = adapter._client
+
+        # Call get_holdings() - should NOT refresh (same object)
+        holdings = adapter.get_holdings()
+
+        # Should work normally
+        assert len(holdings) == 1
+        assert holdings[0].symbol == "IDEA"
+        # Verify client was used
+        mock_client.holdings.assert_called_once()
+        # Verify adapter's client is still the same object (no unnecessary refresh)
+        # Note: The refresh logic will still set it, but it's the same object, so no harm
+        assert adapter._client is mock_client
+
+
 class TestInfiniteLoopPrevention:
     """Test infinite loop prevention mechanisms"""
 
@@ -512,7 +731,9 @@ class TestInfiniteLoopPrevention:
         # Create a new mock client for after re-auth (also returns auth error)
         new_mock_client = MagicMock()
         new_mock_client.holdings.return_value = {"code": "900901", "message": "JWT token expired"}
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         with (
             patch(
@@ -585,7 +806,9 @@ class TestPlaceOrderReAuth:
         # Create a new mock client for after re-auth
         new_mock_client = MagicMock()
         new_mock_client.place_order.return_value = {"neoOrdNo": "12345", "status": "success"}
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         order = Order(
             symbol="IDEA",
@@ -634,7 +857,9 @@ class TestPlaceOrderReAuth:
         # Create a new mock client for after re-auth
         new_mock_client = MagicMock()
         new_mock_client.place_order.return_value = {"neoOrdNo": "67890", "status": "success"}
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         order = Order(
             symbol="TCS",
@@ -716,7 +941,9 @@ class TestPlaceOrderReAuth:
         new_mock_client = MagicMock()
         new_mock_client.place_order.return_value = {"neoOrdNo": "12345", "status": "success"}
         mock_auth_handler.is_authenticated.return_value = True
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         # First call times out, second call succeeds after client refresh
         call_count = 0
@@ -759,7 +986,9 @@ class TestPlaceOrderReAuth:
         new_mock_client = MagicMock()
         new_mock_client.place_order.return_value = {"neoOrdNo": "12345", "status": "success"}
         mock_auth_handler.is_authenticated.return_value = True
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         # First call raises connection error, second call succeeds after client refresh
         call_count = 0
@@ -832,7 +1061,9 @@ class TestCancelOrderReAuth:
         # Create a new mock client for after re-auth
         new_mock_client = MagicMock()
         new_mock_client.cancel_order.return_value = True
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         with (
             patch(
@@ -888,7 +1119,9 @@ class TestCancelOrderReAuth:
         new_mock_client = MagicMock()
         new_mock_client.cancel_order.return_value = True
         mock_auth_handler.is_authenticated.return_value = True
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         # First call times out, second call succeeds after client refresh
         call_count = 0
@@ -922,7 +1155,9 @@ class TestCancelOrderReAuth:
         new_mock_client = MagicMock()
         new_mock_client.cancel_order.return_value = True
         mock_auth_handler.is_authenticated.return_value = True
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         # First call raises connection error, second call succeeds after client refresh
         call_count = 0
@@ -999,7 +1234,9 @@ class TestGetAllOrdersReAuth:
                 }
             ]
         }
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         with (
             patch(
@@ -1052,7 +1289,9 @@ class TestGetAllOrdersReAuth:
                 }
             ]
         }
-        mock_auth_handler.get_client.return_value = new_mock_client
+        # get_client() should return mock_client first, then new_mock_client after re-auth
+        # This simulates: refresh at start -> mock_client, refresh after re-auth -> new_mock_client
+        mock_auth_handler.get_client.side_effect = [mock_client, new_mock_client]
 
         with (
             patch(

@@ -160,9 +160,10 @@ class TestBacktestServiceMLConfig:
     def test_integrated_backtest_passes_config_to_validation(self, config_ml_enabled):
         """Test that run_integrated_backtest passes config to validate_initial_entry_with_trade_agent"""
         # Mock market data
-        import pandas as pd
-        import sys
         import importlib
+        import sys
+
+        import pandas as pd
 
         dates = pd.date_range("2024-01-01", periods=300, freq="D")
         mock_df = pd.DataFrame(
@@ -178,8 +179,22 @@ class TestBacktestServiceMLConfig:
 
         # Ensure we have the real integrated_backtest module (not a mock from another test)
         # Reload the module to clear any previous mocks
+        # Check if it's actually a module before reloading (might be a mock from another test)
         if "integrated_backtest" in sys.modules:
-            importlib.reload(sys.modules["integrated_backtest"])
+            module = sys.modules["integrated_backtest"]
+            # Only reload if it's actually a module (has __file__ attribute)
+            # If it's a mock/SimpleNamespace from another test, skip reload
+            import types
+
+            if isinstance(module, types.ModuleType) and hasattr(module, "__file__"):
+                try:
+                    importlib.reload(module)
+                except (TypeError, AttributeError):
+                    # If reload fails (e.g., it's a mock), remove it and import fresh
+                    del sys.modules["integrated_backtest"]
+            else:
+                # Not a real module, remove it and import fresh
+                del sys.modules["integrated_backtest"]
 
         # Patch both fetch_ohlcv_yf and validate_initial_entry_with_trade_agent
         # Need to patch where they're used in integrated_backtest module
@@ -280,9 +295,12 @@ class TestBacktestServiceMLConfig:
         # Patch os.environ.get at the standard library level, not at the module level
         # This works across different OS because we patch the actual os module
         import os
+
         with (
             patch("services.analysis_service.AnalysisService") as mock_analysis_service_class,
-            patch.dict(os.environ, {}, clear=False) as mock_env,  # Use patch.dict for OS compatibility
+            patch.dict(
+                os.environ, {}, clear=False
+            ) as mock_env,  # Use patch.dict for OS compatibility
         ):
             # Ensure TRADE_AGENT_USER_ID is not set
             if "TRADE_AGENT_USER_ID" in os.environ:

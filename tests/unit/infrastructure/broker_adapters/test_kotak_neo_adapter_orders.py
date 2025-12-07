@@ -10,7 +10,7 @@ Tests cover:
 
 from datetime import datetime
 from decimal import Decimal
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -35,7 +35,11 @@ def mock_client():
 @pytest.fixture
 def adapter(mock_client):
     """Create a KotakNeoBrokerAdapter instance"""
-    adapter = KotakNeoBrokerAdapter(auth_handler=MagicMock())
+    auth_handler = MagicMock()
+    # Configure get_client() to return the same mock_client to support client refresh logic
+    auth_handler.get_client = Mock(return_value=mock_client)
+    auth_handler.is_authenticated = Mock(return_value=True)
+    adapter = KotakNeoBrokerAdapter(auth_handler=auth_handler)
     adapter._client = mock_client
     adapter._connected = True
     return adapter
