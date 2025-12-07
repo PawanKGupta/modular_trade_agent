@@ -1,0 +1,40 @@
+[1mdiff --git a/modules/kotak_neo_auto_trader/sell_engine.py b/modules/kotak_neo_auto_trader/sell_engine.py[m
+[1mindex c1e86e3d..525be149 100644[m
+[1m--- a/modules/kotak_neo_auto_trader/sell_engine.py[m
+[1m+++ b/modules/kotak_neo_auto_trader/sell_engine.py[m
+[36m@@ -771,14 +771,14 @@[m [mclass SellOrderManager:[m
+     def _get_holdings_cached(self, force_refresh: bool = False) -> dict | None:[m
+         """[m
+         Get holdings from broker API with caching to reduce API calls.[m
+[31m-        [m
+[32m+[m
+         Cache TTL: 2 minutes (120 seconds) - reduced for better freshness[m
+         - Reduces API calls while still detecting manual trades within reasonable time[m
+         - Cache is invalidated on each call after TTL expires[m
+[31m-        [m
+[32m+[m
+         Args:[m
+             force_refresh: If True, bypass cache and fetch fresh data (for critical operations)[m
+[31m-        [m
+[32m+[m
+         Returns:[m
+             Holdings dictionary or None[m
+         """[m
+[36m@@ -823,7 +823,7 @@[m [mclass SellOrderManager:[m
+     def _invalidate_holdings_cache(self) -> None:[m
+         """[m
+         Invalidate holdings cache.[m
+[31m-        [m
+[32m+[m
+         Call this when positions are updated to ensure next reconciliation[m
+         uses fresh data from broker API.[m
+         """[m
+[36m@@ -2617,7 +2617,7 @@[m [mclass SellOrderManager:[m
+                                 # Edge Case #12: Cancel pending reentry orders for closed position[m
+                                 # Note: This includes broker API calls, so it's outside the transaction[m
+                                 self._cancel_pending_reentry_orders(base_symbol)[m
+[31m-                                [m
+[32m+[m
+                                 # Invalidate cache since position was closed (broker holdings changed)[m
+                                 self._invalidate_holdings_cache()[m
+                             else:[m

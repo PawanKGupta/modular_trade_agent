@@ -38,6 +38,9 @@ class TestSellOrderUpdateAfterReentry:
             manager.orders.modify_order = Mock(return_value={"stat": "Ok"})
             manager.orders.cancel_order = Mock(return_value={"stat": "Ok"})
             manager.orders.place_limit_sell = Mock(return_value={"nOrdNo": "NEW123"})
+            manager.orders.get_orders = Mock(
+                return_value={"data": []}
+            )  # Mock for run_at_market_open optimization
             manager.active_sell_orders = {}
             manager.lowest_ema9 = {}
             return manager

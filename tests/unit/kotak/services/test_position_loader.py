@@ -215,13 +215,25 @@ class TestPositionLoaderLoadOpenPositions:
         """Test loading handles file errors gracefully"""
         # Reset singleton to ensure test isolation
         import modules.kotak_neo_auto_trader.services.position_loader as position_loader_module
+
         position_loader_module._position_loader_instance = None
 
-        loader = PositionLoader(history_path="/nonexistent/path.json", enable_caching=False)
-        positions = loader.load_open_positions()
-        # Should return empty list on error, not raise exception
-        assert isinstance(positions, list)
-        assert len(positions) == 0
+        # Mock load_history to raise an exception to reliably test error handling
+        # This ensures the test works consistently across all OS and environments
+        # Using real file paths can be unreliable because:
+        # - load_history() catches all exceptions and returns default template
+        # - Some paths might exist or be readable in CI environments
+        # - Directory paths might be resolved differently
+        with patch(
+            "modules.kotak_neo_auto_trader.services.position_loader.load_history"
+        ) as mock_load_history:
+            mock_load_history.side_effect = IOError("Permission denied: cannot access file")
+
+            loader = PositionLoader(history_path="any_path.json", enable_caching=False)
+            positions = loader.load_open_positions()
+            # Should return empty list on error, not raise exception
+            assert isinstance(positions, list)
+            assert len(positions) == 0
 
 
 class TestPositionLoaderGetPositionsBySymbol:

@@ -4215,6 +4215,20 @@ class AutoTradeEngine:
             )
             return summary
 
+        # Manual Trade Detection Timing Fix: Reconcile positions before placing reentry orders
+        # This ensures we detect manual trades that happened during market hours
+        if hasattr(self, "sell_manager") and self.sell_manager:
+            try:
+                reconciliation_stats = self.sell_manager._reconcile_positions_with_broker_holdings()
+                if reconciliation_stats.get("updated", 0) > 0 or reconciliation_stats.get("closed", 0) > 0:
+                    logger.info(
+                        f"Reconciliation before reentry placement: "
+                        f"{reconciliation_stats.get('updated', 0)} positions updated, "
+                        f"{reconciliation_stats.get('closed', 0)} positions closed"
+                    )
+            except Exception as e:
+                logger.warning(f"Reconciliation before reentry placement failed: {e}. Continuing...")
+
         open_positions = self.positions_repo.list(self.user_id)
         open_positions = [pos for pos in open_positions if pos.closed_at is None]
 

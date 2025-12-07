@@ -28,6 +28,27 @@ class PositionsRepository:
             .first()
         )
 
+    def get_by_symbol_for_update(self, user_id: int, symbol: str) -> Positions | None:
+        """
+        Get position by symbol with row-level lock (SELECT ... FOR UPDATE).
+
+        This prevents concurrent modifications by locking the row until the transaction commits.
+        Use this when you need to read and then update a position to prevent race conditions.
+
+        Args:
+            user_id: User ID
+            symbol: Base symbol (without suffix)
+
+        Returns:
+            Positions object with row lock, or None if not found
+        """
+        stmt = (
+            select(Positions)
+            .where(Positions.user_id == user_id, Positions.symbol == symbol)
+            .with_for_update()
+        )
+        return self.db.execute(stmt).scalar_one_or_none()
+
     def list(self, user_id: int) -> builtins.list[Positions]:
         stmt = (
             select(Positions)
@@ -49,8 +70,11 @@ class PositionsRepository:
         initial_entry_price: float | None = None,
         last_reentry_price: float | None = None,
         entry_rsi: float | None = None,
+        auto_commit: bool = True,
     ) -> Positions:
-        pos = self.get_by_symbol(user_id, symbol)
+        # Use FOR UPDATE lock when updating existing position to prevent race conditions
+        # This ensures atomic read-modify-write operations
+        pos = self.get_by_symbol_for_update(user_id, symbol)
         if pos:
             pos.quantity = quantity
             pos.avg_price = avg_price
@@ -80,8 +104,9 @@ class PositionsRepository:
                 entry_rsi=entry_rsi,
             )
             self.db.add(pos)
-        self.db.commit()
-        self.db.refresh(pos)
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(pos)
         return pos
 
     def count_open(self, user_id: int) -> int:
@@ -107,6 +132,7 @@ class PositionsRepository:
         symbol: str,
         closed_at: datetime | None = None,
         exit_price: float | None = None,
+        auto_commit: bool = True,
     ) -> Positions | None:
         """
         Mark a position as closed in the positions table.
@@ -118,19 +144,22 @@ class PositionsRepository:
             symbol: Base symbol (without suffix)
             closed_at: Closing timestamp (defaults to current time)
             exit_price: Exit price (optional, for future use)
+            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
 
         Returns:
             Updated Positions object, or None if position not found
         """
-        pos = self.get_by_symbol(user_id, symbol)
+        # Use FOR UPDATE lock to prevent race conditions with concurrent operations
+        pos = self.get_by_symbol_for_update(user_id, symbol)
         if not pos:
             logger.warning(f"Position not found for {symbol} (user_id: {user_id})")
             return None
 
         pos.closed_at = closed_at or ist_now()
         pos.quantity = 0.0  # Set quantity to 0 when fully closed
-        self.db.commit()
-        self.db.refresh(pos)
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(pos)
         logger.info(f"Position marked as closed: {symbol} (closed_at: {pos.closed_at})")
         return pos
 
@@ -139,6 +168,7 @@ class PositionsRepository:
         user_id: int,
         symbol: str,
         sold_quantity: float,
+        auto_commit: bool = True,
     ) -> Positions | None:
         """
         Reduce position quantity after partial sell execution.
@@ -149,11 +179,13 @@ class PositionsRepository:
             user_id: User ID
             symbol: Base symbol (without suffix)
             sold_quantity: Quantity sold (to subtract from current quantity)
+            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
 
         Returns:
             Updated Positions object, or None if position not found
         """
-        pos = self.get_by_symbol(user_id, symbol)
+        # Use FOR UPDATE lock to prevent race conditions with concurrent operations
+        pos = self.get_by_symbol_for_update(user_id, symbol)
         if not pos:
             logger.warning(f"Position not found for {symbol} (user_id: {user_id})")
             return None
@@ -175,6 +207,7 @@ class PositionsRepository:
                 f"(sold {sold_quantity}, remaining: {new_quantity})"
             )
 
-        self.db.commit()
-        self.db.refresh(pos)
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(pos)
         return pos

@@ -113,6 +113,9 @@ class SellOrderManager:
         self.user_id = user_id
         self.order_verifier = order_verifier  # Phase 3.2: OrderStatusVerifier for shared results
 
+        # Holdings cache removed - we now fetch holdings when needed and reuse data
+        # from monitoring cycles instead of maintaining a separate cache
+
         # Initialize OrderStateManager if not provided (for backward compatibility)
         self.state_manager = order_state_manager
         if self.state_manager is None:
@@ -420,7 +423,14 @@ class SellOrderManager:
         try:
             from .utils.symbol_utils import extract_base_symbol
 
-            holdings_response = self.portfolio.get_holdings()
+            # Fetch holdings directly (no cache - fetch when needed)
+            holdings_response = None
+            if self.portfolio:
+                try:
+                    holdings_response = self.portfolio.get_holdings()
+                except Exception as e:
+                    logger.debug(f"Failed to fetch holdings for validation: {e}")
+
             if holdings_response and isinstance(holdings_response, dict):
                 holdings_data = holdings_response.get("data", [])
                 for holding in holdings_data:
@@ -512,7 +522,9 @@ class SellOrderManager:
         logger.debug(f"Loaded {len(open_positions)} open positions from database")
         return open_positions
 
-    def _reconcile_positions_with_broker_holdings(self) -> dict[str, int]:
+    def _reconcile_positions_with_broker_holdings(
+        self, holdings_response: dict[str, Any] | None = None
+    ) -> dict[str, int]:
         """
         Reconcile positions table with broker holdings to detect manual sells.
 
@@ -539,10 +551,23 @@ class SellOrderManager:
         stats = {"checked": 0, "updated": 0, "closed": 0, "ignored": 0}
 
         try:
-            # Fetch broker holdings
-            holdings_response = self.portfolio.get_holdings()
+            # Use provided holdings response if available (from monitoring cycle), otherwise fetch
             if not holdings_response or not isinstance(holdings_response, dict):
-                logger.debug("Could not fetch broker holdings for reconciliation")
+                # Fallback: Fetch if not provided (for backward compatibility)
+                if self.portfolio:
+                    try:
+                        holdings_response = self.portfolio.get_holdings()
+                    except Exception as e:
+                        logger.debug(f"Failed to fetch holdings for reconciliation: {e}")
+                        return stats
+                else:
+                    logger.debug(
+                        "Portfolio not available, cannot fetch holdings for reconciliation"
+                    )
+                    return stats
+
+            if not isinstance(holdings_response, dict):
+                logger.debug("Invalid holdings response for reconciliation")
                 return stats
 
             holdings_data = holdings_response.get("data", [])
@@ -581,9 +606,7 @@ class SellOrderManager:
             open_positions = self.positions_repo.list(self.user_id)
             open_positions = [pos for pos in open_positions if pos.closed_at is None]
 
-            logger.info(
-                f"Reconciling {len(open_positions)} open positions with broker holdings..."
-            )
+            logger.info(f"Reconciling {len(open_positions)} open positions with broker holdings...")
 
             for pos in open_positions:
                 stats["checked"] += 1
@@ -665,6 +688,133 @@ class SellOrderManager:
             logger.error(f"Error during positions reconciliation: {e}", exc_info=True)
 
         return stats
+
+    def _reconcile_single_symbol(
+        self, symbol: str, holdings_response: dict[str, Any] | None = None
+    ) -> bool:
+        """
+        Lightweight reconciliation for a single symbol.
+
+        Used before critical operations (e.g., updating sell orders) to ensure
+        we have the latest position quantity even if manual trade happened.
+
+        Args:
+            symbol: Base symbol to reconcile
+
+        Returns:
+            True if reconciliation was performed, False otherwise
+        """
+        if not self.positions_repo or not self.user_id:
+            return False
+
+        try:
+            # Get position from database with lock (consistent with other critical reads)
+            position = self.positions_repo.get_by_symbol_for_update(self.user_id, symbol)
+            if not position or position.closed_at is not None:
+                return False  # Position doesn't exist or is closed
+
+            # Use provided holdings response if available, otherwise fetch fresh
+            if not holdings_response or not isinstance(holdings_response, dict):
+                # Fetch fresh for critical operations
+                if self.portfolio:
+                    try:
+                        holdings_response = self.portfolio.get_holdings()
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to fetch holdings for single symbol reconciliation: {e}"
+                        )
+                        return False
+                else:
+                    return False
+
+            if not isinstance(holdings_response, dict):
+                return False
+
+            holdings_data = holdings_response.get("data", [])
+            from .utils.symbol_utils import extract_base_symbol
+
+            # Find broker quantity for this symbol
+            broker_qty = 0
+            for holding in holdings_data:
+                holding_symbol = (
+                    holding.get("tradingSymbol")
+                    or holding.get("symbol")
+                    or holding.get("securitySymbol")
+                    or ""
+                )
+                if not holding_symbol:
+                    continue
+
+                base_symbol = extract_base_symbol(holding_symbol).upper()
+                if base_symbol == symbol.upper():
+                    broker_qty = int(
+                        holding.get("quantity")
+                        or holding.get("qty")
+                        or holding.get("netQuantity")
+                        or holding.get("holdingsQuantity")
+                        or 0
+                    )
+                    break
+
+            positions_qty = int(position.quantity)
+
+            # Manual full sell detected
+            if broker_qty == 0 and positions_qty > 0:
+                logger.warning(
+                    f"Manual full sell detected for {symbol} during sell order update. "
+                    f"Marking position as closed."
+                )
+                from src.infrastructure.db.timezone_utils import ist_now
+
+                self.positions_repo.mark_closed(
+                    user_id=self.user_id,
+                    symbol=symbol,
+                    closed_at=ist_now(),
+                    exit_price=None,
+                )
+                return True
+
+            # Manual partial sell detected
+            elif broker_qty < positions_qty:
+                sold_qty = positions_qty - broker_qty
+                logger.warning(
+                    f"Manual partial sell detected for {symbol} during sell order update: "
+                    f"{sold_qty} shares sold. Updating position."
+                )
+                self.positions_repo.reduce_quantity(
+                    user_id=self.user_id,
+                    symbol=symbol,
+                    sold_quantity=float(sold_qty),
+                )
+                return True
+
+            return False  # No reconciliation needed
+
+        except Exception as e:
+            logger.debug(f"Error in lightweight reconciliation for {symbol}: {e}")
+            return False
+
+    def _get_holdings(self) -> dict | None:
+        """
+        Get holdings from broker API.
+
+        Simplified: No cache mechanism - fetch when needed.
+        Holdings data is reused from monitoring cycles where possible.
+
+        Returns:
+            Holdings dictionary or None
+        """
+        if not self.portfolio:
+            return None
+
+        try:
+            holdings_response = self.portfolio.get_holdings()
+            if holdings_response and isinstance(holdings_response, dict):
+                logger.debug("Fetched holdings from broker API")
+            return holdings_response
+        except Exception as e:
+            logger.warning(f"Failed to fetch holdings from broker API: {e}")
+            return None
 
     def get_current_ema9(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
@@ -930,7 +1080,7 @@ class SellOrderManager:
             logger.error(f"Error in cancel+replace: {e}")
             return False
 
-    def check_order_execution(self) -> list[str]:
+    def check_order_execution(self, all_orders_response: dict[str, Any] | None = None) -> list[str]:
         """
         Check which sell orders have been executed
 
@@ -967,22 +1117,47 @@ class SellOrderManager:
                 logger.debug(f"Error checking OrderStatusVerifier results: {e}")
                 # Fall through to direct API call
 
-        # Fallback: Use direct API call if OrderStatusVerifier not available or no results found
+        # Fallback: Use provided orders response if available, otherwise use direct API call
         try:
-            executed_orders = self.orders.get_executed_orders()
+            # Use provided orders response if available (from monitoring cycle)
+            if all_orders_response and isinstance(all_orders_response, dict):
+                orders_data = all_orders_response.get("data", [])
+                # Filter for executed/completed SELL orders matching our tracked orders
+                for order in orders_data:
+                    # Check if it's a sell order
+                    if not OrderFieldExtractor.is_sell_order(order):
+                        continue
 
-            if not executed_orders:
-                return []
+                    # Check if order is completed/executed
+                    if not OrderStatusParser.is_completed(order):
+                        continue
 
-            # Filter for our tracked sell orders
-            for order in executed_orders:
-                order_id = order.get("neoOrdNo") or order.get("orderId")
-                if order_id and any(
-                    info.get("order_id") == str(order_id)
-                    for info in self.active_sell_orders.values()
-                ):
-                    executed_ids.append(str(order_id))
-                    logger.info(f"Sell order executed: Order ID {order_id}")
+                    order_id = OrderFieldExtractor.get_order_id(order)
+                    if order_id and any(
+                        info.get("order_id") == str(order_id)
+                        for info in self.active_sell_orders.values()
+                    ):
+                        executed_ids.append(str(order_id))
+                        logger.info(f"Sell order executed: Order ID {order_id}")
+
+                if executed_ids:
+                    return executed_ids
+            else:
+                # Fallback: Use direct API call if orders response not provided
+                executed_orders = self.orders.get_executed_orders()
+
+                if not executed_orders:
+                    return []
+
+                # Filter for our tracked sell orders
+                for order in executed_orders:
+                    order_id = order.get("neoOrdNo") or order.get("orderId")
+                    if order_id and any(
+                        info.get("order_id") == str(order_id)
+                        for info in self.active_sell_orders.values()
+                    ):
+                        executed_ids.append(str(order_id))
+                        logger.info(f"Sell order executed: Order ID {order_id}")
 
             return executed_ids
 
@@ -1257,6 +1432,10 @@ class SellOrderManager:
                 f"Cancelling them..."
             )
 
+            # Group database updates in transaction, but broker API calls happen outside
+            # This ensures all DB updates succeed or fail together
+            db_updates = []  # Track orders that need DB updates
+
             for db_order in reentry_orders:
                 try:
                     if not db_order.broker_order_id:
@@ -1264,28 +1443,20 @@ class SellOrderManager:
                             f"Reentry order {db_order.id} for {base_symbol} has no broker_order_id. "
                             f"Updating DB status only."
                         )
-                        # Update DB status even without broker_order_id
-                        self.orders_repo.update(
-                            db_order,
-                            status=DbOrderStatus.CANCELLED,
-                            reason="Position closed",
-                        )
+                        # Queue for DB update
+                        db_updates.append((db_order, "Position closed"))
                         cancelled_count += 1
                         continue
 
-                    # Cancel via broker API
+                    # Cancel via broker API (outside transaction)
                     cancel_result = self.orders.cancel_order(db_order.broker_order_id)
                     if cancel_result:
                         logger.info(
                             f"Cancelled reentry order {db_order.broker_order_id} "
                             f"for closed position {base_symbol}"
                         )
-                        # Update DB order status
-                        self.orders_repo.update(
-                            db_order,
-                            status=DbOrderStatus.CANCELLED,
-                            reason="Position closed",
-                        )
+                        # Queue for DB update
+                        db_updates.append((db_order, "Position closed"))
                         cancelled_count += 1
                     else:
                         logger.warning(
@@ -1293,11 +1464,7 @@ class SellOrderManager:
                             f"for {base_symbol} via broker API. Order may have already executed."
                         )
                         # Still update DB status to reflect intent
-                        self.orders_repo.update(
-                            db_order,
-                            status=DbOrderStatus.CANCELLED,
-                            reason="Position closed (cancellation attempted)",
-                        )
+                        db_updates.append((db_order, "Position closed (cancellation attempted)"))
                         cancelled_count += 1
 
                 except Exception as e:
@@ -1306,6 +1473,25 @@ class SellOrderManager:
                         f"for {base_symbol}: {e}"
                     )
                     # Continue with next order even if one fails
+
+            # Apply all DB updates in a single transaction
+            if db_updates:
+                from src.infrastructure.db.transaction import transaction
+
+                with transaction(self.orders_repo.db):
+                    for db_order, reason in db_updates:
+                        try:
+                            self.orders_repo.update(
+                                db_order,
+                                status=DbOrderStatus.CANCELLED,
+                                reason=reason,
+                                auto_commit=False,  # Transaction handles commit
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Error updating DB status for reentry order {db_order.id}: {e}"
+                            )
+                            # Transaction will rollback if exception propagates
 
             if cancelled_count > 0:
                 logger.info(
@@ -1334,9 +1520,7 @@ class SellOrderManager:
             Number of buy orders closed
         """
         if not self.orders_repo or not self.user_id:
-            logger.debug(
-                "OrdersRepository or user_id not available, skipping buy order closure"
-            )
+            logger.debug("OrdersRepository or user_id not available, skipping buy order closure")
             return 0
 
         closed_count = 0
@@ -1364,25 +1548,31 @@ class SellOrderManager:
                 f"Closing them as sell order executed..."
             )
 
-            for db_order in ongoing_buy_orders:
-                try:
-                    # Mark buy order as CLOSED
-                    self.orders_repo.update(
-                        db_order,
-                        status=DbOrderStatus.CLOSED,
-                        closed_at=ist_now(),
-                        reason="Position closed - sell order executed",
-                    )
-                    closed_count += 1
-                    logger.info(
-                        f"Closed buy order {db_order.id} ({db_order.broker_order_id}) "
-                        f"for {base_symbol} - sell order executed"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Error closing buy order {db_order.id} for {base_symbol}: {e}"
-                    )
-                    # Continue with next order even if one fails
+            # Wrap all order closures in a single transaction
+            from src.infrastructure.db.transaction import transaction
+
+            with transaction(self.orders_repo.db):
+                for db_order in ongoing_buy_orders:
+                    try:
+                        # Mark buy order as CLOSED
+                        self.orders_repo.update(
+                            db_order,
+                            status=DbOrderStatus.CLOSED,
+                            closed_at=ist_now(),
+                            reason="Position closed - sell order executed",
+                            auto_commit=False,  # Transaction handles commit
+                        )
+                        closed_count += 1
+                        logger.info(
+                            f"Closed buy order {db_order.id} ({db_order.broker_order_id}) "
+                            f"for {base_symbol} - sell order executed"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Error closing buy order {db_order.id} for {base_symbol}: {e}"
+                        )
+                        # Continue with next order even if one fails
+                        # Transaction will rollback if exception propagates
 
             if closed_count > 0:
                 logger.info(
@@ -1634,7 +1824,9 @@ class SellOrderManager:
         if symbol in self.lowest_ema9:
             del self.lowest_ema9[symbol]
 
-    def has_completed_sell_order(self, symbol: str) -> dict[str, Any] | None:
+    def has_completed_sell_order(
+        self, symbol: str, all_orders_response: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
         """
         Check if a symbol has a completed/executed sell order.
 
@@ -1688,10 +1880,15 @@ class SellOrderManager:
                 logger.debug(f"Error checking OrderStatusVerifier results for {symbol}: {e}")
                 # Fall through to direct API call
 
-        # Fallback: Use direct API call if OrderStatusVerifier not available or no results found
+        # Fallback: Use provided orders response if available, otherwise use direct API call
         try:
-            # Use get_orders() directly to get ALL orders (including completed ones)
-            all_orders = self.orders.get_orders()
+            # Use provided orders response if available (from monitoring cycle)
+            if all_orders_response and isinstance(all_orders_response, dict):
+                all_orders = all_orders_response
+            else:
+                # Fallback: Use direct API call if orders response not provided
+                all_orders = self.orders.get_orders()
+
             if not all_orders or "data" not in all_orders:
                 return None
 
@@ -1818,6 +2015,13 @@ class SellOrderManager:
         # Check for existing sell orders to avoid duplicates
         existing_orders = self.get_existing_sell_orders()
 
+        # Optimization: Fetch orders once and reuse for has_completed_sell_order checks
+        all_orders_response = None
+        try:
+            all_orders_response = self.orders.get_orders()
+        except Exception as e:
+            logger.debug(f"Failed to fetch orders for run_at_market_open: {e}")
+
         orders_placed = 0
 
         for trade in open_positions:
@@ -1830,7 +2034,8 @@ class SellOrderManager:
                 continue
 
             # Check if position already has a completed sell order (already sold)
-            completed_order_info = self.has_completed_sell_order(symbol)
+            # Reuse orders data to avoid duplicate API calls
+            completed_order_info = self.has_completed_sell_order(symbol, all_orders_response)
             if completed_order_info:
                 logger.info(
                     f"Skipping {symbol}: Already has completed sell order - position already sold"
@@ -1878,16 +2083,48 @@ class SellOrderManager:
                     continue
                 elif qty > existing_qty:
                     # Quantity increased (reentry happened) - update existing order
+                    # Race Condition Fix: Re-read position quantity just before updating
+                    # to ensure we have the latest value (in case reentry executed during processing)
+                    current_position = None
+                    if self.positions_repo and self.user_id:
+                        try:
+                            current_position = self.positions_repo.get_by_symbol_for_update(
+                                self.user_id, symbol
+                            )
+                            if current_position:
+                                # Use the latest quantity from database
+                                qty = current_position.quantity
+                                logger.debug(
+                                    f"Re-read position {symbol}: quantity = {qty} "
+                                    f"(was {trade.get('qty', 0)} in initial read)"
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to re-read position {symbol} before sell order update: {e}. "
+                                f"Using quantity from initial read."
+                            )
+
                     logger.info(
                         f"Updating sell order for {symbol}: quantity increased from {existing_qty} to {qty} "
                         f"(reentry detected, Order ID: {existing['order_id']})"
                     )
 
+                    # Manual Trade Detection Timing Fix: Lightweight reconciliation for this symbol
+                    # before updating sell order to ensure we have latest quantity
+                    # Note: holdings_response not available here, so it will fetch fresh if needed
+                    try:
+                        # Quick check: reconcile this specific symbol
+                        self._reconcile_single_symbol(symbol, holdings_response=None)
+                    except Exception as e:
+                        logger.debug(
+                            f"Lightweight reconciliation for {symbol} failed: {e}. Continuing..."
+                        )
+
                     # Update the sell order with new quantity (keep same price)
                     if self.update_sell_order(
                         order_id=existing["order_id"],
                         symbol=symbol,
-                        qty=qty,
+                        qty=int(qty),  # Ensure integer for order quantity
                         new_price=existing_price,  # Keep same price
                     ):
                         logger.info(
@@ -2210,6 +2447,127 @@ class SellOrderManager:
 
         return result
 
+    def _check_and_fix_sell_order_mismatches(
+        self, all_orders_response: dict[str, Any] | None = None
+    ) -> int:
+        """
+        Check for sell order quantity mismatches with position quantities and fix them.
+
+        Flaw #7 Fix: Detects and fixes mismatches caused by failed sell order updates
+        (e.g., after reentry execution when update_sell_order() fails).
+
+        Args:
+            all_orders_response: Optional orders response from get_orders() API call.
+                                 If provided, uses this data instead of making a new API call.
+                                 This allows reusing data from frequent monitoring calls.
+
+        Returns:
+            Number of mismatches fixed
+        """
+        if not self.active_sell_orders or not self.positions_repo or not self.user_id:
+            return 0
+
+        fixed_count = 0
+
+        # Extract pending sell orders from the provided orders response (if available)
+        # Otherwise, fall back to get_existing_sell_orders() for backward compatibility
+        if all_orders_response and isinstance(all_orders_response, dict):
+            existing_orders = {}
+            orders_data = all_orders_response.get("data", [])
+
+            for order in orders_data:
+                try:
+                    if not OrderFieldExtractor.is_sell_order(order):
+                        continue
+
+                    # Extract symbol (remove -EQ suffix)
+                    symbol = extract_base_symbol(OrderFieldExtractor.get_symbol(order))
+
+                    # Extract order details
+                    qty = OrderFieldExtractor.get_quantity(order)
+                    price = OrderFieldExtractor.get_price(order)
+                    order_id = OrderFieldExtractor.get_order_id(order)
+
+                    # Only include pending/open orders (not completed ones)
+                    if not OrderStatusParser.is_completed(order) and symbol and qty > 0:
+                        existing_orders[symbol.upper()] = {
+                            "order_id": order_id,
+                            "qty": qty,
+                            "price": price,
+                        }
+                except Exception as e:
+                    logger.debug(f"Error parsing order for mismatch check: {e}")
+                    continue
+        else:
+            # Fallback: Make separate API call if orders data not provided
+            existing_orders = self.get_existing_sell_orders()
+
+        for symbol, order_info in list(self.active_sell_orders.items()):
+            try:
+                base_symbol = extract_base_symbol(symbol).upper()
+
+                # Get position quantity from database
+                position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+                if not position or position.closed_at:
+                    # Position doesn't exist or is closed - skip
+                    continue
+
+                position_qty = position.quantity
+
+                # Get sell order quantity from broker
+                if base_symbol not in existing_orders:
+                    # Sell order doesn't exist in broker (might have been executed/cancelled)
+                    continue
+
+                sell_order = existing_orders[base_symbol]
+                sell_order_qty = sell_order.get("qty", 0)
+                sell_order_id = sell_order.get("order_id")
+                sell_order_price = sell_order.get("price", 0)
+
+                # Check for mismatch
+                if sell_order_id and position_qty != sell_order_qty:
+                    logger.info(
+                        f"Detected sell order quantity mismatch for {base_symbol}: "
+                        f"Position={position_qty}, Sell order={sell_order_qty}. "
+                        f"Attempting to fix..."
+                    )
+
+                    # Update sell order to match position quantity
+                    if self.update_sell_order(
+                        order_id=str(sell_order_id),
+                        symbol=base_symbol,
+                        qty=int(position_qty),
+                        new_price=sell_order_price,
+                    ):
+                        logger.info(
+                            f"Fixed sell order quantity mismatch for {base_symbol}: "
+                            f"{sell_order_qty} -> {position_qty} shares"
+                        )
+                        # Update tracking with new quantity
+                        self._register_order(
+                            symbol=symbol,
+                            order_id=sell_order_id,
+                            target_price=sell_order_price,
+                            qty=position_qty,
+                            ticker=order_info.get("ticker"),
+                            placed_symbol=order_info.get("placed_symbol") or f"{base_symbol}-EQ",
+                        )
+                        fixed_count += 1
+                    else:
+                        logger.warning(
+                            f"Failed to fix sell order quantity mismatch for {base_symbol}. "
+                            f"Will retry in next check cycle."
+                        )
+
+            except Exception as e:
+                logger.debug(f"Error checking sell order mismatch for {symbol}: {e}")
+                continue
+
+        if fixed_count > 0:
+            logger.info(f"Fixed {fixed_count} sell order quantity mismatch(es)")
+
+        return fixed_count
+
     def _check_and_retry_circuit_expansion(self) -> int:
         """
         Check if EMA9 has dropped within circuit limits for waiting symbols and retry placing orders.
@@ -2320,6 +2678,39 @@ class SellOrderManager:
             "circuit_retried": 0,
         }
 
+        # Manual Trade Detection Timing Fix: Periodic reconciliation during market hours
+        # Run reconciliation every 30 minutes to detect manual trades
+        from datetime import datetime
+
+        now = datetime.now()
+
+        # Flaw #7 Optimization: Fetch holdings once and reuse for reconciliation and mismatch check
+        # This eliminates the need for separate cache mechanism - we reuse data from monitoring cycle
+        holdings_response = None
+        if now.minute in [0, 30] and now.second < 10:
+            # Fetch holdings once for reconciliation (reused for mismatch check if needed)
+            try:
+                holdings_response = self.portfolio.get_holdings() if self.portfolio else None
+            except Exception as e:
+                logger.debug(f"Failed to fetch holdings for reconciliation: {e}")
+
+        # Run reconciliation at :00, :30 minutes of each hour
+        if now.minute in [0, 30] and now.second < 10:
+            try:
+                reconciliation_stats = self._reconcile_positions_with_broker_holdings(
+                    holdings_response
+                )
+                if (
+                    reconciliation_stats.get("updated", 0) > 0
+                    or reconciliation_stats.get("closed", 0) > 0
+                ):
+                    logger.info(
+                        f"Periodic reconciliation: {reconciliation_stats.get('updated', 0)} positions updated, "
+                        f"{reconciliation_stats.get('closed', 0)} positions closed"
+                    )
+            except Exception as e:
+                logger.debug(f"Periodic reconciliation failed (non-critical): {e}")
+
         # Clean up any rejected/cancelled orders before monitoring
         self._cleanup_rejected_orders()
 
@@ -2333,16 +2724,33 @@ class SellOrderManager:
 
         logger.debug(f"Monitoring {len(self.active_sell_orders)} active sell orders in parallel...")
 
-        # Check for executed orders first (single API call)
-        executed_ids = self.check_order_execution()
+        # Flaw #7 Fix: Get all orders once and use for both execution check and mismatch detection
+        # This avoids duplicate API calls - we use the same data for multiple purposes
+        all_orders_response = None
+        try:
+            all_orders_response = self.orders.get_orders()
+        except Exception as e:
+            logger.debug(f"Failed to fetch orders for monitoring: {e}")
+
+        # Check for executed orders first (using the orders data we just fetched)
+        executed_ids = self.check_order_execution(all_orders_response)
+
+        # Flaw #7 Fix: Check for sell order quantity mismatches using the same orders data
+        # Detects and fixes mismatches caused by failed sell order updates (e.g., after reentry)
+        # Runs every 15 minutes (:00, :15, :30, :45) to catch failures quickly
+        if all_orders_response and now.minute % 15 == 0 and now.second < 10:
+            try:
+                self._check_and_fix_sell_order_mismatches(all_orders_response)
+            except Exception as e:
+                logger.debug(f"Failed to check sell order mismatches (non-critical): {e}")
 
         # Remove executed orders BEFORE monitoring (don't waste API calls on executed orders)
         symbols_executed = []
         for symbol, order_info in list(self.active_sell_orders.items()):
             order_id = order_info.get("order_id")
 
-            # Check if sell order has been completed (via get_orders() to catch all statuses)
-            completed_order_info = self.has_completed_sell_order(symbol)
+            # Check if sell order has been completed (using orders data from monitoring cycle)
+            completed_order_info = self.has_completed_sell_order(symbol, all_orders_response)
             if completed_order_info:
                 logger.info(f"{symbol} sell order completed - removing from monitoring")
                 # Mark position as closed in trade history
@@ -2369,22 +2777,30 @@ class SellOrderManager:
                         if filled_qty > 0:
                             if filled_qty >= order_qty or filled_qty >= order_info.get("qty", 0):
                                 # Full execution - mark position as closed
-                                self.positions_repo.mark_closed(
-                                    user_id=self.user_id,
-                                    symbol=base_symbol,
-                                    closed_at=ist_now(),
-                                    exit_price=order_price,
-                                )
-                                logger.info(
-                                    f"Position marked as closed in database: {base_symbol} "
-                                    f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
-                                )
+                                # Wrap position and order updates in transaction for atomicity
+                                from src.infrastructure.db.transaction import transaction
 
-                                # Close corresponding ONGOING buy orders
-                                self._close_buy_orders_for_symbol(base_symbol)
+                                with transaction(self.positions_repo.db):
+                                    self.positions_repo.mark_closed(
+                                        user_id=self.user_id,
+                                        symbol=base_symbol,
+                                        closed_at=ist_now(),
+                                        exit_price=order_price,
+                                        auto_commit=False,  # Transaction handles commit
+                                    )
+                                    logger.info(
+                                        f"Position marked as closed in database: {base_symbol} "
+                                        f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
+                                    )
+
+                                    # Close corresponding ONGOING buy orders (within same transaction)
+                                    self._close_buy_orders_for_symbol(base_symbol)
 
                                 # Edge Case #12: Cancel pending reentry orders for closed position
+                                # Note: This includes broker API calls, so it's outside the transaction
                                 self._cancel_pending_reentry_orders(base_symbol)
+
+                                # Cache removed - holdings fetched when needed
                             else:
                                 # Partial execution - reduce quantity, keep position open
                                 self.positions_repo.reduce_quantity(
@@ -2392,6 +2808,7 @@ class SellOrderManager:
                                     symbol=base_symbol,
                                     sold_quantity=float(filled_qty),
                                 )
+                                # Cache removed - holdings fetched when needed
                                 logger.info(
                                     f"Position quantity reduced in database: {base_symbol} "
                                     f"(sold {filled_qty} shares, remaining quantity updated)"
@@ -2423,19 +2840,27 @@ class SellOrderManager:
 
                         base_symbol = extract_base_symbol(symbol).upper()
                         # Assume full execution if we don't have filled_qty info
-                        self.positions_repo.mark_closed(
-                            user_id=self.user_id,
-                            symbol=base_symbol,
-                            closed_at=ist_now(),
-                            exit_price=current_price,
-                        )
-                        logger.info(
-                            f"Position marked as closed in database: {base_symbol} "
-                            f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
-                        )
+                        # Wrap position and order updates in transaction for atomicity
+                        from src.infrastructure.db.transaction import transaction
 
-                        # Close corresponding ONGOING buy orders
-                        self._close_buy_orders_for_symbol(base_symbol)
+                        with transaction(self.positions_repo.db):
+                            self.positions_repo.mark_closed(
+                                user_id=self.user_id,
+                                symbol=base_symbol,
+                                closed_at=ist_now(),
+                                exit_price=current_price,
+                                auto_commit=False,  # Transaction handles commit
+                            )
+                            logger.info(
+                                f"Position marked as closed in database: {base_symbol} "
+                                f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
+                            )
+
+                            # Close corresponding ONGOING buy orders (within same transaction)
+                            self._close_buy_orders_for_symbol(base_symbol)
+
+                        # Invalidate cache since position was closed (broker holdings changed)
+                        self._invalidate_holdings_cache()
                     except Exception as e:
                         logger.error(
                             f"Error updating positions table for {symbol} after sell execution: {e}"
