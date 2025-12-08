@@ -3,7 +3,6 @@ import ast
 import json
 import logging
 import sys
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -30,10 +29,38 @@ from ..schemas.user import BrokerCredsInfo, BrokerCredsRequest, BrokerTestRespon
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# In-memory cache for authenticated broker sessions
-# Key: user_id, Value: auth_instance
-_broker_auth_cache: dict[int, object] = {}
-_broker_auth_cache_lock = threading.Lock()
+
+def _get_or_create_auth_session(user_id: int, temp_env_file: str, db: Session) -> object:
+    """
+    Get or create shared authenticated broker session for a user.
+
+    Uses shared session manager to ensure ONE client object per user
+    is used by all services (unified service, web API, individual services).
+    When session expires, it's recreated once and everyone uses the new one.
+
+    Args:
+        user_id: User ID
+        temp_env_file: Path to temporary env file with broker credentials
+        db: Database session (unused, kept for compatibility)
+
+    Returns:
+        Authenticated KotakNeoAuth instance
+    """
+    from modules.kotak_neo_auto_trader.shared_session_manager import (
+        get_shared_session_manager,
+    )
+
+    session_manager = get_shared_session_manager()
+    auth = session_manager.get_or_create_session(user_id, temp_env_file)
+
+    if not auth:
+        raise HTTPException(
+            status_code=503,
+            detail=("Failed to connect to broker. Please check your credentials and try again."),
+        )
+
+    return auth
+
 
 # Try to import NeoAPI at module level (may not be available in all environments)
 try:
@@ -358,7 +385,12 @@ def broker_status(
 
     # Check cached auth session first (if available from previous API calls)
     # This avoids creating new auth instances on every status check
-    auth = _broker_auth_cache.get(current.id)
+    from modules.kotak_neo_auto_trader.shared_session_manager import (
+        get_shared_session_manager,
+    )
+
+    session_manager = get_shared_session_manager()
+    auth = session_manager.get_session(current.id)
 
     if auth and auth.is_authenticated():
         # Cached session is valid - return Connected status
@@ -497,7 +529,6 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
 
         try:
             # Import broker components
-            from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
             from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter import (
                 BrokerServiceUnavailableError,
             )
@@ -505,34 +536,8 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                 BrokerFactory,
             )
 
-            # Thread-safe session caching - similar to trading service pattern
-            # Reuse existing auth instance if available (it handles re-auth internally)
-            auth = _broker_auth_cache.get(current.id)
-
-            if not auth:
-                with _broker_auth_cache_lock:
-                    # Double-check: another thread might have created it
-                    auth = _broker_auth_cache.get(current.id)
-                    if not auth:
-                        # Create new auth instance and login (only once per user)
-                        logger.info(f"Creating new auth session for user {current.id}")
-                        auth = KotakNeoAuth(temp_env_file)
-                        if not auth.login():
-                            raise HTTPException(
-                                status_code=503,
-                                detail=(
-                                    "Failed to connect to broker. "
-                                    "Please check your credentials and try again."
-                                ),
-                            )
-                        # Cache the authenticated session for reuse
-                        _broker_auth_cache[current.id] = auth
-                        logger.info(
-                            f"Cached auth session for user {current.id} - "
-                            "will reuse for subsequent requests"
-                        )
-            else:
-                logger.debug(f"Reusing cached auth session for user {current.id}")
+            # Get or create authenticated session (handles unified service conflicts)
+            auth = _get_or_create_auth_session(current.id, temp_env_file, db)
 
             # Create broker gateway
             broker = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
@@ -567,8 +572,12 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                         f"Auth says authenticated but client is None for user {current.id}, "
                         "clearing cache - will re-authenticate on next request"
                     )
-                    with _broker_auth_cache_lock:
-                        _broker_auth_cache.pop(current.id, None)
+                    from modules.kotak_neo_auto_trader.shared_session_manager import (
+                        get_shared_session_manager,
+                    )
+
+                    session_manager = get_shared_session_manager()
+                    session_manager.clear_session(current.id)
                     raise HTTPException(
                         status_code=503,
                         detail=(
@@ -765,7 +774,6 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
 
         try:
             # Import broker components
-            from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
             from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter import (
                 BrokerServiceUnavailableError,
             )
@@ -773,34 +781,8 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
                 BrokerFactory,
             )
 
-            # Thread-safe session caching - similar to trading service pattern
-            # Reuse existing auth instance if available (it handles re-auth internally)
-            auth = _broker_auth_cache.get(current.id)
-
-            if not auth:
-                with _broker_auth_cache_lock:
-                    # Double-check: another thread might have created it
-                    auth = _broker_auth_cache.get(current.id)
-                    if not auth:
-                        # Create new auth instance and login (only once per user)
-                        logger.info(f"Creating new auth session for user {current.id}")
-                        auth = KotakNeoAuth(temp_env_file)
-                        if not auth.login():
-                            raise HTTPException(
-                                status_code=503,
-                                detail=(
-                                    "Failed to connect to broker. "
-                                    "Please check your credentials and try again."
-                                ),
-                            )
-                        # Cache the authenticated session for reuse
-                        _broker_auth_cache[current.id] = auth
-                        logger.info(
-                            f"Cached auth session for user {current.id} - "
-                            "will reuse for subsequent requests"
-                        )
-            else:
-                logger.debug(f"Reusing cached auth session for user {current.id}")
+            # Get or create authenticated session using shared session manager
+            auth = _get_or_create_auth_session(current.id, temp_env_file, db)
 
             # Create broker gateway
             broker_gateway = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
@@ -835,8 +817,12 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
                         f"Auth says authenticated but client is None for user {current.id}, "
                         "clearing cache - will re-authenticate on next request"
                     )
-                    with _broker_auth_cache_lock:
-                        _broker_auth_cache.pop(current.id, None)
+                    from modules.kotak_neo_auto_trader.shared_session_manager import (
+                        get_shared_session_manager,
+                    )
+
+                    session_manager = get_shared_session_manager()
+                    session_manager.clear_session(current.id)
                     raise HTTPException(
                         status_code=503,
                         detail=(

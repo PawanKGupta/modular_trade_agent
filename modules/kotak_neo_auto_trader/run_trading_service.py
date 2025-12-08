@@ -193,15 +193,20 @@ class TradingService:
                     "Created temporary env file from broker credentials", action="initialize"
                 )
 
-            # Initialize auth with env_file (Phase 2.4: env_file is created from decrypted credentials)
-            self.auth = KotakNeoAuth(self.env_file)
+            # Use shared session manager to ensure ONE client object per user
+            # This client is shared with web API and all other services
+            from .shared_session_manager import get_shared_session_manager
 
-            if not self.auth.login():
+            session_manager = get_shared_session_manager()
+            self.auth = session_manager.get_or_create_session(self.user_id, self.env_file)
+
+            if not self.auth:
                 self.logger.error("Authentication failed", action="initialize")
                 return False
 
             self.logger.info(
-                "Authentication successful - session active for the day", action="initialize"
+                f"Authentication successful - using shared session for user {self.user_id}",
+                action="initialize",
             )
 
             # Initialize trading engine with user config
