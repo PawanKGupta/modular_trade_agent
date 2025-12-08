@@ -12,10 +12,9 @@ When session expires, recreates the client ONCE and everyone uses the new one.
 """
 
 import threading
+from typing import Optional
 
 from utils.logger import logger
-
-from .auth import KotakNeoAuth
 
 
 class SharedSessionManager:
@@ -34,7 +33,7 @@ class SharedSessionManager:
 
     def get_or_create_session(
         self, user_id: int, env_file: str, force_new: bool = False
-    ) -> KotakNeoAuth | None:
+    ) -> Optional["KotakNeoAuth"]:
         """
         Get existing session or create new one for user.
 
@@ -69,6 +68,8 @@ class SharedSessionManager:
 
             # Create new session
             logger.info(f"[SHARED_SESSION] Creating new session for user {user_id}")
+            from .auth import KotakNeoAuth  # Import here to avoid circular dependency
+
             auth = KotakNeoAuth(env_file)
             if auth.login():
                 with self._manager_lock:
@@ -79,7 +80,7 @@ class SharedSessionManager:
                 logger.error(f"[SHARED_SESSION] Failed to create session for user {user_id}")
                 return None
 
-    def get_session(self, user_id: int) -> KotakNeoAuth | None:
+    def get_session(self, user_id: int) -> Optional["KotakNeoAuth"]:
         """
         Get existing session for user without creating new one.
 

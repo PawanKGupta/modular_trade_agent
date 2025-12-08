@@ -178,6 +178,23 @@ class TestGetAllOrdersResponseFormats:
 
         assert len(orders) == 0
 
+    def test_timeout_returns_empty_list_after_retries(self, adapter, mock_client, monkeypatch):
+        """Timeout after retries should return empty list instead of raising error"""
+
+        def fake_call_with_timeout(*args, **kwargs):
+            raise TimeoutError(
+                "get_all_orders() call to order_report() timed out after 30.0 seconds"
+            )
+
+        monkeypatch.setattr(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter.call_with_timeout",
+            fake_call_with_timeout,
+        )
+
+        orders = adapter.get_all_orders()
+
+        assert orders == []
+
 
 class TestParseOrdersResponse:
     """Test _parse_orders_response() with various field formats"""

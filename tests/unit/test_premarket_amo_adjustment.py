@@ -439,10 +439,16 @@ def test_database_update_on_success(mock_auto_trade_engine):
             with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
                 mock_config.MIN_QTY = 1
 
+                # Mock indicator_service to avoid EMA9 cancellation
+                engine.indicator_service = Mock()
+                engine.indicator_service.calculate_ema9_realtime = Mock(return_value=None)
+
                 summary = engine.adjust_amo_quantities_premarket()
 
                 # Verify DB update was attempted
-                engine.orders_repo.get_by_broker_order_id.assert_called_once_with(1, "ORD001")
+                # get_by_broker_order_id is called twice: once to get ticker, once to update DB
+                assert engine.orders_repo.get_by_broker_order_id.call_count == 2
+                engine.orders_repo.get_by_broker_order_id.assert_any_call(1, "ORD001")
                 engine.orders_repo.update.assert_called_once()
 
                 # Verify Telegram notification was sent

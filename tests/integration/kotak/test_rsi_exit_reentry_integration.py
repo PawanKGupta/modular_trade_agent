@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415,F841,E501
 """
 Integration tests for RSI Exit and Re-entry functionality
 
@@ -579,6 +580,9 @@ class TestReentryIntegrationPaperTrading:
 
         paper_adapter.broker.get_pending_orders = Mock(return_value=[reentry_order])
         paper_adapter.broker.price_provider.get_price = Mock(return_value=2600.0)  # Gap up
+
+        # Mock _calculate_ema9 to return None to skip EMA9 cancellation check
+        paper_adapter._calculate_ema9 = Mock(return_value=None)
 
         adjustment_summary = paper_adapter.adjust_amo_quantities_premarket()
 

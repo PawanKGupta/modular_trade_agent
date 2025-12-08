@@ -4,6 +4,7 @@ Handles login, logout, and session management
 """
 
 import os
+import socket
 import sys
 import threading
 from contextlib import redirect_stderr, redirect_stdout
@@ -11,6 +12,32 @@ from io import StringIO
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+# IPv4 resolution control (scoped + configurable)
+_original_getaddrinfo = socket.getaddrinfo
+_FORCE_IPV4 = os.getenv("FORCE_IPV4", "1") not in ("0", "false", "False")
+_BROKER_HOSTS_IPV4_ONLY = {
+    "gw-napi.kotaksecurities.com",
+}
+
+
+def _ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    """
+    Force IPv4-only DNS resolution for broker hosts when enabled.
+    """
+    if not _FORCE_IPV4:
+        return _original_getaddrinfo(host, port, family, type, proto, flags)
+
+    # If host matches broker hosts, force AF_INET
+    if host in _BROKER_HOSTS_IPV4_ONLY:
+        return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+    # Otherwise, use normal resolution
+    return _original_getaddrinfo(host, port, family, type, proto, flags)
+
+
+# Apply IPv4-only resolution globally (but scoped to broker host)
+socket.getaddrinfo = _ipv4_getaddrinfo
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent

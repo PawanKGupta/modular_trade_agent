@@ -2,10 +2,61 @@ import asyncio
 import contextlib
 import logging
 import os
+import socket
 import sys
 import traceback
 import uuid
 from logging.handlers import RotatingFileHandler
+
+# IPv4 resolution control (scoped + configurable)
+_original_getaddrinfo = socket.getaddrinfo
+_FORCE_IPV4 = os.getenv("FORCE_IPV4", "1") not in ("0", "false", "False")
+_BROKER_HOSTS_IPV4_ONLY = {
+    "gw-napi.kotaksecurities.com",
+}
+_BROKER_IPV4_HOST = os.getenv("BROKER_IPV4_HOST", "gw-napi.kotaksecurities.com")
+_BROKER_IPV4_PORT = int(os.getenv("BROKER_IPV4_PORT", "443"))
+_BROKER_IPV4_TIMEOUT = float(os.getenv("BROKER_IPV4_TIMEOUT", "3.0"))
+
+
+def _ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    """
+    Force IPv4-only DNS resolution for broker hosts when enabled.
+    """
+    if not _FORCE_IPV4:
+        return _original_getaddrinfo(host, port, family, type, proto, flags)
+
+    if host in _BROKER_HOSTS_IPV4_ONLY:
+        return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+    return _original_getaddrinfo(host, port, family, type, proto, flags)
+
+
+# Apply IPv4-only resolution globally for FastAPI server (scoped to broker hosts)
+socket.getaddrinfo = _ipv4_getaddrinfo
+
+
+def _check_broker_ipv4_connectivity() -> bool:
+    """
+    Quick IPv4 connectivity probe to the broker host.
+    Logs a warning if IPv4 is forced but not reachable.
+    """
+    if not _FORCE_IPV4:
+        return True
+    try:
+        with socket.create_connection(
+            (_BROKER_IPV4_HOST, _BROKER_IPV4_PORT), timeout=_BROKER_IPV4_TIMEOUT
+        ):
+            return True
+    except Exception as exc:  # pragma: no cover - warning path validated in tests
+        logging.getLogger(__name__).warning(
+            "IPv4 connectivity check to broker host failed: %s:%s (%s). "
+            "Set FORCE_IPV4=0 to disable IPv4-only if your network requires IPv6.",
+            _BROKER_IPV4_HOST,
+            _BROKER_IPV4_PORT,
+            exc,
+        )
+        return False
 
 
 class SafeRotatingFileHandler(RotatingFileHandler):
@@ -168,13 +219,13 @@ async def ensure_db_schema():
 
                 if running_individual:
                     print(
-                        f"[Startup] Found {len(running_individual)} orphaned individual service(s)"
+                                f"[Startup] Found {len(running_individual)} orphaned individual services"
                     )
                     for status in running_individual:
                         status.is_running = False
                         status.process_id = None
                         print(
-                            f"[Startup] Marked {status.task_name} as stopped for user {status.user_id}"
+                                    f"[Startup] Marked {status.task_name} stopped for user {status.user_id}"
                         )
                     db.commit()
 
@@ -188,6 +239,12 @@ async def ensure_db_schema():
     except Exception as e:
         print(f"[Startup] Failed to ensure DB schema: {e}")
         raise
+
+
+@app.on_event("startup")
+async def broker_ipv4_health_check():
+    """Run a quick IPv4 connectivity probe to the broker host on startup."""
+    _check_broker_ipv4_connectivity()
 
 
 @app.middleware("http")

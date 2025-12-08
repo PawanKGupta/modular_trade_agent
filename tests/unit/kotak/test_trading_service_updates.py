@@ -291,7 +291,7 @@ class TestTradingServiceReentryIntegration:
         """Sample user ID for testing"""
         return 1
 
-    @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.SellOrderManager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.prevent_service_conflict")
@@ -306,7 +306,7 @@ class TestTradingServiceReentryIntegration:
         mock_prevent_conflict,
         mock_sell_manager_class,
         mock_engine_class,
-        mock_auth_class,
+        mock_get_session_manager,
         mock_db_session,
         sample_user_id,
         mock_strategy_config,
@@ -315,7 +315,11 @@ class TestTradingServiceReentryIntegration:
         # Setup mocks
         mock_auth = Mock()
         mock_auth.login.return_value = True
-        mock_auth_class.return_value = mock_auth
+        mock_auth.is_authenticated.return_value = True
+
+        mock_session_manager = Mock()
+        mock_session_manager.get_or_create_session.return_value = mock_auth
+        mock_get_session_manager.return_value = mock_session_manager
 
         mock_engine = Mock()
         mock_engine.positions_repo = Mock()
@@ -371,7 +375,7 @@ class TestTradingServiceReentryIntegration:
         # Verify place_reentry_orders was called
         mock_engine.place_reentry_orders.assert_called_once()
 
-    @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.SellOrderManager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.prevent_service_conflict")
@@ -386,7 +390,7 @@ class TestTradingServiceReentryIntegration:
         mock_prevent_conflict,
         mock_sell_manager_class,
         mock_engine_class,
-        mock_auth_class,
+        mock_get_session_manager,
         mock_db_session,
         sample_user_id,
         mock_strategy_config,
@@ -395,7 +399,11 @@ class TestTradingServiceReentryIntegration:
         # Setup mocks
         mock_auth = Mock()
         mock_auth.login.return_value = True
-        mock_auth_class.return_value = mock_auth
+        mock_auth.is_authenticated.return_value = True
+
+        mock_session_manager = Mock()
+        mock_session_manager.get_or_create_session.return_value = mock_auth
+        mock_get_session_manager.return_value = mock_session_manager
 
         mock_engine = Mock()
         mock_engine.positions_repo = Mock()

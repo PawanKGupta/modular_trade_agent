@@ -306,13 +306,9 @@ def test_test_broker_connection_success_updates_settings(monkeypatch):
     result = broker.test_broker_connection(payload=payload, db=db_session, current=user)
 
     assert result.ok is True
-    # Verify settings were updated
-    assert len(repo.update_called) == 1
-    update_kwargs = repo.update_called[0][1]
-    assert update_kwargs["trade_mode"] == TradeMode.BROKER
-    assert update_kwargs["broker"] == "kotak-neo"
-    assert update_kwargs["broker_status"] == "Connected"
-    db_session.commit.assert_called_once()
+    # Verify settings were NOT updated (test connection only, per implementation)
+    # The implementation comment says: "Test connection only - do NOT save broker mode or credentials"
+    assert len(repo.update_called) == 0
 
 
 def test_test_broker_connection_failure_no_update(monkeypatch):
@@ -432,27 +428,30 @@ def test_broker_status_with_cached_authenticated_auth(monkeypatch):
     mock_auth = MagicMock()
     mock_auth.is_authenticated.return_value = True
 
-    # Clear cache and add mock auth
-    broker._broker_auth_cache.clear()
-    broker._broker_auth_cache[42] = mock_auth
+    # Mock SharedSessionManager to return cached auth
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_session.return_value = mock_auth
+    with patch(
+        "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+        return_value=mock_session_manager,
+    ):
+        # Mock decrypt function
+        mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
+        monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
 
-    # Mock decrypt function
-    mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
-    monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
+        user = DummyUser(id=42)
+        db_session = MagicMock()
+        result = broker.broker_status(db=db_session, current=user)
 
-    user = DummyUser(id=42)
-    db_session = MagicMock()
-    result = broker.broker_status(db=db_session, current=user)
+        # Should return Connected and update database
+        assert result == {"broker": "kotak-neo", "status": "Connected"}
+        assert len(repo.update_called) == 1
+        assert repo.update_called[0][1]["broker_status"] == "Connected"
+        db_session.commit.assert_called_once()
 
-    # Should return Connected and update database
-    assert result == {"broker": "kotak-neo", "status": "Connected"}
-    assert len(repo.update_called) == 1
-    assert repo.update_called[0][1]["broker_status"] == "Connected"
-    db_session.commit.assert_called_once()
-
-    # Verify is_authenticated was called (not login)
-    mock_auth.is_authenticated.assert_called_once()
-    mock_auth.login.assert_not_called()
+        # Verify is_authenticated was called (not login)
+        mock_auth.is_authenticated.assert_called_once()
+        mock_auth.login.assert_not_called()
 
 
 def test_broker_status_with_cached_non_authenticated_auth(monkeypatch):
@@ -468,26 +467,29 @@ def test_broker_status_with_cached_non_authenticated_auth(monkeypatch):
     mock_auth = MagicMock()
     mock_auth.is_authenticated.return_value = False
 
-    # Clear cache and add mock auth
-    broker._broker_auth_cache.clear()
-    broker._broker_auth_cache[42] = mock_auth
+    # Mock SharedSessionManager to return non-authenticated auth
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_session.return_value = mock_auth
+    with patch(
+        "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+        return_value=mock_session_manager,
+    ):
+        # Mock decrypt function
+        mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
+        monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
 
-    # Mock decrypt function
-    mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
-    monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
+        user = DummyUser(id=42)
+        db_session = MagicMock()
+        result = broker.broker_status(db=db_session, current=user)
 
-    user = DummyUser(id=42)
-    db_session = MagicMock()
-    result = broker.broker_status(db=db_session, current=user)
+        # Should return stored status without updating
+        assert result == {"broker": "kotak-neo", "status": "Disconnected"}
+        assert len(repo.update_called) == 0  # No update when not authenticated
+        db_session.commit.assert_not_called()
 
-    # Should return stored status without updating
-    assert result == {"broker": "kotak-neo", "status": "Disconnected"}
-    assert len(repo.update_called) == 0  # No update when not authenticated
-    db_session.commit.assert_not_called()
-
-    # Verify is_authenticated was called
-    mock_auth.is_authenticated.assert_called_once()
-    mock_auth.login.assert_not_called()
+        # Verify is_authenticated was called
+        mock_auth.is_authenticated.assert_called_once()
+        mock_auth.login.assert_not_called()
 
 
 def test_broker_status_without_cached_auth(monkeypatch):
@@ -499,27 +501,31 @@ def test_broker_status_without_cached_auth(monkeypatch):
     repo.settings.broker_creds_encrypted = b"encrypted_creds"
     monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
 
-    # Clear cache - no cached auth
-    broker._broker_auth_cache.clear()
+    # Mock SharedSessionManager to return None (no cached session)
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_session.return_value = None
+    with patch(
+        "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+        return_value=mock_session_manager,
+    ):
+        # Mock decrypt function
+        mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
+        monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
 
-    # Mock decrypt function
-    mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
-    monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
+        # Mock KotakNeoAuth import to verify it's NOT created
+        # Since KotakNeoAuth is imported inside the function, we patch the module import
+        with patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth") as mock_auth_class:
+            user = DummyUser(id=42)
+            db_session = MagicMock()
+            result = broker.broker_status(db=db_session, current=user)
 
-    # Mock KotakNeoAuth import to verify it's NOT created
-    # Since KotakNeoAuth is imported inside the function, we patch the module import
-    with patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth") as mock_auth_class:
-        user = DummyUser(id=42)
-        db_session = MagicMock()
-        result = broker.broker_status(db=db_session, current=user)
+            # Should return stored status without creating new auth instance
+            assert result == {"broker": "kotak-neo", "status": "Disconnected"}
+            assert len(repo.update_called) == 0
+            db_session.commit.assert_not_called()
 
-        # Should return stored status without creating new auth instance
-        assert result == {"broker": "kotak-neo", "status": "Disconnected"}
-        assert len(repo.update_called) == 0
-        db_session.commit.assert_not_called()
-
-        # Verify KotakNeoAuth was NOT instantiated (status endpoint doesn't create it)
-        mock_auth_class.assert_not_called()
+            # Verify KotakNeoAuth was NOT instantiated (status endpoint doesn't create it)
+            mock_auth_class.assert_not_called()
 
 
 def test_broker_status_paper_mode(monkeypatch):
@@ -566,23 +572,26 @@ def test_broker_status_updates_to_connected_when_cached_auth_valid(monkeypatch):
     mock_auth = MagicMock()
     mock_auth.is_authenticated.return_value = True
 
-    # Clear cache and add mock auth
-    broker._broker_auth_cache.clear()
-    broker._broker_auth_cache[42] = mock_auth
+    # Mock SharedSessionManager to return cached auth
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_session.return_value = mock_auth
+    with patch(
+        "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+        return_value=mock_session_manager,
+    ):
+        # Mock decrypt function
+        mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
+        monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
 
-    # Mock decrypt function
-    mock_creds = {"consumer_key": "key", "consumer_secret": "secret"}
-    monkeypatch.setattr(broker, "decrypt_broker_credentials", lambda x: mock_creds)
+        user = DummyUser(id=42)
+        db_session = MagicMock()
+        result = broker.broker_status(db=db_session, current=user)
 
-    user = DummyUser(id=42)
-    db_session = MagicMock()
-    result = broker.broker_status(db=db_session, current=user)
-
-    # Should update status to Connected
-    assert result == {"broker": "kotak-neo", "status": "Connected"}
-    assert len(repo.update_called) == 1
-    assert repo.update_called[0][1]["broker_status"] == "Connected"
-    db_session.commit.assert_called_once()
+        # Should update status to Connected
+        assert result == {"broker": "kotak-neo", "status": "Connected"}
+        assert len(repo.update_called) == 1
+        assert repo.update_called[0][1]["broker_status"] == "Connected"
+        db_session.commit.assert_called_once()
 
 
 # GET /creds/info tests
@@ -1138,9 +1147,6 @@ def test_get_broker_portfolio_auth_fails(monkeypatch):
     """Test broker portfolio endpoint when authentication fails"""
     user = DummyUser(id=42)
 
-    # Clear cache to ensure fresh auth attempt
-    broker._broker_auth_cache.clear()
-
     repo = DummySettingsRepo(object())
     repo.settings.trade_mode = TradeMode.BROKER
     repo.settings.broker_creds_encrypted = b"encrypted_creds"
@@ -1156,15 +1162,17 @@ def test_get_broker_portfolio_auth_fails(monkeypatch):
 
     monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
 
-    # Mock KotakNeoAuth to fail login
+    # Mock SharedSessionManager to return auth that fails login
     mock_auth = MagicMock()
     mock_auth.login.return_value = False
     mock_auth.is_authenticated.return_value = False
 
-    def mock_auth_init(env_file):
-        return mock_auth
-
-    with patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init):
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_or_create_session.return_value = None  # Login failed
+    with patch(
+        "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+        return_value=mock_session_manager,
+    ):
         db_session = MagicMock()
         with pytest.raises(HTTPException) as exc:
             broker.get_broker_portfolio(db=db_session, current=user)
@@ -1256,9 +1264,6 @@ def test_get_broker_portfolio_success(monkeypatch):
 def test_get_broker_orders_decrypt_fails(monkeypatch):
     """Test broker orders endpoint when credential decryption fails"""
     user = DummyUser(id=42)
-
-    # Clear cache
-    broker._broker_auth_cache.clear()
 
     repo = DummySettingsRepo(object())
     repo.settings.trade_mode = TradeMode.BROKER
@@ -1550,9 +1555,6 @@ def test_get_broker_orders_auth_fails(monkeypatch):
     """Test broker orders endpoint when authentication fails"""
     user = DummyUser(id=42)
 
-    # Clear the cache to ensure a fresh test
-    broker._broker_auth_cache.clear()
-
     repo = DummySettingsRepo(object())
     repo.settings.trade_mode = TradeMode.BROKER
     repo.settings.broker_creds_encrypted = b"encrypted_creds"
@@ -1568,15 +1570,17 @@ def test_get_broker_orders_auth_fails(monkeypatch):
 
     monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
 
-    # Mock KotakNeoAuth to fail login
+    # Mock SharedSessionManager to return auth that fails login
     mock_auth = MagicMock()
     mock_auth.login.return_value = False
     mock_auth.is_authenticated.return_value = False  # Not authenticated
 
-    def mock_auth_init(env_file):
-        return mock_auth
-
-    with patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init):
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_or_create_session.return_value = None  # Login failed
+    with patch(
+        "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+        return_value=mock_session_manager,
+    ):
         db_session = MagicMock()
         with pytest.raises(HTTPException) as exc:
             broker.get_broker_orders(db=db_session, current=user)
@@ -1588,9 +1592,6 @@ def test_get_broker_orders_auth_fails(monkeypatch):
 def test_get_broker_portfolio_cache_reuse_prevents_multiple_otp(monkeypatch):
     """Test that portfolio endpoint reuses cached auth and prevents multiple OTP requests"""
     user = DummyUser(id=42)
-
-    # Clear cache
-    broker._broker_auth_cache.clear()
 
     repo = DummySettingsRepo(object())
     repo.settings.trade_mode = TradeMode.BROKER
@@ -1616,11 +1617,9 @@ def test_get_broker_portfolio_cache_reuse_prevents_multiple_otp(monkeypatch):
     mock_client = MagicMock()
     mock_auth.get_client.return_value = mock_client
 
-    auth_instance_created = []
-
-    def mock_auth_init(env_file):
-        auth_instance_created.append(1)  # Track how many times auth is created
-        return mock_auth
+    # Mock SharedSessionManager to return same auth instance (simulating cache reuse)
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_or_create_session.return_value = mock_auth
 
     # Mock broker gateway
     mock_holding = Holding(
@@ -1649,7 +1648,10 @@ def test_get_broker_portfolio_cache_reuse_prevents_multiple_otp(monkeypatch):
         return mock_ticker
 
     with (
-        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+            return_value=mock_session_manager,
+        ),
         patch(
             "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
             mock_broker_factory,
@@ -1658,31 +1660,30 @@ def test_get_broker_portfolio_cache_reuse_prevents_multiple_otp(monkeypatch):
     ):
         db_session = MagicMock()
 
-        # First call - should create auth and call login once
+        # First call - should get auth from session manager and call login once
         result1 = broker.get_broker_portfolio(db=db_session, current=user)
         assert len(result1.holdings) == 1
-        assert len(auth_instance_created) == 1  # Auth created once
-        assert mock_auth.login.call_count == 1  # Login called once
+        assert mock_session_manager.get_or_create_session.call_count == 1  # Called once
+        assert mock_auth.login.call_count == 0  # Login not called (already authenticated)
 
-        # Second call - should reuse cached auth, NO login call
+        # Second call - should reuse cached auth, NO new session creation
         result2 = broker.get_broker_portfolio(db=db_session, current=user)
         assert len(result2.holdings) == 1
-        assert len(auth_instance_created) == 1  # Auth NOT created again
-        assert mock_auth.login.call_count == 1  # Login NOT called again
+        assert (
+            mock_session_manager.get_or_create_session.call_count == 2
+        )  # Called again (but returns cached)
+        assert mock_auth.login.call_count == 0  # Login still not called
 
         # Third call - should still reuse cached auth
         result3 = broker.get_broker_portfolio(db=db_session, current=user)
         assert len(result3.holdings) == 1
-        assert len(auth_instance_created) == 1  # Auth NOT created again
-        assert mock_auth.login.call_count == 1  # Login still only called once
+        assert mock_session_manager.get_or_create_session.call_count == 3  # Called again
+        assert mock_auth.login.call_count == 0  # Login still not called
 
 
 def test_get_broker_orders_cache_reuse_prevents_multiple_otp(monkeypatch):
     """Test that orders endpoint reuses cached auth and prevents multiple OTP requests"""
     user = DummyUser(id=42)
-
-    # Clear cache
-    broker._broker_auth_cache.clear()
 
     repo = DummySettingsRepo(object())
     repo.settings.trade_mode = TradeMode.BROKER
@@ -1708,11 +1709,9 @@ def test_get_broker_orders_cache_reuse_prevents_multiple_otp(monkeypatch):
     mock_client = MagicMock()
     mock_auth.get_client.return_value = mock_client
 
-    auth_instance_created = []
-
-    def mock_auth_init(env_file):
-        auth_instance_created.append(1)  # Track how many times auth is created
-        return mock_auth
+    # Mock SharedSessionManager to return same auth instance (simulating cache reuse)
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_or_create_session.return_value = mock_auth
 
     # Mock broker gateway
     mock_order = MagicMock()
@@ -1735,7 +1734,10 @@ def test_get_broker_orders_cache_reuse_prevents_multiple_otp(monkeypatch):
         return mock_broker
 
     with (
-        patch("modules.kotak_neo_auto_trader.auth.KotakNeoAuth", mock_auth_init),
+        patch(
+            "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+            return_value=mock_session_manager,
+        ),
         patch(
             "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
             mock_broker_factory,
@@ -1743,23 +1745,23 @@ def test_get_broker_orders_cache_reuse_prevents_multiple_otp(monkeypatch):
     ):
         db_session = MagicMock()
 
-        # First call - should create auth and call login once
+        # First call - should get auth from session manager
         result1 = broker.get_broker_orders(db=db_session, current=user)
         assert len(result1) == 1
-        assert len(auth_instance_created) == 1  # Auth created once
-        assert mock_auth.login.call_count == 1  # Login called once
+        assert mock_session_manager.get_or_create_session.call_count == 1
+        assert mock_auth.login.call_count == 0  # Login not called (already authenticated)
 
-        # Second call - should reuse cached auth, NO login call
+        # Second call - should reuse cached auth
         result2 = broker.get_broker_orders(db=db_session, current=user)
         assert len(result2) == 1
-        assert len(auth_instance_created) == 1  # Auth NOT created again
-        assert mock_auth.login.call_count == 1  # Login NOT called again
+        assert mock_session_manager.get_or_create_session.call_count == 2
+        assert mock_auth.login.call_count == 0  # Login still not called
 
         # Third call - should still reuse cached auth
         result3 = broker.get_broker_orders(db=db_session, current=user)
         assert len(result3) == 1
-        assert len(auth_instance_created) == 1  # Auth NOT created again
-        assert mock_auth.login.call_count == 1  # Login still only called once
+        assert mock_session_manager.get_or_create_session.call_count == 3
+        assert mock_auth.login.call_count == 0  # Login still not called
 
 
 def test_get_broker_portfolio_cached_auth_authenticated_skips_login(monkeypatch):
@@ -1776,14 +1778,14 @@ def test_get_broker_portfolio_cached_auth_authenticated_skips_login(monkeypatch)
 
     monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
 
-    # Pre-populate cache with authenticated auth
+    # Pre-populate SharedSessionManager with authenticated auth
     mock_auth = MagicMock()
     mock_auth.is_authenticated.return_value = True
     mock_client = MagicMock()
     mock_auth.get_client.return_value = mock_client
 
-    broker._broker_auth_cache.clear()
-    broker._broker_auth_cache[42] = mock_auth
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_or_create_session.return_value = mock_auth
 
     # Mock broker gateway
     mock_holding = Holding(
@@ -1812,6 +1814,10 @@ def test_get_broker_portfolio_cached_auth_authenticated_skips_login(monkeypatch)
         return mock_ticker
 
     with (
+        patch(
+            "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+            return_value=mock_session_manager,
+        ),
         patch(
             "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
             mock_broker_factory,
@@ -1844,14 +1850,14 @@ def test_get_broker_orders_cached_auth_authenticated_skips_login(monkeypatch):
 
     monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
 
-    # Pre-populate cache with authenticated auth
+    # Pre-populate SharedSessionManager with authenticated auth
     mock_auth = MagicMock()
     mock_auth.is_authenticated.return_value = True
     mock_client = MagicMock()
     mock_auth.get_client.return_value = mock_client
 
-    broker._broker_auth_cache.clear()
-    broker._broker_auth_cache[42] = mock_auth
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_or_create_session.return_value = mock_auth
 
     # Mock broker gateway
     mock_order = MagicMock()
@@ -1873,9 +1879,15 @@ def test_get_broker_orders_cached_auth_authenticated_skips_login(monkeypatch):
     def mock_broker_factory(broker_type, auth_handler):
         return mock_broker
 
-    with patch(
-        "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
-        mock_broker_factory,
+    with (
+        patch(
+            "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+            return_value=mock_session_manager,
+        ),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
     ):
         db_session = MagicMock()
         result = broker.get_broker_orders(db=db_session, current=user)
