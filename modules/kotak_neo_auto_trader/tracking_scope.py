@@ -28,26 +28,26 @@ class TrackingScope:
     Manages the scope of symbols being tracked by the system.
     Enforces that only system-recommended symbols are monitored.
     """
-    
+
     def __init__(self, data_dir: str = "data"):
         """
         Initialize tracking scope manager.
-        
+
         Args:
             data_dir: Directory for storing tracking data
         """
         self.data_dir = data_dir
         self.tracking_file = os.path.join(data_dir, "system_recommended_symbols.json")
         self._ensure_data_file()
-    
+
     def _ensure_data_file(self) -> None:
         """Create tracking file if it doesn't exist."""
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir, exist_ok=True)
-        
+
         if not os.path.exists(self.tracking_file):
             self._save_tracking_data({"symbols": []})
-    
+
     def _load_tracking_data(self) -> Dict[str, Any]:
         """Load tracking data from file."""
         try:
@@ -56,7 +56,7 @@ class TrackingScope:
         except Exception as e:
             logger.error(f"Failed to load tracking data: {e}")
             return {"symbols": []}
-    
+
     def _save_tracking_data(self, data: Dict[str, Any]) -> None:
         """Save tracking data to file."""
         try:
@@ -64,7 +64,7 @@ class TrackingScope:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"Failed to save tracking data: {e}")
-    
+
     def add_tracked_symbol(
         self,
         symbol: str,
@@ -77,7 +77,7 @@ class TrackingScope:
     ) -> str:
         """
         Add a symbol to tracking scope.
-        
+
         Args:
             symbol: Trading symbol (e.g., 'RELIANCE')
             ticker: Full ticker (e.g., 'RELIANCE.NS')
@@ -86,15 +86,15 @@ class TrackingScope:
             pre_existing_qty: Quantity already owned (not tracked)
             recommendation_source: CSV file or source
             recommendation_verdict: Buy/Strong Buy verdict
-        
+
         Returns:
             tracking_id: Unique tracking identifier
         """
         data = self._load_tracking_data()
-        
+
         # Generate unique tracking ID
         tracking_id = f"track-{symbol}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        
+
         tracking_entry = {
             "id": tracking_id,
             "symbol": symbol,
@@ -110,146 +110,160 @@ class TrackingScope:
             "recommendation_source": recommendation_source,
             "recommendation_verdict": recommendation_verdict
         }
-        
+
         data["symbols"].append(tracking_entry)
         self._save_tracking_data(data)
-        
+
         logger.info(
             f"Added to tracking scope: {symbol} "
             f"(qty: {initial_qty}, tracking_id: {tracking_id})"
         )
-        
+
         return tracking_id
-    
+
     def is_tracked(self, symbol: str) -> bool:
         """
         Check if a symbol is actively tracked.
-        
+
         Args:
             symbol: Trading symbol to check
-        
+
         Returns:
             True if symbol is actively tracked, False otherwise
         """
         data = self._load_tracking_data()
-        
+
         for entry in data["symbols"]:
             if entry["symbol"] == symbol and entry["tracking_status"] == "active":
                 return True
-        
+
         return False
-    
-    def get_tracking_entry(self, symbol: str) -> Optional[Dict[str, Any]]:
+
+    def get_tracking_entry(self, symbol: str, status: str = "any") -> Optional[Dict[str, Any]]:
         """
         Get tracking entry for a symbol.
-        
+
         Args:
             symbol: Trading symbol
-        
+            status: Filter by status ("active", "completed", "any")
+
         Returns:
             Tracking entry dict or None if not found
         """
         data = self._load_tracking_data()
-        
+
         for entry in data["symbols"]:
-            if entry["symbol"] == symbol and entry["tracking_status"] == "active":
-                return entry
-        
+            if entry["symbol"] == symbol:
+                if status == "any":
+                    return entry
+                elif entry["tracking_status"] == status:
+                    return entry
+
         return None
-    
+
     def get_tracked_symbols(self, status: str = "active") -> List[str]:
         """
         Get list of tracked symbols.
-        
+
         Args:
             status: Filter by status (active/completed/all)
-        
+
         Returns:
             List of symbol strings
         """
-        data = self._load_tracking_data()
-        
-        if status == "all":
-            return [entry["symbol"] for entry in data["symbols"]]
-        else:
-            return [
-                entry["symbol"]
-                for entry in data["symbols"]
-                if entry["tracking_status"] == status
-            ]
-    
+        try:
+            data = self._load_tracking_data()
+
+            if status == "all":
+                # Filter out entries with missing or invalid symbol field
+                return [
+                    entry.get("symbol", "")
+                    for entry in data.get("symbols", [])
+                    if entry.get("symbol")  # Only include entries with valid symbol
+                ]
+            else:
+                # Filter out entries with missing or invalid symbol/status fields
+                return [
+                    entry.get("symbol", "")
+                    for entry in data.get("symbols", [])
+                    if entry.get("tracking_status") == status and entry.get("symbol")
+                ]
+        except Exception as e:
+            logger.warning(f"Error getting tracked symbols: {e}. Returning empty list.")
+            return []
+
     def update_tracked_qty(self, symbol: str, qty_change: int) -> None:
         """
         Update the tracked quantity for a symbol.
-        
+
         Args:
             symbol: Trading symbol
             qty_change: Change in quantity (positive for buy, negative for sell)
         """
         data = self._load_tracking_data()
-        
+
         for entry in data["symbols"]:
             if entry["symbol"] == symbol and entry["tracking_status"] == "active":
                 old_qty = entry["current_tracked_qty"]
                 entry["current_tracked_qty"] = max(0, old_qty + qty_change)
-                
+
                 logger.debug(
                     f"Updated tracked qty for {symbol}: "
                     f"{old_qty} -> {entry['current_tracked_qty']}"
                 )
-                
+
                 # Check if position closed
                 if entry["current_tracked_qty"] == 0:
                     self._stop_tracking_internal(entry)
-                
+
                 self._save_tracking_data(data)
                 return
-        
+
         logger.warning(f"Symbol {symbol} not found in active tracking")
-    
+
     def _stop_tracking_internal(self, entry: Dict[str, Any]) -> None:
         """Internal method to stop tracking (called when qty = 0)."""
         entry["tracking_status"] = "completed"
         entry["tracking_ended_at"] = datetime.now().isoformat()
-        
+
         logger.info(
             f"Stopped tracking {entry['symbol']} - position closed "
             f"(tracking_id: {entry['id']})"
         )
-    
+
     def stop_tracking(self, symbol: str, reason: str = "Position closed") -> None:
         """
         Manually stop tracking a symbol.
-        
+
         Args:
             symbol: Trading symbol
             reason: Reason for stopping tracking
         """
         data = self._load_tracking_data()
-        
+
         for entry in data["symbols"]:
             if entry["symbol"] == symbol and entry["tracking_status"] == "active":
                 entry["tracking_status"] = "completed"
                 entry["tracking_ended_at"] = datetime.now().isoformat()
                 entry["stop_reason"] = reason
-                
+
                 self._save_tracking_data(data)
-                
+
                 logger.info(f"Stopped tracking {symbol}: {reason}")
                 return
-        
+
         logger.warning(f"Symbol {symbol} not found in active tracking")
-    
+
     def add_related_order(self, symbol: str, order_id: str) -> None:
         """
         Add a related order ID to tracking entry (for manual orders).
-        
+
         Args:
             symbol: Trading symbol
             order_id: Order ID to add
         """
         data = self._load_tracking_data()
-        
+
         for entry in data["symbols"]:
             if entry["symbol"] == symbol and entry["tracking_status"] == "active":
                 if order_id not in entry["all_related_orders"]:
@@ -266,18 +280,18 @@ _tracking_scope_instance: Optional[TrackingScope] = None
 def get_tracking_scope(data_dir: str = "data") -> TrackingScope:
     """
     Get or create tracking scope singleton instance.
-    
+
     Args:
         data_dir: Directory for tracking data
-    
+
     Returns:
         TrackingScope instance
     """
     global _tracking_scope_instance
-    
+
     if _tracking_scope_instance is None:
         _tracking_scope_instance = TrackingScope(data_dir)
-    
+
     return _tracking_scope_instance
 
 

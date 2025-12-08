@@ -69,10 +69,175 @@ class ManualOrderMatcher:
         """
         logger.info("Starting manual trade reconciliation")
 
+        # Extract holdings symbols for comparison
+        holdings_symbols = []
+        holdings_dict = {}
+        for holding in broker_holdings:
+            # Try multiple field names for symbol extraction
+            symbol = (
+                holding.get("symbol")
+                or holding.get("tradingSymbol")
+                or holding.get("displaySymbol")
+                or holding.get("securitySymbol")
+                or ""
+            )
+            if symbol:
+                # Remove common suffixes (-EQ, -BE, etc.) to get base symbol
+                base_symbol = symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").strip()
+                if base_symbol:
+                    holdings_symbols.append(base_symbol.upper())
+                    holdings_dict[base_symbol.upper()] = holding
+
+        logger.info(f"Found {len(holdings_symbols)} holdings in portfolio: {', '.join(holdings_symbols)}")
+
         tracked_symbols = self.tracking_scope.get_tracked_symbols(status="active")
+        all_tracked_symbols = self.tracking_scope.get_tracked_symbols(status="all")
+        completed_tracked_symbols = self.tracking_scope.get_tracked_symbols(status="completed")
+
+        logger.info(
+            f"Tracking scope status: {len(tracked_symbols)} active, "
+            f"{len(completed_tracked_symbols)} completed, "
+            f"{len(all_tracked_symbols)} total tracked symbols"
+        )
+
+        if tracked_symbols:
+            logger.info(f"Active tracked symbols: {', '.join(tracked_symbols)}")
+        if completed_tracked_symbols:
+            logger.info(f"Completed tracked symbols: {', '.join(completed_tracked_symbols)}")
+            # Log detailed information about completed entries to diagnose issues
+            # Wrap in try-catch to handle corrupted data gracefully
+            try:
+                logger.info("Completed tracking entries details:")
+                for completed_symbol in completed_tracked_symbols:
+                    try:
+                        entry = self.tracking_scope.get_tracking_entry(completed_symbol, status="completed")
+                        if entry:
+                            completed_at = entry.get("tracking_ended_at", "unknown")
+                            tracked_qty = entry.get("current_tracked_qty", 0)
+                            system_qty = entry.get("system_qty", 0)
+                            initial_order_id = entry.get("initial_order_id", "unknown")
+                            ticker = entry.get("ticker", "unknown")
+                            logger.info(
+                                f"  Symbol: {completed_symbol}, Ticker: {ticker}, "
+                                f"System Qty: {system_qty}, Final Tracked Qty: {tracked_qty}, "
+                                f"Initial Order ID: {initial_order_id}, Completed At: {completed_at}"
+                            )
+                        else:
+                            logger.warning(f"  Could not retrieve tracking entry for {completed_symbol}")
+                    except Exception as e:
+                        logger.warning(f"  Error retrieving entry for {completed_symbol}: {e}")
+            except Exception as e:
+                logger.warning(f"Error logging completed entries details: {e}")
+
+        # Log all tracking entries for debugging (to detect data corruption)
+        # Wrap in try-catch to handle corrupted data gracefully
+        try:
+            logger.info("All tracking entries (for debugging):")
+            data = self.tracking_scope._load_tracking_data()
+            for idx, entry in enumerate(data.get("symbols", [])):
+                try:
+                    logger.info(
+                        f"  Entry #{idx+1}: symbol={entry.get('symbol')}, status={entry.get('tracking_status')}, "
+                        f"qty={entry.get('current_tracked_qty')}, ticker={entry.get('ticker')}, "
+                        f"order_id={entry.get('initial_order_id')}"
+                    )
+                except Exception as e:
+                    logger.warning(f"  Error logging entry #{idx+1}: {e}")
+        except Exception as e:
+            logger.warning(f"Error loading tracking data for debugging: {e}")
+
+        # Identify holdings that are not tracked
+        untracked_holdings = []
+        previously_tracked_holdings = []
+        for holding_symbol in holdings_symbols:
+            # Check if it's in active, completed, or all tracked symbols
+            is_tracked_active = holding_symbol in [s.upper() for s in tracked_symbols]
+            is_tracked_completed = holding_symbol in [s.upper() for s in completed_tracked_symbols]
+            is_tracked_any = holding_symbol in [s.upper() for s in all_tracked_symbols]
+
+            holding_info = holdings_dict.get(holding_symbol, {})
+            qty = int(
+                holding_info.get("qty", 0)
+                or holding_info.get("quantity", 0)
+                or holding_info.get("netQuantity", 0)
+                or 0
+            )
+
+            if is_tracked_completed:
+                # Previously tracked but now completed - get details
+                # Wrap in try-catch to handle corrupted data gracefully
+                try:
+                    entry = self.tracking_scope.get_tracking_entry(holding_symbol, status="completed")
+                    if entry:
+                        completed_at = entry.get("tracking_ended_at", "unknown")
+                        final_qty = entry.get("current_tracked_qty", 0)
+                        previously_tracked_holdings.append(
+                            f"{holding_symbol} (qty: {qty}, completed at: {completed_at}, "
+                            f"final tracked qty: {final_qty})"
+                        )
+                except Exception as e:
+                    logger.debug(f"Error retrieving tracking entry for {holding_symbol}: {e}")
+                    # Still add to previously_tracked_holdings even if we can't get details
+                    previously_tracked_holdings.append(f"{holding_symbol} (qty: {qty}, details unavailable)")
+            elif not is_tracked_any:
+                untracked_holdings.append(f"{holding_symbol} (qty: {qty})")
+
+        if previously_tracked_holdings:
+            logger.info(
+                f"Found {len(previously_tracked_holdings)} holdings that were previously tracked "
+                f"but are now completed: {', '.join(previously_tracked_holdings)}. "
+                f"These positions may have been sold or tracking was archived."
+            )
+
+        # Detect potential data corruption: if all completed entries have the same symbol
+        # Note: This is logged as WARNING, not ERROR, so EOD cleanup continues normally
+        if completed_tracked_symbols and len(set(completed_tracked_symbols)) == 1:
+            duplicate_symbol = completed_tracked_symbols[0]
+            if duplicate_symbol.upper() not in holdings_symbols:
+                logger.warning(
+                    f"DATA CORRUPTION DETECTED (non-fatal): All {len(completed_tracked_symbols)} completed tracking entries "
+                    f"have the same symbol '{duplicate_symbol}', but this symbol is NOT in current holdings. "
+                    f"This suggests tracking data corruption. "
+                    f"Holdings: {', '.join(holdings_symbols)}. "
+                    f"EOD cleanup will continue normally. Consider fixing tracking file when convenient."
+                )
+
+        if untracked_holdings:
+            logger.warning(
+                f"Found {len(untracked_holdings)} holdings that are NOT tracked by the system: "
+                f"{', '.join(untracked_holdings)}. "
+                f"These may be manual buys or positions that lost tracking. "
+                f"Manual trade detection will not work for these symbols."
+            )
+        elif not previously_tracked_holdings:
+            logger.info("All holdings are tracked (active or completed)")
+
+        # Identify tracked symbols that are not in holdings
+        tracked_not_in_holdings = []
+        for tracked_symbol in tracked_symbols:
+            if tracked_symbol.upper() not in holdings_symbols:
+                # Wrap in try-catch to handle corrupted data gracefully
+                try:
+                    tracking_entry = self.tracking_scope.get_tracking_entry(tracked_symbol)
+                    tracked_qty = tracking_entry.get("current_tracked_qty", 0) if tracking_entry else 0
+                    tracked_not_in_holdings.append(f"{tracked_symbol} (tracked qty: {tracked_qty})")
+                except Exception as e:
+                    logger.debug(f"Error retrieving tracking entry for {tracked_symbol}: {e}")
+                    tracked_not_in_holdings.append(f"{tracked_symbol} (tracked qty: unknown)")
+
+        if tracked_not_in_holdings:
+            logger.warning(
+                f"Found {len(tracked_not_in_holdings)} tracked symbols NOT in holdings: "
+                f"{', '.join(tracked_not_in_holdings)}. "
+                f"These may have been sold manually or tracking is stale."
+            )
 
         if not tracked_symbols:
-            logger.info("No tracked symbols to reconcile")
+            logger.warning(
+                f"No active tracked symbols to reconcile. "
+                f"This means manual trade detection cannot work for {len(holdings_symbols)} holdings. "
+                f"Consider initializing tracking for existing holdings or investigate why tracking was lost."
+            )
             return {
                 "matched": 0,
                 "manual_buys_detected": 0,
@@ -83,13 +248,6 @@ class ManualOrderMatcher:
 
         logger.info(f"Reconciling {len(tracked_symbols)} tracked symbol(s)")
 
-        # Convert holdings to dict for easy lookup
-        holdings_dict = {}
-        for holding in broker_holdings:
-            symbol = holding.get("symbol") or holding.get("tradingSymbol", "").replace("-EQ", "")
-            if symbol:
-                holdings_dict[symbol.upper()] = holding
-
         results = {
             "matched": 0,
             "manual_buys_detected": 0,
@@ -99,93 +257,101 @@ class ManualOrderMatcher:
         }
 
         # Check each tracked symbol
+        # Wrap entire loop in try-catch to handle corrupted data gracefully
         for symbol in tracked_symbols:
-            tracking_entry = self.tracking_scope.get_tracking_entry(symbol)
+            try:
+                tracking_entry = self.tracking_scope.get_tracking_entry(symbol)
 
-            if not tracking_entry:
-                logger.warning(f"Tracking entry not found for {symbol}")
-                continue
+                if not tracking_entry:
+                    logger.warning(f"Tracking entry not found for {symbol}")
+                    continue
 
-            system_qty = tracking_entry["current_tracked_qty"]
-            pre_existing_qty = tracking_entry.get("pre_existing_qty", 0)
+                system_qty = tracking_entry.get("current_tracked_qty", 0)
+                pre_existing_qty = tracking_entry.get("pre_existing_qty", 0)
 
-            # Get broker quantity
-            broker_holding = holdings_dict.get(symbol.upper())
-            broker_qty = 0
+                # Get broker quantity
+                broker_holding = holdings_dict.get(symbol.upper())
+                broker_qty = 0
 
-            if broker_holding:
-                broker_qty = int(
-                    broker_holding.get("qty", 0) or broker_holding.get("quantity", 0) or 0
+                if broker_holding:
+                    broker_qty = int(
+                        broker_holding.get("qty", 0) or broker_holding.get("quantity", 0) or 0
+                    )
+
+                # Expected quantity = system qty + pre-existing qty
+                expected_total_qty = system_qty + pre_existing_qty
+
+                # Check for discrepancy
+                if broker_qty == expected_total_qty:
+                    # Perfect match - no manual trades
+                    logger.debug(
+                        f"[OK] {symbol}: Broker qty ({broker_qty}) matches expected ({expected_total_qty})"
+                    )
+                    results["matched"] += 1
+                    continue
+
+                # Discrepancy detected - manual trade likely
+                qty_diff = broker_qty - expected_total_qty
+
+                logger.info(
+                    f"[WARN] {symbol}: Quantity mismatch detected\n"
+                    f"  Expected: {expected_total_qty} (system: {system_qty}, pre-existing: {pre_existing_qty})\n"
+                    f"  Broker:   {broker_qty}\n"
+                    f"  Diff:     {qty_diff:+d}"
                 )
 
-            # Expected quantity = system qty + pre-existing qty
-            expected_total_qty = system_qty + pre_existing_qty
+                discrepancy = {
+                    "symbol": symbol,
+                    "system_qty": system_qty,
+                    "pre_existing_qty": pre_existing_qty,
+                    "expected_total_qty": expected_total_qty,
+                    "broker_qty": broker_qty,
+                    "qty_diff": qty_diff,
+                    "timestamp": datetime.now().isoformat(),
+                }
 
-            # Check for discrepancy
-            if broker_qty == expected_total_qty:
-                # Perfect match - no manual trades
-                logger.debug(
-                    f"[OK] {symbol}: Broker qty ({broker_qty}) matches expected ({expected_total_qty})"
+                # Determine if manual buy or sell
+                if qty_diff > 0:
+                    # Manual buy detected
+                    logger.info(f"? Manual BUY detected for {symbol}: +{qty_diff} shares")
+                    results["manual_buys_detected"] += 1
+                    discrepancy["trade_type"] = "MANUAL_BUY"
+                elif qty_diff < 0:
+                    # Manual sell detected
+                    logger.info(f"? Manual SELL detected for {symbol}: {qty_diff} shares")
+                    results["manual_sells_detected"] += 1
+                    discrepancy["trade_type"] = "MANUAL_SELL"
+
+                results["discrepancies"].append(discrepancy)
+
+                # Try to find manual orders in broker order book
+                manual_orders = self._find_manual_orders_for_symbol(
+                    symbol, abs(qty_diff), tracking_entry
                 )
-                results["matched"] += 1
+
+                if manual_orders:
+                    logger.info(f"Found {len(manual_orders)} potential manual order(s) for {symbol}")
+                    discrepancy["manual_orders"] = manual_orders
+
+                    # Add to related orders
+                    for order in manual_orders:
+                        order_id = order.get("order_id")
+                        if order_id:
+                            self.tracking_scope.add_related_order(symbol, order_id)
+
+                # Update tracking quantity to match reality
+                try:
+                    self.tracking_scope.update_tracked_qty(symbol, qty_diff)
+                    results["updated_symbols"].append(symbol)
+                    logger.info(
+                        f"[OK] Updated tracking for {symbol}: " f"{system_qty} -> {system_qty + qty_diff}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update tracking for {symbol}: {e}")
+
+            except Exception as e:
+                logger.warning(f"Error reconciling symbol {symbol}: {e}. Skipping this symbol.")
                 continue
-
-            # Discrepancy detected - manual trade likely
-            qty_diff = broker_qty - expected_total_qty
-
-            logger.info(
-                f"[WARN] {symbol}: Quantity mismatch detected\n"
-                f"  Expected: {expected_total_qty} (system: {system_qty}, pre-existing: {pre_existing_qty})\n"
-                f"  Broker:   {broker_qty}\n"
-                f"  Diff:     {qty_diff:+d}"
-            )
-
-            discrepancy = {
-                "symbol": symbol,
-                "system_qty": system_qty,
-                "pre_existing_qty": pre_existing_qty,
-                "expected_total_qty": expected_total_qty,
-                "broker_qty": broker_qty,
-                "qty_diff": qty_diff,
-                "timestamp": datetime.now().isoformat(),
-            }
-
-            # Determine if manual buy or sell
-            if qty_diff > 0:
-                # Manual buy detected
-                logger.info(f"? Manual BUY detected for {symbol}: +{qty_diff} shares")
-                results["manual_buys_detected"] += 1
-                discrepancy["trade_type"] = "MANUAL_BUY"
-            elif qty_diff < 0:
-                # Manual sell detected
-                logger.info(f"? Manual SELL detected for {symbol}: {qty_diff} shares")
-                results["manual_sells_detected"] += 1
-                discrepancy["trade_type"] = "MANUAL_SELL"
-
-            results["discrepancies"].append(discrepancy)
-
-            # Try to find manual orders in broker order book
-            manual_orders = self._find_manual_orders_for_symbol(
-                symbol, abs(qty_diff), tracking_entry
-            )
-
-            if manual_orders:
-                logger.info(f"Found {len(manual_orders)} potential manual order(s) for {symbol}")
-                discrepancy["manual_orders"] = manual_orders
-
-                # Add to related orders
-                for order in manual_orders:
-                    order_id = order.get("order_id")
-                    if order_id:
-                        self.tracking_scope.add_related_order(symbol, order_id)
-
-            # Update tracking quantity to match reality
-            self.tracking_scope.update_tracked_qty(symbol, qty_diff)
-            results["updated_symbols"].append(symbol)
-
-            logger.info(
-                f"[OK] Updated tracking for {symbol}: " f"{system_qty} -> {system_qty + qty_diff}"
-            )
 
         # Log summary
         logger.info(
@@ -251,25 +417,33 @@ class ManualOrderMatcher:
         closed_positions = []
 
         for symbol in tracked_symbols:
-            tracking_entry = self.tracking_scope.get_tracking_entry(symbol)
+            try:
+                tracking_entry = self.tracking_scope.get_tracking_entry(symbol)
 
-            if not tracking_entry:
+                if not tracking_entry:
+                    continue
+
+                # Check if symbol is no longer in holdings
+                if symbol.upper() not in holdings_dict:
+                    # Position was closed
+                    tracked_qty = tracking_entry.get("current_tracked_qty", 0)
+                    logger.info(
+                        f"? Position closed detected: {symbol} "
+                        f"(was tracking {tracked_qty} shares)"
+                    )
+
+                    # Stop tracking - wrap in try-catch to handle errors gracefully
+                    try:
+                        self.tracking_scope.stop_tracking(
+                            symbol, reason="Position fully closed (manual sell detected)"
+                        )
+                        closed_positions.append(symbol)
+                    except Exception as e:
+                        logger.warning(f"Failed to stop tracking for {symbol}: {e}")
+
+            except Exception as e:
+                logger.warning(f"Error checking position closure for {symbol}: {e}. Skipping.")
                 continue
-
-            # Check if symbol is no longer in holdings
-            if symbol.upper() not in holdings_dict:
-                # Position was closed
-                logger.info(
-                    f"? Position closed detected: {symbol} "
-                    f"(was tracking {tracking_entry['current_tracked_qty']} shares)"
-                )
-
-                # Stop tracking
-                self.tracking_scope.stop_tracking(
-                    symbol, reason="Position fully closed (manual sell detected)"
-                )
-
-                closed_positions.append(symbol)
 
         return closed_positions
 

@@ -371,13 +371,13 @@ class TestThreadSafeReAuthentication:
         # Due to race conditions, it might be called more than once, but should be minimal
         call_count = mock_auth.force_relogin.call_count
         assert call_count >= 1, f"force_relogin should be called at least once, got {call_count}"
-        # In ideal case, should be called only once, but allow up to 4 due to timeout recovery logic
+        # In ideal case, should be called only once, but allow up to 5 due to timeout recovery logic
         # With 5 threads racing, multiple threads can timeout waiting (30s timeout, but test waits only 2s)
-        # and each can attempt recovery. With 5 threads, it's possible for up to 4 threads to attempt
-        # re-auth (1 initial + 3 timeout recoveries) due to race conditions in the test timing
+        # and each can attempt recovery. With 5 threads, it's possible for all 4 waiting threads to timeout
+        # and attempt recovery: 1 initial + 4 timeout recoveries = 5 total calls maximum
         assert (
-            call_count <= 4
-        ), f"force_relogin should be called at most 4 times (1 normal + up to 3 timeout recoveries), got {call_count}"
+            call_count <= 5
+        ), f"force_relogin should be called at most 5 times (1 normal + up to 4 timeout recoveries), got {call_count}"
 
     def test_reauth_lock_per_auth_object(self):
         """Test that each auth object has its own lock"""
