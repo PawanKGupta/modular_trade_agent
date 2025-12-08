@@ -180,42 +180,28 @@ class EODCleanup:
         """
         Final verification of all pending orders.
 
-        Phase 3.2: Consolidate order verification
-        - Checks if OrderStatusVerifier ran within last 15 minutes
-        - Skips verification if OrderStatusVerifier ran recently to avoid duplicate API calls
+        EOD cleanup always performs verification to ensure latest order status
+        before end of day, regardless of when OrderStatusVerifier last ran.
+        This is a critical final check and should not be skipped.
         """
         if not self.order_verifier:
             logger.warning("Order verifier not available, skipping")
             return {"skipped": True}
 
-        # Phase 3.2: Check if OrderStatusVerifier ran recently
-        if self.order_verifier.should_skip_verification(minutes_threshold=15):
-            last_check = self.order_verifier.get_last_check_time()
-            if last_check:
-                time_since_check = datetime.now() - last_check
+        # EOD cleanup always verifies - this is a critical final check
+        # Check if OrderStatusVerifier ran very recently (within 1 minute) to log info
+        last_check = self.order_verifier.get_last_check_time()
+        if last_check:
+            time_since_check = datetime.now() - last_check
+            minutes_since_check = time_since_check.total_seconds() / 60
+
+            if minutes_since_check < 1.0:
                 logger.info(
-                    f"Skipping EOD verification: OrderStatusVerifier ran "
-                    f"{time_since_check.total_seconds() / 60:.1f} minutes ago "
-                    f"(threshold: 15 minutes). Using existing verification results."
+                    f"OrderStatusVerifier ran {minutes_since_check:.1f} minutes ago, "
+                    f"but EOD cleanup will verify anyway for final status check"
                 )
 
-                # Return last verification counts from OrderStatusVerifier
-                counts = self.order_verifier.get_last_verification_counts()
-                logger.info(
-                    f"Using OrderStatusVerifier results: "
-                    f"{counts.get('checked', 0)} checked, "
-                    f"{counts.get('executed', 0)} executed, "
-                    f"{counts.get('rejected', 0)} rejected, "
-                    f"{counts.get('still_pending', 0)} still pending"
-                )
-                return {**counts, "skipped": True, "source": "OrderStatusVerifier"}
-            else:
-                logger.warning(
-                    "OrderStatusVerifier has no last check time, proceeding with verification"
-                )
-
-        # OrderStatusVerifier hasn't run recently or doesn't have last check time
-        # Perform verification now
+        # Always perform verification for EOD cleanup
         counts = self.order_verifier.verify_pending_orders()
 
         logger.info(
