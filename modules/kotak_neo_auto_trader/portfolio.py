@@ -4,8 +4,6 @@ Portfolio Management Module for Kotak Neo API
 Handles portfolio holdings, positions, and account information
 """
 
-from typing import Optional, Dict, List
-
 # Import existing project logger
 import sys
 from pathlib import Path
@@ -40,7 +38,7 @@ class KotakNeoPortfolio:
         logger.info("KotakNeoPortfolio initialized")
 
     @handle_reauth
-    def get_holdings(self) -> Optional[Dict]:
+    def get_holdings(self) -> dict | None:
         """
         Get portfolio holdings (stocks owned) with fallbacks and raw logging.
         """
@@ -124,7 +122,6 @@ class KotakNeoPortfolio:
                             try:
                                 from .utils.price_manager_utils import get_ltp_from_manager
                                 from .utils.symbol_utils import (
-                                    extract_ticker_base,
                                     get_lookup_symbol,
                                 )
 
@@ -219,7 +216,7 @@ class KotakNeoPortfolio:
             return None
 
     @handle_reauth
-    def get_positions(self) -> Optional[Dict]:
+    def get_positions(self) -> dict | None:
         """
         Get current positions (open trades for the day)
 
@@ -265,12 +262,12 @@ class KotakNeoPortfolio:
 
             return positions
 
-        except Exception as e:
+        except Exception:
             logger.error(" Error getting positions: {e}")
             return None
 
     @handle_reauth
-    def get_limits(self) -> Optional[Dict]:
+    def get_limits(self) -> dict | None:
         """
         Get account limits and margins
 
@@ -317,10 +314,21 @@ class KotakNeoPortfolio:
             except Exception:
                 pass
 
-            # Try multiple field name variants
-            cash = data.get("cash") or data.get("availableCash") or data.get("available_cash") or 0
+            # Try multiple field name variants (check capitalized keys first, then lowercase/camelCase)
+            cash = (
+                data.get("Net")
+                or data.get("net")
+                or data.get("cash")
+                or data.get("availableCash")
+                or data.get("available_cash")
+                or 0
+            )
             margin_used = (
-                data.get("marginUsed") or data.get("margin_used") or data.get("usedMargin") or 0
+                data.get("MarginUsed")
+                or data.get("marginUsed")
+                or data.get("margin_used")
+                or data.get("usedMargin")
+                or 0
             )
             margin_available = (
                 data.get("marginAvailable")
@@ -329,6 +337,12 @@ class KotakNeoPortfolio:
                 or data.get("available_margin")
                 or 0
             )
+            # If margin_available is 0 but we have Net and MarginUsed, calculate it
+            if not margin_available and cash and margin_used:
+                try:
+                    margin_available = max(0.0, float(cash) - float(margin_used))
+                except (ValueError, TypeError):
+                    pass
 
             logger.info(f"Cash: Rs {cash}")
             logger.info(f" Margin Used: Rs {margin_used}")
@@ -340,7 +354,7 @@ class KotakNeoPortfolio:
             logger.error(f" Error getting limits: {e}")
             return None
 
-    def get_portfolio_summary(self) -> Dict:
+    def get_portfolio_summary(self) -> dict:
         """
         Get complete portfolio summary
 
@@ -362,7 +376,7 @@ class KotakNeoPortfolio:
 
         return summary
 
-    def calculate_portfolio_value(self) -> Optional[float]:
+    def calculate_portfolio_value(self) -> float | None:
         """
         Calculate total portfolio value
 
@@ -380,7 +394,7 @@ class KotakNeoPortfolio:
 
         return total_value
 
-    def get_stock_details(self, symbol: str) -> Optional[Dict]:
+    def get_stock_details(self, symbol: str) -> dict | None:
         """
         Get details for a specific stock in portfolio
 

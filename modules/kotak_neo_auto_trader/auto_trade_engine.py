@@ -648,16 +648,44 @@ class AutoTradeEngine:
                 else:
                     # Phase 6: Create new failed order with proper status
                     # Create order first, then mark as failed
-                    new_order = self.orders_repo.create_amo(
-                        user_id=self.user_id,
-                        symbol=symbol,
-                        side="buy",
-                        order_type="market",
-                        quantity=failed_order.get("qty", 0),
-                        price=failed_order.get("close"),
-                        order_id=None,
-                        broker_order_id=None,
-                    )
+                    try:
+                        new_order = self.orders_repo.create_amo(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            side="buy",
+                            order_type="market",
+                            quantity=failed_order.get("qty", 0),
+                            price=failed_order.get("close"),
+                            order_id=None,
+                            broker_order_id=None,
+                        )
+                    except Exception as create_error:
+                        # Handle database schema errors (e.g., missing column)
+                        from sqlalchemy.exc import OperationalError
+
+                        if isinstance(create_error, OperationalError) or (
+                            hasattr(create_error, "orig")
+                            and isinstance(create_error.orig, Exception)
+                            and "no column named" in str(create_error).lower()
+                        ):
+                            logger.warning(
+                                f"Database schema error when creating failed order for {symbol}: "
+                                f"{create_error}. Migration may not have been applied. "
+                                "Failed order won't be saved to database.",
+                                exc_info=create_error,
+                            )
+                        else:
+                            logger.warning(
+                                f"Failed to create failed order for {symbol}: {create_error}",
+                                exc_info=create_error,
+                            )
+                        # Rollback session to allow subsequent operations
+                        if hasattr(self.orders_repo, "db"):
+                            try:
+                                self.orders_repo.db.rollback()
+                            except Exception:
+                                pass
+                        return  # Exit early if order creation failed
                     # Phase 6: Mark as failed with proper status and metadata in columns
                     try:
                         self.orders_repo.mark_failed(
@@ -2557,9 +2585,15 @@ class AutoTradeEngine:
             # On error, assume order is valid (don't block on verification failures)
             return (True, None)
 
-    def _check_for_manual_orders(self, symbol: str) -> dict[str, Any]:
+    def _check_for_manual_orders(
+        self, symbol: str, cached_pending_orders: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         """
         Check for manual orders (orders not in our database) for a given symbol.
+
+        Args:
+            symbol: Symbol to check
+            cached_pending_orders: Optional cached pending orders to avoid redundant API calls
 
         Returns:
             {
@@ -2580,8 +2614,11 @@ class AutoTradeEngine:
             return result
 
         try:
-            # Get active orders from broker
-            pending_orders = self.orders.get_pending_orders() or []
+            # Use cached orders if provided, otherwise fetch
+            if cached_pending_orders is not None:
+                pending_orders = cached_pending_orders
+            else:
+                pending_orders = self.orders.get_pending_orders() or []
             variants = set(self._symbol_variants(symbol))
 
             from .utils.order_field_extractor import OrderFieldExtractor
@@ -3466,6 +3503,14 @@ class AutoTradeEngine:
                     # Proceed without holdings check - we'll rely on broker-side duplicate detection
                     # Set test_holdings to empty dict to bypass validation
                     test_holdings = {"data": []}
+                    # Cache the empty holdings to avoid redundant API calls
+                    if (
+                        self.portfolio_service
+                        and self.portfolio_service.enable_caching
+                        and self.portfolio_service._cache
+                    ):
+                        self.portfolio_service._cache.set("holdings", test_holdings)
+                        logger.debug("Populated PortfolioService cache with empty holdings (fallback)")
             else:
                 logger.error(
                     "Cannot fetch holdings (API returned None after retries) and no database fallback available. "
@@ -3483,6 +3528,14 @@ class AutoTradeEngine:
                         "Holdings still unavailable after re-login - aborting order placement"
                     )
                     return summary
+                # Update cache with fresh holdings after 2FA re-login
+                if (
+                    self.portfolio_service
+                    and self.portfolio_service.enable_caching
+                    and self.portfolio_service._cache
+                ):
+                    self.portfolio_service._cache.set("holdings", test_holdings)
+                    logger.debug("Updated PortfolioService cache with holdings after 2FA re-login")
 
         # Verify holdings has 'data' field (successful response structure)
         if not isinstance(test_holdings, dict) or "data" not in test_holdings:
@@ -3495,6 +3548,18 @@ class AutoTradeEngine:
             return summary
 
         logger.info("Holdings API healthy - proceeding with order placement")
+
+        # OPTIMIZATION: Populate PortfolioService cache with holdings from pre-flight check
+        # This prevents redundant API calls when PortfolioService methods are called later
+        # Same pattern as pending_orders cache - fetch once, reuse throughout
+        if (
+            self.portfolio_service
+            and self.portfolio_service.enable_caching
+            and self.portfolio_service._cache
+            and test_holdings is not None
+        ):
+            self.portfolio_service._cache.set("holdings", test_holdings)
+            logger.debug("Populated PortfolioService cache with holdings from pre-flight check")
 
         # OPTIMIZATION: Cache portfolio snapshot and pre-fetch indicators
         # Reduces API calls from O(n) to O(1) for portfolio checks
@@ -3636,6 +3701,17 @@ class AutoTradeEngine:
                     f"indicators (sequential)"
                 )
 
+        # OPTIMIZATION: Fetch orders once and cache for reuse throughout placement
+        # This prevents multiple API calls (5-6x) during buy order placement
+        cached_pending_orders = None
+        if self.orders:
+            try:
+                cached_pending_orders = self.orders.get_pending_orders() or []
+                logger.debug(f"Cached {len(cached_pending_orders)} pending orders for reuse")
+            except Exception as e:
+                logger.warning(f"Failed to cache pending orders: {e}, will fetch per-check")
+                cached_pending_orders = None
+
         # Log summary of what we have before proceeding
         logger.info(
             f"Starting order placement: {len(recommendations)} recommendations, "
@@ -3731,8 +3807,12 @@ class AutoTradeEngine:
                 continue
 
             # Use OrderValidationService for duplicate check (includes holdings + active buy orders)
+            # Pass cached orders to avoid redundant API calls
             is_duplicate, duplicate_reason = self.order_validation_service.check_duplicate_order(
-                broker_symbol, check_active_buy_order=False, check_holdings=True
+                broker_symbol,
+                check_active_buy_order=False,
+                check_holdings=True,
+                cached_pending_orders=cached_pending_orders,
             )
             if is_duplicate:
                 logger.info(
@@ -3764,7 +3844,10 @@ class AutoTradeEngine:
                         logger.warning(f"Failed to send skipped order notification: {e}")
                 continue
             # 2) Check for manual AMO orders -> link to DB and skip placing
-            manual_order_info = self._check_for_manual_orders(broker_symbol)
+            # Pass cached orders to avoid redundant API calls
+            manual_order_info = self._check_for_manual_orders(
+                broker_symbol, cached_pending_orders=cached_pending_orders
+            )
             if manual_order_info.get("has_manual_order"):
                 manual_orders = manual_order_info.get("manual_orders", [])
                 if manual_orders:
@@ -3830,11 +3913,13 @@ class AutoTradeEngine:
             # 3) Active pending buy order check (system orders)
             # Phase 3.1: Use OrderValidationService for duplicate check (broker API + database)
             # This prevents duplicates when service runs multiple times before broker syncs
+            # Pass cached orders to avoid redundant API calls
             is_duplicate_order, duplicate_order_reason = (
                 self.order_validation_service.check_duplicate_order(
                     broker_symbol,
                     check_active_buy_order=True,
                     check_holdings=False,  # Already checked holdings above
+                    cached_pending_orders=cached_pending_orders,
                 )
             )
 
@@ -3913,9 +3998,14 @@ class AutoTradeEngine:
 
             # Check broker API for pending orders (only if database doesn't have order or order is not ONGOING)
             # If broker has pending order, cancel and replace
+            # OPTIMIZATION: Use cached orders if available to avoid redundant API calls
             if self.orders:
                 try:
-                    pend = self.orders.get_pending_orders() or []
+                    # Use cached orders if provided, otherwise fetch
+                    if cached_pending_orders is not None:
+                        pend = cached_pending_orders
+                    else:
+                        pend = self.orders.get_pending_orders() or []
                     has_broker_order = False
                     for o in pend:
                         txn = str(o.get("transactionType") or "").upper()
