@@ -242,12 +242,18 @@ class EODCleanup:
                 logger.error(f"Unexpected holdings response format: {type(holdings_response)}")
                 return {"error": "Invalid response format"}
 
+            logger.info(f"Fetched {len(holdings)} holdings from broker for reconciliation")
+
             # Reconcile with tracking scope
             reconciliation = self.manual_matcher.reconcile_holdings_with_tracking(holdings)
 
-            # Detect position closures
-            closed_positions = self.manual_matcher.detect_position_closures(holdings)
-            reconciliation["closed_positions"] = closed_positions
+            # Detect position closures - wrap in try-catch to handle errors gracefully
+            try:
+                closed_positions = self.manual_matcher.detect_position_closures(holdings)
+                reconciliation["closed_positions"] = closed_positions
+            except Exception as e:
+                logger.warning(f"Error detecting position closures: {e}")
+                reconciliation["closed_positions"] = []
 
             # Log summary
             summary = self.manual_matcher.get_reconciliation_summary(reconciliation)
@@ -259,17 +265,71 @@ class EODCleanup:
             logger.error(f"Manual trade reconciliation error: {e}", exc_info=True)
             return {"error": str(e)}
 
-    def _cleanup_stale_orders(self, max_age_hours: int = 24) -> dict[str, Any]:
+    def _cleanup_stale_orders(self) -> dict[str, Any]:
         """
-        Remove stale pending orders older than max_age_hours.
+        Remove stale pending orders that are older than the end of market hours
+        of the next trading day (excluding holidays and weekends).
 
-        Args:
-            max_age_hours: Maximum age in hours before order is considered stale
+        Logic:
+        - For each order, calculate the market close time of the next trading day
+          after the order was placed
+        - If current time is after that calculated time, the order is stale and removed
+        - Excludes weekends (Saturday, Sunday) and holidays
 
         Returns:
             Dict with cleanup results
         """
-        cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
+        try:
+            from .utils.trading_day_utils import get_next_trading_day_close
+        except ImportError:
+            logger.error("trading_day_utils not available, falling back to 24-hour cleanup")
+            # Fallback to old logic if utility not available
+            cutoff_time = datetime.now() - timedelta(hours=24)
+            pending_orders = self.order_tracker.get_pending_orders(status_filter="PENDING")
+            if not pending_orders:
+                return {"removed": 0, "remaining": 0, "cutoff_time": cutoff_time.isoformat()}
+
+            removed_count = 0
+            for order in pending_orders:
+                placed_at_str = order.get("placed_at")
+                if not placed_at_str:
+                    continue
+                try:
+                    placed_at = datetime.fromisoformat(placed_at_str)
+                    if placed_at < cutoff_time:
+                        order_id = order["order_id"]
+                        symbol = order["symbol"]
+                        logger.warning(
+                            f"Removing stale order (fallback): {symbol} (order_id: {order_id})"
+                        )
+                        self.order_tracker.remove_pending_order(order_id)
+                        removed_count += 1
+                except Exception as e:
+                    logger.error(f"Error parsing placed_at time: {e}")
+
+            remaining = len(self.order_tracker.get_pending_orders(status_filter="PENDING"))
+            logger.info(
+                f"Cleanup (fallback): Removed {removed_count} stale order(s), {remaining} remaining"
+            )
+            return {
+                "removed": removed_count,
+                "remaining": remaining,
+                "cutoff_time": cutoff_time.isoformat(),
+                "method": "fallback_24h",
+            }
+
+        # Get current time (prefer timezone-aware IST)
+        try:
+            from src.infrastructure.db.timezone_utils import IST, ist_now
+
+            current_time = ist_now()
+            # Normalize to IST for consistent comparison
+            if current_time.tzinfo is None:
+                current_time = current_time.replace(tzinfo=IST)
+            elif current_time.tzinfo != IST:
+                current_time = current_time.astimezone(IST)
+        except ImportError:
+            current_time = datetime.now()
 
         pending_orders = self.order_tracker.get_pending_orders(status_filter="PENDING")
 
@@ -278,6 +338,7 @@ class EODCleanup:
             return {"removed": 0, "remaining": 0}
 
         removed_count = 0
+        removed_details = []
 
         for order in pending_orders:
             placed_at_str = order.get("placed_at")
@@ -288,59 +349,110 @@ class EODCleanup:
             try:
                 placed_at = datetime.fromisoformat(placed_at_str)
 
-                if placed_at < cutoff_time:
+                # Calculate next trading day market close from when order was placed
+                # get_next_trading_day_close handles both naive and timezone-aware datetimes
+                # and returns timezone-aware datetime in IST
+                next_trading_day_close = get_next_trading_day_close(placed_at)
+
+                # Normalize for comparison (both should be timezone-aware in IST)
+                # If current_time is naive, convert next_trading_day_close to naive for comparison
+                if current_time.tzinfo is None and next_trading_day_close.tzinfo is not None:
+                    next_trading_day_close = next_trading_day_close.replace(tzinfo=None)
+                elif current_time.tzinfo is not None and next_trading_day_close.tzinfo is not None:
+                    # Both are timezone-aware, ensure same timezone
+                    if current_time.tzinfo != next_trading_day_close.tzinfo:
+                        next_trading_day_close = next_trading_day_close.astimezone(
+                            current_time.tzinfo
+                        )
+
+                # If current time is after next trading day market close, order is stale
+                if current_time > next_trading_day_close:
                     # Stale order - remove it
                     order_id = order["order_id"]
                     symbol = order["symbol"]
 
+                    age_hours = (current_time - placed_at).total_seconds() / 3600
+                    days_old = (current_time.date() - placed_at.date()).days
+
                     logger.warning(
                         f"Removing stale order: {symbol} (order_id: {order_id}, "
-                        f"age: {(datetime.now() - placed_at).total_seconds() / 3600:.1f}h)"
+                        f"placed: {placed_at.strftime('%Y-%m-%d %H:%M:%S')}, "
+                        f"next trading day close: {next_trading_day_close.strftime('%Y-%m-%d %H:%M:%S')}, "
+                        f"age: {age_hours:.1f}h / {days_old}d)"
                     )
 
                     self.order_tracker.remove_pending_order(order_id)
                     removed_count += 1
+                    removed_details.append(
+                        {
+                            "symbol": symbol,
+                            "order_id": order_id,
+                            "placed_at": placed_at.isoformat(),
+                            "next_trading_day_close": next_trading_day_close.isoformat(),
+                        }
+                    )
 
             except Exception as e:
-                logger.error(f"Error parsing placed_at time: {e}")
+                logger.error(f"Error processing order for cleanup: {e}", exc_info=True)
 
         remaining = len(self.order_tracker.get_pending_orders(status_filter="PENDING"))
 
-        logger.info(f"Cleanup: Removed {removed_count} stale order(s), {remaining} remaining")
+        logger.info(
+            f"Cleanup: Removed {removed_count} stale order(s) "
+            f"(older than next trading day market close), {remaining} remaining"
+        )
 
         return {
             "removed": removed_count,
             "remaining": remaining,
-            "cutoff_time": cutoff_time.isoformat(),
+            "method": "next_trading_day_close",
+            "removed_details": removed_details,
         }
 
     def _generate_daily_statistics(self) -> dict[str, Any]:
         """Generate comprehensive daily statistics."""
         stats = {}
 
-        # Tracking statistics
-        all_symbols = self.tracking_scope.get_tracked_symbols(status="all")
-        active_symbols = self.tracking_scope.get_tracked_symbols(status="active")
-        completed_symbols = self.tracking_scope.get_tracked_symbols(status="completed")
+        # Tracking statistics - wrap in try-catch to handle corrupted data gracefully
+        try:
+            all_symbols = self.tracking_scope.get_tracked_symbols(status="all")
+            active_symbols = self.tracking_scope.get_tracked_symbols(status="active")
+            completed_symbols = self.tracking_scope.get_tracked_symbols(status="completed")
 
-        stats["tracking"] = {
-            "total_symbols": len(all_symbols),
-            "active_symbols": len(active_symbols),
-            "completed_symbols": len(completed_symbols),
-        }
+            stats["tracking"] = {
+                "total_symbols": len(all_symbols),
+                "active_symbols": len(active_symbols),
+                "completed_symbols": len(completed_symbols),
+            }
+        except Exception as e:
+            logger.warning(f"Error generating tracking statistics: {e}. Using defaults.")
+            stats["tracking"] = {
+                "total_symbols": 0,
+                "active_symbols": 0,
+                "completed_symbols": 0,
+            }
 
-        # Order statistics
-        all_pending = self.order_tracker.get_pending_orders()
-        pending_orders = [o for o in all_pending if o["status"] == "PENDING"]
-        executed_orders = [o for o in all_pending if o["status"] == "EXECUTED"]
-        rejected_orders = [o for o in all_pending if o["status"] == "REJECTED"]
+        # Order statistics - wrap in try-catch to handle errors gracefully
+        try:
+            all_pending = self.order_tracker.get_pending_orders()
+            pending_orders = [o for o in all_pending if o.get("status") == "PENDING"]
+            executed_orders = [o for o in all_pending if o.get("status") == "EXECUTED"]
+            rejected_orders = [o for o in all_pending if o.get("status") == "REJECTED"]
 
-        stats["orders"] = {
-            "total_orders": len(all_pending),
-            "pending": len(pending_orders),
-            "executed": len(executed_orders),
-            "rejected": len(rejected_orders),
-        }
+            stats["orders"] = {
+                "total_orders": len(all_pending),
+                "pending": len(pending_orders),
+                "executed": len(executed_orders),
+                "rejected": len(rejected_orders),
+            }
+        except Exception as e:
+            logger.warning(f"Error generating order statistics: {e}. Using defaults.")
+            stats["orders"] = {
+                "total_orders": 0,
+                "pending": 0,
+                "executed": 0,
+                "rejected": 0,
+            }
 
         logger.info(
             f"Daily stats: "
@@ -387,9 +499,12 @@ class EODCleanup:
         Returns:
             Dict with archive results
         """
-        completed_symbols = self.tracking_scope.get_tracked_symbols(status="completed")
-
-        logger.info(f"Found {len(completed_symbols)} completed tracking entries")
+        try:
+            completed_symbols = self.tracking_scope.get_tracked_symbols(status="completed")
+            logger.info(f"Found {len(completed_symbols)} completed tracking entries")
+        except Exception as e:
+            logger.warning(f"Error retrieving completed entries: {e}. Using default count.")
+            completed_symbols = []
 
         # Future: Could move to archive file or database
         # For now, they stay in the main file with status="completed"
