@@ -26,21 +26,34 @@ def is_auth_error(response: Any) -> bool:
     description = str(response.get('description', '')).lower()
     error = str(response.get('error', '')).lower()
     
-    # Check for JWT expiry error code
+    # Check for JWT expiry error code (most specific)
     if code == '900901':
         return True
     
-    # Check for JWT token errors in description
+    # Check for JWT token errors in description (specific to JWT)
     if 'invalid jwt token' in description or 'jwt token expired' in description:
         return True
     
-    # Check for credential errors in message
-    if 'invalid credentials' in message or 'unauthorized' in message:
+    # Check for JWT token errors in message (specific to JWT)
+    if 'invalid jwt token' in message or 'jwt token expired' in message:
         return True
     
-    # Check for auth errors in error field
-    if 'invalid credentials' in error or 'unauthorized' in error:
-        return True
+    # Check for credential errors in message (but only if not a success response)
+    # Avoid false positives: don't treat "unauthorized" as auth error if code indicates success
+    if code not in ('200', 'success', '0', ''):
+        if 'invalid credentials' in message:
+            return True
+        # Only treat "unauthorized" as auth error if code is 401, 403, or similar
+        if code in ('401', '403', '4011', '4031') and 'unauthorized' in message:
+            return True
+    
+    # Check for auth errors in error field (but only if not a success response)
+    if code not in ('200', 'success', '0', ''):
+        if 'invalid credentials' in error:
+            return True
+        # Only treat "unauthorized" as auth error if code is 401, 403, or similar
+        if code in ('401', '403', '4011', '4031') and 'unauthorized' in error:
+            return True
     
     return False
 

@@ -945,7 +945,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         # Check response for auth errors
                         if isinstance(response, dict) and is_auth_error(response):
                             logger.warning(
-                                "Authentication error detected in get_all_orders response. "
+                                f"Authentication error detected in get_all_orders response: {response}. "
                                 "Checking re-authentication failure rate..."
                             )
                             # Check if re-auth should be blocked due to recent failures
