@@ -155,24 +155,167 @@ class TestMultiUserTradingService:
             assert any("Starting trading service" in log.message for log in logs)
 
     def test_start_service_already_running(self, db_session, sample_user_with_settings):
-        """Test starting service that's already running"""
+        """Test starting service that's already running.
+
+        Should return True without creating new instance.
+        """
         from unittest.mock import MagicMock, patch
 
         service = MultiUserTradingService(db=db_session)
+        service._logger = MagicMock()  # Avoid DB-backed logging writes
 
         # Mock TradingService to avoid actual initialization
-        with patch(
-            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
-        ) as mock_service_class:
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+            ) as mock_service_class,
+            patch("threading.Thread") as mock_thread_class,
+            patch(
+                "src.application.services.multi_user_trading_service.get_user_logger"
+            ) as mock_get_logger,
+        ):
             mock_service = MagicMock()
+            mock_service.running = True  # Set running flag to True
             mock_service_class.return_value = mock_service
+            # Mock thread as alive to simulate running service
+            mock_thread = MagicMock()
+            mock_thread.is_alive.return_value = True  # Thread is alive
+            mock_thread_class.return_value = mock_thread
+            # Use simple no-op logger to avoid DB logging writes
+            noop_logger = MagicMock()
+            mock_get_logger.return_value = noop_logger
 
             # Start service first time
             service.start_service(sample_user_with_settings.id)
 
+            # Verify TradingService was created once
+            assert mock_service_class.call_count == 1
+
+            # Ensure session is clean before retrying (avoid pending rollback)
+            db_session.rollback()
+
             # Try to start again (should return True if already running)
             result = service.start_service(sample_user_with_settings.id)
             assert result is True
+
+            # CRITICAL: Verify TradingService was NOT created again (prevents multiple clients)
+            assert mock_service_class.call_count == 1, "TradingService should only be created once"
+
+    def test_stale_service_cleanup(self, db_session, sample_user_with_settings):
+        """Test stale service cleanup.
+
+        Stale services (thread dead but running=True) should be cleaned up
+        and a new instance created.
+        """
+        from unittest.mock import MagicMock, patch
+
+        service = MultiUserTradingService(db=db_session)
+        service._logger = MagicMock()  # Avoid DB-backed logging writes
+
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+            ) as mock_service_class,
+            patch("threading.Thread") as mock_thread_class,
+            patch(
+                "src.application.services.multi_user_trading_service.get_user_logger"
+            ) as mock_get_logger,
+        ):
+            # First service instance (will become stale)
+            mock_service1 = MagicMock()
+            mock_service1.running = True
+            mock_service_class.return_value = mock_service1
+
+            mock_thread1 = MagicMock()
+            mock_thread1.is_alive.return_value = True  # Initially alive
+            mock_thread_class.return_value = mock_thread1
+
+            noop_logger = MagicMock()
+            mock_get_logger.return_value = noop_logger
+
+            # Start service first time
+            service.start_service(sample_user_with_settings.id)
+            assert mock_service_class.call_count == 1
+
+            # Simulate thread dying (stale service)
+            mock_thread1.is_alive.return_value = False  # Thread is now dead
+
+            # Create second service instance for cleanup scenario
+            mock_service2 = MagicMock()
+            mock_service2.running = True
+            mock_service_class.return_value = mock_service2
+
+            mock_thread2 = MagicMock()
+            mock_thread2.is_alive.return_value = True  # New thread is alive
+            mock_thread_class.return_value = mock_thread2
+
+            db_session.rollback()
+
+            # Try to start again - should detect stale service and create new one
+            result = service.start_service(sample_user_with_settings.id)
+            assert result is True
+
+            # CRITICAL: Should have created a NEW instance after cleanup
+            assert (
+                mock_service_class.call_count == 2
+            ), "Should create new instance after stale cleanup"
+            # Verify old service was removed
+            assert service._services[sample_user_with_settings.id] == mock_service2
+
+    def test_multiple_start_calls_create_only_one_instance(
+        self, db_session, sample_user_with_settings
+    ):
+        """Test multiple sequential start_service calls.
+
+        Should only create ONE TradingService instance.
+        """
+        from unittest.mock import MagicMock, patch
+
+        service = MultiUserTradingService(db=db_session)
+        service._logger = MagicMock()  # Avoid DB-backed logging writes
+
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+            ) as mock_service_class,
+            patch("threading.Thread") as mock_thread_class,
+            patch(
+                "src.application.services.multi_user_trading_service.get_user_logger"
+            ) as mock_get_logger,
+        ):
+            mock_service = MagicMock()
+            mock_service.running = True
+            mock_service_class.return_value = mock_service
+
+            mock_thread = MagicMock()
+            mock_thread.is_alive.return_value = True
+            mock_thread_class.return_value = mock_thread
+
+            noop_logger = MagicMock()
+            mock_get_logger.return_value = noop_logger
+
+            # First start_service call - should create instance
+            result1 = service.start_service(sample_user_with_settings.id)
+            assert result1 is True
+            assert mock_service_class.call_count == 1
+
+            db_session.rollback()
+
+            # Second start_service call - should detect existing service and NOT create new instance
+            result2 = service.start_service(sample_user_with_settings.id)
+            assert result2 is True
+
+            # CRITICAL: Only ONE TradingService instance should be created despite 2 calls
+            assert mock_service_class.call_count == 1, (
+                f"Expected 1 TradingService instance, got {mock_service_class.call_count}. "
+                "Multiple instances would cause JWT token invalidation."
+            )
+
+            # Third call - still should not create new instance
+            db_session.rollback()
+            result3 = service.start_service(sample_user_with_settings.id)
+            assert result3 is True
+            assert mock_service_class.call_count == 1
 
     def test_stop_service_not_started(self, db_session, sample_user):
         """Test stopping service that was never started"""
@@ -244,17 +387,35 @@ class TestMultiUserTradingService:
         from unittest.mock import MagicMock, patch
 
         service = MultiUserTradingService(db=db_session)
+        service._logger = MagicMock()  # Avoid DB-backed logging writes
         results = []
 
         # Mock TradingService to avoid actual initialization
-        with patch(
-            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
-        ) as mock_service_class:
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+            ) as mock_service_class,
+            patch("threading.Thread") as mock_thread_class,
+            patch(
+                "src.application.services.multi_user_trading_service.get_user_logger"
+            ) as mock_get_logger,
+        ):
             mock_service = MagicMock()
             mock_service_class.return_value = mock_service
+            # Prevent background thread side effects
+            mock_thread = MagicMock()
+            mock_thread.is_alive.return_value = False
+            mock_thread_class.return_value = mock_thread
+            # Use simple no-op logger to avoid DB logging writes
+            noop_logger = MagicMock()
+            mock_get_logger.return_value = noop_logger
+
+            # Ensure clean session before concurrent ops
+            db_session.rollback()
 
             def start_service():
                 try:
+                    db_session.rollback()
                     result = service.start_service(sample_user_with_settings.id)
                     results.append(("start", result))
                 except Exception as e:
@@ -263,6 +424,7 @@ class TestMultiUserTradingService:
             def stop_service():
                 time.sleep(0.1)  # Small delay
                 try:
+                    db_session.rollback()
                     result = service.stop_service(sample_user_with_settings.id)
                     results.append(("stop", result))
                 except Exception as e:
@@ -373,6 +535,103 @@ class TestMultiUserTradingService:
         # get_service_status returns ServiceStatus object, not dict
         assert status1.user_id == user1.id
         assert status2.user_id == user2.id
+
+    def test_per_user_locks_allow_different_users_separate_instances(self, db_session):
+        """Test that different users can have separate TradingService instances (per-user locks)"""
+        import json
+        from unittest.mock import MagicMock, patch
+
+        from server.app.core.crypto import encrypt_blob
+
+        # Create two users
+        user1 = Users(
+            email="user1@example.com",
+            password_hash="hash1",
+            created_at=ist_now(),
+        )
+        user2 = Users(
+            email="user2@example.com",
+            password_hash="hash2",
+            created_at=ist_now(),
+        )
+        db_session.add_all([user1, user2])
+        db_session.commit()
+
+        # Create properly encrypted credentials for both
+        creds1 = encrypt_blob(
+            json.dumps({"api_key": "key1", "api_secret": "secret1", "environment": "prod"}).encode(
+                "utf-8"
+            )
+        )
+        creds2 = encrypt_blob(
+            json.dumps({"api_key": "key2", "api_secret": "secret2", "environment": "prod"}).encode(
+                "utf-8"
+            )
+        )
+
+        # Create settings for both
+        settings1 = UserSettings(
+            user_id=user1.id,
+            trade_mode=TradeMode.BROKER,
+            broker_creds_encrypted=creds1,
+        )
+        settings2 = UserSettings(
+            user_id=user2.id,
+            trade_mode=TradeMode.BROKER,
+            broker_creds_encrypted=creds2,
+        )
+        db_session.add_all([settings1, settings2])
+        db_session.commit()
+
+        service = MultiUserTradingService(db=db_session)
+        service._logger = MagicMock()
+
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+            ) as mock_service_class,
+            patch("threading.Thread") as mock_thread_class,
+            patch(
+                "src.application.services.multi_user_trading_service.get_user_logger"
+            ) as mock_get_logger,
+        ):
+            mock_service = MagicMock()
+            mock_service.running = True
+            mock_service_class.return_value = mock_service
+
+            mock_thread = MagicMock()
+            mock_thread.is_alive.return_value = True
+            mock_thread_class.return_value = mock_thread
+
+            noop_logger = MagicMock()
+            mock_get_logger.return_value = noop_logger
+
+            # Start service for user1
+            result1 = service.start_service(user1.id)
+            assert result1 is True
+            assert mock_service_class.call_count == 1
+
+            db_session.rollback()
+
+            # Start service for user2 (different user, should create new instance)
+            result2 = service.start_service(user2.id)
+            assert result2 is True
+
+            # CRITICAL: Both users should have their own TradingService instances
+            # (2 calls total, one per user)
+            assert mock_service_class.call_count == 2, (
+                "Each user should have their own TradingService instance. "
+                f"Got {mock_service_class.call_count} calls."
+            )
+
+            # Verify locks are separate per user
+            assert user1.id in service._locks
+            assert user2.id in service._locks
+            assert service._locks[user1.id] != service._locks[user2.id]
+
+            # Verify both services exist
+            assert user1.id in service._services
+            assert user2.id in service._services
 
     def test_paper_mode_creates_paper_adapter(self, db_session, sample_user):
         """Test that paper mode creates PaperTradingServiceAdapter instead of TradingService"""
