@@ -8,6 +8,13 @@ import traceback
 import uuid
 from logging.handlers import RotatingFileHandler
 
+# Single-process unified runner (optional). Default disabled to avoid double-start with user-triggered runs.
+RUN_UNIFIED_IN_API = os.getenv("RUN_UNIFIED_IN_API", "0") not in ("0", "false", "False")
+UNIFIED_USER_IDS = [
+    int(uid.strip())
+    for uid in os.getenv("UNIFIED_USER_IDS", "").split(",")
+    if uid.strip().isdigit()
+]
 # IPv4 resolution control (scoped + configurable)
 _original_getaddrinfo = socket.getaddrinfo
 _FORCE_IPV4 = os.getenv("FORCE_IPV4", "1") not in ("0", "false", "False")
@@ -128,6 +135,7 @@ if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
 app = FastAPI(title="Rebound API", version="1.0.0", debug=True)
+_unified_tasks = []
 
 # Configure file logging to capture errors for analysis
 LOG_DIR = os.path.abspath(os.path.join(ROOT_DIR, "logs"))
@@ -243,6 +251,53 @@ async def ensure_db_schema():
 async def broker_ipv4_health_check():
     """Run a quick IPv4 connectivity probe to the broker host on startup."""
     _check_broker_ipv4_connectivity()
+
+
+@app.on_event("startup")
+async def start_unified_services():
+    """
+    Optionally start unified trading services inside the API process to ensure
+    a single Kotak client/session owner (reduces OTP/login churn).
+    """
+    if not RUN_UNIFIED_IN_API:
+        return
+
+    # Lazy imports to avoid overhead when disabled
+    try:
+        import asyncio
+        from modules.kotak_neo_auto_trader.run_trading_service import TradingService
+        from modules.kotak_neo_auto_trader.shared_session_manager import (
+            get_shared_session_manager,
+        )
+    except Exception as exc:
+        print(f"[Startup] Unified service imports failed, skipping: {exc}")
+        return
+
+    # Determine which users to start; if none specified, skip to avoid unintended login
+    user_ids = UNIFIED_USER_IDS
+    if not user_ids:
+        print("[Startup] RUN_UNIFIED_IN_API is enabled but UNIFIED_USER_IDS is empty; skipping unified start.")
+        return
+
+    loop = asyncio.get_event_loop()
+    for uid in user_ids:
+        try:
+            auth = get_shared_session_manager().get_or_create_session(
+                user_id=uid, env_file="modules/kotak_neo_auto_trader/kotak_neo.env"
+            )
+            if not auth:
+                print(f"[Startup] Unified service: failed to obtain session for user {uid}, skipping.")
+                continue
+
+            service = TradingService(
+                user_id=uid, env_file="modules/kotak_neo_auto_trader/kotak_neo.env"
+            )
+            service.auth = auth
+            task = loop.create_task(service.run_async())
+            _unified_tasks.append(task)
+            print(f"[Startup] Unified service started in API process for user {uid}")
+        except Exception as exc:
+            print(f"[Startup] Unified service start failed for user {uid}: {exc}")
 
 
 @app.middleware("http")

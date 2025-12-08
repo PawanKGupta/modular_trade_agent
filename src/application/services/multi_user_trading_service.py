@@ -338,8 +338,26 @@ class MultiUserTradingService:
             if user_id in self._services:
                 # Service already exists - check if it's actually running
                 service = self._services[user_id]
+                service_thread = self._service_threads.get(user_id)
+
                 if hasattr(service, "running") and service.running:
-                    return True  # Already running
+                    # Verify thread is actually alive (not just running flag)
+                    if service_thread and service_thread.is_alive():
+                        self._logger.info(
+                            f"Service already running for user {user_id}; not starting another instance",
+                            action="start_service",
+                        )
+                        return True  # Already running
+                    else:
+                        # Thread is dead but service.running=True - clean up stale service
+                        self._logger.warning(
+                            f"Service for user {user_id} has running=True but thread is dead. "
+                            "Cleaning up stale service instance.",
+                            action="start_service",
+                        )
+                        self._services.pop(user_id, None)
+                        self._service_threads.pop(user_id, None)
+                        # Continue to start new service below
 
             try:
                 # Get user-specific logger

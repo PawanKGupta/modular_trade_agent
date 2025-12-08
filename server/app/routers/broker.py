@@ -52,6 +52,7 @@ def _get_or_create_auth_session(user_id: int, temp_env_file: str, db: Session) -
 
     session_manager = get_shared_session_manager()
     auth = session_manager.get_or_create_session(user_id, temp_env_file)
+    logger.info(f"[SHARED_SESSION] Broker API using shared session for user {user_id}")
 
     if not auth:
         raise HTTPException(
