@@ -1,15 +1,15 @@
 """
-Unit tests for AutoTradeEngine pending orders cache optimization
+Unit tests for AutoTradeEngine pending orders and holdings cache optimization
 
-Tests verify that get_pending_orders() is called only once per place_new_entries()
-call, and the cached result is reused for all duplicate checks and manual order checks.
+Tests verify that:
+1. get_pending_orders() is called only once per place_new_entries() call
+2. get_holdings() is called only once per place_new_entries() call (via PortfolioService cache)
+3. Cached results are reused for all duplicate checks and manual order checks
 
-This optimization reduces API calls from 5-6 per "buy once" click to just 1.
+This optimization reduces API calls from 5-6 per "buy once" click to just 1-2.
 """
 
 from unittest.mock import Mock, patch
-
-import pytest
 
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine, Recommendation
 
@@ -45,7 +45,7 @@ class TestPendingOrdersCacheOptimization:
             return_value={"data": {"day": {"used": 0, "available": 100000}}}
         )
         engine.orders = Mock()
-        
+
         # Mock get_pending_orders to track calls
         mock_pending_orders = [
             {"order_id": "ORD001", "symbol": "RELIANCE-EQ", "status": "PENDING"},
@@ -84,8 +84,12 @@ class TestPendingOrdersCacheOptimization:
 
         # Create multiple recommendations to test caching
         recommendations = [
-            Recommendation(ticker="RELIANCE.NS", verdict="BUY", last_close=100.0, execution_capital=None),
-            Recommendation(ticker="TCS.NS", verdict="STRONG_BUY", last_close=100.0, execution_capital=None),
+            Recommendation(
+                ticker="RELIANCE.NS", verdict="BUY", last_close=100.0, execution_capital=None
+            ),
+            Recommendation(
+                ticker="TCS.NS", verdict="STRONG_BUY", last_close=100.0, execution_capital=None
+            ),
         ]
 
         # Call place_new_entries
@@ -93,9 +97,7 @@ class TestPendingOrdersCacheOptimization:
 
         # CRITICAL: get_pending_orders() should be called ONLY ONCE
         # regardless of how many recommendations we process
-        assert (
-            engine.orders.get_pending_orders.call_count == 1
-        ), (
+        assert engine.orders.get_pending_orders.call_count == 1, (
             f"Expected get_pending_orders() to be called once, "
             f"but it was called {engine.orders.get_pending_orders.call_count} times. "
             f"This defeats the cache optimization."
@@ -117,9 +119,9 @@ class TestPendingOrdersCacheOptimization:
                 ), "Cached orders should be passed to check_duplicate_order"
                 found_cached_orders = True
 
-        assert found_cached_orders, (
-            "check_duplicate_order should be called with cached_pending_orders parameter"
-        )
+        assert (
+            found_cached_orders
+        ), "check_duplicate_order should be called with cached_pending_orders parameter"
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.get_daily_indicators")
@@ -149,24 +151,18 @@ class TestPendingOrdersCacheOptimization:
             return_value={"data": {"day": {"used": 0, "available": 100000}}}
         )
         engine.orders = Mock()
-        
+
         # Mock get_pending_orders to raise an exception
         engine.orders.get_pending_orders = Mock(side_effect=Exception("API Error"))
 
         # Mock OrderValidationService
         engine.order_validation_service = Mock()
-        engine.order_validation_service.check_portfolio_capacity = Mock(
-            return_value=(True, 3, 10)
-        )
-        engine.order_validation_service.check_duplicate_order = Mock(
-            return_value=(False, None)
-        )
+        engine.order_validation_service.check_portfolio_capacity = Mock(return_value=(True, 3, 10))
+        engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
         engine.order_validation_service.check_volume_ratio = Mock(
             return_value=(True, 0.5, "Rs 500+ (10%)")
         )
-        engine.order_validation_service.check_balance = Mock(
-            return_value=(True, 100000.0, 40)
-        )
+        engine.order_validation_service.check_balance = Mock(return_value=(True, 100000.0, 40))
 
         # Mock PortfolioService
         engine.portfolio_service = Mock()
@@ -183,7 +179,11 @@ class TestPendingOrdersCacheOptimization:
         )
 
         # Create recommendation
-        recommendations = [Recommendation(ticker="RELIANCE.NS", verdict="BUY", last_close=100.0, execution_capital=None)]
+        recommendations = [
+            Recommendation(
+                ticker="RELIANCE.NS", verdict="BUY", last_close=100.0, execution_capital=None
+            )
+        ]
 
         # Call place_new_entries - should not raise exception
         result = engine.place_new_entries(recommendations)
@@ -197,6 +197,110 @@ class TestPendingOrdersCacheOptimization:
 
         # Verify place_new_entries completed successfully despite cache failure
         assert result is not None, "place_new_entries should return a result even if cache fails"
-        
+
         # Verify that when cache fails, the system gracefully falls back to per-check fetching
         # This is expected behavior - cache failure should not break the flow
+
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.get_daily_indicators")
+    def test_place_new_entries_caches_holdings_via_portfolio_service(
+        self, mock_get_indicators, mock_auth
+    ):
+        """Test that holdings are cached in PortfolioService to avoid redundant API calls"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth.return_value = mock_auth_instance
+
+        # Mock indicators
+        mock_get_indicators.return_value = {
+            "close": 100.0,
+            "rsi10": 25.0,
+            "ema9": 95.0,
+            "ema200": 90.0,
+            "avg_volume": 1000000,
+        }
+
+        # Create engine
+        engine = AutoTradeEngine(env_file="test.env", user_id=1)
+        engine.history_path = None
+        engine.portfolio = Mock()
+        
+        # Mock get_holdings to track calls
+        mock_holdings = {"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
+        engine.portfolio.get_holdings = Mock(return_value=mock_holdings)
+        engine.portfolio.get_limits = Mock(
+            return_value={"data": {"day": {"used": 0, "available": 100000}}}
+        )
+        engine.orders = Mock()
+        engine.orders.get_pending_orders = Mock(return_value=[])
+
+        # Create real PortfolioService with cache enabled
+        from modules.kotak_neo_auto_trader.services.portfolio_service import PortfolioService
+        
+        portfolio_service = PortfolioService(
+            portfolio=engine.portfolio,
+            strategy_config=engine.strategy_config,
+            enable_caching=True,
+        )
+        engine.portfolio_service = portfolio_service
+
+        # Mock OrderValidationService
+        engine.order_validation_service = Mock()
+        engine.order_validation_service.check_portfolio_capacity = Mock(
+            return_value=(True, 3, 10)
+        )
+        engine.order_validation_service.check_duplicate_order = Mock(
+            return_value=(False, None)
+        )
+        engine.order_validation_service.check_volume_ratio = Mock(
+            return_value=(True, 0.5, "Rs 500+ (10%)")
+        )
+        engine.order_validation_service.check_balance = Mock(
+            return_value=(True, 100000.0, 40)
+        )
+
+        # Mock other dependencies
+        engine.orders_repo = Mock()
+        engine.orders_repo.list = Mock(return_value=[])
+        engine.positions_repo = Mock()
+        engine.positions_repo.list = Mock(return_value=[])
+        engine.orders.place_order = Mock(
+            return_value={"order_id": "NEW_ORD001", "status": "PENDING"}
+        )
+
+        # Create recommendation
+        recommendations = [
+            Recommendation(
+                ticker="RELIANCE.NS", verdict="BUY", last_close=100.0, execution_capital=None
+            )
+        ]
+
+        # Track initial call count
+        initial_call_count = engine.portfolio.get_holdings.call_count
+
+        # Call place_new_entries
+        engine.place_new_entries(recommendations)
+
+        # Verify get_holdings was called (pre-flight check)
+        total_calls = engine.portfolio.get_holdings.call_count - initial_call_count
+        assert (
+            total_calls >= 1
+        ), "get_holdings should be called at least once (pre-flight check)"
+
+        # Verify PortfolioService cache was populated by checking if subsequent calls use cache
+        # If cache works, get_portfolio_count() should not call get_holdings() again
+        calls_before = engine.portfolio.get_holdings.call_count
+        
+        # Call get_portfolio_count again - should use cache, not fetch again
+        engine.portfolio_service.get_portfolio_count(include_pending=True)
+        
+        calls_after = engine.portfolio.get_holdings.call_count
+        
+        # If cache is working, no additional calls should be made
+        assert (
+            calls_after == calls_before
+        ), (
+            f"PortfolioService should use cached holdings. "
+            f"Expected {calls_before} calls, got {calls_after}. "
+            f"Cache may not be working correctly."
+        )

@@ -3503,6 +3503,14 @@ class AutoTradeEngine:
                     # Proceed without holdings check - we'll rely on broker-side duplicate detection
                     # Set test_holdings to empty dict to bypass validation
                     test_holdings = {"data": []}
+                    # Cache the empty holdings to avoid redundant API calls
+                    if (
+                        self.portfolio_service
+                        and self.portfolio_service.enable_caching
+                        and self.portfolio_service._cache
+                    ):
+                        self.portfolio_service._cache.set("holdings", test_holdings)
+                        logger.debug("Populated PortfolioService cache with empty holdings (fallback)")
             else:
                 logger.error(
                     "Cannot fetch holdings (API returned None after retries) and no database fallback available. "
@@ -3520,6 +3528,14 @@ class AutoTradeEngine:
                         "Holdings still unavailable after re-login - aborting order placement"
                     )
                     return summary
+                # Update cache with fresh holdings after 2FA re-login
+                if (
+                    self.portfolio_service
+                    and self.portfolio_service.enable_caching
+                    and self.portfolio_service._cache
+                ):
+                    self.portfolio_service._cache.set("holdings", test_holdings)
+                    logger.debug("Updated PortfolioService cache with holdings after 2FA re-login")
 
         # Verify holdings has 'data' field (successful response structure)
         if not isinstance(test_holdings, dict) or "data" not in test_holdings:
@@ -3532,6 +3548,18 @@ class AutoTradeEngine:
             return summary
 
         logger.info("Holdings API healthy - proceeding with order placement")
+
+        # OPTIMIZATION: Populate PortfolioService cache with holdings from pre-flight check
+        # This prevents redundant API calls when PortfolioService methods are called later
+        # Same pattern as pending_orders cache - fetch once, reuse throughout
+        if (
+            self.portfolio_service
+            and self.portfolio_service.enable_caching
+            and self.portfolio_service._cache
+            and test_holdings is not None
+        ):
+            self.portfolio_service._cache.set("holdings", test_holdings)
+            logger.debug("Populated PortfolioService cache with holdings from pre-flight check")
 
         # OPTIMIZATION: Cache portfolio snapshot and pre-fetch indicators
         # Reduces API calls from O(n) to O(1) for portfolio checks
