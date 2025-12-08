@@ -56,7 +56,7 @@ class SharedSessionManager:
             if not force_new and user_id in self._sessions:
                 auth = self._sessions[user_id]
                 if auth.is_authenticated() and auth.get_client():
-                    logger.debug(f"[SHARED_SESSION] Reusing existing session for user {user_id}")
+                    logger.info(f"[SHARED_SESSION] Reusing existing session for user {user_id}")
                     return auth
                 else:
                     # Session exists but is invalid - clear it

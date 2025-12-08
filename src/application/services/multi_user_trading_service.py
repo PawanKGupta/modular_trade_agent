@@ -339,6 +339,10 @@ class MultiUserTradingService:
                 # Service already exists - check if it's actually running
                 service = self._services[user_id]
                 if hasattr(service, "running") and service.running:
+                    self._logger.info(
+                        f"Service already running for user {user_id}; not starting another instance",
+                        action="start_service",
+                    )
                     return True  # Already running
 
             try:
