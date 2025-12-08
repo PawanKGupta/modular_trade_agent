@@ -39,7 +39,7 @@ def get_model_path_from_version(db: Session, model_type: str, version: str | Non
 
         if model and model.model_path:
             model_path = Path(model.model_path)
-            if model_path.exists():
+            if model_path.is_file():
                 logger.debug(f"Found model path for {model_type} v{version}: {model_path}")
                 return str(model_path)
             else:
