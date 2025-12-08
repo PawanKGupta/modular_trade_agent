@@ -218,14 +218,12 @@ async def ensure_db_schema():
                 )
 
                 if running_individual:
-                    print(
-                                f"[Startup] Found {len(running_individual)} orphaned individual services"
-                    )
+                    print(f"[Startup] Found {len(running_individual)} orphaned individual services")
                     for status in running_individual:
                         status.is_running = False
                         status.process_id = None
                         print(
-                                    f"[Startup] Marked {status.task_name} stopped for user {status.user_id}"
+                            f"[Startup] Marked {status.task_name} stopped for user {status.user_id}"
                         )
                     db.commit()
 
