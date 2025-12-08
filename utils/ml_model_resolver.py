@@ -43,7 +43,12 @@ def get_model_path_from_version(db: Session, model_type: str, version: str | Non
                 logger.debug(f"Found model path for {model_type} v{version}: {model_path}")
                 return str(model_path)
             else:
-                logger.warning(f"Model path from database doesn't exist: {model_path}")
+                logger.warning(
+                    "Model path from database doesn't exist on disk: %s (model_type=%s, version=%s)",
+                    model_path,
+                    model_type,
+                    version,
+                )
         else:
             logger.debug(f"No model found in database for {model_type} v{version}")
 
