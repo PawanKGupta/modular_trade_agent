@@ -290,6 +290,7 @@ class OrderValidationService:
         check_active_buy_order: bool = True,
         check_holdings: bool = True,
         allow_reentry: bool = False,
+        cached_pending_orders: list[dict[str, Any]] | None = None,
     ) -> tuple[bool, str | None]:
         """
         Check if order would be duplicate
@@ -299,6 +300,7 @@ class OrderValidationService:
             check_active_buy_order: Check for active buy orders (broker API + database)
             check_holdings: Check if already in holdings
             allow_reentry: If True, skip holdings check (allows buying more of existing position)
+            cached_pending_orders: Optional cached pending orders to avoid redundant API calls
 
         Returns:
             Tuple of (is_duplicate, reason)
@@ -308,7 +310,11 @@ class OrderValidationService:
         # Check for active buy orders (broker API first)
         if check_active_buy_order and self.orders:
             try:
-                pend = self.orders.get_pending_orders() or []
+                # Use cached orders if provided, otherwise fetch
+                if cached_pending_orders is not None:
+                    pend = cached_pending_orders
+                else:
+                    pend = self.orders.get_pending_orders() or []
                 for o in pend:
                     txn = str(o.get("transactionType") or "").upper()
                     sym = str(o.get("tradingSymbol") or "").upper()

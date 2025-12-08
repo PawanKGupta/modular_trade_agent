@@ -317,10 +317,21 @@ class KotakNeoPortfolio:
             except Exception:
                 pass
 
-            # Try multiple field name variants
-            cash = data.get("cash") or data.get("availableCash") or data.get("available_cash") or 0
+            # Try multiple field name variants (check capitalized keys first, then lowercase/camelCase)
+            cash = (
+                data.get("Net")
+                or data.get("net")
+                or data.get("cash")
+                or data.get("availableCash")
+                or data.get("available_cash")
+                or 0
+            )
             margin_used = (
-                data.get("marginUsed") or data.get("margin_used") or data.get("usedMargin") or 0
+                data.get("MarginUsed")
+                or data.get("marginUsed")
+                or data.get("margin_used")
+                or data.get("usedMargin")
+                or 0
             )
             margin_available = (
                 data.get("marginAvailable")
@@ -329,6 +340,12 @@ class KotakNeoPortfolio:
                 or data.get("available_margin")
                 or 0
             )
+            # If margin_available is 0 but we have Net and MarginUsed, calculate it
+            if not margin_available and cash and margin_used:
+                try:
+                    margin_available = max(0.0, float(cash) - float(margin_used))
+                except (ValueError, TypeError):
+                    pass
 
             logger.info(f"Cash: Rs {cash}")
             logger.info(f" Margin Used: Rs {margin_used}")
