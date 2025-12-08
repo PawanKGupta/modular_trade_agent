@@ -224,7 +224,7 @@ class TestPendingOrdersCacheOptimization:
         engine = AutoTradeEngine(env_file="test.env", user_id=1)
         engine.history_path = None
         engine.portfolio = Mock()
-        
+
         # Mock get_holdings to track calls
         mock_holdings = {"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         engine.portfolio.get_holdings = Mock(return_value=mock_holdings)
@@ -236,7 +236,7 @@ class TestPendingOrdersCacheOptimization:
 
         # Create real PortfolioService with cache enabled
         from modules.kotak_neo_auto_trader.services.portfolio_service import PortfolioService
-        
+
         portfolio_service = PortfolioService(
             portfolio=engine.portfolio,
             strategy_config=engine.strategy_config,
@@ -290,12 +290,12 @@ class TestPendingOrdersCacheOptimization:
         # Verify PortfolioService cache was populated by checking if subsequent calls use cache
         # If cache works, get_portfolio_count() should not call get_holdings() again
         calls_before = engine.portfolio.get_holdings.call_count
-        
+
         # Call get_portfolio_count again - should use cache, not fetch again
         engine.portfolio_service.get_portfolio_count(include_pending=True)
-        
+
         calls_after = engine.portfolio.get_holdings.call_count
-        
+
         # If cache is working, no additional calls should be made
         assert (
             calls_after == calls_before
