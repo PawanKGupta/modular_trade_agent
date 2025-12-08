@@ -17,6 +17,8 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adap
     BrokerServiceUnavailableError,
     _extract_api_error_message,
     _get_service_unavailable_message,
+    _is_network_connectivity_error,
+    _is_service_unavailable_error,
 )
 
 
@@ -264,3 +266,25 @@ class TestBrokerServiceUnavailableError:
 
         assert exc_info.value.message == message
         assert str(exc_info.value) == message
+
+
+class TestServiceUnavailableClassification:
+    """Tests for network vs service-unavailable error classification"""
+
+    def test_network_connectivity_error_detects_errno_101(self):
+        """Errno 101 / network unreachable should be treated as local network issue"""
+        error = Exception(
+            "HTTPSConnectionPool(host='gw-napi.kotaksecurities.com', port=443): "
+            "Failed to establish a new connection: [Errno 101] Network is unreachable"
+        )
+
+        assert _is_network_connectivity_error(error) is True
+        # Network issue should not be marked as service unavailable
+        assert _is_service_unavailable_error(error) is False
+
+    def test_service_unavailable_detects_503(self):
+        """HTTP 503 should be treated as service unavailable"""
+        error = Exception("HTTP 503 Service Unavailable: maintenance window")
+
+        assert _is_network_connectivity_error(error) is False
+        assert _is_service_unavailable_error(error) is True

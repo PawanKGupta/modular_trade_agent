@@ -439,10 +439,16 @@ def test_database_update_on_success(mock_auto_trade_engine):
             with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
                 mock_config.MIN_QTY = 1
 
+                # Mock indicator_service to avoid EMA9 cancellation
+                engine.indicator_service = Mock()
+                engine.indicator_service.calculate_ema9_realtime = Mock(return_value=None)
+
                 summary = engine.adjust_amo_quantities_premarket()
 
                 # Verify DB update was attempted
-                engine.orders_repo.get_by_broker_order_id.assert_called_once_with(1, "ORD001")
+                # get_by_broker_order_id is called twice: once to get ticker, once to update DB
+                assert engine.orders_repo.get_by_broker_order_id.call_count == 2
+                engine.orders_repo.get_by_broker_order_id.assert_any_call(1, "ORD001")
                 engine.orders_repo.update.assert_called_once()
 
                 # Verify Telegram notification was sent
@@ -629,3 +635,303 @@ def test_config_default_value():
     assert hasattr(config, "enable_premarket_amo_adjustment")
     # Verify the value
     assert config.enable_premarket_amo_adjustment is True
+
+
+class TestEMAPreMarketValidation:
+    """Test EMA9 validation during pre-market adjustment"""
+
+    def test_cancel_order_when_premarket_price_above_ema9_minus_1_percent(
+        self, mock_auto_trade_engine
+    ):
+        """Test that order is cancelled when pre-market price > EMA9 - 1%"""
+        orders = [
+            {
+                "symbol": "RELIANCE-EQ",
+                "quantity": 2000,
+                "nOrdNo": "ORD001",
+                "orderValidity": "DAY",
+                "orderStatus": "PENDING",
+                "transactionType": "BUY",
+            },
+        ]
+
+        premarket_price = 101.0  # Pre-market price
+        ema9 = 100.0  # EMA9 - 1% = 99.00, pre-market (101.00) > threshold
+
+        with patch.object(AutoTradeEngine, "__init__", return_value=None):
+            engine = AutoTradeEngine()
+            engine.strategy_config = mock_auto_trade_engine.strategy_config
+            engine.auth = mock_auto_trade_engine.auth
+            engine.orders = Mock()
+            engine.orders.get_order_book = Mock(return_value=orders)
+            engine.orders.cancel_order = Mock(return_value=True)
+            engine.orders.modify_order = Mock()
+            engine.portfolio = mock_auto_trade_engine.portfolio
+            engine.login = mock_auto_trade_engine.login
+            engine.db = mock_auto_trade_engine.db
+            engine.orders_repo = mock_auto_trade_engine.orders_repo
+            engine.user_id = 1
+            engine.telegram_notifier = mock_auto_trade_engine.telegram_notifier
+
+            # Mock indicator service
+            engine.indicator_service = Mock()
+            engine.indicator_service.calculate_ema9_realtime = Mock(return_value=ema9)
+
+            with patch(
+                "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
+            ) as mock_market_data:
+                mock_md_instance = Mock()
+                mock_md_instance.get_ltp = Mock(return_value=premarket_price)
+                mock_market_data.return_value = mock_md_instance
+
+                with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
+                    mock_config.MIN_QTY = 1
+
+                    summary = engine.adjust_amo_quantities_premarket()
+
+                    # Verify order was cancelled
+                    assert summary["cancelled_above_ema9"] == 1
+                    assert summary["adjusted"] == 0
+                    assert summary["total_orders"] == 1
+
+                    # Verify cancel was called
+                    engine.orders.cancel_order.assert_called_once_with("ORD001")
+
+                    # Verify modify_order was NOT called
+                    engine.orders.modify_order.assert_not_called()
+
+    def test_proceed_when_premarket_price_below_ema9_minus_1_percent(self, mock_auto_trade_engine):
+        """Test that order proceeds when pre-market price <= EMA9 - 1%"""
+        orders = [
+            {
+                "symbol": "RELIANCE-EQ",
+                "quantity": 2000,
+                "nOrdNo": "ORD001",
+                "orderValidity": "DAY",
+                "orderStatus": "PENDING",
+                "transactionType": "BUY",
+            },
+        ]
+
+        premarket_price = 98.0  # Pre-market price
+        ema9 = 100.0  # EMA9 - 1% = 99.00, pre-market (98.00) <= threshold
+
+        with patch.object(AutoTradeEngine, "__init__", return_value=None):
+            engine = AutoTradeEngine()
+            engine.strategy_config = mock_auto_trade_engine.strategy_config
+            engine.auth = mock_auto_trade_engine.auth
+            engine.orders = Mock()
+            engine.orders.get_order_book = Mock(return_value=orders)
+            engine.orders.modify_order = Mock(return_value={"stat": "ok"})
+            engine.portfolio = mock_auto_trade_engine.portfolio
+            engine.login = mock_auto_trade_engine.login
+            engine.db = mock_auto_trade_engine.db
+            engine.orders_repo = mock_auto_trade_engine.orders_repo
+            engine.user_id = 1
+            engine.telegram_notifier = mock_auto_trade_engine.telegram_notifier
+
+            # Mock indicator service
+            engine.indicator_service = Mock()
+            engine.indicator_service.calculate_ema9_realtime = Mock(return_value=ema9)
+
+            with patch(
+                "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
+            ) as mock_market_data:
+                mock_md_instance = Mock()
+                mock_md_instance.get_ltp = Mock(return_value=premarket_price)
+                mock_market_data.return_value = mock_md_instance
+
+                with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
+                    mock_config.MIN_QTY = 1
+
+                    summary = engine.adjust_amo_quantities_premarket()
+
+                    # Verify order was NOT cancelled
+                    assert summary["cancelled_above_ema9"] == 0
+                    assert summary["adjusted"] == 1  # Should proceed with adjustment
+
+                    # Verify modify_order was called (normal adjustment flow)
+                    engine.orders.modify_order.assert_called_once()
+
+    def test_proceed_when_premarket_price_exactly_at_ema9_minus_1_percent(
+        self, mock_auto_trade_engine
+    ):
+        """Test that order proceeds when pre-market price exactly equals EMA9 - 1%"""
+        orders = [
+            {
+                "symbol": "RELIANCE-EQ",
+                "quantity": 2000,
+                "nOrdNo": "ORD001",
+                "orderValidity": "DAY",
+                "orderStatus": "PENDING",
+                "transactionType": "BUY",
+            },
+        ]
+
+        premarket_price = 99.0  # Exactly EMA9 - 1%
+        ema9 = 100.0  # EMA9 - 1% = 99.00
+
+        with patch.object(AutoTradeEngine, "__init__", return_value=None):
+            engine = AutoTradeEngine()
+            engine.strategy_config = mock_auto_trade_engine.strategy_config
+            engine.auth = mock_auto_trade_engine.auth
+            engine.orders = Mock()
+            engine.orders.get_order_book = Mock(return_value=orders)
+            engine.orders.modify_order = Mock(return_value={"stat": "ok"})
+            engine.portfolio = mock_auto_trade_engine.portfolio
+            engine.login = mock_auto_trade_engine.login
+            engine.db = mock_auto_trade_engine.db
+            engine.orders_repo = mock_auto_trade_engine.orders_repo
+            engine.user_id = 1
+            engine.telegram_notifier = mock_auto_trade_engine.telegram_notifier
+
+            # Mock indicator service
+            engine.indicator_service = Mock()
+            engine.indicator_service.calculate_ema9_realtime = Mock(return_value=ema9)
+
+            with patch(
+                "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
+            ) as mock_market_data:
+                mock_md_instance = Mock()
+                mock_md_instance.get_ltp = Mock(return_value=premarket_price)
+                mock_market_data.return_value = mock_md_instance
+
+                with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
+                    mock_config.MIN_QTY = 1
+
+                    summary = engine.adjust_amo_quantities_premarket()
+
+                    # Verify order was NOT cancelled (exact match should proceed)
+                    assert summary["cancelled_above_ema9"] == 0
+                    assert summary["adjusted"] == 1
+
+                    # Verify modify_order was called
+                    engine.orders.modify_order.assert_called_once()
+
+    def test_proceed_when_ema9_calculation_fails(self, mock_auto_trade_engine):
+        """Test that order proceeds when EMA9 calculation fails"""
+        orders = [
+            {
+                "symbol": "RELIANCE-EQ",
+                "quantity": 2000,
+                "nOrdNo": "ORD001",
+                "orderValidity": "DAY",
+                "orderStatus": "PENDING",
+                "transactionType": "BUY",
+            },
+        ]
+
+        premarket_price = 101.0
+
+        with patch.object(AutoTradeEngine, "__init__", return_value=None):
+            engine = AutoTradeEngine()
+            engine.strategy_config = mock_auto_trade_engine.strategy_config
+            engine.auth = mock_auto_trade_engine.auth
+            engine.orders = Mock()
+            engine.orders.get_order_book = Mock(return_value=orders)
+            engine.orders.modify_order = Mock(return_value={"stat": "ok"})
+            engine.portfolio = mock_auto_trade_engine.portfolio
+            engine.login = mock_auto_trade_engine.login
+            engine.db = mock_auto_trade_engine.db
+            engine.orders_repo = mock_auto_trade_engine.orders_repo
+            engine.user_id = 1
+            engine.telegram_notifier = mock_auto_trade_engine.telegram_notifier
+
+            # Mock indicator service - EMA9 calculation fails (returns None)
+            engine.indicator_service = Mock()
+            engine.indicator_service.calculate_ema9_realtime = Mock(return_value=None)
+
+            with patch(
+                "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
+            ) as mock_market_data:
+                mock_md_instance = Mock()
+                mock_md_instance.get_ltp = Mock(return_value=premarket_price)
+                mock_market_data.return_value = mock_md_instance
+
+                with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
+                    mock_config.MIN_QTY = 1
+
+                    summary = engine.adjust_amo_quantities_premarket()
+
+                    # Verify order was NOT cancelled (proceeds when EMA9 unavailable)
+                    assert summary["cancelled_above_ema9"] == 0
+                    assert summary["adjusted"] == 1
+
+                    # Verify modify_order was called
+                    engine.orders.modify_order.assert_called_once()
+
+    def test_cancel_order_updates_database_status(
+        self, mock_auto_trade_engine, db_session, test_user
+    ):
+        """Test that cancelled order updates database status"""
+        from src.infrastructure.db.models import Orders
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+        from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+        # Create database order
+        orders_repo = OrdersRepository(db_session)
+        db_order = Orders(
+            user_id=test_user.id,
+            symbol="RELIANCE",
+            side="buy",
+            order_type="market",
+            quantity=2000,
+            status=DbOrderStatus.PENDING,
+            broker_order_id="ORD001",
+            order_metadata={"ticker": "RELIANCE.NS"},
+        )
+        db_session.add(db_order)
+        db_session.commit()
+        db_session.refresh(db_order)
+
+        orders = [
+            {
+                "symbol": "RELIANCE-EQ",
+                "quantity": 2000,
+                "nOrdNo": "ORD001",
+                "orderValidity": "DAY",
+                "orderStatus": "PENDING",
+                "transactionType": "BUY",
+            },
+        ]
+
+        premarket_price = 101.0
+        ema9 = 100.0  # EMA9 - 1% = 99.00, pre-market (101.00) > threshold
+
+        with patch.object(AutoTradeEngine, "__init__", return_value=None):
+            engine = AutoTradeEngine()
+            engine.strategy_config = mock_auto_trade_engine.strategy_config
+            engine.auth = mock_auto_trade_engine.auth
+            engine.orders = Mock()
+            engine.orders.get_order_book = Mock(return_value=orders)
+            engine.orders.cancel_order = Mock(return_value=True)
+            engine.portfolio = mock_auto_trade_engine.portfolio
+            engine.login = mock_auto_trade_engine.login
+            engine.db = db_session
+            engine.orders_repo = orders_repo
+            engine.user_id = test_user.id
+            engine.telegram_notifier = mock_auto_trade_engine.telegram_notifier
+
+            # Mock indicator service
+            engine.indicator_service = Mock()
+            engine.indicator_service.calculate_ema9_realtime = Mock(return_value=ema9)
+
+            with patch(
+                "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
+            ) as mock_market_data:
+                mock_md_instance = Mock()
+                mock_md_instance.get_ltp = Mock(return_value=premarket_price)
+                mock_market_data.return_value = mock_md_instance
+
+                with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
+                    mock_config.MIN_QTY = 1
+
+                    summary = engine.adjust_amo_quantities_premarket()
+
+                    # Verify order was cancelled
+                    assert summary["cancelled_above_ema9"] == 1
+
+                    # Verify database order status updated
+                    db_session.refresh(db_order)
+                    assert db_order.status == DbOrderStatus.CANCELLED
+                    assert "EMA9" in db_order.reason or "Pre-market price" in db_order.reason

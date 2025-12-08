@@ -67,6 +67,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         # State
         self._connected = False
         self._order_counter = 0
+        self._warned_symbols: set[str] = set()  # Track symbols we already warned about in this session
 
         # Initialize if needed
         self._initialize()
@@ -286,10 +287,15 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             )
         else:
             # Order execution failed or pending
-            logger.warning(
+            msg = (
                 f"[WARN]? Order execution failed for {order.symbol}: {message}. "
                 f"Order remains in {order.status.value} status."
             )
+            if order.symbol in self._warned_symbols:
+                logger.info(msg)  # Downgrade repeat warnings to INFO to reduce log noise
+            else:
+                logger.warning(msg)
+                self._warned_symbols.add(order.symbol)
 
         # Save updated order
         self._save_order(order)

@@ -27,6 +27,10 @@ services:
       # Admin user auto-creation (only on first deployment when DB is empty)
       # Set ADMIN_EMAIL, ADMIN_PASSWORD, and ADMIN_NAME in .env file
 
+    dns:
+      - 8.8.8.8  # Google DNS (IPv4 only)
+      - 8.8.4.4  # Google DNS backup (IPv4 only)
+
     volumes:
       - ../data:/app/data
       - ../logs:/app/logs

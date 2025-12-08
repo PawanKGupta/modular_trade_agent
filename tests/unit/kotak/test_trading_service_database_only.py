@@ -37,7 +37,7 @@ class TestTradingServiceDatabaseOnlyInitialization:
         """Sample user ID for testing"""
         return 2
 
-    @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.SellOrderManager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.prevent_service_conflict")
@@ -50,7 +50,7 @@ class TestTradingServiceDatabaseOnlyInitialization:
         mock_prevent_conflict,
         mock_sell_manager_class,
         mock_engine_class,
-        mock_auth_class,
+        mock_get_shared_session_manager,
         mock_db_session,
         sample_user_id,
         mock_strategy_config,
@@ -59,7 +59,12 @@ class TestTradingServiceDatabaseOnlyInitialization:
         # Setup mocks
         mock_auth = Mock()
         mock_auth.login.return_value = True  # Auth login succeeds
-        mock_auth_class.return_value = mock_auth
+        mock_auth.is_authenticated.return_value = True
+        mock_auth.get_client.return_value = Mock()
+
+        mock_session_manager = Mock()
+        mock_session_manager.get_or_create_session.return_value = mock_auth
+        mock_get_shared_session_manager.return_value = mock_session_manager
 
         mock_engine = Mock()
         mock_engine.positions_repo = Mock()
@@ -97,12 +102,13 @@ class TestTradingServiceDatabaseOnlyInitialization:
 
         # Verify positions_repo was passed
         call_args = mock_sell_manager_class.call_args
-        assert call_args[0][0] == mock_auth  # First positional arg is auth
+        # First positional arg is auth (from shared session manager)
+        assert call_args[0][0] == mock_auth
         assert call_args[1]["positions_repo"] == mock_engine.positions_repo
         assert call_args[1]["user_id"] == sample_user_id
         assert call_args[1]["orders_repo"] == mock_engine.orders_repo
 
-    @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.SellOrderManager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.prevent_service_conflict")
@@ -115,7 +121,7 @@ class TestTradingServiceDatabaseOnlyInitialization:
         mock_prevent_conflict,
         mock_sell_manager_class,
         mock_engine_class,
-        mock_auth_class,
+        mock_get_shared_session_manager,
         mock_db_session,
         sample_user_id,
         mock_strategy_config,
@@ -124,7 +130,12 @@ class TestTradingServiceDatabaseOnlyInitialization:
         # Setup mocks
         mock_auth = Mock()
         mock_auth.login.return_value = True  # Auth login succeeds
-        mock_auth_class.return_value = mock_auth
+        mock_auth.is_authenticated.return_value = True
+        mock_auth.get_client.return_value = Mock()
+
+        mock_session_manager = Mock()
+        mock_session_manager.get_or_create_session.return_value = mock_auth
+        mock_get_shared_session_manager.return_value = mock_session_manager
 
         mock_engine = Mock()
         mock_engine.positions_repo = Mock()
@@ -161,7 +172,7 @@ class TestTradingServiceDatabaseOnlyInitialization:
         call_args = mock_sell_manager_class.call_args
         assert call_args[1]["orders_repo"] == mock_engine.orders_repo
 
-    @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.SellOrderManager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.prevent_service_conflict")
@@ -174,7 +185,7 @@ class TestTradingServiceDatabaseOnlyInitialization:
         mock_prevent_conflict,
         mock_sell_manager_class,
         mock_engine_class,
-        mock_auth_class,
+        mock_get_shared_session_manager,
         mock_db_session,
         sample_user_id,
         mock_strategy_config,
@@ -183,7 +194,12 @@ class TestTradingServiceDatabaseOnlyInitialization:
         # Setup mocks
         mock_auth = Mock()
         mock_auth.login.return_value = True  # Auth login succeeds
-        mock_auth_class.return_value = mock_auth
+        mock_auth.is_authenticated.return_value = True
+        mock_auth.get_client.return_value = Mock()
+
+        mock_session_manager = Mock()
+        mock_session_manager.get_or_create_session.return_value = mock_auth
+        mock_get_shared_session_manager.return_value = mock_session_manager
 
         # Create mock engine without positions_repo attribute
         # Use spec to limit attributes, then add only what we need
@@ -230,7 +246,7 @@ class TestTradingServiceDatabaseOnlyInitialization:
         error_calls = [str(call) for call in mock_logger.error.call_args_list]
         assert any("PositionsRepository not available" in call for call in error_calls)
 
-    @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.SellOrderManager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.prevent_service_conflict")
@@ -243,7 +259,7 @@ class TestTradingServiceDatabaseOnlyInitialization:
         mock_prevent_conflict,
         mock_sell_manager_class,
         mock_engine_class,
-        mock_auth_class,
+        mock_get_shared_session_manager,
         mock_db_session,
         sample_user_id,
         mock_strategy_config,
@@ -252,7 +268,12 @@ class TestTradingServiceDatabaseOnlyInitialization:
         # Setup mocks
         mock_auth = Mock()
         mock_auth.login.return_value = True  # Auth login succeeds
-        mock_auth_class.return_value = mock_auth
+        mock_auth.is_authenticated.return_value = True
+        mock_auth.get_client.return_value = Mock()
+
+        mock_session_manager = Mock()
+        mock_session_manager.get_or_create_session.return_value = mock_auth
+        mock_get_shared_session_manager.return_value = mock_session_manager
 
         mock_engine = Mock()
         mock_engine.positions_repo = Mock()

@@ -55,6 +55,10 @@ def mock_engine_with_repos(db_session, test_user):
         engine.portfolio = Mock()
         engine.login = Mock(return_value=True)
 
+        # Skip EMA9-based cancellation during tests
+        engine.indicator_service = Mock()
+        engine.indicator_service.calculate_ema9_realtime = Mock(return_value=None)
+
         # Initialize repositories (they should be initialized in __init__)
         from src.infrastructure.persistence.orders_repository import OrdersRepository
         from src.infrastructure.persistence.positions_repository import PositionsRepository
@@ -198,6 +202,10 @@ class TestQuantityRecalculationForReentry:
             # Pre-market price: 2600 (gap up from 2500)
             # New qty: 100000 / 2600 = 38.46 -> 38 shares (reduced)
             mock_market_data_instance.get_ltp = Mock(return_value=2600.0)
+
+            # Mock indicator_service to return None (skip EMA9 cancellation check)
+            engine.indicator_service = Mock()
+            engine.indicator_service.calculate_ema9_realtime = Mock(return_value=None)
 
             summary = engine.adjust_amo_quantities_premarket()
 
@@ -721,6 +729,9 @@ class TestPaperTradingPremarketAdjustment:
         paper_adapter.broker.price_provider.get_price = Mock(return_value=2600.0)
         paper_adapter.broker.cancel_order = Mock(return_value=True)
         paper_adapter.broker.place_order = Mock(return_value="NEW_ORDER_123")
+
+        # Mock _calculate_ema9 to return None to skip EMA9 cancellation check
+        paper_adapter._calculate_ema9 = Mock(return_value=None)
 
         summary = paper_adapter.adjust_amo_quantities_premarket()
 

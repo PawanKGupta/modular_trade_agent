@@ -197,6 +197,33 @@ def _extract_api_error_message(error: Exception) -> str | None:
     return None
 
 
+def _is_network_connectivity_error(error: Exception) -> bool:
+    """
+    Check if an error indicates local network connectivity issues (not broker service issue).
+
+    Args:
+        error: Exception to check
+
+    Returns:
+        True if error indicates local network connectivity issue, False otherwise
+    """
+    error_str = str(error).lower()
+
+    # Local network connectivity issues (Docker/container network problems)
+    network_connectivity_indicators = [
+        "network is unreachable",  # Errno 101 - local network issue
+        "name resolution failed",  # DNS issue
+        "dns",  # DNS resolution failure
+        "errno 101",  # Network unreachable error code
+    ]
+
+    for indicator in network_connectivity_indicators:
+        if indicator in error_str:
+            return True
+
+    return False
+
+
 def _is_service_unavailable_error(error: Exception) -> bool:
     """
     Check if an error indicates broker service is unavailable (maintenance, downtime, etc.)
@@ -207,10 +234,14 @@ def _is_service_unavailable_error(error: Exception) -> bool:
     Returns:
         True if error indicates service unavailable, False otherwise
     """
+    # First check if it's a local network connectivity issue (not a broker service issue)
+    if _is_network_connectivity_error(error):
+        return False  # Don't treat local network issues as service unavailable
+
     error_str = str(error).lower()
     error_type = type(error).__name__.lower()
 
-    # Check for service unavailable indicators
+    # Check for service unavailable indicators (actual broker service issues)
     service_unavailable_indicators = [
         "service unavailable",
         "503",
@@ -222,11 +253,7 @@ def _is_service_unavailable_error(error: Exception) -> bool:
         "downtime",
         "server error",
         "internal server error",
-        "connection refused",
-        "network is unreachable",
-        "failed to establish",
-        "name resolution failed",
-        "dns",
+        "connection refused",  # Server actively refusing (different from network unreachable)
     ]
 
     # Check error message
@@ -236,7 +263,7 @@ def _is_service_unavailable_error(error: Exception) -> bool:
 
     # Check error type
     if "httperror" in error_type or "connectionerror" in error_type:
-        # Check if it's a 5xx error
+        # Check if it's a 5xx error (actual HTTP server error)
         if "50" in error_str:
             return True
 
@@ -816,18 +843,21 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                 timeout_error_message=f"get_all_orders() call to {method_name}() timed out",
                             )
                         except TimeoutError as timeout_error:
-                            logger.error(
+                            logger.warning(
                                 f"SDK call timed out in get_all_orders: {timeout_error}. "
-                                "This may indicate broker API is slow or unreachable."
+                                "This may indicate broker API is slow or network connectivity issue."
                             )
                             # Check if this is a service unavailable scenario (timeout after retries)
                             if attempt >= max_retries:
-                                # After all retries, timeout likely means service is unavailable
-                                raise BrokerServiceUnavailableError(
-                                    "Broker service is temporarily unavailable. "
-                                    "The API did not respond within the expected time. "
-                                    "This may be due to maintenance or high load. Please try again later."
-                                ) from timeout_error
+                                # After all retries, timeout could be network issue or service unavailable
+                                # For read operations like get_all_orders, return empty list instead of raising error
+                                # This prevents false "service unavailable" errors when it's actually a network issue
+                                logger.warning(
+                                    "Timeout after all retries in get_all_orders. "
+                                    "This could be a network connectivity issue or broker service problem. "
+                                    "Returning empty list to avoid false service unavailable errors."
+                                )
+                                return []
                             # If timeout occurs, try refreshing client from auth handler
                             # The client might be stale even if auth handler reports authenticated
                             if self.auth_handler and self.auth_handler.is_authenticated():
@@ -842,6 +872,17 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                                 break  # Retry outer loop
                             continue  # Try next method
                         except Exception as call_error:
+                            # Check if it's a local network connectivity issue (not broker service issue)
+                            if _is_network_connectivity_error(call_error):
+                                logger.warning(
+                                    f"Network connectivity issue detected in get_all_orders: {call_error}. "
+                                    "This appears to be a local network/Docker connectivity problem, "
+                                    "not a broker service issue. Returning empty list."
+                                )
+                                # Return empty list instead of raising error for network connectivity issues
+                                # This prevents false "service unavailable" errors when broker is actually available
+                                return []
+
                             # Check if it's a service unavailable error (maintenance, downtime, etc.)
                             if _is_service_unavailable_error(call_error):
                                 logger.error(
@@ -945,7 +986,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         # Check response for auth errors
                         if isinstance(response, dict) and is_auth_error(response):
                             logger.warning(
-                                "Authentication error detected in get_all_orders response. "
+                                f"Authentication error detected in get_all_orders response: {response}. "
                                 "Checking re-authentication failure rate..."
                             )
                             # Check if re-auth should be blocked due to recent failures
