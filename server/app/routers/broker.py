@@ -286,6 +286,7 @@ def save_broker_creds(
 
     settings = repo.update(
         settings,
+        trade_mode=TradeMode.BROKER,  # Switch to broker mode when credentials are saved
         broker=payload.broker,
         broker_status="Stored",
     )
@@ -330,17 +331,9 @@ def test_broker_connection(
     )
     success, message = _test_kotak_neo_connection(creds)
 
-    # Update settings if connection successful
-    if success:
-        repo = SettingsRepository(db)
-        settings = repo.ensure_default(current.id)
-        settings = repo.update(
-            settings,
-            trade_mode=TradeMode.BROKER,
-            broker=payload.broker,
-            broker_status="Connected",
-        )
-        db.commit()
+    # Test connection only - do NOT save broker mode or credentials
+    # Broker mode will be set only when user clicks "Save Credentials"
+    # This allows users to test without committing to broker mode
 
     return BrokerTestResponse(ok=success, message=message)
 
