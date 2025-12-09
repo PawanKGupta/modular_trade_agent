@@ -335,6 +335,25 @@ class EODCleanup:
             try:
                 placed_at = datetime.fromisoformat(placed_at_str)
 
+                # Normalize placed_at to match current_time's timezone awareness
+                # This ensures we can safely subtract them later
+                if current_time.tzinfo is None and placed_at.tzinfo is not None:
+                    # current_time is naive, make placed_at naive too
+                    placed_at = placed_at.replace(tzinfo=None)
+                elif current_time.tzinfo is not None and placed_at.tzinfo is None:
+                    # current_time is aware, make placed_at aware too (assume IST)
+                    try:
+                        from src.infrastructure.db.timezone_utils import IST
+
+                        placed_at = placed_at.replace(tzinfo=IST)
+                    except ImportError:
+                        # If IST not available, convert to current_time's timezone
+                        placed_at = placed_at.replace(tzinfo=current_time.tzinfo)
+                elif current_time.tzinfo is not None and placed_at.tzinfo is not None:
+                    # Both are aware, ensure same timezone
+                    if current_time.tzinfo != placed_at.tzinfo:
+                        placed_at = placed_at.astimezone(current_time.tzinfo)
+
                 # Calculate next trading day market close from when order was placed
                 # get_next_trading_day_close handles both naive and timezone-aware datetimes
                 # and returns timezone-aware datetime in IST

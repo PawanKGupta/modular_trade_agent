@@ -7,11 +7,13 @@ to use OrderValidationService while maintaining backward compatibility.
 Phase 3.1: Order Validation & Verification
 """
 
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
 
-import pytest
-
-from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+from modules.kotak_neo_auto_trader.auto_trade_engine import (
+    AutoTradeEngine,
+    Recommendation,
+)
+from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
 
 class TestAutoTradeEngineOrderValidationServiceInitialization:
@@ -59,9 +61,7 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
     """Test that place_new_entries() uses OrderValidationService correctly"""
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
-    def test_place_new_entries_uses_order_validation_service_volume_ratio(
-        self, mock_auth
-    ):
+    def test_place_new_entries_uses_order_validation_service_volume_ratio(self, mock_auth):
         """Test that place_new_entries() uses OrderValidationService.check_volume_ratio()"""
         mock_auth_instance = Mock()
         mock_auth_instance.is_authenticated.return_value = True
@@ -96,10 +96,21 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
         engine.portfolio.get_holdings = Mock(return_value={"data": []})
         engine.orders = Mock()
         engine.orders.get_pending_orders = Mock(return_value=[])
+        engine.orders.get_executed_orders = Mock(return_value=[])
+        engine.orders_repo = Mock()
+        engine.orders_repo.get_by_broker_order_id = Mock(return_value=None)
+
+        # Mock scrip master for symbol resolution
+        mock_scrip_master = Mock()
+        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
+
+        def mock_get_instrument(symbol, exchange="NSE"):
+            return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
+
+        mock_scrip_master.get_instrument = mock_get_instrument
+        engine.scrip_master = mock_scrip_master
 
         # Mock recommendation
-        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
-
         rec = Recommendation(
             ticker="RELIANCE.NS",
             verdict="buy",
@@ -134,12 +145,8 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
 
         # Mock OrderValidationService
         mock_validation_service = Mock()
-        mock_validation_service.check_portfolio_capacity = Mock(
-            return_value=(True, 3, 10)
-        )
-        mock_validation_service.check_duplicate_order = Mock(
-            return_value=(False, None)
-        )
+        mock_validation_service.check_portfolio_capacity = Mock(return_value=(True, 3, 10))
+        mock_validation_service.check_duplicate_order = Mock(return_value=(False, None))
         mock_validation_service.check_volume_ratio = Mock(
             return_value=(True, 0.01, "Rs 500+ (10%)")
         )
@@ -161,10 +168,21 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
         engine.portfolio.get_holdings = Mock(return_value={"data": []})
         engine.orders = Mock()
         engine.orders.get_pending_orders = Mock(return_value=[])
+        engine.orders.get_executed_orders = Mock(return_value=[])
+        engine.orders_repo = Mock()
+        engine.orders_repo.get_by_broker_order_id = Mock(return_value=None)
+
+        # Mock scrip master for symbol resolution
+        mock_scrip_master = Mock()
+        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
+
+        def mock_get_instrument(symbol, exchange="NSE"):
+            return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
+
+        mock_scrip_master.get_instrument = mock_get_instrument
+        engine.scrip_master = mock_scrip_master
 
         # Mock recommendation
-        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
-
         rec = Recommendation(
             ticker="RELIANCE.NS",
             verdict="buy",
@@ -191,9 +209,7 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
             # Balance check happens after volume ratio, so we expect it to be called if volume passes
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
-    def test_place_new_entries_uses_order_validation_service_portfolio_capacity(
-        self, mock_auth
-    ):
+    def test_place_new_entries_uses_order_validation_service_portfolio_capacity(self, mock_auth):
         """Test that place_new_entries() uses OrderValidationService.check_portfolio_capacity()"""
         mock_auth_instance = Mock()
         mock_auth_instance.is_authenticated.return_value = True
@@ -219,10 +235,21 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
         engine.portfolio.get_holdings = Mock(return_value={"data": []})
         engine.orders = Mock()
         engine.orders.get_pending_orders = Mock(return_value=[])
+        engine.orders.get_executed_orders = Mock(return_value=[])
+        engine.orders_repo = Mock()
+        engine.orders_repo.get_by_broker_order_id = Mock(return_value=None)
+
+        # Mock scrip master for symbol resolution
+        mock_scrip_master = Mock()
+        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
+
+        def mock_get_instrument(symbol, exchange="NSE"):
+            return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
+
+        mock_scrip_master.get_instrument = mock_get_instrument
+        engine.scrip_master = mock_scrip_master
 
         # Mock recommendation
-        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
-
         rec = Recommendation(
             ticker="RELIANCE.NS",
             verdict="buy",
@@ -237,9 +264,7 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
         assert summary["skipped_portfolio_limit"] > 0
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
-    def test_place_new_entries_uses_order_validation_service_duplicate_check(
-        self, mock_auth
-    ):
+    def test_place_new_entries_uses_order_validation_service_duplicate_check(self, mock_auth):
         """Test that place_new_entries() uses OrderValidationService.check_duplicate_order()"""
         mock_auth_instance = Mock()
         mock_auth_instance.is_authenticated.return_value = True
@@ -247,18 +272,14 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
 
         # Mock OrderValidationService
         mock_validation_service = Mock()
-        mock_validation_service.check_portfolio_capacity = Mock(
-            return_value=(True, 3, 10)
-        )
+        mock_validation_service.check_portfolio_capacity = Mock(return_value=(True, 3, 10))
         mock_validation_service.check_duplicate_order = Mock(
             return_value=(True, "Already in holdings: RELIANCE")
         )
         mock_validation_service.check_volume_ratio = Mock(
             return_value=(True, 0.01, "Rs 500+ (10%)")
         )
-        mock_validation_service.check_balance = Mock(
-            return_value=(True, 100000.0, 40)
-        )
+        mock_validation_service.check_balance = Mock(return_value=(True, 100000.0, 40))
 
         # Mock PortfolioService
         mock_portfolio_service = Mock()
@@ -274,10 +295,21 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
         engine.portfolio.get_holdings = Mock(return_value={"data": []})
         engine.orders = Mock()
         engine.orders.get_pending_orders = Mock(return_value=[])
+        engine.orders.get_executed_orders = Mock(return_value=[])
+        engine.orders_repo = Mock()
+        engine.orders_repo.get_by_broker_order_id = Mock(return_value=None)
+
+        # Mock scrip master for symbol resolution
+        mock_scrip_master = Mock()
+        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
+
+        def mock_get_instrument(symbol, exchange="NSE"):
+            return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
+
+        mock_scrip_master.get_instrument = mock_get_instrument
+        engine.scrip_master = mock_scrip_master
 
         # Mock recommendation
-        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
-
         rec = Recommendation(
             ticker="RELIANCE.NS",
             verdict="buy",
@@ -315,8 +347,6 @@ class TestRetryServiceOrderValidationServiceIntegration:
         mock_validation_service.portfolio_service = mock_portfolio_service
 
         # Mock order (need at least one to trigger capacity check)
-        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
         mock_order = Mock()
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
@@ -350,9 +380,7 @@ class TestRetryServiceOrderValidationServiceIntegration:
 
         # Mock OrderValidationService
         mock_validation_service = Mock()
-        mock_validation_service.check_portfolio_capacity = Mock(
-            return_value=(True, 5, 10)
-        )
+        mock_validation_service.check_portfolio_capacity = Mock(return_value=(True, 5, 10))
         mock_validation_service.check_duplicate_order = Mock(
             return_value=(True, "Already in holdings: RELIANCE")
         )
@@ -378,8 +406,6 @@ class TestRetryServiceOrderValidationServiceIntegration:
         )
 
         # Mock order
-        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
         mock_order = Mock()
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
@@ -415,12 +441,8 @@ class TestRetryServiceOrderValidationServiceIntegration:
 
         # Mock OrderValidationService
         mock_validation_service = Mock()
-        mock_validation_service.check_portfolio_capacity = Mock(
-            return_value=(True, 5, 10)
-        )
-        mock_validation_service.check_duplicate_order = Mock(
-            return_value=(False, None)
-        )
+        mock_validation_service.check_portfolio_capacity = Mock(return_value=(True, 5, 10))
+        mock_validation_service.check_duplicate_order = Mock(return_value=(False, None))
         mock_validation_service.check_volume_ratio = Mock(
             return_value=(False, 0.5, "Rs 500+ (10%)")  # Invalid volume ratio
         )
@@ -443,8 +465,6 @@ class TestRetryServiceOrderValidationServiceIntegration:
         )
 
         # Mock order
-        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
         mock_order = Mock()
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
@@ -489,8 +509,6 @@ class TestOrderValidationServiceBackwardCompatibility:
         engine.orders.get_pending_orders = Mock(return_value=[])
 
         # Mock recommendation
-        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
-
         rec = Recommendation(
             ticker="RELIANCE.NS",
             verdict="buy",
@@ -535,4 +553,3 @@ class TestOrderValidationServiceBackwardCompatibility:
         assert "placed" in summary
         assert "failed" in summary
         assert "skipped" in summary
-

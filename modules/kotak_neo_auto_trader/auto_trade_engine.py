@@ -1504,7 +1504,11 @@ class AutoTradeEngine:
                 self.scrip_master.load_scrip_master(force_download=False)
                 logger.info("Scrip master loaded for buy order symbol resolution")
             except Exception as e:
-                logger.warning(f"Failed to load scrip master: {e}. Will use symbol fallback.")
+                logger.error(
+                    f"Failed to load scrip master: {e}. "
+                    f"Order placement will fail without scrip master. "
+                    f"Please check network connection and try again."
+                )
                 self.scrip_master = None
 
             # Phase 2: Initialize modules
@@ -1536,7 +1540,11 @@ class AutoTradeEngine:
                 self.scrip_master.load_scrip_master(force_download=False)
                 logger.info("Scrip master loaded for buy order symbol resolution")
             except Exception as e:
-                logger.warning(f"Failed to load scrip master: {e}. Will use symbol fallback.")
+                logger.error(
+                    f"Failed to load scrip master: {e}. "
+                    f"Order placement will fail without scrip master. "
+                    f"Please check network connection and try again."
+                )
                 self.scrip_master = None
 
             # Phase 2: Initialize modules
@@ -2031,6 +2039,88 @@ class AutoTradeEngine:
             logger.error(f"Error counting reentries for {base_symbol}: {e}")
             return 0
 
+    def _resolve_broker_symbol(self, base_symbol: str) -> str:
+        """
+        Resolve base symbol to actual broker trading symbol using scrip master.
+
+        Scrip master is the SINGLE SOURCE OF TRUTH for symbol resolution.
+        If scrip master is not available or symbol is not found, raises an error.
+
+        Args:
+            base_symbol: Base symbol (e.g., "SALSTEEL") or already resolved symbol (e.g., "SALSTEEL-BE")
+
+        Returns:
+            Resolved broker symbol (e.g., "SALSTEEL-BE")
+
+        Raises:
+            ValueError: If scrip master is not available or symbol cannot be resolved
+        """
+        # Get exchange from user's trading config (from database UserTradingConfig)
+        # This is the user's preference stored in their trading configuration
+        # Falls back to config.DEFAULT_EXCHANGE only if strategy_config not available (standalone usage)
+        exchange = (
+            self.strategy_config.default_exchange
+            if self.strategy_config
+            else config.DEFAULT_EXCHANGE
+        )
+
+        # If symbol already has suffix, validate it exists in scrip master
+        if any(base_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"]):
+            # Validate that this symbol exists in scrip master
+            if self.scrip_master and self.scrip_master.symbol_map:
+                instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
+                if instrument and instrument.get("symbol"):
+                    # Symbol exists in scrip master, use as-is
+                    logger.debug(
+                        f"Symbol {base_symbol} already has suffix and exists in scrip master ({exchange})"
+                    )
+                    return base_symbol
+                else:
+                    # Symbol has suffix but not in scrip master - this is an error
+                    raise ValueError(
+                        f"Symbol {base_symbol} has suffix but not found in scrip master ({exchange}). "
+                        f"Please verify the symbol is correct."
+                    )
+            else:
+                # Scrip master not available, but symbol has suffix - assume it's valid
+                logger.warning(
+                    f"Scrip master not available, but symbol {base_symbol} has suffix. "
+                    f"Using as-is (not validated)."
+                )
+                return base_symbol
+
+        # Scrip master is REQUIRED for symbol resolution
+        if not self.scrip_master or not self.scrip_master.symbol_map:
+            raise ValueError(
+                f"Scrip master is not available. Cannot resolve symbol {base_symbol}. "
+                f"Please ensure scrip master is loaded before placing orders."
+            )
+
+        try:
+            # Use configurable exchange for symbol resolution
+            instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
+            if instrument and instrument.get("symbol"):
+                resolved = instrument["symbol"]
+                logger.info(
+                    f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange}) - single source of truth"
+                )
+                return resolved
+            else:
+                # Symbol not found in scrip master
+                raise ValueError(
+                    f"Symbol {base_symbol} not found in scrip master ({exchange}). "
+                    f"Please verify the symbol is correct or check if it's listed on {exchange}."
+                )
+        except ValueError:
+            # Re-raise ValueError (our custom errors)
+            raise
+        except Exception as e:
+            # Wrap other exceptions
+            raise ValueError(
+                f"Failed to resolve symbol {base_symbol} via scrip master: {e}. "
+                f"Scrip master is the single source of truth for symbol resolution."
+            ) from e
+
     def _attempt_place_order(
         self,
         broker_symbol: str,
@@ -2046,7 +2136,7 @@ class AutoTradeEngine:
         Helper method to attempt placing an order with symbol resolution.
 
         Args:
-            broker_symbol: Trading symbol
+            broker_symbol: Trading symbol (should already be resolved, but will resolve if needed)
             ticker: Full ticker (e.g., RELIANCE.NS)
             qty: Order quantity
             close: Current close price
@@ -2087,94 +2177,52 @@ class AutoTradeEngine:
                 f"Using LIMIT order for {broker_symbol} (T2T segment) @ Rs {limit_price:.2f}"
             )
 
-        # Try to resolve symbol using scrip master first
-        resolved_symbol = None
-        if self.scrip_master and self.scrip_master.symbol_map:
-            # Try base symbol first
-            instrument = self.scrip_master.get_instrument(broker_symbol)
-            if instrument:
-                resolved_symbol = instrument["symbol"]
-                logger.debug(f"Resolved {broker_symbol} -> {resolved_symbol} via scrip master")
+        # Symbol should already be resolved from place_new_entries() via scrip master
+        # Scrip master is the SINGLE SOURCE OF TRUTH - use the resolved symbol directly
+        # If symbol doesn't have suffix, it means resolution failed earlier - this is an error
+        place_symbol = broker_symbol
 
-        # If scrip master resolved the symbol, use it directly
-        if resolved_symbol:
-            place_symbol = resolved_symbol
-            if use_limit_order:
-                trial = self.orders.place_limit_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    price=limit_price,
-                    variety=order_variety,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-            else:
-                trial = self.orders.place_market_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    variety=order_variety,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-            # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
-            if isinstance(trial, dict) and "error" not in trial:
-                stat = trial.get("stat", "").lower()
-                if (
-                    stat == "ok"
-                    or "data" in trial
-                    or "order" in trial
-                    or "raw" in trial
-                    or "nordno" in str(trial).lower()
-                ):
-                    resp = trial
-                    placed_symbol = place_symbol
+        # Validate that symbol has suffix (means it was resolved by scrip master)
+        has_suffix = any(place_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"])
+        if not has_suffix:
+            logger.error(
+                f"Symbol {place_symbol} does not have suffix. "
+                f"This indicates scrip master resolution failed earlier. "
+                f"Cannot place order without proper symbol resolution."
+            )
+            return (False, None)
 
-        # Fallback: Try common series suffixes if scrip master didn't work
-        if not resp:
-            series_suffixes = ["-EQ", "-BE", "-BL", "-BZ"]
-            resp = None
-            placed_symbol = None
-            for suf in series_suffixes:
-                place_symbol = (
-                    broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
-                )
+        # Place order with scrip master resolved symbol
+        if use_limit_order:
+            trial = self.orders.place_limit_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                price=limit_price,
+                variety=order_variety,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
+        else:
+            trial = self.orders.place_market_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                variety=order_variety,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
 
-                # Check if this suffix requires limit order
-                is_t2t_suf = suf in ["-BE", "-BL", "-BZ"]
-
-                if is_t2t_suf:
-                    limit_price = close * 1.01
-                    logger.debug(f"Trying {place_symbol} with LIMIT @ Rs {limit_price:.2f}")
-                    trial = self.orders.place_limit_buy(
-                        symbol=place_symbol,
-                        quantity=qty,
-                        price=limit_price,
-                        variety=order_variety,
-                        exchange=config.DEFAULT_EXCHANGE,
-                        product=config.DEFAULT_PRODUCT,
-                    )
-                else:
-                    trial = self.orders.place_market_buy(
-                        symbol=place_symbol,
-                        quantity=qty,
-                        variety=order_variety,
-                        exchange=config.DEFAULT_EXCHANGE,
-                        product=config.DEFAULT_PRODUCT,
-                    )
-                # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
-                if isinstance(trial, dict) and "error" not in trial:
-                    stat = trial.get("stat", "").lower()
-                    trial_str = str(trial).lower()
-                    if (
-                        stat == "ok"
-                        or "data" in trial
-                        or "order" in trial
-                        or "raw" in trial
-                        or "nordno" in trial_str
-                    ) and "not_ok" not in trial_str:
-                        resp = trial
-                        placed_symbol = place_symbol
-                        break
+        # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
+        if isinstance(trial, dict) and "error" not in trial:
+            stat = trial.get("stat", "").lower()
+            if (
+                stat == "ok"
+                or "data" in trial
+                or "order" in trial
+                or "raw" in trial
+                or "nordno" in str(trial).lower()
+            ):
+                resp = trial
+                placed_symbol = place_symbol
 
         # Check if order was successful
         # Accept responses with nOrdNo (direct order ID) or data/order/raw structures
@@ -2198,15 +2246,19 @@ class AutoTradeEngine:
         # Extract order ID from response
         order_id = extract_order_id(resp)
 
+        # Use resolved symbol (placed_symbol) everywhere - this is the actual broker format
+        # Define early so it can be used throughout
+        actual_symbol = placed_symbol or broker_symbol  # Prefer placed_symbol (resolved format)
+
         if not order_id:
             # Fallback: Search order book after a shorter wait (reduced from 60s to 10s for performance)
             logger.warning(
-                f"No order ID in response for {broker_symbol}. "
+                f"No order ID in response for {actual_symbol}. "
                 f"Will search order book after 10 seconds..."
             )
             order_id = search_order_in_broker_orderbook(
                 self.orders,
-                placed_symbol or broker_symbol,
+                actual_symbol,
                 qty,
                 placement_time,
                 max_wait_seconds=10,  # Reduced from 60s to 10s for faster execution
@@ -2215,14 +2267,14 @@ class AutoTradeEngine:
             if not order_id:
                 # Still no order ID - uncertain placement
                 logger.error(
-                    f"Order placement uncertain for {broker_symbol}: "
+                    f"Order placement uncertain for {actual_symbol}: "
                     f"No order ID and not found in order book"
                 )
                 # Send notification about uncertain order
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 telegram_msg = (
                     f"⚠️ *Order Placement Uncertain*\n\n"
-                    f"Symbol: `{broker_symbol}`\n"
+                    f"Symbol: `{actual_symbol}`\n"
                     f"Qty: {qty}\n"
                     f"Order ID not received and not found in order book.\n"
                     f"Please check broker app manually.\n\n"
@@ -2250,8 +2302,7 @@ class AutoTradeEngine:
 
         # Order successfully placed with order_id
         logger.info(
-            f"Order placed successfully: {placed_symbol or broker_symbol} "
-            f"(order_id: {order_id}, qty: {qty})"
+            f"Order placed successfully: {actual_symbol} (order_id: {order_id}, qty: {qty})"
         )
 
         # Mark signal as TRADED (Phase 2.3: Database integration)
@@ -2262,13 +2313,14 @@ class AutoTradeEngine:
                 )
 
                 signals_repo = SignalsRepository(self.db, user_id=self.user_id)
-                # Use the base symbol (without series suffix like -EQ)
-                base_symbol = broker_symbol.split("-")[0] if "-" in broker_symbol else broker_symbol
+                # Use the base symbol (without series suffix like -EQ) for signal marking
+                # Signals table stores base symbols, so extract base from actual symbol
+                base_symbol = actual_symbol.split("-")[0] if "-" in actual_symbol else actual_symbol
                 if signals_repo.mark_as_traded(base_symbol, user_id=self.user_id):
                     logger.info(f"Marked signal for {base_symbol} as TRADED (user {self.user_id})")
             except Exception as mark_error:
                 # Don't fail order placement if marking fails
-                logger.warning(f"Failed to mark signal as traded for {broker_symbol}: {mark_error}")
+                logger.warning(f"Failed to mark signal as traded for {actual_symbol}: {mark_error}")
 
         order_type = "LIMIT" if use_limit_order else "MARKET"
 
@@ -2277,7 +2329,7 @@ class AutoTradeEngine:
             try:
                 limit_price = limit_price if use_limit_order else None
                 self.telegram_notifier.notify_order_placed(
-                    symbol=placed_symbol or broker_symbol,
+                    symbol=actual_symbol,  # Use actual resolved symbol format
                     order_id=order_id,
                     quantity=qty,
                     order_type=order_type,
@@ -2293,7 +2345,8 @@ class AutoTradeEngine:
             holdings = self.portfolio.get_holdings() or {}
             for item in holdings.get("data") or []:
                 sym = str(item.get("tradingSymbol", "")).upper()
-                if broker_symbol.upper() in sym:
+                # Check if actual_symbol matches holdings symbol (both should be in broker format)
+                if actual_symbol.upper() in sym or sym in actual_symbol.upper():
                     pre_existing_qty = int(item.get("quantity", 0))
                     break
         except Exception as e:
@@ -2302,7 +2355,7 @@ class AutoTradeEngine:
         # Register in tracking scope (system-recommended)
         try:
             tracking_id = add_tracked_symbol(
-                symbol=broker_symbol,
+                symbol=actual_symbol,  # Use actual resolved symbol format
                 ticker=ticker,
                 initial_order_id=order_id,
                 initial_qty=qty,
@@ -2310,7 +2363,7 @@ class AutoTradeEngine:
                 recommendation_source=recommendation_source,
                 recommendation_verdict=getattr(ind, "verdict", None),
             )
-            logger.debug(f"Added to tracking scope: {broker_symbol} (tracking_id: {tracking_id})")
+            logger.debug(f"Added to tracking scope: {actual_symbol} (tracking_id: {tracking_id})")
         except Exception as e:
             logger.error(f"Failed to add to tracking scope: {e}")
 
@@ -2318,7 +2371,7 @@ class AutoTradeEngine:
         try:
             add_pending_order(
                 order_id=order_id,
-                symbol=placed_symbol or broker_symbol,
+                symbol=actual_symbol,  # Use actual resolved symbol format
                 ticker=ticker,
                 qty=qty,
                 order_type=order_type,
@@ -2334,7 +2387,7 @@ class AutoTradeEngine:
         # Immediately fetch order status from broker and sync DB state
         self._sync_order_status_snapshot(
             order_id=str(order_id),
-            symbol=placed_symbol or broker_symbol,
+            symbol=actual_symbol,  # Use actual resolved symbol format
             quantity=qty,
         )
 
@@ -2342,7 +2395,7 @@ class AutoTradeEngine:
         # This checks if the order was immediately rejected by the broker
         try:
             is_valid, rejection_reason = self._verify_order_placement(
-                order_id=order_id, symbol=placed_symbol or broker_symbol, wait_seconds=15
+                order_id=order_id, symbol=actual_symbol, wait_seconds=15
             )
             if not is_valid:
                 logger.error(
@@ -2769,6 +2822,24 @@ class AutoTradeEngine:
             for db_order in retriable_orders:
                 summary["retried"] += 1
                 symbol = db_order.symbol
+
+                # Validate symbol exists in scrip master (single source of truth)
+                # Symbol in DB should already be resolved, but validate it exists
+                # Use user's trading config preference for exchange
+                exchange = (
+                    self.strategy_config.default_exchange
+                    if self.strategy_config
+                    else config.DEFAULT_EXCHANGE
+                )
+                if self.scrip_master and self.scrip_master.symbol_map:
+                    instrument = self.scrip_master.get_instrument(symbol, exchange=exchange)
+                    if not instrument or not instrument.get("symbol"):
+                        logger.warning(
+                            f"Symbol {symbol} from DB not found in scrip master ({exchange}). "
+                            f"Skipping retry (symbol may have been delisted or changed)."
+                        )
+                        summary["skipped"] += 1
+                        continue
 
                 # Check portfolio limit
                 if not has_capacity:
@@ -3415,6 +3486,7 @@ class AutoTradeEngine:
             "attempted": 0,
             "placed": 0,
             "failed_balance": 0,
+            "skipped": 0,  # Total skipped (for backward compatibility with tests)
             "skipped_portfolio_limit": 0,
             "skipped_duplicates": 0,
             "skipped_missing_data": 0,
@@ -3510,7 +3582,9 @@ class AutoTradeEngine:
                         and self.portfolio_service._cache
                     ):
                         self.portfolio_service._cache.set("holdings", test_holdings)
-                        logger.debug("Populated PortfolioService cache with empty holdings (fallback)")
+                        logger.debug(
+                            "Populated PortfolioService cache with empty holdings (fallback)"
+                        )
             else:
                 logger.error(
                     "Cannot fetch holdings (API returned None after retries) and no database fallback available. "
@@ -3740,10 +3814,34 @@ class AutoTradeEngine:
 
         # Process new recommendations (retries handled separately at scheduled time)
         for rec in recommendations:
-            broker_symbol = self.parse_symbol_for_broker(rec.ticker)
+            base_symbol = self.parse_symbol_for_broker(rec.ticker)  # "SALSTEEL"
+
+            # Resolve symbol to actual broker format early (e.g., "SALSTEEL" -> "SALSTEEL-BE")
+            # Scrip master is the SINGLE SOURCE OF TRUTH for symbol resolution
+            try:
+                broker_symbol = self._resolve_broker_symbol(base_symbol)  # "SALSTEEL-BE"
+            except ValueError as e:
+                # Scrip master resolution failed - skip this recommendation
+                logger.error(f"Failed to resolve symbol {base_symbol} via scrip master: {e}")
+                summary["skipped"] += 1
+                summary["skipped_missing_data"] += 1  # Also increment specific counter
+                ticker_attempt = {
+                    "ticker": rec.ticker,
+                    "symbol": base_symbol,
+                    "verdict": rec.verdict,
+                    "status": "skipped",
+                    "reason": f"scrip_master_resolution_failed: {str(e)}",
+                    "qty": None,
+                    "execution_capital": None,
+                    "price": None,
+                    "order_id": None,
+                }
+                summary["ticker_attempts"].append(ticker_attempt)
+                continue
+
             ticker_attempt = {
                 "ticker": rec.ticker,
-                "symbol": broker_symbol,
+                "symbol": broker_symbol,  # Use resolved symbol
                 "verdict": rec.verdict,
                 "status": "pending",
                 "reason": None,
@@ -3770,6 +3868,7 @@ class AutoTradeEngine:
                     f"Portfolio limit reached ({current_count}/{max_size}); skipping further entries"
                 )
                 summary["skipped_portfolio_limit"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "portfolio_limit_reached"
                 summary["ticker_attempts"].append(ticker_attempt)
@@ -3790,6 +3889,7 @@ class AutoTradeEngine:
                     "System does not track existing holdings - keeping portfolios separate."
                 )
                 summary["skipped_duplicates"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "already_in_holdings"
                 summary["ticker_attempts"].append(ticker_attempt)
@@ -3820,6 +3920,7 @@ class AutoTradeEngine:
                     "System does not track existing holdings - keeping portfolios separate."
                 )
                 summary["skipped_duplicates"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 skip_reason = (
                     "already_in_holdings"
                     if "holdings" in duplicate_reason.lower()
@@ -3845,8 +3946,9 @@ class AutoTradeEngine:
                 continue
             # 2) Check for manual AMO orders -> link to DB and skip placing
             # Pass cached orders to avoid redundant API calls
+            # Note: _check_for_manual_orders checks by base symbol, but we use resolved symbol for DB
             manual_order_info = self._check_for_manual_orders(
-                broker_symbol, cached_pending_orders=cached_pending_orders
+                base_symbol, cached_pending_orders=cached_pending_orders
             )
             if manual_order_info.get("has_manual_order"):
                 manual_orders = manual_order_info.get("manual_orders", [])
@@ -3855,6 +3957,9 @@ class AutoTradeEngine:
                     manual_order_id = manual_order.get("order_id")
                     manual_qty = manual_order.get("quantity", 0)
                     manual_price = manual_order.get("price", 0.0)
+                    # Extract actual symbol from manual order (broker format)
+                    # order_info dict uses "symbol" key (from OrderFieldExtractor.get_symbol())
+                    manual_symbol = manual_order.get("symbol") or broker_symbol
 
                     logger.info(
                         f"Manual AMO order detected for {broker_symbol}: order_id={manual_order_id}, "
@@ -3880,14 +3985,15 @@ class AutoTradeEngine:
                                 status=DbOrderStatus.PENDING,
                             )
                             logger.info(
-                                f"Updated existing DB order {existing_order.id} for {broker_symbol} "
+                                f"Updated existing DB order {existing_order.id} for {manual_symbol} "
                                 f"with manual order details"
                             )
                         else:
                             # Create new order record for manual order
+                            # Use actual symbol from broker order (manual_symbol) or resolved symbol
                             db_order = self.orders_repo.create_amo(
                                 user_id=self.user_id,
-                                symbol=broker_symbol,
+                                symbol=manual_symbol,  # Use actual symbol from broker order
                                 side="buy",
                                 order_type="market",  # AMO orders are typically market
                                 quantity=manual_qty,
@@ -3898,11 +4004,12 @@ class AutoTradeEngine:
                             db_order.status = DbOrderStatus.PENDING
                             self.orders_repo.update(db_order)
                             logger.info(
-                                f"Created new DB order {db_order.id} for {broker_symbol} "
+                                f"Created new DB order {db_order.id} for {manual_symbol} "
                                 f"with manual order details"
                             )
 
                     summary["skipped_duplicates"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     ticker_attempt["status"] = "skipped"
                     ticker_attempt["reason"] = "manual_order_exists"
                     ticker_attempt["qty"] = manual_qty
@@ -3990,6 +4097,7 @@ class AutoTradeEngine:
                         "Order already executed, cannot update quantity."
                     )
                     summary["skipped_duplicates"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     ticker_attempt["status"] = "skipped"
                     ticker_attempt["reason"] = "active_order_in_db"
                     ticker_attempt["existing_order_id"] = existing_db_order.id
@@ -4026,6 +4134,7 @@ class AutoTradeEngine:
                             )
                             # If cancel fails, skip to prevent duplicates
                             summary["skipped_duplicates"] += 1
+                            summary["skipped"] += 1  # Increment general counter
                             ticker_attempt["status"] = "skipped"
                             ticker_attempt["reason"] = "cancel_failed"
                             summary["ticker_attempts"].append(ticker_attempt)
@@ -4045,6 +4154,7 @@ class AutoTradeEngine:
                     "Will not place duplicate order."
                 )
                 summary["skipped_duplicates"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "duplicate_order"
                 summary["ticker_attempts"].append(ticker_attempt)
@@ -4061,6 +4171,7 @@ class AutoTradeEngine:
             if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
                 logger.warning(f"Skipping {rec.ticker}: missing indicators")
                 summary["skipped_missing_data"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "missing_indicators"
                 summary["ticker_attempts"].append(ticker_attempt)
@@ -4070,6 +4181,7 @@ class AutoTradeEngine:
             if close <= 0:
                 logger.warning(f"Skipping {rec.ticker}: invalid close price {close}")
                 summary["skipped_invalid_qty"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "invalid_price"
                 ticker_attempt["price"] = close
@@ -4184,6 +4296,7 @@ class AutoTradeEngine:
                             f"Quantity and price unchanged (qty={existing_qty}, price=Rs {existing_price:.2f})."
                         )
                         summary["skipped_duplicates"] += 1
+                        summary["skipped"] += 1  # Increment general counter
                         ticker_attempt["status"] = "skipped"
                         ticker_attempt["reason"] = "active_order_in_db"
                         ticker_attempt["existing_order_id"] = existing_db_order.id
@@ -4197,6 +4310,7 @@ class AutoTradeEngine:
                         "Order already executed, cannot update quantity/price."
                     )
                     summary["skipped_duplicates"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     ticker_attempt["status"] = "skipped"
                     ticker_attempt["reason"] = "active_order_in_db"
                     ticker_attempt["existing_order_id"] = existing_db_order.id
@@ -4213,6 +4327,7 @@ class AutoTradeEngine:
             if not is_valid_volume:
                 logger.info(f"Skipping {broker_symbol}: position size too large relative to volume")
                 summary["skipped_invalid_qty"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "position_too_large_for_volume"
                 ticker_attempt["qty"] = qty
@@ -4282,6 +4397,7 @@ class AutoTradeEngine:
                 self._add_failed_order(failed_order_info)
                 summary["failed_balance"] += 1
                 summary["skipped_invalid_qty"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "failed"
                 ticker_attempt["reason"] = "insufficient_balance"
                 ticker_attempt["qty"] = qty
@@ -4467,6 +4583,7 @@ class AutoTradeEngine:
                 if not ind:
                     logger.warning(f"Skipping {symbol}: missing indicators for re-entry evaluation")
                     summary["skipped_missing_data"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     continue
 
                 current_rsi = ind.get("rsi10")
@@ -4476,6 +4593,7 @@ class AutoTradeEngine:
                 if current_rsi is None or current_price is None:
                     logger.warning(f"Skipping {symbol}: invalid indicators (RSI or price missing)")
                     summary["skipped_missing_data"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     continue
 
                 # Determine next re-entry level based on entry RSI
@@ -4494,10 +4612,22 @@ class AutoTradeEngine:
                 )
 
                 # Check for duplicates (only active buy orders, NOT holdings - reentries allow buying more)
-                broker_symbol = self.parse_symbol_for_broker(ticker)
-                if not broker_symbol:
+                base_symbol = self.parse_symbol_for_broker(ticker)
+                if not base_symbol:
                     logger.warning(f"Could not parse broker symbol for {symbol}")
                     summary["skipped_missing_data"] += 1
+                    summary["skipped"] += 1  # Increment general counter
+                    continue
+
+                # Resolve symbol via scrip master (single source of truth)
+                try:
+                    broker_symbol = self._resolve_broker_symbol(base_symbol)
+                except ValueError as e:
+                    logger.error(
+                        f"Failed to resolve symbol {base_symbol} via scrip master for re-entry: {e}"
+                    )
+                    summary["skipped_missing_data"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     continue
 
                 # Check for active buy orders only (reentries should allow buying more of existing position)
@@ -4513,6 +4643,7 @@ class AutoTradeEngine:
                     if is_duplicate:
                         logger.info(f"Skipping {symbol}: {duplicate_reason}")
                         summary["skipped_duplicates"] += 1
+                        summary["skipped"] += 1  # Increment general counter
                         continue
 
                 # Calculate execution capital and quantity
@@ -4524,6 +4655,7 @@ class AutoTradeEngine:
                 if qty <= 0:
                     logger.warning(f"Skipping {symbol}: invalid quantity ({qty})")
                     summary["skipped_invalid_qty"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     continue
 
                 # Check balance and adjust quantity if needed

@@ -8,6 +8,7 @@ Manages profit-taking sell orders with EMA9 target tracking:
 3. Tracks order execution and updates trade history
 """
 
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -25,6 +26,30 @@ from modules.kotak_neo_auto_trader.services import (  # noqa: E402
     get_price_service,
 )
 from utils.logger import logger  # noqa: E402
+
+# Conditional imports for optional dependencies
+try:
+    from core.volume_analysis import is_market_hours
+except ImportError:
+    is_market_hours = None
+
+try:
+    from modules.kotak_neo_auto_trader.telegram_notifier import (
+        get_telegram_notifier,
+        send_telegram,
+    )
+except ImportError:
+    get_telegram_notifier = None
+    send_telegram = None
+
+try:
+    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+    from src.infrastructure.db.timezone_utils import ist_now
+    from src.infrastructure.db.transaction import transaction
+except ImportError:
+    DbOrderStatus = None
+    ist_now = None
+    transaction = None
 
 try:
     from . import config
@@ -79,6 +104,7 @@ class SellOrderManager:
         price_manager=None,
         order_state_manager: OrderStateManager | None = None,
         order_verifier=None,  # Phase 3.2: Optional OrderStatusVerifier for shared results
+        strategy_config=None,  # Optional: StrategyConfig for user-specific settings (exchange, etc.)
     ):
         """
         Initialize sell order manager
@@ -112,6 +138,7 @@ class SellOrderManager:
         self.orders_repo = orders_repo  # For metadata enrichment
         self.user_id = user_id
         self.order_verifier = order_verifier  # Phase 3.2: OrderStatusVerifier for shared results
+        self.strategy_config = strategy_config  # User-specific trading config (for exchange, etc.)
 
         # Holdings cache removed - we now fetch holdings when needed and reuse data
         # from monitoring cycles instead of maintaining a separate cache
@@ -421,8 +448,6 @@ class SellOrderManager:
         # Fetch broker holdings for validation (Edge Case #17)
         broker_holdings_map = {}
         try:
-            from .utils.symbol_utils import extract_base_symbol
-
             # Fetch holdings directly (no cache - fetch when needed)
             holdings_response = None
             if self.portfolio:
@@ -467,12 +492,8 @@ class SellOrderManager:
                 placed_symbol = f"{pos.symbol}-EQ"
 
                 # Try to get ticker and placed_symbol from most recent ONGOING order
-                if self.orders_repo:
+                if self.orders_repo and DbOrderStatus:
                     try:
-                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
-                        from .utils.symbol_utils import extract_base_symbol
-
                         ongoing_orders = self.orders_repo.list(
                             self.user_id, status=DbOrderStatus.ONGOING
                         )
@@ -624,14 +645,13 @@ class SellOrderManager:
                         f"but broker has 0 shares. Marking position as closed."
                     )
                     try:
-                        from src.infrastructure.db.timezone_utils import ist_now
-
-                        self.positions_repo.mark_closed(
-                            user_id=self.user_id,
-                            symbol=symbol,
-                            closed_at=ist_now(),
-                            exit_price=None,  # Manual sell, price unknown
-                        )
+                        if ist_now:
+                            self.positions_repo.mark_closed(
+                                user_id=self.user_id,
+                                symbol=symbol,
+                                closed_at=ist_now(),
+                                exit_price=None,  # Manual sell, price unknown
+                            )
                         stats["closed"] += 1
                         logger.info(f"Position {symbol} marked as closed due to manual full sell")
                     except Exception as e:
@@ -731,7 +751,6 @@ class SellOrderManager:
                 return False
 
             holdings_data = holdings_response.get("data", [])
-            from .utils.symbol_utils import extract_base_symbol
 
             # Find broker quantity for this symbol
             broker_qty = 0
@@ -764,14 +783,13 @@ class SellOrderManager:
                     f"Manual full sell detected for {symbol} during sell order update. "
                     f"Marking position as closed."
                 )
-                from src.infrastructure.db.timezone_utils import ist_now
-
-                self.positions_repo.mark_closed(
-                    user_id=self.user_id,
-                    symbol=symbol,
-                    closed_at=ist_now(),
-                    exit_price=None,
-                )
+                if ist_now:
+                    self.positions_repo.mark_closed(
+                        user_id=self.user_id,
+                        symbol=symbol,
+                        closed_at=ist_now(),
+                        exit_price=None,
+                    )
                 return True
 
             # Manual partial sell detected
@@ -884,10 +902,19 @@ class SellOrderManager:
                 symbol = f"{symbol}-EQ"
 
             # Try to get correct trading symbol from scrip master
+            # Use user's trading config preference for exchange (from database UserTradingConfig)
+            # Falls back to config.DEFAULT_EXCHANGE if strategy_config not available
+            exchange = (
+                self.strategy_config.default_exchange
+                if self.strategy_config
+                else config.DEFAULT_EXCHANGE
+            )
             if self.scrip_master and self.scrip_master.symbol_map:
-                correct_symbol = self.scrip_master.get_trading_symbol(symbol)
+                correct_symbol = self.scrip_master.get_trading_symbol(symbol, exchange=exchange)
                 if correct_symbol:
-                    logger.debug(f"Resolved {symbol} -> {correct_symbol} via scrip master")
+                    logger.debug(
+                        f"Resolved {symbol} -> {correct_symbol} via scrip master ({exchange})"
+                    )
                     symbol = correct_symbol
 
             qty = trade.get("qty", 0)
@@ -1410,7 +1437,9 @@ class SellOrderManager:
         cancelled_count = 0
 
         try:
-            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+            if not DbOrderStatus:
+                logger.warning("DbOrderStatus not available, skipping reentry order cancellation")
+                return 0
 
             # Query for pending reentry orders for this symbol
             all_orders = self.orders_repo.list(self.user_id)
@@ -1475,9 +1504,7 @@ class SellOrderManager:
                     # Continue with next order even if one fails
 
             # Apply all DB updates in a single transaction
-            if db_updates:
-                from src.infrastructure.db.transaction import transaction
-
+            if db_updates and transaction:
                 with transaction(self.orders_repo.db):
                     for db_order, reason in db_updates:
                         try:
@@ -1526,8 +1553,9 @@ class SellOrderManager:
         closed_count = 0
 
         try:
-            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-            from src.infrastructure.db.timezone_utils import ist_now
+            if not DbOrderStatus or not ist_now:
+                logger.warning("DbOrderStatus or ist_now not available, skipping buy order closure")
+                return 0
 
             # Query for ONGOING buy orders for this symbol
             all_orders = self.orders_repo.list(self.user_id)
@@ -1549,30 +1577,29 @@ class SellOrderManager:
             )
 
             # Wrap all order closures in a single transaction
-            from src.infrastructure.db.transaction import transaction
-
-            with transaction(self.orders_repo.db):
-                for db_order in ongoing_buy_orders:
-                    try:
-                        # Mark buy order as CLOSED
-                        self.orders_repo.update(
-                            db_order,
-                            status=DbOrderStatus.CLOSED,
-                            closed_at=ist_now(),
-                            reason="Position closed - sell order executed",
-                            auto_commit=False,  # Transaction handles commit
-                        )
-                        closed_count += 1
-                        logger.info(
-                            f"Closed buy order {db_order.id} ({db_order.broker_order_id}) "
-                            f"for {base_symbol} - sell order executed"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Error closing buy order {db_order.id} for {base_symbol}: {e}"
-                        )
-                        # Continue with next order even if one fails
-                        # Transaction will rollback if exception propagates
+            if transaction:
+                with transaction(self.orders_repo.db):
+                    for db_order in ongoing_buy_orders:
+                        try:
+                            # Mark buy order as CLOSED
+                            self.orders_repo.update(
+                                db_order,
+                                status=DbOrderStatus.CLOSED,
+                                closed_at=ist_now(),
+                                reason="Position closed - sell order executed",
+                                auto_commit=False,  # Transaction handles commit
+                            )
+                            closed_count += 1
+                            logger.info(
+                                f"Closed buy order {db_order.id} ({db_order.broker_order_id}) "
+                                f"for {base_symbol} - sell order executed"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Error closing buy order {db_order.id} for {base_symbol}: {e}"
+                            )
+                            # Continue with next order even if one fails
+                            # Transaction will rollback if exception propagates
 
             if closed_count > 0:
                 logger.info(
@@ -1701,8 +1728,6 @@ class SellOrderManager:
         if not rejection_reason:
             return None
 
-        import re
-
         # Try to extract High Price Range and Low Price Range
         # Pattern: "High Price Range:33.51" or "High Price Range: 33.51"
         high_match = re.search(r"High Price Range[:\s]+([\d.]+)", rejection_reason, re.IGNORECASE)
@@ -1744,8 +1769,6 @@ class SellOrderManager:
                     status = OrderStatusParser.parse_status(broker_order)
 
                     # Check if rejection is due to circuit limit breach
-                    from .utils.order_field_extractor import OrderFieldExtractor
-
                     rejection_reason = OrderFieldExtractor.get_rejection_reason(broker_order) or ""
 
                     if (
@@ -2680,8 +2703,6 @@ class SellOrderManager:
 
         # Manual Trade Detection Timing Fix: Periodic reconciliation during market hours
         # Run reconciliation every 30 minutes to detect manual trades
-        from datetime import datetime
-
         now = datetime.now()
 
         # Flaw #7 Optimization: Fetch holdings once and reuse for reconciliation and mismatch check
@@ -2771,30 +2792,27 @@ class SellOrderManager:
                 # Update positions table (Edge Case #8 fix)
                 if self.positions_repo and self.user_id:
                     try:
-                        from src.infrastructure.db.timezone_utils import ist_now
-
                         base_symbol = extract_base_symbol(symbol).upper()
                         if filled_qty > 0:
                             if filled_qty >= order_qty or filled_qty >= order_info.get("qty", 0):
                                 # Full execution - mark position as closed
                                 # Wrap position and order updates in transaction for atomicity
-                                from src.infrastructure.db.transaction import transaction
+                                if transaction and ist_now:
+                                    with transaction(self.positions_repo.db):
+                                        self.positions_repo.mark_closed(
+                                            user_id=self.user_id,
+                                            symbol=base_symbol,
+                                            closed_at=ist_now(),
+                                            exit_price=order_price,
+                                            auto_commit=False,  # Transaction handles commit
+                                        )
+                                        logger.info(
+                                            f"Position marked as closed in database: {base_symbol} "
+                                            f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
+                                        )
 
-                                with transaction(self.positions_repo.db):
-                                    self.positions_repo.mark_closed(
-                                        user_id=self.user_id,
-                                        symbol=base_symbol,
-                                        closed_at=ist_now(),
-                                        exit_price=order_price,
-                                        auto_commit=False,  # Transaction handles commit
-                                    )
-                                    logger.info(
-                                        f"Position marked as closed in database: {base_symbol} "
-                                        f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
-                                    )
-
-                                    # Close corresponding ONGOING buy orders (within same transaction)
-                                    self._close_buy_orders_for_symbol(base_symbol)
+                                        # Close corresponding ONGOING buy orders (within same transaction)
+                                        self._close_buy_orders_for_symbol(base_symbol)
 
                                 # Edge Case #12: Cancel pending reentry orders for closed position
                                 # Note: This includes broker API calls, so it's outside the transaction
@@ -2836,28 +2854,25 @@ class SellOrderManager:
                 # Update positions table (Edge Case #8 fix)
                 if self.positions_repo and self.user_id:
                     try:
-                        from src.infrastructure.db.timezone_utils import ist_now
-
                         base_symbol = extract_base_symbol(symbol).upper()
                         # Assume full execution if we don't have filled_qty info
                         # Wrap position and order updates in transaction for atomicity
-                        from src.infrastructure.db.transaction import transaction
+                        if transaction and ist_now:
+                            with transaction(self.positions_repo.db):
+                                self.positions_repo.mark_closed(
+                                    user_id=self.user_id,
+                                    symbol=base_symbol,
+                                    closed_at=ist_now(),
+                                    exit_price=current_price,
+                                    auto_commit=False,  # Transaction handles commit
+                                )
+                                logger.info(
+                                    f"Position marked as closed in database: {base_symbol} "
+                                    f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
+                                )
 
-                        with transaction(self.positions_repo.db):
-                            self.positions_repo.mark_closed(
-                                user_id=self.user_id,
-                                symbol=base_symbol,
-                                closed_at=ist_now(),
-                                exit_price=current_price,
-                                auto_commit=False,  # Transaction handles commit
-                            )
-                            logger.info(
-                                f"Position marked as closed in database: {base_symbol} "
-                                f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
-                            )
-
-                            # Close corresponding ONGOING buy orders (within same transaction)
-                            self._close_buy_orders_for_symbol(base_symbol)
+                                # Close corresponding ONGOING buy orders (within same transaction)
+                                self._close_buy_orders_for_symbol(base_symbol)
 
                         # Invalidate cache since position was closed (broker holdings changed)
                         self._invalidate_holdings_cache()
@@ -3162,39 +3177,35 @@ class SellOrderManager:
 
             # Use TelegramNotifier to respect notification preferences
             try:
-                from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
-
-                telegram_notifier = get_telegram_notifier(
-                    db_session=None,  # SellOrderManager doesn't have db_session
-                )
-                if telegram_notifier and telegram_notifier.enabled:
-                    telegram_notifier.notify_system_alert(
-                        alert_type="RSI_EXIT_CONVERSION_FAILED",
-                        message_text=message,
-                        severity="ERROR",
-                        user_id=self.user_id,
+                if get_telegram_notifier:
+                    telegram_notifier = get_telegram_notifier(
+                        db_session=None,  # SellOrderManager doesn't have db_session
                     )
-                else:
-                    # Fallback to old method if telegram_notifier not available
-                    from modules.kotak_neo_auto_trader.telegram_notifier import send_telegram
-
+                    if telegram_notifier and telegram_notifier.enabled:
+                        telegram_notifier.notify_system_alert(
+                            alert_type="RSI_EXIT_CONVERSION_FAILED",
+                            message_text=message,
+                            severity="ERROR",
+                            user_id=self.user_id,
+                        )
+                    elif send_telegram:
+                        # Fallback to old method if telegram_notifier not available
+                        send_telegram(message)
+                elif send_telegram:
                     send_telegram(message)
             except Exception as notify_err:
                 logger.warning(f"Failed to send RSI exit error notification: {notify_err}")
                 # Fallback to old method on error
-                try:
-                    from modules.kotak_neo_auto_trader.telegram_notifier import send_telegram
-
-                    send_telegram(message)
-                except Exception:
-                    pass  # Already logged
+                if send_telegram:
+                    try:
+                        send_telegram(message)
+                    except Exception:
+                        pass  # Already logged
         except Exception as e:
             logger.warning(f"Failed to send RSI exit error notification: {e}")
 
     def _get_order_variety_for_market_hours(self) -> str:
         """Get order variety based on market hours."""
-        from core.volume_analysis import is_market_hours
-
-        if is_market_hours():
+        if is_market_hours and is_market_hours():
             return "REGULAR"
         return config.DEFAULT_VARIETY

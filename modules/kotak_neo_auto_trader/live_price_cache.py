@@ -5,12 +5,11 @@ Maintains real-time LTP cache using Kotak Neo WebSocket
 """
 
 import sys
-import time
 import threading
-from pathlib import Path
-from typing import Dict, Optional, List
-from datetime import datetime, timedelta
+import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -66,12 +65,12 @@ class LivePriceCache:
         self.reconnect_delay = reconnect_delay_seconds
 
         # Thread-safe price cache
-        self._cache: Dict[str, PriceData] = {}
+        self._cache: dict[str, PriceData] = {}
         self._cache_lock = threading.Lock()
 
         # Subscription tracking
-        self._subscribed_tokens: List[Dict] = []
-        self._symbol_to_token: Dict[str, int] = {}
+        self._subscribed_tokens: list[dict] = []
+        self._symbol_to_token: dict[str, int] = {}
 
         # WebSocket state
         self._ws_connected = threading.Event()
@@ -80,10 +79,10 @@ class LivePriceCache:
         self._shutdown = threading.Event()
 
         # Internal threads/handles
-        self._monitor_thread: Optional[threading.Thread] = None
+        self._monitor_thread: threading.Thread | None = None
 
         # Log throttling for WebSocket connected messages
-        self._last_connected_log_time: Optional[datetime] = None
+        self._last_connected_log_time: datetime | None = None
         self._connected_log_throttle_seconds = 60  # Max 1 log per minute
 
         # Stats
@@ -161,7 +160,7 @@ class LivePriceCache:
 
         logger.info("Live price cache service stopped")
 
-    def subscribe_to_positions(self, symbols: List[str]):
+    def subscribe_to_positions(self, symbols: list[str]):
         """
         Subscribe to positions for compatibility with LivePriceManager interface.
 
@@ -172,7 +171,7 @@ class LivePriceCache:
         """
         self.subscribe(symbols)
 
-    def subscribe(self, symbols: List[str]):
+    def subscribe(self, symbols: list[str]):
         """
         Subscribe to live prices for given symbols.
 
@@ -187,15 +186,23 @@ class LivePriceCache:
         # Get instrument tokens
         tokens_to_subscribe = []
 
+        # Get exchange from config (defaults to NSE)
+        try:
+            import config
+
+            default_exchange = getattr(config, "DEFAULT_EXCHANGE", "NSE")
+        except ImportError:
+            default_exchange = "NSE"
+
         for symbol in symbols:
-            instrument = self.scrip_master.get_instrument(symbol)
+            instrument = self.scrip_master.get_instrument(symbol, exchange=default_exchange)
             if not instrument:
-                logger.warning(f"Instrument not found for {symbol}")
+                logger.warning(f"Instrument not found for {symbol} ({default_exchange})")
                 continue
 
             token = instrument.get("token")
             trading_symbol = instrument.get("symbol")
-            exchange = instrument.get("exchange", "NSE").lower()
+            exchange = instrument.get("exchange", default_exchange).lower()
 
             # Determine exchange segment
             if exchange == "nse":
@@ -263,7 +270,7 @@ class LivePriceCache:
             logger.error(f"Subscription failed: {e}", exc_info=True)
             self.stats["errors"] += 1
 
-    def unsubscribe(self, symbols: List[str]):
+    def unsubscribe(self, symbols: list[str]):
         """
         Unsubscribe from live prices for given symbols.
 
@@ -309,7 +316,7 @@ class LivePriceCache:
             except Exception as e:
                 logger.error(f"Unsubscribe failed: {e}")
 
-    def get_ltp(self, symbol: str, ticker: str = None) -> Optional[float]:
+    def get_ltp(self, symbol: str, ticker: str = None) -> float | None:
         """
         Get latest LTP for a symbol.
 
@@ -334,7 +341,7 @@ class LivePriceCache:
 
             return price_data.ltp
 
-    def get_all_prices(self) -> Dict[str, float]:
+    def get_all_prices(self) -> dict[str, float]:
         """
         Get all cached LTPs (non-stale only).
 
@@ -431,7 +438,7 @@ class LivePriceCache:
             logger.error(f"Error processing WebSocket message: {e}", exc_info=True)
             self.stats["errors"] += 1
 
-    def _process_price_update(self, item: Dict):
+    def _process_price_update(self, item: dict):
         """Process a single price update from WebSocket data."""
         try:
             # Extract fields (WebSocket sends abbreviated keys)
@@ -527,19 +534,17 @@ class LivePriceCache:
                         if self._subscribed_tokens:
                             logger.warning("WebSocket disconnected, attempting reconnect...")
                             self._reconnect()
-                    else:
-                        # Initial connection - let subscribe() handle it
-                        # This prevents deadlock where monitor waits for connection,
-                        # but connection waits for subscriptions
-                        if self._subscribed_tokens:
-                            logger.debug(
-                                "Initial connection pending - subscribe() will establish connection"
-                            )
-                else:
-                    # Connected - mark as ever connected
-                    if not has_ever_connected:
-                        has_ever_connected = True
-                        logger.info("WebSocket connection established")
+                    # Initial connection - let subscribe() handle it
+                    # This prevents deadlock where monitor waits for connection,
+                    # but connection waits for subscriptions
+                    elif self._subscribed_tokens:
+                        logger.debug(
+                            "Initial connection pending - subscribe() will establish connection"
+                        )
+                # Connected - mark as ever connected
+                elif not has_ever_connected:
+                    has_ever_connected = True
+                    logger.info("WebSocket connection established")
 
                 # Sleep before next check
                 for _ in range(int(max(1, self.reconnect_delay))):
@@ -586,7 +591,7 @@ class LivePriceCache:
                 logger.error(f"Reconnection failed: {e}")
                 self.stats["errors"] += 1
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         """Get cache statistics."""
         with self._cache_lock:
             cache_size = len(self._cache)

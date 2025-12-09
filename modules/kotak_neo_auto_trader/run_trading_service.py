@@ -280,6 +280,7 @@ class TradingService:
                     orders_repo=orders_repo,  # For metadata enrichment
                     price_manager=self.price_cache,
                     order_verifier=order_verifier,  # Phase 3.2: Share OrderStatusVerifier results
+                    strategy_config=self.strategy_config,  # Pass user's trading config for exchange preference
                 )
 
                 # Phase 2: Initialize unified order monitor for buy and sell order monitoring
