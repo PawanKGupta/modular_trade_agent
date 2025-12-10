@@ -7,12 +7,18 @@ Tests that when a reentry order executes, the positions table is updated with:
 - last_reentry_price
 """
 
+import copy
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+
+try:
+    from src.infrastructure.db.timezone_utils import IST
+except ImportError:
+    IST = None
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -29,8 +35,6 @@ class TestReentryTrackingInDatabase:
     @pytest.fixture
     def db_session(self):
         """Create a mock database session"""
-        from unittest.mock import MagicMock
-
         session = MagicMock()
         session.query = MagicMock()
         session.add = MagicMock()
@@ -90,6 +94,7 @@ class TestReentryTrackingInDatabase:
         positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
 
         # Create reentry order with entry_type="reentry"
+        placement_date = datetime.now(IST) - timedelta(days=1)  # Placed yesterday
         reentry_order = Orders(
             id=1,
             user_id=1,
@@ -98,6 +103,7 @@ class TestReentryTrackingInDatabase:
             order_type="market",
             quantity=5,
             entry_type="reentry",
+            placed_at=placement_date,  # Order placed yesterday
             order_metadata={
                 "rsi_level": 20,
                 "rsi": 19.5,
@@ -156,6 +162,16 @@ class TestReentryTrackingInDatabase:
         assert reentry["rsi"] == 19.5
         assert reentry["price"] == 2480.0
         assert "time" in reentry
+        assert "placed_at" in reentry  # ✅ NEW: placed_at should be stored
+        # Verify placed_at is a date string (YYYY-MM-DD format)
+        placed_at_date = datetime.fromisoformat(reentry["placed_at"]).date()
+        # Verify placed_at matches order's placed_at date
+        if reentry_order.placed_at:
+            assert placed_at_date == reentry_order.placed_at.date()
+        else:
+            # Fallback: should match execution date if placed_at is None
+            time_date = datetime.fromisoformat(reentry["time"]).date()
+            assert placed_at_date == time_date
 
     def test_reentry_detected_by_existing_position(
         self, unified_monitor, positions_repo, orders_repo
@@ -242,7 +258,8 @@ class TestReentryTrackingInDatabase:
             opened_at=datetime.now(),
         )
 
-        # Create second reentry order with a specific execution time to avoid time-based duplicate detection
+        # Create second reentry order with a specific execution time to avoid
+        # time-based duplicate detection
         execution_time = datetime(2024, 1, 2, 10, 0, 0)  # Different day/time from first reentry
         reentry_order = Orders(
             id=2,
@@ -266,13 +283,13 @@ class TestReentryTrackingInDatabase:
         orders_repo.get_by_broker_order_id = Mock(return_value=reentry_order)
 
         # Mock get_by_symbol_for_update to return a fresh position each time
-        # This will be called twice: once before transaction (line 819), once inside transaction (line 970)
-        # Both calls should return the same position (without the new reentry ORDER456)
-        # The duplicate check inside transaction should NOT find ORDER456 in latest_reentries
+        # This will be called twice: once before transaction (line 819), once
+        # inside transaction (line 970). Both calls should return the same
+        # position (without the new reentry ORDER456). The duplicate check
+        # inside transaction should NOT find ORDER456 in latest_reentries.
         # CRITICAL: The position returned must NOT have ORDER456 in reentries array
-        # IMPORTANT: Return a fresh position object each time to avoid list reference issues in CI
-        import copy
-
+        # IMPORTANT: Return a fresh position object each time to avoid list
+        # reference issues in CI
         def get_position_copy():
             # Create a fresh position with a copy of reentries to avoid modifying the original
             return Positions(
@@ -288,7 +305,9 @@ class TestReentryTrackingInDatabase:
                 opened_at=initial_position.opened_at,
             )
 
-        positions_repo.get_by_symbol_for_update = Mock(side_effect=lambda *args, **kwargs: get_position_copy())
+        positions_repo.get_by_symbol_for_update = Mock(
+            side_effect=lambda *args, **kwargs: get_position_copy()
+        )
 
         upsert_call_args = {}
 
@@ -313,8 +332,6 @@ class TestReentryTrackingInDatabase:
         positions_repo.upsert = Mock(side_effect=capture_upsert)
 
         # Mock transaction context manager
-        from unittest.mock import patch
-
         mock_transaction = Mock()
         mock_transaction.__enter__ = Mock(return_value=unified_monitor.positions_repo.db)
         mock_transaction.__exit__ = Mock(return_value=False)
@@ -512,9 +529,208 @@ class TestReentryTrackingInDatabase:
             execution_qty=5.0,
         )
 
-        # Verify initial_entry_price is NOT in upsert call (should be preserved from existing position)
-        # The upsert method should not update initial_entry_price for existing positions
+        # Verify initial_entry_price is NOT in upsert call (should be preserved
+        # from existing position). The upsert method should not update
+        # initial_entry_price for existing positions
         assert (
             "initial_entry_price" not in upsert_call_args
             or upsert_call_args.get("initial_entry_price") is None
         )
+
+    def test_reentry_stores_placed_at_date(self, unified_monitor, positions_repo, orders_repo):
+        """Test that reentry stores placed_at date from order for daily cap check"""
+        # Create initial position
+        initial_position = Positions(
+            id=1,
+            user_id=1,
+            symbol="RELIANCE",
+            quantity=10,
+            avg_price=2500.0,
+            reentry_count=0,
+            reentries=None,
+            initial_entry_price=2500.0,
+            last_reentry_price=None,
+            opened_at=datetime.now(),
+        )
+
+        positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
+
+        # Create reentry order with placed_at date (yesterday)
+        yesterday = datetime.now(IST) - timedelta(days=1)
+        reentry_order = Orders(
+            id=1,
+            user_id=1,
+            symbol="RELIANCE",
+            side="buy",
+            order_type="market",
+            quantity=5,
+            entry_type="reentry",
+            placed_at=yesterday,  # Order placed yesterday
+            order_metadata={
+                "rsi_level": 20,
+                "rsi": 19.5,
+                "price": 2480.0,
+            },
+        )
+
+        orders_repo.get = Mock(return_value=reentry_order)
+        orders_repo.get_by_broker_order_id = Mock(return_value=reentry_order)
+
+        upsert_call_args = {}
+
+        def capture_upsert(**kwargs):
+            upsert_call_args.update(kwargs)
+            return initial_position
+
+        positions_repo.upsert = Mock(side_effect=capture_upsert)
+
+        # Execute reentry (today)
+        unified_monitor._create_position_from_executed_order(
+            order_id="ORDER123",
+            order_info={"symbol": "RELIANCE-EQ", "db_order_id": 1},
+            execution_price=2480.0,
+            execution_qty=5.0,
+        )
+
+        # Verify placed_at is stored correctly
+        reentries = upsert_call_args.get("reentries", [])
+        assert len(reentries) == 1
+        reentry = reentries[0]
+        assert "placed_at" in reentry
+        # Verify placed_at is yesterday's date (order placement date)
+        placed_at_date = datetime.fromisoformat(reentry["placed_at"]).date()
+        assert placed_at_date == yesterday.date()
+        # Verify time is today (execution date)
+        assert "time" in reentry
+        time_dt = datetime.fromisoformat(reentry["time"])
+        # Both dates should be stored
+        assert placed_at_date != time_dt.date()  # Different dates
+
+    def test_reentry_partial_execution_stores_placed_at(
+        self, unified_monitor, positions_repo, orders_repo
+    ):
+        """Test that partial execution still stores placed_at correctly"""
+        # Create initial position
+        initial_position = Positions(
+            id=1,
+            user_id=1,
+            symbol="RELIANCE",
+            quantity=10,
+            avg_price=2500.0,
+            reentry_count=0,
+            reentries=None,
+            initial_entry_price=2500.0,
+            last_reentry_price=None,
+            opened_at=datetime.now(),
+        )
+
+        positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
+
+        # Create reentry order (placed for 10 shares, but only 7 execute)
+        placement_date = datetime.now(IST) - timedelta(days=1)
+        reentry_order = Orders(
+            id=1,
+            user_id=1,
+            symbol="RELIANCE",
+            side="buy",
+            order_type="market",
+            quantity=10,  # Order placed for 10 shares
+            entry_type="reentry",
+            placed_at=placement_date,
+            order_metadata={
+                "rsi_level": 20,
+                "rsi": 19.5,
+                "price": 2480.0,
+            },
+        )
+
+        orders_repo.get = Mock(return_value=reentry_order)
+        orders_repo.get_by_broker_order_id = Mock(return_value=reentry_order)
+
+        upsert_call_args = {}
+
+        def capture_upsert(**kwargs):
+            upsert_call_args.update(kwargs)
+            return initial_position
+
+        positions_repo.upsert = Mock(side_effect=capture_upsert)
+
+        # Execute partial reentry (only 7 shares execute)
+        unified_monitor._create_position_from_executed_order(
+            order_id="ORDER123",
+            order_info={"symbol": "RELIANCE-EQ", "db_order_id": 1},
+            execution_price=2480.0,
+            execution_qty=7.0,  # Partial execution (7 out of 10)
+        )
+
+        # Verify partial execution is tracked correctly
+        reentries = upsert_call_args.get("reentries", [])
+        assert len(reentries) == 1
+        reentry = reentries[0]
+        assert reentry["qty"] == 7  # Partial quantity
+        assert "placed_at" in reentry  # Should still have placed_at
+        # Verify placed_at is from order placement date
+        placed_at_date = datetime.fromisoformat(reentry["placed_at"]).date()
+        assert placed_at_date == placement_date.date()
+
+    def test_reentry_fallback_to_execution_date_if_placed_at_missing(
+        self, unified_monitor, positions_repo, orders_repo
+    ):
+        """Test backward compatibility: falls back to execution date if placed_at is None"""
+        # Create initial position
+        initial_position = Positions(
+            id=1,
+            user_id=1,
+            symbol="RELIANCE",
+            quantity=10,
+            avg_price=2500.0,
+            reentry_count=0,
+            reentries=None,
+            initial_entry_price=2500.0,
+            last_reentry_price=None,
+            opened_at=datetime.now(),
+        )
+
+        positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
+
+        # Create order without placed_at (old format or missing data)
+        reentry_order = Orders(
+            id=1,
+            user_id=1,
+            symbol="RELIANCE",
+            side="buy",
+            order_type="market",
+            quantity=5,
+            entry_type="reentry",
+            placed_at=None,  # Missing placed_at
+            order_metadata={"rsi_level": 20, "rsi": 19.5, "price": 2480.0},
+        )
+
+        orders_repo.get = Mock(return_value=reentry_order)
+        orders_repo.get_by_broker_order_id = Mock(return_value=reentry_order)
+
+        upsert_call_args = {}
+
+        def capture_upsert(**kwargs):
+            upsert_call_args.update(kwargs)
+            return initial_position
+
+        positions_repo.upsert = Mock(side_effect=capture_upsert)
+
+        # Execute reentry
+        unified_monitor._create_position_from_executed_order(
+            order_id="ORDER123",
+            order_info={"symbol": "RELIANCE-EQ", "db_order_id": 1},
+            execution_price=2480.0,
+            execution_qty=5.0,
+        )
+
+        # Verify placed_at falls back to execution date
+        reentries = upsert_call_args.get("reentries", [])
+        assert len(reentries) == 1
+        reentry = reentries[0]
+        assert "placed_at" in reentry  # Should still have placed_at (fallback)
+        # Verify placed_at is execution date (fallback)
+        placed_at_date = datetime.fromisoformat(reentry["placed_at"]).date()
+        time_date = datetime.fromisoformat(reentry["time"]).date()
+        assert placed_at_date == time_date  # Should match execution date (fallback)

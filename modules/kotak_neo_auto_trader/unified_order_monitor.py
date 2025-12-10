@@ -7,9 +7,16 @@ Phase 2: Unified order monitoring implementation.
 Extends SellOrderManager to handle buy order monitoring alongside sell orders.
 """
 
+from datetime import datetime
 from typing import Any
 
 from utils.logger import logger
+
+try:
+    from src.infrastructure.db.timezone_utils import IST, ist_now
+except ImportError:
+    IST = None
+    ist_now = None
 
 try:
     from .sell_engine import SellOrderManager
@@ -67,7 +74,7 @@ class UnifiedOrderMonitor:
         self.user_id = user_id
         self.telegram_notifier = telegram_notifier
 
-        # Track active buy orders {order_id: {'symbol': str, 'quantity': float, 'order_id': str, ...}}
+        # Track active buy orders {order_id: {'symbol': str, 'quantity': float, ...}}
         self.active_buy_orders: dict[str, dict[str, Any]] = {}
 
         # Initialize orders repository if DB is available
@@ -274,7 +281,8 @@ class UnifiedOrderMonitor:
             broker_orders: Optional pre-fetched broker orders list
 
         Returns:
-            Dict with statistics: {'checked': int, 'executed': int, 'rejected': int, 'cancelled': int}
+            Dict with statistics: {'checked': int, 'executed': int, 'rejected': int,
+                'cancelled': int}
         """
         stats = {"checked": 0, "executed": 0, "rejected": 0, "cancelled": 0}
 
@@ -333,7 +341,8 @@ class UnifiedOrderMonitor:
                     # Handle different statuses
                     if status_lower in ["executed", "filled", "complete"]:
                         stats["executed"] += 1
-                        # Edge Case #2: Use fldQty from broker_order if available (partial execution)
+                        # Edge Case #2: Use fldQty from broker_order if available
+                        # (partial execution)
                         filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
                         if filled_qty > 0:
                             # Override execution quantity with actual filled quantity
@@ -420,10 +429,12 @@ class UnifiedOrderMonitor:
                                                 source = "order_report"
                                                 logger.info(
                                                     f"Using fldQty from order_report() for {order_id}: "
-                                                    f"qty={execution_qty}, price={execution_price:.2f}"
+                                                    f"qty={execution_qty}, "
+                                                    f"price={execution_price:.2f}"
                                                 )
 
-                                        # Priority 2: fldQty from order_history() (if not found in order_report)
+                                        # Priority 2: fldQty from order_history()
+                                        # (if not found in order_report)
                                         if execution_qty is None:
                                             history_data = (
                                                 self._get_filled_quantity_from_order_history(
@@ -441,7 +452,8 @@ class UnifiedOrderMonitor:
                                                 source = "order_history"
                                                 logger.info(
                                                     f"Using fldQty from order_history() for {order_id}: "
-                                                    f"qty={execution_qty}, price={execution_price:.2f}"
+                                                    f"qty={execution_qty}, "
+                                                    f"price={execution_price:.2f}"
                                                 )
 
                                         # Priority 3: Holdings quantity (actual broker position)
@@ -463,7 +475,8 @@ class UnifiedOrderMonitor:
                                                 logger.info(
                                                     f"Using holdings quantity for {order_id}: "
                                                     f"qty={execution_qty}, price={execution_price:.2f} "
-                                                    f"(Note: This is total position, not just this order)"
+                                                    f"(Note: This is total position, "
+                                                    f"not just this order)"
                                                 )
 
                                         # Priority 4: DB order quantity (last resort)
@@ -506,7 +519,8 @@ class UnifiedOrderMonitor:
                                             and execution_qty > 0
                                         ):
                                             # Wrap order execution and position creation in transaction
-                                            # Both repositories share the same db_session, so one transaction covers both
+                                            # Both repositories share the same db_session, so one
+                                            # transaction covers both
                                             with transaction(self.orders_repo.db):
                                                 self.orders_repo.mark_executed(
                                                     db_order,
@@ -516,11 +530,13 @@ class UnifiedOrderMonitor:
                                                 )
                                                 logger.info(
                                                     f"Reconciled order {order_id} (source: {source}): "
-                                                    f"executed at Rs {execution_price:.2f}, qty {execution_qty}"
+                                                    f"executed at Rs {execution_price:.2f}, "
+                                                    f"qty {execution_qty}"
                                                 )
 
                                                 # Create/update position (within same transaction)
-                                                # SQLAlchemy will use savepoints for nested transactions automatically
+                                                # SQLAlchemy will use savepoints for nested
+                                                # transactions automatically
                                                 self._create_position_from_executed_order(
                                                     order_id,
                                                     order_info,
@@ -533,7 +549,8 @@ class UnifiedOrderMonitor:
                                         else:
                                             logger.warning(
                                                 f"Holdings found for {base_symbol} but missing "
-                                                f"price/qty data - cannot reconcile order {order_id}"
+                                                f"price/qty data - cannot reconcile order "
+                                                f"{order_id}"
                                             )
                                     except Exception as e:
                                         logger.error(
@@ -545,7 +562,8 @@ class UnifiedOrderMonitor:
                                 placed_at = order_info.get("placed_at")
                                 if placed_at:
                                     logger.debug(
-                                        f"Buy order {order_id} not found in broker orders or holdings"
+                                        f"Buy order {order_id} not found in broker orders "
+                                        f"or holdings"
                                     )
                         except Exception as e:
                             logger.warning(
@@ -606,7 +624,8 @@ class UnifiedOrderMonitor:
             # Map broker status to our status
             if status in ["executed", "filled", "complete"]:
                 execution_price = OrderFieldExtractor.get_price(broker_order)
-                # Edge Case #2: Use fldQty (filled quantity) if available, otherwise use order quantity
+                # Edge Case #2: Use fldQty (filled quantity) if available,
+                # otherwise use order quantity
                 filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
                 if filled_qty > 0:
                     execution_qty = float(filled_qty)
@@ -741,8 +760,6 @@ class UnifiedOrderMonitor:
             return False
 
         try:
-            from datetime import datetime
-
             datetime.fromisoformat(time_str)
         except (ValueError, TypeError) as e:
             logger.error(f"Invalid time format in reentry data: {time_str} - {e}")
@@ -828,13 +845,9 @@ class UnifiedOrderMonitor:
                 return
 
             # Calculate execution time (use current time if not available)
-            try:
-                from src.infrastructure.db.timezone_utils import ist_now
-
+            if ist_now:
                 execution_time = ist_now()
-            except ImportError:
-                from datetime import datetime
-
+            else:
                 execution_time = datetime.now()
             if db_order and hasattr(db_order, "filled_at") and db_order.filled_at:
                 execution_time = db_order.filled_at
@@ -860,8 +873,19 @@ class UnifiedOrderMonitor:
                 # Reentry tracking: Detect if this is a reentry and update reentry fields
                 is_reentry = False
                 reentry_count = existing_pos.reentry_count or 0
-                # Create a copy to avoid modifying the original list (important for duplicate check later)
-                reentries_array = list(existing_pos.reentries) if existing_pos.reentries else []
+                # Enhanced Hybrid Approach: Handle both old format (list) and
+                # new format (dict with _cycle_metadata)
+                if existing_pos.reentries:
+                    if isinstance(existing_pos.reentries, dict):
+                        # New format: extract reentries array from wrapper structure
+                        reentries_array = list(existing_pos.reentries.get("reentries", []))
+                    elif isinstance(existing_pos.reentries, list):
+                        # Old format: reentries is directly a list
+                        reentries_array = list(existing_pos.reentries)
+                    else:
+                        reentries_array = []
+                else:
+                    reentries_array = []
                 last_reentry_price = existing_pos.last_reentry_price
                 reentry_data = None  # Initialize to None, will be set if is_reentry is True
 
@@ -872,7 +896,34 @@ class UnifiedOrderMonitor:
                     is_reentry = True
 
                 if is_reentry:
+                    # Extract placed_at date for daily cap check (fixes issue where execution
+                    # date is used instead of placement date for daily cap)
+                    placed_at_date = None
+                    if db_order and db_order.placed_at:
+                        try:
+                            # Normalize to IST for consistent date extraction
+                            placed_at_dt = db_order.placed_at
+                            if placed_at_dt.tzinfo is None:
+                                # Naive datetime - assume IST
+                                placed_at_dt = placed_at_dt.replace(tzinfo=IST)
+                            elif placed_at_dt.tzinfo != IST:
+                                # Different timezone - convert to IST
+                                placed_at_dt = placed_at_dt.astimezone(IST)
+                            placed_at_date = placed_at_dt.date().isoformat()
+                        except Exception as e:
+                            logger.warning(
+                                f"Error extracting placed_at date for reentry {order_id}: {e}. "
+                                f"Falling back to execution date."
+                            )
+                            # Fallback to execution date
+                            placed_at_date = execution_time.date().isoformat()
+                    else:
+                        # Fallback: use execution date if placed_at not available
+                        # (backward compatibility for orders without placed_at)
+                        placed_at_date = execution_time.date().isoformat()
+
                     # Extract reentry data from order metadata or construct from execution data
+                    # Enhanced Hybrid Approach: Include cycle number from order metadata
                     reentry_data = None
                     if db_order and db_order.order_metadata:
                         metadata = (
@@ -881,9 +932,16 @@ class UnifiedOrderMonitor:
                             else {}
                         )
                         # Extract reentry fields from metadata
-                        reentry_level = metadata.get("rsi_level") or metadata.get("level")
+                        reentry_level = (
+                            metadata.get("rsi_level")
+                            or metadata.get("level")
+                            or metadata.get("reentry_level")
+                        )
                         reentry_rsi = metadata.get("rsi") or metadata.get("rsi10") or entry_rsi
                         reentry_price = metadata.get("price") or execution_price
+                        reentry_cycle = metadata.get(
+                            "cycle"
+                        )  # Enhanced Hybrid Approach: Get cycle number
 
                         # Construct reentry data matching trade history structure
                         reentry_data = {
@@ -891,18 +949,36 @@ class UnifiedOrderMonitor:
                             "level": int(reentry_level) if reentry_level is not None else None,
                             "rsi": float(reentry_rsi) if reentry_rsi is not None else None,
                             "price": float(reentry_price),
-                            "time": execution_time.isoformat(),
+                            "time": execution_time.isoformat(),  # Execution time
+                            "placed_at": placed_at_date,  # Placement date (for daily cap check)
                             "order_id": order_id,  # Track which order created this reentry
+                            "cycle": (
+                                int(reentry_cycle) if reentry_cycle is not None else None
+                            ),  # Enhanced Hybrid Approach: Store cycle number
                         }
                     else:
                         # Fallback: construct minimal reentry data from execution
+                        # Try to get cycle from existing position metadata
+                        reentry_cycle = None
+                        if existing_pos and existing_pos.reentries:
+                            # Get cycle from position metadata (if available)
+                            # Enhanced Hybrid Approach: Extract cycle from _cycle_metadata structure
+                            if isinstance(existing_pos.reentries, dict):
+                                cycle_meta = existing_pos.reentries.get("_cycle_metadata", {})
+                                if isinstance(cycle_meta, dict):
+                                    reentry_cycle = cycle_meta.get("current_cycle")
+
                         reentry_data = {
                             "qty": int(execution_qty),
                             "level": None,
                             "rsi": float(entry_rsi) if entry_rsi else None,
                             "price": float(execution_price),
-                            "time": execution_time.isoformat(),
+                            "time": execution_time.isoformat(),  # Execution time
+                            "placed_at": placed_at_date,  # Placement date (for daily cap check)
                             "order_id": order_id,  # Track which order created this reentry
+                            "cycle": (
+                                int(reentry_cycle) if reentry_cycle is not None else None
+                            ),  # Enhanced Hybrid Approach: Store cycle number
                         }
 
                     # Improvement: Validate reentry data before writing
@@ -924,8 +1000,9 @@ class UnifiedOrderMonitor:
                         if not isinstance(reentries_array, list):
                             reentries_array = []
 
-                        # Improvement: Check for duplicate reentry (same order_id or very similar timestamp+qty)
-                        # This prevents duplicate entries if order is processed multiple times
+                        # Improvement: Check for duplicate reentry (same order_id or very
+                        # similar timestamp+qty). This prevents duplicate entries if order
+                        # is processed multiple times
                         existing_reentry = next(
                             (
                                 r
@@ -934,15 +1011,16 @@ class UnifiedOrderMonitor:
                                 or (
                                     r.get("time") == reentry_data["time"]
                                     and r.get("qty") == reentry_data["qty"]
-                                    and abs(r.get("price", 0) - reentry_data["price"]) < 0.01
+                                    and abs(r.get("price", 0) - reentry_data["price"])
+                                    < 0.01  # noqa: PLR2004
                                 )
                             ),
                             None,
                         )
                         if existing_reentry:
                             logger.warning(
-                                f"Duplicate reentry detected for {base_symbol} (order_id: {order_id}). "
-                                f"Skipping to prevent duplicate entry."
+                                f"Duplicate reentry detected for {base_symbol} "
+                                f"(order_id: {order_id}). Skipping to prevent duplicate entry."
                             )
                             # Don't update reentry fields, but still update quantity and avg_price
                             is_reentry = False
@@ -980,19 +1058,28 @@ class UnifiedOrderMonitor:
                         logger.warning(
                             f"Reentry order execution aborted for {base_symbol}: "
                             f"Position was closed at {current_position.closed_at} "
-                            f"while reentry was being processed. Skipping update to prevent reopening closed position."
+                            f"while reentry was being processed. "
+                            f"Skipping update to prevent reopening closed position."
                         )
                         # Transaction will rollback automatically
                         return
 
                     # Flaw #8 Fix: Re-check for duplicate reentry just before updating
-                    # This prevents duplicate entries if two processes process the same order concurrently
-                    # We already have the locked read from the closed_at check above
+                    # This prevents duplicate entries if two processes process the same
+                    # order concurrently. We already have the locked read from the
+                    # closed_at check above
                     if is_reentry and current_position and reentry_data:
                         # Get latest reentries array from the locked position
-                        latest_reentries = (
-                            current_position.reentries if current_position.reentries else []
-                        )
+                        # Enhanced Hybrid Approach: Handle both old and new format
+                        if current_position.reentries:
+                            if isinstance(current_position.reentries, dict):
+                                latest_reentries = current_position.reentries.get("reentries", [])
+                            elif isinstance(current_position.reentries, list):
+                                latest_reentries = current_position.reentries
+                            else:
+                                latest_reentries = []
+                        else:
+                            latest_reentries = []
 
                         # Re-check for duplicate using latest data
                         # Only check if reentry_data is defined (it should be if is_reentry is True)
@@ -1006,7 +1093,8 @@ class UnifiedOrderMonitor:
                                     or (
                                         r.get("time") == reentry_data["time"]
                                         and r.get("qty") == reentry_data["qty"]
-                                        and abs(r.get("price", 0) - reentry_data["price"]) < 0.01
+                                        and abs(r.get("price", 0) - reentry_data["price"])
+                                        < 0.01  # noqa: PLR2004
                                     )
                                 ),
                                 None,
@@ -1014,8 +1102,9 @@ class UnifiedOrderMonitor:
 
                         if duplicate_found:
                             logger.warning(
-                                f"Duplicate reentry detected for {base_symbol} (order_id: {order_id}) "
-                                f"during final check. Another process may have already added this reentry. "
+                                f"Duplicate reentry detected for {base_symbol} "
+                                f"(order_id: {order_id}) during final check. "
+                                f"Another process may have already added this reentry. "
                                 f"Skipping entire update to prevent duplicate entry and double-counting."
                             )
                             # If duplicate found, another process already processed this order
@@ -1025,9 +1114,10 @@ class UnifiedOrderMonitor:
                             return
 
                     # Flaw #9 Fix: Try broker API call BEFORE updating database
-                    # If broker API fails, we still update position (primary operation - order executed)
-                    # This prevents losing the position update, but creates temporary inconsistency
-                    # The sell order update will be retried later via periodic mismatch check (Flaw #7 fix)
+                    # If broker API fails, we still update position (primary operation -
+                    # order executed). This prevents losing the position update, but
+                    # creates temporary inconsistency. The sell order update will be
+                    # retried later via periodic mismatch check (Flaw #7 fix)
                     sell_order_update_success = True
                     if new_qty > existing_qty and self.sell_manager:
                         try:
@@ -1043,14 +1133,15 @@ class UnifiedOrderMonitor:
                                 if existing_order_id and new_qty != existing_order_qty:
                                     if new_qty > existing_order_qty:
                                         logger.info(
-                                            f"Reentry detected for {base_symbol}: Updating sell order quantity "
-                                            f"from {existing_order_qty} to {new_qty} (Order ID: {existing_order_id})"
+                                            f"Reentry detected for {base_symbol}: "
+                                            f"Updating sell order quantity from {existing_order_qty} "
+                                            f"to {new_qty} (Order ID: {existing_order_id})"
                                         )
                                     else:
                                         logger.info(
-                                            f"Sell order quantity mismatch for {base_symbol}: Position={new_qty}, "
-                                            f"Sell order={existing_order_qty}. Updating to match position "
-                                            f"(Order ID: {existing_order_id})"
+                                            f"Sell order quantity mismatch for {base_symbol}: "
+                                            f"Position={new_qty}, Sell order={existing_order_qty}. "
+                                            f"Updating to match position (Order ID: {existing_order_id})"
                                         )
 
                                     # Flaw #9 Fix: Try broker API call BEFORE updating database
@@ -1066,22 +1157,45 @@ class UnifiedOrderMonitor:
                                     if sell_order_update_success:
                                         logger.info(
                                             f"Successfully updated sell order for {base_symbol}: "
-                                            f"{existing_order_qty} -> {new_qty} shares @ Rs {existing_order_price:.2f}"
+                                            f"{existing_order_qty} -> {new_qty} shares "
+                                            f"@ Rs {existing_order_price:.2f}"
                                         )
                                     else:
                                         logger.warning(
-                                            f"Failed to update sell order for {base_symbol} via broker API. "
-                                            f"Position will still be updated (primary operation - order executed). "
-                                            f"Sell order will be retried later via periodic mismatch check (Flaw #7 fix)."
+                                            f"Failed to update sell order for {base_symbol} "
+                                            f"via broker API. Position will still be updated "
+                                            f"(primary operation - order executed). "
+                                            f"Sell order will be retried later via periodic "
+                                            f"mismatch check (Flaw #7 fix)."
                                         )
                         except Exception as e:
                             # Broker API call failed - log warning but continue with position update
                             logger.warning(
                                 f"Error updating sell order after reentry for {base_symbol}: {e}. "
                                 f"Position will still be updated (primary operation - order executed). "
-                                f"Sell order will be retried later via periodic mismatch check (Flaw #7 fix)."
+                                f"Sell order will be retried later via periodic mismatch check "
+                                f"(Flaw #7 fix)."
                             )
                             sell_order_update_success = False
+
+                    # Enhanced Hybrid Approach: Preserve cycle metadata structure when
+                    # updating reentries
+                    reentries_to_store = None
+                    if is_reentry:
+                        # Check if existing reentries has cycle metadata structure
+                        if (
+                            isinstance(existing_pos.reentries, dict)
+                            and "_cycle_metadata" in existing_pos.reentries
+                        ):
+                            # Preserve existing cycle metadata structure
+                            reentries_to_store = {
+                                "_cycle_metadata": existing_pos.reentries["_cycle_metadata"],
+                                "reentries": reentries_array,
+                            }
+                        else:
+                            # Old format or no metadata - store as list (backward compatible)
+                            # Cycle metadata will be added by _determine_reentry_level on next check
+                            reentries_to_store = reentries_array
 
                     self.positions_repo.upsert(
                         user_id=self.user_id,
@@ -1091,7 +1205,7 @@ class UnifiedOrderMonitor:
                         opened_at=existing_pos.opened_at,  # Preserve original open time
                         entry_rsi=entry_rsi_to_set,  # Only set if not already set
                         reentry_count=reentry_count if is_reentry else None,
-                        reentries=reentries_array if is_reentry else None,
+                        reentries=reentries_to_store,
                         last_reentry_price=last_reentry_price if is_reentry else None,
                         auto_commit=False,  # Transaction handles commit
                     )
@@ -1115,13 +1229,14 @@ class UnifiedOrderMonitor:
                                     user_id=self.user_id,
                                     symbol=base_symbol,
                                     reentry_count=actual_count,
-                                    # Preserve other fields including the newly set last_reentry_price
+                                    # Preserve other fields including the newly set
+                                    # last_reentry_price
                                     quantity=updated_position.quantity,
                                     avg_price=updated_position.avg_price,
                                     opened_at=updated_position.opened_at,
                                     entry_rsi=updated_position.entry_rsi,
                                     reentries=updated_position.reentries,
-                                    last_reentry_price=last_reentry_price,  # Use the value we just set, not from DB
+                                    last_reentry_price=last_reentry_price,  # Use value we set
                                     auto_commit=False,  # Transaction handles commit
                                 )
                                 # Refresh position after fix
@@ -1325,12 +1440,13 @@ class UnifiedOrderMonitor:
             return 0
 
         try:
-            from datetime import datetime
-
-            from src.infrastructure.db.timezone_utils import IST, ist_now
-
             # Get today's date
-            today = ist_now().date()
+            local_ist_now = ist_now
+            if local_ist_now is None:
+                from src.infrastructure.db.timezone_utils import (
+                    ist_now as local_ist_now,  # noqa: PLC0415
+                )
+            today = local_ist_now().date()
             today_start = datetime.combine(today, datetime.min.time()).replace(
                 tzinfo=ist_now().tzinfo
             )
