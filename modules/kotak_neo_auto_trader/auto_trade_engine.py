@@ -224,6 +224,8 @@ class AutoTradeEngine:
             orders=None,  # Will be set after login
             auth=self.auth,
             strategy_config=self.strategy_config,
+            orders_repo=self.orders_repo if hasattr(self, "orders_repo") else None,
+            user_id=self.user_id,
             enable_caching=True,
         )
 
@@ -4801,7 +4803,6 @@ class AutoTradeEngine:
                 if not ind:
                     logger.warning(f"Skipping {symbol}: missing indicators for re-entry evaluation")
                     summary["skipped_missing_data"] += 1
-                    summary["skipped"] += 1  # Increment general counter
                     continue
 
                 current_rsi = ind.get("rsi10")
@@ -4811,7 +4812,6 @@ class AutoTradeEngine:
                 if current_rsi is None or current_price is None:
                     logger.warning(f"Skipping {symbol}: invalid indicators (RSI or price missing)")
                     summary["skipped_missing_data"] += 1
-                    summary["skipped"] += 1  # Increment general counter
                     continue
 
                 # Determine next re-entry level based on entry RSI
@@ -4875,7 +4875,8 @@ class AutoTradeEngine:
 
                 if next_level is None:
                     logger.debug(
-                        f"No re-entry opportunity for {symbol} (entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})"
+                        f"No re-entry opportunity for {symbol} "
+                        f"(entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})"
                     )
                     summary["skipped_invalid_rsi"] += 1
                     continue
@@ -4887,28 +4888,30 @@ class AutoTradeEngine:
 
                 logger.info(
                     f"Re-entry opportunity for {symbol}: entry_rsi={entry_rsi:.2f}, "
-                    f"current_rsi={current_rsi:.2f}, next_level={next_level}, cycle={current_cycle}, is_reset={is_reset}"
+                    f"current_rsi={current_rsi:.2f}, next_level={next_level}, "
+                    f"cycle={current_cycle}, is_reset={is_reset}"
                 )
 
                 # Check if re-entry at this level already exists in current cycle
-                # Enhanced Hybrid Approach: Now checks by cycle number, allowing same level after reset
+                # Enhanced Hybrid Approach: Checks by cycle number, allowing same level after reset
                 # Fix Issue 1: Pass allow_reset=True when reset is detected, regardless of level
                 if self.has_reentry_at_level(symbol, next_level, allow_reset=is_reset):
                     logger.info(
                         f"Skipping {symbol}: Re-entry at level {next_level} (RSI < {next_level}) "
-                        f"already exists in cycle {current_cycle}. Next re-entry should be at a different level or after reset."
+                        f"already exists in cycle {current_cycle}. "
+                        f"Next re-entry should be at a different level or after reset."
                     )
                     summary["skipped_duplicate_level"] = (
                         summary.get("skipped_duplicate_level", 0) + 1
                     )
                     continue
 
-                # Check for duplicates (only active buy orders, NOT holdings - reentries allow buying more)
+                # Check for duplicates (only active buy orders, NOT holdings)
+                # Reentries allow buying more of existing position
                 base_symbol = self.parse_symbol_for_broker(ticker)
                 if not base_symbol:
                     logger.warning(f"Could not parse broker symbol for {symbol}")
                     summary["skipped_missing_data"] += 1
-                    summary["skipped"] += 1  # Increment general counter
                     continue
 
                 # Resolve symbol via scrip master (single source of truth)
@@ -4919,23 +4922,22 @@ class AutoTradeEngine:
                         f"Failed to resolve symbol {base_symbol} via scrip master for re-entry: {e}"
                     )
                     summary["skipped_missing_data"] += 1
-                    summary["skipped"] += 1  # Increment general counter
                     continue
 
-                # Check for active buy orders only (reentries should allow buying more of existing position)
+                # Check for active buy orders only
+                # Reentries allow buying more of existing position
                 if self.order_validation_service:
                     is_duplicate, duplicate_reason = (
                         self.order_validation_service.check_duplicate_order(
                             broker_symbol,
                             check_active_buy_order=True,
                             check_holdings=False,  # Don't check holdings for reentries
-                            allow_reentry=True,  # Allow reentries (buying more of existing position)
+                            allow_reentry=True,  # Allow reentries (buying more)
                         )
                     )
                     if is_duplicate:
                         logger.info(f"Skipping {symbol}: {duplicate_reason}")
                         summary["skipped_duplicates"] += 1
-                        summary["skipped"] += 1  # Increment general counter
                         continue
 
                 # Calculate execution capital and quantity
@@ -4947,14 +4949,14 @@ class AutoTradeEngine:
                 if qty <= 0:
                     logger.warning(f"Skipping {symbol}: invalid quantity ({qty})")
                     summary["skipped_invalid_qty"] += 1
-                    summary["skipped"] += 1  # Increment general counter
                     continue
 
                 # Check balance and adjust quantity if needed
                 affordable_qty = self.get_affordable_qty(current_price)
                 if affordable_qty < qty:
                     logger.warning(
-                        f"Insufficient balance for {symbol}: requested={qty}, affordable={affordable_qty}"
+                        f"Insufficient balance for {symbol}: "
+                        f"requested={qty}, affordable={affordable_qty}"
                     )
                     qty = affordable_qty
                     if qty <= 0:
@@ -5023,10 +5025,17 @@ class AutoTradeEngine:
                 logger.error(f"Error checking re-entry for {symbol}: {e}", exc_info=True)
                 continue
 
+        skipped_total = (
+            summary["skipped_no_position"]
+            + summary["skipped_duplicates"]
+            + summary["skipped_invalid_rsi"]
+            + summary["skipped_missing_data"]
+            + summary["skipped_invalid_qty"]
+        )
         logger.info(
             f"Re-entry check complete: attempted={summary['attempted']}, "
             f"placed={summary['placed']}, failed_balance={summary['failed_balance']}, "
-            f"skipped={summary['skipped_no_position'] + summary['skipped_duplicates'] + summary['skipped_invalid_rsi'] + summary['skipped_missing_data'] + summary['skipped_invalid_qty']}"
+            f"skipped={skipped_total}"
         )
 
         return summary

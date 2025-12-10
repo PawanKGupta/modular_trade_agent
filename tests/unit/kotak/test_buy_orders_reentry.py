@@ -415,10 +415,13 @@ class TestPlaceReentryOrders:
         mock_position.symbol = "RELIANCE"
         mock_position.entry_rsi = 25.0
         mock_position.closed_at = None
+        mock_position.reentries = None  # No re-entries yet
 
         # Mock positions repository
         mock_positions_repo = Mock()
         mock_positions_repo.list.return_value = [mock_position]
+        # Mock get_by_symbol for has_reentry_at_level() check
+        mock_positions_repo.get_by_symbol.return_value = mock_position
         engine.positions_repo = mock_positions_repo
         engine.user_id = 1
 
@@ -630,10 +633,13 @@ class TestPlaceReentryOrders:
         mock_position.symbol = "RELIANCE"
         mock_position.entry_rsi = 25.0
         mock_position.closed_at = None
+        mock_position.reentries = None  # No re-entries yet
 
         # Mock positions repository
         mock_positions_repo = Mock()
         mock_positions_repo.list.return_value = [mock_position]
+        # Mock get_by_symbol for has_reentry_at_level() check
+        mock_positions_repo.get_by_symbol.return_value = mock_position
         engine.positions_repo = mock_positions_repo
         engine.user_id = 1
 
