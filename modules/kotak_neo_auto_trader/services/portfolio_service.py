@@ -82,6 +82,8 @@ def get_portfolio_service(  # noqa: PLR0913
     orders: KotakNeoOrders | None = None,
     auth: KotakNeoAuth | None = None,
     strategy_config=None,
+    orders_repo=None,
+    user_id: int | None = None,
     enable_caching: bool = True,
     cache_ttl: int = 120,
 ) -> "PortfolioService":
@@ -93,6 +95,8 @@ def get_portfolio_service(  # noqa: PLR0913
         orders: KotakNeoOrders instance (optional, can be set later)
         auth: KotakNeoAuth instance (optional, for 2FA handling)
         strategy_config: StrategyConfig instance (optional, for portfolio limits)
+        orders_repo: OrdersRepository instance (optional, for database order checks)
+        user_id: User ID (optional, for database order checks)
         enable_caching: Enable caching (default: True)
         cache_ttl: Cache TTL in seconds (default: 120 / 2 minutes)
 
@@ -107,6 +111,8 @@ def get_portfolio_service(  # noqa: PLR0913
             orders=orders,
             auth=auth,
             strategy_config=strategy_config,
+            orders_repo=orders_repo,
+            user_id=user_id,
             enable_caching=enable_caching,
             cache_ttl=cache_ttl,
         )
@@ -120,6 +126,10 @@ def get_portfolio_service(  # noqa: PLR0913
         _portfolio_service_instance.auth = auth
     if strategy_config is not None:
         _portfolio_service_instance.strategy_config = strategy_config
+    if orders_repo is not None:
+        _portfolio_service_instance.orders_repo = orders_repo
+    if user_id is not None:
+        _portfolio_service_instance.user_id = user_id
 
     return _portfolio_service_instance
 
@@ -141,6 +151,8 @@ class PortfolioService:
         orders: KotakNeoOrders | None = None,
         auth: KotakNeoAuth | None = None,
         strategy_config=None,
+        orders_repo=None,
+        user_id: int | None = None,
         enable_caching: bool = True,
         cache_ttl: int = 120,
     ):
@@ -152,6 +164,8 @@ class PortfolioService:
             orders: KotakNeoOrders instance
             auth: KotakNeoAuth instance (for 2FA handling)
             strategy_config: StrategyConfig instance (for portfolio limits)
+            orders_repo: OrdersRepository instance (optional, for database order checks)
+            user_id: User ID (optional, for database order checks)
             enable_caching: Enable caching (default: True)
             cache_ttl: Cache TTL in seconds (default: 120 / 2 minutes)
         """
@@ -159,6 +173,8 @@ class PortfolioService:
         self.orders = orders
         self.auth = auth
         self.strategy_config = strategy_config
+        self.orders_repo = orders_repo
+        self.user_id = user_id
         self.enable_caching = enable_caching
         self._cache = PortfolioCache(ttl_seconds=cache_ttl) if enable_caching else None
 
@@ -291,6 +307,12 @@ class PortfolioService:
 
         Replaces: AutoTradeEngine.current_symbols_in_portfolio()
 
+        Includes:
+        - Holdings from broker API
+        - Pending orders from broker API
+        - ONGOING orders from database (executed orders that may not be in broker holdings yet)
+        - PENDING orders from database (if broker API doesn't return them)
+
         Args:
             include_pending: Include pending BUY orders (default: True)
 
@@ -299,7 +321,7 @@ class PortfolioService:
         """
         symbols = set(self._fetch_holdings_symbols())
 
-        # Include pending BUY orders if requested
+        # Include pending BUY orders from broker API if requested
         if include_pending and self.orders:
             try:
                 pend = self.orders.get_pending_orders() or []
@@ -310,7 +332,34 @@ class PortfolioService:
                         if sym:
                             symbols.add(sym)
             except Exception as e:
-                logger.warning(f"Failed to get pending orders: {e}")
+                logger.warning(f"Failed to get pending orders from broker API: {e}")
+
+        # CRITICAL FIX: Also include database orders (ONGOING and PENDING)
+        # This ensures we count executed orders that may not appear in broker holdings yet
+        # and pending orders that broker API might not return
+        if include_pending and self.orders_repo and self.user_id:
+            try:
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                # Get all buy orders from database with ONGOING or PENDING status
+                db_orders = self.orders_repo.list(self.user_id)
+                for order in db_orders:
+                    if order.side == "buy" and order.status in {
+                        DbOrderStatus.ONGOING,  # Executed orders (may not be in broker holdings yet)
+                        DbOrderStatus.PENDING,  # Pending orders (if broker API doesn't return them)
+                    }:
+                        # Normalize symbol (remove -EQ, -BE, etc. suffixes)
+                        sym = (
+                            order.symbol.upper()
+                            .replace("-EQ", "")
+                            .replace("-BE", "")
+                            .replace("-BL", "")
+                            .replace("-BZ", "")
+                        )
+                        if sym:
+                            symbols.add(sym)
+            except Exception as e:
+                logger.warning(f"Failed to get orders from database: {e}")
 
         return sorted(symbols)
 
