@@ -24,6 +24,7 @@ services:
     environment:
       - DB_URL=sqlite:///./data/app.db
       - TZ=Asia/Kolkata
+      - RUN_UNIFIED_IN_API=false
       # Admin user auto-creation (only on first deployment when DB is empty)
       # Set ADMIN_EMAIL, ADMIN_PASSWORD, and ADMIN_NAME in .env file
 

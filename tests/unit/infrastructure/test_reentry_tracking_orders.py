@@ -117,8 +117,10 @@ class TestReentryTrackingInOrders:
         orders_repo.db.commit()
 
         # Create reentry orders (should work now since initial is CLOSED)
+        # Mark each reentry as CLOSED after creation to allow next reentry
+        # (Duplicate prevention blocks new orders when PENDING/ONGOING order exists)
         for i in range(3):
-            orders_repo.create_amo(
+            reentry_order = orders_repo.create_amo(
                 user_id=user_id,
                 symbol="RELIANCE",
                 side="buy",
@@ -128,10 +130,13 @@ class TestReentryTrackingInOrders:
                 entry_type="reentry",
                 order_metadata={"reentry_index": i + 1},
             )
+            # Mark as CLOSED to allow next reentry order
+            reentry_order.status = OrderStatus.CLOSED
+            orders_repo.db.commit()
 
         # Query all orders
         all_orders = orders_repo.list(user_id)
-        assert len(all_orders) == 4
+        assert len(all_orders) == 4  # initial (closed) + 3 reentry orders
 
         # Query reentry orders only
         reentry_orders = [o for o in all_orders if o.entry_type == "reentry"]
@@ -171,7 +176,7 @@ class TestReentryTrackingInOrders:
         assert metadata["rsi"] == 29.5
 
     def test_reentry_orders_blocked_when_initial_order_ongoing(self, orders_repo, user_id):
-        """Test that reentry orders are blocked when initial order is ONGOING (duplicate prevention)"""
+        """Test that reentry orders are blocked when initial order is ONGOING"""
         # Create initial order
         initial_order = orders_repo.create_amo(
             user_id=user_id,

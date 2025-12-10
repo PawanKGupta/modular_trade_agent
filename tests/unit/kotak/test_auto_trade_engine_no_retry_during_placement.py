@@ -11,6 +11,10 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from config.strategy_config import StrategyConfig
+from modules.kotak_neo_auto_trader.auto_trade_engine import (
+    AutoTradeEngine,
+    Recommendation,
+)
 
 
 @pytest.fixture
@@ -36,8 +40,6 @@ def strategy_config():
 @pytest.fixture
 def auto_trade_engine(mock_auth, strategy_config):
     """Create AutoTradeEngine instance"""
-    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
-
     with patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth") as mock_auth_class:
         mock_auth_class.return_value = mock_auth
 
@@ -57,6 +59,19 @@ def auto_trade_engine(mock_auth, strategy_config):
         engine.telegram_notifier = MagicMock()
         engine.telegram_notifier.enabled = True
 
+        # Mock scrip master for symbol resolution
+        mock_scrip_master = Mock()
+        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
+
+        def mock_get_instrument(symbol, exchange="NSE"):
+            # Return broker symbol with suffix
+            if symbol.upper() == "RELIANCE":
+                return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
+            return {"token": 12346, "symbol": f"{symbol.upper()}-EQ", "exchange": exchange}
+
+        mock_scrip_master.get_instrument = mock_get_instrument
+        engine.scrip_master = mock_scrip_master
+
         return engine
 
 
@@ -65,8 +80,6 @@ class TestNoRetryDuringPlacement:
 
     def test_place_new_entries_does_not_call_get_failed_orders(self, auto_trade_engine):
         """Test that place_new_entries does not call _get_failed_orders"""
-        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
-
         # Mock recommendation
         rec = Recommendation(
             ticker="RELIANCE.NS",
@@ -142,8 +155,6 @@ class TestNoRetryDuringPlacement:
         self, auto_trade_engine
     ):
         """Test that insufficient balance creates RETRY_PENDING order in DB"""
-        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
-
         # Mock recommendation
         rec = Recommendation(
             ticker="RELIANCE.NS",
@@ -213,13 +224,11 @@ class TestNoRetryDuringPlacement:
         # Verify _add_failed_order was called to create RETRY_PENDING order
         auto_trade_engine._add_failed_order.assert_called_once()
         call_args = auto_trade_engine._add_failed_order.call_args[0][0]
-        assert call_args["symbol"] == "RELIANCE"
+        assert call_args["symbol"] == "RELIANCE-EQ"  # Now uses resolved broker symbol
         assert call_args["reason"] == "insufficient_balance"
 
     def test_place_new_entries_summary_no_retried_field(self, auto_trade_engine):
         """Test that summary no longer includes 'retried' field"""
-        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
-
         # Mock recommendation
         rec = Recommendation(
             ticker="RELIANCE.NS",
