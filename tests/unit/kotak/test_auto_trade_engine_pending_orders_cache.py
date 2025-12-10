@@ -82,6 +82,22 @@ class TestPendingOrdersCacheOptimization:
             return_value={"order_id": "NEW_ORD001", "status": "PENDING"}
         )
 
+        # Mock scrip master for symbol resolution
+        mock_scrip_master = Mock()
+        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ", "TCS": "TCS-EQ"}  # Truthy value
+
+        def mock_get_instrument(symbol, exchange="NSE"):
+            # Return broker symbol with suffix
+            symbol_upper = symbol.upper()
+            if symbol_upper == "RELIANCE":
+                return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
+            elif symbol_upper == "TCS":
+                return {"token": 12346, "symbol": "TCS-EQ", "exchange": exchange}
+            return {"token": 12347, "symbol": f"{symbol_upper}-EQ", "exchange": exchange}
+
+        mock_scrip_master.get_instrument = mock_get_instrument
+        engine.scrip_master = mock_scrip_master
+
         # Create multiple recommendations to test caching
         recommendations = [
             Recommendation(
@@ -93,7 +109,7 @@ class TestPendingOrdersCacheOptimization:
         ]
 
         # Call place_new_entries
-        result = engine.place_new_entries(recommendations)
+        engine.place_new_entries(recommendations)
 
         # CRITICAL: get_pending_orders() should be called ONLY ONCE
         # regardless of how many recommendations we process
@@ -178,6 +194,19 @@ class TestPendingOrdersCacheOptimization:
             return_value={"order_id": "NEW_ORD001", "status": "PENDING"}
         )
 
+        # Mock scrip master for symbol resolution
+        mock_scrip_master = Mock()
+        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
+
+        def mock_get_instrument(symbol, exchange="NSE"):
+            # Return broker symbol with suffix
+            if symbol.upper() == "RELIANCE":
+                return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
+            return {"token": 12346, "symbol": f"{symbol.upper()}-EQ", "exchange": exchange}
+
+        mock_scrip_master.get_instrument = mock_get_instrument
+        engine.scrip_master = mock_scrip_master
+
         # Create recommendation
         recommendations = [
             Recommendation(
@@ -235,7 +264,9 @@ class TestPendingOrdersCacheOptimization:
         engine.orders.get_pending_orders = Mock(return_value=[])
 
         # Create real PortfolioService with cache enabled
-        from modules.kotak_neo_auto_trader.services.portfolio_service import PortfolioService
+        from modules.kotak_neo_auto_trader.services.portfolio_service import (  # noqa: PLC0415
+            PortfolioService,
+        )
 
         portfolio_service = PortfolioService(
             portfolio=engine.portfolio,
@@ -246,18 +277,12 @@ class TestPendingOrdersCacheOptimization:
 
         # Mock OrderValidationService
         engine.order_validation_service = Mock()
-        engine.order_validation_service.check_portfolio_capacity = Mock(
-            return_value=(True, 3, 10)
-        )
-        engine.order_validation_service.check_duplicate_order = Mock(
-            return_value=(False, None)
-        )
+        engine.order_validation_service.check_portfolio_capacity = Mock(return_value=(True, 3, 10))
+        engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
         engine.order_validation_service.check_volume_ratio = Mock(
             return_value=(True, 0.5, "Rs 500+ (10%)")
         )
-        engine.order_validation_service.check_balance = Mock(
-            return_value=(True, 100000.0, 40)
-        )
+        engine.order_validation_service.check_balance = Mock(return_value=(True, 100000.0, 40))
 
         # Mock other dependencies
         engine.orders_repo = Mock()
@@ -267,6 +292,19 @@ class TestPendingOrdersCacheOptimization:
         engine.orders.place_order = Mock(
             return_value={"order_id": "NEW_ORD001", "status": "PENDING"}
         )
+
+        # Mock scrip master for symbol resolution
+        mock_scrip_master = Mock()
+        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
+
+        def mock_get_instrument(symbol, exchange="NSE"):
+            # Return broker symbol with suffix
+            if symbol.upper() == "RELIANCE":
+                return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
+            return {"token": 12346, "symbol": f"{symbol.upper()}-EQ", "exchange": exchange}
+
+        mock_scrip_master.get_instrument = mock_get_instrument
+        engine.scrip_master = mock_scrip_master
 
         # Create recommendation
         recommendations = [
@@ -283,9 +321,7 @@ class TestPendingOrdersCacheOptimization:
 
         # Verify get_holdings was called (pre-flight check)
         total_calls = engine.portfolio.get_holdings.call_count - initial_call_count
-        assert (
-            total_calls >= 1
-        ), "get_holdings should be called at least once (pre-flight check)"
+        assert total_calls >= 1, "get_holdings should be called at least once (pre-flight check)"
 
         # Verify PortfolioService cache was populated by checking if subsequent calls use cache
         # If cache works, get_portfolio_count() should not call get_holdings() again
@@ -297,9 +333,7 @@ class TestPendingOrdersCacheOptimization:
         calls_after = engine.portfolio.get_holdings.call_count
 
         # If cache is working, no additional calls should be made
-        assert (
-            calls_after == calls_before
-        ), (
+        assert calls_after == calls_before, (
             f"PortfolioService should use cached holdings. "
             f"Expected {calls_before} calls, got {calls_after}. "
             f"Cache may not be working correctly."

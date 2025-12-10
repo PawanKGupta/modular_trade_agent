@@ -1864,14 +1864,17 @@ class PaperTradingEngineAdapter:
                     )
 
         # Check portfolio limit (from strategy config or default 6)
+        # CRITICAL FIX: Use current_symbols (includes holdings + pending orders + DB orders)
+        # instead of just holdings, to properly respect max_portfolio_size
         max_portfolio_size = (
             self.strategy_config.max_portfolio_size
             if self.strategy_config and hasattr(self.strategy_config, "max_portfolio_size")
             else 6
         )
-        if len(holdings) >= max_portfolio_size:
+        current_portfolio_count = len(current_symbols)
+        if current_portfolio_count >= max_portfolio_size:
             self.logger.warning(
-                f"Portfolio limit reached ({len(holdings)}/{max_portfolio_size})",
+                f"Portfolio limit reached ({current_portfolio_count}/{max_portfolio_size})",
                 action="place_new_entries",
             )
             summary["skipped_portfolio_limit"] = len(recommendations)
@@ -2479,7 +2482,73 @@ class PaperTradingEngineAdapter:
                         continue
 
                     # Determine next re-entry level based on entry RSI
-                    next_level = self._determine_reentry_level(entry_rsi, current_rsi, position)
+                    # Enhanced Hybrid Approach: Returns tuple (next_level, metadata_updates)
+                    next_level, metadata_updates = self._determine_reentry_level(
+                        entry_rsi, current_rsi, position
+                    )
+
+                    # Update position metadata if there are updates
+                    try:
+                        if metadata_updates and any(
+                            v is not None for v in metadata_updates.values()
+                        ):
+                            # Check if a reset happened (current_cycle changed)
+                            reset_happened = metadata_updates.get("current_cycle") is not None
+                            current_cycle = (
+                                metadata_updates.get("current_cycle")
+                                if reset_happened
+                                else self._get_position_cycle_metadata(position).get(
+                                    "current_cycle", 0
+                                )
+                            )
+
+                            # Update position's reentries structure with new metadata
+                            # Ensure position has reentries attribute (may be None for new positions)
+                            if not hasattr(position, "reentries"):
+                                position.reentries = (
+                                    None  # Will be handled by _set_position_cycle_metadata
+                                )
+
+                            updated_reentries = self._set_position_cycle_metadata(
+                                position,
+                                current_cycle=metadata_updates.get("current_cycle"),
+                                last_rsi_above_30=metadata_updates.get("last_rsi_above_30"),
+                                last_rsi_value=metadata_updates.get("last_rsi_value"),
+                            )
+
+                            # Save updated metadata to database
+                            from src.infrastructure.persistence.positions_repository import (
+                                PositionsRepository,
+                            )
+
+                            positions_repo = PositionsRepository(self.db)
+                            positions_repo.upsert(
+                                user_id=self.user_id,
+                                symbol=symbol,
+                                reentries=updated_reentries,
+                                auto_commit=False,  # Commit later with order
+                            )
+
+                            # Refresh position object for consistency
+                            position = positions_repo.get_by_symbol(self.user_id, symbol)
+                            if not position:
+                                self.logger.warning(
+                                    f"Position {symbol} not found after metadata update",
+                                    action="place_reentry_orders",
+                                )
+                                summary["skipped_missing_data"] += 1
+                                continue
+                        else:
+                            # No metadata updates, get current cycle from position
+                            cycle_meta = self._get_position_cycle_metadata(position)
+                            current_cycle = cycle_meta.get("current_cycle", 0)
+                    except Exception as meta_error:
+                        self.logger.warning(
+                            f"Error updating position metadata for {symbol}: {meta_error}. "
+                            f"Continuing with default cycle=0.",
+                            action="place_reentry_orders",
+                        )
+                        current_cycle = 0  # Default to cycle 0 if metadata update fails
 
                     if next_level is None:
                         self.logger.debug(
@@ -2490,9 +2559,26 @@ class PaperTradingEngineAdapter:
                         summary["skipped_invalid_rsi"] += 1
                         continue
 
+                    # Enhanced Hybrid Approach: Check if re-entry at this level already exists
+                    # Detect if a reset happened (current_cycle changed)
+                    reset_happened = metadata_updates.get("current_cycle") is not None
+                    # Normalize symbol for has_reentry_at_level (remove .NS/.BO suffix)
+                    normalized_symbol = symbol.replace(".NS", "").replace(".BO", "").upper()
+                    if self.has_reentry_at_level(
+                        normalized_symbol, next_level, allow_reset=reset_happened
+                    ):
+                        self.logger.info(
+                            f"Skipping {symbol}: re-entry at level {next_level} already exists "
+                            f"in current cycle",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_duplicates"] += 1
+                        continue
+
                     self.logger.info(
                         f"Re-entry opportunity for {symbol}: entry_rsi={entry_rsi:.2f}, "
-                        f"current_rsi={current_rsi:.2f}, next_level={next_level}",
+                        f"current_rsi={current_rsi:.2f}, next_level={next_level}, "
+                        f"cycle={current_cycle}",
                         action="place_reentry_orders",
                     )
 
@@ -2554,6 +2640,7 @@ class PaperTradingEngineAdapter:
                     )
 
                     # Tag as re-entry with metadata for tracking
+                    # Enhanced Hybrid Approach: Include cycle number for tracking
                     reentry_order._metadata = {
                         "original_ticker": ticker,
                         "entry_type": "reentry",
@@ -2561,6 +2648,7 @@ class PaperTradingEngineAdapter:
                         "rsi_value": round(current_rsi, 2),
                         "entry_rsi": entry_rsi,
                         "reentry_level": next_level,
+                        "cycle": current_cycle,  # Store cycle number for tracking
                         "rsi10": current_rsi,
                         "ema9": ind.get("ema9"),
                         "ema200": ind.get("ema200"),
@@ -2628,20 +2716,203 @@ class PaperTradingEngineAdapter:
 
         return summary
 
+    def _get_position_cycle_metadata(self, position: Any) -> dict[str, Any]:
+        """
+        Get cycle metadata from position's reentries structure.
+
+        Enhanced Hybrid Approach: Extracts cycle tracking metadata from position.
+
+        Args:
+            position: Position object from database
+
+        Returns:
+            Dict with cycle metadata:
+            {
+                "current_cycle": int,  # Default: 0
+                "last_rsi_above_30": str | None,  # ISO timestamp or None
+                "last_rsi_value": float | None,  # Last known RSI value
+            }
+        """
+        metadata = {
+            "current_cycle": 0,
+            "last_rsi_above_30": None,
+            "last_rsi_value": None,
+        }
+
+        if not position or not hasattr(position, "reentries"):
+            return metadata
+
+        if not position.reentries:
+            return metadata
+
+        # Check if reentries is a dict with _cycle_metadata key (new format)
+        if isinstance(position.reentries, dict):
+            cycle_meta = position.reentries.get("_cycle_metadata")
+            if isinstance(cycle_meta, dict):
+                metadata["current_cycle"] = cycle_meta.get("current_cycle", 0)
+                metadata["last_rsi_above_30"] = cycle_meta.get("last_rsi_above_30")
+                metadata["last_rsi_value"] = cycle_meta.get("last_rsi_value")
+            return metadata
+
+        # If reentries is a list, metadata might be stored separately
+        # For now, we'll extract from the structure
+        # In the new format, we'll store metadata in a wrapper dict
+        return metadata
+
+    def _set_position_cycle_metadata(
+        self,
+        position: Any,
+        current_cycle: int | None = None,
+        last_rsi_above_30: str | None = None,
+        last_rsi_value: float | None = None,
+    ) -> dict:
+        """
+        Set cycle metadata in position's reentries structure.
+
+        This creates/updates a wrapper structure:
+        {
+            "_cycle_metadata": {
+                "current_cycle": int,
+                "last_rsi_above_30": str | None,
+                "last_rsi_value": float | None
+            },
+            "reentries": [...]
+        }
+
+        Args:
+            position: Position object from database
+            current_cycle: Current cycle number (None to keep existing)
+            last_rsi_above_30: ISO timestamp when RSI was last above 30 (None to keep existing)
+            last_rsi_value: Last known RSI value (None to keep existing)
+
+        Returns:
+            Updated reentries structure (dict with _cycle_metadata and reentries keys)
+        """
+        # Get existing metadata
+        existing_meta = self._get_position_cycle_metadata(position)
+
+        # Get existing reentries array
+        existing_reentries = []
+        if position.reentries:
+            if isinstance(position.reentries, dict):
+                # New format: extract reentries array
+                existing_reentries = position.reentries.get("reentries", [])
+                if not isinstance(existing_reentries, list):
+                    existing_reentries = []
+            elif isinstance(position.reentries, list):
+                # Old format: reentries is directly a list
+                existing_reentries = position.reentries
+
+        # Update metadata
+        if current_cycle is not None:
+            existing_meta["current_cycle"] = current_cycle
+        if last_rsi_above_30 is not None:
+            existing_meta["last_rsi_above_30"] = last_rsi_above_30
+        if last_rsi_value is not None:
+            existing_meta["last_rsi_value"] = last_rsi_value
+
+        # Return wrapper structure
+        return {"_cycle_metadata": existing_meta, "reentries": existing_reentries}
+
+    def has_reentry_at_level(self, base_symbol: str, level: int, allow_reset: bool = False) -> bool:
+        """
+        Check if a re-entry at the specified level already exists in the current cycle.
+
+        Enhanced Hybrid Approach: Now checks by cycle number, not just level.
+        This allows re-entries at the same level after a reset (new cycle).
+
+        Args:
+            base_symbol: Symbol to check
+            level: Re-entry level (30, 20, or 10)
+            allow_reset: If True, allow re-entry at this level even if initial entry was at this level
+
+        Returns:
+            True if re-entry at this level already exists in current cycle, False otherwise
+        """
+        try:
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+            positions_repo = PositionsRepository(self.db)
+            position = positions_repo.get_by_symbol(self.user_id, base_symbol)
+            if not position:
+                return False
+
+            # Get current cycle from metadata
+            cycle_meta = self._get_position_cycle_metadata(position)
+            current_cycle = cycle_meta.get("current_cycle", 0)
+
+            # Check if initial entry was at this level
+            # Exception: If allow_reset=True, skip this check
+            entry_rsi = position.entry_rsi
+            if entry_rsi is not None and not allow_reset:
+                # Determine which level the initial entry was at
+                if level == 30 and entry_rsi < 30:
+                    return True
+                elif level == 20 and entry_rsi < 20:
+                    return True
+                elif level == 10 and entry_rsi < 10:
+                    return True
+
+            # Check existing re-entries in current cycle
+            if not position.reentries:
+                return False
+
+            # Extract reentries array (handle both old and new format)
+            reentries = position.reentries
+            if isinstance(reentries, dict):
+                reentries = reentries.get("reentries", [])
+            if not isinstance(reentries, list):
+                return False
+
+            for reentry in reentries:
+                if not isinstance(reentry, dict):
+                    continue
+
+                reentry_level = reentry.get("level")
+                if reentry_level is None:
+                    continue
+
+                try:
+                    reentry_level_int = int(reentry_level) if reentry_level is not None else None
+                    if reentry_level_int == level:
+                        # Check cycle number (if stored)
+                        reentry_cycle = reentry.get("cycle")
+                        if reentry_cycle is not None:
+                            # Only block if it's in the same cycle
+                            if int(reentry_cycle) == current_cycle:
+                                return True
+                        # Backward compatibility: if cycle not stored, assume cycle 0
+                        elif current_cycle == 0:
+                            return True
+                except (ValueError, TypeError):
+                    continue
+
+            return False
+        except Exception as e:
+            self.logger.error(
+                f"Error checking reentry level for {base_symbol}: {e}",
+                exc_info=True,
+                action="has_reentry_at_level",
+            )
+            return False
+
     def _determine_reentry_level(
         self, entry_rsi: float, current_rsi: float, position: Any
-    ) -> int | None:
+    ) -> tuple[int | None, dict[str, Any]]:
         """
         Determine next re-entry level based on entry RSI and current RSI (paper trading).
 
-        Logic (same as real trading):
+        Enhanced Hybrid Approach: Implements cycle tracking with reset detection on startup.
+
+        Logic:
         - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
         - Entry at RSI < 20 → Re-entry at RSI < 10 → Reset
         - Entry at RSI < 10 → Only Reset
 
         Reset mechanism:
-        - When RSI > 30: Set reset_ready = True
-        - When RSI drops < 30 after reset_ready: Reset all levels
+        - When RSI > 30: Store last_rsi_above_30 timestamp in position metadata
+        - When RSI drops < 30 after last_rsi_above_30 exists: Increment current_cycle, reset all levels
+        - On startup: Check if current RSI < 30 and last_rsi_above_30 exists → Reset detected
 
         Args:
             entry_rsi: RSI10 value at initial entry
@@ -2649,39 +2920,207 @@ class PaperTradingEngineAdapter:
             position: Position object (for tracking reset state)
 
         Returns:
-            Next re-entry level (30, 20, or 10), or None if no re-entry opportunity
+            Tuple of (next_level, metadata_updates):
+            - next_level: Next re-entry level (30, 20, or 10), or None if no re-entry opportunity
+            - metadata_updates: Dict with cycle metadata updates to apply:
+              {
+                  "current_cycle": int | None,  # None = no change
+                  "last_rsi_above_30": str | None,  # ISO timestamp or None to clear
+                  "last_rsi_value": float | None,  # None = no change
+              }
         """
-        reset_ready = False
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        # Get current cycle metadata
+        cycle_meta = self._get_position_cycle_metadata(position)
+        current_cycle = cycle_meta.get("current_cycle", 0)
+        last_rsi_above_30 = cycle_meta.get("last_rsi_above_30")
+        last_rsi_value = cycle_meta.get("last_rsi_value")
+
+        # Initialize metadata updates (None = no change)
+        metadata_updates = {
+            "current_cycle": None,
+            "last_rsi_above_30": None,
+            "last_rsi_value": None,
+        }
+
         levels_taken = {"30": False, "20": False, "10": False}
 
         # Determine initial levels_taken based on entry_rsi
         if entry_rsi < 10:
+            # Entry at RSI < 10: All levels taken
             levels_taken = {"30": True, "20": True, "10": True}
         elif entry_rsi < 20:
+            # Entry at RSI < 20: 30 and 20 taken
             levels_taken = {"30": True, "20": True, "10": False}
         elif entry_rsi < 30:
+            # Entry at RSI < 30: Only 30 taken
             levels_taken = {"30": True, "20": False, "10": False}
         else:
+            # Entry at RSI >= 30: No levels taken (shouldn't happen, but handle it)
             levels_taken = {"30": False, "20": False, "10": False}
 
-        # Check reset mechanism
+        # Fix Issue 1: Update levels_taken based on executed re-entries in current cycle
+        # Check reentries array to see which levels have been taken in the current cycle
+        if position and position.reentries:
+            reentries = position.reentries
+            if isinstance(reentries, dict):
+                # New format: extract reentries array
+                reentries = reentries.get("reentries", [])
+            if isinstance(reentries, list):
+                for reentry in reentries:
+                    if not isinstance(reentry, dict):
+                        continue
+                    # Check if this re-entry is in the current cycle
+                    reentry_cycle = reentry.get("cycle")
+                    if reentry_cycle is not None:
+                        # Only consider re-entries in the current cycle
+                        if int(reentry_cycle) == current_cycle:
+                            reentry_level = reentry.get("level")
+                            if reentry_level is not None:
+                                try:
+                                    level_int = int(reentry_level)
+                                    if level_int == 30:
+                                        levels_taken["30"] = True
+                                    elif level_int == 20:
+                                        levels_taken["20"] = True
+                                    elif level_int == 10:
+                                        levels_taken["10"] = True
+                                except (ValueError, TypeError):
+                                    pass
+                    # Backward compatibility: if cycle not stored, assume cycle 0
+                    elif current_cycle == 0:
+                        reentry_level = reentry.get("level")
+                        if reentry_level is not None:
+                            try:
+                                level_int = int(reentry_level)
+                                if level_int == 30:
+                                    levels_taken["30"] = True
+                                elif level_int == 20:
+                                    levels_taken["20"] = True
+                                elif level_int == 10:
+                                    levels_taken["10"] = True
+                            except (ValueError, TypeError):
+                                pass
+
+        # Fix: Mark intermediate levels as taken to prevent backtracking
+        # Rule: When a re-entry at level X is taken, mark all higher levels
+        # (between entry level and X) as taken
+        if levels_taken.get("10"):
+            # If level 10 is taken, mark level 20 and 30 as taken (can't backtrack)
+            levels_taken["20"] = True
+            levels_taken["30"] = True
+            self.logger.debug(
+                "Level 10 is taken - marking levels 20 and 30 as taken to prevent backtracking",
+                action="_determine_reentry_level",
+            )
+        elif levels_taken.get("20"):
+            # If level 20 is taken, mark level 30 as taken (can't backtrack)
+            levels_taken["30"] = True
+            self.logger.debug(
+                "Level 20 is taken - marking level 30 as taken to prevent backtracking",
+                action="_determine_reentry_level",
+            )
+
+        # Enhanced reset detection with startup support
+        # Step 1: If RSI > 30, store last_rsi_above_30 timestamp
         if current_rsi > 30:
-            reset_ready = True
+            # Store timestamp when RSI goes above 30
+            now = ist_now()
+            metadata_updates["last_rsi_above_30"] = now.isoformat()
+            metadata_updates["last_rsi_value"] = current_rsi
+            self.logger.debug(
+                f"RSI > 30 detected: {current_rsi:.2f}. Storing last_rsi_above_30 timestamp.",
+                action="_determine_reentry_level",
+            )
+            # Don't return yet - continue to check if we should trigger reset immediately
 
-        # If reset_ready and RSI drops < 30 again, trigger NEW CYCLE reentry at RSI<30
-        if current_rsi < 30 and reset_ready:
+        # Step 2: Check for reset condition (RSI < 30 AND last_rsi_above_30 exists)
+        # This works both during runtime and on startup
+        reset_detected = False
+        if current_rsi < 30 and last_rsi_above_30:
+            # Reset detected! Increment cycle and reset all levels
+            new_cycle = current_cycle + 1
+            metadata_updates["current_cycle"] = new_cycle
+            metadata_updates["last_rsi_above_30"] = None  # Clear reset flag
+            metadata_updates["last_rsi_value"] = current_rsi  # Update last RSI value
+            reset_detected = True
+
+            self.logger.info(
+                f"Reset detected: RSI dropped to {current_rsi:.2f} after being above 30. "
+                f"Incrementing cycle from {current_cycle} to {new_cycle}.",
+                action="_determine_reentry_level",
+            )
+
+            # Reset all levels, treat as new cycle
             levels_taken = {"30": False, "20": False, "10": False}
-            reset_ready = False
-            return 30
+
+            # Fix Issue 2: Reset should check current RSI level and trigger appropriate level
+            # Don't always return level 30 - check what level the current RSI satisfies
+            if current_rsi < 10:
+                # RSI < 10: Trigger level 10 (highest priority)
+                self.logger.info(
+                    f"Reset triggers re-entry at level 10 (RSI {current_rsi:.2f} < 10)",
+                    action="_determine_reentry_level",
+                )
+                return (10, metadata_updates)
+            elif current_rsi < 20:
+                # RSI < 20: Trigger level 20
+                self.logger.info(
+                    f"Reset triggers re-entry at level 20 (RSI {current_rsi:.2f} < 20)",
+                    action="_determine_reentry_level",
+                )
+                return (20, metadata_updates)
+            elif current_rsi < 30:
+                # RSI < 30: Trigger level 30
+                self.logger.info(
+                    f"Reset triggers re-entry at level 30 (RSI {current_rsi:.2f} < 30)",
+                    action="_determine_reentry_level",
+                )
+                return (30, metadata_updates)
+            else:
+                # Shouldn't happen (we're in reset condition with RSI < 30)
+                self.logger.warning(
+                    f"Reset detected but RSI {current_rsi:.2f} is not < 30. This shouldn't happen.",
+                    action="_determine_reentry_level",
+                )
+                return (None, metadata_updates)
+
+        # Step 3: Update last_rsi_value if RSI changed (for tracking)
+        if last_rsi_value != current_rsi:
+            metadata_updates["last_rsi_value"] = current_rsi
 
         # Normal progression through levels
+        # Fix Issue 3: Allow skipping levels if RSI drops directly to a lower level
+        # Check levels in priority order (10 > 20 > 30) - allows skipping levels
         next_level = None
-        if levels_taken.get("30") and not levels_taken.get("20") and current_rsi < 20:
-            next_level = 20
-        elif levels_taken.get("20") and not levels_taken.get("10") and current_rsi < 10:
-            next_level = 10
 
-        return next_level
+        if current_rsi < 10:
+            # RSI < 10: Check if level 10 is available
+            if not levels_taken.get("10"):
+                next_level = 10
+                self.logger.debug(
+                    f"RSI {current_rsi:.2f} < 10, level 10 available (allows skipping level 20)",
+                    action="_determine_reentry_level",
+                )
+        elif current_rsi < 20:
+            # RSI < 20: Check if level 20 is available
+            if not levels_taken.get("20"):
+                next_level = 20
+                self.logger.debug(
+                    f"RSI {current_rsi:.2f} < 20, level 20 available",
+                    action="_determine_reentry_level",
+                )
+        elif current_rsi < 30:
+            # RSI < 30: Check if level 30 is available
+            if not levels_taken.get("30"):
+                next_level = 30
+                self.logger.debug(
+                    f"RSI {current_rsi:.2f} < 30, level 30 available",
+                    action="_determine_reentry_level",
+                )
+
+        return (next_level, metadata_updates)
 
     def _calculate_execution_capital(self, price: float, avg_volume: float) -> float:
         """

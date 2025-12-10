@@ -5,11 +5,10 @@ Tests the new entry_type field and order_metadata for tracking reentry orders.
 """
 
 import pytest
-from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.infrastructure.db.models import Orders, OrderStatus
+from src.infrastructure.db.models import Base, OrderStatus
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 
 
@@ -17,8 +16,6 @@ from src.infrastructure.persistence.orders_repository import OrdersRepository
 def db_session():
     """Create in-memory SQLite database for testing"""
     engine = create_engine("sqlite:///:memory:", echo=False)
-    from src.infrastructure.db.models import Base
-    
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     session = Session()
@@ -54,7 +51,7 @@ class TestReentryTrackingInOrders:
             entry_type="initial",
             order_metadata={"rsi10": 28.5, "ema9": 2500.0},
         )
-        
+
         assert order.entry_type == "initial"
         assert order.order_metadata == {"rsi10": 28.5, "ema9": 2500.0}
         assert order.symbol == "RELIANCE"
@@ -79,7 +76,7 @@ class TestReentryTrackingInOrders:
                 "reentry_index": 1,
             },
         )
-        
+
         assert order.entry_type == "reentry"
         assert order.order_metadata["rsi_level"] == 20
         assert order.order_metadata["rsi"] == 19.5
@@ -97,14 +94,14 @@ class TestReentryTrackingInOrders:
             order_id="ORDER789",
             broker_order_id="BROKER789",
         )
-        
+
         assert order.entry_type is None
         assert order.order_metadata is None
 
     def test_query_reentry_orders(self, orders_repo, user_id):
         """Test querying orders by entry_type='reentry'"""
         # Create initial order
-        orders_repo.create_amo(
+        initial_order = orders_repo.create_amo(
             user_id=user_id,
             symbol="RELIANCE",
             side="buy",
@@ -113,10 +110,17 @@ class TestReentryTrackingInOrders:
             price=None,
             entry_type="initial",
         )
-        
-        # Create reentry orders
+
+        # Mark initial order as CLOSED to allow reentry orders
+        # (Duplicate prevention only blocks PENDING/ONGOING orders)
+        initial_order.status = OrderStatus.CLOSED
+        orders_repo.db.commit()
+
+        # Create reentry orders (should work now since initial is CLOSED)
+        # Mark each reentry as CLOSED after creation to allow next reentry
+        # (Duplicate prevention blocks new orders when PENDING/ONGOING order exists)
         for i in range(3):
-            orders_repo.create_amo(
+            reentry_order = orders_repo.create_amo(
                 user_id=user_id,
                 symbol="RELIANCE",
                 side="buy",
@@ -126,15 +130,18 @@ class TestReentryTrackingInOrders:
                 entry_type="reentry",
                 order_metadata={"reentry_index": i + 1},
             )
-        
+            # Mark as CLOSED to allow next reentry order
+            reentry_order.status = OrderStatus.CLOSED
+            orders_repo.db.commit()
+
         # Query all orders
         all_orders = orders_repo.list(user_id)
-        assert len(all_orders) == 4
-        
+        assert len(all_orders) == 4  # initial (closed) + 3 reentry orders
+
         # Query reentry orders only
         reentry_orders = [o for o in all_orders if o.entry_type == "reentry"]
         assert len(reentry_orders) == 3
-        
+
         # Verify reentry orders have correct metadata
         # Sort by placed_at to ensure consistent order
         reentry_orders_sorted = sorted(reentry_orders, key=lambda o: o.placed_at)
@@ -159,7 +166,7 @@ class TestReentryTrackingInOrders:
                 "reentry_index": 1,
             },
         )
-        
+
         metadata = order.order_metadata
         assert "rsi_level" in metadata
         assert "rsi" in metadata
@@ -168,3 +175,50 @@ class TestReentryTrackingInOrders:
         assert metadata["rsi_level"] == 30
         assert metadata["rsi"] == 29.5
 
+    def test_reentry_orders_blocked_when_initial_order_ongoing(self, orders_repo, user_id):
+        """Test that reentry orders are blocked when initial order is ONGOING"""
+        # Create initial order
+        initial_order = orders_repo.create_amo(
+            user_id=user_id,
+            symbol="RELIANCE",
+            side="buy",
+            order_type="market",
+            quantity=10,
+            price=None,
+            entry_type="initial",
+        )
+
+        # Mark initial order as ONGOING (executed order)
+        initial_order.status = OrderStatus.ONGOING
+        orders_repo.db.commit()
+
+        # Try to create 3 reentry orders - should all return the same initial order
+        # (duplicate prevention should block new orders when ONGOING order exists)
+        reentry_orders = []
+        for i in range(3):
+            reentry_order = orders_repo.create_amo(
+                user_id=user_id,
+                symbol="RELIANCE",
+                side="buy",
+                order_type="market",
+                quantity=5,
+                price=None,
+                entry_type="reentry",
+                order_metadata={"reentry_index": i + 1},
+            )
+            reentry_orders.append(reentry_order)
+
+        # Verify: All 3 "reentry" orders are actually the same initial order
+        # (duplicate prevention returned existing order instead of creating new ones)
+        assert len(reentry_orders) == 3
+        assert all(order.id == initial_order.id for order in reentry_orders)
+        assert all(
+            order.entry_type == "initial" for order in reentry_orders
+        )  # All are initial, not reentry
+
+        # Verify: Only 1 order exists in database (the initial one)
+        all_orders = orders_repo.list(user_id)
+        assert len(all_orders) == 1
+        assert all_orders[0].id == initial_order.id
+        assert all_orders[0].status == OrderStatus.ONGOING
+        assert all_orders[0].entry_type == "initial"

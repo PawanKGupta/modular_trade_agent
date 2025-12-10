@@ -224,6 +224,8 @@ class AutoTradeEngine:
             orders=None,  # Will be set after login
             auth=self.auth,
             strategy_config=self.strategy_config,
+            orders_repo=self.orders_repo if hasattr(self, "orders_repo") else None,
+            user_id=self.user_id,
             enable_caching=True,
         )
 
@@ -1504,7 +1506,11 @@ class AutoTradeEngine:
                 self.scrip_master.load_scrip_master(force_download=False)
                 logger.info("Scrip master loaded for buy order symbol resolution")
             except Exception as e:
-                logger.warning(f"Failed to load scrip master: {e}. Will use symbol fallback.")
+                logger.error(
+                    f"Failed to load scrip master: {e}. "
+                    f"Order placement will fail without scrip master. "
+                    f"Please check network connection and try again."
+                )
                 self.scrip_master = None
 
             # Phase 2: Initialize modules
@@ -1536,7 +1542,11 @@ class AutoTradeEngine:
                 self.scrip_master.load_scrip_master(force_download=False)
                 logger.info("Scrip master loaded for buy order symbol resolution")
             except Exception as e:
-                logger.warning(f"Failed to load scrip master: {e}. Will use symbol fallback.")
+                logger.error(
+                    f"Failed to load scrip master: {e}. "
+                    f"Order placement will fail without scrip master. "
+                    f"Please check network connection and try again."
+                )
                 self.scrip_master = None
 
             # Phase 2: Initialize modules
@@ -2003,7 +2013,22 @@ class AutoTradeEngine:
                 return 0
 
             # Count reentries from today
-            reentries = position.reentries
+            # Fix: Check placed_at date (order placement date) instead of time (execution date)
+            # This ensures daily cap is based on when order was placed, not when it executed
+            # Example: Order placed Day 1, executes Day 2 → Should count for Day 1, not Day 2
+            reentries_raw = position.reentries
+
+            # Handle both old format (list) and new format (dict with metadata)
+            if isinstance(reentries_raw, dict):
+                # New format: extract reentries array
+                reentries = reentries_raw.get("reentries", [])
+            elif isinstance(reentries_raw, list):
+                # Old format: directly a list
+                reentries = reentries_raw
+            else:
+                # Invalid format
+                return 0
+
             if not isinstance(reentries, list):
                 return 0
 
@@ -2012,24 +2037,308 @@ class AutoTradeEngine:
             for reentry in reentries:
                 if not isinstance(reentry, dict):
                     continue
-                reentry_time = reentry.get("time")
-                if not reentry_time:
-                    continue
-                try:
-                    # Parse ISO format timestamp
-                    d = datetime.fromisoformat(reentry_time).date()
-                except Exception:
+
+                # Priority: Check placed_at first (correct date for daily cap)
+                placed_at_str = reentry.get("placed_at")
+                placed_at_checked = False
+                if placed_at_str:
                     try:
-                        # Fallback: try parsing just the date part
-                        d = datetime.strptime(reentry_time.split("T")[0], "%Y-%m-%d").date()
-                    except Exception:
+                        # placed_at is stored as ISO date string (YYYY-MM-DD)
+                        d = datetime.fromisoformat(placed_at_str).date()
+                        placed_at_checked = True  # Successfully parsed placed_at
+                        if d == today:
+                            cnt += 1
+                            continue  # Found match, skip time field check
+                        # If placed_at exists and doesn't match today, skip time field (don't fallback)
                         continue
-                if d == today:
-                    cnt += 1
+                    except Exception:
+                        # If parsing fails, fall through to time field fallback
+                        pass
+
+                # Fallback: Use time field (backward compatibility for old re-entries)
+                # Only use this if placed_at is missing or parsing failed
+                # Old re-entries may not have placed_at field
+                if not placed_at_checked:
+                    reentry_time = reentry.get("time")
+                    if reentry_time:
+                        try:
+                            # Parse ISO format timestamp
+                            d = datetime.fromisoformat(reentry_time).date()
+                        except Exception:
+                            try:
+                                # Fallback: try parsing just the date part
+                                d = datetime.strptime(reentry_time.split("T")[0], "%Y-%m-%d").date()
+                            except Exception:
+                                continue
+                        if d == today:
+                            cnt += 1
             return cnt
         except Exception as e:
             logger.error(f"Error counting reentries for {base_symbol}: {e}")
             return 0
+
+    def _get_position_cycle_metadata(self, position: Any) -> dict[str, Any]:
+        """
+        Get cycle metadata from position.
+
+        Returns a dict with:
+        - current_cycle: int (default 0)
+        - last_rsi_above_30: str | None (ISO timestamp)
+        - last_rsi_value: float | None
+
+        Args:
+            position: Position object from database
+
+        Returns:
+            Dict with cycle metadata
+        """
+        metadata = {
+            "current_cycle": 0,
+            "last_rsi_above_30": None,
+            "last_rsi_value": None,
+        }
+
+        if not position or not position.reentries:
+            return metadata
+
+        # Check if reentries is a dict with _cycle_metadata key (new format)
+        if isinstance(position.reentries, dict):
+            cycle_meta = position.reentries.get("_cycle_metadata")
+            if isinstance(cycle_meta, dict):
+                metadata["current_cycle"] = cycle_meta.get("current_cycle", 0)
+                metadata["last_rsi_above_30"] = cycle_meta.get("last_rsi_above_30")
+                metadata["last_rsi_value"] = cycle_meta.get("last_rsi_value")
+            return metadata
+
+        # If reentries is a list, metadata might be stored separately
+        # For now, we'll extract from the structure
+        # In the new format, we'll store metadata in a wrapper dict
+        return metadata
+
+    def _set_position_cycle_metadata(
+        self,
+        position: Any,
+        current_cycle: int | None = None,
+        last_rsi_above_30: str | None = None,
+        last_rsi_value: float | None = None,
+    ) -> dict:
+        """
+        Set cycle metadata in position's reentries structure.
+
+        This creates/updates a wrapper structure:
+        {
+            "_cycle_metadata": {
+                "current_cycle": int,
+                "last_rsi_above_30": str | None,
+                "last_rsi_value": float | None
+            },
+            "reentries": [...]
+        }
+
+        Args:
+            position: Position object from database
+            current_cycle: Current cycle number (None to keep existing)
+            last_rsi_above_30: ISO timestamp when RSI was last above 30 (None to keep existing)
+            last_rsi_value: Last known RSI value (None to keep existing)
+
+        Returns:
+            Updated reentries structure (dict with _cycle_metadata and reentries keys)
+        """
+        # Get existing metadata
+        existing_meta = self._get_position_cycle_metadata(position)
+
+        # Get existing reentries array
+        existing_reentries = []
+        if position.reentries:
+            if isinstance(position.reentries, dict):
+                # New format: extract reentries array
+                existing_reentries = position.reentries.get("reentries", [])
+                if not isinstance(existing_reentries, list):
+                    existing_reentries = []
+            elif isinstance(position.reentries, list):
+                # Old format: reentries is directly a list
+                existing_reentries = position.reentries
+
+        # Update metadata
+        if current_cycle is not None:
+            existing_meta["current_cycle"] = current_cycle
+        if last_rsi_above_30 is not None:
+            existing_meta["last_rsi_above_30"] = last_rsi_above_30
+        if last_rsi_value is not None:
+            existing_meta["last_rsi_value"] = last_rsi_value
+
+        # Return wrapper structure
+        return {"_cycle_metadata": existing_meta, "reentries": existing_reentries}
+
+    def has_reentry_at_level(self, base_symbol: str, level: int, allow_reset: bool = False) -> bool:
+        """
+        Check if a re-entry at the specified level already exists in the current cycle.
+
+        Enhanced Hybrid Approach: Now checks by cycle number, not just level.
+        This allows re-entries at the same level after a reset (new cycle).
+
+        This includes checking:
+        1. Initial entry RSI - if initial entry was at this level, block re-entry at same level
+           (Exception: If allow_reset=True, allow it after reset for any level)
+        2. Existing re-entries in current cycle - if a re-entry at this level exists in current cycle, block duplicate
+
+        Args:
+            base_symbol: Symbol to check
+            level: Re-entry level (30, 20, or 10)
+            allow_reset: If True, allow re-entry at this level even if initial entry was at this level
+                        (This handles the reset case where RSI > 30 then < 30, allowing re-entry at any level)
+
+        Returns:
+            True if re-entry at this level already exists in current cycle (including initial entry), False otherwise
+        """
+        try:
+            if not self.positions_repo or not self.user_id:
+                return False
+
+            position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+            if not position:
+                return False
+
+            # Get current cycle from metadata
+            cycle_meta = self._get_position_cycle_metadata(position)
+            current_cycle = cycle_meta.get("current_cycle", 0)
+
+            # Check if initial entry was at this level
+            # Exception: If allow_reset=True, skip this check (reset allows re-entry at any level again)
+            entry_rsi = position.entry_rsi
+            if entry_rsi is not None and not allow_reset:
+                # Determine which level the initial entry was at
+                if level == 30 and entry_rsi < 30:
+                    return True  # Initial entry was at RSI < 30, block re-entry at level 30
+                elif level == 20 and entry_rsi < 20:
+                    return True  # Initial entry was at RSI < 20, block re-entry at level 20
+                elif level == 10 and entry_rsi < 10:
+                    return True  # Initial entry was at RSI < 10, block re-entry at level 10
+
+            # Check existing re-entries in current cycle
+            if not position.reentries:
+                return False
+
+            # Extract reentries array (handle both old and new format)
+            reentries = position.reentries
+            if isinstance(reentries, dict):
+                # New format: extract reentries array
+                reentries = reentries.get("reentries", [])
+            if not isinstance(reentries, list):
+                return False
+
+            for reentry in reentries:
+                if not isinstance(reentry, dict):
+                    continue
+
+                # Check if level matches
+                reentry_level = reentry.get("level")
+                if reentry_level is None:
+                    continue
+
+                try:
+                    # Handle both int and string representations
+                    reentry_level_int = int(reentry_level) if reentry_level is not None else None
+                    if reentry_level_int == level:
+                        # Check cycle number (if stored)
+                        reentry_cycle = reentry.get("cycle")
+                        if reentry_cycle is not None:
+                            # Only block if it's in the same cycle
+                            if int(reentry_cycle) == current_cycle:
+                                return True
+                        # Backward compatibility: if cycle not stored, assume cycle 0
+                        # Only block if current_cycle is also 0 (initial cycle)
+                        elif current_cycle == 0:
+                            return True
+                except (ValueError, TypeError):
+                    continue
+
+            return False
+        except Exception as e:
+            logger.error(f"Error checking reentry level for {base_symbol}: {e}")
+            return False
+
+    def _resolve_broker_symbol(self, base_symbol: str) -> str:
+        """
+        Resolve base symbol to actual broker trading symbol using scrip master.
+
+        Scrip master is the SINGLE SOURCE OF TRUTH for symbol resolution.
+        If scrip master is not available or symbol is not found, raises an error.
+
+        Args:
+            base_symbol: Base symbol (e.g., "SALSTEEL") or already resolved symbol (e.g., "SALSTEEL-BE")
+
+        Returns:
+            Resolved broker symbol (e.g., "SALSTEEL-BE")
+
+        Raises:
+            ValueError: If scrip master is not available or symbol cannot be resolved
+        """
+        # Get exchange from user's trading config (from database UserTradingConfig)
+        # This is the user's preference stored in their trading configuration
+        # Falls back to config.DEFAULT_EXCHANGE only if strategy_config not available (standalone usage)
+        exchange = (
+            self.strategy_config.default_exchange
+            if self.strategy_config
+            else config.DEFAULT_EXCHANGE
+        )
+
+        # If symbol already has suffix, validate it exists in scrip master
+        if any(base_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"]):
+            # Validate that this symbol exists in scrip master
+            if self.scrip_master and self.scrip_master.symbol_map:
+                instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
+                if instrument and instrument.get("symbol"):
+                    # Symbol exists in scrip master, use as-is
+                    logger.debug(
+                        f"Symbol {base_symbol} already has suffix and exists in scrip master ({exchange})"
+                    )
+                    return base_symbol
+                else:
+                    # Symbol has suffix but not in scrip master - this is an error
+                    raise ValueError(
+                        f"Symbol {base_symbol} has suffix but not found in scrip master ({exchange}). "
+                        f"Please verify the symbol is correct."
+                    )
+            else:
+                # Scrip master not available, but symbol has suffix - assume it's valid
+                logger.warning(
+                    f"Scrip master not available, but symbol {base_symbol} has suffix. "
+                    f"Using as-is (not validated)."
+                )
+                return base_symbol
+
+        # Scrip master is REQUIRED for symbol resolution
+        if not self.scrip_master or not self.scrip_master.symbol_map:
+            raise ValueError(
+                f"Scrip master is not available. Cannot resolve symbol {base_symbol}. "
+                f"Please ensure scrip master is loaded before placing orders."
+            )
+
+        try:
+            # Use configurable exchange for symbol resolution
+            instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
+            if instrument and instrument.get("symbol"):
+                resolved = instrument["symbol"]
+                logger.info(
+                    f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange}) - single source of truth"
+                )
+                return resolved
+            else:
+                # Symbol not found in scrip master
+                raise ValueError(
+                    f"Symbol {base_symbol} not found in scrip master ({exchange}). "
+                    f"Please verify the symbol is correct or check if it's listed on {exchange}."
+                )
+        except ValueError:
+            # Re-raise ValueError (our custom errors)
+            raise
+        except Exception as e:
+            # Wrap other exceptions
+            raise ValueError(
+                f"Failed to resolve symbol {base_symbol} via scrip master: {e}. "
+                f"Scrip master is the single source of truth for symbol resolution."
+            ) from e
 
     def _attempt_place_order(
         self,
@@ -2046,7 +2355,7 @@ class AutoTradeEngine:
         Helper method to attempt placing an order with symbol resolution.
 
         Args:
-            broker_symbol: Trading symbol
+            broker_symbol: Trading symbol (should already be resolved, but will resolve if needed)
             ticker: Full ticker (e.g., RELIANCE.NS)
             qty: Order quantity
             close: Current close price
@@ -2087,94 +2396,52 @@ class AutoTradeEngine:
                 f"Using LIMIT order for {broker_symbol} (T2T segment) @ Rs {limit_price:.2f}"
             )
 
-        # Try to resolve symbol using scrip master first
-        resolved_symbol = None
-        if self.scrip_master and self.scrip_master.symbol_map:
-            # Try base symbol first
-            instrument = self.scrip_master.get_instrument(broker_symbol)
-            if instrument:
-                resolved_symbol = instrument["symbol"]
-                logger.debug(f"Resolved {broker_symbol} -> {resolved_symbol} via scrip master")
+        # Symbol should already be resolved from place_new_entries() via scrip master
+        # Scrip master is the SINGLE SOURCE OF TRUTH - use the resolved symbol directly
+        # If symbol doesn't have suffix, it means resolution failed earlier - this is an error
+        place_symbol = broker_symbol
 
-        # If scrip master resolved the symbol, use it directly
-        if resolved_symbol:
-            place_symbol = resolved_symbol
-            if use_limit_order:
-                trial = self.orders.place_limit_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    price=limit_price,
-                    variety=order_variety,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-            else:
-                trial = self.orders.place_market_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    variety=order_variety,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-            # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
-            if isinstance(trial, dict) and "error" not in trial:
-                stat = trial.get("stat", "").lower()
-                if (
-                    stat == "ok"
-                    or "data" in trial
-                    or "order" in trial
-                    or "raw" in trial
-                    or "nordno" in str(trial).lower()
-                ):
-                    resp = trial
-                    placed_symbol = place_symbol
+        # Validate that symbol has suffix (means it was resolved by scrip master)
+        has_suffix = any(place_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"])
+        if not has_suffix:
+            logger.error(
+                f"Symbol {place_symbol} does not have suffix. "
+                f"This indicates scrip master resolution failed earlier. "
+                f"Cannot place order without proper symbol resolution."
+            )
+            return (False, None)
 
-        # Fallback: Try common series suffixes if scrip master didn't work
-        if not resp:
-            series_suffixes = ["-EQ", "-BE", "-BL", "-BZ"]
-            resp = None
-            placed_symbol = None
-            for suf in series_suffixes:
-                place_symbol = (
-                    broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
-                )
+        # Place order with scrip master resolved symbol
+        if use_limit_order:
+            trial = self.orders.place_limit_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                price=limit_price,
+                variety=order_variety,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
+        else:
+            trial = self.orders.place_market_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                variety=order_variety,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
 
-                # Check if this suffix requires limit order
-                is_t2t_suf = suf in ["-BE", "-BL", "-BZ"]
-
-                if is_t2t_suf:
-                    limit_price = close * 1.01
-                    logger.debug(f"Trying {place_symbol} with LIMIT @ Rs {limit_price:.2f}")
-                    trial = self.orders.place_limit_buy(
-                        symbol=place_symbol,
-                        quantity=qty,
-                        price=limit_price,
-                        variety=order_variety,
-                        exchange=config.DEFAULT_EXCHANGE,
-                        product=config.DEFAULT_PRODUCT,
-                    )
-                else:
-                    trial = self.orders.place_market_buy(
-                        symbol=place_symbol,
-                        quantity=qty,
-                        variety=order_variety,
-                        exchange=config.DEFAULT_EXCHANGE,
-                        product=config.DEFAULT_PRODUCT,
-                    )
-                # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
-                if isinstance(trial, dict) and "error" not in trial:
-                    stat = trial.get("stat", "").lower()
-                    trial_str = str(trial).lower()
-                    if (
-                        stat == "ok"
-                        or "data" in trial
-                        or "order" in trial
-                        or "raw" in trial
-                        or "nordno" in trial_str
-                    ) and "not_ok" not in trial_str:
-                        resp = trial
-                        placed_symbol = place_symbol
-                        break
+        # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
+        if isinstance(trial, dict) and "error" not in trial:
+            stat = trial.get("stat", "").lower()
+            if (
+                stat == "ok"
+                or "data" in trial
+                or "order" in trial
+                or "raw" in trial
+                or "nordno" in str(trial).lower()
+            ):
+                resp = trial
+                placed_symbol = place_symbol
 
         # Check if order was successful
         # Accept responses with nOrdNo (direct order ID) or data/order/raw structures
@@ -2198,15 +2465,19 @@ class AutoTradeEngine:
         # Extract order ID from response
         order_id = extract_order_id(resp)
 
+        # Use resolved symbol (placed_symbol) everywhere - this is the actual broker format
+        # Define early so it can be used throughout
+        actual_symbol = placed_symbol or broker_symbol  # Prefer placed_symbol (resolved format)
+
         if not order_id:
             # Fallback: Search order book after a shorter wait (reduced from 60s to 10s for performance)
             logger.warning(
-                f"No order ID in response for {broker_symbol}. "
+                f"No order ID in response for {actual_symbol}. "
                 f"Will search order book after 10 seconds..."
             )
             order_id = search_order_in_broker_orderbook(
                 self.orders,
-                placed_symbol or broker_symbol,
+                actual_symbol,
                 qty,
                 placement_time,
                 max_wait_seconds=10,  # Reduced from 60s to 10s for faster execution
@@ -2215,14 +2486,14 @@ class AutoTradeEngine:
             if not order_id:
                 # Still no order ID - uncertain placement
                 logger.error(
-                    f"Order placement uncertain for {broker_symbol}: "
+                    f"Order placement uncertain for {actual_symbol}: "
                     f"No order ID and not found in order book"
                 )
                 # Send notification about uncertain order
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 telegram_msg = (
                     f"⚠️ *Order Placement Uncertain*\n\n"
-                    f"Symbol: `{broker_symbol}`\n"
+                    f"Symbol: `{actual_symbol}`\n"
                     f"Qty: {qty}\n"
                     f"Order ID not received and not found in order book.\n"
                     f"Please check broker app manually.\n\n"
@@ -2250,8 +2521,7 @@ class AutoTradeEngine:
 
         # Order successfully placed with order_id
         logger.info(
-            f"Order placed successfully: {placed_symbol or broker_symbol} "
-            f"(order_id: {order_id}, qty: {qty})"
+            f"Order placed successfully: {actual_symbol} (order_id: {order_id}, qty: {qty})"
         )
 
         # Mark signal as TRADED (Phase 2.3: Database integration)
@@ -2262,13 +2532,14 @@ class AutoTradeEngine:
                 )
 
                 signals_repo = SignalsRepository(self.db, user_id=self.user_id)
-                # Use the base symbol (without series suffix like -EQ)
-                base_symbol = broker_symbol.split("-")[0] if "-" in broker_symbol else broker_symbol
+                # Use the base symbol (without series suffix like -EQ) for signal marking
+                # Signals table stores base symbols, so extract base from actual symbol
+                base_symbol = actual_symbol.split("-")[0] if "-" in actual_symbol else actual_symbol
                 if signals_repo.mark_as_traded(base_symbol, user_id=self.user_id):
                     logger.info(f"Marked signal for {base_symbol} as TRADED (user {self.user_id})")
             except Exception as mark_error:
                 # Don't fail order placement if marking fails
-                logger.warning(f"Failed to mark signal as traded for {broker_symbol}: {mark_error}")
+                logger.warning(f"Failed to mark signal as traded for {actual_symbol}: {mark_error}")
 
         order_type = "LIMIT" if use_limit_order else "MARKET"
 
@@ -2277,7 +2548,7 @@ class AutoTradeEngine:
             try:
                 limit_price = limit_price if use_limit_order else None
                 self.telegram_notifier.notify_order_placed(
-                    symbol=placed_symbol or broker_symbol,
+                    symbol=actual_symbol,  # Use actual resolved symbol format
                     order_id=order_id,
                     quantity=qty,
                     order_type=order_type,
@@ -2293,7 +2564,8 @@ class AutoTradeEngine:
             holdings = self.portfolio.get_holdings() or {}
             for item in holdings.get("data") or []:
                 sym = str(item.get("tradingSymbol", "")).upper()
-                if broker_symbol.upper() in sym:
+                # Check if actual_symbol matches holdings symbol (both should be in broker format)
+                if actual_symbol.upper() in sym or sym in actual_symbol.upper():
                     pre_existing_qty = int(item.get("quantity", 0))
                     break
         except Exception as e:
@@ -2302,7 +2574,7 @@ class AutoTradeEngine:
         # Register in tracking scope (system-recommended)
         try:
             tracking_id = add_tracked_symbol(
-                symbol=broker_symbol,
+                symbol=actual_symbol,  # Use actual resolved symbol format
                 ticker=ticker,
                 initial_order_id=order_id,
                 initial_qty=qty,
@@ -2310,7 +2582,7 @@ class AutoTradeEngine:
                 recommendation_source=recommendation_source,
                 recommendation_verdict=getattr(ind, "verdict", None),
             )
-            logger.debug(f"Added to tracking scope: {broker_symbol} (tracking_id: {tracking_id})")
+            logger.debug(f"Added to tracking scope: {actual_symbol} (tracking_id: {tracking_id})")
         except Exception as e:
             logger.error(f"Failed to add to tracking scope: {e}")
 
@@ -2318,7 +2590,7 @@ class AutoTradeEngine:
         try:
             add_pending_order(
                 order_id=order_id,
-                symbol=placed_symbol or broker_symbol,
+                symbol=actual_symbol,  # Use actual resolved symbol format
                 ticker=ticker,
                 qty=qty,
                 order_type=order_type,
@@ -2334,7 +2606,7 @@ class AutoTradeEngine:
         # Immediately fetch order status from broker and sync DB state
         self._sync_order_status_snapshot(
             order_id=str(order_id),
-            symbol=placed_symbol or broker_symbol,
+            symbol=actual_symbol,  # Use actual resolved symbol format
             quantity=qty,
         )
 
@@ -2342,7 +2614,7 @@ class AutoTradeEngine:
         # This checks if the order was immediately rejected by the broker
         try:
             is_valid, rejection_reason = self._verify_order_placement(
-                order_id=order_id, symbol=placed_symbol or broker_symbol, wait_seconds=15
+                order_id=order_id, symbol=actual_symbol, wait_seconds=15
             )
             if not is_valid:
                 logger.error(
@@ -2769,6 +3041,24 @@ class AutoTradeEngine:
             for db_order in retriable_orders:
                 summary["retried"] += 1
                 symbol = db_order.symbol
+
+                # Validate symbol exists in scrip master (single source of truth)
+                # Symbol in DB should already be resolved, but validate it exists
+                # Use user's trading config preference for exchange
+                exchange = (
+                    self.strategy_config.default_exchange
+                    if self.strategy_config
+                    else config.DEFAULT_EXCHANGE
+                )
+                if self.scrip_master and self.scrip_master.symbol_map:
+                    instrument = self.scrip_master.get_instrument(symbol, exchange=exchange)
+                    if not instrument or not instrument.get("symbol"):
+                        logger.warning(
+                            f"Symbol {symbol} from DB not found in scrip master ({exchange}). "
+                            f"Skipping retry (symbol may have been delisted or changed)."
+                        )
+                        summary["skipped"] += 1
+                        continue
 
                 # Check portfolio limit
                 if not has_capacity:
@@ -3415,6 +3705,7 @@ class AutoTradeEngine:
             "attempted": 0,
             "placed": 0,
             "failed_balance": 0,
+            "skipped": 0,  # Total skipped (for backward compatibility with tests)
             "skipped_portfolio_limit": 0,
             "skipped_duplicates": 0,
             "skipped_missing_data": 0,
@@ -3510,7 +3801,9 @@ class AutoTradeEngine:
                         and self.portfolio_service._cache
                     ):
                         self.portfolio_service._cache.set("holdings", test_holdings)
-                        logger.debug("Populated PortfolioService cache with empty holdings (fallback)")
+                        logger.debug(
+                            "Populated PortfolioService cache with empty holdings (fallback)"
+                        )
             else:
                 logger.error(
                     "Cannot fetch holdings (API returned None after retries) and no database fallback available. "
@@ -3740,10 +4033,34 @@ class AutoTradeEngine:
 
         # Process new recommendations (retries handled separately at scheduled time)
         for rec in recommendations:
-            broker_symbol = self.parse_symbol_for_broker(rec.ticker)
+            base_symbol = self.parse_symbol_for_broker(rec.ticker)  # "SALSTEEL"
+
+            # Resolve symbol to actual broker format early (e.g., "SALSTEEL" -> "SALSTEEL-BE")
+            # Scrip master is the SINGLE SOURCE OF TRUTH for symbol resolution
+            try:
+                broker_symbol = self._resolve_broker_symbol(base_symbol)  # "SALSTEEL-BE"
+            except ValueError as e:
+                # Scrip master resolution failed - skip this recommendation
+                logger.error(f"Failed to resolve symbol {base_symbol} via scrip master: {e}")
+                summary["skipped"] += 1
+                summary["skipped_missing_data"] += 1  # Also increment specific counter
+                ticker_attempt = {
+                    "ticker": rec.ticker,
+                    "symbol": base_symbol,
+                    "verdict": rec.verdict,
+                    "status": "skipped",
+                    "reason": f"scrip_master_resolution_failed: {str(e)}",
+                    "qty": None,
+                    "execution_capital": None,
+                    "price": None,
+                    "order_id": None,
+                }
+                summary["ticker_attempts"].append(ticker_attempt)
+                continue
+
             ticker_attempt = {
                 "ticker": rec.ticker,
-                "symbol": broker_symbol,
+                "symbol": broker_symbol,  # Use resolved symbol
                 "verdict": rec.verdict,
                 "status": "pending",
                 "reason": None,
@@ -3770,6 +4087,7 @@ class AutoTradeEngine:
                     f"Portfolio limit reached ({current_count}/{max_size}); skipping further entries"
                 )
                 summary["skipped_portfolio_limit"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "portfolio_limit_reached"
                 summary["ticker_attempts"].append(ticker_attempt)
@@ -3790,6 +4108,7 @@ class AutoTradeEngine:
                     "System does not track existing holdings - keeping portfolios separate."
                 )
                 summary["skipped_duplicates"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "already_in_holdings"
                 summary["ticker_attempts"].append(ticker_attempt)
@@ -3820,6 +4139,7 @@ class AutoTradeEngine:
                     "System does not track existing holdings - keeping portfolios separate."
                 )
                 summary["skipped_duplicates"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 skip_reason = (
                     "already_in_holdings"
                     if "holdings" in duplicate_reason.lower()
@@ -3845,8 +4165,9 @@ class AutoTradeEngine:
                 continue
             # 2) Check for manual AMO orders -> link to DB and skip placing
             # Pass cached orders to avoid redundant API calls
+            # Note: _check_for_manual_orders checks by base symbol, but we use resolved symbol for DB
             manual_order_info = self._check_for_manual_orders(
-                broker_symbol, cached_pending_orders=cached_pending_orders
+                base_symbol, cached_pending_orders=cached_pending_orders
             )
             if manual_order_info.get("has_manual_order"):
                 manual_orders = manual_order_info.get("manual_orders", [])
@@ -3855,6 +4176,9 @@ class AutoTradeEngine:
                     manual_order_id = manual_order.get("order_id")
                     manual_qty = manual_order.get("quantity", 0)
                     manual_price = manual_order.get("price", 0.0)
+                    # Extract actual symbol from manual order (broker format)
+                    # order_info dict uses "symbol" key (from OrderFieldExtractor.get_symbol())
+                    manual_symbol = manual_order.get("symbol") or broker_symbol
 
                     logger.info(
                         f"Manual AMO order detected for {broker_symbol}: order_id={manual_order_id}, "
@@ -3880,14 +4204,15 @@ class AutoTradeEngine:
                                 status=DbOrderStatus.PENDING,
                             )
                             logger.info(
-                                f"Updated existing DB order {existing_order.id} for {broker_symbol} "
+                                f"Updated existing DB order {existing_order.id} for {manual_symbol} "
                                 f"with manual order details"
                             )
                         else:
                             # Create new order record for manual order
+                            # Use actual symbol from broker order (manual_symbol) or resolved symbol
                             db_order = self.orders_repo.create_amo(
                                 user_id=self.user_id,
-                                symbol=broker_symbol,
+                                symbol=manual_symbol,  # Use actual symbol from broker order
                                 side="buy",
                                 order_type="market",  # AMO orders are typically market
                                 quantity=manual_qty,
@@ -3898,11 +4223,12 @@ class AutoTradeEngine:
                             db_order.status = DbOrderStatus.PENDING
                             self.orders_repo.update(db_order)
                             logger.info(
-                                f"Created new DB order {db_order.id} for {broker_symbol} "
+                                f"Created new DB order {db_order.id} for {manual_symbol} "
                                 f"with manual order details"
                             )
 
                     summary["skipped_duplicates"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     ticker_attempt["status"] = "skipped"
                     ticker_attempt["reason"] = "manual_order_exists"
                     ticker_attempt["qty"] = manual_qty
@@ -3990,6 +4316,7 @@ class AutoTradeEngine:
                         "Order already executed, cannot update quantity."
                     )
                     summary["skipped_duplicates"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     ticker_attempt["status"] = "skipped"
                     ticker_attempt["reason"] = "active_order_in_db"
                     ticker_attempt["existing_order_id"] = existing_db_order.id
@@ -4026,6 +4353,7 @@ class AutoTradeEngine:
                             )
                             # If cancel fails, skip to prevent duplicates
                             summary["skipped_duplicates"] += 1
+                            summary["skipped"] += 1  # Increment general counter
                             ticker_attempt["status"] = "skipped"
                             ticker_attempt["reason"] = "cancel_failed"
                             summary["ticker_attempts"].append(ticker_attempt)
@@ -4045,6 +4373,7 @@ class AutoTradeEngine:
                     "Will not place duplicate order."
                 )
                 summary["skipped_duplicates"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "duplicate_order"
                 summary["ticker_attempts"].append(ticker_attempt)
@@ -4061,6 +4390,7 @@ class AutoTradeEngine:
             if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
                 logger.warning(f"Skipping {rec.ticker}: missing indicators")
                 summary["skipped_missing_data"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "missing_indicators"
                 summary["ticker_attempts"].append(ticker_attempt)
@@ -4070,6 +4400,7 @@ class AutoTradeEngine:
             if close <= 0:
                 logger.warning(f"Skipping {rec.ticker}: invalid close price {close}")
                 summary["skipped_invalid_qty"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "invalid_price"
                 ticker_attempt["price"] = close
@@ -4184,6 +4515,7 @@ class AutoTradeEngine:
                             f"Quantity and price unchanged (qty={existing_qty}, price=Rs {existing_price:.2f})."
                         )
                         summary["skipped_duplicates"] += 1
+                        summary["skipped"] += 1  # Increment general counter
                         ticker_attempt["status"] = "skipped"
                         ticker_attempt["reason"] = "active_order_in_db"
                         ticker_attempt["existing_order_id"] = existing_db_order.id
@@ -4197,6 +4529,7 @@ class AutoTradeEngine:
                         "Order already executed, cannot update quantity/price."
                     )
                     summary["skipped_duplicates"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     ticker_attempt["status"] = "skipped"
                     ticker_attempt["reason"] = "active_order_in_db"
                     ticker_attempt["existing_order_id"] = existing_db_order.id
@@ -4213,6 +4546,7 @@ class AutoTradeEngine:
             if not is_valid_volume:
                 logger.info(f"Skipping {broker_symbol}: position size too large relative to volume")
                 summary["skipped_invalid_qty"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "position_too_large_for_volume"
                 ticker_attempt["qty"] = qty
@@ -4282,6 +4616,7 @@ class AutoTradeEngine:
                 self._add_failed_order(failed_order_info)
                 summary["failed_balance"] += 1
                 summary["skipped_invalid_qty"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "failed"
                 ticker_attempt["reason"] = "insufficient_balance"
                 ticker_attempt["qty"] = qty
@@ -4386,6 +4721,7 @@ class AutoTradeEngine:
             "failed_balance": 0,
             "skipped_no_position": 0,
             "skipped_duplicates": 0,
+            "skipped_duplicate_level": 0,  # Re-entry at same level already placed today
             "skipped_invalid_rsi": 0,
             "skipped_missing_data": 0,
             "skipped_invalid_qty": 0,
@@ -4479,35 +4815,124 @@ class AutoTradeEngine:
                     continue
 
                 # Determine next re-entry level based on entry RSI
-                next_level = self._determine_reentry_level(entry_rsi, current_rsi, position)
+                # Enhanced Hybrid Approach: Returns (next_level, metadata_updates)
+                # Get cycle before to detect if reset happened
+                cycle_meta_before = self._get_position_cycle_metadata(position)
+                cycle_before = cycle_meta_before.get("current_cycle", 0)
+
+                next_level, metadata_updates = self._determine_reentry_level(
+                    entry_rsi, current_rsi, position
+                )
+
+                # Detect if reset happened (cycle was incremented)
+                is_reset = (
+                    metadata_updates.get("current_cycle") is not None
+                    and metadata_updates.get("current_cycle") > cycle_before
+                )
+
+                # Update position metadata if needed (cycle tracking, reset detection)
+                if any(v is not None for v in metadata_updates.values()):
+                    try:
+                        # Get current cycle metadata
+                        cycle_meta = self._get_position_cycle_metadata(position)
+                        current_cycle = cycle_meta.get("current_cycle", 0)
+
+                        # Apply metadata updates
+                        updated_reentries = self._set_position_cycle_metadata(
+                            position,
+                            current_cycle=metadata_updates.get("current_cycle") or current_cycle,
+                            last_rsi_above_30=metadata_updates.get("last_rsi_above_30"),
+                            last_rsi_value=metadata_updates.get("last_rsi_value"),
+                        )
+
+                        # Update position in database
+                        self.positions_repo.upsert(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            quantity=position.quantity,
+                            avg_price=position.avg_price,
+                            reentries=updated_reentries,
+                            auto_commit=True,
+                        )
+
+                        # Refresh position object to get updated metadata
+                        position = self.positions_repo.get_by_symbol(self.user_id, symbol)
+                        if not position:
+                            logger.warning(f"Position {symbol} not found after metadata update")
+                            summary["skipped_missing_data"] += 1
+                            continue
+
+                        if metadata_updates.get("current_cycle") is not None:
+                            logger.info(
+                                f"Updated cycle metadata for {symbol}: "
+                                f"current_cycle={updated_reentries['_cycle_metadata']['current_cycle']}"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to update cycle metadata for {symbol}: {e}. "
+                            f"Continuing with re-entry check..."
+                        )
 
                 if next_level is None:
                     logger.debug(
-                        f"No re-entry opportunity for {symbol} (entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})"
+                        f"No re-entry opportunity for {symbol} "
+                        f"(entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})"
                     )
                     summary["skipped_invalid_rsi"] += 1
                     continue
 
+                # Get current cycle for logging and order metadata
+                # Use refreshed position object if metadata was updated
+                cycle_meta = self._get_position_cycle_metadata(position)
+                current_cycle = cycle_meta.get("current_cycle", 0)
+
                 logger.info(
                     f"Re-entry opportunity for {symbol}: entry_rsi={entry_rsi:.2f}, "
-                    f"current_rsi={current_rsi:.2f}, next_level={next_level}"
+                    f"current_rsi={current_rsi:.2f}, next_level={next_level}, "
+                    f"cycle={current_cycle}, is_reset={is_reset}"
                 )
 
-                # Check for duplicates (only active buy orders, NOT holdings - reentries allow buying more)
-                broker_symbol = self.parse_symbol_for_broker(ticker)
-                if not broker_symbol:
+                # Check if re-entry at this level already exists in current cycle
+                # Enhanced Hybrid Approach: Checks by cycle number, allowing same level after reset
+                # Fix Issue 1: Pass allow_reset=True when reset is detected, regardless of level
+                if self.has_reentry_at_level(symbol, next_level, allow_reset=is_reset):
+                    logger.info(
+                        f"Skipping {symbol}: Re-entry at level {next_level} (RSI < {next_level}) "
+                        f"already exists in cycle {current_cycle}. "
+                        f"Next re-entry should be at a different level or after reset."
+                    )
+                    summary["skipped_duplicate_level"] = (
+                        summary.get("skipped_duplicate_level", 0) + 1
+                    )
+                    continue
+
+                # Check for duplicates (only active buy orders, NOT holdings)
+                # Reentries allow buying more of existing position
+                base_symbol = self.parse_symbol_for_broker(ticker)
+                if not base_symbol:
                     logger.warning(f"Could not parse broker symbol for {symbol}")
                     summary["skipped_missing_data"] += 1
                     continue
 
-                # Check for active buy orders only (reentries should allow buying more of existing position)
+                # Resolve symbol via scrip master (single source of truth)
+                try:
+                    broker_symbol = self._resolve_broker_symbol(base_symbol)
+                except ValueError as e:
+                    logger.error(
+                        f"Failed to resolve symbol {base_symbol} via scrip master for re-entry: {e}"
+                    )
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                # Check for active buy orders only
+                # Reentries allow buying more of existing position
                 if self.order_validation_service:
                     is_duplicate, duplicate_reason = (
                         self.order_validation_service.check_duplicate_order(
                             broker_symbol,
                             check_active_buy_order=True,
                             check_holdings=False,  # Don't check holdings for reentries
-                            allow_reentry=True,  # Allow reentries (buying more of existing position)
+                            allow_reentry=True,  # Allow reentries (buying more)
                         )
                     )
                     if is_duplicate:
@@ -4530,7 +4955,8 @@ class AutoTradeEngine:
                 affordable_qty = self.get_affordable_qty(current_price)
                 if affordable_qty < qty:
                     logger.warning(
-                        f"Insufficient balance for {symbol}: requested={qty}, affordable={affordable_qty}"
+                        f"Insufficient balance for {symbol}: "
+                        f"requested={qty}, affordable={affordable_qty}"
                     )
                     qty = affordable_qty
                     if qty <= 0:
@@ -4559,7 +4985,11 @@ class AutoTradeEngine:
                         continue
 
                 # Place re-entry order (AMO-like)
+                # Enhanced Hybrid Approach: Include cycle number in order metadata
                 rec_source = "reentry"
+                cycle_meta = self._get_position_cycle_metadata(position)
+                current_cycle = cycle_meta.get("current_cycle", 0)
+
                 success, order_id = self._attempt_place_order(
                     broker_symbol,
                     ticker,
@@ -4578,6 +5008,7 @@ class AutoTradeEngine:
                         "entry_type": "reentry",
                         "entry_rsi": entry_rsi,
                         "reentry_level": next_level,
+                        "cycle": current_cycle,  # Store cycle number for tracking
                     },
                 )
 
@@ -4594,19 +5025,28 @@ class AutoTradeEngine:
                 logger.error(f"Error checking re-entry for {symbol}: {e}", exc_info=True)
                 continue
 
+        skipped_total = (
+            summary["skipped_no_position"]
+            + summary["skipped_duplicates"]
+            + summary["skipped_invalid_rsi"]
+            + summary["skipped_missing_data"]
+            + summary["skipped_invalid_qty"]
+        )
         logger.info(
             f"Re-entry check complete: attempted={summary['attempted']}, "
             f"placed={summary['placed']}, failed_balance={summary['failed_balance']}, "
-            f"skipped={summary['skipped_no_position'] + summary['skipped_duplicates'] + summary['skipped_invalid_rsi'] + summary['skipped_missing_data'] + summary['skipped_invalid_qty']}"
+            f"skipped={skipped_total}"
         )
 
         return summary
 
     def _determine_reentry_level(
         self, entry_rsi: float, current_rsi: float, position: Any
-    ) -> int | None:
+    ) -> tuple[int | None, dict[str, Any]]:
         """
         Determine next re-entry level based on entry RSI and current RSI.
+
+        Enhanced Hybrid Approach: Implements cycle tracking with reset detection on startup.
 
         Logic:
         - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
@@ -4614,8 +5054,9 @@ class AutoTradeEngine:
         - Entry at RSI < 10 → Only Reset
 
         Reset mechanism:
-        - When RSI > 30: Set reset_ready = True (track in position metadata)
-        - When RSI drops < 30 after reset_ready: Reset all levels
+        - When RSI > 30: Store last_rsi_above_30 timestamp in position metadata
+        - When RSI drops < 30 after last_rsi_above_30 exists: Increment current_cycle, reset all levels
+        - On startup: Check if current RSI < 30 and last_rsi_above_30 exists → Reset detected
 
         Args:
             entry_rsi: RSI10 value at initial entry
@@ -4623,13 +5064,30 @@ class AutoTradeEngine:
             position: Position object (for tracking reset state)
 
         Returns:
-            Next re-entry level (30, 20, or 10), or None if no re-entry opportunity
+            Tuple of (next_level, metadata_updates):
+            - next_level: Next re-entry level (30, 20, or 10), or None if no re-entry opportunity
+            - metadata_updates: Dict with cycle metadata updates to apply:
+              {
+                  "current_cycle": int | None,  # None = no change
+                  "last_rsi_above_30": str | None,  # ISO timestamp or None to clear
+                  "last_rsi_value": float | None,  # None = no change
+              }
         """
-        # Get reset state from position metadata (stored in reentries JSON or separate field)
-        # For now, we'll track reset_ready in a simple way
-        # TODO: Store reset_ready in position metadata or separate field
+        from src.infrastructure.db.timezone_utils import ist_now
 
-        reset_ready = False
+        # Get current cycle metadata
+        cycle_meta = self._get_position_cycle_metadata(position)
+        current_cycle = cycle_meta.get("current_cycle", 0)
+        last_rsi_above_30 = cycle_meta.get("last_rsi_above_30")
+        last_rsi_value = cycle_meta.get("last_rsi_value")
+
+        # Initialize metadata updates (None = no change)
+        metadata_updates = {
+            "current_cycle": None,
+            "last_rsi_above_30": None,
+            "last_rsi_value": None,
+        }
+
         levels_taken = {"30": False, "20": False, "10": False}
 
         # Determine initial levels_taken based on entry_rsi
@@ -4646,33 +5104,148 @@ class AutoTradeEngine:
             # Entry at RSI >= 30: No levels taken (shouldn't happen, but handle it)
             levels_taken = {"30": False, "20": False, "10": False}
 
-        # Check reset mechanism
-        # TODO: Track reset_ready in database (could use position metadata or separate field)
-        # For now, we'll check if RSI was > 30 recently by checking if we have any reentry data
-        # This is a simplified approach - in production, we'd track reset_ready explicitly
+        # Fix Issue 1: Update levels_taken based on executed re-entries in current cycle
+        # Check reentries array to see which levels have been taken in the current cycle
+        if position and position.reentries:
+            reentries = position.reentries
+            if isinstance(reentries, dict):
+                # New format: extract reentries array
+                reentries = reentries.get("reentries", [])
+            if isinstance(reentries, list):
+                for reentry in reentries:
+                    if not isinstance(reentry, dict):
+                        continue
+                    # Check if this re-entry is in the current cycle
+                    reentry_cycle = reentry.get("cycle")
+                    if reentry_cycle is not None:
+                        # Only consider re-entries in the current cycle
+                        if int(reentry_cycle) == current_cycle:
+                            reentry_level = reentry.get("level")
+                            if reentry_level is not None:
+                                try:
+                                    level_int = int(reentry_level)
+                                    if level_int == 30:
+                                        levels_taken["30"] = True
+                                    elif level_int == 20:
+                                        levels_taken["20"] = True
+                                    elif level_int == 10:
+                                        levels_taken["10"] = True
+                                except (ValueError, TypeError):
+                                    pass
+                    # Backward compatibility: if cycle not stored, assume cycle 0
+                    elif current_cycle == 0:
+                        reentry_level = reentry.get("level")
+                        if reentry_level is not None:
+                            try:
+                                level_int = int(reentry_level)
+                                if level_int == 30:
+                                    levels_taken["30"] = True
+                                elif level_int == 20:
+                                    levels_taken["20"] = True
+                                elif level_int == 10:
+                                    levels_taken["10"] = True
+                            except (ValueError, TypeError):
+                                pass
 
-        # Reset handling: if RSI > 30, mark reset_ready
+        # Fix: Mark intermediate levels as taken to prevent backtracking
+        # Rule: When a re-entry at level X is taken, mark all higher levels (between entry level and X) as taken
+        # This prevents backtracking: e.g., if level 10 is taken, level 20 should also be marked as taken
+        # Examples:
+        #   - If level 10 is taken → Mark levels 20 and 30 as taken (can't backtrack to 20 or 30)
+        #   - If level 20 is taken → Mark level 30 as taken (can't backtrack to 30)
+        #   - If level 30 is taken → No intermediate levels
+        if levels_taken.get("10"):
+            # If level 10 is taken, mark level 20 and 30 as taken (can't backtrack)
+            levels_taken["20"] = True
+            levels_taken["30"] = True
+            logger.debug(
+                "Level 10 is taken - marking levels 20 and 30 as taken to prevent backtracking"
+            )
+        elif levels_taken.get("20"):
+            # If level 20 is taken, mark level 30 as taken (can't backtrack)
+            levels_taken["30"] = True
+            logger.debug("Level 20 is taken - marking level 30 as taken to prevent backtracking")
+
+        # Enhanced reset detection with startup support
+        # Step 1: If RSI > 30, store last_rsi_above_30 timestamp
         if current_rsi > 30:
-            reset_ready = True
-            # TODO: Store reset_ready in position metadata
+            # Store timestamp when RSI goes above 30
+            now = ist_now()
+            metadata_updates["last_rsi_above_30"] = now.isoformat()
+            metadata_updates["last_rsi_value"] = current_rsi
+            logger.debug(
+                f"RSI > 30 detected: {current_rsi:.2f}. Storing last_rsi_above_30 timestamp."
+            )
+            # Don't return yet - continue to check if we should trigger reset immediately
 
-        # If reset_ready and RSI drops < 30 again, trigger NEW CYCLE reentry at RSI<30
-        if current_rsi < 30 and reset_ready:
+        # Step 2: Check for reset condition (RSI < 30 AND last_rsi_above_30 exists)
+        # This works both during runtime and on startup
+        reset_detected = False
+        if current_rsi < 30 and last_rsi_above_30:
+            # Reset detected! Increment cycle and reset all levels
+            new_cycle = current_cycle + 1
+            metadata_updates["current_cycle"] = new_cycle
+            metadata_updates["last_rsi_above_30"] = None  # Clear reset flag
+            metadata_updates["last_rsi_value"] = current_rsi  # Update last RSI value
+            reset_detected = True
+
+            logger.info(
+                f"Reset detected: RSI dropped to {current_rsi:.2f} after being above 30. "
+                f"Incrementing cycle from {current_cycle} to {new_cycle}."
+            )
+
             # Reset all levels, treat as new cycle
             levels_taken = {"30": False, "20": False, "10": False}
-            reset_ready = False
-            # TODO: Update reset_ready in position metadata
-            # Immediately trigger reentry at RSI<30 level
-            return 30
+
+            # Fix Issue 2: Reset should check current RSI level and trigger appropriate level
+            # Don't always return level 30 - check what level the current RSI satisfies
+            if current_rsi < 10:
+                # RSI < 10: Trigger level 10 (highest priority)
+                logger.info(f"Reset triggers re-entry at level 10 (RSI {current_rsi:.2f} < 10)")
+                return (10, metadata_updates)
+            elif current_rsi < 20:
+                # RSI < 20: Trigger level 20
+                logger.info(f"Reset triggers re-entry at level 20 (RSI {current_rsi:.2f} < 20)")
+                return (20, metadata_updates)
+            elif current_rsi < 30:
+                # RSI < 30: Trigger level 30
+                logger.info(f"Reset triggers re-entry at level 30 (RSI {current_rsi:.2f} < 30)")
+                return (30, metadata_updates)
+            else:
+                # Shouldn't happen (we're in reset condition with RSI < 30)
+                logger.warning(
+                    f"Reset detected but RSI {current_rsi:.2f} is not < 30. This shouldn't happen."
+                )
+                return (None, metadata_updates)
+
+        # Step 3: Update last_rsi_value if RSI changed (for tracking)
+        if last_rsi_value != current_rsi:
+            metadata_updates["last_rsi_value"] = current_rsi
 
         # Normal progression through levels
+        # Fix Issue 3: Allow skipping levels if RSI drops directly to a lower level
+        # Check levels in priority order (10 > 20 > 30) - allows skipping levels
         next_level = None
-        if levels_taken.get("30") and not levels_taken.get("20") and current_rsi < 20:
-            next_level = 20  # Re-entry at RSI < 20
-        elif levels_taken.get("20") and not levels_taken.get("10") and current_rsi < 10:
-            next_level = 10  # Re-entry at RSI < 10
 
-        return next_level
+        if current_rsi < 10:
+            # RSI < 10: Check if level 10 is available
+            if not levels_taken.get("10"):
+                next_level = 10
+                logger.debug(
+                    f"RSI {current_rsi:.2f} < 10, level 10 available (allows skipping level 20)"
+                )
+        elif current_rsi < 20:
+            # RSI < 20: Check if level 20 is available
+            if not levels_taken.get("20"):
+                next_level = 20
+                logger.debug(f"RSI {current_rsi:.2f} < 20, level 20 available")
+        elif current_rsi < 30:
+            # RSI < 30: Check if level 30 is available
+            if not levels_taken.get("30"):
+                next_level = 30
+                logger.debug(f"RSI {current_rsi:.2f} < 30, level 30 available")
+
+        return (next_level, metadata_updates)
 
     def evaluate_reentries_and_exits(self) -> dict[str, int]:
         summary = {"symbols_evaluated": 0, "exits": 0, "reentries": 0}
@@ -5210,12 +5783,15 @@ class AutoTradeEngine:
                                     e["reentries"] = []
                                 # Construct reentry data matching database structure
                                 # This structure must match what unified_order_monitor writes to DB.
+                                # Since this is a market order placed immediately, placed_at = today
+                                current_time = datetime.now()
                                 reentry_data = {
                                     "qty": int(qty),
                                     "level": int(next_level) if next_level is not None else None,
                                     "rsi": float(rsi) if rsi is not None else None,
                                     "price": float(price),
-                                    "time": datetime.now().isoformat(),
+                                    "time": current_time.isoformat(),  # Execution time (for historical tracking)
+                                    "placed_at": current_time.date().isoformat(),  # Placement date (for daily cap check)
                                     "order_id": (
                                         reentry_order_id if reentry_order_id else None
                                     ),  # Track order_id if available

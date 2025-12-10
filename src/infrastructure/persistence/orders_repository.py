@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 import builtins
+import json
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Orders, OrderStatus
 from src.infrastructure.db.timezone_utils import ist_now
+
+# Import logger for duplicate detection logging
+try:
+    from utils.logger import logger
+except ImportError:
+    import logging
+
+    logger = logging.getLogger(__name__)
 
 
 class OrdersRepository:
@@ -21,7 +30,6 @@ class OrdersRepository:
     def list(self, user_id: int, status: OrderStatus | None = None) -> builtins.list[Orders]:
         # Always use raw SQL fallback to avoid enum validation issues
         # This ensures compatibility with database schema regardless of SQLAlchemy metadata cache
-        from sqlalchemy import inspect, text
 
         # Check which columns actually exist in the database
         inspector = inspect(self.db.bind)
@@ -153,8 +161,6 @@ class OrdersRepository:
                 # Handle JSON metadata - might be string or dict
                 metadata_val = row_dict.get("metadata")
                 if isinstance(metadata_val, str):
-                    import json
-
                     try:
                         metadata_val = json.loads(metadata_val)
                     except Exception:
@@ -209,10 +215,45 @@ class OrdersRepository:
         order_metadata: dict | None = None,
         reason: str | None = None,
     ) -> Orders:
+        # Check for existing active order to prevent duplicates
+        # First check by exact symbol match (most common case - same symbol format)
+        # Then check by base symbol (fallback for different formats like SALSTEEL-BE vs SALSTEEL)
+        if side == "buy":
+            existing_orders = self.list(user_id)
+            symbol_upper = symbol.upper().strip()
+            base_symbol = symbol_upper.split("-")[0].strip()
+
+            for existing_order in existing_orders:
+                if existing_order.side != "buy":
+                    continue
+                if existing_order.status not in [OrderStatus.PENDING, OrderStatus.ONGOING]:
+                    continue
+
+                existing_symbol_upper = existing_order.symbol.upper().strip()
+                existing_base = existing_symbol_upper.split("-")[0].strip()
+
+                # First: Check exact symbol match (most common - same format)
+                if existing_symbol_upper == symbol_upper:
+                    logger.warning(
+                        f"Duplicate order prevented: Active buy order already exists with exact symbol '{symbol}'. "
+                        f"Existing order: {existing_order.symbol} (id: {existing_order.id}, status: {existing_order.status}). "
+                        f"Returning existing order."
+                    )
+                    return existing_order
+
+                # Second: Check base symbol match (fallback for different formats)
+                if existing_base == base_symbol:
+                    logger.warning(
+                        f"Duplicate order prevented: Active buy order already exists for base symbol '{base_symbol}'. "
+                        f"Existing order: {existing_order.symbol} (id: {existing_order.id}, status: {existing_order.status}). "
+                        f"Requested symbol: {symbol}. Returning existing order."
+                    )
+                    return existing_order
+
         now = ist_now()
         order = Orders(
             user_id=user_id,
-            symbol=symbol,
+            symbol=symbol,  # Keep actual symbol format from broker (e.g., SALSTEEL-BE)
             side=side,
             order_type=order_type,
             quantity=quantity,
@@ -266,6 +307,45 @@ class OrdersRepository:
         )
         result = self.db.execute(stmt).scalar_one_or_none()
         return result is not None
+
+    def has_active_buy_order_by_base_symbol(
+        self, user_id: int, symbol: str, statuses: list[OrderStatus] | None = None
+    ) -> bool:
+        """
+        Check if user has an active buy order for a symbol (comparing by base symbol).
+
+        This prevents duplicate orders when same stock is represented with different
+        symbol formats (e.g., SALSTEEL-BE vs SALSTEEL).
+
+        Args:
+            user_id: User ID
+            symbol: Symbol to check (can be SALSTEEL-BE, SALSTEEL, etc.)
+            statuses: List of statuses to check (default: PENDING, ONGOING)
+
+        Returns:
+            True if active buy order exists for the base symbol, False otherwise
+        """
+        if statuses is None:
+            statuses = [OrderStatus.PENDING, OrderStatus.ONGOING]
+
+        # Extract base symbol (remove segment suffixes)
+        base_symbol = symbol.upper().split("-")[0].strip()
+
+        # Get all buy orders for user
+        all_orders = self.list(user_id)
+
+        for order in all_orders:
+            if order.side != "buy" or order.status not in statuses:
+                continue
+
+            # Extract base symbol from existing order
+            order_base_symbol = order.symbol.upper().split("-")[0].strip()
+
+            # Compare base symbols
+            if order_base_symbol == base_symbol:
+                return True
+
+        return False
 
     def has_ongoing_buy_order(self, user_id: int, symbol: str) -> bool:
         """
@@ -335,8 +415,6 @@ class OrdersRepository:
                 setattr(order, k, v)
 
         # Always update updated_at timestamp when order is modified
-        from src.infrastructure.db.timezone_utils import ist_now
-
         order.updated_at = ist_now()
 
         if auto_commit:
@@ -461,7 +539,7 @@ class OrdersRepository:
         Returns:
             List of FAILED orders that haven't expired yet
         """
-        from modules.kotak_neo_auto_trader.utils.trading_day_utils import (
+        from modules.kotak_neo_auto_trader.utils.trading_day_utils import (  # noqa: PLC0415
             get_next_trading_day_close,
         )
 
@@ -508,8 +586,6 @@ class OrdersRepository:
         Returns:
             Dict mapping status to count: {'amo': 5, 'ongoing': 10, 'closed': 20, ...}
         """
-        from sqlalchemy import text
-
         # Query to count orders by status
         query = text(
             """
@@ -555,8 +631,6 @@ class OrdersRepository:
                 'closed_orders': int,
             }
         """
-        from sqlalchemy import text
-
         # Get total count
         total_query = text(
             """

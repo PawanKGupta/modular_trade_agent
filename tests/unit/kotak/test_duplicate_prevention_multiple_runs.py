@@ -12,8 +12,11 @@ import pytest
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine, Recommendation
-from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+from modules.kotak_neo_auto_trader.auto_trade_engine import (  # noqa: E402
+    AutoTradeEngine,
+    Recommendation,
+)
+from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: E402
 
 
 class TestDuplicatePreventionMultipleRuns:
@@ -42,11 +45,24 @@ class TestDuplicatePreventionMultipleRuns:
             engine.user_id = 1
             engine.db = MagicMock()
             engine.current_symbols_in_portfolio = MagicMock(return_value=[])
+
+            # Mock scrip master for symbol resolution
+            mock_scrip_master = MagicMock()
+            mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
+
+            def mock_get_instrument(symbol, exchange="NSE"):
+                # Return broker symbol with suffix
+                if symbol.upper() == "RELIANCE":
+                    return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
+                return {"token": 12345, "symbol": f"{symbol.upper()}-EQ", "exchange": exchange}
+
+            mock_scrip_master.get_instrument = mock_get_instrument
+            engine.scrip_master = mock_scrip_master
+
             return engine
 
     def test_place_new_entries_skips_when_order_exists_in_db(self, auto_trade_engine):
         """Test that place_new_entries skips placing order if order already exists in DB"""
-        symbol = "RELIANCE"
         broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
@@ -114,8 +130,6 @@ class TestDuplicatePreventionMultipleRuns:
 
     def test_place_new_entries_allows_when_no_order_in_db(self, auto_trade_engine):
         """Test that place_new_entries allows placing order if no order exists in DB"""
-        symbol = "RELIANCE"
-        broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
         # Mock no existing orders in database

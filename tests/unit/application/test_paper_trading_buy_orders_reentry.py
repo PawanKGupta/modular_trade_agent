@@ -62,7 +62,7 @@ class TestPaperTradingDetermineReentryLevel:
         current_rsi = 18.0
         position = Mock()
 
-        next_level = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        next_level, _ = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
         # Should trigger re-entry at RSI < 20
         assert next_level == 20
@@ -84,11 +84,12 @@ class TestPaperTradingDetermineReentryLevel:
         # First re-entry at 20 would have been taken, so now should trigger at 10
         # But the logic checks: if entry_rsi < 30, levels_taken = {"30": True, "20": False, "10": False}
         # So it will only trigger at 20, not 10
-        # This test verifies the initial logic
-        next_level = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        # New behavior: Priority-based level selection allows skipping
+        # Since current_rsi < 10 and level 10 is available, it triggers level 10
+        next_level, _ = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
-        # Should trigger re-entry at RSI < 20 (first re-entry)
-        assert next_level == 20
+        # Should trigger re-entry at RSI < 10 (allows skipping level 20)
+        assert next_level == 10
 
     def test_determine_reentry_level_entry_at_20_reentry_at_10(self, paper_engine):
         """Test that entry at RSI < 20 triggers re-entry at RSI < 10"""
@@ -97,7 +98,7 @@ class TestPaperTradingDetermineReentryLevel:
         current_rsi = 8.0
         position = Mock()
 
-        next_level = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        next_level, _ = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
         # Should trigger re-entry at RSI < 10
         assert next_level == 10
@@ -109,7 +110,7 @@ class TestPaperTradingDetermineReentryLevel:
         current_rsi = 5.0
         position = Mock()
 
-        next_level = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        next_level, _ = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
         # Should return None (no re-entry, only reset possible)
         assert next_level is None
@@ -125,27 +126,29 @@ class TestPaperTradingDetermineReentryLevel:
         entry_rsi = 8.0  # Entry at RSI < 10, so all levels taken
         position = Mock()
 
-        # Test: RSI > 30 should set reset_ready, but won't trigger reset (RSI not < 30)
-        next_level = paper_engine._determine_reentry_level(entry_rsi, 35.0, position)
+        # Test: RSI > 30 should set last_rsi_above_30, but won't trigger reset (RSI not < 30)
+        next_level, _ = paper_engine._determine_reentry_level(entry_rsi, 35.0, position)
 
-        # When RSI > 30, reset_ready is set but no reset triggered (RSI not < 30)
+        # When RSI > 30, last_rsi_above_30 is set but no reset triggered (RSI not < 30)
         # So should return None (no re-entry when RSI > 30, and all levels already taken)
         assert next_level is None
 
         # Test: After RSI > 30, if RSI drops < 30 in SAME call, should trigger reset
         # However, this is impossible in practice (RSI can't be both > 30 and < 30)
-        # So we test the logic: if reset_ready was True and RSI < 30, it would reset
+        # So we test the logic: if last_rsi_above_30 was True and RSI < 30, it would reset
         # This demonstrates the intended behavior, even though it requires persistence
 
         # Test normal progression: Entry at RSI < 30, current RSI < 20
-        # Without persisted reset_ready, this won't trigger reset
+        # Without persisted last_rsi_above_30, this won't trigger reset
         entry_rsi_normal = 25.0
-        next_level_low = paper_engine._determine_reentry_level(entry_rsi_normal, 28.0, position)
+        next_level_low, _ = paper_engine._determine_reentry_level(entry_rsi_normal, 28.0, position)
         # Entry at RSI < 30, current RSI = 28 (not < 20), so no re-entry
         assert next_level_low is None  # RSI not < 20, so no re-entry
 
         # Test actual re-entry: Entry at RSI < 30, current RSI < 20
-        next_level_actual = paper_engine._determine_reentry_level(entry_rsi_normal, 18.0, position)
+        next_level_actual, _ = paper_engine._determine_reentry_level(
+            entry_rsi_normal, 18.0, position
+        )
         assert next_level_actual == 20  # Normal progression to level 20
 
     def test_determine_reentry_level_reset_mechanism_known_limitation(self, paper_engine):
@@ -159,20 +162,30 @@ class TestPaperTradingDetermineReentryLevel:
         entry_rsi = 8.0
         position = Mock()
 
-        # First call: RSI > 30 (should set reset_ready, but it's local variable)
-        first_result = paper_engine._determine_reentry_level(entry_rsi, 35.0, position)
+        # First call: RSI > 30 (should set last_rsi_above_30 timestamp)
+        first_result, first_metadata = paper_engine._determine_reentry_level(
+            entry_rsi, 35.0, position
+        )
         assert first_result is None  # RSI > 30, no re-entry
+        # Enhanced Hybrid Approach: last_rsi_above_30 should be stored
+        assert first_metadata.get("last_rsi_above_30") is not None
 
-        # Second call: RSI < 30 (reset_ready was reset to False, so no reset triggered)
-        second_result = paper_engine._determine_reentry_level(entry_rsi, 28.0, position)
+        # Update position with metadata from first call
+        position.reentries = paper_engine._set_position_cycle_metadata(
+            position,
+            last_rsi_above_30=first_metadata.get("last_rsi_above_30"),
+            last_rsi_value=first_metadata.get("last_rsi_value"),
+        )
 
-        # LIMITATION: Should return 30 (reset triggered), but returns None because
-        # reset_ready is not persisted between calls
-        # This test documents the current (limited) behavior
-        assert second_result is None  # Current behavior: no reset across calls
+        # Second call: RSI < 30 (last_rsi_above_30 exists, so reset should trigger)
+        second_result, second_metadata = paper_engine._determine_reentry_level(
+            entry_rsi, 28.0, position
+        )
 
-        # If reset_ready was persisted, this would return 30 (new cycle)
-        # To fix this, reset_ready should be stored in position metadata or database
+        # Enhanced Hybrid Approach: Reset detected, should trigger re-entry at level 30
+        # (or appropriate level based on current RSI)
+        assert second_result == 30  # Reset triggers re-entry at level 30
+        assert second_metadata.get("current_cycle") is not None  # Cycle incremented
 
     def test_determine_reentry_level_no_reentry_when_rsi_above_level(self, paper_engine):
         """Test that no re-entry is triggered when RSI is above the next level"""
@@ -181,7 +194,7 @@ class TestPaperTradingDetermineReentryLevel:
         current_rsi = 25.0
         position = Mock()
 
-        next_level = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        next_level, _ = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
         # Should return None (RSI not < 20)
         assert next_level is None
@@ -193,10 +206,11 @@ class TestPaperTradingDetermineReentryLevel:
         current_rsi = 18.0
         position = Mock()
 
-        next_level = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        next_level, _ = paper_engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
-        # Should return None (entry_rsi >= 30, no levels taken)
-        assert next_level is None
+        # New behavior: When entry_rsi >= 30, no levels are initially taken
+        # So if current_rsi < 20, it will trigger level 20
+        assert next_level == 20
 
 
 class TestPaperTradingPlaceReentryOrders:
