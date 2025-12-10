@@ -26,7 +26,7 @@ class TestDetermineReentryLevel:
         current_rsi = 18.0
         position = Mock()
 
-        next_level = engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        next_level, _ = engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
         # Should trigger re-entry at RSI < 20
         assert next_level == 20
@@ -40,21 +40,19 @@ class TestDetermineReentryLevel:
 
         engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
 
-        # Entry at RSI < 30, already took 20, current RSI < 10
-        # Note: This test simulates after first re-entry at 20
-        # In real scenario, levels_taken would be updated after first re-entry
+        # Entry at RSI < 30, current RSI < 10
+        # Note: The new implementation allows skipping levels with priority (10 > 20 > 30)
+        # So when current_rsi < 10, it will trigger level 10 directly, skipping level 20
         entry_rsi = 25.0
         current_rsi = 8.0
         position = Mock()
 
-        # First re-entry at 20 would have been taken, so now should trigger at 10
-        # But the logic checks: if entry_rsi < 30, levels_taken = {"30": True, "20": False, "10": False}
-        # So it will only trigger at 20, not 10
-        # This test verifies the initial logic
-        next_level = engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        # New behavior: Priority-based level selection allows skipping
+        # Since current_rsi < 10 and level 10 is available, it triggers level 10
+        next_level, _ = engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
-        # Should trigger re-entry at RSI < 20 (first re-entry)
-        assert next_level == 20
+        # Should trigger re-entry at RSI < 10 (allows skipping level 20)
+        assert next_level == 10
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
     def test_determine_reentry_level_entry_at_20_reentry_at_10(self, mock_auth):
@@ -70,7 +68,7 @@ class TestDetermineReentryLevel:
         current_rsi = 8.0
         position = Mock()
 
-        next_level = engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        next_level, _ = engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
         # Should trigger re-entry at RSI < 10
         assert next_level == 10
@@ -89,7 +87,7 @@ class TestDetermineReentryLevel:
         current_rsi = 5.0
         position = Mock()
 
-        next_level = engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        next_level, _ = engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
         # Should return None (no re-entry, only reset possible)
         assert next_level is None
@@ -115,7 +113,7 @@ class TestDetermineReentryLevel:
         # Test: RSI > 30 in same call should set reset_ready, but since it's same call
         # and RSI is > 30, it won't trigger reset (reset only triggers when RSI < 30)
         # So this test verifies the logic works correctly for the current implementation
-        next_level = engine._determine_reentry_level(entry_rsi, 35.0, position)
+        next_level, _ = engine._determine_reentry_level(entry_rsi, 35.0, position)
 
         # When RSI > 30, reset_ready is set but no reset triggered (RSI not < 30)
         # So should return None (no re-entry when RSI > 30)
@@ -142,7 +140,7 @@ class TestDetermineReentryLevel:
         engine._determine_reentry_level(entry_rsi, 35.0, position)
 
         # Second call: RSI < 30 (reset_ready was reset to False, so no reset triggered)
-        next_level = engine._determine_reentry_level(entry_rsi, 28.0, position)
+        next_level, _ = engine._determine_reentry_level(entry_rsi, 28.0, position)
 
         # LIMITATION: Should return 30 (reset triggered), but returns None because
         # reset_ready is not persisted between calls
@@ -167,7 +165,7 @@ class TestDetermineReentryLevel:
         position = Mock()
 
         # Test: RSI > 30 should set reset_ready, but won't trigger reset (RSI not < 30)
-        next_level_high = engine._determine_reentry_level(entry_rsi, 35.0, position)
+        next_level_high, _ = engine._determine_reentry_level(entry_rsi, 35.0, position)
 
         # When RSI > 30, reset_ready is set but no reset triggered (RSI not < 30)
         # So should return None (no re-entry when RSI > 30, and all levels already taken)
@@ -181,12 +179,12 @@ class TestDetermineReentryLevel:
         # Test normal progression: Entry at RSI < 30, current RSI < 20
         # Without persisted reset_ready, this won't trigger reset
         entry_rsi_normal = 25.0
-        next_level_low = engine._determine_reentry_level(entry_rsi_normal, 28.0, position)
+        next_level_low, _ = engine._determine_reentry_level(entry_rsi_normal, 28.0, position)
         # Entry at RSI < 30, current RSI = 28 (not < 20), so no re-entry
         assert next_level_low is None  # RSI not < 20, so no re-entry
 
         # Test actual re-entry: Entry at RSI < 30, current RSI < 20
-        next_level_actual = engine._determine_reentry_level(entry_rsi_normal, 18.0, position)
+        next_level_actual, _ = engine._determine_reentry_level(entry_rsi_normal, 18.0, position)
         assert next_level_actual == 20  # Normal progression to level 20
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
@@ -203,7 +201,7 @@ class TestDetermineReentryLevel:
         current_rsi = 25.0
         position = Mock()
 
-        next_level = engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        next_level, _ = engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
         # Should return None (RSI not < 20)
         assert next_level is None
@@ -218,14 +216,18 @@ class TestDetermineReentryLevel:
         engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
 
         # Entry at RSI = 30 (boundary)
+        # Note: The new implementation doesn't block re-entries when entry_rsi >= 30
+        # It only uses entry_rsi to determine initial levels_taken
+        # When entry_rsi >= 30, no levels are initially taken, so re-entries are allowed
         entry_rsi = 30.0
         current_rsi = 18.0
         position = Mock()
 
-        next_level = engine._determine_reentry_level(entry_rsi, current_rsi, position)
+        next_level, _ = engine._determine_reentry_level(entry_rsi, current_rsi, position)
 
-        # Should return None (entry_rsi >= 30, no levels taken)
-        assert next_level is None
+        # New behavior: When entry_rsi >= 30, no levels are initially taken
+        # So if current_rsi < 20, it will trigger level 20
+        assert next_level == 20
 
 
 class TestPlaceReentryOrders:
@@ -493,7 +495,8 @@ class TestPlaceReentryOrders:
     def test_place_reentry_orders_multiple_positions_different_entry_rsi(
         self, mock_login, mock_place_order, mock_auth
     ):
-        """Test that re-entry logic correctly handles multiple positions with different entry RSI levels"""
+        """Test that re-entry logic correctly handles multiple positions with
+        different entry RSI levels"""
         mock_auth_instance = Mock()
         mock_auth_instance.is_authenticated.return_value = True
         mock_auth.return_value = mock_auth_instance
