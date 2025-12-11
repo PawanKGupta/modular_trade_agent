@@ -20,6 +20,7 @@ from ..core.deps import get_current_user, get_db
 from ..schemas.service import (
     IndividualServicesStatusResponse,
     IndividualServiceStatus,
+    PositionCreationMetricsResponse,
     RunOnceRequest,
     RunOnceResponse,
     ServiceLogResponse,
@@ -341,4 +342,55 @@ def get_service_logs(  # noqa: PLR0913
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting service logs: {str(e)}",
+        ) from e
+
+
+@router.get("/service/metrics/position-creation", response_model=PositionCreationMetricsResponse)
+def get_position_creation_metrics(
+    db: Session = Depends(get_db),
+    current: Users = Depends(get_current_user),
+    trading_service: MultiUserTradingService = Depends(get_trading_service),
+):
+    """
+    Get position creation metrics for current user's trading service.
+
+    Issue #1 Fix: Returns metrics tracking position creation success/failure rates.
+    """
+    try:
+        metrics = trading_service.get_position_creation_metrics(current.id)
+
+        if metrics is None:
+            # Service not running or unified_order_monitor not available
+            return PositionCreationMetricsResponse(
+                success=0,
+                failed_missing_repos=0,
+                failed_missing_symbol=0,
+                failed_exception=0,
+                success_rate=0.0,
+                total_attempts=0,
+            )
+
+        # Calculate totals and success rate
+        total_attempts = (
+            metrics.get("success", 0)
+            + metrics.get("failed_missing_repos", 0)
+            + metrics.get("failed_missing_symbol", 0)
+            + metrics.get("failed_exception", 0)
+        )
+
+        success_count = metrics.get("success", 0)
+        success_rate = (success_count / total_attempts * 100.0) if total_attempts > 0 else 0.0
+
+        return PositionCreationMetricsResponse(
+            success=success_count,
+            failed_missing_repos=metrics.get("failed_missing_repos", 0),
+            failed_missing_symbol=metrics.get("failed_missing_symbol", 0),
+            failed_exception=metrics.get("failed_exception", 0),
+            success_rate=round(success_rate, 2),
+            total_attempts=total_attempts,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting position creation metrics: {str(e)}",
         ) from e

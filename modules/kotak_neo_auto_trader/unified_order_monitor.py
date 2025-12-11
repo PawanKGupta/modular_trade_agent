@@ -77,7 +77,16 @@ class UnifiedOrderMonitor:
         # Track active buy orders {order_id: {'symbol': str, 'quantity': float, ...}}
         self.active_buy_orders: dict[str, dict[str, Any]] = {}
 
+        # Issue #1 Fix: Metrics tracking for position creation
+        self._position_creation_metrics = {
+            "success": 0,
+            "failed_missing_repos": 0,
+            "failed_missing_symbol": 0,
+            "failed_exception": 0,
+        }
+
         # Initialize orders repository if DB is available
+        # Issue #1 Fix: Ensure repositories are always initialized when DB is available
         self.orders_repo = None
         self.positions_repo = None
         if DB_AVAILABLE and db_session:
@@ -85,17 +94,66 @@ class UnifiedOrderMonitor:
                 self.orders_repo = OrdersRepository(db_session)
                 logger.info("OrdersRepository initialized for buy order monitoring")
             except Exception as e:
-                logger.warning(f"Failed to initialize OrdersRepository: {e}")
+                logger.error(
+                    f"CRITICAL: Failed to initialize OrdersRepository: {e}. "
+                    f"Position creation will fail. Check database connection.",
+                    exc_info=True,
+                )
                 self.orders_repo = None
 
             try:
                 self.positions_repo = PositionsRepository(db_session)
                 logger.info("PositionsRepository initialized for position tracking")
             except Exception as e:
-                logger.warning(f"Failed to initialize PositionsRepository: {e}")
+                logger.error(
+                    f"CRITICAL: Failed to initialize PositionsRepository: {e}. "
+                    f"Position creation will fail. Check database connection.",
+                    exc_info=True,
+                )
                 self.positions_repo = None
 
+        # Issue #1 Fix: Validate critical dependencies
+        if DB_AVAILABLE and db_session:
+            if not self.orders_repo or not self.positions_repo:
+                logger.error(
+                    "CRITICAL: UnifiedOrderMonitor initialized without required repositories. "
+                    "Position creation will fail. This will prevent sell order placement. "
+                    f"orders_repo={self.orders_repo is not None}, "
+                    f"positions_repo={self.positions_repo is not None}, "
+                    f"user_id={self.user_id is not None}"
+                )
+            elif not self.user_id:
+                logger.error(
+                    "CRITICAL: UnifiedOrderMonitor initialized without user_id. "
+                    "Position creation will fail. This will prevent sell order placement."
+                )
+
         logger.info("UnifiedOrderMonitor initialized")
+
+    def get_position_creation_metrics(self) -> dict[str, int]:
+        """
+        Get position creation metrics for monitoring.
+
+        Issue #1 Fix: Returns metrics tracking position creation success/failure rates.
+
+        Returns:
+            Dict with metrics: success, failed_missing_repos,
+            failed_missing_symbol, failed_exception
+        """
+        return self._position_creation_metrics.copy()
+
+    def reset_position_creation_metrics(self) -> None:
+        """
+        Reset position creation metrics.
+
+        Issue #1 Fix: Useful for periodic metric reporting.
+        """
+        self._position_creation_metrics = {
+            "success": 0,
+            "failed_missing_repos": 0,
+            "failed_missing_symbol": 0,
+            "failed_exception": 0,
+        }
 
     def load_pending_buy_orders(self) -> int:
         """
@@ -194,7 +252,9 @@ class UnifiedOrderMonitor:
 
         return registered_count
 
-    def _get_filled_quantity_from_order_history(self, order_id: str) -> dict[str, Any] | None:
+    def _get_filled_quantity_from_order_history(  # noqa: PLR0911
+        self, order_id: str
+    ) -> dict[str, Any] | None:
         """
         Get filled quantity from order_history API (Edge Case #2 fix).
 
@@ -271,7 +331,7 @@ class UnifiedOrderMonitor:
             logger.warning(f"Error fetching order_history for {order_id}: {e}")
             return None
 
-    def check_buy_order_status(
+    def check_buy_order_status(  # noqa: PLR0912, PLR0915
         self, broker_orders: list[dict[str, Any]] | None = None
     ) -> dict[str, int]:
         """
@@ -428,7 +488,7 @@ class UnifiedOrderMonitor:
                                                 )
                                                 source = "order_report"
                                                 logger.info(
-                                                    f"Using fldQty from order_report() for {order_id}: "
+                                                    f"Using fldQty from order_report() for {order_id}: "  # noqa: E501
                                                     f"qty={execution_qty}, "
                                                     f"price={execution_price:.2f}"
                                                 )
@@ -451,7 +511,7 @@ class UnifiedOrderMonitor:
                                                 )
                                                 source = "order_history"
                                                 logger.info(
-                                                    f"Using fldQty from order_history() for {order_id}: "
+                                                    f"Using fldQty from order_history() for {order_id}: "  # noqa: E501
                                                     f"qty={execution_qty}, "
                                                     f"price={execution_price:.2f}"
                                                 )
@@ -472,12 +532,12 @@ class UnifiedOrderMonitor:
                                                     or 0.0
                                                 )
                                                 source = "holdings"
-                                                logger.info(
-                                                    f"Using holdings quantity for {order_id}: "
-                                                    f"qty={execution_qty}, price={execution_price:.2f} "
-                                                    f"(Note: This is total position, "
-                                                    f"not just this order)"
-                                                )
+                                            logger.info(
+                                                f"Using holdings quantity for {order_id}: "  # noqa: E501
+                                                f"qty={execution_qty}, price={execution_price:.2f} "
+                                                f"(Note: This is total position, "
+                                                f"not just this order)"
+                                            )
 
                                         # Priority 4: DB order quantity (last resort)
                                         if execution_qty is None:
@@ -518,7 +578,7 @@ class UnifiedOrderMonitor:
                                             and execution_qty
                                             and execution_qty > 0
                                         ):
-                                            # Wrap order execution and position creation in transaction
+                                            # Wrap order execution and position creation in transaction  # noqa: E501
                                             # Both repositories share the same db_session, so one
                                             # transaction covers both
                                             with transaction(self.orders_repo.db):
@@ -529,7 +589,7 @@ class UnifiedOrderMonitor:
                                                     auto_commit=False,  # Transaction handles commit
                                                 )
                                                 logger.info(
-                                                    f"Reconciled order {order_id} (source: {source}): "
+                                                    f"Reconciled order {order_id} (source: {source}): "  # noqa: E501
                                                     f"executed at Rs {execution_price:.2f}, "
                                                     f"qty {execution_qty}"
                                                 )
@@ -767,7 +827,7 @@ class UnifiedOrderMonitor:
 
         return True
 
-    def _create_position_from_executed_order(
+    def _create_position_from_executed_order(  # noqa: PLR0912, PLR0915
         self,
         order_id: str,
         order_info: dict[str, Any],
@@ -778,6 +838,7 @@ class UnifiedOrderMonitor:
         Create or update position from executed buy order with entry RSI tracking.
 
         Phase 2: Entry RSI Tracking - Extracts entry RSI from order metadata and stores in position.
+        Issue #1 Fix: Enhanced error handling, retry mechanism, and fallback symbol extraction.
 
         Args:
             order_id: Order ID
@@ -785,30 +846,127 @@ class UnifiedOrderMonitor:
             execution_price: Execution price
             execution_qty: Execution quantity
         """
+        # Issue #1 Fix: Enhanced validation with structured logging and alerting
         if not self.positions_repo or not self.user_id:
-            logger.debug("Cannot create position: positions_repo or user_id not available")
+            # Issue #1 Fix: Track metrics
+            self._position_creation_metrics["failed_missing_repos"] += 1
+            logger.error(
+                f"CRITICAL: Cannot create position for order {order_id}: "
+                f"positions_repo={self.positions_repo is not None}, "
+                f"user_id={self.user_id is not None}. "
+                f"This will prevent sell order placement. "
+                f"Execution: {execution_qty} @ Rs {execution_price:.2f}"
+            )
+            # Issue #1 Fix: Send alert if telegram notifier available
+            if self.telegram_notifier and self.telegram_notifier.enabled:
+                try:
+                    symbol_hint = order_info.get("symbol", "UNKNOWN")
+                    self.telegram_notifier.notify_system_alert(
+                        alert_type="POSITION_CREATION_FAILED",
+                        message_text=(
+                            f"Order {order_id} executed but position not created. "
+                            f"Symbol: {symbol_hint}, Qty: {execution_qty}, "
+                            f"Price: Rs {execution_price:.2f}. "
+                            f"Reason: Missing positions_repo or user_id. "
+                            f"Sell order will NOT be placed."
+                        ),
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send position creation failure alert: {e}")
             return
 
         if not self.orders_repo:
-            logger.debug("Cannot create position: orders_repo not available")
+            # Issue #1 Fix: Track metrics
+            self._position_creation_metrics["failed_missing_repos"] += 1
+            logger.error(
+                f"CRITICAL: Cannot create position for order {order_id}: "
+                f"orders_repo not available. "
+                f"This will prevent position creation. "
+                f"Execution: {execution_qty} @ Rs {execution_price:.2f}"
+            )
+            # Issue #1 Fix: Send alert if telegram notifier available
+            if self.telegram_notifier and self.telegram_notifier.enabled:
+                try:
+                    symbol_hint = order_info.get("symbol", "UNKNOWN")
+                    self.telegram_notifier.notify_system_alert(
+                        alert_type="POSITION_CREATION_FAILED",
+                        message_text=(
+                            f"Order {order_id} executed but position not created. "
+                            f"Symbol: {symbol_hint}, Qty: {execution_qty}, "
+                            f"Price: Rs {execution_price:.2f}. "
+                            f"Reason: Missing orders_repo. Sell order will NOT be placed."
+                        ),
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send position creation failure alert: {e}")
             return
 
         try:
+            # Issue #1 Fix: Enhanced symbol extraction with fallbacks
             symbol = order_info.get("symbol", "").upper()
+
+            # Get order from database first (needed for fallback symbol extraction)
+            db_order = None
+            if order_info.get("db_order_id"):
+                try:
+                    db_order = self.orders_repo.get(order_info["db_order_id"])
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get order by db_order_id {order_info['db_order_id']}: {e}. "
+                        f"Will try broker_order_id fallback."
+                    )
+
+            if not db_order:
+                # Try to find order by broker_order_id
+                try:
+                    db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get order by broker_order_id {order_id}: {e}. "
+                        f"Will continue with symbol from order_info."
+                    )
+
+            # Issue #1 Fix: Fallback symbol extraction from db_order if not in order_info
+            if not symbol and db_order:
+                if hasattr(db_order, "symbol") and db_order.symbol:
+                    symbol = db_order.symbol.upper()
+                    logger.info(
+                        f"Symbol not found in order_info for order {order_id}, "
+                        f"using fallback from db_order: {symbol}"
+                    )
+
             if not symbol:
-                logger.warning("Cannot create position: symbol not found in order_info")
+                # Issue #1 Fix: Track metrics
+                self._position_creation_metrics["failed_missing_symbol"] += 1
+                logger.error(
+                    f"CRITICAL: Cannot create position for order {order_id}: "
+                    f"symbol not found in order_info or db_order. "
+                    f"Execution: {execution_qty} @ Rs {execution_price:.2f}. "
+                    f"This will prevent sell order placement."
+                )
+                # Issue #1 Fix: Send alert if telegram notifier available
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_system_alert(
+                            alert_type="POSITION_CREATION_FAILED",
+                            message_text=(
+                                f"Order {order_id} executed but position not created. "
+                                f"Qty: {execution_qty}, Price: Rs {execution_price:.2f}. "
+                                f"Reason: Symbol not found. Sell order will NOT be placed."
+                            ),
+                            severity="ERROR",
+                            user_id=self.user_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send position creation failure alert: {e}")
                 return
 
             # Extract base symbol (remove -EQ suffix if present)
             base_symbol = extract_base_symbol(symbol).upper()
-
-            # Get order from database to extract metadata
-            db_order = None
-            if order_info.get("db_order_id"):
-                db_order = self.orders_repo.get(order_info["db_order_id"])
-            else:
-                # Try to find order by broker_order_id
-                db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
 
             # Extract entry RSI from order metadata
             entry_rsi = None
@@ -1105,7 +1263,8 @@ class UnifiedOrderMonitor:
                                 f"Duplicate reentry detected for {base_symbol} "
                                 f"(order_id: {order_id}) during final check. "
                                 f"Another process may have already added this reentry. "
-                                f"Skipping entire update to prevent duplicate entry and double-counting."
+                                f"Skipping entire update to prevent duplicate entry "  # noqa: E501
+                                f"and double-counting."
                             )
                             # If duplicate found, another process already processed this order
                             # and updated the position (including quantity and avg_price)
@@ -1134,14 +1293,15 @@ class UnifiedOrderMonitor:
                                     if new_qty > existing_order_qty:
                                         logger.info(
                                             f"Reentry detected for {base_symbol}: "
-                                            f"Updating sell order quantity from {existing_order_qty} "
+                                            f"Updating sell order quantity from {existing_order_qty} "  # noqa: E501
                                             f"to {new_qty} (Order ID: {existing_order_id})"
                                         )
                                     else:
                                         logger.info(
                                             f"Sell order quantity mismatch for {base_symbol}: "
                                             f"Position={new_qty}, Sell order={existing_order_qty}. "
-                                            f"Updating to match position (Order ID: {existing_order_id})"
+                                            f"Updating to match position "  # noqa: E501
+                                            f"(Order ID: {existing_order_id})"
                                         )
 
                                     # Flaw #9 Fix: Try broker API call BEFORE updating database
@@ -1172,7 +1332,8 @@ class UnifiedOrderMonitor:
                             # Broker API call failed - log warning but continue with position update
                             logger.warning(
                                 f"Error updating sell order after reentry for {base_symbol}: {e}. "
-                                f"Position will still be updated (primary operation - order executed). "
+                                f"Position will still be updated "  # noqa: E501
+                                f"(primary operation - order executed). "
                                 f"Sell order will be retried later via periodic mismatch check "
                                 f"(Flaw #7 fix)."
                             )
@@ -1221,7 +1382,8 @@ class UnifiedOrderMonitor:
                             if updated_position.reentry_count != actual_count:
                                 logger.warning(
                                     f"Reentry count mismatch for {base_symbol}: "
-                                    f"count={updated_position.reentry_count}, array_length={actual_count}. "
+                                    f"count={updated_position.reentry_count}, "  # noqa: E501
+                                    f"array_length={actual_count}. "
                                     f"Fixing..."
                                 )
                                 # Fix the mismatch - preserve the last_reentry_price we just set
@@ -1266,20 +1428,87 @@ class UnifiedOrderMonitor:
                 )
 
         except ValueError as e:
+            # Issue #1 Fix: Track metrics and send alert
+            self._position_creation_metrics["failed_exception"] += 1
             logger.error(
-                f"Invalid data for position update: {base_symbol}, order_id={order_id}: {e}",
+                f"Invalid data for position update: {base_symbol}, order_id={order_id}: {e}. "
+                f"Execution: {execution_qty} @ Rs {execution_price:.2f}. "
+                f"This will prevent sell order placement.",
                 exc_info=True,
             )
+            # Issue #1 Fix: Send alert if telegram notifier available
+            if self.telegram_notifier and self.telegram_notifier.enabled:
+                try:
+                    self.telegram_notifier.notify_system_alert(
+                        alert_type="POSITION_CREATION_FAILED",
+                        message_text=(
+                            f"Order {order_id} executed but position not created. "
+                            f"Symbol: {base_symbol}, Qty: {execution_qty}, "
+                            f"Price: Rs {execution_price:.2f}. "
+                            f"Reason: Invalid data - {str(e)}. "
+                            f"Sell order will NOT be placed."
+                        ),
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                except Exception as notify_err:
+                    logger.warning(f"Failed to send position creation failure alert: {notify_err}")
         except KeyError as e:
+            # Issue #1 Fix: Track metrics and send alert
+            self._position_creation_metrics["failed_exception"] += 1
             logger.error(
-                f"Missing required field in order_info for {base_symbol}, order_id={order_id}: {e}",
+                f"Missing required field in order_info for {base_symbol}, "
+                f"order_id={order_id}: {e}. "
+                f"Execution: {execution_qty} @ Rs {execution_price:.2f}. "
+                f"This will prevent sell order placement.",
                 exc_info=True,
             )
+            # Issue #1 Fix: Send alert if telegram notifier available
+            if self.telegram_notifier and self.telegram_notifier.enabled:
+                try:
+                    self.telegram_notifier.notify_system_alert(
+                        alert_type="POSITION_CREATION_FAILED",
+                        message_text=(
+                            f"Order {order_id} executed but position not created. "
+                            f"Symbol: {base_symbol}, Qty: {execution_qty}, "
+                            f"Price: Rs {execution_price:.2f}. "
+                            f"Reason: Missing field - {str(e)}. "
+                            f"Sell order will NOT be placed."
+                        ),
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                except Exception as notify_err:
+                    logger.warning(f"Failed to send position creation failure alert: {notify_err}")
         except Exception as e:
+            # Issue #1 Fix: Track metrics and send alert
+            self._position_creation_metrics["failed_exception"] += 1
             logger.error(
-                f"Unexpected error updating position for {base_symbol}, order_id={order_id}: {e}",
+                f"Unexpected error updating position for {base_symbol}, order_id={order_id}: {e}. "
+                f"Execution: {execution_qty} @ Rs {execution_price:.2f}. "
+                f"This will prevent sell order placement.",
                 exc_info=True,
             )
+            # Issue #1 Fix: Send alert if telegram notifier available
+            if self.telegram_notifier and self.telegram_notifier.enabled:
+                try:
+                    self.telegram_notifier.notify_system_alert(
+                        alert_type="POSITION_CREATION_FAILED",
+                        message_text=(
+                            f"Order {order_id} executed but position not created. "
+                            f"Symbol: {base_symbol}, Qty: {execution_qty}, "
+                            f"Price: Rs {execution_price:.2f}. "
+                            f"Reason: Unexpected error - {str(e)}. "
+                            f"Sell order will NOT be placed."
+                        ),
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                except Exception as notify_err:
+                    logger.warning(f"Failed to send position creation failure alert: {notify_err}")
+        else:
+            # Issue #1 Fix: Track successful position creation
+            self._position_creation_metrics["success"] += 1
 
     def _handle_buy_order_rejection(
         self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
@@ -1422,7 +1651,9 @@ class UnifiedOrderMonitor:
 
         return combined_stats
 
-    def check_and_place_sell_orders_for_new_holdings(self) -> int:
+    def check_and_place_sell_orders_for_new_holdings(  # noqa: PLR0912, PLR0915
+        self,
+    ) -> int:
         """
         Check for newly executed buy orders (ONGOING status) that were executed today
         and place sell orders for them if they don't already have sell orders.

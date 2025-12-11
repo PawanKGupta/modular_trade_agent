@@ -192,7 +192,7 @@ class MultiUserTradingService:
                         ):
                             if not service.tasks_completed.get("analysis"):
                                 try:
-                                    from src.application.services.individual_service_manager import (  # noqa: PLC0415
+                                    from src.application.services.individual_service_manager import (  # noqa: PLC0415, E501
                                         IndividualServiceManager,
                                     )
                                     from src.infrastructure.db.session import (
@@ -207,7 +207,7 @@ class MultiUserTradingService:
                                     # Create fresh DB session for analysis (avoid session conflict)
                                     analysis_db = SessionLocal()
                                     try:
-                                        # Trigger analysis via Individual Service Manager with fresh session
+                                        # Trigger analysis via Individual Service Manager with fresh session  # noqa: E501
                                         service_manager = IndividualServiceManager(analysis_db)
                                         success, message, _ = service_manager.run_once(
                                             user_id, "analysis", execution_type="scheduled"
@@ -229,11 +229,11 @@ class MultiUserTradingService:
                                         try:
                                             # Rollback any pending transaction
                                             analysis_db.rollback()
-                                        except Exception:
-                                            pass  # Ignore rollback errors (session may already be closed/rolled back)
+                                        except Exception:  # noqa: S110
+                                            pass  # Ignore rollback errors (session may already be closed/rolled back)  # noqa: E501
                                         try:
                                             analysis_db.close()
-                                        except Exception:
+                                        except Exception:  # noqa: S110
                                             pass  # Ignore close errors if session is in bad state
                                 except Exception as e:
                                     user_logger.error(
@@ -291,7 +291,8 @@ class MultiUserTradingService:
                             heartbeat_counter == 1 or heartbeat_counter % 300 == 0
                         ):  # First update, then every 5 minutes
                             user_logger.info(
-                                f"💓 Scheduler heartbeat (running for {heartbeat_counter // 60} minutes)",
+                                f"💓 Scheduler heartbeat "  # noqa: E501
+                                f"(running for {heartbeat_counter // 60} minutes)",
                                 action="scheduler",
                             )
                     except Exception as e:
@@ -313,11 +314,11 @@ class MultiUserTradingService:
             try:
                 # Rollback any pending transaction
                 thread_db.rollback()
-            except Exception:
+            except Exception:  # noqa: S110
                 pass  # Ignore rollback errors (session may already be closed/rolled back)
             try:
                 thread_db.close()
-            except Exception:
+            except Exception:  # noqa: S110
                 pass  # Ignore close errors if session is in bad state
 
     def start_service(self, user_id: int) -> bool:  # noqa: PLR0915, PLR0912
@@ -344,7 +345,8 @@ class MultiUserTradingService:
                     # Verify thread is actually alive (not just running flag)
                     if service_thread and service_thread.is_alive():
                         self._logger.info(
-                            f"Service already running for user {user_id}; not starting another instance",
+                            f"Service already running for user {user_id}; "  # noqa: E501
+                            f"not starting another instance",
                             action="start_service",
                         )
                         return True  # Already running
@@ -637,6 +639,40 @@ class MultiUserTradingService:
         service = self._services[user_id]
         return hasattr(service, "running") and service.running
 
+    def get_position_creation_metrics(self, user_id: int) -> dict[str, int] | None:
+        """
+        Get position creation metrics for a user's trading service.
+
+        Issue #1 Fix: Returns metrics tracking position creation success/failure rates.
+
+        Args:
+            user_id: User ID to get metrics for
+
+        Returns:
+            Dict with metrics: success, failed_missing_repos,
+            failed_missing_symbol, failed_exception
+            Returns None if service is not running or unified_order_monitor
+            is not available
+        """
+        if user_id not in self._services:
+            return None
+
+        service = self._services[user_id]
+
+        # Check if service has unified_order_monitor (broker mode)
+        if hasattr(service, "unified_order_monitor") and service.unified_order_monitor:
+            try:
+                return service.unified_order_monitor.get_position_creation_metrics()
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to get position creation metrics for user {user_id}: {e}",
+                    action="get_position_creation_metrics",
+                )
+                return None
+
+        # Paper trading mode doesn't have unified_order_monitor
+        return None
+
     def list_active_services(self) -> list[int]:
         """
         Get list of user IDs with active services.
@@ -706,7 +742,10 @@ class MultiUserTradingService:
             if pref_service.should_notify(
                 user_id, NotificationEventType.SERVICE_STARTED, channel="in_app"
             ):
-                message = "Unified Trading Service\nStatus: Running\nAll scheduled tasks will execute automatically."
+                message = (  # noqa: E501
+                    "Unified Trading Service\nStatus: Running\n"
+                    "All scheduled tasks will execute automatically."
+                )
                 notification = self._notification_repo.create(
                     user_id=user_id,
                     type="service",
@@ -760,7 +799,10 @@ class MultiUserTradingService:
                             email_notifier.send_service_notification(
                                 email=preferences.email_address,
                                 title="Unified Trading Service Started",
-                                message="Unified Trading Service has started. All scheduled tasks will execute automatically.",
+                                message=(  # noqa: E501
+                                    "Unified Trading Service has started. "
+                                    "All scheduled tasks will execute automatically."
+                                ),
                                 level="info",
                             )
                 except Exception as e:
@@ -788,7 +830,10 @@ class MultiUserTradingService:
             if pref_service.should_notify(
                 user_id, NotificationEventType.SERVICE_STOPPED, channel="in_app"
             ):
-                message = "Unified Trading Service\nStatus: Stopped\nAll scheduled tasks have been halted."
+                message = (  # noqa: E501
+                    "Unified Trading Service\nStatus: Stopped\n"
+                    "All scheduled tasks have been halted."
+                )
                 notification = self._notification_repo.create(
                     user_id=user_id,
                     type="service",
@@ -842,7 +887,10 @@ class MultiUserTradingService:
                             email_notifier.send_service_notification(
                                 email=preferences.email_address,
                                 title="Unified Trading Service Stopped",
-                                message="Unified Trading Service has been stopped. All scheduled tasks have been halted.",
+                                message=(  # noqa: E501
+                                    "Unified Trading Service has been stopped. "
+                                    "All scheduled tasks have been halted."
+                                ),
                                 level="info",
                             )
                 except Exception as e:

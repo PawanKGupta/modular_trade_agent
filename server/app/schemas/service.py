@@ -99,9 +99,7 @@ class StartIndividualServiceRequest(BaseModel):
 
     task_name: str = Field(
         ...,
-        description=(
-            "Task name: premarket_retry, sell_monitor, buy_orders, eod_cleanup"
-        ),
+        description=("Task name: premarket_retry, sell_monitor, buy_orders, eod_cleanup"),
     )
 
 
@@ -142,6 +140,21 @@ class RunOnceResponse(BaseModel):
     execution_id: int | None = None
     has_conflict: bool = False
     conflict_message: str | None = None
+
+
+class PositionCreationMetricsResponse(BaseModel):
+    """Position creation metrics response"""
+
+    success: int = Field(default=0, description="Number of successful position creations")
+    failed_missing_repos: int = Field(
+        default=0, description="Number of failures due to missing repositories"
+    )
+    failed_missing_symbol: int = Field(
+        default=0, description="Number of failures due to missing symbol"
+    )
+    failed_exception: int = Field(default=0, description="Number of failures due to exceptions")
+    success_rate: float = Field(default=0.0, description="Success rate as percentage (0-100)")
+    total_attempts: int = Field(default=0, description="Total position creation attempts")
 
 
 # Service Schedule Management Schemas (Admin)

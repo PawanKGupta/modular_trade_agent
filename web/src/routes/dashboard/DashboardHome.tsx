@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { getServiceStatus, type ServiceStatus } from '../../api/service';
+import { getServiceStatus, getPositionCreationMetrics, type ServiceStatus, type PositionCreationMetrics } from '../../api/service';
 import { getPortfolio, type PaperTradingPortfolio } from '../../api/user';
 import { getPnlSummary, type PnlSummary } from '../../api/pnl';
 import { getBuyingZone } from '../../api/signals';
@@ -90,6 +90,12 @@ export function DashboardHome() {
 			return data.unread_count;
 		},
 		refetchInterval: 30000,
+	});
+
+	const positionMetricsQ = useQuery({
+		queryKey: ['position-creation-metrics'],
+		queryFn: getPositionCreationMetrics,
+		refetchInterval: 60000, // Refresh every minute
 	});
 
 	const serviceStatus = serviceStatusQ.data;
@@ -221,6 +227,75 @@ export function DashboardHome() {
 							</span>
 						)}
 					</div>
+				</div>
+			)}
+
+			{/* Position Creation Health Card (only in broker mode) */}
+			{isBrokerMode && (
+				<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">
+					<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 mb-3 sm:mb-4">
+						<h2 className="text-base sm:text-lg font-semibold text-[var(--text)]">Position Creation Health</h2>
+						<span className="text-xs sm:text-sm text-[var(--muted)]">Issue #1 Fix</span>
+					</div>
+					{positionMetricsQ.isLoading ? (
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Loading metrics...</div>
+					) : !serviceStatus?.service_running ? (
+						<div className="text-xs sm:text-sm text-[var(--muted)]">
+							Service is not running. Start the service to track position creation metrics.
+						</div>
+					) : positionMetricsQ.data && positionMetricsQ.data.total_attempts > 0 ? (
+						<div className="space-y-2">
+							<div className="flex items-center justify-between">
+								<span className="text-xs sm:text-sm text-[var(--muted)]">Success Rate</span>
+								<span
+									className={`text-sm sm:text-base font-semibold ${
+										positionMetricsQ.data.success_rate >= 95
+											? 'text-green-400'
+											: positionMetricsQ.data.success_rate >= 80
+												? 'text-yellow-400'
+												: 'text-red-400'
+									}`}
+								>
+									{positionMetricsQ.data.success_rate.toFixed(1)}%
+								</span>
+							</div>
+							<div className="grid grid-cols-2 gap-2 text-xs sm:text-sm">
+								<div className="flex items-center gap-2">
+									<div className="w-2 h-2 bg-green-400 rounded-full" />
+									<span className="text-[var(--muted)]">Success:</span>
+									<span className="text-[var(--text)] font-medium">{positionMetricsQ.data.success}</span>
+								</div>
+								{positionMetricsQ.data.failed_missing_repos > 0 && (
+									<div className="flex items-center gap-2">
+										<div className="w-2 h-2 bg-red-400 rounded-full" />
+										<span className="text-[var(--muted)]">Missing Repos:</span>
+										<span className="text-red-400 font-medium">{positionMetricsQ.data.failed_missing_repos}</span>
+									</div>
+								)}
+								{positionMetricsQ.data.failed_missing_symbol > 0 && (
+									<div className="flex items-center gap-2">
+										<div className="w-2 h-2 bg-red-400 rounded-full" />
+										<span className="text-[var(--muted)]">Missing Symbol:</span>
+										<span className="text-red-400 font-medium">{positionMetricsQ.data.failed_missing_symbol}</span>
+									</div>
+								)}
+								{positionMetricsQ.data.failed_exception > 0 && (
+									<div className="flex items-center gap-2">
+										<div className="w-2 h-2 bg-red-400 rounded-full" />
+										<span className="text-[var(--muted)]">Exceptions:</span>
+										<span className="text-red-400 font-medium">{positionMetricsQ.data.failed_exception}</span>
+									</div>
+								)}
+							</div>
+							<div className="text-xs text-[var(--muted)] pt-2 border-t border-[#1e293b]">
+								Total Attempts: {positionMetricsQ.data.total_attempts}
+							</div>
+						</div>
+					) : (
+						<div className="text-xs sm:text-sm text-[var(--muted)]">
+							No position creation attempts yet. Metrics will appear after buy orders execute.
+						</div>
+					)}
 				</div>
 			)}
 

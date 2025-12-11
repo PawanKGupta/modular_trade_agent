@@ -50,6 +50,15 @@ export interface ServiceLogs {
 	limit: number;
 }
 
+export interface PositionCreationMetrics {
+	success: number;
+	failed_missing_repos: number;
+	failed_missing_symbol: number;
+	failed_exception: number;
+	success_rate: number;
+	total_attempts: number;
+}
+
 export async function startService(): Promise<ServiceStartResponse> {
 	const { data } = await api.post<ServiceStartResponse>('/user/service/start');
 	return data;
@@ -81,6 +90,11 @@ export async function getServiceLogs(params?: {
 	limit?: number;
 }): Promise<ServiceLogs> {
 	const { data } = await api.get<ServiceLogs>('/user/service/logs', { params });
+	return data;
+}
+
+export async function getPositionCreationMetrics(): Promise<PositionCreationMetrics> {
+	const { data } = await api.get<PositionCreationMetrics>('/user/service/metrics/position-creation');
 	return data;
 }
 
