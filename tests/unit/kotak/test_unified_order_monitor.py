@@ -98,6 +98,167 @@ class TestUnifiedOrderMonitor:
 
             assert monitor.orders_repo is None
 
+    def test_initialization_raises_value_error_when_db_session_none(self, mock_sell_manager):
+        """Test that ValueError is raised when db_session is None and DB_AVAILABLE is True"""
+        with patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", True):
+            from modules.kotak_neo_auto_trader.unified_order_monitor import (  # noqa: PLC0415
+                UnifiedOrderMonitor,
+            )
+
+            with pytest.raises(ValueError, match="requires db_session when database is available"):
+                UnifiedOrderMonitor(
+                    sell_order_manager=mock_sell_manager,
+                    db_session=None,
+                    user_id=1,
+                )
+
+    def test_initialization_raises_value_error_when_user_id_none(
+        self, mock_sell_manager, mock_db_session
+    ):
+        """Test that ValueError is raised when user_id is None and DB_AVAILABLE is True"""
+        with patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", True):
+            from modules.kotak_neo_auto_trader.unified_order_monitor import UnifiedOrderMonitor
+
+            with pytest.raises(ValueError, match="requires user_id when database is available"):
+                UnifiedOrderMonitor(
+                    sell_order_manager=mock_sell_manager,
+                    db_session=mock_db_session,
+                    user_id=None,
+                )
+
+    def test_initialization_raises_runtime_error_when_orders_repo_fails(
+        self, mock_sell_manager, mock_db_session
+    ):
+        """Test that RuntimeError is raised when OrdersRepository initialization fails"""
+        with (
+            patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", True),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.OrdersRepository",
+                side_effect=Exception("Database connection failed"),
+            ),
+        ):
+            from modules.kotak_neo_auto_trader.unified_order_monitor import (  # noqa: PLC0415
+                UnifiedOrderMonitor,
+            )
+
+            with pytest.raises(RuntimeError, match="Failed to initialize OrdersRepository"):
+                UnifiedOrderMonitor(
+                    sell_order_manager=mock_sell_manager,
+                    db_session=mock_db_session,
+                    user_id=1,
+                )
+
+    def test_initialization_raises_runtime_error_when_positions_repo_fails(
+        self, mock_sell_manager, mock_db_session, mock_orders_repo
+    ):
+        """Test that RuntimeError is raised when PositionsRepository initialization fails"""
+        with (
+            patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", True),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.OrdersRepository",
+                return_value=mock_orders_repo,
+            ),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.PositionsRepository",
+                side_effect=Exception("Database connection failed"),
+            ),
+        ):
+            from modules.kotak_neo_auto_trader.unified_order_monitor import (  # noqa: PLC0415
+                UnifiedOrderMonitor,
+            )
+
+            with pytest.raises(RuntimeError, match="Failed to initialize PositionsRepository"):
+                UnifiedOrderMonitor(
+                    sell_order_manager=mock_sell_manager,
+                    db_session=mock_db_session,
+                    user_id=1,
+                )
+
+    def test_initialization_raises_runtime_error_when_repos_missing_after_init(
+        self, mock_sell_manager, mock_db_session
+    ):
+        """Test that RuntimeError is raised when repositories are missing after initialization"""
+        with (
+            patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", True),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.OrdersRepository",
+                return_value=None,  # Simulate initialization returning None
+            ),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.PositionsRepository",
+                return_value=None,  # Simulate initialization returning None
+            ),
+        ):
+            from modules.kotak_neo_auto_trader.unified_order_monitor import (  # noqa: PLC0415
+                UnifiedOrderMonitor,
+            )
+
+            with pytest.raises(RuntimeError, match="initialized without required repositories"):
+                UnifiedOrderMonitor(
+                    sell_order_manager=mock_sell_manager,
+                    db_session=mock_db_session,
+                    user_id=1,
+                )
+
+    def test_initialization_raises_value_error_when_user_id_zero(
+        self, mock_sell_manager, mock_db_session, mock_orders_repo
+    ):
+        """Test that ValueError is raised when user_id is 0 (falsy) after initialization"""
+        mock_positions_repo = Mock()
+        with (
+            patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", True),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.OrdersRepository",
+                return_value=mock_orders_repo,
+            ),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.PositionsRepository",
+                return_value=mock_positions_repo,
+            ),
+        ):
+            from modules.kotak_neo_auto_trader.unified_order_monitor import (  # noqa: PLC0415
+                UnifiedOrderMonitor,
+            )
+
+            # Test that user_id=0 (falsy) is caught by final validation
+            with pytest.raises(ValueError, match="initialized without user_id"):
+                UnifiedOrderMonitor(
+                    sell_order_manager=mock_sell_manager,
+                    db_session=mock_db_session,
+                    user_id=0,  # Falsy value should be caught by final validation
+                )
+
+    def test_initialization_succeeds_with_all_required_params(
+        self, mock_sell_manager, mock_db_session, mock_orders_repo
+    ):
+        """Test that initialization succeeds when all required parameters are provided"""
+        mock_positions_repo = Mock()
+        with (
+            patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", True),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.OrdersRepository",
+                return_value=mock_orders_repo,
+            ),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.PositionsRepository",
+                return_value=mock_positions_repo,
+            ),
+        ):
+            from modules.kotak_neo_auto_trader.unified_order_monitor import (  # noqa: PLC0415
+                UnifiedOrderMonitor,
+            )
+
+            monitor = UnifiedOrderMonitor(
+                sell_order_manager=mock_sell_manager,
+                db_session=mock_db_session,
+                user_id=1,
+            )
+
+            assert monitor.orders_repo == mock_orders_repo
+            assert monitor.positions_repo == mock_positions_repo
+            assert monitor.user_id == 1
+            assert monitor.db_session == mock_db_session
+
     def test_load_pending_buy_orders_empty(self, unified_monitor, mock_orders_repo):
         """Test loading pending buy orders when none exist"""
         mock_orders_repo.get_pending_amo_orders.return_value = []

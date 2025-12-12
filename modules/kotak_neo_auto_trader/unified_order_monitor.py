@@ -61,12 +61,17 @@ class UnifiedOrderMonitor:
         Initialize unified order monitor.
 
         Phase 9: Added telegram_notifier for notifications.
+        Issue #1 Fix: db_session and user_id are required when DB_AVAILABLE is True.
 
         Args:
             sell_order_manager: Existing SellOrderManager instance
-            db_session: Optional database session for buy order tracking
-            user_id: Optional user ID for filtering orders
+            db_session: Database session for buy order tracking (required if DB_AVAILABLE)
+            user_id: User ID for filtering orders (required if DB_AVAILABLE)
             telegram_notifier: Optional TelegramNotifier for sending notifications
+
+        Raises:
+            ValueError: If DB_AVAILABLE is True but db_session or user_id is None
+            RuntimeError: If repository initialization fails
         """
         self.sell_manager = sell_order_manager
         self.orders = sell_order_manager.orders
@@ -85,8 +90,20 @@ class UnifiedOrderMonitor:
             "failed_exception": 0,
         }
 
-        # Initialize orders repository if DB is available
-        # Issue #1 Fix: Ensure repositories are always initialized when DB is available
+        # Issue #1 Fix: Validate required parameters when DB is available
+        if DB_AVAILABLE:
+            if db_session is None:
+                raise ValueError(
+                    "UnifiedOrderMonitor requires db_session when database is available. "
+                    "Position creation will fail without it."
+                )
+            if user_id is None:
+                raise ValueError(
+                    "UnifiedOrderMonitor requires user_id when database is available. "
+                    "Position creation will fail without it."
+                )
+
+        # Issue #1 Fix: Initialize repositories and raise exception on failure
         self.orders_repo = None
         self.positions_repo = None
         if DB_AVAILABLE and db_session:
@@ -94,39 +111,43 @@ class UnifiedOrderMonitor:
                 self.orders_repo = OrdersRepository(db_session)
                 logger.info("OrdersRepository initialized for buy order monitoring")
             except Exception as e:
-                logger.error(
+                error_msg = (
                     f"CRITICAL: Failed to initialize OrdersRepository: {e}. "
-                    f"Position creation will fail. Check database connection.",
-                    exc_info=True,
+                    f"Position creation will fail. Check database connection."
                 )
-                self.orders_repo = None
+                logger.error(error_msg, exc_info=True)
+                raise RuntimeError(error_msg) from e
 
             try:
                 self.positions_repo = PositionsRepository(db_session)
                 logger.info("PositionsRepository initialized for position tracking")
             except Exception as e:
-                logger.error(
+                error_msg = (
                     f"CRITICAL: Failed to initialize PositionsRepository: {e}. "
-                    f"Position creation will fail. Check database connection.",
-                    exc_info=True,
+                    f"Position creation will fail. Check database connection."
                 )
-                self.positions_repo = None
+                logger.error(error_msg, exc_info=True)
+                raise RuntimeError(error_msg) from e
 
-        # Issue #1 Fix: Validate critical dependencies
-        if DB_AVAILABLE and db_session:
+        # Issue #1 Fix: Final validation - raise exception if critical dependencies missing
+        if DB_AVAILABLE:
             if not self.orders_repo or not self.positions_repo:
-                logger.error(
+                error_msg = (
                     "CRITICAL: UnifiedOrderMonitor initialized without required repositories. "
                     "Position creation will fail. This will prevent sell order placement. "
                     f"orders_repo={self.orders_repo is not None}, "
                     f"positions_repo={self.positions_repo is not None}, "
                     f"user_id={self.user_id is not None}"
                 )
-            elif not self.user_id:
-                logger.error(
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+            if not self.user_id:
+                error_msg = (
                     "CRITICAL: UnifiedOrderMonitor initialized without user_id. "
                     "Position creation will fail. This will prevent sell order placement."
                 )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
         logger.info("UnifiedOrderMonitor initialized")
 
@@ -809,7 +830,7 @@ class UnifiedOrderMonitor:
 
         # Validate price
         price = reentry_data.get("price")
-        if not isinstance(price, (int, float)) or price <= 0:
+        if not isinstance(price, int | float) or price <= 0:
             logger.error(f"Invalid price in reentry data: {price} (must be positive number)")
             return False
 
