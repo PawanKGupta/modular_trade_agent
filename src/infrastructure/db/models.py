@@ -179,7 +179,7 @@ class Positions(Base):
     # Entry RSI tracking (for re-entry level progression)
     entry_rsi: Mapped[float | None] = mapped_column(Float, nullable=True)  # RSI10 at entry
 
-    __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_positions_user_symbol"),)
+    __table_args__ = ()
 
 
 class Fills(Base):
