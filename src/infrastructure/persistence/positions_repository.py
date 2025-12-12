@@ -91,7 +91,10 @@ class PositionsRepository:
         )
         if not include_closed:
             stmt = stmt.where(Positions.closed_at.is_(None))
-        return self.db.execute(stmt).scalar_one_or_none()
+        # Use first() instead of scalar_one_or_none() to handle multiple rows
+        # (returns most recent based on order_by)
+        result = self.db.execute(stmt).first()
+        return result[0] if result else None
 
     def list(self, user_id: int) -> builtins.list[Positions]:
         stmt = (
