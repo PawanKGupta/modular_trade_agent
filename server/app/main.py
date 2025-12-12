@@ -201,14 +201,27 @@ async def ensure_db_schema():
                     print(f"[Startup] Failed to create admin user: {e}")
 
             # Clean up orphaned service status (services that were running when server stopped)
+            # and auto-restore services that were running before server restart
             try:
                 from src.infrastructure.db.models import IndividualServiceStatus, ServiceStatus
 
-                # Mark all unified services as stopped
+                # Capture running services BEFORE marking them as stopped (for auto-restore)
                 running_unified = (
                     db.query(ServiceStatus).filter(ServiceStatus.service_running == True).all()
                 )
+                running_individual = (
+                    db.query(IndividualServiceStatus)
+                    .filter(IndividualServiceStatus.is_running == True)
+                    .all()
+                )
 
+                # Store which services to restore (deduplicate user_ids for unified services)
+                unified_user_ids_to_restore = list({status.user_id for status in running_unified})
+                individual_services_to_restore = [
+                    (status.user_id, status.task_name) for status in running_individual
+                ]
+
+                # Mark all unified services as stopped
                 if running_unified:
                     print(f"[Startup] Found {len(running_unified)} orphaned unified service(s)")
                     for status in running_unified:
@@ -219,12 +232,6 @@ async def ensure_db_schema():
                     db.commit()
 
                 # Mark all individual services as stopped
-                running_individual = (
-                    db.query(IndividualServiceStatus)
-                    .filter(IndividualServiceStatus.is_running == True)
-                    .all()
-                )
-
                 if running_individual:
                     print(f"[Startup] Found {len(running_individual)} orphaned individual services")
                     for status in running_individual:
@@ -237,6 +244,160 @@ async def ensure_db_schema():
 
                 if running_unified or running_individual:
                     print("[Startup] ✓ Cleaned up orphaned service status")
+
+                # Auto-restore services that were running before server restart
+                if unified_user_ids_to_restore or individual_services_to_restore:
+                    print("[Startup] Auto-restoring services that were running before restart...")
+                    try:
+                        from src.application.services.individual_service_manager import (
+                            IndividualServiceManager,
+                        )
+                        from src.application.services.multi_user_trading_service import (
+                            MultiUserTradingService,
+                        )
+
+                        # Create service managers with a fresh session for auto-restore
+                        # IMPORTANT: Restore unified services FIRST, then individual services
+                        # This ensures conflict detection works correctly (individual services
+                        # will be blocked if unified service is running, which is the desired behavior)
+                        with SessionLocal() as restore_db:
+                            trading_service = MultiUserTradingService(restore_db)
+                            individual_manager = IndividualServiceManager(restore_db)
+
+                            # Step 1: Restore unified services FIRST
+                            restored_unified_count = 0
+                            failed_unified_count = 0
+                            skipped_unified_count = 0
+                            for user_id in unified_user_ids_to_restore:
+                                try:
+                                    # Verify user still exists
+                                    user = (
+                                        restore_db.query(Users).filter(Users.id == user_id).first()
+                                    )
+                                    if not user:
+                                        skipped_unified_count += 1
+                                        print(
+                                            f"[Startup] ⚠ Skipping auto-restore for user {user_id}: user not found"
+                                        )
+                                        continue
+
+                                    success = trading_service.start_service(user_id)
+                                    if success:
+                                        restored_unified_count += 1
+                                        print(
+                                            f"[Startup] ✓ Auto-restored unified service for user {user_id}"
+                                        )
+                                    else:
+                                        failed_unified_count += 1
+                                        print(
+                                            f"[Startup] ✗ Failed to auto-restore unified service for user {user_id} "
+                                            f"(check logs for details - may be due to missing credentials, disabled schedule, etc.)"
+                                        )
+                                except ValueError as e:
+                                    # ValueError typically means missing settings/credentials or configuration issues
+                                    failed_unified_count += 1
+                                    print(
+                                        f"[Startup] ✗ Cannot auto-restore unified service for user {user_id}: {e}"
+                                    )
+                                except Exception as e:
+                                    failed_unified_count += 1
+                                    print(
+                                        f"[Startup] ✗ Error auto-restoring unified service for user {user_id}: {e}"
+                                    )
+                                    traceback.print_exc()
+
+                            # Step 2: Restore individual services AFTER unified services
+                            # Note: If unified service was restored for a user, individual services
+                            # for that user will be blocked by conflict detection (this is correct behavior)
+                            restored_individual_count = 0
+                            failed_individual_count = 0
+                            skipped_individual_count = 0
+                            conflict_individual_count = 0
+                            for user_id, task_name in individual_services_to_restore:
+                                try:
+                                    # Verify user still exists
+                                    user = (
+                                        restore_db.query(Users).filter(Users.id == user_id).first()
+                                    )
+                                    if not user:
+                                        skipped_individual_count += 1
+                                        print(
+                                            f"[Startup] ⚠ Skipping auto-restore for user {user_id}, task {task_name}: user not found"
+                                        )
+                                        continue
+
+                                    success, message = individual_manager.start_service(
+                                        user_id, task_name
+                                    )
+                                    if success:
+                                        restored_individual_count += 1
+                                        print(
+                                            f"[Startup] ✓ Auto-restored {task_name} for user {user_id}"
+                                        )
+                                    # Check if failure is due to conflict (unified service running)
+                                    elif "unified service is running" in message.lower():
+                                        conflict_individual_count += 1
+                                        print(
+                                            f"[Startup] ⚠ Skipped auto-restore of {task_name} for user {user_id}: "
+                                            f"unified service is running (conflict prevented)"
+                                        )
+                                    else:
+                                        failed_individual_count += 1
+                                        print(
+                                            f"[Startup] ✗ Failed to auto-restore {task_name} for user {user_id}: {message}"
+                                        )
+                                except FileNotFoundError:
+                                    # Script not found - individual service runner script is missing
+                                    failed_individual_count += 1
+                                    print(
+                                        f"[Startup] ✗ Cannot auto-restore {task_name} for user {user_id}: "
+                                        f"Individual service runner script not found. "
+                                        f"Individual services require scripts/run_individual_service.py to be created."
+                                    )
+                                except ValueError as e:
+                                    # ValueError typically means missing settings/credentials or configuration issues
+                                    failed_individual_count += 1
+                                    print(
+                                        f"[Startup] ✗ Cannot auto-restore {task_name} for user {user_id}: {e}"
+                                    )
+                                except Exception as e:
+                                    failed_individual_count += 1
+                                    print(
+                                        f"[Startup] ✗ Error auto-restoring {task_name} for user {user_id}: {e}"
+                                    )
+                                    traceback.print_exc()
+
+                            # Summary
+                            total_restored = restored_unified_count + restored_individual_count
+                            total_failed = failed_unified_count + failed_individual_count
+                            total_skipped = skipped_unified_count + skipped_individual_count
+
+                            if total_restored > 0:
+                                print(
+                                    f"[Startup] ✓ Auto-restored {total_restored} service(s) "
+                                    f"({restored_unified_count} unified, {restored_individual_count} individual)"
+                                )
+                            if conflict_individual_count > 0:
+                                print(
+                                    f"[Startup] ℹ Skipped {conflict_individual_count} individual service(s) "
+                                    f"due to unified service conflicts (expected behavior)"
+                                )
+                            if total_skipped > 0:
+                                print(
+                                    f"[Startup] ⚠ Skipped {total_skipped} service(s) "
+                                    f"({skipped_unified_count} unified, {skipped_individual_count} individual) - users not found"
+                                )
+                            if total_failed > 0:
+                                print(
+                                    f"[Startup] ⚠ Failed to auto-restore {total_failed} service(s) "
+                                    f"({failed_unified_count} unified, {failed_individual_count} individual) - check logs for details"
+                                )
+
+                    except Exception as restore_error:
+                        print(
+                            f"[Startup] Warning: Failed to auto-restore services: {restore_error}"
+                        )
+                        traceback.print_exc()
 
             except Exception as cleanup_error:
                 print(f"[Startup] Warning: Failed to cleanup orphaned services: {cleanup_error}")
@@ -265,6 +426,7 @@ async def start_unified_services():
     # Lazy imports to avoid overhead when disabled
     try:
         import asyncio
+
         from modules.kotak_neo_auto_trader.run_trading_service import TradingService
         from modules.kotak_neo_auto_trader.shared_session_manager import (
             get_shared_session_manager,
@@ -276,7 +438,9 @@ async def start_unified_services():
     # Determine which users to start; if none specified, skip to avoid unintended login
     user_ids = UNIFIED_USER_IDS
     if not user_ids:
-        print("[Startup] RUN_UNIFIED_IN_API is enabled but UNIFIED_USER_IDS is empty; skipping unified start.")
+        print(
+            "[Startup] RUN_UNIFIED_IN_API is enabled but UNIFIED_USER_IDS is empty; skipping unified start."
+        )
         return
 
     loop = asyncio.get_event_loop()
@@ -286,7 +450,9 @@ async def start_unified_services():
                 user_id=uid, env_file="modules/kotak_neo_auto_trader/kotak_neo.env"
             )
             if not auth:
-                print(f"[Startup] Unified service: failed to obtain session for user {uid}, skipping.")
+                print(
+                    f"[Startup] Unified service: failed to obtain session for user {uid}, skipping."
+                )
                 continue
 
             service = TradingService(
