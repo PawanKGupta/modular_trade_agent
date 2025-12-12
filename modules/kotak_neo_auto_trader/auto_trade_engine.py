@@ -3412,7 +3412,10 @@ class AutoTradeEngine:
             for db_order in reentry_orders_from_db:
                 # Check if position is closed - cancel re-entry order if closed
                 if self.positions_repo:
-                    position = self.positions_repo.get_by_symbol(self.user_id, db_order.symbol)
+                    # Use get_by_symbol_any to check for closed positions
+                    position = self.positions_repo.get_by_symbol_any(
+                        self.user_id, db_order.symbol, include_closed=True
+                    )
                     if position and position.closed_at is not None:
                         logger.info(
                             f"Position {db_order.symbol} is closed - cancelling re-entry order {db_order.broker_order_id}"

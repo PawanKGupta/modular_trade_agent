@@ -17,6 +17,18 @@ vi.mock('@/api/service', () => ({
 		last_error: null,
 		updated_at: '2025-12-03T10:00:00Z',
 	})),
+	getPositionCreationMetrics: vi.fn(() => Promise.resolve({
+		success: 10,
+		failed_missing_repos: 0,
+		failed_missing_symbol: 0,
+		failed_exception: 0,
+		success_rate: 100.0,
+		total_attempts: 10,
+	})),
+	getPositionsWithoutSellOrders: vi.fn(() => Promise.resolve({
+		positions: [],
+		count: 0,
+	})),
 }));
 
 vi.mock('@/api/user', () => ({

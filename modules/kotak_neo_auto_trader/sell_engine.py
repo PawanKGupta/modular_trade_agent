@@ -477,7 +477,9 @@ class SellOrderManager:
                         or 0
                     )
 
-                    if base_symbol and qty > 0:
+                    # Issue #2 Fix: Track all holdings including zero quantity
+                    # This ensures we detect when broker has 0 shares (user sold all manually)
+                    if base_symbol:
                         broker_holdings_map[base_symbol] = qty
         except Exception as e:
             logger.debug(f"Could not fetch broker holdings for validation: {e}")
@@ -520,6 +522,16 @@ class SellOrderManager:
                 # But we still validate here as a safety check
                 sell_qty = min(positions_qty, broker_qty)
 
+                # Issue #2 Fix: Filter zero quantity positions before adding to list
+                # Prevents positions from being added when sell_qty becomes 0 after validation
+                if sell_qty <= 0:
+                    logger.warning(
+                        f"Skipping {pos.symbol}: sell quantity is {sell_qty} "
+                        f"(positions table: {positions_qty}, broker: {broker_qty}). "
+                        f"Position should be closed or reconciled."
+                    )
+                    continue
+
                 if sell_qty < positions_qty:
                     logger.warning(
                         f"Quantity mismatch for {pos.symbol}: "
@@ -542,6 +554,345 @@ class SellOrderManager:
 
         logger.debug(f"Loaded {len(open_positions)} open positions from database")
         return open_positions
+
+    def _check_positions_without_sell_orders(self) -> int:
+        """
+        Issue #5 Fix: Check how many open positions don't have active sell orders.
+
+        Returns:
+            Number of positions without sell orders
+        """
+        if not self.positions_repo or not self.user_id:
+            return 0
+
+        try:
+            open_positions = self.get_open_positions()
+            if not open_positions:
+                return 0
+
+            # Get existing sell orders (from broker API)
+            existing_orders = self.get_existing_sell_orders()
+            existing_symbols = set(existing_orders.keys())
+
+            # Count positions without sell orders
+            positions_without_orders = 0
+            for position in open_positions:
+                symbol = position.get("symbol", "").upper()
+                if symbol not in existing_symbols:
+                    positions_without_orders += 1
+
+            return positions_without_orders
+        except Exception as e:
+            logger.debug(f"Failed to check positions without sell orders: {e}")
+            return 0
+
+    def _place_sell_orders_for_missing_positions(self) -> tuple[int, list[dict[str, Any]]]:
+        """
+        Issue #5 Fix: Attempt to place sell orders for positions that don't have them.
+
+        This handles cases where sell orders failed to place at market open due to:
+        - Issue #3: EMA9 calculation failure
+        - Issue #2: Zero quantity after validation
+        - Other transient failures
+
+        Returns:
+            Tuple of (orders_placed_count, failed_positions_list)
+            failed_positions_list contains dicts with: symbol, reason, entry_price, quantity
+        """
+        if not self.positions_repo or not self.user_id:
+            return 0, []
+
+        failed_positions = []
+        try:
+            open_positions = self.get_open_positions()
+            if not open_positions:
+                return 0, []
+
+            # Get existing sell orders to avoid duplicates
+            existing_orders = self.get_existing_sell_orders()
+            existing_symbols = set(existing_orders.keys())
+
+            orders_placed = 0
+            for position in open_positions:
+                symbol = position.get("symbol", "").upper()
+                if symbol in existing_symbols:
+                    continue  # Already has sell order
+
+                # Attempt to place sell order for this position
+                try:
+                    ticker = position.get("ticker", f"{symbol}.NS")
+                    broker_sym = position.get("placed_symbol", f"{symbol}-EQ")
+                    entry_price = position.get("entry_price", 0)
+                    qty = position.get("qty", 0)
+
+                    # Issue #3 Fix: Get EMA9 with retry and fallback
+                    ema9 = self._get_ema9_with_retry(
+                        ticker, broker_symbol=broker_sym, symbol=symbol
+                    )
+                    if not ema9:
+                        logger.warning(
+                            f"Issue #5: Cannot place sell order for {symbol}: "
+                            f"EMA9 calculation failed (Issue #3)"
+                        )
+                        failed_positions.append(
+                            {
+                                "symbol": symbol,
+                                "reason": "EMA9 calculation failed (Issue #3)",
+                                "entry_price": entry_price,
+                                "quantity": qty,
+                            }
+                        )
+                        continue
+
+                    # Place sell order
+                    order_id = self.place_sell_order(position, ema9)
+                    if order_id:
+                        # Register the order
+                        self._register_order(
+                            symbol=symbol,
+                            order_id=order_id,
+                            target_price=ema9,
+                            qty=qty,
+                            ticker=ticker,
+                            placed_symbol=broker_sym,
+                        )
+                        self.lowest_ema9[symbol] = ema9
+                        orders_placed += 1
+                        logger.info(
+                            f"Issue #5: Successfully placed sell order for {symbol}: "
+                            f"Order ID: {order_id}, Target: Rs {ema9:.2f}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Issue #5: Failed to place sell order for {symbol}: "
+                            f"place_sell_order() returned None"
+                        )
+                        failed_positions.append(
+                            {
+                                "symbol": symbol,
+                                "reason": "Order placement failed (broker API returned None)",
+                                "entry_price": entry_price,
+                                "quantity": qty,
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Issue #5: Error placing sell order for {symbol}: {e}",
+                        exc_info=True,
+                    )
+                    failed_positions.append(
+                        {
+                            "symbol": symbol,
+                            "reason": f"Exception: {str(e)}",
+                            "entry_price": position.get("entry_price", 0),
+                            "quantity": position.get("qty", 0),
+                        }
+                    )
+
+            return orders_placed, failed_positions
+        except Exception as e:
+            logger.error(f"Issue #5: Failed to place sell orders for missing positions: {e}")
+            return 0, []
+
+    def get_positions_without_sell_orders(
+        self, use_broker_api: bool = False, skip_ema9_check: bool = True
+    ) -> list[dict[str, Any]]:
+        """
+        Issue #5: Get detailed list of positions without sell orders.
+
+        Returns list of positions with reasons why sell orders weren't placed.
+        Useful for dashboard/API visibility.
+
+        Args:
+            use_broker_api: If True, validates against broker holdings and pending orders.
+                          If False (default), uses database-only queries (faster, no API calls).
+            skip_ema9_check: If True (default), skips expensive EMA9 calculation for faster response.
+                           If False, calculates EMA9 to determine exact reason (slower).
+
+        Returns:
+            List of dicts with: symbol, entry_price, quantity, reason, ticker
+        """
+        if not self.positions_repo or not self.user_id:
+            return []
+
+        try:
+            # Option 1: Use database-only queries (no broker API calls)
+            if not use_broker_api:
+                return self._get_positions_without_sell_orders_db_only(
+                    skip_ema9_check=skip_ema9_check
+                )
+
+            # Option 2: Use broker API for validation (slower, but more accurate)
+            open_positions = self.get_open_positions()
+            if not open_positions:
+                return []
+
+            # Get existing sell orders from broker API
+            existing_orders = self.get_existing_sell_orders()
+            existing_symbols = set(existing_orders.keys())
+
+            positions_without_orders = []
+            for position in open_positions:
+                symbol = position.get("symbol", "").upper()
+                if symbol in existing_symbols:
+                    continue  # Has sell order, skip
+
+                # Determine reason why sell order wasn't placed
+                reason = "Not attempted yet"
+                ticker = position.get("ticker", f"{symbol}.NS")
+                broker_sym = position.get("placed_symbol", f"{symbol}-EQ")
+
+                # Check common reasons without actually placing orders
+                try:
+                    # Check if EMA9 can be calculated
+                    ema9 = self._get_ema9_with_retry(
+                        ticker, broker_symbol=broker_sym, symbol=symbol
+                    )
+                    if not ema9:
+                        reason = "EMA9 calculation failed (Issue #3)"
+                    else:
+                        # EMA9 is available - order should be placeable
+                        # Check if quantity is valid
+                        qty = position.get("qty", 0)
+                        if qty <= 0:
+                            reason = "Zero or invalid quantity (Issue #2)"
+                        else:
+                            # All checks pass - order should be placeable
+                            reason = "Order placement not attempted (may be pending retry)"
+                except Exception as e:
+                    reason = f"Error during analysis: {str(e)}"
+
+                positions_without_orders.append(
+                    {
+                        "symbol": symbol,
+                        "entry_price": position.get("entry_price", 0),
+                        "quantity": position.get("qty", 0),
+                        "reason": reason,
+                        "ticker": ticker,
+                        "broker_symbol": broker_sym,
+                    }
+                )
+
+            return positions_without_orders
+        except Exception as e:
+            logger.error(f"Failed to get positions without sell orders: {e}")
+            return []
+
+    def _get_positions_without_sell_orders_db_only(
+        self, skip_ema9_check: bool = True
+    ) -> list[dict[str, Any]]:
+        """
+        Issue #5: Get positions without sell orders using database-only queries.
+
+        This avoids broker API calls and is suitable for dashboard/API queries.
+        Uses database orders table to check for existing sell orders.
+
+        Args:
+            skip_ema9_check: If True (default), skips expensive EMA9 calculation for faster response.
+                           If False, calculates EMA9 to determine exact reason (slower, ~1-2s per position).
+
+        Returns:
+            List of dicts with: symbol, entry_price, quantity, reason, ticker
+        """
+        try:
+            # Get open positions from database (no broker API call)
+            positions = self.positions_repo.list(self.user_id)
+            open_positions = [pos for pos in positions if pos.closed_at is None]
+
+            if not open_positions:
+                return []
+
+            # Get existing sell orders from database (no broker API call)
+            existing_sell_symbols = set()
+            if self.orders_repo:
+                try:
+                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                    # Get all pending/ongoing sell orders from database
+                    all_orders = self.orders_repo.list(self.user_id)
+                    for order in all_orders:
+                        if order.side.lower() == "sell" and order.status in {
+                            DbOrderStatus.PENDING,
+                            DbOrderStatus.ONGOING,
+                        }:
+                            # Extract base symbol
+                            base_symbol = extract_base_symbol(order.symbol).upper()
+                            if base_symbol:
+                                existing_sell_symbols.add(base_symbol)
+                except Exception as e:
+                    logger.debug(f"Failed to get sell orders from database: {e}")
+
+            positions_without_orders = []
+            for pos in open_positions:
+                symbol = pos.symbol.upper()
+                if symbol in existing_sell_symbols:
+                    continue  # Has sell order in database, skip
+
+                # Get ticker and broker_symbol from order metadata if available
+                ticker = f"{symbol}.NS"
+                broker_sym = f"{symbol}-EQ"
+
+                if self.orders_repo:
+                    try:
+                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                        # Try to get ticker from most recent buy order
+                        ongoing_orders = self.orders_repo.list(
+                            self.user_id, status=DbOrderStatus.ONGOING
+                        )
+                        for order in ongoing_orders:
+                            if (
+                                order.side.lower() == "buy"
+                                and extract_base_symbol(order.symbol).upper() == symbol
+                            ):
+                                if order.order_metadata and isinstance(order.order_metadata, dict):
+                                    ticker = order.order_metadata.get("ticker", ticker)
+                                broker_sym = order.symbol
+                                break
+                    except Exception as e:
+                        logger.debug(f"Failed to enrich position metadata: {e}")
+
+                # Determine reason (lightweight check without broker API)
+                reason = "Not attempted yet"
+                qty = int(pos.quantity)
+
+                # Skip expensive EMA9 calculation for dashboard queries (default)
+                if skip_ema9_check:
+                    # Quick check: quantity validation only
+                    if qty <= 0:
+                        reason = "Zero or invalid quantity (Issue #2)"
+                    else:
+                        reason = "Order placement not attempted (may be pending retry or EMA9 calculation failed)"
+                else:
+                    # Full analysis with EMA9 calculation (slower, ~1-2s per position)
+                    try:
+                        ema9 = self._get_ema9_with_retry(
+                            ticker, broker_symbol=broker_sym, symbol=symbol
+                        )
+                        if not ema9:
+                            reason = "EMA9 calculation failed (Issue #3)"
+                        elif qty <= 0:
+                            reason = "Zero or invalid quantity (Issue #2)"
+                        else:
+                            reason = "Order placement not attempted (may be pending retry)"
+                    except Exception as e:
+                        reason = f"Error during analysis: {str(e)}"
+
+                positions_without_orders.append(
+                    {
+                        "symbol": symbol,
+                        "entry_price": float(pos.avg_price),
+                        "quantity": int(pos.quantity),
+                        "reason": reason,
+                        "ticker": ticker,
+                        "broker_symbol": broker_sym,
+                    }
+                )
+
+            return positions_without_orders
+        except Exception as e:
+            logger.error(f"Failed to get positions without sell orders (DB-only): {e}")
+            return []
 
     def _reconcile_positions_with_broker_holdings(
         self, holdings_response: dict[str, Any] | None = None
@@ -856,6 +1207,75 @@ class SellOrderManager:
         return self.indicator_service.calculate_ema9_realtime(
             ticker=ticker, broker_symbol=broker_symbol, current_ltp=None
         )
+
+    def _get_ema9_with_retry(
+        self, ticker: str, broker_symbol: str = None, symbol: str = None, max_retries: int = 2
+    ) -> float | None:
+        """
+        Issue #3 Fix: Get EMA9 with retry mechanism and fallback to yesterday's EMA9.
+
+        Attempts to calculate current EMA9 with retries. If all attempts fail,
+        falls back to yesterday's EMA9 value.
+
+        Args:
+            ticker: Stock ticker (e.g., 'RELIANCE.NS')
+            broker_symbol: Broker symbol for LTP fetch (e.g., 'RELIANCE-EQ')
+            symbol: Base symbol for logging (e.g., 'RELIANCE')
+            max_retries: Maximum number of retry attempts (default: 2)
+
+        Returns:
+            EMA9 value (current or yesterday's fallback) or None if all attempts fail
+        """
+        import time
+
+        # Try calculating EMA9 with retries
+        for attempt in range(max_retries + 1):
+            try:
+                ema9 = self.get_current_ema9(ticker, broker_symbol=broker_symbol)
+                if ema9 and ema9 > 0:
+                    if attempt > 0:
+                        logger.info(
+                            f"EMA9 calculation succeeded for {symbol or ticker} "
+                            f"on attempt {attempt + 1}"
+                        )
+                    return ema9
+            except Exception as e:
+                logger.debug(
+                    f"EMA9 calculation attempt {attempt + 1} failed for {symbol or ticker}: {e}"
+                )
+
+            # Wait before retry (except on last attempt)
+            if attempt < max_retries:
+                time.sleep(0.5)  # Small delay before retry
+
+        # All retries failed - try to get yesterday's EMA9 as fallback
+        logger.warning(
+            f"Issue #3: EMA9 calculation failed for {symbol or ticker} after {max_retries + 1} attempts. "
+            f"Attempting fallback to yesterday's EMA9..."
+        )
+
+        try:
+            # Try to get historical EMA9 (yesterday's value) as fallback
+            # This uses the same logic but without current LTP
+            if self.indicator_service and self.indicator_service.price_service:
+                # Get historical data and calculate yesterday's EMA9
+                df = self.indicator_service.price_service.get_price(
+                    ticker, days=200, interval="1d", add_current_day=False
+                )
+                if df is not None and not df.empty and len(df) >= 9:
+                    ema_series = df["close"].ewm(span=9, adjust=False).mean()
+                    yesterday_ema9 = float(ema_series.iloc[-1])
+                    if yesterday_ema9 and yesterday_ema9 > 0:
+                        logger.info(
+                            f"Issue #3: Using yesterday's EMA9 ({yesterday_ema9:.2f}) as fallback "
+                            f"for {symbol or ticker}"
+                        )
+                        return yesterday_ema9
+        except Exception as e:
+            logger.debug(f"Failed to get yesterday's EMA9 fallback for {symbol or ticker}: {e}")
+
+        # All attempts including fallback failed
+        return None
 
     def get_current_ltp(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
@@ -2190,20 +2610,33 @@ class SellOrderManager:
                     orders_placed += 1
                     continue
 
-            # Get current EMA9 as target (real-time with LTP)
+            # Issue #3 Fix: Get current EMA9 with retry and fallback
             broker_sym = trade.get("placed_symbol") or f"{symbol}-EQ"
-            ema9 = self.get_current_ema9(ticker, broker_symbol=broker_sym)
+            ema9 = self._get_ema9_with_retry(ticker, broker_symbol=broker_sym, symbol=symbol)
             if not ema9:
-                logger.warning(f"Skipping {symbol}: Failed to calculate EMA9")
+                logger.error(
+                    f"Issue #3: Skipping {symbol}: Failed to calculate EMA9 after retries and fallback. "
+                    f"Position exists but sell order cannot be placed."
+                )
+                # Issue #3: Send alert if telegram notifier available
+                if hasattr(self, "telegram_notifier") and self.telegram_notifier:
+                    try:
+                        self.telegram_notifier.notify_system_alert(
+                            alert_type="EMA9_CALCULATION_FAILED",
+                            message_text=(
+                                f"Failed to calculate EMA9 for {symbol}. "
+                                f"Sell order not placed. Position exists but cannot determine target price."
+                            ),
+                            severity="WARNING",
+                            user_id=self.user_id if hasattr(self, "user_id") else None,
+                        )
+                    except Exception as e:
+                        logger.debug(f"Failed to send EMA9 failure alert: {e}")
                 continue
 
-            # Check if price is reasonable (not too far from entry)
-            entry_price = trade.get("entry_price", 0)
-            if entry_price and ema9 < entry_price * 0.95:  # More than 5% below entry
-                logger.warning(
-                    f"Skipping {symbol}: EMA9 (Rs {ema9:.2f}) is too low (entry: Rs {entry_price:.2f})"
-                )
-                continue
+            # Issue #4: EMA9 validation check removed - all positions will get sell orders
+            # This enables RSI 50 exit mechanism to work for all positions
+            # Note: Positions may be sold at loss if EMA9 is below entry price
 
             # Place sell order
             order_id = self.place_sell_order(trade, ema9)
@@ -2699,6 +3132,7 @@ class SellOrderManager:
             "executed": 0,
             "converted_to_market": 0,
             "circuit_retried": 0,
+            "missing_orders_placed": 0,  # Issue #5: Track orders placed for missing positions
         }
 
         # Manual Trade Detection Timing Fix: Periodic reconciliation during market hours
@@ -2739,8 +3173,121 @@ class SellOrderManager:
         circuit_retried = self._check_and_retry_circuit_expansion()
         stats["circuit_retried"] = circuit_retried
 
+        # Issue #5 Fix: Check for positions without sell orders even when active_sell_orders is empty
         if not self.active_sell_orders:
-            logger.debug("No active sell orders to monitor")
+            logger.debug(
+                "No active sell orders to monitor - checking for positions without sell orders"
+            )
+            positions_without_orders = self._check_positions_without_sell_orders()
+            if positions_without_orders > 0:
+                logger.info(
+                    f"Issue #5: Found {positions_without_orders} positions without sell orders. "
+                    f"Attempting to place sell orders..."
+                )
+                # Attempt to place sell orders for positions that don't have them
+                # This handles cases where orders failed to place at market open
+                orders_placed, failed_positions = self._place_sell_orders_for_missing_positions()
+                if orders_placed > 0:
+                    logger.info(
+                        f"Issue #5: Successfully placed {orders_placed} sell orders for missing positions"
+                    )
+                    stats["missing_orders_placed"] = orders_placed
+                    # Send success alert if some orders were placed but not all
+                    if orders_placed < positions_without_orders:
+                        remaining = positions_without_orders - orders_placed
+                        if hasattr(self, "telegram_notifier") and self.telegram_notifier:
+                            try:
+                                # Build detailed message with failed symbols
+                                failed_symbols = [
+                                    fp["symbol"] for fp in failed_positions[:10]
+                                ]  # Limit to 10
+                                symbols_text = ", ".join(failed_symbols)
+                                if len(failed_positions) > 10:
+                                    symbols_text += f" (+{len(failed_positions) - 10} more)"
+
+                                message_lines = [
+                                    f"Partially placed sell orders: {orders_placed}/{positions_without_orders} successful.",
+                                    f"{remaining} positions still without sell orders.",
+                                    "",
+                                    "Failed symbols:",
+                                    symbols_text,
+                                ]
+
+                                # Add reasons summary
+                                reason_counts = {}
+                                for fp in failed_positions:
+                                    reason = fp["reason"]
+                                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+                                if reason_counts:
+                                    message_lines.append("")
+                                    message_lines.append("Reasons:")
+                                    for reason, count in list(reason_counts.items())[
+                                        :5
+                                    ]:  # Top 5 reasons
+                                        message_lines.append(f"  - {reason}: {count}")
+
+                                self.telegram_notifier.notify_system_alert(
+                                    alert_type="SELL_ORDERS_PARTIALLY_PLACED",
+                                    message_text="\n".join(message_lines),
+                                    severity="WARNING",
+                                    user_id=self.user_id if hasattr(self, "user_id") else None,
+                                )
+                            except Exception as e:
+                                logger.debug(f"Failed to send Issue #5 partial success alert: {e}")
+                else:
+                    logger.warning(
+                        f"Issue #5: Could not place sell orders for {positions_without_orders} positions. "
+                        f"Check logs for reasons (EMA9 calculation failure, etc.)"
+                    )
+                    # Issue #5: Send alert when no orders could be placed with detailed symbol list
+                    if hasattr(self, "telegram_notifier") and self.telegram_notifier:
+                        try:
+                            # Build detailed message with failed symbols and reasons
+                            failed_symbols = [
+                                fp["symbol"] for fp in failed_positions[:10]
+                            ]  # Limit to 10
+                            symbols_text = ", ".join(failed_symbols)
+                            if len(failed_positions) > 10:
+                                symbols_text += f" (+{len(failed_positions) - 10} more)"
+
+                            message_lines = [
+                                f"Found {positions_without_orders} positions without sell orders.",
+                                "Could not place any sell orders.",
+                                "",
+                                "Affected symbols:",
+                                symbols_text,
+                            ]
+
+                            # Add reasons summary
+                            reason_counts = {}
+                            for fp in failed_positions:
+                                reason = fp["reason"]
+                                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+                            if reason_counts:
+                                message_lines.append("")
+                                message_lines.append("Reasons:")
+                                for reason, count in list(reason_counts.items())[
+                                    :5
+                                ]:  # Top 5 reasons
+                                    message_lines.append(f"  - {reason}: {count}")
+
+                            message_lines.append("")
+                            message_lines.append("Check dashboard or logs for full details.")
+
+                            self.telegram_notifier.notify_system_alert(
+                                alert_type="SELL_ORDERS_MISSING",
+                                message_text="\n".join(message_lines),
+                                severity="WARNING",
+                                user_id=self.user_id if hasattr(self, "user_id") else None,
+                            )
+                        except Exception as e:
+                            logger.debug(f"Failed to send Issue #5 alert: {e}")
+            else:
+                logger.debug("No positions found without sell orders")
+            # Still return early if no active orders (normal monitoring requires active orders)
+            # But we've now attempted to fix missing orders
             return stats
 
         logger.debug(f"Monitoring {len(self.active_sell_orders)} active sell orders in parallel...")

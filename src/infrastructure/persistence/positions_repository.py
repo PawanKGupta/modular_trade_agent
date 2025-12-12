@@ -22,18 +22,31 @@ class PositionsRepository:
         self.db = db
 
     def get_by_symbol(self, user_id: int, symbol: str) -> Positions | None:
-        return (
-            self.db.query(Positions)
-            .filter(Positions.user_id == user_id, Positions.symbol == symbol)
-            .first()
+        """
+        Get the most recent open position by symbol.
+
+        Returns only open positions (closed_at IS NULL) to support multiple positions per symbol.
+        For closed positions, use get_by_symbol_any(include_closed=True).
+        """
+        stmt = (
+            select(Positions)
+            .where(
+                Positions.user_id == user_id,
+                Positions.symbol == symbol,
+                Positions.closed_at.is_(None),
+            )
+            .order_by(Positions.opened_at.desc())
         )
+        return self.db.execute(stmt).scalar_one_or_none()
 
     def get_by_symbol_for_update(self, user_id: int, symbol: str) -> Positions | None:
         """
-        Get position by symbol with row-level lock (SELECT ... FOR UPDATE).
+        Get the most recent open position by symbol with row-level lock (SELECT ... FOR UPDATE).
 
         This prevents concurrent modifications by locking the row until the transaction commits.
         Use this when you need to read and then update a position to prevent race conditions.
+
+        Returns only open positions (closed_at IS NULL) to support multiple positions per symbol.
 
         Args:
             user_id: User ID
@@ -44,10 +57,44 @@ class PositionsRepository:
         """
         stmt = (
             select(Positions)
-            .where(Positions.user_id == user_id, Positions.symbol == symbol)
+            .where(
+                Positions.user_id == user_id,
+                Positions.symbol == symbol,
+                Positions.closed_at.is_(None),
+            )
+            .order_by(Positions.opened_at.desc())
             .with_for_update()
         )
         return self.db.execute(stmt).scalar_one_or_none()
+
+    def get_by_symbol_any(
+        self, user_id: int, symbol: str, include_closed: bool = False
+    ) -> Positions | None:
+        """
+        Get any position by symbol (open or closed).
+
+        Use this when you need to check if a position exists regardless of closed status.
+        For normal operations, use get_by_symbol() which returns only open positions.
+
+        Args:
+            user_id: User ID
+            symbol: Base symbol (without suffix)
+            include_closed: If True, returns closed positions. If False, same as get_by_symbol().
+
+        Returns:
+            Most recent position (open or closed based on include_closed), or None if not found
+        """
+        stmt = (
+            select(Positions)
+            .where(Positions.user_id == user_id, Positions.symbol == symbol)
+            .order_by(Positions.opened_at.desc())
+        )
+        if not include_closed:
+            stmt = stmt.where(Positions.closed_at.is_(None))
+        # Use first() instead of scalar_one_or_none() to handle multiple rows
+        # (returns most recent based on order_by)
+        result = self.db.execute(stmt).first()
+        return result[0] if result else None
 
     def list(self, user_id: int) -> builtins.list[Positions]:
         stmt = (
@@ -74,7 +121,18 @@ class PositionsRepository:
     ) -> Positions:
         # Use FOR UPDATE lock when updating existing position to prevent race conditions
         # This ensures atomic read-modify-write operations
+        # get_by_symbol_for_update() now returns only open positions
         pos = self.get_by_symbol_for_update(user_id, symbol)
+
+        # Application-level validation: Prevent duplicate open positions
+        # (Database-level partial unique index handles this for PostgreSQL,
+        # but we validate here for SQLite compatibility)
+        if pos and pos.closed_at is not None:
+            # This shouldn't happen since get_by_symbol_for_update filters closed_at,
+            # but defensive check in case of race condition
+            logger.warning(f"Found closed position for {symbol}, creating new position instead")
+            pos = None
+
         if pos:
             pos.quantity = quantity
             pos.avg_price = avg_price

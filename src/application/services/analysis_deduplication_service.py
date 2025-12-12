@@ -210,7 +210,10 @@ class AnalysisDeduplicationService:
                             else:
                                 # Order is ONGOING, so position should be open
                                 # Double-check position status for safety
-                                position = self._positions_repo.get_by_symbol(self.user_id, symbol)
+                                # Use get_by_symbol_any to check for closed positions
+                                position = self._positions_repo.get_by_symbol_any(
+                                    self.user_id, symbol, include_closed=True
+                                )
                                 user_has_open_position = (
                                     position is not None and position.closed_at is None
                                 )
@@ -284,8 +287,9 @@ class AnalysisDeduplicationService:
                                 if user_has_ongoing_order:
                                     # If ONGOING order exists, check if position is explicitly closed
                                     # (ONGOING order implies position is open unless explicitly closed)
-                                    position = self._positions_repo.get_by_symbol(
-                                        self.user_id, symbol
+                                    # Use get_by_symbol_any to check for closed positions
+                                    position = self._positions_repo.get_by_symbol_any(
+                                        self.user_id, symbol, include_closed=True
                                     )
                                     if position is not None and position.closed_at is not None:
                                         # Position exists but is closed: allow new signal

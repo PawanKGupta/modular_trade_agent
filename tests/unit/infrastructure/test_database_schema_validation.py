@@ -230,14 +230,18 @@ class TestPositionsTableSchema:
         assert columns["closed_at"]["nullable"], "closed_at should be nullable"
 
     def test_positions_table_unique_constraint(self, inspector):
-        """Validate Positions table unique constraint on (user_id, symbol)"""
+        """Validate Positions table does NOT have unique constraint on (user_id, symbol)
+        
+        This constraint was removed to support multiple positions per symbol
+        (one open, multiple closed).
+        """
         unique_constraints = inspector.get_unique_constraints("positions")
 
         user_symbol_constraint = next(
             (uc for uc in unique_constraints if set(uc["column_names"]) == {"user_id", "symbol"}),
             None,
         )
-        assert user_symbol_constraint is not None, "Unique constraint (user_id, symbol) not found"
+        assert user_symbol_constraint is None, "Unique constraint (user_id, symbol) should not exist - multiple positions per symbol are now allowed"
 
 
 class TestFillsTableSchema:

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { getServiceStatus, type ServiceStatus } from '../../api/service';
+import { getServiceStatus, getPositionCreationMetrics, getPositionsWithoutSellOrders, type ServiceStatus, type PositionsWithoutSellOrders } from '../../api/service';
 import { getPortfolio, type PaperTradingPortfolio } from '../../api/user';
 import { getPnlSummary, type PnlSummary } from '../../api/pnl';
 import { getBuyingZone } from '../../api/signals';
@@ -72,6 +72,8 @@ export function DashboardHome() {
 			return signals.length;
 		},
 		refetchInterval: 60000, // Refresh every minute
+		retry: 1, // Only retry once
+		staleTime: 30000, // Consider data fresh for 30 seconds
 	});
 
 	const ordersQ = useQuery({
@@ -92,6 +94,24 @@ export function DashboardHome() {
 		refetchInterval: 30000,
 	});
 
+	const positionMetricsQ = useQuery({
+		queryKey: ['position-creation-metrics'],
+		queryFn: getPositionCreationMetrics,
+		refetchInterval: 60000, // Refresh every minute
+	});
+
+	const positionsWithoutOrdersQ = useQuery<PositionsWithoutSellOrders>({
+		queryKey: ['positions-without-sell-orders'],
+		queryFn: getPositionsWithoutSellOrders,
+		refetchInterval: 120000, // Refresh every 2 minutes (optimized for performance)
+		staleTime: 60000, // Consider data fresh for 1 minute
+		retry: 1, // Only retry once on failure
+		retryDelay: 2000, // Wait 2 seconds before retry
+		// Don't block dashboard loading - this is a background query
+		refetchOnMount: false, // Don't refetch on mount if data exists
+		refetchOnWindowFocus: false, // Don't refetch on window focus
+	});
+
 	const serviceStatus = serviceStatusQ.data;
 	const portfolio = portfolioQ.data;
 	const pnl = pnlQ.data;
@@ -99,13 +119,18 @@ export function DashboardHome() {
 	const openOrdersCount = ordersQ.data ?? 0;
 	const unreadNotificationsCount = notificationsQ.data ?? 0;
 
+	const positionsWithoutOrders = positionsWithoutOrdersQ.data;
+	const positionsWithoutOrdersCount = positionsWithoutOrders?.count ?? 0;
+	const positionsWithoutOrdersError = positionsWithoutOrdersQ.error;
+
+	// Don't block dashboard on positions without orders query (it can be slow)
+	// Show dashboard immediately and let this query load in background
+	// Only block on critical queries - let others load in background
+	// Service status is critical (needed for service status card)
+	// Portfolio is critical in paper mode (needed for portfolio cards)
 	const isLoading =
 		serviceStatusQ.isLoading ||
-		portfolioQ.isLoading ||
-		pnlQ.isLoading ||
-		signalsQ.isLoading ||
-		ordersQ.isLoading ||
-		notificationsQ.isLoading;
+		(portfolioQ.isLoading && isPaperMode); // Only block on portfolio in paper mode
 
 	if (isLoading) {
 		return (
@@ -169,25 +194,35 @@ export function DashboardHome() {
 					</Link>
 				</div>
 				<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4">
-					<div className="flex items-center gap-2">
-						<div
-							className={`w-3 h-3 rounded-full ${
-								serviceStatus?.service_running ? 'bg-green-500' : 'bg-red-500'
-							}`}
-						/>
-						<span className="text-sm sm:text-base text-[var(--text)]">
-							{serviceStatus?.service_running ? 'Running' : 'Stopped'}
-						</span>
-					</div>
-					{serviceStatus?.last_heartbeat && (
-						<span className="text-xs sm:text-sm text-[var(--muted)]">
-							Last heartbeat: {formatTimeAgo(serviceStatus.last_heartbeat)}
-						</span>
-					)}
-					{serviceStatus && serviceStatus.error_count > 0 && (
-						<span className="text-xs sm:text-sm text-red-400">
-							{serviceStatus.error_count} error{serviceStatus.error_count !== 1 ? 's' : ''}
-						</span>
+					{serviceStatusQ.isLoading ? (
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Loading status...</div>
+					) : serviceStatus ? (
+						<>
+							<div className="flex items-center gap-2">
+								<div
+									className={`w-3 h-3 rounded-full ${
+										serviceStatus.service_running ? 'bg-green-500' : 'bg-red-500'
+									}`}
+								/>
+								<span className="text-sm sm:text-base text-[var(--text)]">
+									{serviceStatus.service_running ? 'Running' : 'Stopped'}
+								</span>
+							</div>
+							{serviceStatus.last_heartbeat && (
+								<span className="text-xs sm:text-sm text-[var(--muted)]">
+									Last heartbeat: {formatTimeAgo(serviceStatus.last_heartbeat)}
+								</span>
+							)}
+							{serviceStatus.error_count > 0 && (
+								<span className="text-xs sm:text-sm text-red-400">
+									{serviceStatus.error_count} error{serviceStatus.error_count !== 1 ? 's' : ''}
+								</span>
+							)}
+						</>
+					) : (
+						<div className="text-xs sm:text-sm text-yellow-400">
+							Status unavailable (query may have failed)
+						</div>
 					)}
 				</div>
 			</div>
@@ -221,6 +256,129 @@ export function DashboardHome() {
 							</span>
 						)}
 					</div>
+				</div>
+			)}
+
+			{/* Position Creation Health Card (only in broker mode) */}
+			{isBrokerMode && (
+				<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">
+					<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 mb-3 sm:mb-4">
+						<h2 className="text-base sm:text-lg font-semibold text-[var(--text)]">Position Creation Health</h2>
+						<span className="text-xs sm:text-sm text-[var(--muted)]">Issue #1 Fix</span>
+					</div>
+					{positionMetricsQ.isLoading ? (
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Loading metrics...</div>
+					) : !serviceStatus?.service_running ? (
+						<div className="text-xs sm:text-sm text-[var(--muted)]">
+							Service is not running. Start the service to track position creation metrics.
+						</div>
+					) : positionMetricsQ.data && positionMetricsQ.data.total_attempts > 0 ? (
+						<div className="space-y-2">
+							<div className="flex items-center justify-between">
+								<span className="text-xs sm:text-sm text-[var(--muted)]">Success Rate</span>
+								<span
+									className={`text-sm sm:text-base font-semibold ${
+										positionMetricsQ.data.success_rate >= 95
+											? 'text-green-400'
+											: positionMetricsQ.data.success_rate >= 80
+												? 'text-yellow-400'
+												: 'text-red-400'
+									}`}
+								>
+									{positionMetricsQ.data.success_rate.toFixed(1)}%
+								</span>
+							</div>
+							<div className="grid grid-cols-2 gap-2 text-xs sm:text-sm">
+								<div className="flex items-center gap-2">
+									<div className="w-2 h-2 bg-green-400 rounded-full" />
+									<span className="text-[var(--muted)]">Success:</span>
+									<span className="text-[var(--text)] font-medium">{positionMetricsQ.data.success}</span>
+								</div>
+								{positionMetricsQ.data.failed_missing_repos > 0 && (
+									<div className="flex items-center gap-2">
+										<div className="w-2 h-2 bg-red-400 rounded-full" />
+										<span className="text-[var(--muted)]">Missing Repos:</span>
+										<span className="text-red-400 font-medium">{positionMetricsQ.data.failed_missing_repos}</span>
+									</div>
+								)}
+								{positionMetricsQ.data.failed_missing_symbol > 0 && (
+									<div className="flex items-center gap-2">
+										<div className="w-2 h-2 bg-red-400 rounded-full" />
+										<span className="text-[var(--muted)]">Missing Symbol:</span>
+										<span className="text-red-400 font-medium">{positionMetricsQ.data.failed_missing_symbol}</span>
+									</div>
+								)}
+								{positionMetricsQ.data.failed_exception > 0 && (
+									<div className="flex items-center gap-2">
+										<div className="w-2 h-2 bg-red-400 rounded-full" />
+										<span className="text-[var(--muted)]">Exceptions:</span>
+										<span className="text-red-400 font-medium">{positionMetricsQ.data.failed_exception}</span>
+									</div>
+								)}
+							</div>
+							<div className="text-xs text-[var(--muted)] pt-2 border-t border-[#1e293b]">
+								Total Attempts: {positionMetricsQ.data.total_attempts}
+							</div>
+						</div>
+					) : (
+						<div className="text-xs sm:text-sm text-[var(--muted)]">
+							No position creation attempts yet. Metrics will appear after buy orders execute.
+						</div>
+					)}
+				</div>
+			)}
+
+			{/* Positions Without Sell Orders Card (only in broker mode) */}
+			{isBrokerMode && (
+				<div className="bg-[var(--panel)] border border-yellow-500/30 rounded-lg p-3 sm:p-4">
+					<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 mb-3 sm:mb-4">
+						<h2 className="text-base sm:text-lg font-semibold text-[var(--text)] flex items-center gap-2">
+							<span className="text-yellow-400">⚠️</span>
+							Positions Without Sell Orders
+						</h2>
+						<span className="text-xs sm:text-sm text-[var(--muted)]">Issue #5</span>
+					</div>
+					{positionsWithoutOrdersQ.isLoading ? (
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Loading...</div>
+					) : positionsWithoutOrdersError ? (
+						<div className="text-xs sm:text-sm text-red-400">
+							Error loading positions: {positionsWithoutOrdersError instanceof Error ? positionsWithoutOrdersError.message : 'Unknown error'}
+						</div>
+					) : positionsWithoutOrders && positionsWithoutOrders.positions.length > 0 ? (
+						<div className="space-y-3">
+							<div className="text-sm text-yellow-400 font-medium">
+								{positionsWithoutOrdersCount} position{positionsWithoutOrdersCount !== 1 ? 's' : ''} without sell orders
+							</div>
+							<div className="space-y-2 max-h-64 overflow-y-auto">
+								{positionsWithoutOrders.positions.slice(0, 10).map((pos, idx) => (
+									<div
+										key={`${pos.symbol}-${idx}`}
+										className="bg-[#1e293b]/50 border border-[#1e293b] rounded p-2 text-xs sm:text-sm"
+									>
+										<div className="flex items-center justify-between mb-1">
+											<span className="font-medium text-[var(--text)]">{pos.symbol}</span>
+											<span className="text-[var(--muted)]">
+												Qty: {pos.quantity} @ Rs {pos.entry_price.toFixed(2)}
+											</span>
+										</div>
+										<div className="text-yellow-400/80 text-xs mt-1">{pos.reason}</div>
+									</div>
+								))}
+								{positionsWithoutOrders.positions.length > 10 && (
+									<div className="text-xs text-[var(--muted)] text-center pt-2">
+										+{positionsWithoutOrders.positions.length - 10} more positions
+									</div>
+								)}
+							</div>
+							<div className="text-xs text-[var(--muted)] pt-2 border-t border-[#1e293b]">
+								Check Telegram alerts or logs for details. System will retry placing orders automatically.
+							</div>
+						</div>
+					) : (
+						<div className="text-xs sm:text-sm text-[var(--muted)]">
+							✓ All positions have sell orders
+						</div>
+					)}
 				</div>
 			)}
 

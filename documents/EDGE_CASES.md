@@ -1234,12 +1234,20 @@ elif broker_qty < positions_qty:
 
 **How It Works**:
 
-1. **Reconciliation runs before placing sell orders** (`run_at_market_open()`)
+1. **Reconciliation runs at multiple times**:
+   - **At market open** (`run_at_market_open()` at ~9:15 AM) - Before placing sell orders
+   - **During market hours** (`monitor_and_update()` at :00 and :30 minutes of each hour) - Periodic reconciliation
+   - **Before reentry orders** (`place_reentry_orders()`) - Ensures accurate position data
 2. **Compares positions table with broker holdings** for each open position
 3. **If broker_qty < positions_qty**: Detects manual partial sell
 4. **Updates positions table** using `reduce_quantity()` method
 5. **If broker_qty = 0**: Marks position as closed (Edge Case #15)
 6. **If broker_qty > positions_qty**: IGNORES (manual buy, not tracked)
+
+**When Positions Table is Updated**:
+- **Market Open**: Once at ~9:15 AM when `run_at_market_open()` executes
+- **During Market Hours**: Every 30 minutes (at :00 and :30 minutes) during `monitor_and_update()`
+- **Before Reentry**: When reentry logic runs to ensure accurate position data
 
 **Files Modified**:
 - `modules/kotak_neo_auto_trader/sell_engine.py` - Added `_reconcile_positions_with_broker_holdings()` method
@@ -1314,11 +1322,20 @@ if broker_qty == 0 and positions_qty > 0:
 
 **How It Works**:
 
-1. **Reconciliation checks if symbol exists in broker holdings**
-2. **If symbol not found (broker_qty = 0)**: Detects manual full sell
-3. **Marks position as closed** using `mark_closed()` method
-4. **Sets `closed_at` timestamp** and `quantity = 0`
-5. **Prevents sell order placement** for closed positions
+1. **Reconciliation runs at multiple times**:
+   - **At market open** (`run_at_market_open()` at ~9:15 AM) - Before placing sell orders
+   - **During market hours** (`monitor_and_update()` at :00 and :30 minutes of each hour) - Periodic reconciliation
+   - **Before reentry orders** (`place_reentry_orders()`) - Ensures accurate position data
+2. **Reconciliation checks if symbol exists in broker holdings**
+3. **If symbol not found (broker_qty = 0)**: Detects manual full sell
+4. **Marks position as closed** using `mark_closed()` method
+5. **Sets `closed_at` timestamp** and `quantity = 0`
+6. **Prevents sell order placement** for closed positions
+
+**When Positions Table is Updated**:
+- **Market Open**: Once at ~9:15 AM when `run_at_market_open()` executes
+- **During Market Hours**: Every 30 minutes (at :00 and :30 minutes) during `monitor_and_update()`
+- **Before Reentry**: When reentry logic runs to ensure accurate position data
 
 **Files Modified**:
 - `modules/kotak_neo_auto_trader/sell_engine.py` - Added full sell detection in `_reconcile_positions_with_broker_holdings()`

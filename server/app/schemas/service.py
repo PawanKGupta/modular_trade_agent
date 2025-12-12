@@ -99,9 +99,7 @@ class StartIndividualServiceRequest(BaseModel):
 
     task_name: str = Field(
         ...,
-        description=(
-            "Task name: premarket_retry, sell_monitor, buy_orders, eod_cleanup"
-        ),
+        description=("Task name: premarket_retry, sell_monitor, buy_orders, eod_cleanup"),
     )
 
 
@@ -142,6 +140,41 @@ class RunOnceResponse(BaseModel):
     execution_id: int | None = None
     has_conflict: bool = False
     conflict_message: str | None = None
+
+
+class PositionCreationMetricsResponse(BaseModel):
+    """Position creation metrics response"""
+
+    success: int = Field(default=0, description="Number of successful position creations")
+    failed_missing_repos: int = Field(
+        default=0, description="Number of failures due to missing repositories"
+    )
+    failed_missing_symbol: int = Field(
+        default=0, description="Number of failures due to missing symbol"
+    )
+    failed_exception: int = Field(default=0, description="Number of failures due to exceptions")
+    success_rate: float = Field(default=0.0, description="Success rate as percentage (0-100)")
+    total_attempts: int = Field(default=0, description="Total position creation attempts")
+
+
+class PositionWithoutSellOrder(BaseModel):
+    """Position without sell order details"""
+
+    symbol: str = Field(description="Stock symbol")
+    entry_price: float = Field(description="Entry price")
+    quantity: int = Field(description="Position quantity")
+    reason: str = Field(description="Reason why sell order wasn't placed")
+    ticker: str = Field(description="Ticker symbol (e.g., RELIANCE.NS)")
+    broker_symbol: str = Field(description="Broker symbol (e.g., RELIANCE-EQ)")
+
+
+class PositionsWithoutSellOrdersResponse(BaseModel):
+    """Response for positions without sell orders"""
+
+    positions: list[PositionWithoutSellOrder] = Field(
+        default_factory=list, description="List of positions without sell orders"
+    )
+    count: int = Field(default=0, description="Total count of positions without sell orders")
 
 
 # Service Schedule Management Schemas (Admin)
