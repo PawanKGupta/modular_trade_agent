@@ -11,6 +11,10 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default [
+	// Ignore patterns (must be first)
+	{
+		ignores: ['dist/**', 'coverage/**', 'node_modules/**', '**/node_modules/**', 'build/**', '.vite/**'],
+	},
 	js.configs.recommended,
 	...tseslint.configs.recommended,
 	{
@@ -31,7 +35,6 @@ export default [
 		settings: {
 			react: { version: 'detect' },
 		},
-		ignores: ['dist/**', 'coverage/**', 'node_modules/**', '**/node_modules/**'],
 	},
 	{
 		files: ['eslint.config.js'],

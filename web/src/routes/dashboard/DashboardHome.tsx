@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { getServiceStatus, getPositionCreationMetrics, type ServiceStatus, type PositionCreationMetrics } from '../../api/service';
+import { getServiceStatus, getPositionCreationMetrics, type ServiceStatus } from '../../api/service';
 import { getPortfolio, type PaperTradingPortfolio } from '../../api/user';
 import { getPnlSummary, type PnlSummary } from '../../api/pnl';
 import { getBuyingZone } from '../../api/signals';
