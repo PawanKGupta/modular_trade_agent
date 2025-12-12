@@ -25,6 +25,10 @@ vi.mock('@/api/service', () => ({
 		success_rate: 100.0,
 		total_attempts: 10,
 	})),
+	getPositionsWithoutSellOrders: vi.fn(() => Promise.resolve({
+		positions: [],
+		count: 0,
+	})),
 }));
 
 vi.mock('@/api/user', () => ({
