@@ -365,7 +365,22 @@ Reconciles positions in the database with actual broker holdings to detect:
 ### Reconciliation Logic
 
 **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
-**Method**: `_reconcile_positions_with_broker_holdings()` (Lines ~600-800)
+**Method**: `_reconcile_positions_with_broker_holdings()` (Lines ~558-700)
+
+**When Reconciliation Runs**:
+
+1. **At Market Open** (~9:15 AM):
+   - `run_at_market_open()` calls reconciliation before placing sell orders
+   - Ensures positions table is up-to-date before order placement
+
+2. **During Market Hours** (Every 30 minutes):
+   - `monitor_and_update()` runs reconciliation at :00 and :30 minutes of each hour
+   - Periodic reconciliation to detect manual trades during market hours
+   - Example: 10:00, 10:30, 11:00, 11:30, etc.
+
+3. **Before Reentry Orders**:
+   - `place_reentry_orders()` calls reconciliation before placing reentry orders
+   - Ensures accurate position data for reentry decisions
 
 **Flow**:
 ```
@@ -390,6 +405,11 @@ Reconciles positions in the database with actual broker holdings to detect:
        └─> Ignore (don't update - user may have bought manually)
 ```
 
+**When Positions Table is Updated**:
+- **Market Open**: Once at ~9:15 AM when `run_at_market_open()` executes
+- **During Market Hours**: Every 30 minutes (at :00 and :30 minutes) during `monitor_and_update()`
+- **Before Reentry**: When reentry logic runs to ensure accurate position data
+
 ### Edge Cases Handled
 
 1. **Manual Sell Detection**: Automatically closes or reduces position quantity
@@ -402,13 +422,15 @@ Reconciles positions in the database with actual broker holdings to detect:
 
 ### Critical Issues
 
-#### Issue #1: Position Creation Failure
+#### Issue #1: Position Creation Failure ✅ **FIXED**
 
-**Location**: `modules/kotak_neo_auto_trader/unified_order_monitor.py:788-800`
+**Location**: `modules/kotak_neo_auto_trader/unified_order_monitor.py:93-150`
+
+**Status**: ✅ **FIXED** (2025-01-27)
 
 **Problem**: If `_create_position_from_executed_order()` returns early, position is never created in database.
 
-**Blocking Conditions**:
+**Blocking Conditions** (Before Fix):
 - `positions_repo` is `None`
 - `user_id` is `None`
 - `orders_repo` is `None`
@@ -416,31 +438,69 @@ Reconciles positions in the database with actual broker holdings to detect:
 
 **Impact**: Buy order executes successfully, but position is not created → Sell order is never placed.
 
-**Detection**: Check logs for:
-- `"Cannot create position: positions_repo or user_id not available"`
-- `"Cannot create position: orders_repo not available"`
-- `"Cannot create position: symbol not found in order_info"`
+**Solution Implemented**:
 
-**Recommendation**:
-- Ensure `positions_repo` and `user_id` are always initialized in `UnifiedOrderMonitor`
-- Add alerting when position creation fails
-- Add retry mechanism for position creation failures
+1. **Required Parameters Validation**:
+   - `db_session` and `user_id` are now **required** when `DB_AVAILABLE` is `True`
+   - Raises `ValueError` if missing during initialization (fails fast)
 
-#### Issue #2: Zero Quantity After Validation
+2. **Repository Initialization with Exception Handling**:
+   - `OrdersRepository` and `PositionsRepository` initialization wrapped in try-except
+   - Raises `RuntimeError` if initialization fails (prevents silent failures)
+   - Object is never created in invalid state
 
-**Location**: `modules/kotak_neo_auto_trader/sell_engine.py:515-541, 921-923`
+3. **Final Validation**:
+   - After initialization, validates that critical dependencies exist
+   - Raises `RuntimeError` if repositories or `user_id` are missing
+   - Ensures object is never in invalid state
+
+**Code Changes**:
+- Lines 93-104: Validate required parameters when `DB_AVAILABLE` is `True`
+- Lines 106-130: Initialize repositories with exception handling
+- Lines 132-150: Final validation of critical dependencies
+
+**Tests Added**:
+- `test_initialization_raises_value_error_when_db_session_none`
+- `test_initialization_raises_value_error_when_user_id_none`
+- `test_initialization_raises_runtime_error_when_orders_repo_fails`
+- `test_initialization_raises_runtime_error_when_positions_repo_fails`
+- `test_initialization_raises_runtime_error_when_repos_missing_after_init`
+- `test_initialization_raises_value_error_when_user_id_zero`
+- `test_initialization_succeeds_with_all_required_params`
+
+**Impact**: Position creation failures now fail fast during initialization, preventing silent failures that would block sell order placement.
+
+#### Issue #2: Zero Quantity After Validation ✅ **FIXED**
+
+**Location**: `modules/kotak_neo_auto_trader/sell_engine.py:523-541, 921-923`
+
+**Status**: ✅ **FIXED** (2025-01-27)
 
 **Problem**: If `sell_qty` becomes 0 after validation, position is still added to `open_positions`, but `place_sell_order()` rejects it.
 
 **Impact**: Position exists in database, but sell order is not placed.
 
-**Detection**: Check logs for:
-- `"Invalid quantity 0 for {symbol}"`
-- `"Quantity mismatch for {symbol}: positions table shows X, broker has 0"`
+**Solution Implemented**:
 
-**Recommendation**:
-- Filter zero quantity positions in `get_open_positions()` before adding to list
-- Add explicit check: `if sell_qty <= 0: continue`
+1. **Zero Quantity Filtering**:
+   - Added check in `get_open_positions()`: `if sell_qty <= 0: continue`
+   - Filters out zero quantity positions before adding to `open_positions` list
+   - Logs warning when zero quantity position is skipped
+
+2. **Broker Holdings Map Enhancement**:
+   - Changed from `if base_symbol and qty > 0` to `if base_symbol` to track all holdings
+   - Now tracks zero quantity holdings (detects when broker has 0 shares)
+   - Ensures proper detection of manual full sells
+
+**Code Changes**:
+- Lines 480-481: Track all holdings including zero quantity in `broker_holdings_map`
+- Lines 523-530: Filter zero quantity positions with warning log
+
+**Tests Added**:
+- `test_get_open_positions_filters_zero_quantity_issue_2` - Tests filtering when broker has 0 shares
+- `test_get_open_positions_filters_zero_quantity_when_positions_zero` - Tests filtering when positions_qty is 0
+
+**Impact**: Zero quantity positions are no longer added to `open_positions`, preventing unnecessary processing and repeated order placement attempts.
 
 ### Medium Issues
 
