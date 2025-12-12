@@ -502,20 +502,48 @@ Reconciles positions in the database with actual broker holdings to detect:
 
 **Impact**: Zero quantity positions are no longer added to `open_positions`, preventing unnecessary processing and repeated order placement attempts.
 
-### Medium Issues
+### Medium Issues (Fixed)
 
-#### Issue #3: EMA9 Calculation Failure
+#### Issue #3: EMA9 Calculation Failure ✅ **FIXED**
 
-**Location**: `modules/kotak_neo_auto_trader/sell_engine.py:2193-2198`
+**Location**: `modules/kotak_neo_auto_trader/sell_engine.py:872-939, 2274-2293`
+
+**Status**: ✅ **FIXED** (2025-01-27)
 
 **Problem**: If `get_current_ema9()` returns `None`, sell order is skipped.
 
 **Impact**: Position exists, but sell order is not placed.
 
-**Recommendation**:
-- Add retry mechanism for EMA9 calculation
-- Use previous day's EMA9 as fallback
-- Add alerting when EMA9 calculation fails
+**Solution Implemented**:
+
+1. **Retry Mechanism** (`_get_ema9_with_retry()` method):
+   - Retries up to 2 times (3 total attempts) with 0.5s delay between attempts
+   - Handles exceptions during calculation gracefully
+   - Logs detailed information for each attempt
+
+2. **Fallback to Yesterday's EMA9**:
+   - If all retries fail, attempts to get yesterday's EMA9 from historical data
+   - Calculates EMA9 from historical close prices (excludes current day)
+   - Uses yesterday's EMA9 as target price (better than skipping order entirely)
+
+3. **Enhanced Alerting**:
+   - Enhanced error logging with "Issue #3" prefix for easy identification
+   - Sends Telegram alert (if available) when EMA9 calculation fails after all attempts
+   - Provides detailed context about the failure
+
+**Code Changes**:
+- Lines 872-939: Added `_get_ema9_with_retry()` method with retry and fallback logic
+- Lines 2274-2293: Updated `run_at_market_open()` to use retry method
+- `unified_order_monitor.py`: Updated `check_and_place_sell_orders_for_new_holdings()` to use retry method
+
+**Tests Added**:
+- `test_get_ema9_with_retry_succeeds_on_first_attempt`
+- `test_get_ema9_with_retry_succeeds_on_retry`
+- `test_get_ema9_with_retry_falls_back_to_yesterday_ema9`
+- `test_get_ema9_with_retry_returns_none_when_all_fail`
+- `test_get_ema9_with_retry_handles_exceptions`
+
+**Impact**: Reduces sell order placement failures due to transient EMA9 calculation issues. Provides fallback when real-time calculation fails, ensuring positions are more likely to get sell orders placed even with temporary failures.
 
 #### Issue #4: EMA9 Validation Failure
 
