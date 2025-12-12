@@ -555,6 +555,117 @@ class SellOrderManager:
         logger.debug(f"Loaded {len(open_positions)} open positions from database")
         return open_positions
 
+    def _check_positions_without_sell_orders(self) -> int:
+        """
+        Issue #5 Fix: Check how many open positions don't have active sell orders.
+
+        Returns:
+            Number of positions without sell orders
+        """
+        if not self.positions_repo or not self.user_id:
+            return 0
+
+        try:
+            open_positions = self.get_open_positions()
+            if not open_positions:
+                return 0
+
+            # Get existing sell orders (from broker API)
+            existing_orders = self.get_existing_sell_orders()
+            existing_symbols = set(existing_orders.keys())
+
+            # Count positions without sell orders
+            positions_without_orders = 0
+            for position in open_positions:
+                symbol = position.get("symbol", "").upper()
+                if symbol not in existing_symbols:
+                    positions_without_orders += 1
+
+            return positions_without_orders
+        except Exception as e:
+            logger.debug(f"Failed to check positions without sell orders: {e}")
+            return 0
+
+    def _place_sell_orders_for_missing_positions(self) -> int:
+        """
+        Issue #5 Fix: Attempt to place sell orders for positions that don't have them.
+
+        This handles cases where sell orders failed to place at market open due to:
+        - Issue #3: EMA9 calculation failure
+        - Issue #2: Zero quantity after validation
+        - Other transient failures
+
+        Returns:
+            Number of sell orders successfully placed
+        """
+        if not self.positions_repo or not self.user_id:
+            return 0
+
+        try:
+            open_positions = self.get_open_positions()
+            if not open_positions:
+                return 0
+
+            # Get existing sell orders to avoid duplicates
+            existing_orders = self.get_existing_sell_orders()
+            existing_symbols = set(existing_orders.keys())
+
+            orders_placed = 0
+            for position in open_positions:
+                symbol = position.get("symbol", "").upper()
+                if symbol in existing_symbols:
+                    continue  # Already has sell order
+
+                # Attempt to place sell order for this position
+                try:
+                    ticker = position.get("ticker", f"{symbol}.NS")
+                    broker_sym = position.get("placed_symbol", f"{symbol}-EQ")
+
+                    # Issue #3 Fix: Get EMA9 with retry and fallback
+                    ema9 = self._get_ema9_with_retry(
+                        ticker, broker_symbol=broker_sym, symbol=symbol
+                    )
+                    if not ema9:
+                        logger.warning(
+                            f"Issue #5: Cannot place sell order for {symbol}: "
+                            f"EMA9 calculation failed (Issue #3)"
+                        )
+                        continue
+
+                    # Place sell order
+                    order_id = self.place_sell_order(position, ema9)
+                    if order_id:
+                        # Register the order
+                        self._register_order(
+                            symbol=symbol,
+                            order_id=order_id,
+                            target_price=ema9,
+                            qty=position.get("qty", 0),
+                            ticker=ticker,
+                            placed_symbol=broker_sym,
+                        )
+                        self.lowest_ema9[symbol] = ema9
+                        orders_placed += 1
+                        logger.info(
+                            f"Issue #5: Successfully placed sell order for {symbol}: "
+                            f"Order ID: {order_id}, Target: Rs {ema9:.2f}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Issue #5: Failed to place sell order for {symbol}: "
+                            f"place_sell_order() returned None"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Issue #5: Error placing sell order for {symbol}: {e}",
+                        exc_info=True,
+                    )
+
+            return orders_placed
+        except Exception as e:
+            logger.error(f"Issue #5: Failed to place sell orders for missing positions: {e}")
+            return 0
+
     def _reconcile_positions_with_broker_holdings(
         self, holdings_response: dict[str, Any] | None = None
     ) -> dict[str, int]:
@@ -2793,6 +2904,7 @@ class SellOrderManager:
             "executed": 0,
             "converted_to_market": 0,
             "circuit_retried": 0,
+            "missing_orders_placed": 0,  # Issue #5: Track orders placed for missing positions
         }
 
         # Manual Trade Detection Timing Fix: Periodic reconciliation during market hours
@@ -2833,8 +2945,30 @@ class SellOrderManager:
         circuit_retried = self._check_and_retry_circuit_expansion()
         stats["circuit_retried"] = circuit_retried
 
+        # Issue #5 Fix: Check for positions without sell orders even when active_sell_orders is empty
         if not self.active_sell_orders:
-            logger.debug("No active sell orders to monitor")
+            logger.debug("No active sell orders to monitor - checking for positions without sell orders")
+            positions_without_orders = self._check_positions_without_sell_orders()
+            if positions_without_orders > 0:
+                logger.info(
+                    f"Issue #5: Found {positions_without_orders} positions without sell orders. "
+                    f"Attempting to place sell orders..."
+                )
+                # Attempt to place sell orders for positions that don't have them
+                # This handles cases where orders failed to place at market open
+                orders_placed = self._place_sell_orders_for_missing_positions()
+                if orders_placed > 0:
+                    logger.info(f"Issue #5: Successfully placed {orders_placed} sell orders for missing positions")
+                    stats["missing_orders_placed"] = orders_placed
+                else:
+                    logger.warning(
+                        f"Issue #5: Could not place sell orders for {positions_without_orders} positions. "
+                        f"Check logs for reasons (EMA9 calculation failure, etc.)"
+                    )
+            else:
+                logger.debug("No positions found without sell orders")
+            # Still return early if no active orders (normal monitoring requires active orders)
+            # But we've now attempted to fix missing orders
             return stats
 
         logger.debug(f"Monitoring {len(self.active_sell_orders)} active sell orders in parallel...")
