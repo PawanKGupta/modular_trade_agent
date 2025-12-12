@@ -1114,7 +1114,7 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager.get_existing_sell_orders.return_value = {}
         mock_sell_manager.active_sell_orders = {}
         mock_sell_manager.has_completed_sell_order.return_value = None
-        mock_sell_manager.get_current_ema9.return_value = 2500.0  # EMA9 above entry
+        mock_sell_manager._get_ema9_with_retry.return_value = 2500.0  # EMA9 above entry
         mock_sell_manager.place_sell_order.return_value = "SELL123"
         mock_sell_manager._register_order = Mock()
         mock_sell_manager.lowest_ema9 = {}
@@ -1156,10 +1156,10 @@ class TestUnifiedOrderMonitor:
         assert count == 0
         mock_sell_manager.place_sell_order.assert_not_called()
 
-    def test_check_and_place_sell_orders_for_new_holdings_ema9_too_low(
+    def test_check_and_place_sell_orders_for_new_holdings_ema9_below_entry(
         self, unified_monitor, mock_orders_repo, mock_sell_manager
     ):
-        """Test skipping holdings when EMA9 is too low (more than 5% below entry)"""
+        """Test that sell orders are placed even when EMA9 is below entry price (Issue #4 fix)"""
         from src.infrastructure.db.timezone_utils import ist_now
 
         execution_time = ist_now().replace(hour=10, minute=30)
@@ -1178,13 +1178,19 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager.get_existing_sell_orders.return_value = {}
         mock_sell_manager.active_sell_orders = {}
         mock_sell_manager.has_completed_sell_order.return_value = None
-        # EMA9 is 6% below entry (too low)
-        mock_sell_manager.get_current_ema9.return_value = 2300.0
+        # EMA9 is 6% below entry - Issue #4: Check removed, order should still be placed
+        mock_sell_manager._get_ema9_with_retry.return_value = 2300.0
+        mock_sell_manager.place_sell_order.return_value = "ORDER_123"
+        mock_sell_manager._register_order = Mock()
+        mock_sell_manager.lowest_ema9 = {}
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
 
-        assert count == 0
-        mock_sell_manager.place_sell_order.assert_not_called()
+        # Issue #4: Order should be placed even when EMA9 < 95% of entry
+        assert count == 1
+        mock_sell_manager.place_sell_order.assert_called_once()
+        mock_sell_manager._register_order.assert_called_once()
+        assert "RELIANCE" in mock_sell_manager.lowest_ema9
 
     def test_check_and_place_sell_orders_for_new_holdings_skips_sell_orders(
         self, unified_monitor, mock_orders_repo
@@ -1248,7 +1254,7 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager.get_existing_sell_orders.return_value = {}
         mock_sell_manager.active_sell_orders = {}
         mock_sell_manager.has_completed_sell_order.return_value = None
-        mock_sell_manager.get_current_ema9.return_value = 2500.0
+        mock_sell_manager._get_ema9_with_retry.return_value = 2500.0
         # Place sell order fails
         mock_sell_manager.place_sell_order.side_effect = Exception("Place order failed")
 
@@ -1280,7 +1286,7 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager.get_existing_sell_orders.return_value = {}
         mock_sell_manager.active_sell_orders = {}
         mock_sell_manager.has_completed_sell_order.return_value = None
-        mock_sell_manager.get_current_ema9.return_value = 2500.0
+        mock_sell_manager._get_ema9_with_retry.return_value = 2500.0
         mock_sell_manager.place_sell_order.return_value = "SELL123"
         mock_sell_manager._register_order = Mock()
         mock_sell_manager.lowest_ema9 = {}
@@ -1312,7 +1318,7 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager.get_existing_sell_orders.return_value = {}
         mock_sell_manager.active_sell_orders = {}
         mock_sell_manager.has_completed_sell_order.return_value = None
-        mock_sell_manager.get_current_ema9.return_value = 2500.0
+        mock_sell_manager._get_ema9_with_retry.return_value = 2500.0
         mock_sell_manager.place_sell_order.return_value = "SELL123"
         mock_sell_manager._register_order = Mock()
         mock_sell_manager.lowest_ema9 = {}
@@ -1320,9 +1326,9 @@ class TestUnifiedOrderMonitor:
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
 
         assert count == 1
-        # Verify ticker was constructed (get_current_ema9 should be called with RELIANCE.NS)
-        mock_sell_manager.get_current_ema9.assert_called_once()
-        call_args = mock_sell_manager.get_current_ema9.call_args
+        # Verify ticker was constructed (_get_ema9_with_retry should be called with RELIANCE.NS)
+        mock_sell_manager._get_ema9_with_retry.assert_called_once()
+        call_args = mock_sell_manager._get_ema9_with_retry.call_args
         assert call_args[0][0] == "RELIANCE.NS"  # Ticker constructed from symbol
 
     def test_check_and_place_sell_orders_for_new_holdings_invalid_price(
@@ -1403,7 +1409,7 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager.get_existing_sell_orders.return_value = {}
         mock_sell_manager.active_sell_orders = {}
         mock_sell_manager.has_completed_sell_order.return_value = None
-        mock_sell_manager.get_current_ema9.return_value = None  # EMA9 calculation fails
+        mock_sell_manager._get_ema9_with_retry.return_value = None  # EMA9 calculation fails
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
 
@@ -1432,7 +1438,7 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager.get_existing_sell_orders.return_value = {}
         mock_sell_manager.active_sell_orders = {}
         mock_sell_manager.has_completed_sell_order.return_value = None
-        mock_sell_manager.get_current_ema9.return_value = 2500.0
+        mock_sell_manager._get_ema9_with_retry.return_value = 2500.0
         mock_sell_manager.place_sell_order.return_value = None  # Order placement fails
         mock_sell_manager._register_order = Mock()
         mock_sell_manager.lowest_ema9 = {}
@@ -1476,7 +1482,7 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager.get_existing_sell_orders.return_value = {}
         mock_sell_manager.active_sell_orders = {}
         mock_sell_manager.has_completed_sell_order.return_value = None
-        mock_sell_manager.get_current_ema9.side_effect = [
+        mock_sell_manager._get_ema9_with_retry.side_effect = [
             None,
             3300.0,
         ]  # First fails, second succeeds
@@ -1488,7 +1494,7 @@ class TestUnifiedOrderMonitor:
 
         # Should have processed both orders, but only placed one
         assert count == 1
-        assert mock_sell_manager.get_current_ema9.call_count == 2
+        assert mock_sell_manager._get_ema9_with_retry.call_count == 2
         assert mock_sell_manager.place_sell_order.call_count == 1
         assert "TCS" in mock_sell_manager.lowest_ema9
 
@@ -1526,7 +1532,7 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager.get_existing_sell_orders.return_value = {}
         mock_sell_manager.active_sell_orders = {}
         mock_sell_manager.has_completed_sell_order.return_value = None
-        mock_sell_manager.get_current_ema9.return_value = 2500.0
+        mock_sell_manager._get_ema9_with_retry.return_value = 2500.0
         mock_sell_manager.place_sell_order.return_value = "SELL123"
         mock_sell_manager._register_order = Mock()
         mock_sell_manager.lowest_ema9 = {}
@@ -1573,7 +1579,7 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager.get_existing_sell_orders.return_value = {}
         mock_sell_manager.active_sell_orders = {}
         mock_sell_manager.has_completed_sell_order.return_value = None
-        mock_sell_manager.get_current_ema9.return_value = 3300.0
+        mock_sell_manager._get_ema9_with_retry.return_value = 3300.0
         mock_sell_manager.place_sell_order.return_value = "SELL456"
         mock_sell_manager._register_order = Mock()
         mock_sell_manager.lowest_ema9 = {}
