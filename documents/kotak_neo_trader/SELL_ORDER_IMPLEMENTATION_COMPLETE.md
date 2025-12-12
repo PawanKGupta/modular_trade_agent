@@ -545,20 +545,45 @@ Reconciles positions in the database with actual broker holdings to detect:
 
 **Impact**: Reduces sell order placement failures due to transient EMA9 calculation issues. Provides fallback when real-time calculation fails, ensuring positions are more likely to get sell orders placed even with temporary failures.
 
-#### Issue #4: EMA9 Validation Failure
+#### Issue #4: EMA9 Validation Failure ✅ **FIXED**
 
-**Location**: `modules/kotak_neo_auto_trader/sell_engine.py:2200-2206`
+**Location**: `modules/kotak_neo_auto_trader/sell_engine.py:2298-2304` (removed)
+**Location**: `modules/kotak_neo_auto_trader/unified_order_monitor.py:1852-1858` (removed)
+
+**Status**: ✅ **FIXED** (2025-01-27)
 
 **Problem**: If EMA9 < 95% of entry price, sell order is skipped (safety check).
 
 **Impact**: Position exists, but sell order is not placed (prevents selling at loss > 5%).
 
-**Note**: This is a **safety feature**, but it blocks monitoring for these positions.
+**Solution Implemented**:
 
-**Recommendation**:
-- Consider if 5% threshold is appropriate for all scenarios
-- Add configuration option to adjust threshold
-- Consider allowing sell order placement with warning instead of blocking
+1. **Removed EMA9 Validation Check**:
+   - Removed the 95% threshold check that was blocking sell order placement
+   - All positions now get sell orders placed, regardless of EMA9 vs entry price
+   - Enables RSI 50 exit mechanism to work for all positions
+
+2. **Code Changes**:
+   - `sell_engine.py:2298-2304`: Removed validation check in `run_at_market_open()`
+   - `unified_order_monitor.py:1852-1858`: Removed validation check in `check_and_place_sell_orders_for_new_holdings()`
+   - Added comments explaining the change and its impact
+
+3. **Test Updates**:
+   - Updated 9 tests to use `_get_ema9_with_retry()` instead of `get_current_ema9()`
+   - Fixed test assertions to match new behavior
+
+**Impact**:
+- ✅ All positions now get sell orders placed and monitored
+- ✅ RSI 50 exit mechanism now works for all positions (previously blocked)
+- ✅ Better automation - no positions left without sell orders
+- ⚠️ Positions may be sold at loss if EMA9 is below entry price (removed 5% loss protection)
+- ⚠️ No automatic protection against selling at large losses
+
+**Trade-offs**:
+- **Removed**: 5% loss protection (safety feature)
+- **Gained**: Full automation, RSI 50 exit availability, consistent monitoring
+
+**Note**: This change enables RSI 50 exit mechanism which can provide alternative exit strategy when EMA9 is low. However, it removes the conservative loss protection that was preventing orders at >5% loss.
 
 #### Issue #5: No Active Sell Orders
 
