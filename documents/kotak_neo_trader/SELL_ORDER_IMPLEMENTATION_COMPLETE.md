@@ -1,6 +1,7 @@
 # Sell Order Implementation - Complete Documentation
 
 **Date**: 2025-01-27
+**Last Updated**: 2025-12-13 (Issue #5 Enhancements)
 **Status**: ✅ Current Implementation
 **Version**: Database-Based (Post-Unified-Service)
 
@@ -585,18 +586,88 @@ Reconciles positions in the database with actual broker holdings to detect:
 
 **Note**: This change enables RSI 50 exit mechanism which can provide alternative exit strategy when EMA9 is low. However, it removes the conservative loss protection that was preventing orders at >5% loss.
 
-#### Issue #5: No Active Sell Orders
+#### Issue #5: No Active Sell Orders ✅ **FIXED**
 
-**Location**: `modules/kotak_neo_auto_trader/sell_engine.py:2742-2744`
+**Location**: `modules/kotak_neo_auto_trader/sell_engine.py:2836-2858, 558-870`
+
+**Status**: ✅ **FIXED** (2025-01-27, Enhanced 2025-12-13)
 
 **Problem**: If `active_sell_orders` is empty, monitoring returns early.
 
 **Impact**: Position exists, but no sell order was placed → Position is not monitored.
 
-**Recommendation**:
-- Add separate monitoring for positions that don't have sell orders
-- Track why sell orders weren't placed
-- Provide dashboard/alerts for positions without sell orders
+**Solution Implemented**:
+
+1. **Check for Positions Without Sell Orders** (`_check_positions_without_sell_orders()`):
+   - When `active_sell_orders` is empty, checks database for open positions
+   - Compares positions with existing sell orders from broker API
+   - Returns count of positions without sell orders
+
+2. **Attempt to Place Missing Orders** (`_place_sell_orders_for_missing_positions()`):
+   - Attempts to place sell orders for positions that don't have them
+   - Uses `_get_ema9_with_retry()` for EMA9 calculation (Issue #3 fix)
+   - Handles cases where orders failed to place at market open
+   - Returns tuple: (orders_placed_count, failed_positions_list)
+   - Failed positions include: symbol, reason, entry_price, quantity
+
+3. **Modified `monitor_and_update()`**:
+   - When `active_sell_orders` is empty, checks for positions without orders
+   - Attempts to place sell orders for missing positions
+   - Tracks orders placed in `stats['missing_orders_placed']`
+   - Sends Telegram alerts with symbol details when orders can't be placed
+
+4. **Enhanced Visibility (2025-12-13)**:
+   - **API Endpoint**: `GET /service/positions/without-sell-orders`
+     - Returns detailed list of positions without sell orders
+     - Database-only mode by default (fast, no broker API calls)
+     - Optional broker API mode for validation
+   - **Dashboard Card**: Always visible in broker mode
+     - Shows loading, error, and data states
+     - Displays positions with reasons why orders weren't placed
+     - Non-blocking (doesn't delay dashboard load)
+   - **Telegram Alerts**: Enhanced with symbol details
+     - Shows up to 10 symbols with "+X more" indicator
+     - Includes reason summaries with counts
+     - Alert types: `SELL_ORDERS_MISSING`, `SELL_ORDERS_PARTIALLY_PLACED`
+
+5. **Performance Optimizations**:
+   - Database-only mode by default (no broker API calls)
+   - Skips expensive EMA9 calculation for dashboard queries (fast response)
+   - 10-second timeout on API calls
+   - 2-minute refetch interval for dashboard
+   - Non-blocking queries (dashboard loads immediately)
+
+**Code Changes**:
+- Lines 2836-2858: Added check for positions without sell orders in `monitor_and_update()`
+- Lines 558-587: Added `_check_positions_without_sell_orders()` method
+- Lines 589-695: Added `_place_sell_orders_for_missing_positions()` method
+- Lines 697-772: Added `get_positions_without_sell_orders()` method
+- Lines 774-870: Added `_get_positions_without_sell_orders_db_only()` method
+- Lines 2790-2796: Added `missing_orders_placed` to stats dictionary
+- `server/app/routers/service.py`: Added API endpoint
+- `src/application/services/multi_user_trading_service.py`: Added service method
+- `web/src/routes/dashboard/DashboardHome.tsx`: Added dashboard card
+- `web/src/api/service.ts`: Added API function with timeout
+
+**Impact**:
+- ✅ Positions without sell orders are now detected and handled
+- ✅ System attempts to place orders even when initial placement failed
+- ✅ Better visibility into positions that need attention
+- ✅ Handles Issue #3 (EMA9 failure) and Issue #2 (zero quantity) cases
+- ✅ Positions are no longer invisible when orders fail to place
+- ✅ Automatic recovery from transient failures
+- ✅ Users can see positions without sell orders in dashboard
+- ✅ Telegram alerts provide detailed information
+- ✅ API endpoint enables programmatic access
+- ✅ Fast dashboard loading (non-blocking queries)
+
+**Handles Cases**:
+- Issue #3: EMA9 calculation failure (uses retry mechanism)
+- Issue #2: Zero quantity after validation (filtered in `get_open_positions()`)
+- Transient broker API failures
+- System restarts where orders weren't reloaded
+
+**Tests**: 41 comprehensive tests covering all edge cases in `tests/unit/kotak/test_sell_engine_issue_5_positions_without_orders.py`
 
 ---
 

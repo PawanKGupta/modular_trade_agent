@@ -21,6 +21,8 @@ from ..schemas.service import (
     IndividualServicesStatusResponse,
     IndividualServiceStatus,
     PositionCreationMetricsResponse,
+    PositionsWithoutSellOrdersResponse,
+    PositionWithoutSellOrder,
     RunOnceRequest,
     RunOnceResponse,
     ServiceLogResponse,
@@ -393,4 +395,48 @@ def get_position_creation_metrics(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting position creation metrics: {str(e)}",
+        ) from e
+
+
+@router.get(
+    "/service/positions/without-sell-orders",
+    response_model=PositionsWithoutSellOrdersResponse,
+)
+def get_positions_without_sell_orders(
+    db: Session = Depends(get_db),
+    current: Users = Depends(get_current_user),
+    trading_service: MultiUserTradingService = Depends(get_trading_service),
+):
+    """
+    Issue #5: Get positions without sell orders for current user.
+
+    Returns detailed list of positions that don't have sell orders,
+    including reasons why orders weren't placed.
+
+    Useful for dashboard visibility and troubleshooting.
+    """
+    try:
+        positions = trading_service.get_positions_without_sell_orders(current.id)
+
+        # Convert to response format
+        position_list = [
+            PositionWithoutSellOrder(
+                symbol=pos["symbol"],
+                entry_price=pos["entry_price"],
+                quantity=pos["quantity"],
+                reason=pos["reason"],
+                ticker=pos["ticker"],
+                broker_symbol=pos["broker_symbol"],
+            )
+            for pos in positions
+        ]
+
+        return PositionsWithoutSellOrdersResponse(
+            positions=position_list,
+            count=len(position_list),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting positions without sell orders: {str(e)}",
         ) from e

@@ -12,6 +12,7 @@ import threading
 import time
 from datetime import datetime
 from datetime import time as dt_time
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -672,6 +673,46 @@ class MultiUserTradingService:
 
         # Paper trading mode doesn't have unified_order_monitor
         return None
+
+    def get_positions_without_sell_orders(
+        self, user_id: int, skip_ema9_check: bool = True
+    ) -> list[dict[str, Any]]:
+        """
+        Issue #5: Get positions without sell orders for a user.
+
+        Returns detailed list of positions that don't have sell orders,
+        including reasons why orders weren't placed.
+
+        Args:
+            user_id: User ID
+            skip_ema9_check: If True (default), skips expensive EMA9 calculation for faster response.
+                           Set to False for detailed analysis (slower, ~1-2s per position).
+
+        Returns:
+            List of dicts with position details and reasons
+        """
+        if user_id not in self._services:
+            return []
+
+        service = self._services[user_id]
+
+        # Check if service has unified_order_monitor (broker mode)
+        if hasattr(service, "unified_order_monitor") and service.unified_order_monitor:
+            try:
+                sell_manager = service.unified_order_monitor.sell_manager
+                if sell_manager:
+                    return sell_manager.get_positions_without_sell_orders(
+                        use_broker_api=False, skip_ema9_check=skip_ema9_check
+                    )
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to get positions without sell orders for user {user_id}: {e}",
+                    action="get_positions_without_sell_orders",
+                )
+                return []
+
+        # Paper trading mode or service not available
+        return []
 
     def list_active_services(self) -> list[int]:
         """

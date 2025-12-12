@@ -157,6 +157,26 @@ class PositionCreationMetricsResponse(BaseModel):
     total_attempts: int = Field(default=0, description="Total position creation attempts")
 
 
+class PositionWithoutSellOrder(BaseModel):
+    """Position without sell order details"""
+
+    symbol: str = Field(description="Stock symbol")
+    entry_price: float = Field(description="Entry price")
+    quantity: int = Field(description="Position quantity")
+    reason: str = Field(description="Reason why sell order wasn't placed")
+    ticker: str = Field(description="Ticker symbol (e.g., RELIANCE.NS)")
+    broker_symbol: str = Field(description="Broker symbol (e.g., RELIANCE-EQ)")
+
+
+class PositionsWithoutSellOrdersResponse(BaseModel):
+    """Response for positions without sell orders"""
+
+    positions: list[PositionWithoutSellOrder] = Field(
+        default_factory=list, description="List of positions without sell orders"
+    )
+    count: int = Field(default=0, description="Total count of positions without sell orders")
+
+
 # Service Schedule Management Schemas (Admin)
 
 

@@ -59,6 +59,20 @@ export interface PositionCreationMetrics {
 	total_attempts: number;
 }
 
+export interface PositionWithoutSellOrder {
+	symbol: string;
+	entry_price: number;
+	quantity: number;
+	reason: string;
+	ticker: string;
+	broker_symbol: string;
+}
+
+export interface PositionsWithoutSellOrders {
+	positions: PositionWithoutSellOrder[];
+	count: number;
+}
+
 export async function startService(): Promise<ServiceStartResponse> {
 	const { data } = await api.post<ServiceStartResponse>('/user/service/start');
 	return data;
@@ -96,6 +110,29 @@ export async function getServiceLogs(params?: {
 export async function getPositionCreationMetrics(): Promise<PositionCreationMetrics> {
 	const { data } = await api.get<PositionCreationMetrics>('/user/service/metrics/position-creation');
 	return data;
+}
+
+export async function getPositionsWithoutSellOrders(): Promise<PositionsWithoutSellOrders> {
+	// Add timeout to prevent blocking dashboard
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+	try {
+		const { data } = await api.get<PositionsWithoutSellOrders>(
+			'/user/service/positions/without-sell-orders',
+			{ signal: controller.signal }
+		);
+		clearTimeout(timeoutId);
+		return data;
+	} catch (error) {
+		clearTimeout(timeoutId);
+		// Return empty result on timeout/error instead of throwing
+		if (error instanceof Error && error.name === 'AbortError') {
+			console.warn('Positions without sell orders query timed out');
+			return { positions: [], count: 0 };
+		}
+		throw error;
+	}
 }
 
 // Individual Service Management
