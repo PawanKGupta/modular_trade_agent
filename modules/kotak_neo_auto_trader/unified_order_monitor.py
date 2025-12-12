@@ -1849,13 +1849,9 @@ class UnifiedOrderMonitor:
                         )
                         continue
 
-                    # Check if price is reasonable (not too far from entry)
-                    if ema9 < execution_price * 0.95:  # More than 5% below entry
-                        logger.warning(
-                            f"Skipping {base_symbol}: EMA9 (Rs {ema9:.2f}) is too low "
-                            f"(entry: Rs {execution_price:.2f})"
-                        )
-                        continue
+                    # Issue #4: EMA9 validation check removed - all positions will get sell orders
+                    # This enables RSI 50 exit mechanism to work for all positions
+                    # Note: Positions may be sold at loss if EMA9 is below entry price
 
                     # Place sell order
                     logger.info(

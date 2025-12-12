@@ -2295,13 +2295,9 @@ class SellOrderManager:
                         logger.debug(f"Failed to send EMA9 failure alert: {e}")
                 continue
 
-            # Check if price is reasonable (not too far from entry)
-            entry_price = trade.get("entry_price", 0)
-            if entry_price and ema9 < entry_price * 0.95:  # More than 5% below entry
-                logger.warning(
-                    f"Skipping {symbol}: EMA9 (Rs {ema9:.2f}) is too low (entry: Rs {entry_price:.2f})"
-                )
-                continue
+            # Issue #4: EMA9 validation check removed - all positions will get sell orders
+            # This enables RSI 50 exit mechanism to work for all positions
+            # Note: Positions may be sold at loss if EMA9 is below entry price
 
             # Place sell order
             order_id = self.place_sell_order(trade, ema9)
