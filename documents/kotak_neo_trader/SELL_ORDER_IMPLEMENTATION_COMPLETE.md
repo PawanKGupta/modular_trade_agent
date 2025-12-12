@@ -829,6 +829,75 @@ python -m modules.kotak_neo_auto_trader.run_sell_orders \
 
 ---
 
+## Issues Verification Summary
+
+### All Issues Fixed and Verified ✅
+
+All 5 issues identified in this document have been **FIXED** and **VERIFIED** with comprehensive implementations and tests.
+
+| Issue # | Title | Status | Tests | Code Verified |
+|---------|-------|--------|-------|---------------|
+| #1 | Position Creation Failure | ✅ FIXED | 7 | ✅ |
+| #2 | Zero Quantity After Validation | ✅ FIXED | 2 | ✅ |
+| #3 | EMA9 Calculation Failure | ✅ FIXED | 5 | ✅ |
+| #4 | EMA9 Validation Failure | ✅ FIXED | 9 | ✅ |
+| #5 | No Active Sell Orders | ✅ FIXED | 46 | ✅ |
+
+**Total**: 5 issues, all **FIXED**, **69 tests total**
+
+### Verification Details
+
+#### Issue #1: Position Creation Failure ✅ **VERIFIED**
+- ✅ Code exists: `modules/kotak_neo_auto_trader/unified_order_monitor.py:64-150`
+- ✅ Required parameters validation implemented
+- ✅ Repository initialization with exception handling
+- ✅ Final validation of critical dependencies
+- ✅ Tests: 7 comprehensive tests in `test_unified_order_monitor.py`
+
+#### Issue #2: Zero Quantity After Validation ✅ **VERIFIED**
+- ✅ Code exists: `modules/kotak_neo_auto_trader/sell_engine.py:527` (filter check)
+- ✅ Zero quantity filtering: `if sell_qty <= 0: continue`
+- ✅ Broker holdings map tracks zero quantity holdings
+- ✅ Tests: 2 tests (`test_get_open_positions_filters_zero_quantity_issue_2`, `test_get_open_positions_filters_zero_quantity_when_positions_zero`)
+
+#### Issue #3: EMA9 Calculation Failure ✅ **VERIFIED**
+- ✅ Code exists: `modules/kotak_neo_auto_trader/sell_engine.py:1229-1280` (`_get_ema9_with_retry()`)
+- ✅ Retry mechanism implemented (3 attempts with 0.5s delay)
+- ✅ Fallback to yesterday's EMA9 implemented
+- ✅ Enhanced alerting with "Issue #3" prefix
+- ✅ Tests: 5 tests in `test_sell_engine.py` (TestEMA9RetryMechanismIssue3)
+
+#### Issue #4: EMA9 Validation Failure ✅ **VERIFIED**
+- ✅ Code removed: Validation check removed from `sell_engine.py` and `unified_order_monitor.py`
+- ✅ All positions now get sell orders placed
+- ✅ RSI 50 exit mechanism enabled for all positions
+- ✅ Tests: 9 tests updated to use `_get_ema9_with_retry()`
+
+#### Issue #5: No Active Sell Orders ✅ **VERIFIED**
+- ✅ Code exists: `modules/kotak_neo_auto_trader/sell_engine.py:558-870`
+  - `_check_positions_without_sell_orders()`: Lines 558-587
+  - `_place_sell_orders_for_missing_positions()`: Lines 589-695
+  - `get_positions_without_sell_orders()`: Lines 697-772
+  - `_get_positions_without_sell_orders_db_only()`: Lines 774-870
+- ✅ Modified `monitor_and_update()`: Lines 3176-3280
+- ✅ API Endpoint: `server/app/routers/service.py` - `/service/positions/without-sell-orders`
+- ✅ Dashboard Card: `web/src/routes/dashboard/DashboardHome.tsx`
+- ✅ Service Method: `src/application/services/multi_user_trading_service.py`
+- ✅ Tests: 41 tests in `test_sell_engine_issue_5_positions_without_orders.py` + 5 API tests
+
+### Verification Checklist
+
+- [x] Issue #1: Code exists and tests pass
+- [x] Issue #2: Code exists and tests pass
+- [x] Issue #3: Code exists and tests pass
+- [x] Issue #4: Code removed and tests updated
+- [x] Issue #5: Code exists, API exists, dashboard exists, tests pass
+- [x] All documentation matches implementation
+- [x] All tests are passing
+- [x] No pending issues in documentation
+
+---
+
 ## Summary
 
 ### Key Points
@@ -836,10 +905,11 @@ python -m modules.kotak_neo_auto_trader.run_sell_orders \
 1. **Database-Based**: All positions are stored in `positions` table (not JSON files)
 2. **Unified Service**: Sell orders are managed by `TradingService` via `SellOrderManager` or `UnifiedOrderMonitor`
 3. **EMA9 Target**: Sell orders are placed at EMA9 price and updated only if EMA9 drops
-4. **Safety Check**: EMA9 must be >= 95% of entry price to prevent selling at loss > 5%
+4. **All Issues Fixed**: All 5 blocking issues have been resolved with comprehensive tests (69 tests total)
 5. **Reconciliation**: Positions are reconciled with broker holdings to detect manual trades
 6. **Monitoring**: Continuous monitoring every 60 seconds during market hours
 7. **Execution Handling**: Full and partial executions are handled, with position closure and buy order cancellation
+8. **Enhanced Visibility**: API endpoint, dashboard card, and Telegram alerts for positions without sell orders
 
 ### Integration Points
 
@@ -854,10 +924,9 @@ python -m modules.kotak_neo_auto_trader.run_sell_orders \
 - [ ] Trailing stop-loss option (update on price increase)
 - [ ] Multi-level profit taking (partial exits)
 - [ ] Performance analytics dashboard
-- [ ] EMA9 calculation fallback mechanism
-- [ ] Comprehensive alerting for blocking conditions
 
 ---
 
-**Last Updated**: 2025-01-27
+**Last Updated**: 2025-12-13 (Issue #5 Enhancements & Verification)
+**Status**: ✅ All Issues Fixed and Verified
 **Maintained By**: Trading System Team
