@@ -90,6 +90,23 @@ vi.mock('@/api/paper-trading', () => ({
 			},
 		})
 	),
+	getPaperTradingHistory: vi.fn(() => Promise.resolve({
+		transactions: [],
+		closed_positions: [],
+		statistics: {
+			total_trades: 0,
+			profitable_trades: 0,
+			losing_trades: 0,
+			breakeven_trades: 0,
+			win_rate: 0,
+			total_profit: 0,
+			total_loss: 0,
+			net_pnl: 0,
+			avg_profit_per_trade: 0,
+			avg_loss_per_trade: 0,
+			total_transactions: 0,
+		},
+	})),
 }));
 
 describe('PaperTradingPage', () => {

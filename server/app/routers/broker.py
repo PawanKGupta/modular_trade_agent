@@ -530,7 +530,7 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
 
         try:
             # Import broker components
-            from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter import (
+            from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter import (  # noqa: E501
                 BrokerServiceUnavailableError,
             )
             from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (
@@ -631,6 +631,58 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                 portfolio_value += market_value
                 unrealized_pnl_total += pnl
 
+                # Fetch reentry details from database positions table
+                reentry_count = 0
+                reentries_list = None
+                entry_rsi = None
+                initial_entry_price = None
+
+                try:
+                    from src.infrastructure.persistence.positions_repository import (
+                        PositionsRepository,
+                    )
+
+                    positions_repo = PositionsRepository(db)
+                    # Normalize symbol: remove .NS/.BO suffix and -EQ/-BE suffix,
+                    # convert to uppercase
+                    normalized_symbol = symbol.upper().replace(".NS", "").replace(".BO", "")
+                    # Remove broker-specific suffixes like -EQ, -BE
+                    if "-" in normalized_symbol:
+                        normalized_symbol = normalized_symbol.split("-")[0]
+
+                    position = positions_repo.get_by_symbol(current.id, normalized_symbol)
+                    if position:
+                        reentry_count = position.reentry_count or 0
+                        entry_rsi = position.entry_rsi
+                        initial_entry_price = position.initial_entry_price
+
+                        # Parse reentries JSON field
+                        if position.reentries:
+                            if isinstance(position.reentries, dict):
+                                # New format: {"reentries": [...], "current_cycle": ...}
+                                reentries_list = position.reentries.get("reentries", [])
+                            elif isinstance(position.reentries, list):
+                                # Old format: direct array
+                                reentries_list = position.reentries
+                            else:
+                                reentries_list = []
+                        else:
+                            reentries_list = []
+
+                        logger.debug(
+                            f"Found reentry data for {symbol} "
+                            f"(normalized: {normalized_symbol}): "
+                            f"count={reentry_count}, "
+                            f"reentries={len(reentries_list) if reentries_list else 0}"
+                        )
+                    else:
+                        logger.debug(
+                            f"No position found for {symbol} "
+                            f"(normalized: {normalized_symbol}) in database"
+                        )
+                except Exception as e:
+                    logger.debug(f"Could not fetch reentry details for {symbol}: {e}")
+
                 portfolio_holdings.append(
                     PaperTradingHolding(
                         symbol=symbol,
@@ -643,6 +695,10 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                         pnl_percentage=pnl_pct,
                         target_price=None,  # Broker holdings don't have target prices
                         distance_to_target=None,
+                        reentry_count=reentry_count,
+                        reentries=reentries_list,
+                        entry_rsi=entry_rsi,
+                        initial_entry_price=initial_entry_price,
                     )
                 )
 
@@ -775,7 +831,7 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
 
         try:
             # Import broker components
-            from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter import (
+            from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter import (  # noqa: E501
                 BrokerServiceUnavailableError,
             )
             from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (

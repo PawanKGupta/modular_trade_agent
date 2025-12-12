@@ -30,6 +30,10 @@ vi.mock('@/api/user', () => ({
 					pnl_percentage: 4.0,
 					target_price: null,
 					distance_to_target: null,
+					reentry_count: 0,
+					entry_rsi: null,
+					initial_entry_price: null,
+					reentries: null,
 				},
 			],
 			recent_orders: [],
@@ -262,5 +266,133 @@ describe('BrokerPortfolioPage', () => {
 			expect(screen.getByText(/Holdings \(0\)/)).toBeInTheDocument();
 			expect(screen.getByText('No holdings')).toBeInTheDocument();
 		}, { timeout: 10000 });
+	});
+
+	it('displays reentry details in holdings table', async () => {
+		const userApi = await import('@/api/user');
+		vi.mocked(userApi.getPortfolio).mockResolvedValueOnce({
+			account: {
+				initial_capital: 200000,
+				available_cash: 150000,
+				total_pnl: 10000,
+				realized_pnl: 5000,
+				unrealized_pnl: 5000,
+				portfolio_value: 60000,
+				total_value: 210000,
+				return_percentage: 5.0,
+			},
+			holdings: [
+				{
+					symbol: 'RELIANCE-EQ',
+					quantity: 20,
+					average_price: 2500.0,
+					current_price: 2600.0,
+					cost_basis: 50000,
+					market_value: 52000,
+					pnl: 2000,
+					pnl_percentage: 4.0,
+					target_price: null,
+					distance_to_target: null,
+					reentry_count: 2,
+					entry_rsi: 28.5,
+					initial_entry_price: 2500.0,
+					reentries: [
+						{
+							qty: 10,
+							price: 2400.0,
+							time: '2025-01-15T10:00:00',
+							level: 20,
+							rsi: 18.5,
+							cycle: 1,
+						},
+						{
+							qty: 5,
+							price: 2300.0,
+							time: '2025-01-20T10:00:00',
+							level: 10,
+							rsi: 9.2,
+							cycle: 2,
+						},
+					],
+				},
+			],
+			recent_orders: [],
+			order_statistics: {},
+		});
+
+		render(
+			withProviders(
+				<MemoryRouter>
+					<BrokerPortfolioPage />
+				</MemoryRouter>
+			)
+		);
+
+		await waitFor(() => {
+			// Text is split across elements: "2", " re-entry", "s"
+			// Check for the parent container that contains all the reentry info
+			const reentryCell = screen.getByText('Entry RSI: 28.5').closest('td');
+			expect(reentryCell?.textContent).toContain('2');
+			expect(reentryCell?.textContent).toContain('re-entry');
+			expect(screen.getByText('Entry RSI: 28.5')).toBeInTheDocument();
+			expect(screen.getByText('View details')).toBeInTheDocument();
+		});
+
+		// Click to expand details
+		const detailsButton = screen.getByText('View details');
+		detailsButton.click();
+
+		await waitFor(() => {
+			expect(screen.getByText(/Re-entry 1: 10 @ Rs 2400.00/)).toBeInTheDocument();
+			expect(screen.getByText(/Re-entry 2: 5 @ Rs 2300.00/)).toBeInTheDocument();
+		});
+	});
+
+	it('displays "-" when no reentries in broker holdings', async () => {
+		const userApi = await import('@/api/user');
+		vi.mocked(userApi.getPortfolio).mockResolvedValueOnce({
+			account: {
+				initial_capital: 200000,
+				available_cash: 150000,
+				total_pnl: 10000,
+				realized_pnl: 5000,
+				unrealized_pnl: 5000,
+				portfolio_value: 60000,
+				total_value: 210000,
+				return_percentage: 5.0,
+			},
+			holdings: [
+				{
+					symbol: 'TCS-EQ',
+					quantity: 30,
+					average_price: 3500.0,
+					current_price: 3600.0,
+					cost_basis: 105000,
+					market_value: 108000,
+					pnl: 3000,
+					pnl_percentage: 2.86,
+					target_price: null,
+					distance_to_target: null,
+					reentry_count: 0,
+					entry_rsi: null,
+					initial_entry_price: null,
+					reentries: null,
+				},
+			],
+			recent_orders: [],
+			order_statistics: {},
+		});
+
+		render(
+			withProviders(
+				<MemoryRouter>
+					<BrokerPortfolioPage />
+				</MemoryRouter>
+			)
+		);
+
+		await waitFor(() => {
+			expect(screen.getByText('TCS-EQ')).toBeInTheDocument();
+		});
 	});
 });

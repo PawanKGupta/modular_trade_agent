@@ -198,25 +198,25 @@ export function DashboardHome() {
 						<div className="text-xs sm:text-sm text-[var(--muted)]">Loading status...</div>
 					) : serviceStatus ? (
 						<>
-							<div className="flex items-center gap-2">
-								<div
-									className={`w-3 h-3 rounded-full ${
+					<div className="flex items-center gap-2">
+						<div
+							className={`w-3 h-3 rounded-full ${
 										serviceStatus.service_running ? 'bg-green-500' : 'bg-red-500'
-									}`}
-								/>
-								<span className="text-sm sm:text-base text-[var(--text)]">
+							}`}
+						/>
+						<span className="text-sm sm:text-base text-[var(--text)]">
 									{serviceStatus.service_running ? 'Running' : 'Stopped'}
-								</span>
-							</div>
+						</span>
+					</div>
 							{serviceStatus.last_heartbeat && (
-								<span className="text-xs sm:text-sm text-[var(--muted)]">
-									Last heartbeat: {formatTimeAgo(serviceStatus.last_heartbeat)}
-								</span>
-							)}
+						<span className="text-xs sm:text-sm text-[var(--muted)]">
+							Last heartbeat: {formatTimeAgo(serviceStatus.last_heartbeat)}
+						</span>
+					)}
 							{serviceStatus.error_count > 0 && (
-								<span className="text-xs sm:text-sm text-red-400">
-									{serviceStatus.error_count} error{serviceStatus.error_count !== 1 ? 's' : ''}
-								</span>
+						<span className="text-xs sm:text-sm text-red-400">
+							{serviceStatus.error_count} error{serviceStatus.error_count !== 1 ? 's' : ''}
+						</span>
 							)}
 						</>
 					) : (
