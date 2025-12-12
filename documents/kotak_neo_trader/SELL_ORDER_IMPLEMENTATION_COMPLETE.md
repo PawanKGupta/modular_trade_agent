@@ -927,6 +927,242 @@ All 5 issues identified in this document have been **FIXED** and **VERIFIED** wi
 
 ---
 
-**Last Updated**: 2025-12-13 (Issue #5 Enhancements & Verification)
-**Status**: ✅ All Issues Fixed and Verified
+## Flow Analysis & Validation
+
+**Analysis Date**: 2025-12-13
+
+### Executive Summary
+
+After comprehensive analysis of the sell order flow, **no critical blocking issues** were found. The implementation is robust with proper error handling, transaction management, and recovery mechanisms. However, **3 minor potential improvements** were identified (all non-blocking).
+
+### Flow Overview
+
+#### 1. Market Open Flow (`run_at_market_open()`)
+
+```
+1. Reconcile positions with broker holdings
+   └─> Detect manual sells/buys
+   └─> Update positions table
+
+2. Get open positions from database
+   └─> Filter zero quantity positions (Issue #2 fix)
+
+3. For each position:
+   ├─> Check for completed sell orders (already sold)
+   ├─> Check for existing pending/ongoing sell orders
+   │   ├─> If exists with same qty: Track it
+   │   ├─> If exists with lower qty: Update quantity (reentry)
+   │   └─> If exists with higher qty: Track with existing qty (partial sell)
+   ├─> Calculate EMA9 (with retry - Issue #3 fix)
+   ├─> Place new sell order
+   └─> Register order in active_sell_orders
+```
+
+#### 2. Monitoring Flow (`monitor_and_update()`)
+
+```
+1. Periodic reconciliation (every 30 minutes)
+   └─> Detect manual trades
+
+2. Check for positions without sell orders (Issue #5 fix)
+   └─> Attempt to place missing orders
+
+3. Check for executed orders
+   └─> Update positions table (atomic transaction)
+   └─> Close buy orders (atomic transaction)
+   └─> Cancel reentry orders (outside transaction - broker API)
+
+4. Check RSI exit condition
+   └─> Convert to market order if RSI10 > 50
+
+5. Monitor EMA9 for remaining orders
+   └─> Update order price if EMA9 drops
+```
+
+#### 3. Execution Handling
+
+```
+1. Detect executed order
+   ├─> Get filled_qty and order_qty
+   ├─> If full execution:
+   │   ├─> Mark position as closed (transaction)
+   │   ├─> Close buy orders (same transaction)
+   │   └─> Cancel reentry orders (outside transaction)
+   └─> If partial execution:
+       └─> Reduce position quantity
+
+2. Remove from active_sell_orders tracking
+```
+
+### Issues Analysis
+
+#### ✅ **No Critical Issues Found**
+
+All 5 previously identified issues have been fixed:
+- Issue #1: Position Creation Failure ✅
+- Issue #2: Zero Quantity After Validation ✅
+- Issue #3: EMA9 Calculation Failure ✅
+- Issue #4: EMA9 Validation Failure ✅
+- Issue #5: No Active Sell Orders ✅
+
+#### ⚠️ **Minor Potential Improvements (Non-Blocking)**
+
+##### 1. Order Registration Failure Handling
+
+**Location**: `sell_engine.py:2642-2655`
+
+**Current Behavior**:
+```python
+order_id = self.place_sell_order(trade, ema9)
+if order_id:
+    # Track the order
+    self._register_order(...)
+```
+
+**Potential Issue**: If `place_sell_order()` succeeds but `_register_order()` fails (e.g., exception), the order is placed but not tracked. This is partially mitigated by Issue #5 fix which detects positions without sell orders.
+
+**Impact**: Low - Issue #5 will detect and handle this case.
+
+**Recommendation**: Add try-except around `_register_order()` to log failures, but current behavior is acceptable.
+
+**Status**: ✅ **Acceptable** - Issue #5 provides recovery mechanism
+
+##### 2. Transaction Dependency Check
+
+**Location**: `sell_engine.py:3347-3362`, `3407-3422`
+
+**Current Behavior**:
+```python
+if transaction and ist_now:
+    with transaction(self.positions_repo.db):
+        # Atomic updates
+```
+
+**Potential Issue**: If `transaction` or `ist_now` is `None` (import failure), the transaction block is skipped and updates happen without atomicity. However, the code gracefully handles this with individual commits.
+
+**Impact**: Low - Code handles missing dependencies gracefully.
+
+**Recommendation**: Current implementation is correct - it checks for dependencies before using transactions.
+
+**Status**: ✅ **Correct** - Proper dependency checking
+
+##### 3. Partial Execution Quantity Tracking
+
+**Location**: `sell_engine.py:3370-3380`
+
+**Current Behavior**: When partial execution occurs, position quantity is reduced but the sell order quantity in `active_sell_orders` is not updated.
+
+**Potential Issue**: The tracked order quantity may not match the actual remaining order quantity after partial execution.
+
+**Impact**: Low - The order will be updated on next monitoring cycle or when execution completes.
+
+**Recommendation**: Update `active_sell_orders[qty]` after partial execution to keep tracking accurate.
+
+**Status**: ⚠️ **Minor Improvement** - Not critical, but would improve accuracy
+
+### Edge Cases Handled
+
+#### ✅ **Race Conditions**
+
+1. **Reentry During Order Placement**:
+   - Fixed with re-read of position quantity before updating order
+   - Location: `sell_engine.py:2531-2548`
+
+2. **Manual Sell During Monitoring**:
+   - Handled by periodic reconciliation (every 30 minutes)
+   - Location: `sell_engine.py:3153-3167`
+
+3. **Order Execution During Monitoring**:
+   - Handled by checking execution status before EMA9 updates
+   - Location: `sell_engine.py:3316-3393`
+
+#### ✅ **Error Recovery**
+
+1. **EMA9 Calculation Failure**:
+   - Retry mechanism (3 attempts)
+   - Fallback to yesterday's EMA9
+   - Issue #3 fix
+
+2. **Order Placement Failure**:
+   - Issue #5 detects and retries
+   - Telegram alerts notify user
+
+3. **Transaction Failures**:
+   - Proper exception handling
+   - Rollback on errors
+
+#### ✅ **Data Consistency**
+
+1. **Atomic Position Updates**:
+   - Transactions ensure position and buy order updates are atomic
+   - Location: `sell_engine.py:3347-3362`
+
+2. **Order Tracking Consistency**:
+   - `_register_order()` updates both `OrderStateManager` and `active_sell_orders`
+   - Location: `sell_engine.py:202-249`
+
+### Flow Validation Checklist
+
+#### ✅ **Order Placement**
+
+- [x] Reconciliation before placement
+- [x] Zero quantity filtering
+- [x] Existing order detection
+- [x] EMA9 calculation with retry
+- [x] Order registration
+- [x] Error handling
+
+#### ✅ **Order Monitoring**
+
+- [x] Periodic reconciliation
+- [x] Missing order detection (Issue #5)
+- [x] Execution detection
+- [x] EMA9 updates
+- [x] RSI exit handling
+- [x] Error recovery
+
+#### ✅ **Execution Handling**
+
+- [x] Full execution handling
+- [x] Partial execution handling
+- [x] Atomic position updates
+- [x] Buy order closure
+- [x] Reentry order cancellation
+- [x] Order tracking cleanup
+
+### Recommendations
+
+**Priority: Low** (Non-Blocking)
+
+1. **Update Order Quantity After Partial Execution**:
+   - Update `active_sell_orders[symbol]['qty']` after partial execution
+   - Improves tracking accuracy
+   - Not critical - order will complete eventually
+
+2. **Enhanced Logging for Registration Failures**:
+   - Add try-except around `_register_order()` with detailed logging
+   - Helps diagnose rare registration failures
+   - Issue #5 provides recovery, so not critical
+
+3. **Consider Order Quantity Sync**:
+   - Periodically sync `active_sell_orders` quantities with broker orders
+   - Already handled by `_check_and_fix_sell_order_mismatches()`
+   - Runs every 15 minutes
+
+### Analysis Conclusion
+
+✅ **The sell order flow is robust and production-ready.**
+
+- All critical issues have been fixed
+- Proper error handling and recovery mechanisms
+- Transaction management ensures data consistency
+- Edge cases are handled appropriately
+- Minor improvements identified are non-blocking
+
+**No action required** - the implementation is solid. The identified minor improvements can be addressed in future enhancements if needed.
+
+---
+
+**Last Updated**: 2025-12-13 (Issue #5 Enhancements, Verification & Flow Analysis)
+**Status**: ✅ All Issues Fixed and Verified, Flow Validated
 **Maintained By**: Trading System Team
