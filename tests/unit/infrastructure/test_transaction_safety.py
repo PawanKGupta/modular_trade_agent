@@ -390,10 +390,12 @@ class TestMultiStepTransactionSafety:
             )
 
         # All should be committed
-        closed_position = positions_repo.get_by_symbol(user_id, "RELIANCE")
+        # Use get_by_symbol_any() to get closed position
+        closed_position = positions_repo.get_by_symbol_any(user_id, "RELIANCE", include_closed=True)
         closed_order1 = orders_repo.get(buy_order1.id)
         closed_order2 = orders_repo.get(buy_order2.id)
 
+        assert closed_position is not None, "Position should exist (closed)"
         assert closed_position.closed_at is not None
         assert closed_position.quantity == 0.0
         assert closed_order1.status == OrderStatus.CLOSED
