@@ -1837,11 +1837,16 @@ class UnifiedOrderMonitor:
                         ),
                     }
 
-                    # Get current EMA9 as target
+                    # Issue #3 Fix: Get current EMA9 with retry and fallback
                     broker_sym = db_order.symbol
-                    ema9 = self.sell_manager.get_current_ema9(ticker, broker_symbol=broker_sym)
+                    ema9 = self.sell_manager._get_ema9_with_retry(
+                        ticker, broker_symbol=broker_sym, symbol=base_symbol
+                    )
                     if not ema9:
-                        logger.warning(f"Skipping {base_symbol}: Failed to calculate EMA9")
+                        logger.error(
+                            f"Issue #3: Skipping {base_symbol}: Failed to calculate EMA9 after retries "
+                            f"and fallback. Position exists but sell order cannot be placed."
+                        )
                         continue
 
                     # Check if price is reasonable (not too far from entry)

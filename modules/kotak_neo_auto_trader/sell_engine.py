@@ -869,6 +869,75 @@ class SellOrderManager:
             ticker=ticker, broker_symbol=broker_symbol, current_ltp=None
         )
 
+    def _get_ema9_with_retry(
+        self, ticker: str, broker_symbol: str = None, symbol: str = None, max_retries: int = 2
+    ) -> float | None:
+        """
+        Issue #3 Fix: Get EMA9 with retry mechanism and fallback to yesterday's EMA9.
+
+        Attempts to calculate current EMA9 with retries. If all attempts fail,
+        falls back to yesterday's EMA9 value.
+
+        Args:
+            ticker: Stock ticker (e.g., 'RELIANCE.NS')
+            broker_symbol: Broker symbol for LTP fetch (e.g., 'RELIANCE-EQ')
+            symbol: Base symbol for logging (e.g., 'RELIANCE')
+            max_retries: Maximum number of retry attempts (default: 2)
+
+        Returns:
+            EMA9 value (current or yesterday's fallback) or None if all attempts fail
+        """
+        import time
+
+        # Try calculating EMA9 with retries
+        for attempt in range(max_retries + 1):
+            try:
+                ema9 = self.get_current_ema9(ticker, broker_symbol=broker_symbol)
+                if ema9 and ema9 > 0:
+                    if attempt > 0:
+                        logger.info(
+                            f"EMA9 calculation succeeded for {symbol or ticker} "
+                            f"on attempt {attempt + 1}"
+                        )
+                    return ema9
+            except Exception as e:
+                logger.debug(
+                    f"EMA9 calculation attempt {attempt + 1} failed for {symbol or ticker}: {e}"
+                )
+
+            # Wait before retry (except on last attempt)
+            if attempt < max_retries:
+                time.sleep(0.5)  # Small delay before retry
+
+        # All retries failed - try to get yesterday's EMA9 as fallback
+        logger.warning(
+            f"Issue #3: EMA9 calculation failed for {symbol or ticker} after {max_retries + 1} attempts. "
+            f"Attempting fallback to yesterday's EMA9..."
+        )
+
+        try:
+            # Try to get historical EMA9 (yesterday's value) as fallback
+            # This uses the same logic but without current LTP
+            if self.indicator_service and self.indicator_service.price_service:
+                # Get historical data and calculate yesterday's EMA9
+                df = self.indicator_service.price_service.get_price(
+                    ticker, days=200, interval="1d", add_current_day=False
+                )
+                if df is not None and not df.empty and len(df) >= 9:
+                    ema_series = df["close"].ewm(span=9, adjust=False).mean()
+                    yesterday_ema9 = float(ema_series.iloc[-1])
+                    if yesterday_ema9 and yesterday_ema9 > 0:
+                        logger.info(
+                            f"Issue #3: Using yesterday's EMA9 ({yesterday_ema9:.2f}) as fallback "
+                            f"for {symbol or ticker}"
+                        )
+                        return yesterday_ema9
+        except Exception as e:
+            logger.debug(f"Failed to get yesterday's EMA9 fallback for {symbol or ticker}: {e}")
+
+        # All attempts including fallback failed
+        return None
+
     def get_current_ltp(self, ticker: str, broker_symbol: str = None) -> float | None:
         """
         Get current Last Traded Price for a ticker
@@ -2202,11 +2271,28 @@ class SellOrderManager:
                     orders_placed += 1
                     continue
 
-            # Get current EMA9 as target (real-time with LTP)
+            # Issue #3 Fix: Get current EMA9 with retry and fallback
             broker_sym = trade.get("placed_symbol") or f"{symbol}-EQ"
-            ema9 = self.get_current_ema9(ticker, broker_symbol=broker_sym)
+            ema9 = self._get_ema9_with_retry(ticker, broker_symbol=broker_sym, symbol=symbol)
             if not ema9:
-                logger.warning(f"Skipping {symbol}: Failed to calculate EMA9")
+                logger.error(
+                    f"Issue #3: Skipping {symbol}: Failed to calculate EMA9 after retries and fallback. "
+                    f"Position exists but sell order cannot be placed."
+                )
+                # Issue #3: Send alert if telegram notifier available
+                if hasattr(self, "telegram_notifier") and self.telegram_notifier:
+                    try:
+                        self.telegram_notifier.notify_system_alert(
+                            alert_type="EMA9_CALCULATION_FAILED",
+                            message_text=(
+                                f"Failed to calculate EMA9 for {symbol}. "
+                                f"Sell order not placed. Position exists but cannot determine target price."
+                            ),
+                            severity="WARNING",
+                            user_id=self.user_id if hasattr(self, "user_id") else None,
+                        )
+                    except Exception as e:
+                        logger.debug(f"Failed to send EMA9 failure alert: {e}")
                 continue
 
             # Check if price is reasonable (not too far from entry)
