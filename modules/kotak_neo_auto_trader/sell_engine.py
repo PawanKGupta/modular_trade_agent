@@ -477,7 +477,9 @@ class SellOrderManager:
                         or 0
                     )
 
-                    if base_symbol and qty > 0:
+                    # Issue #2 Fix: Track all holdings including zero quantity
+                    # This ensures we detect when broker has 0 shares (user sold all manually)
+                    if base_symbol:
                         broker_holdings_map[base_symbol] = qty
         except Exception as e:
             logger.debug(f"Could not fetch broker holdings for validation: {e}")
@@ -519,6 +521,16 @@ class SellOrderManager:
                 # If broker_qty < positions_qty, reconciliation should have updated positions table
                 # But we still validate here as a safety check
                 sell_qty = min(positions_qty, broker_qty)
+
+                # Issue #2 Fix: Filter zero quantity positions before adding to list
+                # Prevents positions from being added when sell_qty becomes 0 after validation
+                if sell_qty <= 0:
+                    logger.warning(
+                        f"Skipping {pos.symbol}: sell quantity is {sell_qty} "
+                        f"(positions table: {positions_qty}, broker: {broker_qty}). "
+                        f"Position should be closed or reconciled."
+                    )
+                    continue
 
                 if sell_qty < positions_qty:
                     logger.warning(

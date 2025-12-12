@@ -246,6 +246,70 @@ class TestManualSellDetection:
         assert open_positions[0]["symbol"] == "RELIANCE"
         assert open_positions[0]["qty"] == 35  # Uses positions_qty (35), ignores manual buy
 
+    def test_get_open_positions_filters_zero_quantity_issue_2(
+        self, sell_manager, mock_positions_repo, mock_portfolio
+    ):
+        """Test Issue #2: get_open_positions filters zero quantity positions."""
+        # Setup: Position in DB shows 35 shares, but broker has 0 (user sold all manually)
+        position = Mock(spec=Positions)
+        position.symbol = "RELIANCE"
+        position.quantity = 35.0
+        position.avg_price = 2500.0
+        position.opened_at = Mock()
+        position.opened_at.isoformat.return_value = "2025-01-01T00:00:00"
+        position.closed_at = None
+
+        mock_positions_repo.list.return_value = [position]
+
+        # Broker holdings: 0 shares (user manually sold all)
+        mock_portfolio.get_holdings.return_value = {
+            "data": [
+                {
+                    "tradingSymbol": "RELIANCE-EQ",
+                    "quantity": 0,
+                }
+            ]
+        }
+
+        # Execute
+        open_positions = sell_manager.get_open_positions()
+
+        # Verify: Zero quantity position is filtered out (Issue #2 fix)
+        assert len(open_positions) == 0
+        # Position should not be added to open_positions when sell_qty = 0
+
+    def test_get_open_positions_filters_zero_quantity_when_positions_zero(
+        self, sell_manager, mock_positions_repo, mock_portfolio
+    ):
+        """Test Issue #2: get_open_positions filters when positions_qty is 0."""
+        # Setup: Position in DB shows 0 shares (shouldn't happen, but test edge case)
+        position = Mock(spec=Positions)
+        position.symbol = "RELIANCE"
+        position.quantity = 0.0
+        position.avg_price = 2500.0
+        position.opened_at = Mock()
+        position.opened_at.isoformat.return_value = "2025-01-01T00:00:00"
+        position.closed_at = None
+
+        mock_positions_repo.list.return_value = [position]
+
+        # Broker holdings: 10 shares
+        mock_portfolio.get_holdings.return_value = {
+            "data": [
+                {
+                    "tradingSymbol": "RELIANCE-EQ",
+                    "quantity": 10,
+                }
+            ]
+        }
+
+        # Execute
+        open_positions = sell_manager.get_open_positions()
+
+        # Verify: Zero quantity position is filtered out
+        assert len(open_positions) == 0
+        # min(0, 10) = 0, so position should be filtered
+
     def test_reconcile_handles_missing_portfolio_gracefully(
         self, sell_manager, mock_positions_repo
     ):
