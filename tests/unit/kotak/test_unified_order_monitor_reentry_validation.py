@@ -8,7 +8,7 @@ before writing to database.
 import sys
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -30,10 +30,40 @@ class TestReentryDataValidation:
         return manager
 
     @pytest.fixture
-    def unified_monitor(self, sell_manager):
-        """Create UnifiedOrderMonitor instance"""
-        monitor = UnifiedOrderMonitor(sell_order_manager=sell_manager, user_id=1)
-        return monitor
+    def mock_db_session(self):
+        """Create mock database session"""
+        return Mock()
+
+    @pytest.fixture
+    def mock_orders_repo(self):
+        """Create mock OrdersRepository"""
+        return Mock()
+
+    @pytest.fixture
+    def mock_positions_repo(self):
+        """Create mock PositionsRepository"""
+        return Mock()
+
+    @pytest.fixture
+    def unified_monitor(self, sell_manager, mock_db_session, mock_orders_repo, mock_positions_repo):
+        """Create UnifiedOrderMonitor instance with required dependencies"""
+        with (
+            patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", True),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.OrdersRepository",
+                return_value=mock_orders_repo,
+            ),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.PositionsRepository",
+                return_value=mock_positions_repo,
+            ),
+        ):
+            monitor = UnifiedOrderMonitor(
+                sell_order_manager=sell_manager,
+                db_session=mock_db_session,
+                user_id=1,
+            )
+            return monitor
 
     def test_validate_reentry_data_valid(self, unified_monitor):
         """Test that valid reentry data passes validation"""
@@ -159,4 +189,3 @@ class TestReentryDataValidation:
         valid_data["rsi"] = 19.5
         valid_data["order_id"] = "ORDER123"
         assert unified_monitor._validate_reentry_data(valid_data) is True
-
