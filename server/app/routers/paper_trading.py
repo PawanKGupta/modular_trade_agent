@@ -44,6 +44,10 @@ class PaperTradingHolding(BaseModel):
     pnl_percentage: float
     target_price: float | None = None  # Frozen EMA9 target
     distance_to_target: float | None = None  # % to reach target
+    reentry_count: int = 0  # Number of re-entries for this position
+    reentries: list[dict[str, Any]] | None = None  # Re-entry details array
+    entry_rsi: float | None = None  # RSI10 at initial entry
+    initial_entry_price: float | None = None  # Initial entry price (before re-entries)
 
 
 class PaperTradingOrder(BaseModel):
@@ -257,6 +261,58 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             if target_price and current_price > 0:
                 distance_to_target = (target_price - current_price) / current_price * 100
 
+            # Fetch reentry details from database positions table
+            reentry_count = 0
+            reentries_list = None
+            entry_rsi = None
+            initial_entry_price = None
+
+            try:
+                from src.infrastructure.persistence.positions_repository import (  # noqa: PLC0415
+                    PositionsRepository,
+                )
+
+                positions_repo = PositionsRepository(db)
+                # Normalize symbol: remove .NS/.BO suffix and -EQ/-BE suffix,
+                # convert to uppercase
+                normalized_symbol = symbol.upper().replace(".NS", "").replace(".BO", "")
+                # Remove broker-specific suffixes like -EQ, -BE
+                if "-" in normalized_symbol:
+                    normalized_symbol = normalized_symbol.split("-")[0]
+
+                position = positions_repo.get_by_symbol(current.id, normalized_symbol)
+                if position:
+                    reentry_count = position.reentry_count or 0
+                    entry_rsi = position.entry_rsi
+                    initial_entry_price = position.initial_entry_price
+
+                    # Parse reentries JSON field
+                    if position.reentries:
+                        if isinstance(position.reentries, dict):
+                            # New format: {"reentries": [...], "current_cycle": ...}
+                            reentries_list = position.reentries.get("reentries", [])
+                        elif isinstance(position.reentries, list):
+                            # Old format: direct array
+                            reentries_list = position.reentries
+                        else:
+                            reentries_list = []
+                    else:
+                        reentries_list = []
+
+                    logger.debug(
+                        f"Found reentry data for {symbol} "
+                        f"(normalized: {normalized_symbol}): "
+                        f"count={reentry_count}, "
+                        f"reentries={len(reentries_list) if reentries_list else 0}"
+                    )
+                else:
+                    logger.debug(
+                        f"No position found for {symbol} "
+                        f"(normalized: {normalized_symbol}) in database"
+                    )
+            except Exception as e:
+                logger.debug(f"Could not fetch reentry details for {symbol}: {e}")
+
             holdings.append(
                 PaperTradingHolding(
                     symbol=symbol,
@@ -269,6 +325,10 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                     pnl_percentage=pnl_pct,
                     target_price=target_price,
                     distance_to_target=distance_to_target,
+                    reentry_count=reentry_count,
+                    reentries=reentries_list,
+                    entry_rsi=entry_rsi,
+                    initial_entry_price=initial_entry_price,
                 )
             )
 

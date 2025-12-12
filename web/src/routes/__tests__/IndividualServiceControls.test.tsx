@@ -10,9 +10,9 @@ vi.mock('@/api/service', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@/api/service')>();
 	return {
 		...actual,
-		startIndividualService: vi.fn(),
-		stopIndividualService: vi.fn(),
-		runTaskOnce: vi.fn(),
+	startIndividualService: vi.fn(),
+	stopIndividualService: vi.fn(),
+	runTaskOnce: vi.fn(),
 	};
 });
 
