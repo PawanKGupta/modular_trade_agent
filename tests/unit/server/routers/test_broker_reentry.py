@@ -300,3 +300,76 @@ def test_get_broker_portfolio_reentry_data_symbol_normalization(monkeypatch):
         assert holding.symbol == "RELIANCE-EQ"
         assert holding.reentry_count == 1
         assert holding.entry_rsi == 28.0
+
+
+def test_get_broker_portfolio_reentry_data_invalid_format(monkeypatch):
+    """Test that invalid reentries format (neither dict nor list) is handled gracefully"""
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Mock auth session
+    mock_auth = MagicMock()
+    mock_auth.is_authenticated.return_value = True
+    mock_auth.get_client.return_value = MagicMock()
+
+    def mock_get_auth_session(user_id, temp_env_file, db):
+        return mock_auth
+
+    monkeypatch.setattr(broker, "_get_or_create_auth_session", mock_get_auth_session)
+
+    # Mock broker factory
+    mock_broker = DummyBroker()
+
+    def mock_broker_factory_create(broker_type, auth_handler=None):
+        return mock_broker
+
+    monkeypatch.setattr(
+        "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+        mock_broker_factory_create,
+    )
+
+    # Mock positions repository with invalid reentries format
+    mock_position = MagicMock(spec=Positions)
+    mock_position.reentry_count = 1
+    mock_position.entry_rsi = 28.0
+    mock_position.initial_entry_price = 2500.0
+    mock_position.reentries = "invalid_format"  # Invalid format - neither dict nor list
+
+    positions_repo = DummyPositionsRepository(None)
+    positions_repo.positions[(42, "RELIANCE")] = mock_position
+
+    def mock_positions_repo_init(db):
+        return positions_repo
+
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.positions_repository.PositionsRepository",
+        mock_positions_repo_init,
+    )
+
+    # Mock yfinance for current price
+    with patch("yfinance.Ticker") as mock_ticker_class:
+        mock_ticker_instance = MagicMock()
+        mock_ticker_instance.info = {"currentPrice": 2600.0}
+        mock_ticker_class.return_value = mock_ticker_instance
+
+        db_session = MagicMock()
+        result = broker.get_broker_portfolio(db=db_session, current=user)
+
+        assert len(result.holdings) == 1
+        holding = result.holdings[0]
+        # Should have reentry_count and entry_rsi, but reentries should be empty list
+        assert holding.reentry_count == 1
+        assert holding.entry_rsi == 28.0
+        assert holding.reentries == []

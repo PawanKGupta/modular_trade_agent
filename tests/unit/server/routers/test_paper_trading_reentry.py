@@ -427,6 +427,80 @@ def test_get_paper_trading_portfolio_reentry_data_symbol_normalization(monkeypat
         assert tcs_holding.entry_rsi is None
 
 
+def test_get_paper_trading_portfolio_reentry_data_invalid_format(monkeypatch):
+    """Test that invalid reentries format (neither dict nor list) is handled gracefully"""
+    user = DummyUser(id=42)
+
+    def mock_exists(self):
+        return True
+
+    monkeypatch.setattr(Path, "exists", mock_exists)
+
+    store = DummyPaperTradeStore("test_path")
+    store._account = {
+        "initial_capital": 100000.0,
+        "available_cash": 50000.0,
+        "realized_pnl": 0.0,
+    }
+    store._holdings = {
+        "RELIANCE": {
+            "quantity": 10,
+            "average_price": 2500.0,
+            "current_price": 2600.0,
+        }
+    }
+    store._orders = []
+
+    def mock_store_init(storage_path, auto_save=False):
+        return store
+
+    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
+
+    def mock_reporter_init(store):
+        return DummyPaperTradeReporter(store)
+
+    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
+
+    # Mock positions repository with invalid reentries format (string instead of dict/list)
+    mock_position = MagicMock(spec=Positions)
+    mock_position.reentry_count = 1
+    mock_position.entry_rsi = 28.5
+    mock_position.initial_entry_price = 2500.0
+    mock_position.reentries = "invalid_format"  # Invalid format - neither dict nor list
+
+    positions_repo = DummyPositionsRepository(None)
+    positions_repo.positions[(42, "RELIANCE")] = mock_position
+
+    def mock_positions_repo_init(db):
+        return positions_repo
+
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.positions_repository.PositionsRepository",
+        mock_positions_repo_init,
+    )
+
+    # Mock yfinance
+    with patch("yfinance.Ticker") as mock_ticker_class:
+        mock_ticker_instance = MagicMock()
+        mock_ticker_instance.info = {"currentPrice": 2600.0}
+        mock_ticker_class.return_value = mock_ticker_instance
+
+        def mock_path_exists(self):
+            return False if "active_sell_orders.json" in str(self) else True
+
+        monkeypatch.setattr(Path, "exists", mock_path_exists)
+
+        db_session = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=db_session, current=user)
+
+        assert len(result.holdings) == 1
+        holding = result.holdings[0]
+        # Should have reentry_count and entry_rsi, but reentries should be empty list
+        assert holding.reentry_count == 1
+        assert holding.entry_rsi == 28.5
+        assert holding.reentries == []
+
+
 def test_get_paper_trading_portfolio_reentry_data_exception_handling(monkeypatch):
     """Test that exceptions during reentry data fetch don't break the endpoint"""
     user = DummyUser(id=42)
