@@ -199,9 +199,36 @@ class TestIndividualServiceManagerAnalysis:
             },
         ]
 
+        instruments = [
+            {"symbol": "RELIANCE-EQ", "tradingSymbol": "RELIANCE-EQ", "pTrdSymbol": "RELIANCE-EQ"},
+            {"symbol": "TCS-EQ", "tradingSymbol": "TCS-EQ", "pTrdSymbol": "TCS-EQ"},
+            {"symbol": "INFY-EQ", "tradingSymbol": "INFY-EQ", "pTrdSymbol": "INFY-EQ"},
+            {"symbol": "HDFC-EQ", "tradingSymbol": "HDFC-EQ", "pTrdSymbol": "HDFC-EQ"},
+        ]
+
+        def get_instrument_side_effect(symbol, exchange="NSE"):
+            base = symbol.split("-")[0].upper()
+            for inst in instruments:
+                inst_symbol = (
+                    inst.get("symbol") or inst.get("tradingSymbol") or inst.get("pTrdSymbol", "")
+                )
+                if inst_symbol.startswith(base + "-"):
+                    return {"symbol": inst_symbol, "exchange": exchange}
+            return None
+
         # Monday 8:00 AM - should allow update
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            summary = manager._persist_analysis_results(results, logger)
+            with patch(
+                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+            ) as mock_scrip_class:
+                mock_scrip_instance = MagicMock()
+                mock_scrip_instance._load_from_cache.return_value = instruments
+                mock_scrip_instance.scrip_data = {"NSE": instruments}
+                mock_scrip_instance.symbol_map = {}
+                mock_scrip_instance.get_instrument.side_effect = get_instrument_side_effect
+                mock_scrip_class.return_value = mock_scrip_instance
+
+                summary = manager._persist_analysis_results(results, logger)
 
         # Only buy and strong_buy should be processed
         assert summary["processed"] == 2
@@ -224,9 +251,33 @@ class TestIndividualServiceManagerAnalysis:
             },
         ]
 
+        instruments = [
+            {"symbol": "RELIANCE-EQ", "tradingSymbol": "RELIANCE-EQ", "pTrdSymbol": "RELIANCE-EQ"},
+        ]
+
+        def get_instrument_side_effect(symbol, exchange="NSE"):
+            base = symbol.split("-")[0].upper()
+            for inst in instruments:
+                inst_symbol = (
+                    inst.get("symbol") or inst.get("tradingSymbol") or inst.get("pTrdSymbol", "")
+                )
+                if inst_symbol.startswith(base + "-"):
+                    return {"symbol": inst_symbol, "exchange": exchange}
+            return None
+
         # Monday 8:00 AM - should allow update
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            summary = manager._persist_analysis_results(results, logger)
+            with patch(
+                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+            ) as mock_scrip_class:
+                mock_scrip_instance = MagicMock()
+                mock_scrip_instance._load_from_cache.return_value = instruments
+                mock_scrip_instance.scrip_data = {"NSE": instruments}
+                mock_scrip_instance.symbol_map = {}
+                mock_scrip_instance.get_instrument.side_effect = get_instrument_side_effect
+                mock_scrip_class.return_value = mock_scrip_instance
+
+                summary = manager._persist_analysis_results(results, logger)
 
         assert summary["processed"] == 1  # Should be included because final_verdict is "buy"
 
@@ -243,9 +294,33 @@ class TestIndividualServiceManagerAnalysis:
             },
         ]
 
+        instruments = [
+            {"symbol": "RELIANCE-EQ", "tradingSymbol": "RELIANCE-EQ", "pTrdSymbol": "RELIANCE-EQ"},
+        ]
+
+        def get_instrument_side_effect(symbol, exchange="NSE"):
+            base = symbol.split("-")[0].upper()
+            for inst in instruments:
+                inst_symbol = (
+                    inst.get("symbol") or inst.get("tradingSymbol") or inst.get("pTrdSymbol", "")
+                )
+                if inst_symbol.startswith(base + "-"):
+                    return {"symbol": inst_symbol, "exchange": exchange}
+            return None
+
         # Monday 10:00 AM - should be blocked
         with freeze_time("2025-01-13 10:00:00+05:30"):
-            summary = manager._persist_analysis_results(results, logger)
+            with patch(
+                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+            ) as mock_scrip_class:
+                mock_scrip_instance = MagicMock()
+                mock_scrip_instance._load_from_cache.return_value = instruments
+                mock_scrip_instance.scrip_data = {"NSE": instruments}
+                mock_scrip_instance.symbol_map = {}
+                mock_scrip_instance.get_instrument.side_effect = get_instrument_side_effect
+                mock_scrip_class.return_value = mock_scrip_instance
+
+                summary = manager._persist_analysis_results(results, logger)
 
         assert summary["skipped"] == 1
         assert "skipped_reason" in summary
@@ -264,9 +339,33 @@ class TestIndividualServiceManagerAnalysis:
             },
         ]
 
+        instruments = [
+            {"symbol": "RELIANCE-EQ", "tradingSymbol": "RELIANCE-EQ", "pTrdSymbol": "RELIANCE-EQ"},
+        ]
+
+        def get_instrument_side_effect(symbol, exchange="NSE"):
+            base = symbol.split("-")[0].upper()
+            for inst in instruments:
+                inst_symbol = (
+                    inst.get("symbol") or inst.get("tradingSymbol") or inst.get("pTrdSymbol", "")
+                )
+                if inst_symbol.startswith(base + "-"):
+                    return {"symbol": inst_symbol, "exchange": exchange}
+            return None
+
         # Monday 4:30 PM - should allow
         with freeze_time("2025-01-13 16:30:00+05:30"):
-            summary = manager._persist_analysis_results(results, logger)
+            with patch(
+                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+            ) as mock_scrip_class:
+                mock_scrip_instance = MagicMock()
+                mock_scrip_instance._load_from_cache.return_value = instruments
+                mock_scrip_instance.scrip_data = {"NSE": instruments}
+                mock_scrip_instance.symbol_map = {}
+                mock_scrip_instance.get_instrument.side_effect = get_instrument_side_effect
+                mock_scrip_class.return_value = mock_scrip_instance
+
+                summary = manager._persist_analysis_results(results, logger)
 
         assert summary["processed"] == 1
         assert summary["skipped"] == 0
@@ -284,9 +383,33 @@ class TestIndividualServiceManagerAnalysis:
             },
         ]
 
+        instruments = [
+            {"symbol": "RELIANCE-EQ", "tradingSymbol": "RELIANCE-EQ", "pTrdSymbol": "RELIANCE-EQ"},
+        ]
+
+        def get_instrument_side_effect(symbol, exchange="NSE"):
+            base = symbol.split("-")[0].upper()
+            for inst in instruments:
+                inst_symbol = (
+                    inst.get("symbol") or inst.get("tradingSymbol") or inst.get("pTrdSymbol", "")
+                )
+                if inst_symbol.startswith(base + "-"):
+                    return {"symbol": inst_symbol, "exchange": exchange}
+            return None
+
         # Monday 8:00 AM - should allow
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            summary = manager._persist_analysis_results(results, logger)
+            with patch(
+                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+            ) as mock_scrip_class:
+                mock_scrip_instance = MagicMock()
+                mock_scrip_instance._load_from_cache.return_value = instruments
+                mock_scrip_instance.scrip_data = {"NSE": instruments}
+                mock_scrip_instance.symbol_map = {}
+                mock_scrip_instance.get_instrument.side_effect = get_instrument_side_effect
+                mock_scrip_class.return_value = mock_scrip_instance
+
+                summary = manager._persist_analysis_results(results, logger)
 
         assert summary["processed"] == 1
         assert summary["skipped"] == 0
@@ -304,9 +427,33 @@ class TestIndividualServiceManagerAnalysis:
             },
         ]
 
+        instruments = [
+            {"symbol": "RELIANCE-EQ", "tradingSymbol": "RELIANCE-EQ", "pTrdSymbol": "RELIANCE-EQ"},
+        ]
+
+        def get_instrument_side_effect(symbol, exchange="NSE"):
+            base = symbol.split("-")[0].upper()
+            for inst in instruments:
+                inst_symbol = (
+                    inst.get("symbol") or inst.get("tradingSymbol") or inst.get("pTrdSymbol", "")
+                )
+                if inst_symbol.startswith(base + "-"):
+                    return {"symbol": inst_symbol, "exchange": exchange}
+            return None
+
         # Monday 8:00 AM - should allow
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            summary = manager._persist_analysis_results(results, logger)
+            with patch(
+                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+            ) as mock_scrip_class:
+                mock_scrip_instance = MagicMock()
+                mock_scrip_instance._load_from_cache.return_value = instruments
+                mock_scrip_instance.scrip_data = {"NSE": instruments}
+                mock_scrip_instance.symbol_map = {}
+                mock_scrip_instance.get_instrument.side_effect = get_instrument_side_effect
+                mock_scrip_class.return_value = mock_scrip_instance
+
+                summary = manager._persist_analysis_results(results, logger)
 
         # Should still process even with missing fields
         assert summary["processed"] == 1

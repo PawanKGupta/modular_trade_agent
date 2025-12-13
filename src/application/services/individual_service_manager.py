@@ -30,9 +30,10 @@ from src.infrastructure.logging import get_user_logger
 
 # Import for service notifications
 try:
-    from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
+    import importlib.util
 
-    TELEGRAM_NOTIFIER_AVAILABLE = True
+    spec = importlib.util.find_spec("modules.kotak_neo_auto_trader.telegram_notifier")
+    TELEGRAM_NOTIFIER_AVAILABLE = spec is not None
 except ImportError:
     TELEGRAM_NOTIFIER_AVAILABLE = False
 
@@ -943,7 +944,7 @@ class IndividualServiceManager:
                 processed_rows.append(normalized)
 
         summary = {
-            "processed": len(processed_rows),
+            "processed": 0,  # Will be updated after actual persistence
             "inserted": 0,
             "updated": 0,
             "skipped": len(results) - len(processed_rows),
@@ -1013,6 +1014,7 @@ class IndividualServiceManager:
                 )
                 summary["skipped_reason"] = reason
                 summary["skipped"] = len(processed_rows)
+                summary["processed"] = 0  # Nothing was actually processed
                 return summary
 
             # Smart expiration is now handled inside deduplicate_and_update_signals
@@ -1034,6 +1036,8 @@ class IndividualServiceManager:
                 task_name="analysis",
             )
             summary.update(counts)
+            # processed = inserted + updated (actual database operations)
+            summary["processed"] = counts.get("inserted", 0) + counts.get("updated", 0)
             logger.info(
                 f"Signals updated successfully: {summary}",
                 action="run_analysis",
