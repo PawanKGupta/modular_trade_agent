@@ -1,6 +1,6 @@
 import { api } from './client';
 
-export type SignalStatus = 'active' | 'expired' | 'traded' | 'rejected';
+export type SignalStatus = 'active' | 'expired' | 'traded' | 'rejected' | 'failed';
 
 export type BuyingZoneItem = {
 	id: number;
@@ -72,7 +72,7 @@ export type BuyingZoneItem = {
 };
 
 export type DateFilter = 'today' | 'yesterday' | 'last_10_days' | null;
-export type StatusFilter = 'active' | 'expired' | 'traded' | 'rejected' | 'all';
+export type StatusFilter = 'active' | 'expired' | 'traded' | 'rejected' | 'failed' | 'all';
 
 export async function getBuyingZone(
 	limit = 100,

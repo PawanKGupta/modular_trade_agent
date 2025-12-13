@@ -628,9 +628,7 @@ class IndividualServiceManager:
                 user_config_to_strategy_config,
             )
 
-            strategy_config = user_config_to_strategy_config(
-                user_config, db_session=self.db
-            )
+            strategy_config = user_config_to_strategy_config(user_config, db_session=self.db)
 
             # Pass user_id as environment variable so trade_agent can load config
             # Note: trade_agent.py will need to be updated to read user_id from env

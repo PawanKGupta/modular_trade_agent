@@ -45,6 +45,7 @@ class SignalStatus(str, Enum):
     EXPIRED = "expired"  # Expired (past next analysis run)
     TRADED = "traded"  # Order placed for this signal
     REJECTED = "rejected"  # User manually rejected this signal
+    FAILED = "failed"  # Order placed but failed/rejected/cancelled - no position created
 
 
 class Users(Base):

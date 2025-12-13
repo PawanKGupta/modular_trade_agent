@@ -331,6 +331,7 @@ export function BuyingZonePage() {
 							<option value="expired">⏰ Expired</option>
 							<option value="traded">✅ Traded</option>
 							<option value="rejected">❌ Rejected</option>
+							<option value="failed">⚠️ Failed</option>
 						</select>
 					</div>
 
@@ -532,6 +533,10 @@ export function BuyingZonePage() {
 																			badgeClass = 'bg-red-500/20 text-red-400 border border-red-500/30';
 																			badgeText = '❌ Rejected';
 																			break;
+																		case 'failed':
+																			badgeClass = 'bg-orange-500/20 text-orange-400 border border-orange-500/30';
+																			badgeText = '⚠️ Failed';
+																			break;
 																		default:
 																			badgeClass = 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
 																			badgeText = status || '-';
@@ -553,7 +558,7 @@ export function BuyingZonePage() {
 																						Reject
 																					</button>
 																				)}
-																				{(status === 'rejected' || status === 'traded') && (() => {
+																				{(status === 'rejected' || status === 'traded' || status === 'failed') && (() => {
 																					// Check if signal is expired based on next trading day market close time (3:30 PM IST)
 																					// Rule: Signal expires at the end of the next trading day's market hours
 																					// - Signal from Monday → Expires Tuesday 3:30 PM
