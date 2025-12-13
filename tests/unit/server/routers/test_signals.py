@@ -123,6 +123,11 @@ class DummySignalsRepo:
         self.mark_active_called.append(symbol)
         return self.mark_active_result
 
+    def mark_time_expired_signals(self):
+        """Mock method for marking time-expired signals - returns count of expired signals"""
+        # For testing, just return 0 (no signals expired)
+        return 0
+
     def get_signals_with_user_status(self, user_id, limit=100, status_filter=None):
         """Mock method for per-user status - returns signals with effective status"""
         # For testing, just return signals as (signal, signal.status) tuples

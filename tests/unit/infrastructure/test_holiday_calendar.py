@@ -8,11 +8,10 @@ Tests cover:
 - Edge cases with holidays
 """
 
-from datetime import date, timedelta
-
-import pytest
+from datetime import date
 
 from src.infrastructure.utils.holiday_calendar import (
+    get_holiday_name,
     get_next_trading_day,
     is_nse_holiday,
     is_trading_day,
@@ -54,6 +53,28 @@ class TestHolidayDetection:
 
         # Sunday
         assert is_nse_holiday(date(2025, 12, 7)) is False
+
+    def test_get_holiday_name(self):
+        """Should return holiday name for known holidays"""
+        # Mahashivratri
+        assert get_holiday_name(date(2025, 2, 26)) == "Mahashivratri"
+
+        # Holi
+        assert get_holiday_name(date(2025, 3, 14)) == "Holi"
+
+        # Diwali Laxmi Pujan
+        assert get_holiday_name(date(2025, 10, 21)) == "Diwali Laxmi Pujan"
+
+        # Christmas
+        assert get_holiday_name(date(2025, 12, 25)) == "Christmas"
+
+    def test_get_holiday_name_returns_none_for_non_holidays(self):
+        """Should return None for non-holiday dates"""
+        # Regular weekday
+        assert get_holiday_name(date(2025, 12, 1)) is None
+
+        # Weekend
+        assert get_holiday_name(date(2025, 12, 6)) is None
 
 
 class TestTradingDayCheck:
@@ -145,4 +166,3 @@ class TestNextTradingDay:
 
         # Sunday -> Monday
         assert get_next_trading_day(date(2025, 12, 7)) == date(2025, 12, 8)
-

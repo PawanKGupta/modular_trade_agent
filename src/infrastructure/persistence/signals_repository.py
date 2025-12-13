@@ -16,12 +16,36 @@ MARKET_CLOSE_TIME = time(15, 30)  # 3:30 PM IST
 
 
 class SignalsRepository:
+    """
+    Repository for managing trading signals with expiry logic.
+
+    Important Notes:
+    - All signal timestamps are stored/assumed to be in IST (Indian Standard Time)
+    - SQLite stores datetimes as naive (no timezone), but we treat them as IST
+    - Each database session should call mark_time_expired_signals() independently
+    - Session isolation: Changes in one session aren't visible to others until commit
+    - Always call mark_time_expired_signals() before querying signals for consistency
+    """
+
     def __init__(self, db: Session, user_id: int | None = None):
         self.db = db
         self.user_id = user_id  # Optional: for per-user operations
 
     def recent(self, limit: int = 100, active_only: bool = False) -> list[Signals]:
-        """Get recent signals, optionally filtered by status"""
+        """
+        Get recent signals, optionally filtered to active only.
+
+        Note: This method does NOT call mark_time_expired_signals() automatically.
+        Callers should call mark_time_expired_signals() before using this method
+        to ensure expired signals are not returned.
+
+        Args:
+            limit: Maximum number of signals to return
+            active_only: If True, only return signals with ACTIVE status
+
+        Returns:
+            List of Signals, ordered by timestamp (most recent first)
+        """
         stmt = select(Signals).order_by(Signals.ts.desc())
         if active_only:
             stmt = stmt.where(Signals.status == SignalStatus.ACTIVE)
@@ -29,7 +53,20 @@ class SignalsRepository:
         return list(self.db.execute(stmt).scalars().all())
 
     def by_date(self, target_date: date, limit: int = 100) -> list[Signals]:
-        """Get signals for a specific date (IST timezone)"""
+        """
+        Get signals for a specific date (IST timezone).
+
+        Note: This method does NOT call mark_time_expired_signals() automatically.
+        Callers should call mark_time_expired_signals() before using this method
+        to ensure expired signals are not returned.
+
+        Args:
+            target_date: Date to filter by (assumed to be in IST timezone)
+            limit: Maximum number of signals to return
+
+        Returns:
+            List of Signals for the specified date, ordered by timestamp (most recent first)
+        """
         # Use SQLite's date() function to extract date from ts column
         # Format: 'YYYY-MM-DD'
         target_date_str = target_date.isoformat()
@@ -44,7 +81,21 @@ class SignalsRepository:
         return list(self.db.execute(stmt).scalars().all())
 
     def by_date_range(self, start_date: date, end_date: date, limit: int = 100) -> list[Signals]:
-        """Get signals within a date range (IST timezone)"""
+        """
+        Get signals within a date range (IST timezone).
+
+        Note: This method does NOT call mark_time_expired_signals() automatically.
+        Callers should call mark_time_expired_signals() before using this method
+        to ensure expired signals are not returned.
+
+        Args:
+            start_date: Start date (inclusive, assumed to be in IST timezone)
+            end_date: End date (inclusive, assumed to be in IST timezone)
+            limit: Maximum number of signals to return
+
+        Returns:
+            List of Signals within the date range, ordered by timestamp (most recent first)
+        """
         # Use SQLite's date() function to extract date from ts column
         start_date_str = start_date.isoformat()
         end_date_str = end_date.isoformat()
@@ -381,7 +432,9 @@ class SignalsRepository:
         Rule: Signal is valid until the end of the next trading day's market hours (3:30 PM IST).
 
         Args:
-            signal_timestamp: Signal creation timestamp
+            signal_timestamp: Signal creation timestamp (naive or timezone-aware)
+                - If naive, assumed to be in IST timezone
+                - If timezone-aware, converted to IST
 
         Returns:
             datetime: Expiry time (next trading day at 3:30 PM IST, timezone-aware)
@@ -391,8 +444,14 @@ class SignalsRepository:
             - Signal Friday 4:00 PM → Expires Monday 3:30 PM (skip weekend)
             - Signal Tuesday before holiday → Expires after holiday (skip holiday)
             - Signal Friday before holiday weekend → Expires Monday after weekend (skip holiday + weekend)
+
+        Note:
+            SQLite stores datetimes as naive (no timezone). When reading from database,
+            timestamps are assumed to be in IST. This method handles both naive and
+            timezone-aware datetimes correctly.
         """
         # Ensure signal timestamp is timezone-aware (IST)
+        # SQLite stores datetimes as naive, so we assume naive = IST
         if signal_timestamp.tzinfo is None:
             signal_timestamp = signal_timestamp.replace(tzinfo=IST)
         else:
@@ -437,22 +496,41 @@ class SignalsRepository:
         This function should be called periodically or before querying signals to ensure
         database consistency.
 
+        Important:
+            - This method should be called before querying signals in any code path
+            - Each database session should call this independently (session isolation)
+            - This method is idempotent (safe to call multiple times)
+            - Uses a small time window check to minimize race conditions
+
         Returns:
             Number of signals marked as expired
         """
         now = ist_now()
 
         # Get all ACTIVE signals
+        # Note: Using list() to materialize the query results immediately, reducing
+        # the time window for potential race conditions where a signal might be
+        # updated between query and expiry check
+        # Race condition mitigation: Materialize results before processing to minimize
+        # the window where a signal could be updated by another session
         active_signals = list(
-            self.db.execute(
-                select(Signals).where(Signals.status == SignalStatus.ACTIVE)
-            ).scalars().all()
+            self.db.execute(select(Signals).where(Signals.status == SignalStatus.ACTIVE))
+            .scalars()
+            .all()
         )
 
         expired_count = 0
+        now = ist_now()  # Get current time once to minimize time drift during processing
+
         for signal in active_signals:
             # Check if signal has passed its expiry time
-            if self._is_signal_expired_by_market_close(signal.ts):
+            # Note: signal.ts may be naive (from SQLite), but _is_signal_expired_by_market_close
+            # handles this correctly by assuming naive = IST
+            # Race condition mitigation: Re-check status before updating to handle
+            # cases where another session might have already updated the signal
+            if signal.status == SignalStatus.ACTIVE and self._is_signal_expired_by_market_close(
+                signal.ts
+            ):
                 signal.status = SignalStatus.EXPIRED
                 expired_count += 1
 
@@ -522,6 +600,9 @@ class SignalsRepository:
         - effective_status is user's custom status (TRADED/REJECTED) if they have one
         - otherwise it's the base signal status (ACTIVE/EXPIRED)
 
+        Before returning, checks and updates time-expired signals to ensure
+        database consistency.
+
         Args:
             user_id: User ID to get personalized status for
             limit: Maximum number of signals to return
@@ -530,6 +611,9 @@ class SignalsRepository:
         Returns:
             List of (Signals, SignalStatus) tuples
         """
+        # Mark time-expired signals before querying to ensure database consistency
+        self.mark_time_expired_signals()
+
         # Join signals with user_signal_status
         stmt = (
             select(Signals, UserSignalStatus.status)

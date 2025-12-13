@@ -15,6 +15,11 @@ from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.service_log_repository import ServiceLogRepository
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.service_task_repository import ServiceTaskRepository
+from src.infrastructure.utils.holiday_calendar import (
+    get_holiday_name,
+    is_nse_holiday,
+    is_trading_day,
+)
 
 from ..core.deps import get_current_user, get_db
 from ..schemas.service import (
@@ -36,6 +41,7 @@ from ..schemas.service import (
     StopIndividualServiceResponse,
     TaskExecutionResponse,
     TaskHistoryResponse,
+    TradingDayInfoResponse,
 )
 
 router = APIRouter()
@@ -439,4 +445,33 @@ def get_positions_without_sell_orders(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting positions without sell orders: {str(e)}",
+        ) from e
+
+
+@router.get("/service/trading-day-info", response_model=TradingDayInfoResponse)
+def get_trading_day_info(
+    current: Users = Depends(get_current_user),  # noqa: B008, ARG001
+):
+    """
+    Get trading day information for today.
+
+    Returns whether today is a trading day, if it's a holiday, holiday name, and if it's a weekend.
+    """
+    try:
+        today = ist_now().date()
+        is_holiday = is_nse_holiday(today)
+        holiday_name = get_holiday_name(today) if is_holiday else None
+        is_weekend = today.weekday() >= 5  # Saturday=5, Sunday=6
+        is_trading = is_trading_day(today)
+
+        return TradingDayInfoResponse(
+            is_trading_day=is_trading,
+            is_holiday=is_holiday,
+            holiday_name=holiday_name,
+            is_weekend=is_weekend,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting trading day info: {str(e)}",
         ) from e

@@ -6,6 +6,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+class TradingDayInfoResponse(BaseModel):
+    """Trading day information response"""
+
+    is_trading_day: bool
+    is_holiday: bool
+    holiday_name: str | None = None
+    is_weekend: bool
+
+
 class ServiceStatusResponse(BaseModel):
     """Service status response"""
 

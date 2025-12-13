@@ -8,6 +8,7 @@ import { getBuyingZone } from '../../api/signals';
 import { listOrders } from '../../api/orders';
 import { getNotificationCount } from '../../api/notifications';
 import { useSettings } from '../../hooks/useSettings';
+import { HolidayBanner } from '../../components/HolidayBanner';
 
 function formatMoney(amount: number): string {
 	return new Intl.NumberFormat('en-IN', {
@@ -142,6 +143,9 @@ export function DashboardHome() {
 
 	return (
 		<div className="p-2 sm:p-4 space-y-4 sm:space-y-6">
+			{/* Holiday Banner */}
+			<HolidayBanner />
+
 			{/* Header */}
 			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
 				<h1 className="text-xl sm:text-2xl font-semibold text-[var(--text)]">Dashboard</h1>

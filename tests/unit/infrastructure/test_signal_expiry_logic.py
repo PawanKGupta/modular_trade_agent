@@ -9,13 +9,13 @@ Tests cover:
 - Edge cases
 """
 
-from datetime import date, datetime, time, timedelta
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
 
-from src.infrastructure.db.models import SignalStatus, Signals
-from src.infrastructure.db.timezone_utils import IST, ist_now
+from src.infrastructure.db.models import Signals, SignalStatus
+from src.infrastructure.db.timezone_utils import IST
 from src.infrastructure.persistence.signals_repository import SignalsRepository
 
 
@@ -23,6 +23,22 @@ from src.infrastructure.persistence.signals_repository import SignalsRepository
 def signals_repo(db_session):
     """Create SignalsRepository instance"""
     return SignalsRepository(db_session)
+
+
+@pytest.fixture
+def test_user(db_session):
+    """Create a test user"""
+    from src.infrastructure.db.models import Users
+
+    user = Users(
+        email="test_expiry@example.com",
+        password_hash="test_hash",
+        role="user",
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
 
 
 class TestSignalExpiryTimeCalculation:
@@ -171,9 +187,7 @@ class TestSignalExpiryCheck:
         signal_time = datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST)
 
         # Mock current time: Tuesday 2:00 PM (before expiry)
-        with patch(
-            "src.infrastructure.persistence.signals_repository.ist_now"
-        ) as mock_now:
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
             mock_now.return_value = datetime(2025, 12, 2, 14, 0, 0, tzinfo=IST)
 
             is_expired = signals_repo._is_signal_expired_by_market_close(signal_time)
@@ -185,9 +199,7 @@ class TestSignalExpiryCheck:
         signal_time = datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST)
 
         # Mock current time: Tuesday 3:30 PM (exactly at expiry)
-        with patch(
-            "src.infrastructure.persistence.signals_repository.ist_now"
-        ) as mock_now:
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
             mock_now.return_value = datetime(2025, 12, 2, 15, 30, 0, tzinfo=IST)
 
             is_expired = signals_repo._is_signal_expired_by_market_close(signal_time)
@@ -199,9 +211,7 @@ class TestSignalExpiryCheck:
         signal_time = datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST)
 
         # Mock current time: Tuesday 4:00 PM (after expiry)
-        with patch(
-            "src.infrastructure.persistence.signals_repository.ist_now"
-        ) as mock_now:
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
             mock_now.return_value = datetime(2025, 12, 2, 16, 0, 0, tzinfo=IST)
 
             is_expired = signals_repo._is_signal_expired_by_market_close(signal_time)
@@ -213,9 +223,7 @@ class TestSignalExpiryCheck:
         signal_time = datetime(2025, 12, 5, 16, 0, 0, tzinfo=IST)
 
         # Mock current time: Monday 3:31 PM (after expiry)
-        with patch(
-            "src.infrastructure.persistence.signals_repository.ist_now"
-        ) as mock_now:
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
             mock_now.return_value = datetime(2025, 12, 8, 15, 31, 0, tzinfo=IST)
 
             is_expired = signals_repo._is_signal_expired_by_market_close(signal_time)
@@ -227,9 +235,7 @@ class TestSignalExpiryCheck:
         signal_time = datetime(2025, 12, 5, 16, 0, 0, tzinfo=IST)
 
         # Mock current time: Saturday 10:00 AM (weekend, but before expiry)
-        with patch(
-            "src.infrastructure.persistence.signals_repository.ist_now"
-        ) as mock_now:
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
             mock_now.return_value = datetime(2025, 12, 6, 10, 0, 0, tzinfo=IST)
 
             is_expired = signals_repo._is_signal_expired_by_market_close(signal_time)
@@ -252,9 +258,7 @@ class TestDatabaseStatusUpdate:
         db_session.commit()
 
         # Mock current time: Tuesday 4:00 PM (after expiry)
-        with patch(
-            "src.infrastructure.persistence.signals_repository.ist_now"
-        ) as mock_now:
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
             mock_now.return_value = datetime(2025, 12, 2, 16, 0, 0, tzinfo=IST)
 
             expired_count = signals_repo.mark_time_expired_signals()
@@ -276,9 +280,7 @@ class TestDatabaseStatusUpdate:
         db_session.commit()
 
         # Mock current time: Tuesday 2:00 PM (before expiry)
-        with patch(
-            "src.infrastructure.persistence.signals_repository.ist_now"
-        ) as mock_now:
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
             mock_now.return_value = datetime(2025, 12, 2, 14, 0, 0, tzinfo=IST)
 
             expired_count = signals_repo.mark_time_expired_signals()
@@ -343,9 +345,7 @@ class TestDatabaseStatusUpdate:
         db_session.commit()
 
         # Mock current time: Wednesday, Dec 3, 4:00 PM (both expired)
-        with patch(
-            "src.infrastructure.persistence.signals_repository.ist_now"
-        ) as mock_now:
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
             mock_now.return_value = datetime(2025, 12, 3, 16, 0, 0, tzinfo=IST)
 
             expired_count = signals_repo.mark_time_expired_signals()
@@ -376,9 +376,7 @@ class TestDatabaseStatusUpdate:
         db_session.commit()
 
         # Mock current time: Tuesday 4:00 PM (only signal1 expired)
-        with patch(
-            "src.infrastructure.persistence.signals_repository.ist_now"
-        ) as mock_now:
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
             mock_now.return_value = datetime(2025, 12, 2, 16, 0, 0, tzinfo=IST)
 
             expired_count = signals_repo.mark_time_expired_signals()
@@ -406,9 +404,7 @@ class TestGetActiveSignalsIntegration:
         db_session.commit()
 
         # Mock current time: Tuesday 4:00 PM (after expiry)
-        with patch(
-            "src.infrastructure.persistence.signals_repository.ist_now"
-        ) as mock_now:
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
             mock_now.return_value = datetime(2025, 12, 2, 16, 0, 0, tzinfo=IST)
 
             active_signals = signals_repo.get_active_signals()
@@ -432,9 +428,7 @@ class TestGetActiveSignalsIntegration:
         db_session.commit()
 
         # Mock current time: Tuesday 2:00 PM (before expiry)
-        with patch(
-            "src.infrastructure.persistence.signals_repository.ist_now"
-        ) as mock_now:
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
             mock_now.return_value = datetime(2025, 12, 2, 14, 0, 0, tzinfo=IST)
 
             active_signals = signals_repo.get_active_signals()
@@ -444,3 +438,100 @@ class TestGetActiveSignalsIntegration:
             assert active_signals[0].symbol == "RELIANCE"
             assert active_signals[0].status == SignalStatus.ACTIVE
 
+
+class TestGetSignalsWithUserStatusExpiryCheck:
+    """Test get_signals_with_user_status() with expiry check integration"""
+
+    def test_get_signals_with_user_status_expires_old_signals(
+        self, db_session, signals_repo, test_user
+    ):
+        """get_signals_with_user_status should expire old signals before returning"""
+        # Create expired signal
+        signal = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.ACTIVE,
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),  # Monday 4:00 PM
+            verdict="buy",
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        # Mock current time: Tuesday 4:00 PM (after expiry)
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
+            mock_now.return_value = datetime(2025, 12, 2, 16, 0, 0, tzinfo=IST)
+
+            signals_with_status = signals_repo.get_signals_with_user_status(
+                user_id=test_user.id, limit=100
+            )
+
+            # Database status should be updated to EXPIRED
+            db_session.refresh(signal)
+            assert signal.status == SignalStatus.EXPIRED
+
+            # Signal should be returned with EXPIRED status
+            signal_found = False
+            for sig, status in signals_with_status:
+                if sig.id == signal.id:
+                    signal_found = True
+                    assert status == SignalStatus.EXPIRED
+                    break
+            assert signal_found
+
+    def test_get_signals_with_user_status_returns_active_signals(
+        self, db_session, signals_repo, test_user
+    ):
+        """get_signals_with_user_status should return signals that are still active"""
+        # Create active signal
+        signal = Signals(
+            symbol="TCS",
+            status=SignalStatus.ACTIVE,
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),  # Monday 4:00 PM
+            verdict="buy",
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        # Mock current time: Tuesday 2:00 PM (before expiry)
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
+            mock_now.return_value = datetime(2025, 12, 2, 14, 0, 0, tzinfo=IST)
+
+            signals_with_status = signals_repo.get_signals_with_user_status(
+                user_id=test_user.id, limit=100
+            )
+
+            # Signal should still be ACTIVE
+            db_session.refresh(signal)
+            assert signal.status == SignalStatus.ACTIVE
+
+            # Signal should be returned with ACTIVE status
+            signal_found = False
+            for sig, status in signals_with_status:
+                if sig.id == signal.id:
+                    signal_found = True
+                    assert status == SignalStatus.ACTIVE
+                    break
+            assert signal_found
+
+    def test_get_signals_with_user_status_calls_expiry_check(
+        self, db_session, signals_repo, test_user
+    ):
+        """Test that get_signals_with_user_status calls mark_time_expired_signals"""
+        # Create a signal
+        signal = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.ACTIVE,
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),
+            verdict="buy",
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        # Mock mark_time_expired_signals to track calls
+        with patch.object(signals_repo, "mark_time_expired_signals") as mock_expiry_check:
+            mock_expiry_check.return_value = 0
+
+            # Call get_signals_with_user_status
+            signals_repo.get_signals_with_user_status(user_id=test_user.id, limit=100)
+
+            # Verify mark_time_expired_signals was called
+            mock_expiry_check.assert_called_once()

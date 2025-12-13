@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useMemo, useEffect } from 'react';
 import { getBuyingZone, getBuyingZoneColumns, saveBuyingZoneColumns, rejectSignal, activateSignal, type BuyingZoneItem, type DateFilter, type StatusFilter } from '@/api/signals';
+import { HolidayBanner } from '@/components/HolidayBanner';
 
 /**
  * Calculate the expiry time for a signal based on next trading day market close.
@@ -311,7 +312,9 @@ export function BuyingZonePage() {
 	if (error) return <div className="p-2 sm:p-4 text-sm sm:text-base text-red-400">Failed to load</div>;
 
 	return (
-		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
+		<>
+			<HolidayBanner />
+			<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
 			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
 				<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Buying Zone</h1>
 				<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4 w-full sm:w-auto">
@@ -610,5 +613,6 @@ export function BuyingZonePage() {
 				</div>
 			)}
 		</div>
+		</>
 	);
 }

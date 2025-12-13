@@ -9,26 +9,30 @@ Note: This list should be updated annually with the official NSE holiday calenda
 
 from datetime import date, timedelta
 
-# NSE Holidays for 2025
-NSE_HOLIDAYS_2025: set[date] = {
-    date(2025, 2, 26),  # Wednesday - Mahashivratri
-    date(2025, 3, 14),  # Friday - Holi
-    date(2025, 3, 31),  # Monday - Id-Ul-Fitr (Ramadan Eid)
-    date(2025, 4, 10),  # Thursday - Shri Mahavir Jayanti
-    date(2025, 4, 14),  # Monday - Dr. Baba Saheb Ambedkar Jayanti
-    date(2025, 4, 18),  # Friday - Good Friday
-    date(2025, 5, 1),   # Thursday - Maharashtra Day
-    date(2025, 8, 15),  # Friday - Independence Day / Parsi New Year
-    date(2025, 8, 27),  # Wednesday - Shri Ganesh Chaturthi
-    date(2025, 10, 2),  # Thursday - Mahatma Gandhi Jayanti/Dussehra
-    date(2025, 10, 21), # Tuesday - Diwali Laxmi Pujan
-    date(2025, 10, 22), # Wednesday - Balipratipada
-    date(2025, 11, 5),  # Wednesday - Prakash Gurpurb Sri Guru Nanak Dev
-    date(2025, 12, 25), # Thursday - Christmas
+# NSE Holidays for 2025 with names
+NSE_HOLIDAYS_2025: dict[date, str] = {
+    date(2025, 2, 26): "Mahashivratri",
+    date(2025, 3, 14): "Holi",
+    date(2025, 3, 31): "Id-Ul-Fitr (Ramadan Eid)",
+    date(2025, 4, 10): "Shri Mahavir Jayanti",
+    date(2025, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
+    date(2025, 4, 18): "Good Friday",
+    date(2025, 5, 1): "Maharashtra Day",
+    date(2025, 8, 15): "Independence Day / Parsi New Year",
+    date(2025, 8, 27): "Shri Ganesh Chaturthi",
+    date(2025, 10, 2): "Mahatma Gandhi Jayanti/Dussehra",
+    date(2025, 10, 21): "Diwali Laxmi Pujan",
+    date(2025, 10, 22): "Balipratipada",
+    date(2025, 11, 5): "Prakash Gurpurb Sri Guru Nanak Dev",
+    date(2025, 12, 13): "TEST - Holiday for Testing",  # TODO: Remove before commit
+    date(2025, 12, 25): "Christmas",
 }
 
 # Combine all holiday sets (for future years, add more sets here)
-ALL_NSE_HOLIDAYS: set[date] = NSE_HOLIDAYS_2025
+ALL_NSE_HOLIDAYS: dict[date, str] = NSE_HOLIDAYS_2025
+
+# Set of holiday dates for quick lookup
+ALL_NSE_HOLIDAY_DATES: set[date] = set(ALL_NSE_HOLIDAYS.keys())
 
 
 def is_nse_holiday(check_date: date) -> bool:
@@ -41,7 +45,20 @@ def is_nse_holiday(check_date: date) -> bool:
     Returns:
         True if the date is a market holiday, False otherwise
     """
-    return check_date in ALL_NSE_HOLIDAYS
+    return check_date in ALL_NSE_HOLIDAY_DATES
+
+
+def get_holiday_name(check_date: date) -> str | None:
+    """
+    Get the name of the holiday for a given date.
+
+    Args:
+        check_date: Date to check
+
+    Returns:
+        Holiday name if the date is a holiday, None otherwise
+    """
+    return ALL_NSE_HOLIDAYS.get(check_date)
 
 
 def is_trading_day(check_date: date) -> bool:
@@ -59,7 +76,7 @@ def is_trading_day(check_date: date) -> bool:
         return False
 
     # Check if holiday
-    if is_nse_holiday(check_date):
+    if check_date in ALL_NSE_HOLIDAY_DATES:
         return False
 
     return True
@@ -82,4 +99,3 @@ def get_next_trading_day(start_date: date) -> date:
         next_day += timedelta(days=1)
 
     return next_day
-

@@ -1646,6 +1646,10 @@ class PaperTradingEngineAdapter:
             # Query Signals table for buy/strong_buy recommendations
             signals_repo = SignalsRepository(self.db, user_id=self.user_id)
 
+            # Mark time-expired signals before loading to ensure database consistency
+            # This prevents trading on expired signals
+            signals_repo.mark_time_expired_signals()
+
             # Get latest signals (today's or most recent)
             from src.infrastructure.db.models import SignalStatus  # noqa: PLC0415
             from src.infrastructure.db.timezone_utils import ist_now

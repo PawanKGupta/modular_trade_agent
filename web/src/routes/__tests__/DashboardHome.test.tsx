@@ -29,6 +29,12 @@ vi.mock('@/api/service', () => ({
 		positions: [],
 		count: 0,
 	})),
+	getTradingDayInfo: vi.fn(() => Promise.resolve({
+		is_trading_day: true,
+		is_holiday: false,
+		holiday_name: null,
+		is_weekend: false,
+	})),
 }));
 
 vi.mock('@/api/user', () => ({
