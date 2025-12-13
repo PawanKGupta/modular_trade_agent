@@ -1746,6 +1746,46 @@ class TestSignalStatusFiltering:
         # Should exclude EXPIRED signal
         assert len(recs) == 0
 
+    def test_load_recommendations_excludes_failed_signals(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that FAILED signals (per-user) are excluded from recommendations"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create ACTIVE signal
+        signal = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # Mark as FAILED for this user (per-user status)
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.FAILED,
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should exclude FAILED signal
+        assert len(recs) == 0
+
     def test_load_recommendations_per_user_status_takes_precedence(
         self, db_session, test_user, mock_paper_broker
     ):
