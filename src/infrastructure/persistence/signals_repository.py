@@ -7,6 +7,12 @@ from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus
 from src.infrastructure.db.timezone_utils import IST, ist_now
+from src.infrastructure.utils.holiday_calendar import get_next_trading_day
+
+# Trading day constants
+SATURDAY = 5  # weekday() returns 5 for Saturday
+SUNDAY = 6  # weekday() returns 6 for Sunday
+MARKET_CLOSE_TIME = time(15, 30)  # 3:30 PM IST
 
 
 class SignalsRepository:
@@ -368,19 +374,23 @@ class SignalsRepository:
         # Base status is something else (shouldn't happen), return False
         return False
 
-    def _is_signal_expired_by_market_close(self, signal_timestamp: datetime) -> bool:
+    def get_signal_expiry_time(self, signal_timestamp: datetime) -> datetime:
         """
-        Check if a signal is expired based on market close time (3:30 PM IST).
+        Calculate the expiry time for a signal based on next trading day market close.
 
-        Rules:
-        - Signals from day before yesterday (2 days ago) are expired
-        - Signals generated yesterday are active until today's 3:30 PM
+        Rule: Signal is valid until the end of the next trading day's market hours (3:30 PM IST).
 
         Args:
             signal_timestamp: Signal creation timestamp
 
         Returns:
-            True if signal is expired, False otherwise
+            datetime: Expiry time (next trading day at 3:30 PM IST, timezone-aware)
+
+        Examples:
+            - Signal Monday 4:00 PM → Expires Tuesday 3:30 PM
+            - Signal Friday 4:00 PM → Expires Monday 3:30 PM (skip weekend)
+            - Signal Tuesday before holiday → Expires after holiday (skip holiday)
+            - Signal Friday before holiday weekend → Expires Monday after weekend (skip holiday + weekend)
         """
         # Ensure signal timestamp is timezone-aware (IST)
         if signal_timestamp.tzinfo is None:
@@ -388,30 +398,79 @@ class SignalsRepository:
         else:
             signal_timestamp = signal_timestamp.astimezone(IST)
 
-        now = ist_now()
-        market_close_time = time(15, 30)  # 3:30 PM IST
-
-        # Get signal date and today's date
+        # Get signal date
         signal_date = signal_timestamp.date()
-        today_date = now.date()
-        yesterday_date = today_date - timedelta(days=1)
-        day_before_yesterday_date = today_date - timedelta(days=2)
 
-        # Signal is expired if:
-        # 1. Signal was created on day before yesterday or earlier, OR
-        # 2. Signal was created yesterday but current time >= today's 3:30 PM
-        if signal_date <= day_before_yesterday_date:
-            return True  # Signal from day before yesterday or earlier is expired
+        # Get next trading day (skips weekends and holidays)
+        next_trading_day = get_next_trading_day(signal_date)
 
-        if signal_date == yesterday_date and now >= datetime.combine(
-            today_date, market_close_time
-        ).replace(tzinfo=IST):
-            return True  # Signal from yesterday but past today's 3:30 PM is expired
+        # Return market close time on next trading day (timezone-aware in IST)
+        return datetime.combine(next_trading_day, MARKET_CLOSE_TIME).replace(tzinfo=IST)
 
-        return False  # Signal is still active
+    def _is_signal_expired_by_market_close(self, signal_timestamp: datetime) -> bool:
+        """
+        Check if a signal is expired based on next trading day market close time (3:30 PM IST).
+
+        Rule: Signal expires at the end of the next trading day's market hours.
+        - Signal from Monday → Expires Tuesday 3:30 PM
+        - Signal from Friday → Expires Monday 3:30 PM (skip weekend)
+        - Weekends and holidays are skipped when finding next trading day
+
+        Args:
+            signal_timestamp: Signal creation timestamp
+
+        Returns:
+            True if signal is expired, False otherwise
+        """
+        # Get expiry time for this signal
+        expiry_time = self.get_signal_expiry_time(signal_timestamp)
+
+        # Check if current time has passed expiry time
+        now = ist_now()
+        return now >= expiry_time
+
+    def mark_time_expired_signals(self) -> int:
+        """
+        Mark ACTIVE signals as EXPIRED if they have passed their time-based expiry.
+
+        Rule: Signals expire at the end of the next trading day's market hours (3:30 PM IST).
+        This function should be called periodically or before querying signals to ensure
+        database consistency.
+
+        Returns:
+            Number of signals marked as expired
+        """
+        now = ist_now()
+
+        # Get all ACTIVE signals
+        active_signals = list(
+            self.db.execute(
+                select(Signals).where(Signals.status == SignalStatus.ACTIVE)
+            ).scalars().all()
+        )
+
+        expired_count = 0
+        for signal in active_signals:
+            # Check if signal has passed its expiry time
+            if self._is_signal_expired_by_market_close(signal.ts):
+                signal.status = SignalStatus.EXPIRED
+                expired_count += 1
+
+        if expired_count > 0:
+            self.db.commit()
+
+        return expired_count
 
     def get_active_signals(self, limit: int = 100) -> list[Signals]:
-        """Get only ACTIVE signals"""
+        """
+        Get only ACTIVE signals.
+
+        Before returning, checks and updates time-expired signals to ensure
+        database consistency.
+        """
+        # Check and update time-expired signals before querying
+        self.mark_time_expired_signals()
+
         stmt = (
             select(Signals)
             .where(Signals.status == SignalStatus.ACTIVE)
