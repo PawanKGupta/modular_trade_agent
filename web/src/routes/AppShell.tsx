@@ -370,7 +370,7 @@ export function AppShell() {
 					</div>
 				</div>
 			</aside>
-			<main className="bg-[var(--bg)] min-h-screen flex-1 sm:flex-none">
+			<main className="bg-[var(--bg)] min-h-screen flex-1 sm:flex-none overflow-x-hidden">
 				<div className="sticky top-0 z-10 bg-[var(--bg)]/80 backdrop-blur-sm border-b border-[#1e293b]/50 px-3 sm:px-6 py-3 sm:py-4">
 					<div className="flex items-center justify-between gap-2 sm:gap-4">
 						{/* Mode Badge */}

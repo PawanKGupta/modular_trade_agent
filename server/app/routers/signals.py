@@ -28,6 +28,10 @@ def buying_zone(
     user=Depends(get_current_user),
 ):
     repo = SignalsRepository(db, user_id=user.id)
+
+    # Mark time-expired signals before querying to ensure database consistency
+    repo.mark_time_expired_signals()
+
     now = ist_now()
     today = now.date()
 

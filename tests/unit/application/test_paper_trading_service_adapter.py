@@ -120,7 +120,9 @@ class TestPaperTradingServiceAdapter:
 
         assert adapter.tasks_completed["buy_orders"] is True
 
-    def test_run_buy_orders_calls_place_reentry_orders(self, db_session, test_user, mock_paper_broker):
+    def test_run_buy_orders_calls_place_reentry_orders(
+        self, db_session, test_user, mock_paper_broker
+    ):
         """Test that run_buy_orders calls place_reentry_orders after placing fresh entries"""
         from config.strategy_config import StrategyConfig
 
@@ -1014,10 +1016,7 @@ class TestPaperTradingSellMonitoring:
 
                 # Check that main monitoring path uses days=60
                 # (RSI exit logic may also call with days=200, but main path should use 60)
-                main_call = next(
-                    (call for call in calls if call[1].get("days") == 60),
-                    None
-                )
+                main_call = next((call for call in calls if call[1].get("days") == 60), None)
                 assert main_call is not None, (
                     "fetch_ohlcv_yf should be called with days=60 for main monitoring. "
                     f"Actual calls: {[call[1] for call in calls]}"
@@ -1750,7 +1749,7 @@ class TestSignalStatusFiltering:
     def test_load_recommendations_per_user_status_takes_precedence(
         self, db_session, test_user, mock_paper_broker
     ):
-        """Test that per-user status takes precedence over base signal status"""
+        """Test that per-user status takes precedence over base signal status, except for EXPIRED"""
         # Create another user
         user2 = Users(
             email="user2@test.com",
@@ -1761,6 +1760,47 @@ class TestSignalStatusFiltering:
         db_session.commit()
         db_session.refresh(user2)
 
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signal with TRADED base status (not EXPIRED - user can override TRADED/REJECTED)
+        signal = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.TRADED,  # Base status is TRADED (can be overridden)
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # Mark as ACTIVE for test_user (per-user status override)
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.ACTIVE,  # Per-user status is ACTIVE
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should include signal because per-user status (ACTIVE) takes precedence over TRADED
+        assert len(recs) == 1
+        assert recs[0].ticker == "RELIANCE.NS"
+
+    def test_load_recommendations_expired_signals_cannot_be_overridden(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that EXPIRED signals cannot be overridden by per-user status"""
         adapter = PaperTradingEngineAdapter(
             broker=mock_paper_broker,
             user_id=test_user.id,
@@ -1782,21 +1822,20 @@ class TestSignalStatusFiltering:
         db_session.commit()
         db_session.refresh(signal)
 
-        # But mark as ACTIVE for test_user (per-user status)
+        # Try to mark as ACTIVE for test_user (per-user status)
         user_status = UserSignalStatus(
             user_id=test_user.id,
             signal_id=signal.id,
             symbol="RELIANCE",
-            status=SignalStatus.ACTIVE,  # Per-user status is ACTIVE
+            status=SignalStatus.ACTIVE,  # Per-user status is ACTIVE (but should be ignored)
         )
         db_session.add(user_status)
         db_session.commit()
 
         recs = adapter.load_latest_recommendations()
 
-        # Should include signal because per-user status (ACTIVE) takes precedence
-        assert len(recs) == 1
-        assert recs[0].ticker == "RELIANCE.NS"
+        # Should NOT include signal because EXPIRED status cannot be overridden
+        assert len(recs) == 0
 
     def test_load_recommendations_mixed_status_signals(
         self, db_session, test_user, mock_paper_broker

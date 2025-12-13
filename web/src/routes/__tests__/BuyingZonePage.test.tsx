@@ -5,6 +5,16 @@ import { BuyingZonePage } from '../dashboard/BuyingZonePage';
 import { withProviders } from '@/test/utils';
 import * as signalsApi from '@/api/signals';
 
+// Mock getTradingDayInfo for HolidayBanner component
+vi.mock('@/api/service', () => ({
+	getTradingDayInfo: vi.fn(() => Promise.resolve({
+		is_trading_day: true,
+		is_holiday: false,
+		holiday_name: null,
+		is_weekend: false,
+	})),
+}));
+
 describe('BuyingZonePage', () => {
 	beforeEach(() => {
 		// Reset any spies

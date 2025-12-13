@@ -1,6 +1,45 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useMemo, useEffect } from 'react';
 import { getBuyingZone, getBuyingZoneColumns, saveBuyingZoneColumns, rejectSignal, activateSignal, type BuyingZoneItem, type DateFilter, type StatusFilter } from '@/api/signals';
+import { HolidayBanner } from '@/components/HolidayBanner';
+
+/**
+ * Calculate the expiry time for a signal based on next trading day market close.
+ * Rule: Signal is valid until the end of the next trading day's market hours (3:30 PM IST).
+ *
+ * @param signalTimestamp - Signal creation timestamp
+ * @returns Expiry time (next trading day at 3:30 PM IST)
+ */
+function getSignalExpiryTime(signalTimestamp: Date): Date {
+	const signalDate = new Date(signalTimestamp);
+	signalDate.setHours(0, 0, 0, 0); // Start of signal day
+
+	// Start from day after signal creation
+	const nextDay = new Date(signalDate);
+	nextDay.setDate(nextDay.getDate() + 1);
+
+	// Skip weekends (Saturday=6, Sunday=0)
+	while (nextDay.getDay() === 0 || nextDay.getDay() === 6) {
+		nextDay.setDate(nextDay.getDate() + 1);
+	}
+
+	// Set to market close time (3:30 PM IST)
+	nextDay.setHours(15, 30, 0, 0);
+
+	return nextDay;
+}
+
+/**
+ * Check if a signal is expired based on next trading day market close time.
+ *
+ * @param signalTimestamp - Signal creation timestamp
+ * @returns True if signal is expired, False otherwise
+ */
+function isSignalExpiredByMarketClose(signalTimestamp: Date): boolean {
+	const expiryTime = getSignalExpiryTime(signalTimestamp);
+	const now = new Date();
+	return now >= expiryTime;
+}
 
 type ColumnKey =
 	| 'symbol'
@@ -273,7 +312,9 @@ export function BuyingZonePage() {
 	if (error) return <div className="p-2 sm:p-4 text-sm sm:text-base text-red-400">Failed to load</div>;
 
 	return (
-		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
+		<>
+			<HolidayBanner />
+			<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
 			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
 				<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Buying Zone</h1>
 				<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4 w-full sm:w-auto">
@@ -513,39 +554,17 @@ export function BuyingZonePage() {
 																					</button>
 																				)}
 																				{(status === 'rejected' || status === 'traded') && (() => {
-																					// Check if signal is expired based on market close time (3:30 PM IST)
-																					// Rules:
-																					// - Signals from day before yesterday (2 days ago) are expired
-																					// - Signals generated yesterday are active until today's 3:30 PM
-																					// - Signals generated today are never expired
+																					// Check if signal is expired based on next trading day market close time (3:30 PM IST)
+																					// Rule: Signal expires at the end of the next trading day's market hours
+																					// - Signal from Monday → Expires Tuesday 3:30 PM
+																					// - Signal from Friday → Expires Monday 3:30 PM (skip weekend)
 																					const signalTime = new Date(row.ts);
-																					const now = new Date();
-
-																					// Market close time: 3:30 PM (15:30)
-																					const marketCloseHour = 15;
-																					const marketCloseMinute = 30;
-
-																					// Calculate today's start (00:00)
-																					const todayStart = new Date(now);
-																					todayStart.setHours(0, 0, 0, 0);
-
-																					// Calculate yesterday's start (00:00)
-																					const yesterdayStart = new Date(now);
-																					yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-																					yesterdayStart.setHours(0, 0, 0, 0);
-
-																					// Calculate today's market close (3:30 PM)
-																					const todayMarketClose = new Date(now);
-																					todayMarketClose.setHours(marketCloseHour, marketCloseMinute, 0, 0);
 
 																					// Signal is expired if:
-																					// 1. base_status is 'expired', OR
-																					// 2. Signal was created before yesterday (day before yesterday or earlier), OR
-																					// 3. Signal was created yesterday (not today) AND current time >= today's 3:30 PM
+																					// 1. base_status is 'expired' (from database), OR
+																					// 2. Current time >= signal's expiry time (next trading day 3:30 PM)
 																					const isExpiredByStatus = row.base_status === 'expired';
-																					const isExpiredByMarketClose =
-																						signalTime < yesterdayStart ||
-																						(signalTime >= yesterdayStart && signalTime < todayStart && now >= todayMarketClose);
+																					const isExpiredByMarketClose = isSignalExpiredByMarketClose(signalTime);
 																					const isExpired = isExpiredByStatus || isExpiredByMarketClose;
 
 																					return (
@@ -594,5 +613,6 @@ export function BuyingZonePage() {
 				</div>
 			)}
 		</div>
+		</>
 	);
 }

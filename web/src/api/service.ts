@@ -44,6 +44,13 @@ export interface ServiceLog {
 	timestamp: string;
 }
 
+export interface TradingDayInfo {
+	is_trading_day: boolean;
+	is_holiday: boolean;
+	holiday_name: string | null;
+	is_weekend: boolean;
+}
+
 export interface ServiceLogs {
 	logs: ServiceLog[];
 	total: number;
@@ -212,5 +219,10 @@ export async function stopIndividualService(
 
 export async function runTaskOnce(request: RunOnceRequest): Promise<RunOnceResponse> {
 	const { data } = await api.post<RunOnceResponse>('/user/service/individual/run-once', request);
+	return data;
+}
+
+export async function getTradingDayInfo(): Promise<TradingDayInfo> {
+	const { data } = await api.get<TradingDayInfo>('/user/service/trading-day-info');
 	return data;
 }

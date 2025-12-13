@@ -3,6 +3,7 @@
 from datetime import datetime, time, timedelta
 
 from src.infrastructure.db.timezone_utils import IST, ist_now
+from src.infrastructure.utils.holiday_calendar import get_next_trading_day, is_trading_day as is_trading_day_check
 
 MARKET_CLOSE_TIME = time(15, 30)  # 3:30 PM IST
 SATURDAY = 5  # weekday() returns 5 for Saturday
@@ -32,18 +33,11 @@ def get_next_trading_day_close(failed_at: datetime) -> datetime:
         # Timezone-aware - convert to IST if needed
         failed_date = failed_at.astimezone(IST).date()
 
-    # Start from day after failure
-    next_day = failed_date + timedelta(days=1)
-
-    # Skip weekends (Saturday=5, Sunday=6)
-    while next_day.weekday() >= SATURDAY:
-        next_day += timedelta(days=1)
-
-    # TODO: Skip holidays (add holiday checking logic)
-    # For now, just skip weekends
+    # Get next trading day (skips weekends and holidays)
+    next_trading_day = get_next_trading_day(failed_date)
 
     # Return market close time on next trading day (timezone-aware in IST)
-    return datetime.combine(next_day, MARKET_CLOSE_TIME).replace(tzinfo=IST)
+    return datetime.combine(next_trading_day, MARKET_CLOSE_TIME).replace(tzinfo=IST)
 
 
 def is_trading_day(check_date: datetime | None = None) -> bool:
@@ -59,12 +53,11 @@ def is_trading_day(check_date: datetime | None = None) -> bool:
     if check_date is None:
         check_date = ist_now()
 
-    # Check if weekday (Monday=0, Sunday=6)
-    weekday = check_date.weekday()
-    if weekday >= SATURDAY:  # Saturday or Sunday
-        return False
+    # Extract date if datetime object
+    if isinstance(check_date, datetime):
+        check_date_obj = check_date.date()
+    else:
+        check_date_obj = check_date
 
-    # TODO: Add holiday checking logic
-    # For now, just check weekday
-
-    return True
+    # Use holiday calendar to check if trading day
+    return is_trading_day_check(check_date_obj)
