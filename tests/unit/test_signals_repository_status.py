@@ -6,6 +6,7 @@ import os
 from datetime import datetime, time, timedelta
 
 import pytest
+from freezegun import freeze_time
 
 os.environ["DB_URL"] = "sqlite:///:memory:"
 
@@ -190,17 +191,58 @@ class TestMarkAsRejected:
 
 
 class TestGetActiveSignals:
-    def test_returns_only_active_signals(self, signals_repo, sample_signals):
-        """Should return only signals with ACTIVE status"""
-        active_signals = signals_repo.get_active_signals(limit=100)
+    def test_returns_only_active_signals(self, signals_repo, db_session):
+        """Should return only signals with ACTIVE status that haven't expired"""
+        from freezegun import freeze_time
+        from datetime import date, time
 
-        assert len(active_signals) == 3  # STOCK1, STOCK2, STOCK3
+        # Create signals with controlled timestamps to avoid time-based expiry
+        # Use freeze_time to ensure signals are created at a known time
+        test_date = datetime(2025, 12, 1, 10, 0, 0, tzinfo=ist_now().tzinfo)  # Monday 10:00 AM
 
-        symbols = {s.symbol for s in active_signals}
-        assert "STOCK1" in symbols
-        assert "STOCK2" in symbols
-        assert "STOCK3" in symbols
-        assert "STOCK4" not in symbols  # Expired, should not be included
+        with freeze_time(test_date):
+            now = ist_now()
+            signals = [
+                Signals(
+                    symbol="STOCK1",
+                    status=SignalStatus.ACTIVE,
+                    ts=now - timedelta(hours=2),  # 2 hours ago - still active
+                    rsi10=25.0,
+                ),
+                Signals(
+                    symbol="STOCK2",
+                    status=SignalStatus.ACTIVE,
+                    ts=now - timedelta(hours=1),  # 1 hour ago - still active
+                    rsi10=30.0,
+                ),
+                Signals(
+                    symbol="STOCK3",
+                    status=SignalStatus.ACTIVE,
+                    ts=now - timedelta(minutes=30),  # 30 minutes ago - still active
+                    rsi10=28.0,
+                ),
+                Signals(
+                    symbol="STOCK4",
+                    status=SignalStatus.EXPIRED,  # Already expired
+                    ts=now - timedelta(days=3),
+                    rsi10=32.0,
+                ),
+            ]
+
+            db_session.add_all(signals)
+            db_session.commit()
+
+            # Get active signals - should return only non-expired ACTIVE signals
+            active_signals = signals_repo.get_active_signals(limit=100)
+
+            # All three recent signals should be active (created within hours, not days)
+            assert len(active_signals) == 3  # STOCK1, STOCK2, STOCK3
+
+            symbols = {s.symbol for s in active_signals}
+            assert "STOCK1" in symbols
+            assert "STOCK2" in symbols
+            assert "STOCK3" in symbols
+            assert "STOCK4" not in symbols  # Expired, should not be included
 
     def test_respects_limit(self, signals_repo, sample_signals):
         """Should respect the limit parameter"""
@@ -404,26 +446,27 @@ class TestMarkAsActive:
         assert signal.status == SignalStatus.TRADED
 
     def test_cannot_reactivate_signal_after_today_market_close(self, signals_repo, db_session):
-        """Test: Cannot reactivate signal after today's 3:30 PM if created yesterday"""
-        # Create signal from yesterday (any time)
-        now = ist_now()
-        yesterday = now.date() - timedelta(days=1)
-        yesterday_signal = datetime.combine(yesterday, time(16, 0)).replace(tzinfo=now.tzinfo)
+        """Test: Cannot reactivate signal after next trading day's 3:30 PM if created yesterday"""
+        from freezegun import freeze_time
+        from datetime import date, time
+        from src.infrastructure.db.timezone_utils import IST
+
+        # Create signal from yesterday (Thursday, Dec 11, 2025)
+        yesterday = date(2025, 12, 11)  # Thursday
+        yesterday_signal = datetime.combine(yesterday, time(16, 0)).replace(tzinfo=IST)
         signal = Signals(
             symbol="TEST7", status=SignalStatus.REJECTED, ts=yesterday_signal, rsi10=25.0
         )
         db_session.add(signal)
         db_session.commit()
 
-        # Check if current time is after today's 3:30 PM
-        today_market_close = datetime.combine(now.date(), time(15, 30)).replace(tzinfo=now.tzinfo)
-        if now >= today_market_close:
-            # Current time is after today's 3:30 PM, signal should be expired
+        # Signal from Thursday expires on Friday 3:30 PM (next trading day)
+        # Test at Friday 4:00 PM (after expiry)
+        with freeze_time("2025-12-12 16:00:00+05:30"):  # Friday 4:00 PM
             success = signals_repo.mark_as_active("TEST7")
-            assert success is False
-        else:
-            # Current time is before today's 3:30 PM, signal should be active
+            assert success is False  # Should fail because expired (past Friday 3:30 PM)
+
+        # Test at Friday 2:00 PM (before expiry)
+        with freeze_time("2025-12-12 14:00:00+05:30"):  # Friday 2:00 PM
             success = signals_repo.mark_as_active("TEST7")
-            # This test depends on current time, so we just verify the logic works
-            # If it's before 3:30 PM, it should succeed (unless other conditions fail)
-            assert success is not None
+            assert success is True  # Should succeed because not expired (before Friday 3:30 PM)

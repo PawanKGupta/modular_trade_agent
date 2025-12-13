@@ -13,6 +13,7 @@ from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.service_schedule_repository import (
     ServiceScheduleRepository,
 )
+from src.infrastructure.utils.holiday_calendar import is_trading_day as is_trading_day_check
 
 # Constants
 HOURS_PER_DAY = 24
@@ -218,12 +219,5 @@ class ScheduleManager:
         if check_date is None:
             check_date = ist_now().date()
 
-        # Check if weekday (Monday=0, Sunday=6)
-        weekday = check_date.weekday()
-        if weekday >= WEEKEND_START_WEEKDAY:  # Saturday or Sunday
-            return False
-
-        # TODO: Add holiday checking logic if needed
-        # For now, just check weekday
-
-        return True
+        # Use holiday calendar to check if trading day (includes weekend and holiday checks)
+        return is_trading_day_check(check_date)

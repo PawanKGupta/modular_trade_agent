@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from freezegun import freeze_time
 
 # Add project root to path (now in tests/regression/)
 project_root = Path(__file__).parent.parent.parent
@@ -82,9 +83,10 @@ class TestContinuousServiceArchitecture:
         assert service.shutdown_requested == False
 
     def test_is_trading_day_logic(self, db_session):
-        """Test trading day detection (Mon-Fri)"""
+        """Test trading day detection (Mon-Fri, excluding holidays)"""
         from modules.kotak_neo_auto_trader.run_trading_service import TradingService
         from src.infrastructure.db.models import Users
+        from freezegun import freeze_time
 
         # Create a test user
         user = Users(email="test@example.com", password_hash="test", role="user")
@@ -100,22 +102,25 @@ class TestContinuousServiceArchitecture:
             env_file="test.env",
         )
 
-        # Trading days are Mon-Fri (weekday 0-4)
-        with patch("modules.kotak_neo_auto_trader.run_trading_service.datetime") as mock_dt:
-            # Monday
-            mock_dt.now.return_value.weekday.return_value = 0
+        # Test with freeze_time to control the date
+        # Monday (regular weekday, not a holiday) - Dec 1, 2025
+        with freeze_time("2025-12-01 10:00:00+05:30"):  # Monday
             assert service.is_trading_day() == True
 
-            # Friday
-            mock_dt.now.return_value.weekday.return_value = 4
+        # Friday (regular weekday, not a holiday) - Dec 5, 2025
+        with freeze_time("2025-12-05 10:00:00+05:30"):  # Friday
             assert service.is_trading_day() == True
 
-            # Saturday
-            mock_dt.now.return_value.weekday.return_value = 5
+        # Saturday - Dec 6, 2025
+        with freeze_time("2025-12-06 10:00:00+05:30"):  # Saturday
             assert service.is_trading_day() == False
 
-            # Sunday
-            mock_dt.now.return_value.weekday.return_value = 6
+        # Sunday - Dec 7, 2025
+        with freeze_time("2025-12-07 10:00:00+05:30"):  # Sunday
+            assert service.is_trading_day() == False
+
+        # Holiday (Holi - Mar 14, 2025 is a Friday holiday)
+        with freeze_time("2025-03-14 10:00:00+05:30"):  # Friday (Holi holiday)
             assert service.is_trading_day() == False
 
     def test_market_hours_detection(self, db_session):

@@ -17,6 +17,10 @@ from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 from src.infrastructure.persistence.signals_repository import SignalsRepository
+from src.infrastructure.utils.holiday_calendar import (
+    get_next_trading_day,
+    is_trading_day,
+)
 
 # Constants
 WEEKEND_START_WEEKDAY = 5  # Saturday
@@ -50,16 +54,17 @@ class AnalysisDeduplicationService:
 
         # If before 9AM, use previous trading day
         if current_time < time(9, 0):
-            # Go back to previous trading day (skip weekends)
+            # Go back to previous trading day (skip weekends and holidays)
             trading_day = current_date - timedelta(days=1)
-            while trading_day.weekday() >= WEEKEND_START_WEEKDAY:  # Saturday = 5, Sunday = 6
+            while not is_trading_day(trading_day):
                 trading_day -= timedelta(days=1)
             window_start = datetime.combine(trading_day, time(9, 0))
             window_end = datetime.combine(current_date, time(9, 0))
         else:
-            # Current trading day
+            # Current trading day - get next trading day for window end
+            next_trading_day = get_next_trading_day(current_date)
             window_start = datetime.combine(current_date, time(9, 0))
-            window_end = datetime.combine(current_date + timedelta(days=1), time(9, 0))
+            window_end = datetime.combine(next_trading_day, time(9, 0))
 
         return window_start, window_end
 
@@ -76,15 +81,8 @@ class AnalysisDeduplicationService:
         if check_date is None:
             check_date = ist_now().date()
 
-        # Check if weekend
-        weekday = check_date.weekday()
-        if weekday >= WEEKEND_START_WEEKDAY:  # Saturday or Sunday
-            return True
-
-        # TODO: Add holiday checking logic if needed
-        # For now, just check weekday
-
-        return False
+        # Use holiday calendar to check if trading day (inverse of is_trading_day)
+        return not is_trading_day(check_date)
 
     def should_update_signals(self) -> bool:
         """

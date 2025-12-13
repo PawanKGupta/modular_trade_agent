@@ -30,6 +30,15 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTr
 from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
 
+# Import holiday calendar for trading day checks
+try:
+    from src.infrastructure.db.timezone_utils import ist_now
+    from src.infrastructure.utils.holiday_calendar import is_trading_day as is_trading_day_check
+except ImportError:
+    # Fallback if running from different context
+    ist_now = None
+    is_trading_day_check = None
+
 
 class PaperTradingService:
     """
@@ -147,7 +156,10 @@ class PaperTradingService:
             logger.warning(f"Could not display portfolio status: {e}")
 
     def is_trading_day(self) -> bool:
-        """Check if today is a trading day (Monday-Friday)"""
+        """Check if today is a trading day (Monday-Friday, excluding holidays)"""
+        if is_trading_day_check and ist_now:
+            return is_trading_day_check(ist_now().date())
+        # Fallback to weekday check if imports failed
         return datetime.now().weekday() < 5
 
     def is_market_hours(self) -> bool:
