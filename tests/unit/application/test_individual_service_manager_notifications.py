@@ -122,15 +122,17 @@ class TestIndividualServiceManagerNotifications:
         mock_email_notifier.send_service_notification.assert_called_once()
         manager._notification_repo.create.assert_called_once()
 
-    @patch("src.application.services.individual_service_manager.get_telegram_notifier")
     def test_notify_service_started_preference_disabled(
-        self, mock_get_telegram_notifier, manager, mock_db_session, sample_preferences
+        self, manager, mock_db_session, sample_preferences
     ):
         """Test that service started notifications are skipped when preference is disabled"""
         # Setup preference service mock to return False
         pref_service = Mock(spec=NotificationPreferenceService)
         pref_service.get_preferences = Mock(return_value=sample_preferences)
         pref_service.should_notify = Mock(return_value=False)  # Preference disabled
+
+        # Mock _get_telegram_notifier to verify it's not called
+        manager._get_telegram_notifier = Mock()
 
         # Patch NotificationPreferenceService where it's imported
         with patch(
@@ -140,7 +142,8 @@ class TestIndividualServiceManagerNotifications:
             manager._notify_service_started(user_id=1, task_name="analysis", process_id=12345)
 
         # Verify notifications were NOT sent
-        mock_get_telegram_notifier.assert_not_called()
+        # Since should_notify returns False, _get_telegram_notifier should not be called
+        manager._get_telegram_notifier.assert_not_called()
         manager._notification_repo.create.assert_not_called()
 
     @patch("src.application.services.individual_service_manager.EmailNotifier")
