@@ -1038,8 +1038,26 @@ class AutoTradeEngine:
                     active_signals = []
                     for signal in signals:
                         # Get effective status (user-specific if exists, otherwise base status)
+                        # IMPORTANT: EXPIRED base status cannot be overridden by user status
+                        # However, TRADED/REJECTED user status takes precedence over EXPIRED base status
+                        # (from our recent fix - user actions are preserved even when base expires)
                         user_status = signals_repo.get_user_signal_status(signal.id, self.user_id)
-                        effective_status = user_status if user_status is not None else signal.status
+
+                        # Determine effective status:
+                        # 1. If user has TRADED or REJECTED override, use that (completed actions take precedence)
+                        # 2. If base signal is EXPIRED and no user override, effective_status is EXPIRED
+                        # 3. Otherwise, use user status if exists, otherwise use base signal status
+                        if user_status in [SignalStatus.TRADED, SignalStatus.REJECTED]:
+                            # User has completed an action (TRADED/REJECTED) - this takes precedence
+                            effective_status = user_status
+                        elif signal.status == SignalStatus.EXPIRED:
+                            # Base signal is EXPIRED and no user action - cannot be overridden with ACTIVE
+                            effective_status = SignalStatus.EXPIRED
+                        else:
+                            # Use user status if exists, otherwise use base signal status
+                            effective_status = (
+                                user_status if user_status is not None else signal.status
+                            )
 
                         # Only include ACTIVE signals
                         if effective_status != SignalStatus.ACTIVE:

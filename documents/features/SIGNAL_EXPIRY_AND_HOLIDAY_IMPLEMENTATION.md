@@ -592,9 +592,58 @@ After implementing time-based signal expiry logic, several edge cases were ident
    - **File**: `src/infrastructure/persistence/signals_repository.py`
    - **Tests**: 3 tests
 
+#### Latest Fixes ✅
+1. **REJECTED Signals Time-Based Expiry**
+   - **Issue**: `REJECTED` signals were not being expired by time, only `ACTIVE` signals were checked
+   - **Problem**: A signal with base status `REJECTED` and user override `ACTIVE` would remain active even after expiry time
+   - **Fix**: Modified `mark_time_expired_signals()` to check both `ACTIVE` and `REJECTED` signals for time-based expiry
+   - **File**: `src/infrastructure/persistence/signals_repository.py`
+   - **Implementation**:
+     ```python
+     # Now checks both ACTIVE and REJECTED signals
+     signals_to_check = list(
+         self.db.execute(
+             select(Signals).where(
+                 Signals.status.in_([SignalStatus.ACTIVE, SignalStatus.REJECTED])
+             )
+         ).scalars().all()
+     )
+     ```
+   - **Tests**: 3 tests in `test_signal_expiry_logic.py`
+     - `test_mark_expired_signals_expires_rejected_signals`
+     - `test_mark_expired_signals_skips_rejected_signals_before_expiry`
+     - `test_mark_expired_signals_handles_active_and_rejected_together`
+
+2. **User Status Precedence Over EXPIRED Base Status**
+   - **Issue**: When a signal's base status was `EXPIRED` but user had `TRADED` or `REJECTED` override, the effective status was incorrectly shown as `EXPIRED`
+   - **Problem**: Users who had traded or rejected a signal would see it as expired, even though they had taken action on it
+   - **Fix**: Modified `get_signals_with_user_status()` to prioritize user-specific `TRADED` or `REJECTED` status over `EXPIRED` base status
+   - **File**: `src/infrastructure/persistence/signals_repository.py`
+   - **Implementation**:
+     ```python
+     # Determine effective status:
+     # 1. If user has TRADED or REJECTED override, use that (completed actions take precedence)
+     # 2. If base signal is EXPIRED and no user override, effective_status is EXPIRED
+     # 3. Otherwise, use user status if exists, otherwise use base signal status
+     if user_status in [SignalStatus.TRADED, SignalStatus.REJECTED]:
+         # User has completed an action (TRADED/REJECTED) - this takes precedence over EXPIRED
+         effective_status = user_status
+     elif signal.status == SignalStatus.EXPIRED:
+         # Time-based expiry - user cannot override with ACTIVE, but TRADED/REJECTED already handled above
+         effective_status = SignalStatus.EXPIRED
+     else:
+         # Use user status if exists, otherwise use base signal status
+         effective_status = user_status if user_status else signal.status
+     ```
+   - **Rationale**: User actions (TRADED/REJECTED) represent completed decisions and should be preserved even if the base signal expires. The frontend can still show the base status separately (e.g., "traded, expired").
+   - **Tests**: 3 tests in `test_signal_expiry_logic.py`
+     - `test_get_signals_with_user_status_traded_takes_precedence_over_expired`
+     - `test_get_signals_with_user_status_rejected_takes_precedence_over_expired`
+     - `test_get_signals_with_user_status_expired_when_no_user_action`
+
 ### Test Coverage
 
-**Total Tests**: 21 tests covering all edge cases
+**Total Tests**: 34 tests covering all edge cases (27 original + 7 test fixes)
 - ✅ AutoTradeEngine expiry check: 4 tests
 - ✅ PaperTradingEngineAdapter expiry check: 3 tests
 - ✅ get_signals_with_user_status() expiry check: 3 tests
@@ -602,11 +651,13 @@ After implementing time-based signal expiry logic, several edge cases were ident
 - ✅ Multiple sessions: 2 tests
 - ✅ Race conditions: 3 tests
 - ✅ Integration: 1 test
+- ✅ REJECTED signals expiry: 3 tests
+- ✅ User status precedence: 3 tests
 
 **Test Files**:
 1. `tests/unit/modules/test_auto_trade_engine_expiry_check.py`
 2. `tests/unit/application/test_paper_trading_adapter_expiry_check.py`
-3. `tests/unit/infrastructure/test_signal_expiry_logic.py` (updated)
+3. `tests/unit/infrastructure/test_signal_expiry_logic.py` (updated with latest fixes)
 4. `tests/unit/infrastructure/test_signal_expiry_p1_p2_p3_fixes.py`
 
 ### Documentation Updates
@@ -619,7 +670,8 @@ After implementing time-based signal expiry logic, several edge cases were ident
 2. **Method-Level Documentation**: Enhanced for:
    - `get_signal_expiry_time()` - Timezone handling details
    - `_is_signal_expired_by_market_close()` - Timezone notes
-   - `mark_time_expired_signals()` - Session isolation and race condition notes
+   - `mark_time_expired_signals()` - Session isolation and race condition notes, REJECTED signal expiry
+   - `get_signals_with_user_status()` - User status precedence logic
    - `recent()`, `by_date()`, `by_date_range()` - Expiry check requirements
 
 ### Implementation Details
@@ -741,6 +793,10 @@ def get_signals_with_user_status(...):
 6. **Edge Cases Fixes (P0)**: Fixed trading engine expiry checks (7 tests)
 7. **Edge Cases Fixes (P1)**: Added expiry check to get_signals_with_user_status(), verified timezone handling (8 tests)
 8. **Edge Cases Fixes (P2, P3)**: Added session isolation docs, race condition mitigation (6 tests)
+9. **Latest Fixes**: REJECTED signals expiry and user status precedence (6 tests)
+10. **Test Fixes**: Fixed reactivation tests and trading engine filtering tests (7 tests)
+9. **Latest Fixes**: REJECTED signals expiry and user status precedence (6 tests)
+10. **Test Fixes**: Fixed reactivation tests and trading engine filtering tests (7 tests)
 
 ---
 
@@ -752,14 +808,20 @@ def get_signals_with_user_status(...):
 - All services updated to use holiday calendar
 - Database consistency ensured
 - Frontend and backend synchronized
-- Comprehensive test coverage (78 tests total, all passing)
+- Comprehensive test coverage (91 tests total, all passing)
   - Initial implementation: 57 tests
   - Edge cases fixes (P1, P2, P3): 21 tests
+  - Latest fixes (REJECTED expiry, user status precedence): 6 tests
+  - Test fixes (reactivation and filtering): 7 tests
 - All edge cases handled
 - Trading engines check expiry before loading signals
 - Timezone handling verified and documented
 - Race conditions mitigated
 - Multiple session handling documented
+- REJECTED signals now expire by time
+- User TRADED/REJECTED status takes precedence over EXPIRED base status
+- Trading engine filtering logic matches precedence rules
+- All tests passing (91/91)
 
 **Impact**:
 - Signals and orders now correctly expire after holidays
@@ -768,3 +830,5 @@ def get_signals_with_user_status(...):
 - No expired signals can be used for trading
 - All code paths check expiry consistently
 - Robust handling of timezone edge cases and concurrent updates
+- REJECTED signals are properly expired by time (prevents stale rejected signals)
+- User actions (TRADED/REJECTED) are preserved even when base signal expires (better UX)

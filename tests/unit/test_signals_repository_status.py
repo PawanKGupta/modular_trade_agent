@@ -193,8 +193,6 @@ class TestMarkAsRejected:
 class TestGetActiveSignals:
     def test_returns_only_active_signals(self, signals_repo, db_session):
         """Should return only signals with ACTIVE status that haven't expired"""
-        from freezegun import freeze_time
-        from datetime import date, time
 
         # Create signals with controlled timestamps to avoid time-based expiry
         # Use freeze_time to ensure signals are created at a known time
@@ -408,38 +406,42 @@ class TestMarkAsActive:
         assert signal.status == SignalStatus.ACTIVE
 
     def test_cannot_reactivate_old_rejected_signal(self, signals_repo, db_session):
-        """Test: Cannot reactivate a rejected signal from day before yesterday"""
-        # Create rejected signal from day before yesterday
-        now = ist_now()
-        day_before_yesterday = now.date() - timedelta(days=2)
-        # Set to any time on day before yesterday
-        signal_time = datetime.combine(day_before_yesterday, time(14, 0)).replace(tzinfo=now.tzinfo)
-        signal = Signals(symbol="TEST5", status=SignalStatus.REJECTED, ts=signal_time, rsi10=25.0)
+        """Test: Cannot reactivate a rejected signal that has expired (past next trading day's market close)"""
+
+        # Create rejected signal from last week (guaranteed to be expired)
+        # Use a fixed date to ensure the signal is expired
+        signal_date = datetime(2025, 12, 9, 14, 0, 0, tzinfo=ist_now().tzinfo)  # Monday, Dec 9
+        signal = Signals(symbol="TEST5", status=SignalStatus.REJECTED, ts=signal_date, rsi10=25.0)
         db_session.add(signal)
         db_session.commit()
 
-        # Try to reactivate (should fail because signal is from day before yesterday)
-        success = signals_repo.mark_as_active("TEST5")
-        assert success is False
+        # Freeze time to a date after the signal's expiry (next trading day's market close)
+        # Signal from Monday Dec 9 expires on Tuesday Dec 10 at 3:30 PM
+        with freeze_time("2025-12-10 16:00:00+05:30"):  # Tuesday 4:00 PM (after expiry)
+            # Try to reactivate (should fail because signal has expired)
+            success = signals_repo.mark_as_active("TEST5")
+            assert success is False
 
         # Status should remain REJECTED
         db_session.refresh(signal)
         assert signal.status == SignalStatus.REJECTED
 
     def test_cannot_reactivate_old_traded_signal(self, signals_repo, db_session):
-        """Test: Cannot reactivate a traded signal from day before yesterday"""
-        # Create traded signal from day before yesterday
-        now = ist_now()
-        day_before_yesterday = now.date() - timedelta(days=2)
-        # Set to any time on day before yesterday
-        signal_time = datetime.combine(day_before_yesterday, time(14, 0)).replace(tzinfo=now.tzinfo)
-        signal = Signals(symbol="TEST6", status=SignalStatus.TRADED, ts=signal_time, rsi10=25.0)
+        """Test: Cannot reactivate a traded signal that has expired (past next trading day's market close)"""
+
+        # Create traded signal from last week (guaranteed to be expired)
+        # Use a fixed date to ensure the signal is expired
+        signal_date = datetime(2025, 12, 9, 14, 0, 0, tzinfo=ist_now().tzinfo)  # Monday, Dec 9
+        signal = Signals(symbol="TEST6", status=SignalStatus.TRADED, ts=signal_date, rsi10=25.0)
         db_session.add(signal)
         db_session.commit()
 
-        # Try to reactivate (should fail because signal is from day before yesterday)
-        success = signals_repo.mark_as_active("TEST6")
-        assert success is False
+        # Freeze time to a date after the signal's expiry (next trading day's market close)
+        # Signal from Monday Dec 9 expires on Tuesday Dec 10 at 3:30 PM
+        with freeze_time("2025-12-10 16:00:00+05:30"):  # Tuesday 4:00 PM (after expiry)
+            # Try to reactivate (should fail because signal has expired)
+            success = signals_repo.mark_as_active("TEST6")
+            assert success is False
 
         # Status should remain TRADED
         db_session.refresh(signal)
@@ -447,8 +449,8 @@ class TestMarkAsActive:
 
     def test_cannot_reactivate_signal_after_today_market_close(self, signals_repo, db_session):
         """Test: Cannot reactivate signal after next trading day's 3:30 PM if created yesterday"""
-        from freezegun import freeze_time
-        from datetime import date, time
+        from datetime import date
+
         from src.infrastructure.db.timezone_utils import IST
 
         # Create signal from yesterday (Thursday, Dec 11, 2025)

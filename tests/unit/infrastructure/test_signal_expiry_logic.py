@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.infrastructure.db.models import Signals, SignalStatus
+from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus
 from src.infrastructure.db.timezone_utils import IST
 from src.infrastructure.persistence.signals_repository import SignalsRepository
 
@@ -325,6 +325,52 @@ class TestDatabaseStatusUpdate:
         db_session.refresh(signal)
         assert signal.status == SignalStatus.TRADED
 
+    def test_mark_expired_signals_expires_rejected_signals(self, db_session, signals_repo):
+        """Should update REJECTED signals to EXPIRED when past expiry time"""
+        # Create rejected signal from Monday (expires Tuesday 3:30 PM)
+        signal = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.REJECTED,
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),  # Monday 4:00 PM
+            verdict="buy",
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        # Mock current time: Tuesday 4:00 PM (after expiry)
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
+            mock_now.return_value = datetime(2025, 12, 2, 16, 0, 0, tzinfo=IST)
+
+            expired_count = signals_repo.mark_time_expired_signals()
+
+            assert expired_count == 1
+            db_session.refresh(signal)
+            assert signal.status == SignalStatus.EXPIRED
+
+    def test_mark_expired_signals_skips_rejected_signals_before_expiry(
+        self, db_session, signals_repo
+    ):
+        """Should not update REJECTED signals that are still within expiry window"""
+        # Create rejected signal from Monday (expires Tuesday 3:30 PM)
+        signal = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.REJECTED,
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),  # Monday 4:00 PM
+            verdict="buy",
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        # Mock current time: Tuesday 2:00 PM (before expiry)
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
+            mock_now.return_value = datetime(2025, 12, 2, 14, 0, 0, tzinfo=IST)
+
+            expired_count = signals_repo.mark_time_expired_signals()
+
+            assert expired_count == 0
+            db_session.refresh(signal)
+            assert signal.status == SignalStatus.REJECTED
+
     def test_mark_expired_signals_handles_multiple_signals(self, db_session, signals_repo):
         """Should handle multiple signals with different expiry times"""
         # Signal 1: Monday, Dec 1, 2025 (expires Tuesday, Dec 2, 3:30 PM)
@@ -386,6 +432,39 @@ class TestDatabaseStatusUpdate:
             db_session.refresh(signal2)
             assert signal1.status == SignalStatus.EXPIRED
             assert signal2.status == SignalStatus.ACTIVE
+
+    def test_mark_expired_signals_handles_active_and_rejected_together(
+        self, db_session, signals_repo
+    ):
+        """Should expire both ACTIVE and REJECTED signals that are past expiry"""
+        # Signal 1: ACTIVE from Monday (expires Tuesday 3:30 PM)
+        signal1 = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.ACTIVE,
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),  # Monday 4:00 PM
+            verdict="buy",
+        )
+        # Signal 2: REJECTED from Monday (expires Tuesday 3:30 PM)
+        signal2 = Signals(
+            symbol="TCS",
+            status=SignalStatus.REJECTED,
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),  # Monday 4:00 PM
+            verdict="buy",
+        )
+        db_session.add_all([signal1, signal2])
+        db_session.commit()
+
+        # Mock current time: Tuesday 4:00 PM (after expiry)
+        with patch("src.infrastructure.persistence.signals_repository.ist_now") as mock_now:
+            mock_now.return_value = datetime(2025, 12, 2, 16, 0, 0, tzinfo=IST)
+
+            expired_count = signals_repo.mark_time_expired_signals()
+
+            assert expired_count == 2
+            db_session.refresh(signal1)
+            db_session.refresh(signal2)
+            assert signal1.status == SignalStatus.EXPIRED
+            assert signal2.status == SignalStatus.EXPIRED
 
 
 class TestGetActiveSignalsIntegration:
@@ -512,6 +591,111 @@ class TestGetSignalsWithUserStatusExpiryCheck:
                     break
             assert signal_found
 
+    def test_get_signals_with_user_status_traded_takes_precedence_over_expired(
+        self, db_session, signals_repo, test_user
+    ):
+        """TRADED user status should take precedence over EXPIRED base status"""
+        # Create signal with EXPIRED base status
+        signal = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.EXPIRED,  # Base status is EXPIRED
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),
+            verdict="buy",
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # User has TRADED override
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.TRADED,  # User status is TRADED
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        signals_with_status = signals_repo.get_signals_with_user_status(
+            user_id=test_user.id, limit=100
+        )
+
+        # Should return TRADED as effective status (not EXPIRED)
+        signal_found = False
+        for sig, status in signals_with_status:
+            if sig.id == signal.id:
+                signal_found = True
+                assert status == SignalStatus.TRADED, "TRADED should take precedence over EXPIRED"
+                break
+        assert signal_found
+
+    def test_get_signals_with_user_status_rejected_takes_precedence_over_expired(
+        self, db_session, signals_repo, test_user
+    ):
+        """REJECTED user status should take precedence over EXPIRED base status"""
+        # Create signal with EXPIRED base status
+        signal = Signals(
+            symbol="TCS",
+            status=SignalStatus.EXPIRED,  # Base status is EXPIRED
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),
+            verdict="buy",
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # User has REJECTED override
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="TCS",
+            status=SignalStatus.REJECTED,  # User status is REJECTED
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        signals_with_status = signals_repo.get_signals_with_user_status(
+            user_id=test_user.id, limit=100
+        )
+
+        # Should return REJECTED as effective status (not EXPIRED)
+        signal_found = False
+        for sig, status in signals_with_status:
+            if sig.id == signal.id:
+                signal_found = True
+                assert (
+                    status == SignalStatus.REJECTED
+                ), "REJECTED should take precedence over EXPIRED"
+                break
+        assert signal_found
+
+    def test_get_signals_with_user_status_expired_when_no_user_action(
+        self, db_session, signals_repo, test_user
+    ):
+        """EXPIRED base status should be returned when no user action (TRADED/REJECTED)"""
+        # Create signal with EXPIRED base status
+        signal = Signals(
+            symbol="INFY",
+            status=SignalStatus.EXPIRED,  # Base status is EXPIRED
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),
+            verdict="buy",
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        signals_with_status = signals_repo.get_signals_with_user_status(
+            user_id=test_user.id, limit=100
+        )
+
+        # Should return EXPIRED as effective status
+        signal_found = False
+        for sig, status in signals_with_status:
+            if sig.id == signal.id:
+                signal_found = True
+                assert status == SignalStatus.EXPIRED
+                break
+        assert signal_found
+
     def test_get_signals_with_user_status_calls_expiry_check(
         self, db_session, signals_repo, test_user
     ):
@@ -535,3 +719,108 @@ class TestGetSignalsWithUserStatusExpiryCheck:
 
             # Verify mark_time_expired_signals was called
             mock_expiry_check.assert_called_once()
+
+    def test_get_signals_with_user_status_traded_takes_precedence_over_expired(
+        self, db_session, signals_repo, test_user
+    ):
+        """TRADED user status should take precedence over EXPIRED base status"""
+        # Create signal with EXPIRED base status
+        signal = Signals(
+            symbol="RELIANCE",
+            status=SignalStatus.EXPIRED,  # Base status is EXPIRED
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),
+            verdict="buy",
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # User has TRADED override
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.TRADED,  # User status is TRADED
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        signals_with_status = signals_repo.get_signals_with_user_status(
+            user_id=test_user.id, limit=100
+        )
+
+        # Should return TRADED as effective status (not EXPIRED)
+        signal_found = False
+        for sig, status in signals_with_status:
+            if sig.id == signal.id:
+                signal_found = True
+                assert status == SignalStatus.TRADED, "TRADED should take precedence over EXPIRED"
+                break
+        assert signal_found
+
+    def test_get_signals_with_user_status_rejected_takes_precedence_over_expired(
+        self, db_session, signals_repo, test_user
+    ):
+        """REJECTED user status should take precedence over EXPIRED base status"""
+        # Create signal with EXPIRED base status
+        signal = Signals(
+            symbol="TCS",
+            status=SignalStatus.EXPIRED,  # Base status is EXPIRED
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),
+            verdict="buy",
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # User has REJECTED override
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="TCS",
+            status=SignalStatus.REJECTED,  # User status is REJECTED
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        signals_with_status = signals_repo.get_signals_with_user_status(
+            user_id=test_user.id, limit=100
+        )
+
+        # Should return REJECTED as effective status (not EXPIRED)
+        signal_found = False
+        for sig, status in signals_with_status:
+            if sig.id == signal.id:
+                signal_found = True
+                assert (
+                    status == SignalStatus.REJECTED
+                ), "REJECTED should take precedence over EXPIRED"
+                break
+        assert signal_found
+
+    def test_get_signals_with_user_status_expired_when_no_user_action(
+        self, db_session, signals_repo, test_user
+    ):
+        """EXPIRED base status should be returned when no user action (TRADED/REJECTED)"""
+        # Create signal with EXPIRED base status
+        signal = Signals(
+            symbol="INFY",
+            status=SignalStatus.EXPIRED,  # Base status is EXPIRED
+            ts=datetime(2025, 12, 1, 16, 0, 0, tzinfo=IST),
+            verdict="buy",
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        signals_with_status = signals_repo.get_signals_with_user_status(
+            user_id=test_user.id, limit=100
+        )
+
+        # Should return EXPIRED as effective status
+        signal_found = False
+        for sig, status in signals_with_status:
+            if sig.id == signal.id:
+                signal_found = True
+                assert status == SignalStatus.EXPIRED
+                break
+        assert signal_found

@@ -5,7 +5,7 @@ Tests that signal status (TRADED/REJECTED) is tracked per-user
 while keeping base signals shared across users.
 """
 
-from datetime import datetime, time, timedelta
+from datetime import datetime
 
 import pytest
 
@@ -328,14 +328,14 @@ class TestPerUserSignalStatus:
         assert user_status is not None
 
     def test_mark_as_active_cannot_reactivate_old_signal(self, db_session, test_users):
-        """Test that cannot reactivate a signal from day before yesterday"""
+        """Test that cannot reactivate a signal that has expired (past next trading day's market close)"""
+        from freezegun import freeze_time
+
         user1, user2 = test_users
 
-        # Create signal from day before yesterday
-        now = ist_now()
-        day_before_yesterday = now.date() - timedelta(days=2)
-        # Set to any time on day before yesterday
-        signal_time = datetime.combine(day_before_yesterday, time(14, 0)).replace(tzinfo=now.tzinfo)
+        # Create signal from last week (guaranteed to be expired)
+        # Use a fixed date to ensure the signal is expired
+        signal_date = datetime(2025, 12, 9, 14, 0, 0, tzinfo=ist_now().tzinfo)  # Monday, Dec 9
         old_signal = Signals(
             symbol="RELIANCE",
             status=SignalStatus.ACTIVE,
@@ -343,7 +343,7 @@ class TestPerUserSignalStatus:
             ema9=2600.0,
             last_close=2500.0,
             verdict="buy",
-            ts=signal_time,
+            ts=signal_date,
         )
         db_session.add(old_signal)
         db_session.commit()
@@ -362,9 +362,12 @@ class TestPerUserSignalStatus:
         db_session.add(user_status)
         db_session.commit()
 
-        # Try to reactivate (should fail because signal is from previous day)
-        success = repo.mark_as_active("RELIANCE", user_id=user1.id)
-        assert success is False
+        # Freeze time to a date after the signal's expiry (next trading day's market close)
+        # Signal from Monday Dec 9 expires on Tuesday Dec 10 at 3:30 PM
+        with freeze_time("2025-12-10 16:00:00+05:30"):  # Tuesday 4:00 PM (after expiry)
+            # Try to reactivate (should fail because signal has expired)
+            success = repo.mark_as_active("RELIANCE", user_id=user1.id)
+            assert success is False
 
         # User status should still exist
         user_status = (
