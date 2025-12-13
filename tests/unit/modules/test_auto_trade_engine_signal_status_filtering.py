@@ -287,6 +287,42 @@ class TestAutoTradeEngineSignalStatusFiltering:
         assert len(recs) == 1
         assert recs[0].ticker == "RELIANCE.NS"
 
+    def test_load_recommendations_excludes_failed_signals(
+        self, auto_trade_engine_with_db, db_session, test_user
+    ):
+        """Test that FAILED signals (per-user) are excluded from recommendations"""
+        # Create ACTIVE signal
+        signal = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # Mark as FAILED for test_user (per-user status)
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.FAILED,
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        # Mock CSV fallback to return empty list
+        with patch.object(
+            auto_trade_engine_with_db, "load_latest_recommendations_from_csv", return_value=[]
+        ):
+            recs = auto_trade_engine_with_db.load_latest_recommendations()
+
+        # Should exclude FAILED signal
+        assert len(recs) == 0
+
     def test_load_recommendations_different_users_see_different_signals(
         self, auto_trade_engine_with_db, db_session, test_user
     ):

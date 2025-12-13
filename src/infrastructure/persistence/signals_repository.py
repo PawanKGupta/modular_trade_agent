@@ -321,6 +321,39 @@ class SignalsRepository:
         self.db.commit()
         return True
 
+    def mark_as_failed(self, signal_id: int, user_id: int) -> bool:
+        """
+        Mark a user-specific TRADED signal as FAILED.
+
+        This is used when an order fails, is rejected, or is cancelled.
+        The signal was previously marked as TRADED, but the order didn't succeed.
+
+        Args:
+            signal_id: Signal ID
+            user_id: User ID
+
+        Returns:
+            True if signal was found and marked, False otherwise
+        """
+        if not user_id:
+            return False
+
+        # Check if user has a TRADED status override for this signal
+        user_status = self.db.execute(
+            select(UserSignalStatus).where(
+                UserSignalStatus.user_id == user_id,
+                UserSignalStatus.signal_id == signal_id,
+                UserSignalStatus.status == SignalStatus.TRADED,
+            )
+        ).scalar_one_or_none()
+
+        if user_status:
+            user_status.status = SignalStatus.FAILED
+            user_status.marked_at = ist_now()
+            self.db.commit()
+            return True
+        return False
+
     def mark_as_active(self, symbol: str, user_id: int | None = None) -> bool:  # noqa: PLR0911
         """
         Mark a signal as ACTIVE again for a specific user (reactivate).
@@ -643,11 +676,11 @@ class SignalsRepository:
         signals_with_status = []
         for signal, user_status in results:
             # Determine effective status:
-            # - User actions (TRADED/REJECTED) always take precedence and are shown as effective status
+            # - User actions (TRADED/REJECTED/FAILED) always take precedence and are shown as effective status
             # - Base signal status (ACTIVE/EXPIRED) is shown separately in base_status field
             # - This allows frontend to display: "traded, expired" or "rejected, active" etc.
-            if user_status in [SignalStatus.TRADED, SignalStatus.REJECTED]:
-                # User has completed an action (TRADED/REJECTED) - show this as effective status
+            if user_status in [SignalStatus.TRADED, SignalStatus.REJECTED, SignalStatus.FAILED]:
+                # User has completed an action (TRADED/REJECTED/FAILED) - show this as effective status
                 # Base status will show separately (e.g., "traded, expired" or "rejected, active")
                 effective_status = user_status
             elif signal.status == SignalStatus.EXPIRED:

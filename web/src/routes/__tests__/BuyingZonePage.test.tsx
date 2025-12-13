@@ -667,14 +667,15 @@ describe('BuyingZonePage', () => {
 			const statusFilter = filters[0]; // First combobox is status filter
 			expect(statusFilter).toBeInTheDocument();
 
-			// Check all options are present
+			// Check all options are present (now includes Failed status)
 			const options = statusFilter.querySelectorAll('option');
-			expect(options).toHaveLength(5);
+			expect(options).toHaveLength(6);
 			expect(options[0].textContent).toContain('Active');
 			expect(options[1].textContent).toContain('All');
 			expect(options[2].textContent).toContain('Expired');
 			expect(options[3].textContent).toContain('Traded');
 			expect(options[4].textContent).toContain('Rejected');
+			expect(options[5].textContent).toContain('Failed');
 		});
 
 		it('defaults to showing only active signals', async () => {
@@ -1345,10 +1346,10 @@ describe('BuyingZonePage', () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 
-			// Create a date from day before yesterday (should be expired)
-			const dayBeforeYesterday = new Date();
-			dayBeforeYesterday.setDate(dayBeforeYesterday.getDate() - 2);
-			const dayBeforeYesterdayISO = dayBeforeYesterday.toISOString();
+			// Create a date from last week (definitely expired - ensures it's past next trading day's 3:30 PM)
+			const lastWeek = new Date();
+			lastWeek.setDate(lastWeek.getDate() - 7);
+			const lastWeekISO = lastWeek.toISOString();
 
 			server.use(
 				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
@@ -1360,8 +1361,8 @@ describe('BuyingZonePage', () => {
 							{
 								symbol: 'REJECTED_OLD',
 								status: 'rejected',
-								base_status: 'rejected', // Base status is not expired, but signal is from day before yesterday
-								ts: dayBeforeYesterdayISO,
+								base_status: 'rejected', // Base status is not expired, but signal is from last week (definitely expired)
+								ts: lastWeekISO,
 								distance_to_ema9: 5.5,
 								backtest_score: 75.5,
 								confidence: 0.85,

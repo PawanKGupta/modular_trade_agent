@@ -8,8 +8,9 @@ from typing import Any
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Orders, OrderStatus
+from src.infrastructure.db.models import Orders, OrderStatus, Signals, SignalStatus
 from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.persistence.signals_repository import SignalsRepository
 
 # Import logger for duplicate detection logging
 try:
@@ -455,6 +456,11 @@ class OrdersRepository:
         # Increment retry_count for monitoring (no max retry limit enforced)
         order.retry_count = (order.retry_count or 0) + 1
         # Note: retry_pending parameter is ignored - all FAILED orders are retriable
+
+        # Mark signal as FAILED if it's a buy order
+        if order.side == "buy":
+            self._mark_signal_as_failed(order)
+
         return self.update(order)
 
     def mark_rejected(self, order: Orders, rejection_reason: str) -> Orders:
@@ -468,6 +474,11 @@ class OrdersRepository:
         # Set first_failed_at if not already set (for retry logic)
         if not order.first_failed_at:
             order.first_failed_at = ist_now()
+
+        # Mark signal as FAILED if it's a buy order
+        if order.side == "buy":
+            self._mark_signal_as_failed(order)
+
         return self.update(order)
 
     def mark_cancelled(self, order: Orders, cancelled_reason: str | None = None) -> Orders:
@@ -476,6 +487,11 @@ class OrdersRepository:
         order.reason = cancelled_reason or "Cancelled"  # Use unified reason field
         order.closed_at = ist_now()
         order.last_status_check = ist_now()
+
+        # Mark signal as FAILED if it's a buy order
+        if order.side == "buy":
+            self._mark_signal_as_failed(order)
+
         return self.update(order)
 
     def mark_executed(
@@ -506,6 +522,71 @@ class OrdersRepository:
         """Update the last status check timestamp"""
         order.last_status_check = ist_now()
         return self.update(order)
+
+    def _mark_signal_as_failed(self, order: Orders) -> None:
+        """
+        Helper method to mark signal as FAILED when order fails.
+
+        Only marks if:
+        - Order is a buy order
+        - Signal exists and is TRADED for this user
+        - All buy orders for this symbol have failed (edge case handling)
+
+        Args:
+            order: The order that failed
+        """
+        if order.side != "buy":
+            return  # Only handle buy orders
+
+        try:
+            signals_repo = SignalsRepository(self.db, user_id=order.user_id)
+
+            # Extract base symbol (remove -EQ, -BE suffixes)
+            base_symbol = order.symbol.split("-")[0] if "-" in order.symbol else order.symbol
+            base_symbol = base_symbol.upper()
+
+            # Find the latest signal for this symbol
+            signal = self.db.execute(
+                select(Signals)
+                .where(Signals.symbol == base_symbol)
+                .order_by(Signals.ts.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if not signal:
+                return  # No signal found
+
+            # Check if user has TRADED status for this signal
+            user_status = signals_repo.get_user_signal_status(signal.id, order.user_id)
+            if user_status != SignalStatus.TRADED:
+                return  # Signal is not TRADED, don't mark as FAILED
+
+            # Edge case: Check if there are other successful orders for this symbol
+            # Only mark as FAILED if ALL buy orders have failed
+            other_orders = self.list(order.user_id)
+            symbol_orders = [
+                o
+                for o in other_orders
+                if o.side == "buy"
+                and (o.symbol.split("-")[0] if "-" in o.symbol else o.symbol).upper() == base_symbol
+                and o.id != order.id  # Exclude current order
+            ]
+
+            # Check if any other order is successful (ONGOING or PENDING)
+            has_successful_order = any(
+                o.status in [OrderStatus.ONGOING, OrderStatus.PENDING] for o in symbol_orders
+            )
+
+            if has_successful_order:
+                # Another order is still processing, keep as TRADED
+                return
+
+            # All orders failed or no other orders - mark signal as FAILED
+            signals_repo.mark_as_failed(signal.id, order.user_id)
+
+        except Exception as e:
+            # Don't fail order update if signal marking fails
+            logger.warning(f"Failed to mark signal as FAILED for order {order.id}: {e}")
 
     def get_pending_amo_orders(self, user_id: int) -> list[Orders]:
         """Get all pending orders that need status checking

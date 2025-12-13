@@ -30,9 +30,10 @@ from src.infrastructure.logging import get_user_logger
 
 # Import for service notifications
 try:
-    from modules.kotak_neo_auto_trader.telegram_notifier import get_telegram_notifier
+    import importlib.util
 
-    TELEGRAM_NOTIFIER_AVAILABLE = True
+    spec = importlib.util.find_spec("modules.kotak_neo_auto_trader.telegram_notifier")
+    TELEGRAM_NOTIFIER_AVAILABLE = spec is not None
 except ImportError:
     TELEGRAM_NOTIFIER_AVAILABLE = False
 
@@ -628,9 +629,7 @@ class IndividualServiceManager:
                 user_config_to_strategy_config,
             )
 
-            strategy_config = user_config_to_strategy_config(
-                user_config, db_session=self.db
-            )
+            strategy_config = user_config_to_strategy_config(user_config, db_session=self.db)
 
             # Pass user_id as environment variable so trade_agent can load config
             # Note: trade_agent.py will need to be updated to read user_id from env
@@ -842,6 +841,73 @@ class IndividualServiceManager:
             )
             return []
 
+    def _is_t2t_segment(self, ticker: str) -> bool:
+        """
+        Check if a ticker/symbol belongs to a T2T (Trade-to-Trade) segment.
+
+        T2T segments (-BE, -BL, -BZ) have same-day selling restrictions and should
+        be excluded from trading for mean reversion strategies.
+
+        Uses scrip master's resolution logic to properly resolve the symbol before checking.
+
+        Args:
+            ticker: Stock ticker (e.g., "RELIANCE.NS") or symbol (e.g., "RELIANCE")
+
+        Returns:
+            True if symbol is T2T segment, False otherwise
+        """
+        # Extract base symbol (remove .NS/.BO suffix)
+        base_symbol = ticker.replace(".NS", "").replace(".BO", "").strip().upper()
+
+        # Try to resolve symbol using scrip master if available
+        try:
+            from modules.kotak_neo_auto_trader import config as kotak_config
+            from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
+            from utils.logger import logger as utils_logger
+
+            # Try to load scrip master from cache
+            default_exchange = getattr(kotak_config, "DEFAULT_EXCHANGE", "NSE")
+            scrip_master = KotakNeoScripMaster(
+                cache_dir="data/scrip_master", exchanges=[default_exchange]
+            )
+
+            # Try to load from cache (doesn't require auth)
+            instruments = scrip_master._load_from_cache(default_exchange)
+
+            if instruments:
+                # Build symbol map using scrip master's built-in logic
+                # This properly maps base symbols to their trading symbols
+                scrip_master.scrip_data[default_exchange] = instruments
+                scrip_master._build_symbol_map(default_exchange, instruments)
+
+                # Use scrip master's resolution logic to get the correct trading symbol
+                # This handles edge cases where a stock might only exist in one segment
+                instrument = scrip_master.get_instrument(base_symbol, exchange=default_exchange)
+
+                if instrument and instrument.get("symbol"):
+                    # Got the resolved trading symbol (e.g., "SALSTEEL-BE", "RELIANCE-EQ")
+                    resolved_symbol = instrument["symbol"].upper()
+
+                    # Check if resolved symbol is T2T segment
+                    is_t2t = any(resolved_symbol.endswith(suf) for suf in ["-BE", "-BL", "-BZ"])
+                    return is_t2t
+
+                # If symbol not found in scrip master, can't determine - allow through
+                return False
+            else:
+                # Scrip master cache not available - can't determine, allow through
+                return False
+        except Exception as e:
+            # If scrip master check fails, allow through (to avoid breaking system)
+            # Log debug message (not warning, as this is expected if scrip master not available)
+            try:
+                from utils.logger import logger as utils_logger
+
+                utils_logger.debug(f"Could not check T2T segment for {ticker}: {e}")
+            except ImportError:
+                pass  # Logger not available, silently continue
+            return False
+
     def _persist_analysis_results(
         self, results: list[dict], logger, user_id: int | None = None
     ) -> dict[str, int]:
@@ -853,6 +919,7 @@ class IndividualServiceManager:
         )
 
         processed_rows = []
+        t2t_filtered_count = 0
         for row in results:
             if not isinstance(row, dict) or row.get("status") not in {"success", None}:
                 continue
@@ -861,17 +928,36 @@ class IndividualServiceManager:
             if verdict not in {"buy", "strong_buy"}:
                 continue
 
+            # Filter out T2T segment stocks (hard filter)
+            ticker = row.get("ticker") or row.get("symbol")
+            if ticker and self._is_t2t_segment(ticker):
+                t2t_filtered_count += 1
+                logger.debug(
+                    f"Skipping T2T segment stock: {ticker} (same-day selling not allowed)",
+                    action="run_analysis",
+                    task_name="analysis",
+                )
+                continue
+
             normalized = self._normalize_analysis_row(row)
             if normalized:
                 processed_rows.append(normalized)
 
         summary = {
-            "processed": len(processed_rows),
+            "processed": 0,  # Will be updated after actual persistence
             "inserted": 0,
             "updated": 0,
             "skipped": len(results) - len(processed_rows),
             "expired": 0,
+            "t2t_filtered": t2t_filtered_count,
         }
+
+        if t2t_filtered_count > 0:
+            logger.info(
+                f"Filtered {t2t_filtered_count} T2T segment stocks (same-day selling not allowed)",
+                action="run_analysis",
+                task_name="analysis",
+            )
 
         logger.info(
             f"Normalized {len(processed_rows)} rows from {len(results)} results",
@@ -928,6 +1014,7 @@ class IndividualServiceManager:
                 )
                 summary["skipped_reason"] = reason
                 summary["skipped"] = len(processed_rows)
+                summary["processed"] = 0  # Nothing was actually processed
                 return summary
 
             # Smart expiration is now handled inside deduplicate_and_update_signals
@@ -949,6 +1036,8 @@ class IndividualServiceManager:
                 task_name="analysis",
             )
             summary.update(counts)
+            # processed = inserted + updated (actual database operations)
+            summary["processed"] = counts.get("inserted", 0) + counts.get("updated", 0)
             logger.info(
                 f"Signals updated successfully: {summary}",
                 action="run_analysis",
