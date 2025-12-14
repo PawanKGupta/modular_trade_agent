@@ -108,14 +108,12 @@ class DatabaseLogHandler(logging.Handler):
             try:
                 # Check for flush event (for testing/immediate flush)
                 flush_requested = cls._flush_event.is_set()
-                if flush_requested:
-                    cls._flush_event.clear()
 
                 # Get record from queue with timeout
+                # Use shorter timeout when flush is requested to process faster
+                timeout = 0.1 if flush_requested else 0.5
                 try:
-                    item = cls._shared_queue.get(
-                        timeout=0.5
-                    )  # Shorter timeout to check flush event
+                    item = cls._shared_queue.get(timeout=timeout)
                     # Check for shutdown sentinel (None record)
                     if item[1] is None:
                         break
@@ -126,6 +124,9 @@ class DatabaseLogHandler(logging.Handler):
                         cls._flush_batch(batch)
                         batch.clear()
                         last_flush = time.time()
+                        # Clear flush event after flushing
+                        if flush_requested:
+                            cls._flush_event.clear()
                     continue
 
                 # Flush batch if it's full, timeout reached, or flush requested
@@ -137,6 +138,9 @@ class DatabaseLogHandler(logging.Handler):
                     cls._flush_batch(batch)
                     batch.clear()
                     last_flush = time.time()
+                    # Clear flush event after flushing
+                    if flush_requested:
+                        cls._flush_event.clear()
 
             except Exception as e:
                 # Log error to stderr (can't use logger here to avoid recursion)
