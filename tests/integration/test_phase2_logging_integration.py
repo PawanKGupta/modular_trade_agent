@@ -4,6 +4,7 @@ Integration tests for Phase 2 Logging System
 Tests the full logging flow from service operations to database and files.
 """
 
+import time
 from pathlib import Path
 
 import pytest
@@ -46,9 +47,8 @@ class TestLoggingIntegration:
         """Test that service start creates logs in both database and files"""
         monkeypatch.chdir(tmp_path)
 
-        service = MultiUserTradingService(db=db_session)
-
-        # Patch SessionLocal to use test database
+        # Patch SessionLocal to use test database BEFORE creating service
+        # This ensures the worker thread uses the patched SessionLocal
         from unittest.mock import patch
 
         from sqlalchemy.orm import sessionmaker
@@ -59,6 +59,8 @@ class TestLoggingIntegration:
         with patch(
             "src.infrastructure.logging.database_log_handler.SessionLocal", test_sessionmaker
         ):
+            service = MultiUserTradingService(db=db_session)
+
             # Start service
             try:
                 service.start_service(sample_user_with_full_setup.id)
@@ -66,7 +68,18 @@ class TestLoggingIntegration:
                 pass  # May fail at TradingService init, but logging should work
 
             # Flush queue to ensure logs are written (queue-based async logging)
-            DatabaseLogHandler.flush(timeout=2.0)
+            DatabaseLogHandler.flush(timeout=3.0)
+
+            # Wait for flush event to be cleared, indicating batch was written
+            # The flush event is cleared after the batch is successfully flushed
+            max_wait = 2.0
+            start_wait = time.time()
+            while DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait:
+                time.sleep(0.1)
+
+            # Additional delay to ensure database commit is visible
+            # This is needed especially in CI environments where timing can differ
+            time.sleep(0.3)
 
             # Check database logs
             from src.infrastructure.persistence.service_log_repository import (
@@ -111,7 +124,18 @@ class TestLoggingIntegration:
             logger.error("Test error occurred", exc_info=exception, symbol="RELIANCE")
 
             # Flush queue to ensure logs are written (queue-based async logging)
-            DatabaseLogHandler.flush(timeout=2.0)
+            DatabaseLogHandler.flush(timeout=3.0)
+
+            # Wait for flush event to be cleared, indicating batch was written
+            # The flush event is cleared after the batch is successfully flushed
+            max_wait = 2.0
+            start_wait = time.time()
+            while DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait:
+                time.sleep(0.1)
+
+            # Additional delay to ensure database commit is visible
+            # This is needed especially in CI environments where timing can differ
+            time.sleep(0.3)
 
             # Rollback session in case error capture failed and left it in a bad state
             try:
@@ -173,6 +197,12 @@ class TestLoggingIntegration:
             # Flush queue to ensure log is written (queue-based async logging)
             DatabaseLogHandler.flush(timeout=2.0)
 
+            # Additional small delay to ensure database commit is visible
+            # This is needed especially in CI environments where timing can differ
+            import time
+
+            time.sleep(0.2)
+
             # Check context is preserved in database
             from src.infrastructure.persistence.service_log_repository import (
                 ServiceLogRepository,
@@ -229,6 +259,10 @@ class TestLoggingIntegration:
 
             # Flush queue to ensure logs are written (queue-based async logging)
             DatabaseLogHandler.flush(timeout=2.0)
+
+            # Additional small delay to ensure database commit is visible
+            # This is needed especially in CI environments where timing can differ
+            time.sleep(0.2)
 
             # Check database isolation
             from src.infrastructure.persistence.service_log_repository import (

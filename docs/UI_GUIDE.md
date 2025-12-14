@@ -180,18 +180,14 @@ After logging in, you'll see the main dashboard with navigation to all features.
 - Average price
 - Current value
 - Unrealized P&L
+- Cash balance
+- Total portfolio value
 
 **Trade Execution:**
 - Manual trade execution
 - Buy/Sell orders
 - Quantity and price input
 - Realistic execution simulation
-
-**Trade History:**
-- All paper trades
-- Execution details
-- Fees and charges
-- P&L per trade
 
 **Settings:**
 - Initial capital configuration
@@ -202,6 +198,121 @@ After logging in, you'll see the main dashboard with navigation to all features.
 - Test different strategies
 - Monitor performance
 - Learn without risk
+
+---
+
+### 5a. Paper Trading History (`/dashboard/paper-trading-history`)
+
+**Purpose:** View complete history of paper trading transactions.
+
+#### Features
+
+**Trade History:**
+- All paper trades (buy/sell)
+- Execution details
+- Fees and charges
+- P&L per trade
+- Trade timestamps
+- Order IDs
+
+**Filters:**
+- Filter by date range
+- Filter by symbol
+- Filter by transaction type (buy/sell)
+
+**Trade Details:**
+- Entry/exit prices
+- Quantity
+- Fees breakdown
+- Realized P&L
+- Holding period
+
+#### Usage Tips
+- Review trade history to analyze performance
+- Identify patterns in successful trades
+- Learn from past decisions
+
+---
+
+### 5b. Broker Portfolio (`/dashboard/broker-portfolio`) - Broker Mode Only
+
+**Purpose:** View real broker portfolio and holdings.
+
+#### Features
+
+**Portfolio Display:**
+- Current holdings from broker
+- Average price
+- Current market price
+- Unrealized P&L
+- Total portfolio value
+- Cash balance
+
+**Real-Time Updates:**
+- Auto-refresh every 30 seconds
+- Last update timestamp
+- Connection status indicator
+
+**Holdings Information:**
+- Symbol
+- Quantity
+- Average price
+- Current price
+- Market value
+- P&L (absolute and percentage)
+
+**Requirements:**
+- Must be in broker mode (not paper trading mode)
+- Broker credentials must be configured
+- Broker connection must be active
+
+#### Usage Tips
+- Monitor real portfolio alongside system positions
+- Verify holdings match system tracking
+- Check for any discrepancies
+
+---
+
+### 5c. Broker Orders (`/dashboard/broker-orders`) - Broker Mode Only
+
+**Purpose:** View all orders from the broker API.
+
+#### Features
+
+**Order Display:**
+- All orders from broker
+- Real-time status updates
+- Auto-refresh every 30 seconds
+
+**Filters:**
+- **Status Filter:**
+  - `all` - All orders
+  - `pending` - Pending orders
+  - `ongoing` - Ongoing orders
+  - `closed` - Closed orders
+  - `failed` - Failed orders
+  - `cancelled` - Cancelled orders
+
+**Order Information:**
+- Symbol
+- Quantity
+- Price
+- Order Type (MARKET, LIMIT)
+- Transaction Type (BUY, SELL)
+- Status
+- Timestamps
+- Exchange, Product, Variety
+- Broker Order ID
+
+**Requirements:**
+- Must be in broker mode (not paper trading mode)
+- Broker credentials must be configured
+- Broker connection must be active
+
+#### Usage Tips
+- Compare broker orders with system orders
+- Verify order execution
+- Monitor order status in real-time
 
 ---
 
@@ -376,19 +487,133 @@ After logging in, you'll see the main dashboard with navigation to all features.
 - Chat ID
 - Enable/Disable Notifications
 
+**Trade Mode:**
+- Paper Trading Mode
+- Broker Mode
+- Switch between modes
+
 #### Actions
 - **Save Credentials:** Save and encrypt credentials
 - **Test Connection:** Test broker connection (if implemented)
 - **Enable/Disable Telegram:** Toggle Telegram notifications
+- **Switch Mode:** Toggle between paper trading and broker mode
 
 #### Usage Tips
 - Keep credentials secure
 - Test broker connection after updating
 - Enable Telegram for important notifications
+- Use paper trading mode for testing
 
 ---
 
-### 10. Log Viewer (`/dashboard/logs`)
+### 10. Notification Preferences (`/dashboard/notification-preferences`)
+
+**Purpose:** Configure notification preferences for all channels and event types.
+
+#### Features
+
+**Notification Channels:**
+- **In-App Notifications:** Enable/disable in-app notifications (enabled by default)
+- **Telegram:** Enable Telegram notifications
+  - Bot Token configuration
+  - Chat ID configuration
+  - Test Telegram connection button
+- **Email:** Enable email notifications
+  - Email address configuration
+  - SMTP settings (configured via environment variables)
+
+**Order Event Preferences:**
+- Order Placed (enabled by default)
+- Order Executed (enabled by default)
+- Order Rejected (enabled by default)
+- Order Cancelled (enabled by default)
+- Order Modified (opt-in, disabled by default)
+- Partial Fill (enabled by default)
+
+**Retry Queue Event Preferences:**
+- Order Added to Retry Queue (enabled by default)
+- Retry Queue Updated (enabled by default)
+- Order Removed from Retry Queue (enabled by default)
+- Order Retried Successfully (enabled by default)
+
+**System Event Preferences:**
+- System Errors (enabled by default)
+- System Warnings (opt-in, disabled by default)
+- System Info (opt-in, disabled by default)
+
+**Service Event Preferences:**
+- Service Started (enabled by default)
+- Service Stopped (enabled by default)
+- Service Execution Completed (enabled by default)
+
+**Quiet Hours:**
+- Set start time (e.g., 22:00)
+- Set end time (e.g., 08:00)
+- Can span midnight
+- Clear to disable
+
+**Quick Actions:**
+- Enable All / Disable All buttons for each category
+- Test Telegram connection
+- Save preferences
+
+#### Usage Tips
+- Configure quiet hours to avoid notifications during sleep
+- Enable only notifications you need
+- Test Telegram connection after configuring
+- Use "Order Modified" only if you manually modify orders
+
+---
+
+### 11. Notifications (`/dashboard/notifications`)
+
+**Purpose:** View and manage in-app notifications.
+
+#### Features
+
+**Notification List:**
+- All in-app notifications
+- Real-time updates (auto-refresh every 30 seconds)
+- Unread count badge in navigation
+
+**Filters:**
+- **Type Filter:**
+  - `all` - All notifications
+  - `unread` - Unread notifications only
+  - `service` - Service events
+  - `trading` - Trading events
+  - `system` - System events
+  - `error` - Error events
+- **Level Filter:**
+  - `all` - All levels
+  - `info` - Information
+  - `warning` - Warnings
+  - `error` - Errors
+  - `critical` - Critical
+
+**Notification Details:**
+- Title
+- Message
+- Type (service, trading, system, error)
+- Level (info, warning, error, critical)
+- Read status
+- Delivery status (Telegram/Email sent)
+- Timestamp
+
+**Actions:**
+- **Mark as Read:** Click notification to mark as read
+- **Mark All as Read:** Button to mark all notifications as read
+- **Filter:** Use dropdown filters to find specific notifications
+
+#### Usage Tips
+- Check notifications regularly
+- Use filters to focus on specific types
+- Mark notifications as read to track what you've seen
+- Monitor service execution notifications for task completion
+
+---
+
+### 12. Log Viewer (`/dashboard/logs`)
 
 **Purpose:** View and manage system logs.
 
@@ -427,7 +652,7 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ---
 
-### 11. ML Training (`/dashboard/admin/ml`) - Admin Only
+### 13. ML Training (`/dashboard/admin/ml`) - Admin Only
 
 **Purpose:** Manage ML model training and retraining.
 
@@ -464,7 +689,7 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ---
 
-### 12. User Management (`/dashboard/admin/users`) - Admin Only
+### 14. User Management (`/dashboard/admin/users`) - Admin Only
 
 **Purpose:** Manage users and roles.
 
@@ -496,7 +721,7 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ---
 
-### 13. Activity (`/dashboard/activity`)
+### 15. Activity (`/dashboard/activity`)
 
 **Purpose:** Track user activity and system events.
 
@@ -528,7 +753,7 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ---
 
-### 14. Login (`/login`)
+### 16. Login (`/login`)
 
 **Purpose:** User authentication.
 
@@ -544,7 +769,7 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ---
 
-### 15. Signup (`/signup`)
+### 17. Signup (`/signup`)
 
 **Purpose:** User registration.
 

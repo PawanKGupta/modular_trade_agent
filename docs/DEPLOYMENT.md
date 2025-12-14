@@ -6,62 +6,22 @@ Complete guide for deploying Rebound — Modular Trade Agent to production.
 
 ### Option 1: Docker (Recommended)
 
-The easiest and most reliable deployment method.
+The easiest and most reliable deployment method. Docker handles all dependencies and provides consistent environments across platforms.
 
-#### Prerequisites
-- Docker and Docker Compose installed
-- Domain name (optional, for production)
-- SSL certificate (optional, for HTTPS)
+**Quick Start:**
+- **Windows**: `.\docker\docker-quickstart.ps1`
+- **Linux/Mac**: `./docker/docker-quickstart.sh`
 
-#### Steps
+**Access:**
+- Web UI: http://localhost:5173
+- API: http://localhost:8000
+- Health: http://localhost:8000/health
 
-1. **Clone Repository**
-   ```bash
-   git clone <repository-url>
-   cd modular_trade_agent
-   ```
-
-2. **Configure Environment**
-   ```bash
-   # Create .env file
-   cp .env.example .env
-
-   # Edit .env with production values
-   DB_URL=postgresql://user:password@db:5432/tradeagent
-   ADMIN_EMAIL=admin@yourdomain.com
-   ADMIN_PASSWORD=secure-password
-   JWT_SECRET=your-secure-random-secret
-   ENCRYPTION_KEY=your-encryption-key
-   CORS_ALLOW_ORIGINS=https://yourdomain.com
-   ```
-
-3. **Deploy**
-   ```bash
-   cd docker
-   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-   ```
-
-4. **Verify**
-   ```bash
-   # Check services
-   docker-compose ps
-
-   # View logs
-   docker-compose logs -f
-
-   # Test health
-   curl http://localhost:8000/health
-   ```
-
-#### Production Considerations
-
-- **Database:** Use PostgreSQL instead of SQLite
-- **Reverse Proxy:** Use Nginx for SSL termination
-- **Backups:** Set up regular database backups
-- **Monitoring:** Configure logging and monitoring
-- **Security:** Use strong passwords and secrets
-
-See [docker/README.md](../docker/README.md) for detailed Docker documentation.
+See [Docker Setup Guide](../docker/README.md) for complete Docker documentation including:
+- Detailed setup instructions
+- Configuration options
+- Troubleshooting
+- Production deployment
 
 ### Option 2: Manual Deployment
 

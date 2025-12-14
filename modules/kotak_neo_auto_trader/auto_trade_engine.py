@@ -241,6 +241,75 @@ class AutoTradeEngine:
             user_id=self.user_id,
         )
 
+    # ---------------------- Telegram Notifier Helper (Phase 3) ----------------------
+    def _get_telegram_notifier(self):
+        """
+        Get Telegram notifier instance with user-specific credentials.
+
+        Creates a new TelegramNotifier instance (not singleton) with user-specific
+        bot_token and chat_id from notification preferences. Falls back to singleton
+        pattern if user_id or db_session is not available (backward compatibility).
+
+        Returns:
+            TelegramNotifier instance or None if not available
+        """
+        try:
+            # Backward compatibility: If no user_id or db, use singleton pattern
+            if not self.user_id or not self.db:
+                logger.debug(
+                    "AutoTradeEngine: No user_id or db_session - using singleton TelegramNotifier"
+                )
+                return get_telegram_notifier(db_session=self.db)
+
+            # Check if telegram notifier module is available
+            try:
+                from services.notification_preference_service import (
+                    NotificationPreferenceService,
+                )
+            except ImportError:
+                logger.debug("NotificationPreferenceService not available - using singleton")
+                return get_telegram_notifier(db_session=self.db)
+
+            # Get user's notification preferences to get Telegram chat ID and bot token
+            pref_service = NotificationPreferenceService(self.db)
+            preferences = pref_service.get_preferences(self.user_id)
+
+            # Check if Telegram is enabled for this user
+            if not preferences or not preferences.telegram_enabled:
+                logger.debug(f"Telegram not enabled for user {self.user_id}")
+                return None
+
+            # Get bot token from user preferences first, then fall back to environment
+            bot_token = preferences.telegram_bot_token if preferences else None
+            if not bot_token:
+                import os
+                bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+
+            chat_id = preferences.telegram_chat_id if preferences else None
+
+            # Only create notifier if both bot token and chat ID are available
+            if not bot_token:
+                logger.debug(f"Telegram bot token not available for user {self.user_id}")
+                return None
+            if not chat_id:
+                logger.debug(f"Telegram chat ID not configured for user {self.user_id}")
+                return None
+
+            # Create a new TelegramNotifier instance (not singleton) for this user
+            # This is necessary because each user has a different chat_id
+            from .telegram_notifier import TelegramNotifier
+
+            return TelegramNotifier(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                enabled=True,
+                db_session=self.db,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get user-specific Telegram notifier: {e}. Falling back to singleton.")
+            # Fallback to singleton pattern on error
+            return get_telegram_notifier(db_session=self.db)
+
     # ---------------------- Storage Abstraction (Phase 2.3) ----------------------
     def _load_trades_history(self) -> dict[str, Any]:
         """
@@ -1584,11 +1653,16 @@ class AutoTradeEngine:
         try:
             # 1. Initialize Telegram Notifier
             if self._enable_telegram:
-                # Phase 3: Pass db_session for preference checking
-                self.telegram_notifier = get_telegram_notifier(db_session=self.db)
-                logger.info(
-                    f"Telegram notifier initialized (enabled: {self.telegram_notifier.enabled})"
-                )
+                # Phase 3: Create user-specific TelegramNotifier with user credentials
+                self.telegram_notifier = self._get_telegram_notifier()
+                if self.telegram_notifier:
+                    logger.info(
+                        f"Telegram notifier initialized (enabled: {self.telegram_notifier.enabled})"
+                    )
+                else:
+                    logger.info(
+                        "Telegram notifier not available (user preferences or credentials missing)"
+                    )
 
             # 2. Initialize Manual Order Matcher
             self.manual_matcher = get_manual_order_matcher()
