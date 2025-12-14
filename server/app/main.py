@@ -76,11 +76,82 @@ class SafeRotatingFileHandler(RotatingFileHandler):
     """
 
     _rotation_warning_printed = False  # Class-level flag to suppress repeated warnings
+    _rotation_disabled = False  # Class-level flag to disable rotation after first failure
+
+    def __init__(self, *args, **kwargs):
+        """Initialize handler and ensure log directory has proper permissions."""
+        super().__init__(*args, **kwargs)
+        # Ensure log file has write permissions
+        self._ensure_permissions()
+
+    def _ensure_permissions(self):
+        """Ensure log file and directory have proper write permissions."""
+        try:
+            import os
+            import stat
+
+            log_dir = os.path.dirname(self.baseFilename)
+            # Ensure directory exists and is writable
+            os.makedirs(log_dir, exist_ok=True)
+            # Try to set directory permissions (may fail in Docker, that's OK)
+            try:
+                os.chmod(log_dir, stat.S_IRWXU | stat.S_IRWXG | stat.S_IROTH | stat.S_IXOTH)
+            except (OSError, PermissionError):
+                pass  # Ignore permission errors - may not have chmod rights
+
+            # If log file exists, ensure it's writable
+            if os.path.exists(self.baseFilename):
+                try:
+                    os.chmod(
+                        self.baseFilename, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
+                    )
+                except (OSError, PermissionError):
+                    pass  # Ignore permission errors
+        except Exception:
+            pass  # If permission setting fails, continue anyway
+
+    def _can_rotate(self):
+        """Check if rotation is possible by testing file operations."""
+        if SafeRotatingFileHandler._rotation_disabled:
+            return False
+
+        try:
+            import os
+
+            log_dir = os.path.dirname(self.baseFilename)
+            # Test if we can create and rename files in the log directory
+            test_file = os.path.join(log_dir, ".rotation_test")
+            try:
+                # Try to create a test file
+                with open(test_file, "w") as f:
+                    f.write("test")
+                # Try to rename it
+                test_renamed = test_file + ".renamed"
+                os.rename(test_file, test_renamed)
+                # Clean up
+                if os.path.exists(test_renamed):
+                    os.remove(test_renamed)
+                return True
+            except (OSError, PermissionError):
+                # Clean up test file if it exists
+                try:
+                    if os.path.exists(test_file):
+                        os.remove(test_file)
+                except Exception:
+                    pass
+                return False
+        except Exception:
+            return False
 
     def doRollover(self):
         """
         Override doRollover to handle permission errors gracefully.
         """
+        # Check if rotation is disabled or not possible
+        if SafeRotatingFileHandler._rotation_disabled or not self._can_rotate():
+            # Silently skip rotation - logging will continue to current file
+            return
+
         try:
             # Check if rotation is actually needed
             if self.stream:
@@ -92,9 +163,13 @@ class SafeRotatingFileHandler(RotatingFileHandler):
 
             # Attempt rotation
             super().doRollover()
-            # Reset warning flag on successful rotation
+            # Reset flags on successful rotation
             SafeRotatingFileHandler._rotation_warning_printed = False
-        except (OSError, PermissionError, IOError) as e:
+            SafeRotatingFileHandler._rotation_disabled = False
+        except (OSError, PermissionError) as e:
+            # Disable rotation for this session after first failure
+            SafeRotatingFileHandler._rotation_disabled = True
+
             # Only print warning once to avoid log spam
             if not SafeRotatingFileHandler._rotation_warning_printed:
                 try:
@@ -102,7 +177,7 @@ class SafeRotatingFileHandler(RotatingFileHandler):
 
                     print(
                         f"Warning: Log rotation failed due to permission error: {e}. "
-                        "Continuing to log to current file. This warning will not be repeated.",
+                        "Continuing to log to current file. Rotation disabled for this session.",
                         file=sys.stderr,
                     )
                     SafeRotatingFileHandler._rotation_warning_printed = True
@@ -161,14 +236,51 @@ _unified_tasks = []
 LOG_DIR = os.path.abspath(os.path.join(ROOT_DIR, "logs"))
 os.makedirs(LOG_DIR, exist_ok=True)
 log_path = os.path.join(LOG_DIR, "server_api.log")
-# Use SafeRotatingFileHandler to handle permission errors in Docker containers
-file_handler = SafeRotatingFileHandler(log_path, maxBytes=2 * 1024 * 1024, backupCount=3)
+
+
+# Test if rotation is possible before creating handler
+# In Docker with mounted volumes, rotation may not be possible due to permissions
+def _can_rotate_logs():
+    """Test if log rotation is possible in the logs directory."""
+    try:
+        test_file = os.path.join(LOG_DIR, ".rotation_test")
+        test_renamed = test_file + ".renamed"
+        try:
+            # Try to create and rename a test file
+            with open(test_file, "w") as f:
+                f.write("test")
+            os.rename(test_file, test_renamed)
+            # Clean up
+            if os.path.exists(test_renamed):
+                os.remove(test_renamed)
+            return True
+        except (OSError, PermissionError):
+            # Clean up test file if it exists
+            try:
+                if os.path.exists(test_file):
+                    os.remove(test_file)
+            except Exception:
+                pass
+            return False
+    except Exception:
+        return False
+
+
+# Use rotating handler if rotation is possible, otherwise use simple file handler
+# This prevents permission errors in Docker environments
+if _can_rotate_logs():
+    file_handler = SafeRotatingFileHandler(log_path, maxBytes=2 * 1024 * 1024, backupCount=3)
+else:
+    # Use simple FileHandler if rotation is not possible
+    # External log rotation (logrotate) can be used instead
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+
 file_handler.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 file_handler.setFormatter(formatter)
 root_logger = logging.getLogger()
 if not any(
-    isinstance(h, (RotatingFileHandler, SafeRotatingFileHandler))
+    isinstance(h, (RotatingFileHandler, SafeRotatingFileHandler, logging.FileHandler))
     and getattr(h, "baseFilename", "") == log_path
     for h in root_logger.handlers
 ):
