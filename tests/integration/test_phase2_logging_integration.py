@@ -68,6 +68,10 @@ class TestLoggingIntegration:
             # Flush queue to ensure logs are written (queue-based async logging)
             DatabaseLogHandler.flush(timeout=2.0)
 
+            # Additional small delay to ensure database commit is visible
+            # This is needed especially in CI environments where timing can differ
+            time.sleep(0.2)
+
             # Check database logs
             from src.infrastructure.persistence.service_log_repository import (
                 ServiceLogRepository,
@@ -112,6 +116,10 @@ class TestLoggingIntegration:
 
             # Flush queue to ensure logs are written (queue-based async logging)
             DatabaseLogHandler.flush(timeout=2.0)
+
+            # Additional small delay to ensure database commit is visible
+            # This is needed especially in CI environments where timing can differ
+            time.sleep(0.2)
 
             # Rollback session in case error capture failed and left it in a bad state
             try:
@@ -173,6 +181,12 @@ class TestLoggingIntegration:
             # Flush queue to ensure log is written (queue-based async logging)
             DatabaseLogHandler.flush(timeout=2.0)
 
+            # Additional small delay to ensure database commit is visible
+            # This is needed especially in CI environments where timing can differ
+            import time
+
+            time.sleep(0.2)
+
             # Check context is preserved in database
             from src.infrastructure.persistence.service_log_repository import (
                 ServiceLogRepository,
@@ -229,6 +243,10 @@ class TestLoggingIntegration:
 
             # Flush queue to ensure logs are written (queue-based async logging)
             DatabaseLogHandler.flush(timeout=2.0)
+
+            # Additional small delay to ensure database commit is visible
+            # This is needed especially in CI environments where timing can differ
+            time.sleep(0.2)
 
             # Check database isolation
             from src.infrastructure.persistence.service_log_repository import (
