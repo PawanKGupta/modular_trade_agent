@@ -4,6 +4,7 @@ Integration tests for Phase 2 Logging System
 Tests the full logging flow from service operations to database and files.
 """
 
+import time
 from pathlib import Path
 
 import pytest
