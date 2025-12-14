@@ -81,8 +81,28 @@ class SafeRotatingFileHandler(RotatingFileHandler):
     def __init__(self, *args, **kwargs):
         """Initialize handler and ensure log directory has proper permissions."""
         super().__init__(*args, **kwargs)
+        # Check if we're in Docker and disable rotation immediately
+        if self._is_docker_environment():
+            SafeRotatingFileHandler._rotation_disabled = True
         # Ensure log file has write permissions
         self._ensure_permissions()
+
+    @staticmethod
+    def _is_docker_environment():
+        """Check if running in Docker container."""
+        try:
+            # Check for Docker-specific files/environment
+            if os.path.exists("/.dockerenv"):
+                return True
+            if os.path.exists("/proc/self/cgroup"):
+                with open("/proc/self/cgroup", "r") as f:
+                    if "docker" in f.read():
+                        return True
+            if os.getenv("DOCKER_CONTAINER") == "true":
+                return True
+            return False
+        except Exception:
+            return False
 
     def _ensure_permissions(self):
         """Ensure log file and directory have proper write permissions."""
