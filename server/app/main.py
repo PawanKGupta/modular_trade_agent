@@ -75,26 +75,46 @@ class SafeRotatingFileHandler(RotatingFileHandler):
     the application.
     """
 
+    _rotation_warning_printed = False  # Class-level flag to suppress repeated warnings
+
     def doRollover(self):
         """
         Override doRollover to handle permission errors gracefully.
         """
         try:
-            super().doRollover()
-        except (OSError, PermissionError) as e:
-            # Log the error but don't break the application
-            # Use a simple print to avoid recursion if logging itself fails
-            try:
-                import sys
+            # Check if rotation is actually needed
+            if self.stream:
+                try:
+                    # Flush and close the stream before rotation
+                    self.stream.flush()
+                except Exception:
+                    pass  # Ignore flush errors
 
-                print(
-                    f"Warning: Log rotation failed due to permission error: {e}. "
-                    "Continuing to log to current file.",
-                    file=sys.stderr,
-                )
-            except Exception:
-                pass  # If even stderr fails, just continue silently
+            # Attempt rotation
+            super().doRollover()
+            # Reset warning flag on successful rotation
+            SafeRotatingFileHandler._rotation_warning_printed = False
+        except (OSError, PermissionError, IOError) as e:
+            # Only print warning once to avoid log spam
+            if not SafeRotatingFileHandler._rotation_warning_printed:
+                try:
+                    import sys
+
+                    print(
+                        f"Warning: Log rotation failed due to permission error: {e}. "
+                        "Continuing to log to current file. This warning will not be repeated.",
+                        file=sys.stderr,
+                    )
+                    SafeRotatingFileHandler._rotation_warning_printed = True
+                except Exception:
+                    pass  # If even stderr fails, just continue silently
             # Don't re-raise - allow logging to continue to the current file
+            # Try to ensure the stream is still open for writing
+            try:
+                if self.stream and self.stream.closed:
+                    self.stream = self._open()
+            except Exception:
+                pass  # If we can't reopen, the next emit will handle it
 
 
 from fastapi import FastAPI, Request
