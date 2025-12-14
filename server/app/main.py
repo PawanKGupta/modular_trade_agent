@@ -528,3 +528,8 @@ async def stop_log_retention_worker():
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+    # Shutdown database log handler to flush any pending logs
+    from src.infrastructure.logging.database_log_handler import DatabaseLogHandler
+
+    DatabaseLogHandler.shutdown()

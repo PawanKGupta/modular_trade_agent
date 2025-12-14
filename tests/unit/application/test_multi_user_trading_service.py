@@ -122,37 +122,49 @@ class TestMultiUserTradingService:
         """Test successful service start"""
         from unittest.mock import MagicMock, patch
 
-        service = MultiUserTradingService(db=db_session)
+        # Patch SessionLocal to use test database BEFORE creating service
+        from sqlalchemy.orm import sessionmaker
 
-        # Mock TradingService to avoid actual initialization
+        from src.infrastructure.logging.database_log_handler import DatabaseLogHandler
+
+        test_sessionmaker = sessionmaker(bind=db_session.bind)
         with patch(
-            "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
-        ) as mock_service_class:
-            mock_service = MagicMock()
-            mock_service_class.return_value = mock_service
+            "src.infrastructure.logging.database_log_handler.SessionLocal", test_sessionmaker
+        ):
+            service = MultiUserTradingService(db=db_session)
 
-            # Start service (should succeed with mocked TradingService)
-            service.start_service(sample_user_with_settings.id)
+            # Mock TradingService to avoid actual initialization
+            with patch(
+                "modules.kotak_neo_auto_trader.run_trading_service.TradingService"
+            ) as mock_service_class:
+                mock_service = MagicMock()
+                mock_service_class.return_value = mock_service
 
-            # Service status should be updated
-            from src.infrastructure.persistence.service_status_repository import (
-                ServiceStatusRepository,
-            )
+                # Start service (should succeed with mocked TradingService)
+                service.start_service(sample_user_with_settings.id)
 
-            status_repo = ServiceStatusRepository(db_session)
-            status = status_repo.get(sample_user_with_settings.id)
-            assert status is not None
-            assert status.service_running is True
+                # Service status should be updated
+                from src.infrastructure.persistence.service_status_repository import (
+                    ServiceStatusRepository,
+                )
 
-            # Check logs were created
-            from src.infrastructure.persistence.service_log_repository import (
-                ServiceLogRepository,
-            )
+                status_repo = ServiceStatusRepository(db_session)
+                status = status_repo.get(sample_user_with_settings.id)
+                assert status is not None
+                assert status.service_running is True
 
-            log_repo = ServiceLogRepository(db_session)
-            logs = log_repo.list(user_id=sample_user_with_settings.id, limit=10)
-            assert len(logs) > 0
-            assert any("Starting trading service" in log.message for log in logs)
+                # Flush queue to ensure logs are written (queue-based async logging)
+                DatabaseLogHandler.flush(timeout=2.0)
+
+                # Check logs were created
+                from src.infrastructure.persistence.service_log_repository import (
+                    ServiceLogRepository,
+                )
+
+                log_repo = ServiceLogRepository(db_session)
+                logs = log_repo.list(user_id=sample_user_with_settings.id, limit=10)
+                assert len(logs) > 0
+                assert any("Starting trading service" in log.message for log in logs)
 
     def test_start_service_already_running(self, db_session, sample_user_with_settings):
         """Test starting service that's already running.
@@ -456,15 +468,27 @@ class TestMultiUserTradingService:
         except ValueError:
             pass  # Expected
 
-        # Check error was logged
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
+        # Patch SessionLocal to use test database and flush queue
+        from sqlalchemy.orm import sessionmaker
 
-        log_repo = ServiceLogRepository(db_session)
-        error_logs = log_repo.get_errors(user_id=sample_user.id, limit=10)
-        assert len(error_logs) > 0
-        assert any("User settings not found" in log.message for log in error_logs)
+        from src.infrastructure.logging.database_log_handler import DatabaseLogHandler
+
+        test_sessionmaker = sessionmaker(bind=db_session.bind)
+        with patch(
+            "src.infrastructure.logging.database_log_handler.SessionLocal", test_sessionmaker
+        ):
+            # Flush queue to ensure logs are written (queue-based async logging)
+            DatabaseLogHandler.flush(timeout=2.0)
+
+            # Check error was logged
+            from src.infrastructure.persistence.service_log_repository import (
+                ServiceLogRepository,
+            )
+
+            log_repo = ServiceLogRepository(db_session)
+            error_logs = log_repo.get_errors(user_id=sample_user.id, limit=10)
+            assert len(error_logs) > 0
+            assert any("User settings not found" in log.message for log in error_logs)
 
     def test_multiple_users_isolation(self, db_session):
         """Test that multiple users' services are isolated"""
