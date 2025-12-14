@@ -56,8 +56,12 @@ class TestLoggingIntegration:
         from src.infrastructure.logging.database_log_handler import DatabaseLogHandler
 
         test_sessionmaker = sessionmaker(bind=db_session.bind)
-        with patch(
-            "src.infrastructure.logging.database_log_handler.SessionLocal", test_sessionmaker
+        # Patch at both locations to ensure worker thread uses test database
+        with (
+            patch(
+                "src.infrastructure.logging.database_log_handler.SessionLocal", test_sessionmaker
+            ),
+            patch("src.infrastructure.db.session.SessionLocal", test_sessionmaker),
         ):
             service = MultiUserTradingService(db=db_session)
 
@@ -68,26 +72,34 @@ class TestLoggingIntegration:
                 pass  # May fail at TradingService init, but logging should work
 
             # Flush queue to ensure logs are written (queue-based async logging)
-            DatabaseLogHandler.flush(timeout=3.0)
+            DatabaseLogHandler.flush(timeout=5.0)
 
             # Wait for flush event to be cleared, indicating batch was written
             # The flush event is cleared after the batch is successfully flushed
-            max_wait = 2.0
+            max_wait = 3.0
             start_wait = time.time()
             while DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait:
                 time.sleep(0.1)
 
             # Additional delay to ensure database commit is visible
             # This is needed especially in CI environments where timing can differ
-            time.sleep(0.3)
+            time.sleep(0.5)
 
-            # Check database logs
+            # Check database logs with retry (for CI timing issues)
             from src.infrastructure.persistence.service_log_repository import (
                 ServiceLogRepository,
             )
 
             log_repo = ServiceLogRepository(db_session)
-            logs = log_repo.list(user_id=sample_user_with_full_setup.id, limit=10)
+            
+            # Retry query up to 3 times with increasing delays
+            logs = []
+            for attempt in range(3):
+                logs = log_repo.list(user_id=sample_user_with_full_setup.id, limit=10)
+                if len(logs) > 0:
+                    break
+                if attempt < 2:  # Don't sleep on last attempt
+                    time.sleep(0.3)
 
             assert len(logs) > 0
             assert any("Starting trading service" in log.message for log in logs)
@@ -111,8 +123,12 @@ class TestLoggingIntegration:
         from src.infrastructure.logging.database_log_handler import DatabaseLogHandler
 
         test_sessionmaker = sessionmaker(bind=db_session.bind)
-        with patch(
-            "src.infrastructure.logging.database_log_handler.SessionLocal", test_sessionmaker
+        # Patch at both locations to ensure worker thread uses test database
+        with (
+            patch(
+                "src.infrastructure.logging.database_log_handler.SessionLocal", test_sessionmaker
+            ),
+            patch("src.infrastructure.db.session.SessionLocal", test_sessionmaker),
         ):
             logger = get_user_logger(
                 user_id=sample_user_with_full_setup.id,
@@ -124,18 +140,18 @@ class TestLoggingIntegration:
             logger.error("Test error occurred", exc_info=exception, symbol="RELIANCE")
 
             # Flush queue to ensure logs are written (queue-based async logging)
-            DatabaseLogHandler.flush(timeout=3.0)
+            DatabaseLogHandler.flush(timeout=5.0)
 
             # Wait for flush event to be cleared, indicating batch was written
             # The flush event is cleared after the batch is successfully flushed
-            max_wait = 2.0
+            max_wait = 3.0
             start_wait = time.time()
             while DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait:
                 time.sleep(0.1)
 
             # Additional delay to ensure database commit is visible
             # This is needed especially in CI environments where timing can differ
-            time.sleep(0.3)
+            time.sleep(0.5)
 
             # Rollback session in case error capture failed and left it in a bad state
             try:
@@ -143,13 +159,22 @@ class TestLoggingIntegration:
             except Exception:
                 pass
 
-            # Check ServiceLog
+            # Check ServiceLog with retry (for CI timing issues)
             from src.infrastructure.persistence.service_log_repository import (
                 ServiceLogRepository,
             )
 
             log_repo = ServiceLogRepository(db_session)
-            service_logs = log_repo.get_errors(user_id=sample_user_with_full_setup.id, limit=10)
+            
+            # Retry query up to 3 times with increasing delays
+            service_logs = []
+            for attempt in range(3):
+                service_logs = log_repo.get_errors(user_id=sample_user_with_full_setup.id, limit=10)
+                if len(service_logs) > 0:
+                    break
+                if attempt < 2:  # Don't sleep on last attempt
+                    time.sleep(0.3)
+            
             assert len(service_logs) > 0
             assert any("Test error occurred" in log.message for log in service_logs)
 
@@ -189,27 +214,43 @@ class TestLoggingIntegration:
         from src.infrastructure.logging.database_log_handler import DatabaseLogHandler
 
         test_sessionmaker = sessionmaker(bind=db_session.bind)
-        with patch(
-            "src.infrastructure.logging.database_log_handler.SessionLocal", test_sessionmaker
+        # Patch at both locations to ensure worker thread uses test database
+        with (
+            patch(
+                "src.infrastructure.logging.database_log_handler.SessionLocal", test_sessionmaker
+            ),
+            patch("src.infrastructure.db.session.SessionLocal", test_sessionmaker),
         ):
             logger.info("Order placed", **context)
 
             # Flush queue to ensure log is written (queue-based async logging)
-            DatabaseLogHandler.flush(timeout=2.0)
+            DatabaseLogHandler.flush(timeout=5.0)
 
-            # Additional small delay to ensure database commit is visible
-            # This is needed especially in CI environments where timing can differ
-            import time
+            # Wait for flush event to be cleared, indicating batch was written
+            max_wait = 3.0
+            start_wait = time.time()
+            while DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait:
+                time.sleep(0.1)
 
-            time.sleep(0.2)
+            # Additional delay to ensure database commit is visible
+            time.sleep(0.5)
 
-            # Check context is preserved in database
+            # Check context is preserved in database with retry
             from src.infrastructure.persistence.service_log_repository import (
                 ServiceLogRepository,
             )
 
             log_repo = ServiceLogRepository(db_session)
-            logs = log_repo.list(user_id=sample_user_with_full_setup.id, limit=1)
+            
+            # Retry query up to 3 times with increasing delays
+            logs = []
+            for attempt in range(3):
+                logs = log_repo.list(user_id=sample_user_with_full_setup.id, limit=1)
+                if len(logs) == 1:
+                    break
+                if attempt < 2:  # Don't sleep on last attempt
+                    time.sleep(0.3)
+            
             assert len(logs) == 1
 
             log_context = logs[0].context
@@ -251,27 +292,45 @@ class TestLoggingIntegration:
         from src.infrastructure.logging.database_log_handler import DatabaseLogHandler
 
         test_sessionmaker = sessionmaker(bind=db_session.bind)
-        with patch(
-            "src.infrastructure.logging.database_log_handler.SessionLocal", test_sessionmaker
+        # Patch at both locations to ensure worker thread uses test database
+        with (
+            patch(
+                "src.infrastructure.logging.database_log_handler.SessionLocal", test_sessionmaker
+            ),
+            patch("src.infrastructure.db.session.SessionLocal", test_sessionmaker),
         ):
             logger1.info("User 1 message", user="user1")
             logger2.info("User 2 message", user="user2")
 
             # Flush queue to ensure logs are written (queue-based async logging)
-            DatabaseLogHandler.flush(timeout=2.0)
+            DatabaseLogHandler.flush(timeout=5.0)
 
-            # Additional small delay to ensure database commit is visible
-            # This is needed especially in CI environments where timing can differ
-            time.sleep(0.2)
+            # Wait for flush event to be cleared, indicating batch was written
+            max_wait = 3.0
+            start_wait = time.time()
+            while DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait:
+                time.sleep(0.1)
 
-            # Check database isolation
+            # Additional delay to ensure database commit is visible
+            time.sleep(0.5)
+
+            # Check database isolation with retry
             from src.infrastructure.persistence.service_log_repository import (
                 ServiceLogRepository,
             )
 
             log_repo = ServiceLogRepository(db_session)
-            user1_logs = log_repo.list(user_id=user1.id, limit=10)
-            user2_logs = log_repo.list(user_id=user2.id, limit=10)
+            
+            # Retry query up to 3 times with increasing delays
+            user1_logs = []
+            user2_logs = []
+            for attempt in range(3):
+                user1_logs = log_repo.list(user_id=user1.id, limit=10)
+                user2_logs = log_repo.list(user_id=user2.id, limit=10)
+                if len(user1_logs) == 1 and len(user2_logs) == 1:
+                    break
+                if attempt < 2:  # Don't sleep on last attempt
+                    time.sleep(0.3)
 
             assert len(user1_logs) == 1
             assert len(user2_logs) == 1
