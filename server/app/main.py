@@ -238,10 +238,32 @@ os.makedirs(LOG_DIR, exist_ok=True)
 log_path = os.path.join(LOG_DIR, "server_api.log")
 
 
+# Detect Docker environment - rotation often fails in Docker with mounted volumes
+def _is_docker_environment():
+    """Check if running in Docker container."""
+    try:
+        # Check for Docker-specific files/environment
+        if os.path.exists("/.dockerenv"):
+            return True
+        if os.path.exists("/proc/self/cgroup"):
+            with open("/proc/self/cgroup", "r") as f:
+                if "docker" in f.read():
+                    return True
+        if os.getenv("DOCKER_CONTAINER") == "true":
+            return True
+        return False
+    except Exception:
+        return False
+
+
 # Test if rotation is possible before creating handler
 # In Docker with mounted volumes, rotation may not be possible due to permissions
 def _can_rotate_logs():
     """Test if log rotation is possible in the logs directory."""
+    # In Docker, prefer simple handler to avoid permission issues
+    if _is_docker_environment():
+        return False
+
     try:
         test_file = os.path.join(LOG_DIR, ".rotation_test")
         test_renamed = test_file + ".renamed"
