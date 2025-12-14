@@ -369,7 +369,7 @@ class DatabaseLogHandler(logging.Handler):
 
                 # If thread didn't finish, log warning (but don't block indefinitely)
                 if cls._worker_thread.is_alive():
-                    import sys
+                    import sys  # noqa: PLC0415
 
                     print(
                         "DatabaseLogHandler: Worker thread did not finish within timeout",
