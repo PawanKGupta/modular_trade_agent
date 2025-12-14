@@ -12,7 +12,9 @@ Complete documentation for Rebound — Modular Trade Agent.
 - **[Architecture Overview](ARCHITECTURE.md)** - System architecture, components, and design patterns
 - **[API Documentation](API.md)** - Complete REST API reference
 - **[Deployment Guide](DEPLOYMENT.md)** - Production deployment instructions
-- **[Engineering Standards](../docs/engineering-standards-and-ci.md)** - Development standards and CI
+- **[Engineering Standards](engineering-standards-and-ci.md)** - Development standards and CI
+- **[ML Integration Guide](../documents/architecture/ML_COMPLETE_GUIDE.md)** - Complete ML training and integration guide
+- **[Order Management Guide](../documents/ORDER_MANAGEMENT_COMPLETE.md)** - Complete order management documentation
 
 ## 👤 User Guides
 
@@ -20,7 +22,7 @@ Complete documentation for Rebound — Modular Trade Agent.
 - **[UI Guide](UI_GUIDE.md)** - Complete page-by-page UI documentation
 - **[Trading Configuration](TRADING_CONFIG.md)** - Detailed trading parameters guide
 - **[Features Documentation](FEATURES.md)** - Complete features reference
-- **[Paper Trading](../documents/paper_trading/README.md)** - Paper trading system guide
+- **[Paper Trading](../documents/paper_trading/PAPER_TRADING_COMPLETE.md)** - Complete paper trading guide
 
 ## 📋 Quick Reference
 

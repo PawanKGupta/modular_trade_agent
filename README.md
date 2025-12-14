@@ -113,7 +113,7 @@ See [docker/README.md](docker/README.md) for detailed Docker setup.
 - **[UI Guide](docs/UI_GUIDE.md)** - Complete page-by-page UI documentation
 - **[Trading Configuration](docs/TRADING_CONFIG.md)** - Detailed trading parameters guide
 - **[Features Documentation](docs/FEATURES.md)** - Complete features reference
-- **[Paper Trading](../documents/paper_trading/README.md)** - Paper trading system guide
+- **[Paper Trading](../documents/paper_trading/PAPER_TRADING_COMPLETE.md)** - Complete paper trading guide
 
 ### Developer Guides
 - **[API Documentation](docs/API.md)** - Complete REST API reference
@@ -121,6 +121,8 @@ See [docker/README.md](docker/README.md) for detailed Docker setup.
 - **[Deployment Guide](docs/DEPLOYMENT.md)** - Production deployment
 - **[Migration Guide (Phase 4)](docs/MIGRATION_GUIDE_PHASE4.md)** - Migrating from `core.*` to service layer
 - **[Engineering Standards](docs/engineering-standards-and-ci.md)** - Code standards and CI
+- **[ML Integration Guide](documents/architecture/ML_COMPLETE_GUIDE.md)** - Complete ML training and integration guide
+- **[Order Management Guide](documents/ORDER_MANAGEMENT_COMPLETE.md)** - Complete order management documentation
 
 ## 🏛️ Project Structure
 

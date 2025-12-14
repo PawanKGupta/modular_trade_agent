@@ -28,6 +28,10 @@ Complete documentation of all features in Rebound — Modular Trade Agent system
   - These stocks have same-day selling restrictions and are excluded from trading
   - Filtering happens at signal generation stage (hard filter)
   - Uses scrip master for robust symbol resolution
+- **Analysis Deduplication:**
+  - Prevents duplicate signals within the same trading day window
+  - Trading day window: 9AM to next day 9AM (excluding weekends)
+  - Automatic duplicate detection and prevention
 
 **UI Location:** `/dashboard/buying-zone`
 
@@ -109,8 +113,12 @@ Complete documentation of all features in Rebound — Modular Trade Agent system
 - Fee calculation (brokerage, STT, GST)
 - Slippage simulation
 - Complete P&L tracking
+- Per-user paper trading portfolios
+- Integration with unified trading service
+- Paper trading service adapter for individual services
+- Web UI access for portfolio and history
 
-See [Paper Trading Documentation](../documents/paper_trading/README.md) for details.
+See [Paper Trading Documentation](../documents/paper_trading/PAPER_TRADING_COMPLETE.md) for details.
 
 ### 6. Service Management
 
@@ -159,12 +167,48 @@ See [Trading Configuration Guide](TRADING_CONFIG.md) for details.
   - Automatic exception logging
   - Context preservation
   - User state tracking
+- **Log Retention:**
+  - Automatic cleanup of old logs
+  - Configurable retention period
+  - Separate retention for service logs and error logs
 
 **Technical Details:**
 - `DatabaseLogHandler` uses async queue with worker thread
 - Logs are batched for performance
 - Graceful shutdown ensures all logs are written
 - Docker detection automatically disables rotation if not possible
+- `LogRetentionService` manages automatic log cleanup
+
+### 9. Notification System
+
+**Purpose:** Multi-channel notification system with granular preferences.
+
+**Key Features:**
+- **Notification Channels:**
+  - Telegram notifications (with bot integration)
+  - Email notifications (SMTP-based)
+  - In-app notifications (web UI)
+- **Granular Event Preferences:**
+  - Order events (placed, executed, rejected, cancelled, modified, partial fill)
+  - Retry queue events (added, updated, removed, retried)
+  - System events (errors, warnings, info)
+  - Service events (started, stopped, execution completed)
+- **Notification Preferences:**
+  - Per-event enable/disable
+  - Quiet hours support
+  - Channel-specific preferences
+  - Default preferences for new users
+- **Rate Limiting:**
+  - Telegram: 10 notifications/minute, 100/hour
+  - Automatic throttling to prevent spam
+
+**UI Location:** `/dashboard/notification-preferences` and `/dashboard/notifications`
+
+**Technical Details:**
+- `NotificationPreferenceService` manages preferences with caching
+- `TelegramNotifier` checks preferences before sending
+- `EmailNotifier` supports SMTP configuration
+- In-app notifications stored in database with read/unread status
 
 ## 🔐 Security Features
 
@@ -189,13 +233,22 @@ See [Trading Configuration Guide](TRADING_CONFIG.md) for details.
 - Automated model training
 - Retraining capabilities
 - Model versioning
+- Automatic retraining triggered by events (`MLRetrainingService`)
 
 ### Prediction
 - ML-enhanced verdicts
 - Confidence scoring
 - Feature engineering
+- Two-stage approach (chart quality filter + ML prediction)
 
-See [ML Integration Guide](../documents/architecture/ML_INTEGRATION_GUIDE.md) for details.
+### Monitoring & Feedback
+- ML prediction logging (`MLLoggingService`)
+- Performance metrics tracking
+- Model drift detection
+- Feedback collection (`MLFeedbackService`)
+- Agreement/disagreement tracking with rule-based system
+
+See [ML Integration Guide](../documents/architecture/ML_COMPLETE_GUIDE.md) for details.
 
 ## 🔄 Recent Updates
 
