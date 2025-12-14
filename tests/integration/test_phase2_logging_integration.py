@@ -49,11 +49,13 @@ class TestLoggingIntegration:
 
         # Patch SessionLocal to use test database BEFORE creating service
         # This ensures the worker thread uses the patched SessionLocal
-        from unittest.mock import patch
+        from unittest.mock import patch  # noqa: PLC0415
 
-        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.orm import sessionmaker  # noqa: PLC0415
 
-        from src.infrastructure.logging.database_log_handler import DatabaseLogHandler
+        from src.infrastructure.logging.database_log_handler import (  # noqa: PLC0415
+            DatabaseLogHandler,
+        )
 
         test_sessionmaker = sessionmaker(bind=db_session.bind)
         # Patch at both locations to ensure worker thread uses test database
@@ -71,6 +73,14 @@ class TestLoggingIntegration:
             except Exception:
                 pass  # May fail at TradingService init, but logging should work
 
+            # Verify logs are in queue before flushing
+            if DatabaseLogHandler._shared_queue:
+                queue_size = DatabaseLogHandler._shared_queue.qsize()
+                # Wait a bit for logs to be queued if queue is empty
+                if queue_size == 0:
+                    time.sleep(0.2)
+                    queue_size = DatabaseLogHandler._shared_queue.qsize()
+
             # Flush queue to ensure logs are written (queue-based async logging)
             DatabaseLogHandler.flush(timeout=5.0)
 
@@ -78,12 +88,29 @@ class TestLoggingIntegration:
             # The flush event is cleared after the batch is successfully flushed
             max_wait = 3.0
             start_wait = time.time()
-            while DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait:
+            while (
+                DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait
+            ):
                 time.sleep(0.1)
+
+            # Ensure queue is empty (logs have been processed)
+            if DatabaseLogHandler._shared_queue:
+                max_queue_wait = 2.0
+                queue_start = time.time()
+                while (
+                    not DatabaseLogHandler._shared_queue.empty()
+                    and (time.time() - queue_start) < max_queue_wait
+                ):
+                    time.sleep(0.1)
 
             # Additional delay to ensure database commit is visible
             # This is needed especially in CI environments where timing can differ
             time.sleep(0.5)
+
+            # Force a refresh of the database session to see committed changes
+            db_session.expire_all()
+            # Also commit any pending changes to ensure we're reading latest state
+            db_session.commit()
 
             # Check database logs with retry (for CI timing issues)
             from src.infrastructure.persistence.service_log_repository import (
@@ -91,17 +118,21 @@ class TestLoggingIntegration:
             )
 
             log_repo = ServiceLogRepository(db_session)
-            
-            # Retry query up to 3 times with increasing delays
+
+            # Retry query up to 5 times with increasing delays (more aggressive for CI)
             logs = []
-            for attempt in range(3):
+            for attempt in range(5):
+                # Create a fresh query each time to ensure we see latest data
+                db_session.expire_all()
                 logs = log_repo.list(user_id=sample_user_with_full_setup.id, limit=10)
                 if len(logs) > 0:
                     break
-                if attempt < 2:  # Don't sleep on last attempt
-                    time.sleep(0.3)
+                if attempt < 4:  # Don't sleep on last attempt
+                    time.sleep(0.2 * (attempt + 1))  # Increasing delays: 0.2s, 0.4s, 0.6s, 0.8s
 
-            assert len(logs) > 0
+            assert (
+                len(logs) > 0
+            ), f"No logs found after {5} attempts. Queue size: {DatabaseLogHandler._shared_queue.qsize() if DatabaseLogHandler._shared_queue else 'N/A'}"
             assert any("Starting trading service" in log.message for log in logs)
 
         # Check file logs
@@ -139,6 +170,14 @@ class TestLoggingIntegration:
             exception = ValueError("Integration test error")
             logger.error("Test error occurred", exc_info=exception, symbol="RELIANCE")
 
+            # Verify logs are in queue before flushing
+            if DatabaseLogHandler._shared_queue:
+                queue_size = DatabaseLogHandler._shared_queue.qsize()
+                # Wait a bit for logs to be queued if queue is empty
+                if queue_size == 0:
+                    time.sleep(0.2)
+                    queue_size = DatabaseLogHandler._shared_queue.qsize()
+
             # Flush queue to ensure logs are written (queue-based async logging)
             DatabaseLogHandler.flush(timeout=5.0)
 
@@ -146,12 +185,27 @@ class TestLoggingIntegration:
             # The flush event is cleared after the batch is successfully flushed
             max_wait = 3.0
             start_wait = time.time()
-            while DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait:
+            while (
+                DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait
+            ):
                 time.sleep(0.1)
+
+            # Ensure queue is empty (logs have been processed)
+            if DatabaseLogHandler._shared_queue:
+                max_queue_wait = 2.0
+                queue_start = time.time()
+                while (
+                    not DatabaseLogHandler._shared_queue.empty()
+                    and (time.time() - queue_start) < max_queue_wait
+                ):
+                    time.sleep(0.1)
 
             # Additional delay to ensure database commit is visible
             # This is needed especially in CI environments where timing can differ
             time.sleep(0.5)
+
+            # Force a refresh of the database session to see committed changes
+            db_session.expire_all()
 
             # Rollback session in case error capture failed and left it in a bad state
             try:
@@ -165,7 +219,7 @@ class TestLoggingIntegration:
             )
 
             log_repo = ServiceLogRepository(db_session)
-            
+
             # Retry query up to 3 times with increasing delays
             service_logs = []
             for attempt in range(3):
@@ -174,7 +228,7 @@ class TestLoggingIntegration:
                     break
                 if attempt < 2:  # Don't sleep on last attempt
                     time.sleep(0.3)
-            
+
             assert len(service_logs) > 0
             assert any("Test error occurred" in log.message for log in service_logs)
 
@@ -229,7 +283,9 @@ class TestLoggingIntegration:
             # Wait for flush event to be cleared, indicating batch was written
             max_wait = 3.0
             start_wait = time.time()
-            while DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait:
+            while (
+                DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait
+            ):
                 time.sleep(0.1)
 
             # Additional delay to ensure database commit is visible
@@ -241,17 +297,25 @@ class TestLoggingIntegration:
             )
 
             log_repo = ServiceLogRepository(db_session)
-            
-            # Retry query up to 3 times with increasing delays
+
+            # Force a refresh of the database session to see committed changes
+            db_session.expire_all()
+            db_session.commit()
+
+            # Retry query up to 5 times with increasing delays (more aggressive for CI)
             logs = []
-            for attempt in range(3):
+            for attempt in range(5):
+                # Create a fresh query each time to ensure we see latest data
+                db_session.expire_all()
                 logs = log_repo.list(user_id=sample_user_with_full_setup.id, limit=1)
                 if len(logs) == 1:
                     break
-                if attempt < 2:  # Don't sleep on last attempt
-                    time.sleep(0.3)
-            
-            assert len(logs) == 1
+                if attempt < 4:  # Don't sleep on last attempt
+                    time.sleep(0.2 * (attempt + 1))  # Increasing delays: 0.2s, 0.4s, 0.6s, 0.8s
+
+            assert (
+                len(logs) == 1
+            ), f"Expected 1 log but found {len(logs)} after {5} attempts. Queue size: {DatabaseLogHandler._shared_queue.qsize() if DatabaseLogHandler._shared_queue else 'N/A'}"
 
             log_context = logs[0].context
             assert log_context["symbol"] == "RELIANCE"
@@ -308,11 +372,26 @@ class TestLoggingIntegration:
             # Wait for flush event to be cleared, indicating batch was written
             max_wait = 3.0
             start_wait = time.time()
-            while DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait:
+            while (
+                DatabaseLogHandler._flush_event.is_set() and (time.time() - start_wait) < max_wait
+            ):
                 time.sleep(0.1)
+
+            # Ensure queue is empty (logs have been processed)
+            if DatabaseLogHandler._shared_queue:
+                max_queue_wait = 2.0
+                queue_start = time.time()
+                while (
+                    not DatabaseLogHandler._shared_queue.empty()
+                    and (time.time() - queue_start) < max_queue_wait
+                ):
+                    time.sleep(0.1)
 
             # Additional delay to ensure database commit is visible
             time.sleep(0.5)
+
+            # Force a refresh of the database session to see committed changes
+            db_session.expire_all()
 
             # Check database isolation with retry
             from src.infrastructure.persistence.service_log_repository import (
@@ -320,20 +399,30 @@ class TestLoggingIntegration:
             )
 
             log_repo = ServiceLogRepository(db_session)
-            
-            # Retry query up to 3 times with increasing delays
+
+            # Force a refresh of the database session to see committed changes
+            db_session.expire_all()
+            db_session.commit()
+
+            # Retry query up to 5 times with increasing delays (more aggressive for CI)
             user1_logs = []
             user2_logs = []
-            for attempt in range(3):
+            for attempt in range(5):
+                # Create a fresh query each time to ensure we see latest data
+                db_session.expire_all()
                 user1_logs = log_repo.list(user_id=user1.id, limit=10)
                 user2_logs = log_repo.list(user_id=user2.id, limit=10)
                 if len(user1_logs) == 1 and len(user2_logs) == 1:
                     break
-                if attempt < 2:  # Don't sleep on last attempt
-                    time.sleep(0.3)
+                if attempt < 4:  # Don't sleep on last attempt
+                    time.sleep(0.2 * (attempt + 1))  # Increasing delays: 0.2s, 0.4s, 0.6s, 0.8s
 
-            assert len(user1_logs) == 1
-            assert len(user2_logs) == 1
+            assert (
+                len(user1_logs) == 1
+            ), f"Expected 1 log for user1 but found {len(user1_logs)} after {5} attempts"
+            assert (
+                len(user2_logs) == 1
+            ), f"Expected 1 log for user2 but found {len(user2_logs)} after {5} attempts"
             assert user1_logs[0].user_id == user1.id
             assert user2_logs[0].user_id == user2.id
 

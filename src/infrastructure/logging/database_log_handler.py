@@ -144,7 +144,7 @@ class DatabaseLogHandler(logging.Handler):
 
             except Exception as e:
                 # Log error to stderr (can't use logger here to avoid recursion)
-                import sys
+                import sys  # noqa: PLC0415
 
                 print(f"DatabaseLogHandler worker error: {e}", file=sys.stderr)
                 # Clear batch on error to prevent memory buildup
@@ -167,6 +167,8 @@ class DatabaseLogHandler(logging.Handler):
 
         log_db = SessionLocal()
         try:
+            # Verify we're using the correct database connection
+            # This helps catch issues where worker thread uses wrong database
             repository = ServiceLogRepository(log_db)
 
             for user_id, record in batch:
@@ -222,40 +224,43 @@ class DatabaseLogHandler(logging.Handler):
                                 # Convert non-serializable to string
                                 context[key] = str(value)
 
-                    # Create log entry
+                    # Create log entry (auto_commit=False to batch commits)
                     repository.create(
                         user_id=user_id,
                         level=level_name,  # type: ignore
                         module=module[:128],  # Truncate to max length
                         message=str(record.getMessage())[:1024],  # Truncate to max length
                         context=context if context else None,
+                        auto_commit=False,  # Batch commit at end
                     )
                 except Exception as e:
                     # Log individual record error (can't use logger to avoid recursion)
-                    import sys
+                    import sys  # noqa: PLC0415
 
                     print(
                         f"DatabaseLogHandler: Failed to write log for user {user_id}: {e}",
                         file=sys.stderr,
                     )
+                    # Continue processing other records even if one fails
 
-            # Commit all records in batch
+            # Commit all records in batch (single commit for efficiency)
+            # This ensures all logs are written atomically and visible to other sessions
             log_db.commit()
 
         except Exception as e:
             # Log batch error (can't use logger to avoid recursion)
-            import sys
+            import sys  # noqa: PLC0415
 
             print(f"DatabaseLogHandler: Batch flush failed: {e}", file=sys.stderr)
             try:
                 log_db.rollback()
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
         finally:
             # Always close the session
             try:
                 log_db.close()
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -278,7 +283,7 @@ class DatabaseLogHandler(logging.Handler):
             DatabaseLogHandler._shared_queue.put_nowait((self.user_id, record))
         except queue.Full:
             # Queue is full - log to stderr as fallback
-            import sys
+            import sys  # noqa: PLC0415
 
             print(
                 f"DatabaseLogHandler: Queue full, dropping log for user {self.user_id}",

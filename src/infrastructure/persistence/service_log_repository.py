@@ -28,8 +28,15 @@ class ServiceLogRepository:
         module: str,
         message: str,
         context: dict | None = None,
+        auto_commit: bool = True,
     ) -> ServiceLog:
-        """Create a new log entry"""
+        """
+        Create a new log entry
+
+        Args:
+            auto_commit: If True, commit immediately. If False, caller must commit.
+                        This allows batching multiple creates before committing.
+        """
         log = ServiceLog(
             user_id=user_id,
             level=level,
@@ -39,8 +46,9 @@ class ServiceLogRepository:
             timestamp=ist_now(),
         )
         self.db.add(log)
-        self.db.commit()
-        self.db.refresh(log)
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(log)
         return log
 
     def get(self, log_id: int) -> ServiceLog | None:
