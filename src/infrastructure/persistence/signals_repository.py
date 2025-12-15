@@ -157,6 +157,8 @@ class SignalsRepository:
             # Use SQLAlchemy update() to avoid SQL injection warnings
             # Symbols come from internal code, not user input, but using ORM is safer
             # Use bindparam() to properly bind the timestamp parameter
+            # Use synchronize_session=False to avoid Python-side datetime comparison
+            # which fails when comparing naive (DB) vs aware (Python) datetimes
             before_timestamp_param = bindparam("before_timestamp", before_timestamp)
             stmt = (
                 update(Signals)
@@ -167,7 +169,7 @@ class SignalsRepository:
                 )
                 .values(status=SignalStatus.EXPIRED)
             )
-            result = self.db.execute(stmt)
+            result = self.db.execute(stmt, execution_options={"synchronize_session": False})
         else:
             # Use raw SQL for better performance when no symbol exclusion
             # Direct datetime comparison works in both SQLite and PostgreSQL
@@ -535,8 +537,6 @@ class SignalsRepository:
         Returns:
             Number of signals marked as expired
         """
-        now = ist_now()
-
         # Get all ACTIVE and REJECTED signals (both can be expired by time)
         # Note: Using list() to materialize the query results immediately, reducing
         # the time window for potential race conditions where a signal might be
@@ -554,7 +554,6 @@ class SignalsRepository:
         )
 
         expired_count = 0
-        now = ist_now()  # Get current time once to minimize time drift during processing
 
         for signal in signals_to_check:
             # Check if signal has passed its expiry time

@@ -25,12 +25,23 @@ class TestNotificationRepository:
     @pytest.fixture
     def mock_db_session(self):
         """Create a mock database session"""
+        from sqlalchemy.dialects import sqlite
+
         session = Mock(spec=Session)
         session.add = Mock()
         session.commit = Mock()
         session.refresh = Mock()
         session.get = Mock()
         session.execute = Mock()
+        session.rollback = Mock()
+
+        # Add bind attribute for dialect detection (used by is_sqlite())
+        # Set dialect to sqlite.dialect so is_sqlite() returns True
+        session.bind = Mock()
+        session.bind.dialect = sqlite.dialect()
+        session.bind.url = Mock()
+        session.bind.url.__str__ = Mock(return_value="sqlite:///test.db")
+
         return session
 
     @pytest.fixture
@@ -253,7 +264,9 @@ class TestNotificationRepository:
     def test_create_notification_handles_rollback_error(self, repository, mock_db_session):
         """Test that notification creation handles rolled back session errors"""
         # First commit fails with rollback error (implementation checks error string)
-        rollback_error = Exception("This Session's transaction has been rolled back due to a previous exception")
+        rollback_error = Exception(
+            "This Session's transaction has been rolled back due to a previous exception"
+        )
         mock_db_session.commit.side_effect = [
             rollback_error,
             None,  # Second commit succeeds
@@ -292,11 +305,16 @@ class TestNotificationRepository:
         )
 
         # Commit sequence: first fails, sequence fix commits (succeeds), retry commit succeeds
-        mock_db_session.commit.side_effect = [error, None, None]  # Sequence fix commit, then retry commit
+        mock_db_session.commit.side_effect = [
+            error,
+            None,
+            None,
+        ]  # Sequence fix commit, then retry commit
         mock_db_session.rollback = Mock()
 
         # Mock sequence fix - need to mock execute for both max ID query and sequence update
         call_count = [0]
+
         def mock_execute(*args, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -337,7 +355,11 @@ class TestNotificationRepository:
             orig=Exception("UNIQUE constraint failed: notifications.id"),
         )
         # Commit sequence: first fails, sequence fix commits (succeeds), retry commit fails
-        mock_db_session.commit.side_effect = [error, None, error]  # Sequence fix commit succeeds, retry fails
+        mock_db_session.commit.side_effect = [
+            error,
+            None,
+            error,
+        ]  # Sequence fix commit succeeds, retry fails
         mock_db_session.rollback = Mock()
 
         # Mock sequence fix
@@ -359,7 +381,6 @@ class TestNotificationRepository:
 
     def test_fix_sqlite_sequence_with_max_id(self, repository, mock_db_session):
         """Test fixing SQLite sequence when max ID exists"""
-        from sqlalchemy import text
 
         # Mock max ID query
         mock_result = Mock()
@@ -400,6 +421,7 @@ class TestNotificationRepository:
         mock_result.scalar_one_or_none.return_value = 25  # Max ID is 25
         # First call returns max ID, second call (sequence update) fails
         call_count = [0]
+
         def mock_execute(*args, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -422,6 +444,7 @@ class TestNotificationRepository:
         mock_result.scalar_one_or_none.return_value = None
         # First call returns None, second call (delete) fails
         call_count = [0]
+
         def mock_execute(*args, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -499,7 +522,11 @@ class TestNotificationRepository:
             orig=Exception("UNIQUE constraint failed: notifications.id"),
         )
         # Commit sequence: first fails, sequence fix commits (succeeds), retry commit fails
-        mock_db_session.commit.side_effect = [error, None, error]  # Sequence fix commit succeeds, retry fails
+        mock_db_session.commit.side_effect = [
+            error,
+            None,
+            error,
+        ]  # Sequence fix commit succeeds, retry fails
         # Rollback sequence: first rollback succeeds, second rollback (in error handler) fails
         mock_db_session.rollback.side_effect = [None, Exception("Rollback failed")]
 
@@ -539,7 +566,9 @@ class TestNotificationRepository:
         # Should have tried to rollback (even if it failed)
         assert mock_db_session.rollback.call_count >= 1
 
-    def test_create_notification_integrity_error_without_notifications_id(self, repository, mock_db_session):
+    def test_create_notification_integrity_error_without_notifications_id(
+        self, repository, mock_db_session
+    ):
         """Test that integrity errors without 'notifications.id' don't trigger sequence fix"""
         from sqlalchemy.exc import IntegrityError
 

@@ -153,8 +153,16 @@ class AnalysisDeduplicationService:
         for signal in all_existing_signals:
             if signal.symbol not in symbol_to_signal:
                 symbol_to_signal[signal.symbol] = signal
-            elif signal.ts > symbol_to_signal[signal.symbol].ts:
-                symbol_to_signal[signal.symbol] = signal
+            else:
+                # Normalize timestamps for comparison (handle timezone-aware vs naive)
+                ts1 = signal.ts.replace(tzinfo=None) if signal.ts.tzinfo else signal.ts
+                ts2 = (
+                    symbol_to_signal[signal.symbol].ts.replace(tzinfo=None)
+                    if symbol_to_signal[signal.symbol].ts.tzinfo
+                    else symbol_to_signal[signal.symbol].ts
+                )
+                if ts1 > ts2:
+                    symbol_to_signal[signal.symbol] = signal
 
         updated_count = 0
         inserted_count = 0
@@ -184,7 +192,6 @@ class AnalysisDeduplicationService:
                     # AND if they have a successful order (not failed/cancelled/rejected)
                     # AND if they still have an open position
                     user_has_traded = False
-                    user_has_successful_order = False
                     user_has_open_position = False
                     if self.user_id and existing_signal:
                         user_status = self._signals_repo.get_user_signal_status(
