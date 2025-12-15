@@ -3,7 +3,7 @@ import { api } from './client';
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
 
 export interface ServiceLogEntry {
-	id: number;
+	id: string | number; // file:line format for file logs, number for legacy DB logs
 	user_id: number;
 	level: LogLevel;
 	module: string;
@@ -33,6 +33,8 @@ type OptionalParams = {
 	end_time?: string;
 	search?: string;
 	limit?: number;
+	days_back?: number;
+	tail?: boolean;
 };
 
 export async function getUserLogs(params?: OptionalParams): Promise<ServiceLogEntry[]> {
