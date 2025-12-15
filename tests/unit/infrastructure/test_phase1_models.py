@@ -3,8 +3,8 @@
 Tests cover:
 - ServiceStatus
 - ServiceTaskExecution
-- ServiceLog
 - ErrorLog
+Note: ServiceLog tests removed - activity logs now use file-based logging
 - UserTradingConfig
 - MLTrainingJob
 - MLModel
@@ -26,7 +26,6 @@ from src.infrastructure.db.models import (
     MLModel,
     MLTrainingJob,
     Notification,
-    ServiceLog,
     ServiceStatus,
     ServiceTaskExecution,
     UserNotificationPreferences,
@@ -179,62 +178,6 @@ class TestServiceTaskExecution:
         tasks = db_session.query(ServiceTaskExecution).filter_by(user_id=sample_user.id).all()
         assert len(tasks) == 3
         assert {t.status for t in tasks} == {"success", "failed", "skipped"}
-
-
-class TestServiceLog:
-    """Tests for ServiceLog model"""
-
-    def test_create_service_log(self, db_session, sample_user):
-        """Test creating a service log record"""
-        log = ServiceLog(
-            user_id=sample_user.id,
-            level="INFO",
-            module="trading_service",
-            message="Service started successfully",
-            context={"symbol": "RELIANCE", "order_id": 123},
-        )
-        db_session.add(log)
-        db_session.commit()
-        db_session.refresh(log)
-
-        assert log.id is not None
-        assert log.user_id == sample_user.id
-        assert log.level == "INFO"
-        assert log.module == "trading_service"
-        assert log.message == "Service started successfully"
-        assert log.context == {"symbol": "RELIANCE", "order_id": 123}
-        assert log.timestamp is not None
-
-    def test_service_log_levels(self, db_session, sample_user):
-        """Test different log levels"""
-        levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        for level in levels:
-            log = ServiceLog(
-                user_id=sample_user.id,
-                level=level,
-                module="test",
-                message=f"Test {level} message",
-            )
-            db_session.add(log)
-        db_session.commit()
-
-        logs = db_session.query(ServiceLog).filter_by(user_id=sample_user.id).all()
-        assert len(logs) == 5
-        assert {log.level for log in logs} == set(levels)
-
-    def test_service_log_without_context(self, db_session, sample_user):
-        """Test creating log without context"""
-        log = ServiceLog(
-            user_id=sample_user.id,
-            level="INFO",
-            module="test",
-            message="Simple log message",
-        )
-        db_session.add(log)
-        db_session.commit()
-        db_session.refresh(log)
-
-        assert log.context is None
 
 
 class TestErrorLog:

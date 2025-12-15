@@ -375,7 +375,14 @@ class ServiceTaskExecution(Base):
 
 
 class ServiceLog(Base):
-    """Structured service logs (user-scoped)"""
+    """
+    Structured service logs (user-scoped).
+
+    DEPRECATED: Activity logs now use file-based logging (JSONL files).
+    This model is kept for backward compatibility with existing data.
+    New activity logs are written to files, not this table.
+    Error logs continue to use ErrorLog table.
+    """
 
     __tablename__ = "service_logs"
 

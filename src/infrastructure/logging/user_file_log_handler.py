@@ -53,7 +53,7 @@ class UserFileLogHandler(logging.Handler):
         "stack_info",
         "taskName",
         "user_id",
-        "log_module",
+        # Note: log_module is NOT in STANDARD_FIELDS so it's included in context
     }
 
     def __init__(
@@ -142,6 +142,7 @@ class UserErrorFileLogHandler(UserFileLogHandler):
     Specialized handler for error logs only.
 
     Writes to errors_YYYYMMDD.jsonl files.
+    Only writes ERROR and CRITICAL level logs.
     """
 
     def __init__(self, user_id: int, level: int = logging.ERROR):
@@ -153,3 +154,15 @@ class UserErrorFileLogHandler(UserFileLogHandler):
             level: Minimum logging level (default: ERROR)
         """
         super().__init__(user_id=user_id, log_type="errors", level=level)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """
+        Emit a log record to JSONL file (only ERROR and CRITICAL).
+
+        Overrides parent to add level filtering since emit() bypasses
+        the base Handler's level check.
+        """
+        # Only write ERROR and CRITICAL level logs
+        if record.levelno < logging.ERROR:
+            return
+        super().emit(record)

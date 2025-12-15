@@ -9,7 +9,6 @@ from server.app.core.deps import get_db
 from server.app.main import app
 from src.infrastructure.db.models import UserRole
 from src.infrastructure.persistence.error_log_repository import ErrorLogRepository
-from src.infrastructure.persistence.service_log_repository import ServiceLogRepository
 from src.infrastructure.persistence.user_repository import UserRepository
 
 
@@ -55,24 +54,51 @@ def client(db_session):
 
 
 @pytest.fixture
-def seed_logs(db_session, normal_user, other_user):
-    log_repo = ServiceLogRepository(db_session)
+def seed_logs(db_session, normal_user, other_user, monkeypatch):
+    """Seed logs by mocking FileLogReader"""
+    from datetime import datetime
+
+    from server.app.routers import logs
+
     error_repo = ErrorLogRepository(db_session)
 
-    log_repo.create(
-        user_id=normal_user.id,
-        level="INFO",
-        module="worker.analysis",
-        message="Analysis task completed",
-        context={"task": "analysis"},
-    )
-    log_repo.create(
-        user_id=other_user.id,
-        level="ERROR",
-        module="worker.sell",
-        message="Sell task failed",
-        context={"task": "sell"},
-    )
+    # Mock FileLogReader to return test data
+    class MockFileLogReader:
+        def read_logs(self, user_id, **kwargs):
+            if user_id == normal_user.id:
+                return [
+                    {
+                        "id": "file:1",
+                        "user_id": normal_user.id,
+                        "level": "INFO",
+                        "module": "worker.analysis",
+                        "message": "Analysis task completed",
+                        "context": {"task": "analysis"},
+                        "timestamp": datetime.now(),
+                    }
+                ]
+            elif user_id == other_user.id:
+                return [
+                    {
+                        "id": "file:2",
+                        "user_id": other_user.id,
+                        "level": "ERROR",
+                        "module": "worker.sell",
+                        "message": "Sell task failed",
+                        "context": {"task": "sell"},
+                        "timestamp": datetime.now(),
+                    }
+                ]
+            return []
+
+        def read_error_logs(self, user_id, **kwargs):
+            return []
+
+        def tail_logs(self, user_id, **kwargs):
+            return self.read_logs(user_id, **kwargs)
+
+    mock_reader = MockFileLogReader()
+    monkeypatch.setattr(logs, "FileLogReader", lambda: mock_reader)
 
     user_error = error_repo.create(
         user_id=normal_user.id,

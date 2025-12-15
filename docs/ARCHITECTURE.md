@@ -102,7 +102,8 @@ src/
     ├── db/              # Database models and repositories
     ├── persistence/     # Repository implementations
     ├── logging/         # Logging infrastructure
-    │   ├── database_log_handler.py  # Async queue-based database logging
+    │   ├── file_log_reader.py  # File-based log reader
+    │   ├── user_file_log_handler.py  # JSONL file logging handler
     │   └── user_scoped_logger.py  # User-scoped logging
     └── external/        # External API adapters
 ```
@@ -558,19 +559,29 @@ See [Notification Event Types](#notification-event-types) section below.
    - Rotating file handlers with Docker-aware rotation
    - Log levels: DEBUG, INFO, WARNING, ERROR
 
-2. **Database Logging (Async Queue-Based)**
-   - **Location:** `src/infrastructure/logging/database_log_handler.py`
-   - **Architecture:** Async queue-based logging to prevent SQLAlchemy session conflicts
+2. **File-Based Activity Logging (JSONL)**
+   - **Location:** `src/infrastructure/logging/user_file_log_handler.py`
+   - **Architecture:** Per-user JSONL files organized by date
    - **Features:**
-     - Separate worker thread for log processing
-     - Batch processing for performance
-     - Automatic session management (creates own session per batch)
-     - Graceful shutdown with log flushing
-     - Non-blocking queue operations
+     - One JSONL file per user per day (`service_YYYYMMDD.jsonl`)
+     - Separate error log files (`errors_YYYYMMDD.jsonl`)
+     - Structured JSON format with context support
+     - Automatic file rotation by date
+     - No database contention (file-only for activity logs)
    - **Benefits:**
-     - No transaction conflicts with main request sessions
-     - Improved performance (batched writes)
-     - Thread-safe logging
+     - Eliminates SQLite lock contention
+     - Better performance for high-volume logging
+     - Easy to parse and search
+     - No database overhead for activity logs
+
+3. **Error Logging (Database)**
+   - **Location:** `src/infrastructure/logging/error_capture.py`
+   - **Architecture:** Exceptions stored in ErrorLog table
+   - **Features:**
+     - Full traceback capture
+     - User context and configuration snapshot
+     - Resolution tracking
+     - Retry mechanism for database locks
      - Automatic error handling
 
 3. **User-Scoped Logging**

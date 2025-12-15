@@ -22,7 +22,7 @@ class DummyUser(SimpleNamespace):
 class DummyServiceLog(SimpleNamespace):
     def __init__(self, **kwargs):
         super().__init__(
-            id=kwargs.get("id", 1),
+            id=kwargs.get("id", "file:1"),
             user_id=kwargs.get("user_id", 1),
             level=kwargs.get("level", "INFO"),
             module=kwargs.get("module", "test_module"),
@@ -49,13 +49,13 @@ class DummyErrorLog(SimpleNamespace):
         )
 
 
-class DummyServiceLogRepo:
-    def __init__(self, db):
-        self.db = db
-        self.list_called = []
-        self.list_all_called = []
+class DummyFileLogReader:
+    def __init__(self):
+        self.read_logs_called = []
+        self.read_error_logs_called = []
+        self.tail_logs_called = []
 
-    def list(  # noqa: PLR0913
+    def read_logs(  # noqa: PLR0913
         self,
         user_id,
         level=None,
@@ -64,8 +64,9 @@ class DummyServiceLogRepo:
         end_time=None,
         search=None,
         limit=200,
+        days_back=14,
     ):
-        self.list_called.append(
+        self.read_logs_called.append(
             {
                 "user_id": user_id,
                 "level": level,
@@ -74,47 +75,70 @@ class DummyServiceLogRepo:
                 "end_time": end_time,
                 "search": search,
                 "limit": limit,
+                "days_back": days_back,
             }
         )
         return [
-            DummyServiceLog(
-                id=1,
-                user_id=user_id,
-                level=level or "INFO",
-                module=module or "test_module",
-                message="Test log message",
-            )
+            {
+                "id": "file:1",
+                "user_id": user_id,
+                "level": level or "INFO",
+                "module": module or "test_module",
+                "message": "Test log message",
+                "context": None,
+                "timestamp": datetime.now(),
+            }
         ]
 
-    def list_all(  # noqa: PLR0913
+    def read_error_logs(  # noqa: PLR0913
         self,
-        user_id=None,
-        level=None,
-        module=None,
+        user_id,
         start_time=None,
         end_time=None,
         search=None,
-        limit=500,
+        limit=100,
+        days_back=30,
     ):
-        self.list_all_called.append(
+        self.read_error_logs_called.append(
             {
                 "user_id": user_id,
-                "level": level,
-                "module": module,
                 "start_time": start_time,
                 "end_time": end_time,
                 "search": search,
                 "limit": limit,
+                "days_back": days_back,
             }
         )
         return [
-            DummyServiceLog(
-                id=1,
-                user_id=user_id or 1,
-                level=level or "INFO",
-                module=module or "test_module",
-                message="Test log message",
-            )
+            {
+                "id": "file:1",
+                "user_id": user_id,
+                "level": "ERROR",
+                "module": "test_module",
+                "message": "Test error message",
+                "context": None,
+                "timestamp": datetime.now(),
+            }
+        ]
+
+    def tail_logs(self, user_id, log_type="service", tail_lines=200):
+        self.tail_logs_called.append(
+            {
+                "user_id": user_id,
+                "log_type": log_type,
+                "tail_lines": tail_lines,
+            }
+        )
+        return [
+            {
+                "id": "file:1",
+                "user_id": user_id,
+                "level": "INFO",
+                "module": "test_module",
+                "message": "Test log message",
+                "context": None,
+                "timestamp": datetime.now(),
+            }
         ]
 
 
@@ -201,10 +225,10 @@ class DummyErrorLogRepo:
 
 
 @pytest.fixture
-def service_log_repo(monkeypatch):
-    repo = DummyServiceLogRepo(db=None)
-    monkeypatch.setattr(logs, "ServiceLogRepository", lambda db: repo)
-    return repo
+def file_log_reader(monkeypatch):
+    reader = DummyFileLogReader()
+    monkeypatch.setattr(logs, "FileLogReader", lambda: reader)
+    return reader
 
 
 @pytest.fixture
@@ -277,7 +301,7 @@ def test_parse_datetime_invalid_format():
 
 
 # GET /user/logs tests
-def test_get_user_logs_basic(service_log_repo, current_user):
+def test_get_user_logs_basic(file_log_reader, current_user):
     """Test get_user_logs with no filters"""
     result = logs.get_user_logs(
         level=None,
@@ -292,12 +316,12 @@ def test_get_user_logs_basic(service_log_repo, current_user):
 
     assert len(result.logs) == 1
     assert result.logs[0].user_id == 42
-    assert len(service_log_repo.list_called) == 1
-    assert service_log_repo.list_called[0]["user_id"] == 42
-    assert service_log_repo.list_called[0]["limit"] == 200
+    assert len(file_log_reader.read_logs_called) == 1
+    assert file_log_reader.read_logs_called[0]["user_id"] == 42
+    assert file_log_reader.read_logs_called[0]["limit"] == 200
 
 
-def test_get_user_logs_with_filters(service_log_repo, current_user):
+def test_get_user_logs_with_filters(file_log_reader, current_user):
     """Test get_user_logs with all filters"""
     result = logs.get_user_logs(
         level="ERROR",
@@ -311,7 +335,7 @@ def test_get_user_logs_with_filters(service_log_repo, current_user):
     )
 
     assert len(result.logs) == 1
-    call_args = service_log_repo.list_called[0]
+    call_args = file_log_reader.read_logs_called[0]
     assert call_args["level"] == "ERROR"
     assert call_args["module"] == "trading_service"
     assert call_args["search"] == "failed"
@@ -320,7 +344,7 @@ def test_get_user_logs_with_filters(service_log_repo, current_user):
     assert call_args["end_time"] is not None
 
 
-def test_get_user_logs_parses_datetime(service_log_repo, current_user):
+def test_get_user_logs_parses_datetime(file_log_reader, current_user):
     """Test get_user_logs correctly parses datetime strings"""
     logs.get_user_logs(
         level=None,
@@ -333,7 +357,7 @@ def test_get_user_logs_parses_datetime(service_log_repo, current_user):
         db=None,
     )
 
-    call_args = service_log_repo.list_called[0]
+    call_args = file_log_reader.read_logs_called[0]
     assert call_args["start_time"] is not None
     assert isinstance(call_args["start_time"], datetime)
     assert call_args["end_time"] is not None
@@ -402,7 +426,7 @@ def test_get_user_error_logs_resolved_filter(error_log_repo, current_user):
 
 
 # GET /admin/logs tests
-def test_get_admin_logs_basic(service_log_repo, admin_user):
+def test_get_admin_logs_basic(file_log_reader, admin_user):
     """Test get_admin_logs with no filters"""
     result = logs.get_admin_logs(
         user_id=None,
@@ -417,12 +441,12 @@ def test_get_admin_logs_basic(service_log_repo, admin_user):
     )
 
     assert len(result.logs) == 1
-    assert len(service_log_repo.list_all_called) == 1
-    call_args = service_log_repo.list_all_called[0]
+    assert len(file_log_reader.read_logs_called) == 1
+    call_args = file_log_reader.read_logs_called[0]
     assert call_args["user_id"] is None
 
 
-def test_get_admin_logs_with_user_id(service_log_repo, admin_user):
+def test_get_admin_logs_with_user_id(file_log_reader, admin_user):
     """Test get_admin_logs with user_id filter"""
     result = logs.get_admin_logs(
         user_id=42,
@@ -437,11 +461,11 @@ def test_get_admin_logs_with_user_id(service_log_repo, admin_user):
     )
 
     assert len(result.logs) == 1
-    call_args = service_log_repo.list_all_called[0]
+    call_args = file_log_reader.read_logs_called[0]
     assert call_args["user_id"] == 42
 
 
-def test_get_admin_logs_with_filters(service_log_repo, admin_user):
+def test_get_admin_logs_with_filters(file_log_reader, admin_user):
     """Test get_admin_logs with all filters"""
     logs.get_admin_logs(
         user_id=42,
@@ -455,7 +479,7 @@ def test_get_admin_logs_with_filters(service_log_repo, admin_user):
         db=None,
     )
 
-    call_args = service_log_repo.list_all_called[0]
+    call_args = file_log_reader.read_logs_called[0]
     assert call_args["user_id"] == 42
     assert call_args["level"] == "ERROR"
     assert call_args["module"] == "broker"
@@ -566,10 +590,12 @@ def test_resolve_error_log_not_found(error_log_repo, admin_user):
 
 
 # Edge cases
-def test_get_user_logs_empty_result(service_log_repo, current_user):
+def test_get_user_logs_empty_result(file_log_reader, current_user):
     """Test get_user_logs with empty result"""
-    original_list = service_log_repo.list
-    service_log_repo.list = lambda user_id, level=None, module=None, start_time=None, end_time=None, search=None, limit=200: []  # noqa: E501
+    original_read = file_log_reader.read_logs
+    file_log_reader.read_logs = (
+        lambda user_id, level=None, module=None, start_time=None, end_time=None, search=None, limit=200, days_back=14: []
+    )  # noqa: E501
     result = logs.get_user_logs(
         level=None,
         module=None,
@@ -580,14 +606,16 @@ def test_get_user_logs_empty_result(service_log_repo, current_user):
         current_user=current_user,
         db=None,
     )
-    service_log_repo.list = original_list
+    file_log_reader.read_logs = original_read
     assert len(result.logs) == 0
 
 
 def test_get_user_error_logs_empty_result(error_log_repo, current_user):
     """Test get_user_error_logs with empty result"""
     original_list = error_log_repo.list
-    error_log_repo.list = lambda user_id, resolved=None, error_type=None, start_time=None, end_time=None, search=None, limit=100: []  # noqa: E501
+    error_log_repo.list = (
+        lambda user_id, resolved=None, error_type=None, start_time=None, end_time=None, search=None, limit=100: []
+    )  # noqa: E501
     result = logs.get_user_error_logs(
         resolved=None,
         error_type=None,
@@ -673,7 +701,7 @@ def test_get_admin_error_logs_invalid_datetime(error_log_repo, admin_user):
     assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
-def test_get_user_logs_custom_limit(service_log_repo, current_user):
+def test_get_user_logs_custom_limit(file_log_reader, current_user):
     """Test get_user_logs with custom limit"""
     logs.get_user_logs(
         level=None,
@@ -685,7 +713,7 @@ def test_get_user_logs_custom_limit(service_log_repo, current_user):
         current_user=current_user,
         db=None,
     )
-    assert service_log_repo.list_called[0]["limit"] == 50
+    assert file_log_reader.read_logs_called[0]["limit"] == 50
 
 
 def test_get_user_error_logs_custom_limit(error_log_repo, current_user):
