@@ -182,6 +182,8 @@ class DummyFileLogReader:
                 "days_back": days_back,
             }
         )
+        from src.infrastructure.db.timezone_utils import ist_now
+
         return [
             {
                 "id": "file:1",
@@ -190,7 +192,7 @@ class DummyFileLogReader:
                 "module": module or "test_module",
                 "message": "Test message",
                 "context": None,
-                "timestamp": datetime.now(),
+                "timestamp": ist_now(),
             }
         ]
 
@@ -202,6 +204,8 @@ class DummyFileLogReader:
                 "tail_lines": tail_lines,
             }
         )
+        from src.infrastructure.db.timezone_utils import ist_now
+
         return [
             {
                 "id": "file:1",
@@ -210,7 +214,7 @@ class DummyFileLogReader:
                 "module": "test_module",
                 "message": "Test message",
                 "context": None,
-                "timestamp": datetime.now(),
+                "timestamp": ist_now(),
             }
         ]
 
@@ -263,6 +267,8 @@ def task_repo(monkeypatch, mock_db):
 @pytest.fixture
 def file_log_reader(monkeypatch):
     reader = DummyFileLogReader()
+    # Patch FileLogReader in the router module namespace where it's imported
+    # This is the key - we need to patch where it's used, not where it's defined
     monkeypatch.setattr(service, "FileLogReader", lambda: reader)
     return reader
 
@@ -749,7 +755,9 @@ def test_get_service_logs_no_filters(  # noqa: E501
     file_log_reader, current_user, mock_db, monkeypatch
 ):
     """Test get_service_logs with no filters"""
-    mock_now = datetime(2024, 1, 15, 12, 0, 0)
+    from src.infrastructure.db.timezone_utils import IST
+
+    mock_now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=IST)
     monkeypatch.setattr(service, "ist_now", lambda: mock_now)
 
     result = service.get_service_logs(
@@ -757,6 +765,7 @@ def test_get_service_logs_no_filters(  # noqa: E501
         module=None,
         hours=24,
         limit=100,
+        tail=False,  # Explicitly set tail=False
         db=mock_db,
         current=current_user,
     )
@@ -765,6 +774,7 @@ def test_get_service_logs_no_filters(  # noqa: E501
     assert result.total == 1
     assert result.limit == 100
     assert len(file_log_reader.read_logs_called) == 1
+    assert len(file_log_reader.tail_logs_called) == 0  # tail_logs should not be called
     call_args = file_log_reader.read_logs_called[0]
     assert call_args["user_id"] == 42
     assert call_args["level"] is None
@@ -783,6 +793,7 @@ def test_get_service_logs_with_filters(  # noqa: E501
         module="trading_service",
         hours=48,
         limit=200,
+        tail=False,
         db=mock_db,
         current=current_user,
     )
@@ -809,6 +820,7 @@ def test_get_service_logs_empty_result(  # noqa: E501
         module=None,
         hours=24,
         limit=100,
+        tail=False,
         db=mock_db,
         current=current_user,
     )
@@ -835,6 +847,7 @@ def test_get_service_logs_exception(  # noqa: E501
             module=None,
             hours=24,
             limit=100,
+            tail=False,
             db=mock_db,
             current=current_user,
         )

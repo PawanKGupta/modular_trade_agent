@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -76,13 +75,13 @@ class UserFileLogHandler(logging.Handler):
 
         log_dir = Path("logs") / "users" / f"user_{user_id}"
         log_dir.mkdir(parents=True, exist_ok=True)
-        today = datetime.now().strftime("%Y%m%d")
+        today = ist_now().date().strftime("%Y%m%d")
         self.base_path = log_dir
         self.baseFilename = str(log_dir / f"{log_type}_{today}.jsonl")
         self.stream = open(self.baseFilename, "a", encoding="utf-8")
 
     def _ensure_current_file(self) -> None:
-        today = datetime.now().strftime("%Y%m%d")
+        today = ist_now().date().strftime("%Y%m%d")
         expected = self.base_path / f"{self.log_type}_{today}.jsonl"
         if self.baseFilename != str(expected):
             try:

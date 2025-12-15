@@ -353,7 +353,12 @@ class TestServiceLogsAPI:
             def tail_logs(self, user_id, **kwargs):
                 return self.read_logs(user_id, **kwargs)
 
-        monkeypatch.setattr(service, "FileLogReader", lambda: MockFileLogReader())
+        # Patch FileLogReader in the source module and router module
+        from src.infrastructure.logging import file_log_reader as file_log_reader_module
+
+        mock_instance = MockFileLogReader()
+        monkeypatch.setattr(file_log_reader_module, "FileLogReader", lambda: mock_instance)
+        monkeypatch.setattr(service, "FileLogReader", lambda: mock_instance)
 
         response = client.get(
             "/api/v1/user/service/logs",
@@ -437,14 +442,15 @@ class TestServiceLogsAPI:
         self, client, db_session, test_user, auth_token, monkeypatch
     ):
         """Test getting service logs with hours filter"""
-        from datetime import datetime
 
         from server.app.routers import service
 
         # Mock FileLogReader with time filtering
+        from src.infrastructure.db.timezone_utils import ist_now
+
         class MockFileLogReader:
             def read_logs(self, user_id, start_time=None, **kwargs):
-                now = datetime.now()
+                now = ist_now()
                 all_logs = [
                     {
                         "id": "file:1",
@@ -473,7 +479,12 @@ class TestServiceLogsAPI:
             def tail_logs(self, user_id, **kwargs):
                 return self.read_logs(user_id, **kwargs)
 
-        monkeypatch.setattr(service, "FileLogReader", lambda: MockFileLogReader())
+        # Patch FileLogReader in the source module and router module
+        from src.infrastructure.logging import file_log_reader as file_log_reader_module
+
+        mock_instance = MockFileLogReader()
+        monkeypatch.setattr(file_log_reader_module, "FileLogReader", lambda: mock_instance)
+        monkeypatch.setattr(service, "FileLogReader", lambda: mock_instance)
 
         # Request logs from last 24 hours (should exclude old log)
         response = client.get(

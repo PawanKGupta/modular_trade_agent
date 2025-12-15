@@ -227,6 +227,8 @@ class DummyErrorLogRepo:
 @pytest.fixture
 def file_log_reader(monkeypatch):
     reader = DummyFileLogReader()
+    # Patch FileLogReader in the router module namespace where it's imported
+    # This is the key - we need to patch where it's used, not where it's defined
     monkeypatch.setattr(logs, "FileLogReader", lambda: reader)
     return reader
 
@@ -310,6 +312,8 @@ def test_get_user_logs_basic(file_log_reader, current_user):
         end_time=None,
         search=None,
         limit=200,
+        days_back=7,
+        tail=False,
         current_user=current_user,
         db=None,
     )
@@ -330,6 +334,8 @@ def test_get_user_logs_with_filters(file_log_reader, current_user):
         end_time="2024-01-31",
         search="failed",
         limit=500,
+        days_back=14,
+        tail=False,
         current_user=current_user,
         db=None,
     )
@@ -353,6 +359,8 @@ def test_get_user_logs_parses_datetime(file_log_reader, current_user):
         end_time="2024-01-16",
         search=None,
         limit=200,
+        days_back=7,
+        tail=False,
         current_user=current_user,
         db=None,
     )
@@ -427,15 +435,17 @@ def test_get_user_error_logs_resolved_filter(error_log_repo, current_user):
 
 # GET /admin/logs tests
 def test_get_admin_logs_basic(file_log_reader, admin_user):
-    """Test get_admin_logs with no filters"""
+    """Test get_admin_logs with no filters (user_id required)"""
     result = logs.get_admin_logs(
-        user_id=None,
+        user_id=42,  # user_id is required for admin log access
         level=None,
         module=None,
         start_time=None,
         end_time=None,
         search=None,
         limit=500,
+        days_back=7,
+        tail=False,
         admin=admin_user,
         db=None,
     )
@@ -443,7 +453,7 @@ def test_get_admin_logs_basic(file_log_reader, admin_user):
     assert len(result.logs) == 1
     assert len(file_log_reader.read_logs_called) == 1
     call_args = file_log_reader.read_logs_called[0]
-    assert call_args["user_id"] is None
+    assert call_args["user_id"] == 42
 
 
 def test_get_admin_logs_with_user_id(file_log_reader, admin_user):
@@ -456,6 +466,8 @@ def test_get_admin_logs_with_user_id(file_log_reader, admin_user):
         end_time=None,
         search=None,
         limit=500,
+        days_back=7,
+        tail=False,
         admin=admin_user,
         db=None,
     )
@@ -475,6 +487,8 @@ def test_get_admin_logs_with_filters(file_log_reader, admin_user):
         end_time="2024-01-31",
         search="timeout",
         limit=1000,
+        days_back=14,
+        tail=False,
         admin=admin_user,
         db=None,
     )
@@ -603,6 +617,8 @@ def test_get_user_logs_empty_result(file_log_reader, current_user):
         end_time=None,
         search=None,
         limit=200,
+        days_back=7,
+        tail=False,
         current_user=current_user,
         db=None,
     )
@@ -630,7 +646,7 @@ def test_get_user_error_logs_empty_result(error_log_repo, current_user):
     assert len(result.errors) == 0
 
 
-def test_get_user_logs_invalid_start_time(service_log_repo, current_user):
+def test_get_user_logs_invalid_start_time(current_user):
     """Test get_user_logs with invalid start_time format"""
     with pytest.raises(HTTPException) as exc:
         logs.get_user_logs(
@@ -640,6 +656,8 @@ def test_get_user_logs_invalid_start_time(service_log_repo, current_user):
             end_time=None,
             search=None,
             limit=200,
+            days_back=7,
+            tail=False,
             current_user=current_user,
             db=None,
         )
@@ -648,7 +666,7 @@ def test_get_user_logs_invalid_start_time(service_log_repo, current_user):
     assert "Invalid datetime format" in exc.value.detail
 
 
-def test_get_user_logs_invalid_end_time(service_log_repo, current_user):
+def test_get_user_logs_invalid_end_time(current_user):
     """Test get_user_logs with invalid end_time format"""
     with pytest.raises(HTTPException) as exc:
         logs.get_user_logs(
@@ -658,6 +676,8 @@ def test_get_user_logs_invalid_end_time(service_log_repo, current_user):
             end_time="not-a-date",
             search=None,
             limit=200,
+            days_back=7,
+            tail=False,
             current_user=current_user,
             db=None,
         )
@@ -665,17 +685,19 @@ def test_get_user_logs_invalid_end_time(service_log_repo, current_user):
     assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
-def test_get_admin_logs_invalid_datetime(service_log_repo, admin_user):
+def test_get_admin_logs_invalid_datetime(admin_user):
     """Test get_admin_logs with invalid datetime"""
     with pytest.raises(HTTPException) as exc:
         logs.get_admin_logs(
-            user_id=None,
+            user_id=42,  # user_id is required
             level=None,
             module=None,
             start_time="bad-format",
             end_time=None,
             search=None,
             limit=500,
+            days_back=7,
+            tail=False,
             admin=admin_user,
             db=None,
         )
@@ -710,6 +732,8 @@ def test_get_user_logs_custom_limit(file_log_reader, current_user):
         end_time=None,
         search=None,
         limit=50,
+        days_back=7,
+        tail=False,
         current_user=current_user,
         db=None,
     )

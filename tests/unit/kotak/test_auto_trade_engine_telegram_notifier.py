@@ -5,11 +5,11 @@ Tests the user-specific TelegramNotifier initialization with comprehensive
 edge case coverage.
 """
 
-import pytest
 from unittest.mock import MagicMock, Mock, patch
-import os
 
-from src.infrastructure.db.models import Users, UserNotificationPreferences
+import pytest
+
+from src.infrastructure.db.models import UserNotificationPreferences, Users
 
 
 @pytest.fixture
@@ -54,12 +54,10 @@ def user_with_telegram_prefs(db_session, sample_user):
 @pytest.fixture
 def auto_trade_engine(mock_auth, db_session, sample_user):
     """Create AutoTradeEngine instance with user context"""
-    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
     from config.strategy_config import StrategyConfig
+    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
-    with patch(
-        "modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth"
-    ) as mock_auth_class:
+    with patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth") as mock_auth_class:
         mock_auth_class.return_value = mock_auth
 
         engine = AutoTradeEngine(
@@ -248,12 +246,13 @@ class TestGetTelegramNotifierFailureCases:
             # Simulate ImportError by patching the import inside the method
             # We'll patch sys.modules to remove the module temporarily
             import sys
+
             original_module = sys.modules.get("modules.kotak_neo_auto_trader.telegram_notifier")
-            
+
             # Remove the module to simulate import failure
             if "modules.kotak_neo_auto_trader.telegram_notifier" in sys.modules:
                 del sys.modules["modules.kotak_neo_auto_trader.telegram_notifier"]
-            
+
             try:
                 # Mock the import to raise ImportError
                 with patch(
@@ -311,9 +310,7 @@ class TestGetTelegramNotifierFailureCases:
             ) as mock_get_singleton,
         ):
             # Make get_preferences raise an exception
-            mock_pref_service.return_value.get_preferences.side_effect = Exception(
-                "Database error"
-            )
+            mock_pref_service.return_value.get_preferences.side_effect = Exception("Database error")
             mock_singleton = Mock()
             mock_get_singleton.return_value = mock_singleton
 
@@ -327,12 +324,10 @@ class TestGetTelegramNotifierFailureCases:
 class TestGetTelegramNotifierBackwardCompatibility:
     """Test backward compatibility scenarios"""
 
-    def test_get_telegram_notifier_fallback_when_no_user_id(
-        self, mock_auth, db_session
-    ):
+    def test_get_telegram_notifier_fallback_when_no_user_id(self, mock_auth, db_session):
         """Test _get_telegram_notifier falls back to singleton when user_id is None"""
-        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
         from config.strategy_config import StrategyConfig
+        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
         with patch(
             "modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth"
@@ -359,12 +354,10 @@ class TestGetTelegramNotifierBackwardCompatibility:
                 assert notifier == mock_singleton
                 mock_get_singleton.assert_called_once_with(db_session=db_session)
 
-    def test_get_telegram_notifier_fallback_when_no_db_session(
-        self, mock_auth, sample_user
-    ):
+    def test_get_telegram_notifier_fallback_when_no_db_session(self, mock_auth, sample_user):
         """Test _get_telegram_notifier falls back to singleton when db_session is None"""
-        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
         from config.strategy_config import StrategyConfig
+        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
         with patch(
             "modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth"
@@ -393,8 +386,8 @@ class TestGetTelegramNotifierBackwardCompatibility:
 
     def test_get_telegram_notifier_fallback_when_both_none(self, mock_auth):
         """Test _get_telegram_notifier falls back to singleton when both user_id and db are None"""
-        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
         from config.strategy_config import StrategyConfig
+        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
         with patch(
             "modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth"
@@ -447,9 +440,7 @@ class TestGetTelegramNotifierInitialization:
                 db_session=auto_trade_engine.db,
             )
 
-    def test_initialize_phase2_modules_handles_none_notifier(
-        self, auto_trade_engine, sample_user
-    ):
+    def test_initialize_phase2_modules_handles_none_notifier(self, auto_trade_engine, sample_user):
         """Test _initialize_phase2_modules handles None notifier gracefully"""
         # User has no preferences, so notifier will be None
         auto_trade_engine._initialize_phase2_modules()
@@ -664,9 +655,7 @@ class TestGetTelegramNotifierIntegration:
             call_kwargs = mock_notifier.notify_order_placed.call_args[1]
             assert call_kwargs["user_id"] == auto_trade_engine.user_id
 
-    def test_notifier_respects_user_preferences(
-        self, auto_trade_engine, db_session, sample_user
-    ):
+    def test_notifier_respects_user_preferences(self, auto_trade_engine, db_session, sample_user):
         """Test that notifier respects user notification preferences"""
         # Create preferences with Telegram disabled
         prefs = UserNotificationPreferences(
@@ -683,4 +672,3 @@ class TestGetTelegramNotifierIntegration:
 
         # Notifier should be None when Telegram is disabled
         assert auto_trade_engine.telegram_notifier is None
-

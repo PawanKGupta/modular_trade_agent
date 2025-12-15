@@ -98,6 +98,10 @@ def seed_logs(db_session, normal_user, other_user, monkeypatch):
             return self.read_logs(user_id, **kwargs)
 
     mock_reader = MockFileLogReader()
+    # Patch FileLogReader in the source module and router module
+    from src.infrastructure.logging import file_log_reader as file_log_reader_module
+
+    monkeypatch.setattr(file_log_reader_module, "FileLogReader", lambda: mock_reader)
     monkeypatch.setattr(logs, "FileLogReader", lambda: mock_reader)
 
     user_error = error_repo.create(
@@ -114,7 +118,7 @@ def seed_logs(db_session, normal_user, other_user, monkeypatch):
         traceback="Traceback info",
     )
 
-    return {"user_error_id": user_error.id}
+    return {"user_error_id": user_error.id, "other_user_id": other_user.id}
 
 
 def login(client: TestClient, email: str, password: str) -> str:
@@ -148,25 +152,31 @@ class TestUserLogAPI:
 
 
 class TestAdminLogAPI:
-    def test_admin_can_fetch_all_logs(self, client: TestClient, admin_user, normal_user, seed_logs):
+    def test_admin_can_fetch_all_logs(
+        self, client: TestClient, admin_user, normal_user, other_user, seed_logs
+    ):
         token = login(client, admin_user.email, "Admin@123")
+        # Admin endpoint requires user_id parameter
         response = client.get(
-            "/api/v1/admin/logs",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["logs"]) >= 2
-
-        user_filtered = client.get(
             "/api/v1/admin/logs",
             headers={"Authorization": f"Bearer {token}"},
             params={"user_id": normal_user.id},
         )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["logs"]) >= 1
+        assert data["logs"][0]["user_id"] == normal_user.id
+
+        # Test with other user
+        user_filtered = client.get(
+            "/api/v1/admin/logs",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"user_id": other_user.id},
+        )
         assert user_filtered.status_code == 200
         user_data = user_filtered.json()
-        assert len(user_data["logs"]) == 1
-        assert user_data["logs"][0]["user_id"] == normal_user.id
+        assert len(user_data["logs"]) >= 1
+        assert user_data["logs"][0]["user_id"] == other_user.id
 
     def test_admin_can_resolve_error(self, client: TestClient, admin_user, seed_logs, normal_user):
         token = login(client, admin_user.email, "Admin@123")

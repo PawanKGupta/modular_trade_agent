@@ -554,10 +554,10 @@ See [Notification Event Types](#notification-event-types) section below.
 **Multi-Layer Logging System:**
 
 1. **File Logging**
-   - Structured logging to files (`logs/`)
+- Structured logging to files (`logs/`)
    - User-scoped log files (`logs/user_{user_id}/`)
    - Rotating file handlers with Docker-aware rotation
-   - Log levels: DEBUG, INFO, WARNING, ERROR
+- Log levels: DEBUG, INFO, WARNING, ERROR
 
 2. **File-Based Activity Logging (JSONL)**
    - **Location:** `src/infrastructure/logging/user_file_log_handler.py`

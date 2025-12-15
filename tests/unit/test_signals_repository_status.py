@@ -242,11 +242,41 @@ class TestGetActiveSignals:
             assert "STOCK3" in symbols
             assert "STOCK4" not in symbols  # Expired, should not be included
 
-    def test_respects_limit(self, signals_repo, sample_signals):
+    def test_respects_limit(self, signals_repo, db_session):
         """Should respect the limit parameter"""
-        active_signals = signals_repo.get_active_signals(limit=2)
+        # Create signals with controlled timestamps to avoid time-based expiry
+        test_date = datetime(2025, 12, 1, 10, 0, 0, tzinfo=ist_now().tzinfo)  # Monday 10:00 AM
 
-        assert len(active_signals) == 2
+        with freeze_time(test_date):
+            now = ist_now()
+            signals = [
+                Signals(
+                    symbol="STOCK1",
+                    status=SignalStatus.ACTIVE,
+                    ts=now - timedelta(hours=2),  # 2 hours ago - still active
+                    rsi10=25.0,
+                ),
+                Signals(
+                    symbol="STOCK2",
+                    status=SignalStatus.ACTIVE,
+                    ts=now - timedelta(hours=1),  # 1 hour ago - still active
+                    rsi10=30.0,
+                ),
+                Signals(
+                    symbol="STOCK3",
+                    status=SignalStatus.ACTIVE,
+                    ts=now - timedelta(minutes=30),  # 30 minutes ago - still active
+                    rsi10=28.0,
+                ),
+            ]
+
+            db_session.add_all(signals)
+            db_session.commit()
+
+            # Get active signals with limit - should respect limit
+            active_signals = signals_repo.get_active_signals(limit=2)
+
+            assert len(active_signals) == 2
 
 
 class TestRecentWithActiveFilter:

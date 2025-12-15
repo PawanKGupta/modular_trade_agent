@@ -341,11 +341,11 @@ def get_service_logs(  # noqa: PLR0913
 
         logs = [
             ServiceLogResponse(
-                id=log_dict["id"],
+                id=str(log_dict.get("id", "")),  # Coerce to string for file:line format
                 level=log_dict["level"],
                 module=log_dict["module"],
                 message=log_dict["message"],
-                context=log_dict["context"],
+                context=log_dict.get("context"),
                 timestamp=log_dict["timestamp"],
             )
             for log_dict in log_dicts
