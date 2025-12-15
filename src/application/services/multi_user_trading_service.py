@@ -511,7 +511,12 @@ class MultiUserTradingService:
                 self._service_status_repo.update_running(user_id, running=True)
                 self._service_status_repo.update_heartbeat(user_id)
 
+                # Commit status update BEFORE sending notification
+                # This ensures status is persisted even if notification fails/rollbacks
+                self.db.commit()
+
                 # Send notification for service start
+                # Note: This is wrapped in try-except internally, so failures won't affect status
                 self._notify_service_started(user_id)
 
                 return True
@@ -528,6 +533,8 @@ class MultiUserTradingService:
 
                 self._service_status_repo.update_running(user_id, running=False)
                 self._service_status_repo.increment_error(user_id, error_message=str(e))
+                # Commit error status before raising to ensure it's persisted
+                self.db.commit()
                 raise
 
     def stop_service(self, user_id: int) -> bool:
@@ -593,7 +600,12 @@ class MultiUserTradingService:
                 self._service_status_repo.update_running(user_id, running=False)
                 self._service_status_repo.update_heartbeat(user_id)
 
+                # Commit status update BEFORE sending notification
+                # This ensures status is persisted even if notification fails/rollbacks
+                self.db.commit()
+
                 # Send notification for service stop
+                # Note: This is wrapped in try-except internally, so failures won't affect status
                 self._notify_service_stopped(user_id)
 
                 user_logger.info(
@@ -614,6 +626,8 @@ class MultiUserTradingService:
                 )
 
                 self._service_status_repo.increment_error(user_id, error_message=str(e))
+                # Commit error status to ensure it's persisted
+                self.db.commit()
                 return False
 
     def get_service_status(self, user_id: int) -> any | None:
@@ -799,14 +813,18 @@ class MultiUserTradingService:
                     title="Unified Service Started",
                     message=message,
                 )
-                user_logger = get_user_logger(
-                    user_id=user_id, db=self.db, module="MultiUserTradingService"
-                )
-                user_logger.info(
-                    "Created in-app notification for unified service start",
-                    action="notify_service_started",
-                    notification_id=notification.id,
-                )
+                try:
+                    user_logger = get_user_logger(
+                        user_id=user_id, db=self.db, module="MultiUserTradingService"
+                    )
+                    user_logger.info(
+                        "Created in-app notification for unified service start",
+                        action="notify_service_started",
+                        notification_id=notification.id,
+                    )
+                except Exception:
+                    # Logging failure shouldn't prevent notification from being created
+                    pass
 
             # Send Telegram notification if enabled
             if pref_service.should_notify(

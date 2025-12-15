@@ -49,7 +49,6 @@ export function LogViewerPage() {
 	const [isScrolledUp, setIsScrolledUp] = useState(false);
 	const [showId, setShowId] = useState(false);
 	const [searchInContext, setSearchInContext] = useState(false);
-	const refreshIntervalRef = useRef<number | null>(null);
 	const tableContainerRef = useRef<HTMLDivElement>(null);
 
 	const [errorFilters, setErrorFilters] = useState({

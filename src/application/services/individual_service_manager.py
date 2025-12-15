@@ -1501,16 +1501,22 @@ class IndividualServiceManager:
                     # Use raw SQL to update status directly (bypasses session issues)
                     from sqlalchemy import text  # noqa: PLC0415
 
+                    # Build JSON in Python for cross-database compatibility
+                    # SQLite has json_object() but PostgreSQL doesn't
+                    details_json = json.dumps(
+                        {
+                            "error": "Execution timed out or process crashed",
+                            "stale_execution": 1,
+                            "age_seconds": execution_age.total_seconds(),
+                            "thread_was_alive": 1 if thread_is_alive else 0,
+                        }
+                    )
+
                     update_sql = text(
                         """
                         UPDATE individual_service_task_execution
                         SET status = 'failed',
-                            details = json_object(
-                                'error', 'Execution timed out or process crashed',
-                                'stale_execution', 1,
-                                'age_seconds', :age_seconds,
-                                'thread_was_alive', :thread_alive
-                            )
+                            details = :details_json
                         WHERE id = :execution_id AND status = 'running'
                     """
                     )
@@ -1518,8 +1524,7 @@ class IndividualServiceManager:
                         update_sql,
                         {
                             "execution_id": latest_execution_raw["id"],
-                            "age_seconds": execution_age.total_seconds(),
-                            "thread_alive": 1 if thread_is_alive else 0,
+                            "details_json": details_json,
                         },
                     )
                     self.db.commit()

@@ -18,7 +18,6 @@ export function QuickFilters({ onFilter, onClear }: Props) {
 	const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 	const todayStart = new Date(now);
 	todayStart.setHours(0, 0, 0, 0);
-	const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
 	const filters: QuickFilter[] = [
 		{

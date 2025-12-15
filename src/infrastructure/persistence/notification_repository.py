@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, select, text
 from sqlalchemy.orm import Session
 
+from src.infrastructure.db.dialect import is_sqlite
 from src.infrastructure.db.models import Notification
 from src.infrastructure.db.timezone_utils import ist_now
 
@@ -90,10 +91,16 @@ class NotificationRepository:
                 raise
 
     def _fix_sqlite_sequence(self) -> None:
-        """Fix SQLite auto-increment sequence for notifications table"""
-        try:
-            from sqlalchemy import text
+        """Fix SQLite auto-increment sequence for notifications table.
 
+        This method is SQLite-specific and will be skipped for PostgreSQL.
+        PostgreSQL uses sequences which don't require manual fixing.
+        """
+        # Skip for PostgreSQL - it uses sequences, not sqlite_sequence
+        if not is_sqlite(self.db):
+            return
+
+        try:
             # Get the current max ID from the notifications table
             max_id_result = self.db.execute(
                 select(Notification.id).order_by(Notification.id.desc()).limit(1)
@@ -104,17 +111,17 @@ class NotificationRepository:
                 # Update sqlite_sequence to be at least max_id + 1
                 # This ensures the next auto-generated ID won't conflict
                 try:
-                    # Update or insert into sqlite_sequence
+                    # Update or insert into sqlite_sequence (SQLite-specific syntax)
                     # Use max_id + 1 to ensure next ID is higher than any existing ID
                     self.db.execute(
                         text(
                             "INSERT OR REPLACE INTO sqlite_sequence (name, seq) "
                             "VALUES ('notifications', :seq)"
                         ),
-                        {"seq": max_id + 1}
+                        {"seq": max_id + 1},
                     )
                     self.db.commit()
-                except Exception as seq_error:
+                except Exception:
                     # If sqlite_sequence doesn't exist or update fails, that's okay
                     # SQLite will handle it automatically
                     self.db.rollback()
@@ -122,9 +129,7 @@ class NotificationRepository:
                 # No notifications exist, reset sequence to 0
                 try:
                     self.db.execute(
-                        text(
-                            "DELETE FROM sqlite_sequence WHERE name = 'notifications'"
-                        )
+                        text("DELETE FROM sqlite_sequence WHERE name = 'notifications'")
                     )
                     self.db.commit()
                 except Exception:
