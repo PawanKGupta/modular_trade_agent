@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, constr
 class ServiceLogEntry(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: str  # file:line composite for JSONL logs
     user_id: int
     level: str
     module: str

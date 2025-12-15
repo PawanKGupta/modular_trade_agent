@@ -12,7 +12,7 @@ from src.application.services.individual_service_manager import IndividualServic
 from src.application.services.multi_user_trading_service import MultiUserTradingService
 from src.infrastructure.db.models import Users
 from src.infrastructure.db.timezone_utils import ist_now
-from src.infrastructure.persistence.service_log_repository import ServiceLogRepository
+from src.infrastructure.logging.file_log_reader import FileLogReader
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.service_task_repository import ServiceTaskRepository
 from src.infrastructure.utils.holiday_calendar import (
@@ -314,35 +314,45 @@ def get_service_logs(  # noqa: PLR0913
     hours: int = Query(
         24, ge=1, le=168, description="Number of hours to look back (max 168 = 7 days)"
     ),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of logs to return"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of logs to return"),
+    tail: bool = Query(False, description="Return last 200 lines from latest file."),
     db: Session = Depends(get_db),
     current: Users = Depends(get_current_user),
 ):
     """Get recent service logs for current user"""
     try:
-        log_repo = ServiceLogRepository(db)
-        start_time = ist_now() - timedelta(hours=hours)
+        _ = db  # Not used for file logs
+        reader = FileLogReader()
 
-        logs = log_repo.list(
-            user_id=current.id,
-            level=level,
-            module=module,
-            start_time=start_time,
-            limit=limit,
-        )
+        if tail:
+            log_dicts = reader.tail_logs(user_id=current.id, log_type="service", tail_lines=200)
+        else:
+            start_time = ist_now() - timedelta(hours=hours)
+            days_back = min(14, (hours + 23) // 24)  # ceil hours to days, cap at 14
+
+            log_dicts = reader.read_logs(
+                user_id=current.id,
+                level=level,
+                module=module,
+                start_time=start_time,
+                limit=min(limit, 500),
+                days_back=days_back,
+            )
+
+        logs = [
+            ServiceLogResponse(
+                id=log_dict["id"],
+                level=log_dict["level"],
+                module=log_dict["module"],
+                message=log_dict["message"],
+                context=log_dict["context"],
+                timestamp=log_dict["timestamp"],
+            )
+            for log_dict in log_dicts
+        ]
 
         return ServiceLogsResponse(
-            logs=[
-                ServiceLogResponse(
-                    id=log.id,
-                    level=log.level,
-                    module=log.module,
-                    message=log.message,
-                    context=log.context,
-                    timestamp=log.timestamp,
-                )
-                for log in logs
-            ],
+            logs=logs,
             total=len(logs),
             limit=limit,
         )
@@ -448,6 +458,9 @@ def get_positions_without_sell_orders(
         ) from e
 
 
+WEEKEND_START_DAY = 5  # Saturday=5, Sunday=6
+
+
 @router.get("/service/trading-day-info", response_model=TradingDayInfoResponse)
 def get_trading_day_info(
     current: Users = Depends(get_current_user),  # noqa: B008, ARG001
@@ -461,7 +474,7 @@ def get_trading_day_info(
         today = ist_now().date()
         is_holiday = is_nse_holiday(today)
         holiday_name = get_holiday_name(today) if is_holiday else None
-        is_weekend = today.weekday() >= 5  # Saturday=5, Sunday=6
+        is_weekend = today.weekday() >= WEEKEND_START_DAY
         is_trading = is_trading_day(today)
 
         return TradingDayInfoResponse(

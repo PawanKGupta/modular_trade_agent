@@ -1,17 +1,17 @@
 """
 User-Scoped Logging System
 
-Provides user-aware logging with database and file handlers.
+Provides user-aware logging with file handlers only.
 """
 
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from src.infrastructure.logging.database_log_handler import DatabaseLogHandler
 from src.infrastructure.logging.error_capture import capture_exception
 from src.infrastructure.logging.user_file_log_handler import (
     UserErrorFileLogHandler,
@@ -24,7 +24,6 @@ class UserScopedLogger:
     Logger wrapper that adds user context to all logs.
 
     Provides:
-    - Database logging (structured logs in ServiceLog table)
     - File logging (per-user log files)
     - Error capture (exceptions stored in ErrorLog table)
     - Context injection (user_id, module, task, etc.)
@@ -51,8 +50,7 @@ class UserScopedLogger:
         self.module = module
         self.db = db
 
-        # Create handlers
-        self.db_handler = DatabaseLogHandler(user_id=user_id, db=db)
+        # Create handlers (file-only)
         self.file_handler = UserFileLogHandler(user_id=user_id)
         self.error_file_handler = UserErrorFileLogHandler(user_id=user_id)
 
@@ -129,9 +127,11 @@ class UserScopedLogger:
         log_context["user_id"] = self.user_id
         log_context["log_module"] = self.module  # Use 'log_module' to avoid LogRecord conflict
 
-        # Convert exc_info to proper format if it's an Exception object
+        # Convert exc_info to proper format
         # Python logging expects exc_info to be: None, True, or (type, value, traceback) tuple
-        if exc_info and isinstance(exc_info, BaseException):
+        if exc_info is True:
+            exc_info = sys.exc_info()
+        elif exc_info and isinstance(exc_info, BaseException):
             exc_info = (type(exc_info), exc_info, exc_info.__traceback__)
 
         # Create log record with context
@@ -153,13 +153,6 @@ class UserScopedLogger:
             self.logger.log(level, message, extra=safe_extra, exc_info=exc_info)
         except (ValueError, OSError):
             # Handler may be closed (e.g., during test teardown)
-            pass
-
-        # Emit to database handler
-        try:
-            self.db_handler.emit(record)
-        except (ValueError, OSError, AttributeError):
-            # Handler may be closed or DB session may be invalid
             pass
 
         # Emit to file handler (all logs)
@@ -211,8 +204,6 @@ class UserScopedLogger:
 
     def close(self) -> None:
         """Close handlers and cleanup resources"""
-        if self.db_handler in self.logger.handlers:
-            self.logger.removeHandler(self.db_handler)
         if self.file_handler in self.logger.handlers:
             self.logger.removeHandler(self.file_handler)
         if self.error_file_handler in self.logger.handlers:

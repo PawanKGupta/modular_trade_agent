@@ -196,8 +196,8 @@ class MultiUserTradingService:
                                     from src.application.services.individual_service_manager import (  # noqa: PLC0415, E501
                                         IndividualServiceManager,
                                     )
-                                    from src.infrastructure.db.session import (
-                                        SessionLocal,  # noqa: PLC0415
+                                    from src.infrastructure.db.session import (  # noqa: PLC0415
+                                        SessionLocal,
                                     )
 
                                     user_logger.info(
@@ -281,7 +281,6 @@ class MultiUserTradingService:
 
                     # Update heartbeat every minute using thread-local session
                     try:
-                        # Use ServiceStatusRepository with thread-local session
                         thread_status_repo = ServiceStatusRepository(thread_db)
                         thread_status_repo.update_heartbeat(user_id)
                         thread_db.commit()
@@ -297,7 +296,12 @@ class MultiUserTradingService:
                                 action="scheduler",
                             )
                     except Exception as e:
-                        user_logger.warning(f"Failed to update heartbeat: {e}", action="scheduler")
+                        # Skip locked errors to avoid noisy logs / retries
+                        if "database is locked" not in str(e).lower():
+                            user_logger.warning(
+                                f"Failed to update heartbeat: {e}",
+                                action="scheduler",
+                            )
                         thread_db.rollback()
 
                     time.sleep(1)
@@ -685,8 +689,9 @@ class MultiUserTradingService:
 
         Args:
             user_id: User ID
-            skip_ema9_check: If True (default), skips expensive EMA9 calculation for faster response.
-                           Set to False for detailed analysis (slower, ~1-2s per position).
+            skip_ema9_check: If True (default), skips expensive EMA9 calculation
+                for faster response. Set to False for detailed analysis (slower,
+                ~1-2s per position).
 
         Returns:
             List of dicts with position details and reasons
@@ -831,7 +836,7 @@ class MultiUserTradingService:
                 user_id, NotificationEventType.SERVICE_STARTED, channel="email"
             ):
                 try:
-                    from services.email_notifier import EmailNotifier
+                    from services.email_notifier import EmailNotifier  # noqa: PLC0415
 
                     email_notifier = EmailNotifier()
                     if email_notifier.is_available():
@@ -919,7 +924,7 @@ class MultiUserTradingService:
                 user_id, NotificationEventType.SERVICE_STOPPED, channel="email"
             ):
                 try:
-                    from services.email_notifier import EmailNotifier
+                    from services.email_notifier import EmailNotifier  # noqa: PLC0415
 
                     email_notifier = EmailNotifier()
                     if email_notifier.is_available():

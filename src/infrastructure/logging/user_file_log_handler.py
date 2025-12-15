@@ -1,32 +1,60 @@
 """
-User File Logging Handler
+User File Logging Handler (JSONL)
 
-Writes logs to per-user log files organized by date.
+Writes per-user JSONL logs organized by date.
 """
 
 from __future__ import annotations
 
+import json
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.infrastructure.db.timezone_utils import ist_now
 
-class UserFileLogHandler(logging.FileHandler):
+logger = logging.getLogger(__name__)
+
+
+class UserFileLogHandler(logging.Handler):
     """
-    Logging handler that writes logs to per-user log files.
+    Logging handler that writes logs to per-user JSONL files.
 
     File structure:
     logs/
-    ??? users/
-    ?   ??? user_1/
-    ?   ?   ??? service_20250115.log
-    ?   ?   ??? service_20250116.log
-    ?   ?   ??? errors_20250115.log
-    ?   ??? user_2/
-    ?   ?   ??? ...
+      users/
+        user_{id}/
+          service_YYYYMMDD.jsonl
+          errors_YYYYMMDD.jsonl
     """
+
+    STANDARD_FIELDS = {
+        "name",
+        "msg",
+        "args",
+        "created",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "module",
+        "msecs",
+        "message",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "thread",
+        "threadName",
+        "exc_info",
+        "exc_text",
+        "stack_info",
+        "taskName",
+        "user_id",
+        "log_module",
+    }
 
     def __init__(
         self,
@@ -42,72 +70,78 @@ class UserFileLogHandler(logging.FileHandler):
             log_type: Type of log file ('service' or 'errors')
             level: Minimum logging level (default: NOTSET = all levels)
         """
-        # Create log directory structure
-        log_dir = Path("logs") / "users" / f"user_{user_id}"
-        log_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create date-based log filename
-        today = datetime.now().strftime("%Y%m%d")
-        log_filename = log_dir / f"{log_type}_{today}.log"
-
-        # Initialize file handler with UTF-8 encoding
-        super().__init__(
-            filename=str(log_filename),
-            mode="a",
-            encoding="utf-8",
-            delay=False,
-        )
-
+        super().__init__(level)
         self.user_id = user_id
         self.log_type = log_type
 
-        # Set formatter
-        formatter = logging.Formatter(
-            "%(asctime)s - %(levelname)s - [%(module)s] - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-        self.setFormatter(formatter)
-        self.setLevel(level)
+        log_dir = Path("logs") / "users" / f"user_{user_id}"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y%m%d")
+        self.base_path = log_dir
+        self.baseFilename = str(log_dir / f"{log_type}_{today}.jsonl")
+        self.stream = open(self.baseFilename, "a", encoding="utf-8")
+
+    def _ensure_current_file(self) -> None:
+        today = datetime.now().strftime("%Y%m%d")
+        expected = self.base_path / f"{self.log_type}_{today}.jsonl"
+        if self.baseFilename != str(expected):
+            try:
+                if self.stream:
+                    self.stream.close()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to rotate log file handle: %s", exc, exc_info=False)
+            self.baseFilename = str(expected)
+            self.stream = open(self.baseFilename, "a", encoding="utf-8")
+
+    def _build_context(self, record: logging.LogRecord) -> dict[str, Any] | None:
+        context: dict[str, Any] = {}
+        for key, value in record.__dict__.items():
+            if key in self.STANDARD_FIELDS:
+                continue
+            try:
+                json.dumps(value)  # test serializability
+                context[key] = value
+            except (TypeError, ValueError):
+                context[key] = str(value)
+        return context or None
 
     def emit(self, record: logging.LogRecord) -> None:
         """
-        Emit a log record to the file.
-
-        Args:
-            record: LogRecord to emit
+        Emit a log record to JSONL file.
         """
         try:
-            # Check if we need to rotate to a new file (new day)
-            today = datetime.now().strftime("%Y%m%d")
-            current_file = Path(self.baseFilename)
-            expected_file = current_file.parent / f"{self.log_type}_{today}.log"
+            self._ensure_current_file()
 
-            if current_file != expected_file:
-                # Day changed, close old file and open new one
-                if self.stream:
-                    self.stream.close()
-                self.baseFilename = str(expected_file)
-                self.stream = self._open()
+            module_name = getattr(record, "log_module", getattr(record, "module", record.name))
+            payload = {
+                "timestamp": ist_now().isoformat(),
+                "level": record.levelname,
+                "module": module_name,
+                "message": record.getMessage(),
+                "context": self._build_context(record),
+                "user_id": self.user_id,
+            }
 
-            # Add user context to message if not already present
-            msg = record.getMessage()
-            if f"[User {self.user_id}]" not in msg:
-                # Update the message in the record
-                record.msg = f"[User {self.user_id}] {record.msg}"
-                record.args = ()  # Clear args since we've formatted the message
-
-            super().emit(record)
+            line = json.dumps(payload, ensure_ascii=False)
+            self.stream.write(line + "\n")
+            self.stream.flush()
 
         except Exception:
-            # Don't let logging errors break the application
             self.handleError(record)
+
+    def close(self) -> None:
+        try:
+            if self.stream and not self.stream.closed:
+                self.stream.close()
+        finally:
+            super().close()
 
 
 class UserErrorFileLogHandler(UserFileLogHandler):
     """
     Specialized handler for error logs only.
 
-    Writes to errors_YYYYMMDD.log files.
+    Writes to errors_YYYYMMDD.jsonl files.
     """
 
     def __init__(self, user_id: int, level: int = logging.ERROR):

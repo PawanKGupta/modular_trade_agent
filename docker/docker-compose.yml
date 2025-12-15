@@ -18,11 +18,11 @@ services:
       - "8000:8000"                 # Expose port 8000 to host
 
     env_file:
-      - ../.env                     # Application configuration only (DB_URL, TZ, etc.)
+      - ../.env                     # Application configuration only (TZ, etc.)
                                     # NOT for credentials - all credentials are in database via web UI
 
     environment:
-      - DB_URL=sqlite:///./data/app.db
+      - DB_URL=postgresql+psycopg2://trader:changeme@tradeagent-db:5432/tradeagent
       - TZ=Asia/Kolkata
       - RUN_UNIFIED_IN_API=false
       # Admin user auto-creation (only on first deployment when DB is empty)
@@ -39,6 +39,10 @@ services:
 
     networks:
       - tradeagent-network
+
+    depends_on:
+      tradeagent-db:
+        condition: service_healthy
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -66,26 +70,26 @@ services:
       - api-server                  # Start after API server
 
   # ============================================
-  # Optional: PostgreSQL Database
   # ============================================
-  # Uncomment if you want to use PostgreSQL instead of SQLite
-  # postgres:
-  #   image: postgres:15-alpine
-  #   container_name: tradeagent-db
-  #   restart: unless-stopped
-  #   environment:
-  #     - POSTGRES_DB=tradeagent
-  #     - POSTGRES_USER=trader
-  #     - POSTGRES_PASSWORD=changeme
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
-  #   networks:
-  #     - tradeagent-network
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "pg_isready -U trader"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 5
+  # PostgreSQL Database
+  # ============================================
+  tradeagent-db:
+    image: postgres:15-alpine
+    container_name: tradeagent-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=tradeagent
+      - POSTGRES_USER=trader
+      - POSTGRES_PASSWORD=changeme
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - tradeagent-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trader"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 # ============================================
 # Networks - Define how services communicate
@@ -100,4 +104,6 @@ networks:
 
 volumes:
   paper_trading_data:
+    driver: local
+  postgres_data:
     driver: local

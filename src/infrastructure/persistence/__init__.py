@@ -15,7 +15,6 @@ from .notification_repository import NotificationRepository
 from .orders_repository import OrdersRepository
 from .pnl_repository import PnlRepository
 from .positions_repository import PositionsRepository
-from .service_log_repository import ServiceLogRepository
 from .service_schedule_repository import ServiceScheduleRepository
 from .service_status_repository import ServiceStatusRepository
 from .service_task_repository import ServiceTaskRepository
@@ -39,7 +38,6 @@ __all__ = [
     "IndividualServiceStatusRepository",
     "IndividualServiceTaskExecutionRepository",
     "PositionsRepository",
-    "ServiceLogRepository",
     "ServiceScheduleRepository",
     "ServiceStatusRepository",
     "ServiceTaskRepository",
