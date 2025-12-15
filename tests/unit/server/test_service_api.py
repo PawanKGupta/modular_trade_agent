@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from src.infrastructure.db.models import ServiceLog, UserRole
+from src.infrastructure.db.models import UserRole
 from src.infrastructure.db.timezone_utils import ist_now
 
 
@@ -329,18 +329,36 @@ class TestServiceTasksAPI:
 class TestServiceLogsAPI:
     """Tests for service logs endpoint"""
 
-    def test_get_service_logs_success(self, client, db_session, test_user, auth_token):
+    def test_get_service_logs_success(self, client, db_session, test_user, auth_token, monkeypatch):
         """Test getting service logs"""
-        from src.infrastructure.persistence.service_log_repository import ServiceLogRepository
+        from datetime import datetime
 
-        log_repo = ServiceLogRepository(db_session)
-        log_repo.create(
-            user_id=test_user.id,
-            level="INFO",
-            module="TradingService",
-            message="Service started successfully",
-            context={"action": "start_service"},
-        )
+        from server.app.routers import service
+
+        # Mock FileLogReader
+        class MockFileLogReader:
+            def read_logs(self, user_id, **kwargs):
+                return [
+                    {
+                        "id": "file:1",
+                        "user_id": test_user.id,
+                        "level": "INFO",
+                        "module": "TradingService",
+                        "message": "Service started successfully",
+                        "context": {"action": "start_service"},
+                        "timestamp": datetime.now(),
+                    }
+                ]
+
+            def tail_logs(self, user_id, **kwargs):
+                return self.read_logs(user_id, **kwargs)
+
+        # Patch FileLogReader in the source module and router module
+        from src.infrastructure.logging import file_log_reader as file_log_reader_module
+
+        mock_instance = MockFileLogReader()
+        monkeypatch.setattr(file_log_reader_module, "FileLogReader", lambda: mock_instance)
+        monkeypatch.setattr(service, "FileLogReader", lambda: mock_instance)
 
         response = client.get(
             "/api/v1/user/service/logs",
@@ -356,23 +374,48 @@ class TestServiceLogsAPI:
         assert data["logs"][0]["module"] == "TradingService"
         assert "Service started successfully" in data["logs"][0]["message"]
 
-    def test_get_service_logs_with_filters(self, client, db_session, test_user, auth_token):
+    def test_get_service_logs_with_filters(
+        self, client, db_session, test_user, auth_token, monkeypatch
+    ):
         """Test getting service logs with filters"""
-        from src.infrastructure.persistence.service_log_repository import ServiceLogRepository
+        from datetime import datetime
 
-        log_repo = ServiceLogRepository(db_session)
-        log_repo.create(
-            user_id=test_user.id,
-            level="INFO",
-            module="TradingService",
-            message="Info message",
-        )
-        log_repo.create(
-            user_id=test_user.id,
-            level="ERROR",
-            module="TradingService",
-            message="Error message",
-        )
+        from server.app.routers import service
+
+        # Mock FileLogReader with filter support
+        class MockFileLogReader:
+            def read_logs(self, user_id, level=None, module=None, **kwargs):
+                all_logs = [
+                    {
+                        "id": "file:1",
+                        "user_id": test_user.id,
+                        "level": "INFO",
+                        "module": "TradingService",
+                        "message": "Info message",
+                        "context": None,
+                        "timestamp": datetime.now(),
+                    },
+                    {
+                        "id": "file:2",
+                        "user_id": test_user.id,
+                        "level": "ERROR",
+                        "module": "TradingService",
+                        "message": "Error message",
+                        "context": None,
+                        "timestamp": datetime.now(),
+                    },
+                ]
+                # Apply filters
+                if level:
+                    all_logs = [log for log in all_logs if log["level"] == level]
+                if module:
+                    all_logs = [log for log in all_logs if module.lower() in log["module"].lower()]
+                return all_logs
+
+            def tail_logs(self, user_id, **kwargs):
+                return self.read_logs(user_id, **kwargs)
+
+        monkeypatch.setattr(service, "FileLogReader", lambda: MockFileLogReader())
 
         # Filter by level
         response = client.get(
@@ -395,39 +438,63 @@ class TestServiceLogsAPI:
         data = response.json()
         assert data["total"] == 2  # Both logs are from TradingService
 
-    def test_get_service_logs_with_hours_filter(self, client, db_session, test_user, auth_token):
+    def test_get_service_logs_with_hours_filter(
+        self, client, db_session, test_user, auth_token, monkeypatch
+    ):
         """Test getting service logs with hours filter"""
-        from src.infrastructure.persistence.service_log_repository import ServiceLogRepository
 
-        log_repo = ServiceLogRepository(db_session)
-        # Create old log (outside 24 hour window)
-        old_log = ServiceLog(
-            user_id=test_user.id,
-            level="INFO",
-            module="TradingService",
-            message="Old log",
-            timestamp=ist_now() - timedelta(hours=25),
-        )
-        db_session.add(old_log)
-        # Create recent log
-        log_repo.create(
-            user_id=test_user.id,
-            level="INFO",
-            module="TradingService",
-            message="Recent log",
-        )
-        db_session.commit()
+        from server.app.routers import service
 
-        # Get logs from last 24 hours (default)
+        # Mock FileLogReader with time filtering
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        class MockFileLogReader:
+            def read_logs(self, user_id, start_time=None, **kwargs):
+                now = ist_now()
+                all_logs = [
+                    {
+                        "id": "file:1",
+                        "user_id": test_user.id,
+                        "level": "INFO",
+                        "module": "TradingService",
+                        "message": "Recent log",
+                        "context": None,
+                        "timestamp": now,
+                    },
+                    {
+                        "id": "file:2",
+                        "user_id": test_user.id,
+                        "level": "INFO",
+                        "module": "TradingService",
+                        "message": "Old log",
+                        "context": None,
+                        "timestamp": now - timedelta(hours=25),
+                    },
+                ]
+                # Filter by start_time if provided
+                if start_time:
+                    all_logs = [log for log in all_logs if log["timestamp"] >= start_time]
+                return all_logs
+
+            def tail_logs(self, user_id, **kwargs):
+                return self.read_logs(user_id, **kwargs)
+
+        # Patch FileLogReader in the source module and router module
+        from src.infrastructure.logging import file_log_reader as file_log_reader_module
+
+        mock_instance = MockFileLogReader()
+        monkeypatch.setattr(file_log_reader_module, "FileLogReader", lambda: mock_instance)
+        monkeypatch.setattr(service, "FileLogReader", lambda: mock_instance)
+
+        # Request logs from last 24 hours (should exclude old log)
         response = client.get(
-            "/api/v1/user/service/logs",
+            "/api/v1/user/service/logs?hours=24",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
         assert response.status_code == 200
         data = response.json()
-        # Should only get the recent log
-        assert data["total"] == 1
+        assert data["total"] == 1  # Only recent log
         assert "Recent log" in data["logs"][0]["message"]
 
     def test_get_service_logs_requires_auth(self, client):

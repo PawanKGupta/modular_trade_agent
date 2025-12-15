@@ -218,9 +218,15 @@ class TestIndividualServiceManagerAnalysis:
 
         # Monday 8:00 AM - should allow update
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = MagicMock()
                 mock_scrip_instance._load_from_cache.return_value = instruments
                 mock_scrip_instance.scrip_data = {"NSE": instruments}
@@ -267,9 +273,15 @@ class TestIndividualServiceManagerAnalysis:
 
         # Monday 8:00 AM - should allow update
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = MagicMock()
                 mock_scrip_instance._load_from_cache.return_value = instruments
                 mock_scrip_instance.scrip_data = {"NSE": instruments}
@@ -355,9 +367,15 @@ class TestIndividualServiceManagerAnalysis:
 
         # Monday 4:30 PM - should allow
         with freeze_time("2025-01-13 16:30:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = MagicMock()
                 mock_scrip_instance._load_from_cache.return_value = instruments
                 mock_scrip_instance.scrip_data = {"NSE": instruments}
@@ -399,9 +417,15 @@ class TestIndividualServiceManagerAnalysis:
 
         # Monday 8:00 AM - should allow
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = MagicMock()
                 mock_scrip_instance._load_from_cache.return_value = instruments
                 mock_scrip_instance.scrip_data = {"NSE": instruments}
@@ -443,9 +467,15 @@ class TestIndividualServiceManagerAnalysis:
 
         # Monday 8:00 AM - should allow
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = MagicMock()
                 mock_scrip_instance._load_from_cache.return_value = instruments
                 mock_scrip_instance.scrip_data = {"NSE": instruments}
@@ -767,9 +797,15 @@ class TestIndividualServiceManagerT2TFiltering:
         ]
 
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = MagicMock()
                 mock_scrip_instance._load_from_cache.return_value = instruments
                 mock_scrip_instance.scrip_data = {"NSE": instruments}
@@ -830,9 +866,15 @@ class TestIndividualServiceManagerT2TFiltering:
         ]
 
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = self._create_mock_scrip_master(instruments)
                 mock_scrip_class.return_value = mock_scrip_instance
 
@@ -875,9 +917,15 @@ class TestIndividualServiceManagerT2TFiltering:
         ]
 
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = self._create_mock_scrip_master(instruments)
                 mock_scrip_class.return_value = mock_scrip_instance
 
@@ -927,9 +975,15 @@ class TestIndividualServiceManagerT2TFiltering:
         ]
 
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = self._create_mock_scrip_master(instruments)
                 mock_scrip_class.return_value = mock_scrip_instance
 
@@ -991,9 +1045,15 @@ class TestIndividualServiceManagerT2TFiltering:
         ]
 
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = self._create_mock_scrip_master(instruments)
                 mock_scrip_class.return_value = mock_scrip_instance
 
@@ -1020,9 +1080,15 @@ class TestIndividualServiceManagerT2TFiltering:
         ]
 
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = self._create_mock_scrip_master(instruments)
                 mock_scrip_class.return_value = mock_scrip_instance
 
@@ -1051,9 +1117,15 @@ class TestIndividualServiceManagerT2TFiltering:
         ]
 
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = self._create_mock_scrip_master(instruments)
                 mock_scrip_class.return_value = mock_scrip_instance
 
@@ -1083,9 +1155,15 @@ class TestIndividualServiceManagerT2TFiltering:
         ]
 
         with freeze_time("2025-01-13 08:00:00+05:30"):
-            with patch(
-                "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
-            ) as mock_scrip_class:
+            with (
+                patch(
+                    "modules.kotak_neo_auto_trader.scrip_master.KotakNeoScripMaster"
+                ) as mock_scrip_class,
+                patch(
+                    "src.application.services.individual_service_manager.AnalysisDeduplicationService.should_update_signals",
+                    return_value=True,
+                ),
+            ):
                 mock_scrip_instance = self._create_mock_scrip_master(instruments)
                 mock_scrip_class.return_value = mock_scrip_instance
 

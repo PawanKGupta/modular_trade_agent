@@ -67,11 +67,11 @@ class SignalsRepository:
         Returns:
             List of Signals for the specified date, ordered by timestamp (most recent first)
         """
-        # Use SQLite's date() function to extract date from ts column
+        # Use SQLAlchemy's func.date() to extract date from ts column (works with both SQLite and PostgreSQL)
         # Format: 'YYYY-MM-DD'
         target_date_str = target_date.isoformat()
 
-        # Query: filter by date part of ts using SQLite date() function
+        # Query: filter by date part of ts using cross-database compatible date() function
         stmt = (
             select(Signals)
             .where(func.date(Signals.ts) == target_date_str)
@@ -96,11 +96,11 @@ class SignalsRepository:
         Returns:
             List of Signals within the date range, ordered by timestamp (most recent first)
         """
-        # Use SQLite's date() function to extract date from ts column
+        # Use SQLAlchemy's func.date() to extract date from ts column (works with both SQLite and PostgreSQL)
         start_date_str = start_date.isoformat()
         end_date_str = end_date.isoformat()
 
-        # Query: filter by date range using SQLite date() function
+        # Query: filter by date range using cross-database compatible date() function
         stmt = (
             select(Signals)
             .where(func.date(Signals.ts) >= start_date_str, func.date(Signals.ts) <= end_date_str)
@@ -144,45 +144,41 @@ class SignalsRepository:
             before_timestamp = ist_now()
 
         # Convert to naive datetime for database comparison (SQLite stores as naive)
+        # PostgreSQL can handle timezone-aware datetimes, but we normalize for consistency
         if before_timestamp.tzinfo is not None:
             before_timestamp = before_timestamp.replace(tzinfo=None)
 
-        # Format timestamp for SQL (SQLite datetime format)
-        # SQLite's julianday() can parse various formats, but we'll use a consistent format
-        # Use the format that matches what SQLite stores:
-        # YYYY-MM-DD HH:MM:SS or YYYY-MM-DD HH:MM:SS.ffffff
-        # julianday() handles both formats correctly
-        timestamp_str = before_timestamp.strftime("%Y-%m-%d %H:%M:%S")
-        if before_timestamp.microsecond:
-            timestamp_str += f".{before_timestamp.microsecond:06d}"
-
         # Build SQL query to avoid Python-side datetime comparison issues
-        # Use julianday() for reliable numeric comparison
-        # This handles both with and without microseconds correctly
+        # Use direct datetime comparison for cross-database compatibility
+        # SQLite's julianday() doesn't exist in PostgreSQL, so use direct comparison
         # Note: Use LOWER() for case-insensitive status comparison
         # since SQLite stores enums as strings
         if exclude_symbols:
             # Use SQLAlchemy update() to avoid SQL injection warnings
             # Symbols come from internal code, not user input, but using ORM is safer
             # Use bindparam() to properly bind the timestamp parameter
-            before_timestamp_param = bindparam("before_timestamp", timestamp_str)
+            # Use synchronize_session=False to avoid Python-side datetime comparison
+            # which fails when comparing naive (DB) vs aware (Python) datetimes
+            before_timestamp_param = bindparam("before_timestamp", before_timestamp)
             stmt = (
                 update(Signals)
                 .where(
                     Signals.status == SignalStatus.ACTIVE,
-                    func.julianday(Signals.ts) < func.julianday(before_timestamp_param),
+                    Signals.ts < before_timestamp_param,
                     ~Signals.symbol.in_(exclude_symbols),
                 )
                 .values(status=SignalStatus.EXPIRED)
             )
-            result = self.db.execute(stmt)
+            result = self.db.execute(stmt, execution_options={"synchronize_session": False})
         else:
+            # Use raw SQL for better performance when no symbol exclusion
+            # Direct datetime comparison works in both SQLite and PostgreSQL
             sql = text(
                 """
                 UPDATE signals
                 SET status = :status
                 WHERE status = :active_status
-                  AND julianday(ts) < julianday(:before_timestamp)
+                  AND ts < :before_timestamp
                 """
             )
             result = self.db.execute(
@@ -190,7 +186,7 @@ class SignalsRepository:
                 {
                     "status": SignalStatus.EXPIRED.value,  # "expired"
                     "active_status": SignalStatus.ACTIVE.value,  # "active"
-                    "before_timestamp": timestamp_str,
+                    "before_timestamp": before_timestamp,  # Pass datetime object directly
                 },
             )
         # Commit the expiration update
@@ -541,8 +537,6 @@ class SignalsRepository:
         Returns:
             Number of signals marked as expired
         """
-        now = ist_now()
-
         # Get all ACTIVE and REJECTED signals (both can be expired by time)
         # Note: Using list() to materialize the query results immediately, reducing
         # the time window for potential race conditions where a signal might be
@@ -560,7 +554,6 @@ class SignalsRepository:
         )
 
         expired_count = 0
-        now = ist_now()  # Get current time once to minimize time drift during processing
 
         for signal in signals_to_check:
             # Check if signal has passed its expiry time

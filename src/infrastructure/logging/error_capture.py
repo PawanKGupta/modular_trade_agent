@@ -6,9 +6,12 @@ Captures exceptions with full context and stores them in ErrorLog table.
 
 from __future__ import annotations
 
+import logging
+import time
 import traceback
-from typing import Any, Optional
+from typing import Any
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from src.infrastructure.persistence.error_log_repository import ErrorLogRepository
@@ -16,6 +19,8 @@ from src.infrastructure.persistence.service_status_repository import ServiceStat
 from src.infrastructure.persistence.user_trading_config_repository import (
     UserTradingConfigRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def capture_exception(
@@ -27,7 +32,7 @@ def capture_exception(
 ) -> None:
     """
     Capture exception with full context and store in ErrorLog table.
-    
+
     Args:
         user_id: User ID who encountered the error
         exception: Exception object to capture
@@ -54,8 +59,8 @@ def capture_exception(
                         "max_portfolio_size": user_config.max_portfolio_size,
                         "ml_enabled": user_config.ml_enabled,
                     }
-            except Exception:
-                pass  # Non-fatal if config fetch fails
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to enrich error context with user config: %s", exc)
 
             # Add service status at time of error
             try:
@@ -71,30 +76,41 @@ def capture_exception(
                             else None
                         ),
                     }
-            except Exception:
-                pass  # Non-fatal if status fetch fails
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to enrich error context with service status: %s", exc)
 
         # Get traceback
         tb_str = traceback.format_exc()
 
-        # Create error log entry
-        error_repo.create(
-            user_id=user_id,
-            error_type=type(exception).__name__[:128],  # Truncate to max length
-            error_message=str(exception)[:1024],  # Truncate to max length
-            traceback=tb_str[:8192] if tb_str else None,  # Truncate to max length
-            context=error_context if error_context else None,
-        )
+        # Create error log entry with light retry/backoff on locked DB
+        attempts = 3
+        delays = [0.1, 0.2, 0.4]
+        for i in range(attempts):
+            try:
+                error_repo.create(
+                    user_id=user_id,
+                    error_type=type(exception).__name__[:128],  # Truncate to max length
+                    error_message=str(exception)[:1024],  # Truncate to max length
+                    traceback=tb_str[:8192] if tb_str else None,  # Truncate to max length
+                    context=error_context if error_context else None,
+                )
+                db.commit()
+                break
+            except OperationalError as op_err:
+                db.rollback()
+                if "database is locked" in str(op_err).lower() and i < attempts - 1:
+                    time.sleep(delays[i])
+                    continue
+                raise
+            except Exception:
+                db.rollback()
+                raise
 
     except Exception as e:
         # Fallback: if error capture itself fails, at least log it
         # This prevents error capture from breaking the application
-        import logging
-
-        logger = logging.getLogger("TradeAgent.ErrorCapture")
         logger.error(
             f"Failed to capture exception for user {user_id}: {e}",
             exc_info=True,
             extra={"original_exception": str(exception)},
         )
-

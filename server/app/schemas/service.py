@@ -63,7 +63,7 @@ class TaskHistoryResponse(BaseModel):
 class ServiceLogResponse(BaseModel):
     """Service log entry"""
 
-    id: int
+    id: str  # file:line composite for JSONL logs
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
     module: str
     message: str

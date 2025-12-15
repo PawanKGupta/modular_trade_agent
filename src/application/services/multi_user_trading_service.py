@@ -196,8 +196,8 @@ class MultiUserTradingService:
                                     from src.application.services.individual_service_manager import (  # noqa: PLC0415, E501
                                         IndividualServiceManager,
                                     )
-                                    from src.infrastructure.db.session import (
-                                        SessionLocal,  # noqa: PLC0415
+                                    from src.infrastructure.db.session import (  # noqa: PLC0415
+                                        SessionLocal,
                                     )
 
                                     user_logger.info(
@@ -281,7 +281,6 @@ class MultiUserTradingService:
 
                     # Update heartbeat every minute using thread-local session
                     try:
-                        # Use ServiceStatusRepository with thread-local session
                         thread_status_repo = ServiceStatusRepository(thread_db)
                         thread_status_repo.update_heartbeat(user_id)
                         thread_db.commit()
@@ -297,7 +296,12 @@ class MultiUserTradingService:
                                 action="scheduler",
                             )
                     except Exception as e:
-                        user_logger.warning(f"Failed to update heartbeat: {e}", action="scheduler")
+                        # Skip locked errors to avoid noisy logs / retries
+                        if "database is locked" not in str(e).lower():
+                            user_logger.warning(
+                                f"Failed to update heartbeat: {e}",
+                                action="scheduler",
+                            )
                         thread_db.rollback()
 
                     time.sleep(1)
@@ -507,7 +511,12 @@ class MultiUserTradingService:
                 self._service_status_repo.update_running(user_id, running=True)
                 self._service_status_repo.update_heartbeat(user_id)
 
+                # Commit status update BEFORE sending notification
+                # This ensures status is persisted even if notification fails/rollbacks
+                self.db.commit()
+
                 # Send notification for service start
+                # Note: This is wrapped in try-except internally, so failures won't affect status
                 self._notify_service_started(user_id)
 
                 return True
@@ -524,6 +533,8 @@ class MultiUserTradingService:
 
                 self._service_status_repo.update_running(user_id, running=False)
                 self._service_status_repo.increment_error(user_id, error_message=str(e))
+                # Commit error status before raising to ensure it's persisted
+                self.db.commit()
                 raise
 
     def stop_service(self, user_id: int) -> bool:
@@ -589,7 +600,12 @@ class MultiUserTradingService:
                 self._service_status_repo.update_running(user_id, running=False)
                 self._service_status_repo.update_heartbeat(user_id)
 
+                # Commit status update BEFORE sending notification
+                # This ensures status is persisted even if notification fails/rollbacks
+                self.db.commit()
+
                 # Send notification for service stop
+                # Note: This is wrapped in try-except internally, so failures won't affect status
                 self._notify_service_stopped(user_id)
 
                 user_logger.info(
@@ -610,6 +626,8 @@ class MultiUserTradingService:
                 )
 
                 self._service_status_repo.increment_error(user_id, error_message=str(e))
+                # Commit error status to ensure it's persisted
+                self.db.commit()
                 return False
 
     def get_service_status(self, user_id: int) -> any | None:
@@ -685,8 +703,9 @@ class MultiUserTradingService:
 
         Args:
             user_id: User ID
-            skip_ema9_check: If True (default), skips expensive EMA9 calculation for faster response.
-                           Set to False for detailed analysis (slower, ~1-2s per position).
+            skip_ema9_check: If True (default), skips expensive EMA9 calculation
+                for faster response. Set to False for detailed analysis (slower,
+                ~1-2s per position).
 
         Returns:
             List of dicts with position details and reasons
@@ -794,14 +813,18 @@ class MultiUserTradingService:
                     title="Unified Service Started",
                     message=message,
                 )
-                user_logger = get_user_logger(
-                    user_id=user_id, db=self.db, module="MultiUserTradingService"
-                )
-                user_logger.info(
-                    "Created in-app notification for unified service start",
-                    action="notify_service_started",
-                    notification_id=notification.id,
-                )
+                try:
+                    user_logger = get_user_logger(
+                        user_id=user_id, db=self.db, module="MultiUserTradingService"
+                    )
+                    user_logger.info(
+                        "Created in-app notification for unified service start",
+                        action="notify_service_started",
+                        notification_id=notification.id,
+                    )
+                except Exception:
+                    # Logging failure shouldn't prevent notification from being created
+                    pass
 
             # Send Telegram notification if enabled
             if pref_service.should_notify(
@@ -831,7 +854,7 @@ class MultiUserTradingService:
                 user_id, NotificationEventType.SERVICE_STARTED, channel="email"
             ):
                 try:
-                    from services.email_notifier import EmailNotifier
+                    from services.email_notifier import EmailNotifier  # noqa: PLC0415
 
                     email_notifier = EmailNotifier()
                     if email_notifier.is_available():
@@ -919,7 +942,7 @@ class MultiUserTradingService:
                 user_id, NotificationEventType.SERVICE_STOPPED, channel="email"
             ):
                 try:
-                    from services.email_notifier import EmailNotifier
+                    from services.email_notifier import EmailNotifier  # noqa: PLC0415
 
                     email_notifier = EmailNotifier()
                     if email_notifier.is_available():

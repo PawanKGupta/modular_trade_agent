@@ -13,10 +13,11 @@ from server.app.schemas.logs import (
     ErrorLogsResponse,
     ErrorResolutionRequest,
     ErrorResolutionResponse,
+    ServiceLogEntry,
     ServiceLogsResponse,
 )
+from src.infrastructure.logging.file_log_reader import FileLogReader
 from src.infrastructure.persistence.error_log_repository import ErrorLogRepository
-from src.infrastructure.persistence.service_log_repository import ServiceLogRepository
 
 router = APIRouter()
 
@@ -51,21 +52,35 @@ def get_user_logs(
     search: str | None = Query(
         None, description="Search message/module substring.", max_length=120
     ),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=500),
+    days_back: int = Query(7, ge=1, le=14),
+    tail: bool = Query(False, description="Return last 200 lines from latest file."),
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return service logs for the authenticated user."""
-    repo = ServiceLogRepository(db)
-    logs = repo.list(
-        user_id=current_user.id,
-        level=level,
-        module=module,
-        start_time=_parse_datetime(start_time),
-        end_time=_parse_datetime(end_time),
-        search=search,
-        limit=limit,
-    )
+    """Return service logs for the authenticated user (file-based)."""
+    _ = db  # Not used for file logs
+    reader = FileLogReader()
+
+    if tail:
+        log_dicts = reader.tail_logs(user_id=current_user.id, log_type="service", tail_lines=200)
+    else:
+        log_dicts = reader.read_logs(
+            user_id=current_user.id,
+            level=level,
+            module=module,
+            start_time=_parse_datetime(start_time),
+            end_time=_parse_datetime(end_time),
+            search=search,
+            limit=limit,
+            days_back=days_back,
+        )
+
+    logs = []
+    for log_dict in log_dicts:
+        # Accept legacy int IDs (e.g., old DB rows) by coercing to string for the schema.
+        coerced = {**log_dict, "id": str(log_dict.get("id", ""))}
+        logs.append(ServiceLogEntry(**coerced))
     return ServiceLogsResponse(logs=logs)
 
 
@@ -104,22 +119,40 @@ def get_admin_logs(
     search: str | None = Query(
         None, description="Search message/module substring.", max_length=120
     ),
-    limit: int = Query(500, ge=1, le=2000),
+    limit: int = Query(500, ge=1, le=500),
+    days_back: int = Query(7, ge=1, le=14),
+    tail: bool = Query(False, description="Return last 200 lines from latest file."),
     admin=Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Admin endpoint to list logs across users."""
+    """Admin endpoint to list logs across users (file-based, requires user_id)."""
     _ = admin
-    repo = ServiceLogRepository(db)
-    logs = repo.list_all(
-        user_id=user_id,
-        level=level,
-        module=module,
-        start_time=_parse_datetime(start_time),
-        end_time=_parse_datetime(end_time),
-        search=search,
-        limit=limit,
-    )
+    _ = db  # Not used for file logs
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_id is required for admin log access.",
+        )
+
+    reader = FileLogReader()
+    if tail:
+        log_dicts = reader.tail_logs(user_id=user_id, log_type="service", tail_lines=200)
+    else:
+        log_dicts = reader.read_logs(
+            user_id=user_id,
+            level=level,
+            module=module,
+            start_time=_parse_datetime(start_time),
+            end_time=_parse_datetime(end_time),
+            search=search,
+            limit=limit,
+            days_back=days_back,
+        )
+
+    logs = []
+    for log_dict in log_dicts:
+        coerced = {**log_dict, "id": str(log_dict.get("id", ""))}
+        logs.append(ServiceLogEntry(**coerced))
     return ServiceLogsResponse(logs=logs)
 
 

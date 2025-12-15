@@ -173,11 +173,11 @@ See [Trading Configuration Guide](TRADING_CONFIG.md) for details.
   - Separate retention for service logs and error logs
 
 **Technical Details:**
-- `DatabaseLogHandler` uses async queue with worker thread
-- Logs are batched for performance
-- Graceful shutdown ensures all logs are written
-- Docker detection automatically disables rotation if not possible
-- `LogRetentionService` manages automatic log cleanup
+- Activity logs use JSONL file format (one file per user per day)
+- Error logs stored in database (ErrorLog table)
+- File-based logging eliminates SQLite lock contention
+- `FileLogReader` provides efficient log reading and filtering
+- `LogRetentionService` manages automatic cleanup of old files and error logs
 
 ### 9. Notification System
 

@@ -2,6 +2,7 @@
 Basic tests for paper trading system
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -24,12 +25,23 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTr
 @pytest.fixture
 def paper_config():
     """Create test configuration"""
+    # Make storage path unique per worker when running in parallel
+    # This prevents race conditions when tests run with pytest-xdist (-n=auto)
+    base_path = "paper_trading/test"
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER", "")
+    if worker_id:
+        # Running in parallel - use unique path per worker
+        storage_path = f"{base_path}_{worker_id}"
+    else:
+        # Running sequentially - use base path
+        storage_path = base_path
+
     return PaperTradingConfig(
         initial_capital=100000.0,
         enable_slippage=False,  # Disable for predictable tests
         enable_fees=False,
         price_source="mock",
-        storage_path="paper_trading/test",
+        storage_path=storage_path,
         enforce_market_hours=False,
     )
 
@@ -185,7 +197,7 @@ class TestSellOrders:
             order_type=OrderType.MARKET,
             transaction_type=TransactionType.SELL,
         )
-        order_id = broker.place_order(sell_order)
+        broker.place_order(sell_order)
 
         # Check holding reduced
         holding = broker.get_holding("INFY")
@@ -236,7 +248,7 @@ class TestOrderRetrieval:
         broker.price_provider.set_mock_price("INFY", 1450.00)
 
         # Place multiple orders
-        for i in range(3):
+        for _i in range(3):
             order = Order(
                 symbol="INFY",
                 quantity=5,

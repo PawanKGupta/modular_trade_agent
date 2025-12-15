@@ -95,7 +95,7 @@ class SafeRotatingFileHandler(RotatingFileHandler):
             if os.path.exists("/.dockerenv"):
                 return True
             if os.path.exists("/proc/self/cgroup"):
-                with open("/proc/self/cgroup", "r") as f:
+                with open("/proc/self/cgroup") as f:
                     if "docker" in f.read():
                         return True
             if os.getenv("DOCKER_CONTAINER") == "true":
@@ -266,7 +266,7 @@ def _is_docker_environment():
         if os.path.exists("/.dockerenv"):
             return True
         if os.path.exists("/proc/self/cgroup"):
-            with open("/proc/self/cgroup", "r") as f:
+            with open("/proc/self/cgroup") as f:
                 if "docker" in f.read():
                     return True
         if os.getenv("DOCKER_CONTAINER") == "true":
@@ -703,7 +703,4 @@ async def stop_log_retention_worker():
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-    # Shutdown database log handler to flush any pending logs
-    from src.infrastructure.logging.database_log_handler import DatabaseLogHandler
-
-    DatabaseLogHandler.shutdown()
+    # File-based logging doesn't require shutdown

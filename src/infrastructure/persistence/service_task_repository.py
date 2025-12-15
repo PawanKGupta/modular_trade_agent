@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from typing import Literal
 
 from sqlalchemy import desc, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import ServiceTaskExecution
@@ -27,18 +29,40 @@ class ServiceTaskRepository:
         details: dict | None = None,
     ) -> ServiceTaskExecution:
         """Create a new task execution record"""
-        task = ServiceTaskExecution(
-            user_id=user_id,
-            task_name=task_name,
-            executed_at=ist_now(),
-            status=status,
-            duration_seconds=duration_seconds,
-            details=details,
-        )
-        self.db.add(task)
-        self.db.commit()
-        self.db.refresh(task)
-        return task
+        attempts = 3
+        delays = [0.1, 0.2, 0.4]
+        last_err: Exception | None = None
+
+        for i in range(attempts):
+            try:
+                task = ServiceTaskExecution(
+                    user_id=user_id,
+                    task_name=task_name,
+                    executed_at=ist_now(),
+                    status=status,
+                    duration_seconds=duration_seconds,
+                    details=details,
+                )
+                self.db.add(task)
+                self.db.commit()
+                self.db.refresh(task)
+                return task
+            except OperationalError as op_err:
+                # Retry on locked database; rollback before retry
+                self.db.rollback()
+                last_err = op_err
+                if "database is locked" in str(op_err).lower() and i < attempts - 1:
+                    time.sleep(delays[i])
+                    continue
+                raise
+            except Exception as exc:
+                # Rollback any other errors and re-raise immediately
+                self.db.rollback()
+                last_err = exc
+                raise
+
+        if last_err:
+            raise last_err
 
     def get(self, task_id: int) -> ServiceTaskExecution | None:
         """Get task execution by ID"""
