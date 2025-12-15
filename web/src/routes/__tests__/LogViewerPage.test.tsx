@@ -11,6 +11,16 @@ const mockGetAdminErrorLogs = vi.fn();
 const mockResolveErrorLog = vi.fn();
 const mockListUsers = vi.fn();
 
+// Mock react-syntax-highlighter to avoid ES module issues in tests
+vi.mock('react-syntax-highlighter', () => ({
+	Prism: ({ children }: { children: string }) => <pre>{children}</pre>,
+	default: ({ children }: { children: string }) => <pre>{children}</pre>,
+}));
+
+vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
+	vscDarkPlus: {},
+}));
+
 vi.mock('@/api/logs', () => ({
 	getUserLogs: (params: unknown) => mockGetUserLogs(params),
 	getAdminLogs: (params: unknown) => mockGetAdminLogs(params),
@@ -102,14 +112,25 @@ it('switches to admin scope and filters by user id', async () => {
 	const scopeSelect = screen.getByLabelText(/Scope/i);
 	await userEvent.selectOptions(scopeSelect, 'all');
 
-	// Wait for UserAutocomplete to load
+	// Wait for UserAutocomplete to load and show users
 	await waitFor(() => {
 		const userInput = screen.getByPlaceholderText(/Any/i);
 		expect(userInput).toBeInTheDocument();
 	});
 
+	// Focus the input to open dropdown
 	const userInput = screen.getByPlaceholderText(/Any/i);
-	await userEvent.type(userInput, '2');
+	await userEvent.click(userInput);
+
+	// Wait for dropdown to appear with users
+	await waitFor(() => {
+		expect(screen.getByText(/User 2/i)).toBeInTheDocument();
+	});
+
+	// Click on User 2 to select them
+	const user2Button = screen.getByText(/User 2/i).closest('button');
+	expect(user2Button).toBeInTheDocument();
+	await userEvent.click(user2Button!);
 
 	await waitFor(() => {
 		expect(mockGetAdminLogs).toHaveBeenCalledWith(
