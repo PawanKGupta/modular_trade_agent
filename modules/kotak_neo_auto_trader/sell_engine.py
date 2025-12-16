@@ -66,7 +66,11 @@ try:
     )
     from .utils.order_field_extractor import OrderFieldExtractor
     from .utils.order_status_parser import OrderStatusParser
-    from .utils.symbol_utils import extract_base_symbol, extract_ticker_base
+    from .utils.symbol_utils import (
+        extract_base_symbol,
+        extract_ticker_base,
+        get_ticker_from_full_symbol,
+    )
 except ImportError:
     from modules.kotak_neo_auto_trader import config
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
@@ -492,8 +496,9 @@ class SellOrderManager:
         for pos in positions:
             if pos.closed_at is None:  # Open position
                 # Get ticker and placed_symbol from matching ONGOING order if available
-                ticker = f"{pos.symbol}.NS"
-                placed_symbol = f"{pos.symbol}-EQ"
+                # Extract base symbol for ticker creation (yfinance needs base symbol)
+                ticker = get_ticker_from_full_symbol(pos.symbol)
+                placed_symbol = pos.symbol  # Use full symbol as placed_symbol
 
                 # Try to get ticker and placed_symbol from most recent ONGOING order
                 if self.orders_repo and DbOrderStatus:
@@ -504,7 +509,7 @@ class SellOrderManager:
                         for order in ongoing_orders:
                             if (
                                 order.side.lower() == "buy"
-                                and extract_base_symbol(order.symbol).upper() == pos.symbol.upper()
+                                and order.symbol.upper() == pos.symbol.upper()  # Exact match
                             ):
                                 # Found matching order - use its metadata
                                 if order.order_metadata and isinstance(order.order_metadata, dict):
@@ -622,8 +627,9 @@ class SellOrderManager:
 
                 # Attempt to place sell order for this position
                 try:
-                    ticker = position.get("ticker", f"{symbol}.NS")
-                    broker_sym = position.get("placed_symbol", f"{symbol}-EQ")
+                    # Extract base symbol for ticker creation (yfinance needs base symbol)
+                    ticker = position.get("ticker") or get_ticker_from_full_symbol(symbol)
+                    broker_sym = position.get("placed_symbol", symbol)  # Use full symbol
                     entry_price = position.get("entry_price", 0)
                     qty = position.get("qty", 0)
 
@@ -741,8 +747,9 @@ class SellOrderManager:
 
                 # Determine reason why sell order wasn't placed
                 reason = "Not attempted yet"
-                ticker = position.get("ticker", f"{symbol}.NS")
-                broker_sym = position.get("placed_symbol", f"{symbol}-EQ")
+                # Extract base symbol for ticker creation (yfinance needs base symbol)
+                ticker = position.get("ticker") or get_ticker_from_full_symbol(symbol)
+                broker_sym = position.get("placed_symbol", symbol)  # Use full symbol
 
                 # Check common reasons without actually placing orders
                 try:
