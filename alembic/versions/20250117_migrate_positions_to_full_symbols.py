@@ -12,7 +12,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "20250117_migrate_positions_to_full_symbols"
-down_revision = "d1e2f3a4b5c6"
+down_revision = "20251213_add_failed_status_to_signalstatus"
 branch_labels = None
 depends_on = None
 
@@ -49,7 +49,7 @@ def upgrade() -> None:
                 FROM orders o
                 WHERE o.user_id = positions.user_id
                   AND o.side = 'buy'
-                  AND o.status = 'ONGOING'
+                  AND o.status = 'ongoing'
                   AND UPPER(SUBSTR(o.symbol, 1, INSTR(o.symbol || '-', '-') - 1)) = \
                       UPPER(positions.symbol)
                 ORDER BY o.placed_at DESC
@@ -63,7 +63,7 @@ def upgrade() -> None:
                   SELECT 1 FROM orders o
                   WHERE o.user_id = positions.user_id
                     AND o.side = 'buy'
-                    AND o.status = 'ONGOING'
+                    AND o.status = 'ongoing'
                     AND UPPER(SUBSTR(o.symbol, 1, INSTR(o.symbol || '-', '-') - 1)) = \
                       UPPER(positions.symbol)
               )
@@ -116,7 +116,7 @@ def upgrade() -> None:
                 FROM orders o
                 WHERE o.user_id = p.user_id
                   AND o.side = 'buy'
-                  AND o.status = 'ONGOING'
+                  AND o.status = 'ongoing'
                   AND UPPER(SPLIT_PART(o.symbol, '-', 1)) = UPPER(p.symbol)
                 ORDER BY o.placed_at DESC
                 LIMIT 1
@@ -129,7 +129,7 @@ def upgrade() -> None:
                   SELECT 1 FROM orders o
                   WHERE o.user_id = p.user_id
                     AND o.side = 'buy'
-                    AND o.status = 'ONGOING'
+                    AND o.status = 'ongoing'
                     AND UPPER(SPLIT_PART(o.symbol, '-', 1)) = UPPER(p.symbol)
               )
         """
