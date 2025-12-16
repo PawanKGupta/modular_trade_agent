@@ -7,8 +7,6 @@ while maintaining backward compatibility.
 
 from unittest.mock import Mock, patch
 
-import pytest
-
 from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
 from modules.kotak_neo_auto_trader.services.price_service import PriceService
 
@@ -267,9 +265,7 @@ class TestEMA9RetryMechanismIssue3:
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
-    def test_get_ema9_with_retry_succeeds_on_first_attempt(
-        self, mock_scrip_master, mock_auth
-    ):
+    def test_get_ema9_with_retry_succeeds_on_first_attempt(self, mock_scrip_master, mock_auth):
         """Test that _get_ema9_with_retry succeeds on first attempt"""
         mock_auth_instance = Mock()
         mock_auth_instance.client = None
@@ -280,7 +276,9 @@ class TestEMA9RetryMechanismIssue3:
         # Mock successful EMA9 calculation
         manager.get_current_ema9 = Mock(return_value=2500.0)
 
-        result = manager._get_ema9_with_retry("RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE")
+        result = manager._get_ema9_with_retry(
+            "RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE-EQ"
+        )  # Full symbol after migration
 
         assert result == 2500.0
         manager.get_current_ema9.assert_called_once()
@@ -298,16 +296,16 @@ class TestEMA9RetryMechanismIssue3:
         # Mock: First attempt fails, second succeeds
         manager.get_current_ema9 = Mock(side_effect=[None, 2500.0])
 
-        result = manager._get_ema9_with_retry("RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE")
+        result = manager._get_ema9_with_retry(
+            "RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE-EQ"
+        )  # Full symbol after migration
 
         assert result == 2500.0
         assert manager.get_current_ema9.call_count == 2
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
-    def test_get_ema9_with_retry_falls_back_to_yesterday_ema9(
-        self, mock_scrip_master, mock_auth
-    ):
+    def test_get_ema9_with_retry_falls_back_to_yesterday_ema9(self, mock_scrip_master, mock_auth):
         """Test that _get_ema9_with_retry falls back to yesterday's EMA9 when all retries fail"""
         import pandas as pd
 
@@ -329,11 +327,16 @@ class TestEMA9RetryMechanismIssue3:
             }
         )
         # Ensure price_service exists and has get_price method
-        if not hasattr(manager.indicator_service, "price_service") or manager.indicator_service.price_service is None:
+        if (
+            not hasattr(manager.indicator_service, "price_service")
+            or manager.indicator_service.price_service is None
+        ):
             manager.indicator_service.price_service = Mock()
         manager.indicator_service.price_service.get_price = Mock(return_value=mock_df)
 
-        result = manager._get_ema9_with_retry("RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE")
+        result = manager._get_ema9_with_retry(
+            "RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE-EQ"
+        )  # Full symbol after migration
 
         # Should return yesterday's EMA9 (calculated from historical data)
         assert result is not None
@@ -343,9 +346,7 @@ class TestEMA9RetryMechanismIssue3:
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
-    def test_get_ema9_with_retry_returns_none_when_all_fail(
-        self, mock_scrip_master, mock_auth
-    ):
+    def test_get_ema9_with_retry_returns_none_when_all_fail(self, mock_scrip_master, mock_auth):
         """Test that _get_ema9_with_retry returns None when all attempts and fallback fail"""
         mock_auth_instance = Mock()
         mock_auth_instance.client = None
@@ -359,7 +360,9 @@ class TestEMA9RetryMechanismIssue3:
         # Mock: Fallback also fails (no price service or empty data)
         manager.indicator_service.price_service = None
 
-        result = manager._get_ema9_with_retry("RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE")
+        result = manager._get_ema9_with_retry(
+            "RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE-EQ"
+        )  # Full symbol after migration
 
         assert result is None
         # Should have tried max_retries + 1 times
@@ -378,7 +381,9 @@ class TestEMA9RetryMechanismIssue3:
         # Mock: First attempt raises exception, second succeeds
         manager.get_current_ema9 = Mock(side_effect=[Exception("Network error"), 2500.0])
 
-        result = manager._get_ema9_with_retry("RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE")
+        result = manager._get_ema9_with_retry(
+            "RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE-EQ"
+        )  # Full symbol after migration
 
         assert result == 2500.0
         assert manager.get_current_ema9.call_count == 2

@@ -85,13 +85,13 @@ class TestBrokerAPIFailureRollback:
     ):
         """Test that broker API call happens before database update"""
         # Setup: Existing position
-        base_symbol = "RELIANCE"
+        base_symbol = "RELIANCE-EQ"  # Full symbol after migration
         order_id = "REENTRY123"
         execution_time = ist_now()
 
         existing_position = Positions(
             user_id=1,
-            symbol=base_symbol,
+            symbol=base_symbol,  # Already updated to RELIANCE-EQ
             quantity=100.0,
             avg_price=100.0,
             opened_at=ist_now(),
@@ -166,13 +166,13 @@ class TestBrokerAPIFailureRollback:
     ):
         """Test that if broker API succeeds, both position and sell order are updated"""
         # Setup: Existing position
-        base_symbol = "RELIANCE"
+        base_symbol = "RELIANCE-EQ"  # Full symbol after migration
         order_id = "REENTRY123"
         execution_time = ist_now()
 
         existing_position = Positions(
             user_id=1,
-            symbol=base_symbol,
+            symbol=base_symbol,  # Already updated to RELIANCE-EQ
             quantity=100.0,
             avg_price=100.0,
             opened_at=ist_now(),
@@ -228,7 +228,7 @@ class TestBrokerAPIFailureRollback:
         # Verify: Broker API was called with correct parameters
         mock_sell_manager.update_sell_order.assert_called_once_with(
             order_id="SELL123",
-            symbol=base_symbol,
+            symbol=base_symbol,  # Already updated to RELIANCE-EQ
             qty=110,  # New quantity after reentry
             new_price=9.50,
         )
@@ -238,13 +238,13 @@ class TestBrokerAPIFailureRollback:
     ):
         """Test that if broker API fails, position is still updated (primary operation)"""
         # Setup: Existing position
-        base_symbol = "RELIANCE"
+        base_symbol = "RELIANCE-EQ"  # Full symbol after migration
         order_id = "REENTRY123"
         execution_time = ist_now()
 
         existing_position = Positions(
             user_id=1,
-            symbol=base_symbol,
+            symbol=base_symbol,  # Already updated to RELIANCE-EQ
             quantity=100.0,
             avg_price=100.0,
             opened_at=ist_now(),
@@ -307,13 +307,13 @@ class TestBrokerAPIFailureRollback:
     ):
         """Test that if broker API raises exception, position is still updated"""
         # Setup: Existing position
-        base_symbol = "RELIANCE"
+        base_symbol = "RELIANCE-EQ"  # Full symbol after migration
         order_id = "REENTRY123"
         execution_time = ist_now()
 
         existing_position = Positions(
             user_id=1,
-            symbol=base_symbol,
+            symbol=base_symbol,  # Already updated to RELIANCE-EQ
             quantity=100.0,
             avg_price=100.0,
             opened_at=ist_now(),
@@ -376,13 +376,13 @@ class TestBrokerAPIFailureRollback:
     ):
         """Test that if no sell order exists, broker API call is skipped"""
         # Setup: Existing position
-        base_symbol = "RELIANCE"
+        base_symbol = "RELIANCE-EQ"  # Full symbol after migration
         order_id = "REENTRY123"
         execution_time = ist_now()
 
         existing_position = Positions(
             user_id=1,
-            symbol=base_symbol,
+            symbol=base_symbol,  # Already updated to RELIANCE-EQ
             quantity=100.0,
             avg_price=100.0,
             opened_at=ist_now(),

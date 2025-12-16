@@ -66,7 +66,7 @@ class TestExitPriceTimeRecording:
     ):
         """Test that manual sell order saves exit price."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -94,7 +94,7 @@ class TestExitPriceTimeRecording:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -107,7 +107,7 @@ class TestExitPriceTimeRecording:
     ):
         """Test that manual sell order saves execution time."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -138,7 +138,7 @@ class TestExitPriceTimeRecording:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -152,7 +152,7 @@ class TestExitPriceTimeRecording:
     ):
         """Test that exit price is extracted from order with fallbacks."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -181,7 +181,7 @@ class TestExitPriceTimeRecording:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -194,7 +194,7 @@ class TestExitPriceTimeRecording:
     ):
         """Test that execution time is extracted from order."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -225,7 +225,7 @@ class TestExitPriceTimeRecording:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -239,7 +239,7 @@ class TestExitPriceTimeRecording:
     ):
         """Test that missing exit price is handled gracefully."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -267,7 +267,7 @@ class TestExitPriceTimeRecording:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -281,7 +281,7 @@ class TestExitPriceTimeRecording:
     ):
         """Test that missing execution time uses current time."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -310,7 +310,7 @@ class TestExitPriceTimeRecording:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         with patch("modules.kotak_neo_auto_trader.sell_engine.ist_now") as mock_ist_now:
             current_time = ist_now()
@@ -328,7 +328,7 @@ class TestExitPriceTimeRecording:
     ):
         """Test that exit price of zero is handled."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -356,7 +356,7 @@ class TestExitPriceTimeRecording:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 

@@ -70,7 +70,7 @@ class TestDetectManualSellsFromOrders:
         """Test that executed manual sell is detected for system position."""
         # Setup: System position with 100 shares
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -102,7 +102,7 @@ class TestDetectManualSellsFromOrders:
         }
 
         # Mock get_open_positions
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         # Execute
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
@@ -116,12 +116,12 @@ class TestDetectManualSellsFromOrders:
         mock_positions_repo.mark_closed.assert_called_once()
         call_args = mock_positions_repo.mark_closed.call_args
         assert call_args.kwargs["user_id"] == 1
-        assert call_args.kwargs["symbol"] == "RELIANCE"
+        assert call_args.kwargs["symbol"] == "RELIANCE-EQ"
         assert call_args.kwargs["exit_price"] == 2500.0
 
         # Verify: Manual sell tracked in active_sell_orders
-        assert "RELIANCE" in sell_manager.active_sell_orders
-        tracked_order = sell_manager.active_sell_orders["RELIANCE"]
+        assert "RELIANCE-EQ" in sell_manager.active_sell_orders
+        tracked_order = sell_manager.active_sell_orders["RELIANCE-EQ"]
         assert tracked_order["order_id"] == "MANUAL123"
         assert tracked_order["target_price"] == 2500.0
         assert tracked_order["qty"] == 100
@@ -132,17 +132,17 @@ class TestDetectManualSellsFromOrders:
         """Test that tracked sell orders are skipped."""
         # Setup: Position exists
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
 
         mock_positions_repo.list.return_value = [position]
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         # Setup: Order is already tracked
         sell_manager.active_sell_orders = {
-            "RELIANCE": {"order_id": "SYSTEM123", "target_price": 2500.0, "qty": 100}
+            "RELIANCE-EQ": {"order_id": "SYSTEM123", "target_price": 2500.0, "qty": 100}
         }
 
         # Mock orders response with same order ID
@@ -200,7 +200,7 @@ class TestDetectManualSellsFromOrders:
 
         # Verify: Position not updated
         mock_positions_repo.mark_closed.assert_not_called()
-        assert "RELIANCE" not in sell_manager.active_sell_orders
+        assert "RELIANCE-EQ" not in sell_manager.active_sell_orders
 
     def test_skips_positions_not_in_database(
         self, sell_manager, mock_positions_repo, mock_orders_repo, mock_orders
@@ -236,7 +236,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that exit price is extracted from avgPrc field."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -264,7 +264,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -277,7 +277,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that exit price falls back to prc if avgPrc not available."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -305,7 +305,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -318,7 +318,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that missing exit price is handled gracefully."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -346,7 +346,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -360,7 +360,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that full sell closes position with exit price."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -388,7 +388,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -404,7 +404,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that partial sell reduces position quantity."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -432,7 +432,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -451,14 +451,14 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that multiple manual sell orders for same symbol are handled correctly."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
 
         # After first order, position has 40 shares
         position_after_partial = Mock(spec=Positions)
-        position_after_partial.symbol = "RELIANCE"
+        position_after_partial.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position_after_partial.quantity = 40.0
         position_after_partial.closed_at = None
         position_after_partial.opened_at = position.opened_at
@@ -501,7 +501,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -519,7 +519,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that manual sell for already closed position is skipped."""
         closed_position = Mock(spec=Positions)
-        closed_position.symbol = "RELIANCE"
+        closed_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         closed_position.quantity = 0.0
         closed_position.closed_at = ist_now() - timedelta(minutes=5)
 
@@ -552,13 +552,13 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that ongoing status orders with filled_qty=0 are skipped."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
 
         mock_positions_repo.list.return_value = [position]
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         all_orders_response = {
             "data": [
@@ -583,7 +583,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that ongoing status orders with filled_qty>0 are processed."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -611,7 +611,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -658,7 +658,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -671,7 +671,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that timestamp check allows recent manual sells after position opened."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)  # Position opened 2 hours ago
@@ -703,7 +703,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -716,7 +716,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that timestamp check is skipped for non-system positions."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -740,7 +740,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -753,7 +753,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that executed_qty > position_qty is handled correctly."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 50.0  # Position has 50 shares
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -781,7 +781,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 50}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 50}])
 
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
 
@@ -795,7 +795,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that positions with zero quantity are skipped."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 0.0  # Zero quantity
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -826,7 +826,7 @@ class TestDetectManualSellsFromOrders:
     ):
         """Test that database conflicts are handled gracefully."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -857,7 +857,7 @@ class TestDetectManualSellsFromOrders:
             ]
         }
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         # Should not raise exception
         stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)

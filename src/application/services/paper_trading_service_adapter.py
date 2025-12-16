@@ -909,30 +909,48 @@ class PaperTradingServiceAdapter:
 
         # Get pending sell orders from broker to avoid duplicates
         pending_orders = self.broker.get_pending_orders() if self.broker else []
-        pending_sell_symbols = {
-            o.symbol for o in pending_orders if o.is_sell_order() and o.is_active()
+        # Normalize pending order symbols for comparison (extract base symbols)
+        from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+        pending_sell_base_symbols = {
+            extract_base_symbol(o.symbol).upper()
+            for o in pending_orders
+            if o.is_sell_order() and o.is_active()
+        }
+        # Also create a map of base symbol -> full symbol for active_sell_orders lookup
+        active_sell_base_symbols = {
+            extract_base_symbol(s).upper(): s for s in self.active_sell_orders.keys()
         }
 
         for holding in holdings:
             try:
-                symbol = holding.symbol
-                ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+                symbol = holding.symbol  # Full symbol from holdings (e.g., "RELIANCE-EQ")
+                symbol_base = extract_base_symbol(symbol).upper()  # Base symbol for comparison
+                ticker = f"{symbol_base}.NS"  # Use base symbol for ticker
                 quantity = holding.quantity
 
                 # Skip if already have active sell order (in memory or broker)
-                if symbol in self.active_sell_orders or symbol in pending_sell_symbols:
+                # Compare using base symbols since active_sell_orders might have base symbols
+                if (
+                    symbol_base in active_sell_base_symbols
+                    or symbol_base in pending_sell_base_symbols
+                ):
                     self.logger.debug(
                         f"Skipping {symbol} - already has active sell order "
-                        f"(in memory: {symbol in self.active_sell_orders}, "
-                        f"in broker: {symbol in pending_sell_symbols})",
+                        f"(in memory: {symbol_base in active_sell_base_symbols}, "
+                        f"in broker: {symbol_base in pending_sell_base_symbols})",
                         action="_place_sell_orders",
                     )
                     # If it's in broker but not in memory, add it to memory for tracking
-                    if symbol in pending_sell_symbols and symbol not in self.active_sell_orders:
+                    if (
+                        symbol_base in pending_sell_base_symbols
+                        and symbol_base not in active_sell_base_symbols
+                    ):
                         # Try to find the order details from broker
                         for order in pending_orders:
+                            order_base = extract_base_symbol(order.symbol).upper()
                             if (
-                                order.symbol == symbol
+                                order_base == symbol_base
                                 and order.is_sell_order()
                                 and order.is_active()
                             ):
@@ -943,7 +961,8 @@ class PaperTradingServiceAdapter:
                                     else None
                                 )
                                 if target_price:
-                                    self.active_sell_orders[symbol] = {
+                                    # Use base symbol as key to match existing convention
+                                    self.active_sell_orders[symbol_base] = {
                                         "order_id": (
                                             order.order_id
                                             if hasattr(order, "order_id")
@@ -955,22 +974,24 @@ class PaperTradingServiceAdapter:
                                         "entry_date": datetime.now().strftime("%Y-%m-%d"),
                                     }
                                     self.logger.info(
-                                        f"Restored sell order tracking for {symbol} from broker",
+                                        f"Restored sell order tracking for {symbol_base} from broker",
                                         action="_place_sell_orders",
                                     )
                     # Check if holdings quantity has increased (re-entry happened)
                     # and update sell order quantity and target to match
-                    if symbol in self.active_sell_orders:
-                        current_order_qty = self.active_sell_orders[symbol].get("qty", 0)
+                    # Use base symbol to find the order in active_sell_orders
+                    if symbol_base in active_sell_base_symbols:
+                        order_key = active_sell_base_symbols[symbol_base]
+                        current_order_qty = self.active_sell_orders[order_key].get("qty", 0)
                         if quantity > current_order_qty:
                             self.logger.info(
-                                f"Holdings increased for {symbol} ({current_order_qty} -> {quantity}), "
+                                f"Holdings increased for {symbol_base} ({current_order_qty} -> {quantity}), "
                                 f"updating sell order quantity and target",
                                 action="_place_sell_orders",
                             )
                             # Recalculate EMA9 target (matches backtest behavior)
                             new_target = self._calculate_ema9(ticker)
-                            self._update_sell_order_quantity(symbol, quantity, new_target)
+                            self._update_sell_order_quantity(order_key, quantity, new_target)
                     continue
 
                 # Calculate EMA9 target (initial entry - will be updated on re-entry)
@@ -1356,20 +1377,28 @@ class PaperTradingServiceAdapter:
 
             # Validate and filter out orders for symbols that no longer have holdings
             holdings = self.broker.get_holdings() if self.broker else []
-            holding_symbols = {h.symbol for h in holdings}
+            # Extract base symbols from holdings for comparison (holdings have full symbols like RELIANCE-EQ)
+            from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+            holding_base_symbols = {extract_base_symbol(h.symbol).upper() for h in holdings}
 
             # Also check pending orders from broker to avoid duplicates
             pending_orders = self.broker.get_pending_orders() if self.broker else []
-            pending_sell_symbols = {
-                o.symbol for o in pending_orders if o.is_sell_order() and o.is_active()
+            # Extract base symbols from pending orders for comparison
+            pending_sell_base_symbols = {
+                extract_base_symbol(o.symbol).upper()
+                for o in pending_orders
+                if o.is_sell_order() and o.is_active()
             }
 
             valid_orders = {}
             for symbol, order_info in loaded_orders.items():
+                # Normalize symbol from file (might be base or full symbol)
+                symbol_base = extract_base_symbol(symbol).upper()
                 # Keep order if:
                 # 1. Symbol still has holdings, OR
                 # 2. Symbol has a pending sell order in broker
-                if symbol in holding_symbols or symbol in pending_sell_symbols:
+                if symbol_base in holding_base_symbols or symbol_base in pending_sell_base_symbols:
                     valid_orders[symbol] = order_info
                 else:
                     self.logger.debug(
@@ -1419,13 +1448,19 @@ class PaperTradingServiceAdapter:
             return 0
 
         holdings = self.broker.get_holdings()
-        holdings_map = {h.symbol: h.quantity for h in holdings}
+        # Holdings have full symbols (RELIANCE-EQ), but active_sell_orders might have base symbols (RELIANCE)
+        # Normalize for comparison
+        from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+        holdings_map = {extract_base_symbol(h.symbol).upper(): h.quantity for h in holdings}
 
         updated_count = 0
         for symbol, order_info in list(self.active_sell_orders.items()):
-            if symbol in holdings_map:
+            # Normalize symbol from active_sell_orders (might be base or full)
+            symbol_base = extract_base_symbol(symbol).upper()
+            if symbol_base in holdings_map:
                 current_qty = order_info.get("qty", 0)
-                holdings_qty = holdings_map[symbol]
+                holdings_qty = holdings_map[symbol_base]
 
                 # If holdings quantity is greater than sell order quantity, update it
                 if holdings_qty > current_qty:
@@ -1837,15 +1872,17 @@ class PaperTradingEngineAdapter:
         holdings = self.broker.get_holdings()
         pending_orders = self.broker.get_all_orders()
 
-        # Normalize symbols from holdings (remove .NS/.BO suffix and uppercase)
+        # Normalize symbols from holdings (extract base symbol from full symbols like RELIANCE-EQ)
         # This matches the normalization in load_latest_recommendations()
-        current_symbols = {h.symbol.replace(".NS", "").replace(".BO", "").upper() for h in holdings}
+        from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+        current_symbols = {extract_base_symbol(h.symbol).upper() for h in holdings}
 
         # Also check pending/open buy orders to prevent duplicates
         for order in pending_orders:
             if order.is_buy_order() and order.is_active():
-                # Normalize symbol (remove .NS/.BO suffix and uppercase)
-                normalized_symbol = order.symbol.replace(".NS", "").replace(".BO", "").upper()
+                # Normalize symbol (extract base symbol from full symbols)
+                normalized_symbol = extract_base_symbol(order.symbol).upper()
                 current_symbols.add(normalized_symbol)
                 self.logger.debug(
                     f"Found pending buy order for {order.symbol} (Status: {order.status})",
@@ -1874,8 +1911,10 @@ class PaperTradingEngineAdapter:
                     and order.status
                     not in [OrderStatus.CANCELLED, OrderStatus.FAILED]  # Skip cancelled/failed
                 ):
-                    # Normalize symbol (remove .NS/.BO suffix and uppercase)
-                    normalized_symbol = order.symbol.replace(".NS", "").replace(".BO", "").upper()
+                    # Normalize symbol (extract base symbol from full symbols)
+                    from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+                    normalized_symbol = extract_base_symbol(order.symbol).upper()
                     current_symbols.add(normalized_symbol)
                     self.logger.debug(
                         f"Found today's buy order in DB for {order.symbol} "
@@ -1956,7 +1995,10 @@ class PaperTradingEngineAdapter:
 
             # Normalize ticker for comparison (remove .NS/.BO suffix and uppercase)
             # This matches the normalization in load_latest_recommendations()
-            normalized_ticker = rec.ticker.replace(".NS", "").replace(".BO", "").upper()
+            # Normalize ticker to base symbol (extract base from full symbols like RELIANCE-EQ.NS)
+            # First remove .NS/.BO suffix, then extract base symbol (handles -EQ, -BE suffixes)
+            ticker_without_suffix = rec.ticker.replace(".NS", "").replace(".BO", "").upper()
+            normalized_ticker = extract_base_symbol(ticker_without_suffix).upper()
 
             # Skip if already in portfolio or has pending buy order
             if normalized_ticker in current_symbols:

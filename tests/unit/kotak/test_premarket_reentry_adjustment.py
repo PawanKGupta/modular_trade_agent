@@ -81,7 +81,7 @@ class TestReentryOrdersFilteredByEntryType:
         # Create fresh entry order
         fresh_order = Orders(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=40,
@@ -95,7 +95,7 @@ class TestReentryOrdersFilteredByEntryType:
         # Create re-entry order
         reentry_order = Orders(
             user_id=test_user.id,
-            symbol="TCS",
+            symbol="TCS-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=20,
@@ -152,7 +152,7 @@ class TestReentryOrdersFilteredByEntryType:
         all_orders = engine.orders_repo.list(test_user.id)
         reentry_orders = [o for o in all_orders if o.entry_type == "reentry"]
         assert len(reentry_orders) == 1
-        assert reentry_orders[0].symbol == "TCS"
+        assert reentry_orders[0].symbol == "TCS-EQ"  # Full symbol after migration
 
 
 class TestQuantityRecalculationForReentry:
@@ -167,7 +167,7 @@ class TestQuantityRecalculationForReentry:
         # Create re-entry order
         reentry_order = Orders(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=40,  # Original quantity
@@ -227,7 +227,7 @@ class TestQuantityRecalculationForReentry:
         # Create re-entry order
         reentry_order = Orders(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=40,  # Original quantity
@@ -285,7 +285,7 @@ class TestPriceUpdateForReentry:
         # Create re-entry order
         reentry_order = Orders(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=40,
@@ -342,7 +342,7 @@ class TestBothFreshAndReentryAdjustedTogether:
         # Create fresh entry order
         fresh_order = Orders(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=40,
@@ -356,7 +356,7 @@ class TestBothFreshAndReentryAdjustedTogether:
         # Create re-entry order
         reentry_order = Orders(
             user_id=test_user.id,
-            symbol="TCS",
+            symbol="TCS-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=20,
@@ -424,7 +424,7 @@ class TestCancellationIfPositionClosed:
         # Create closed position
         closed_position = Positions(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=0,
             avg_price=2500.0,
             closed_at=ist_now(),  # Position is closed
@@ -434,7 +434,7 @@ class TestCancellationIfPositionClosed:
         # Create re-entry order for closed position
         reentry_order = Orders(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=40,
@@ -490,7 +490,7 @@ class TestCancellationIfPositionClosed:
         # Create re-entry order for open position
         reentry_order = Orders(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=40,
@@ -547,7 +547,7 @@ class TestNoRSIValidationAtPremarket:
         # Create re-entry order
         reentry_order = Orders(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=40,
@@ -605,7 +605,7 @@ class TestRealTradingPremarketAdjustment:
         # Create open position
         open_position = Positions(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             closed_at=None,
@@ -615,7 +615,7 @@ class TestRealTradingPremarketAdjustment:
         # Create re-entry order
         reentry_order = Orders(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=40,
@@ -658,7 +658,9 @@ class TestRealTradingPremarketAdjustment:
         assert engine.orders.modify_order.called
 
         # Verify position was checked (not cancelled since position is open)
-        position = engine.positions_repo.get_by_symbol(test_user.id, "RELIANCE")
+        position = engine.positions_repo.get_by_symbol(
+            test_user.id, "RELIANCE-EQ"
+        )  # Full symbol after migration
         assert position is not None
         assert position.closed_at is None
 
@@ -765,11 +767,13 @@ class TestPaperTradingPremarketAdjustment:
         positions_repo = PositionsRepository(db_session)
         positions_repo.upsert(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=0,
             avg_price=2500.0,
         )
-        position = positions_repo.get_by_symbol(test_user.id, "RELIANCE")
+        position = positions_repo.get_by_symbol(
+            test_user.id, "RELIANCE-EQ"
+        )  # Full symbol after migration
         # Update position to closed
         position.closed_at = ist_now()
         db_session.commit()
@@ -778,7 +782,7 @@ class TestPaperTradingPremarketAdjustment:
         orders_repo = OrdersRepository(db_session)
         db_order = orders_repo.create_amo(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=40,

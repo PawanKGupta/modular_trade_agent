@@ -153,7 +153,7 @@ class TestReentryTrackingWorkflow:
         # (Duplicate prevention only blocks PENDING/ONGOING orders)
         initial_order = orders_repo.create_amo(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=10,
@@ -172,7 +172,7 @@ class TestReentryTrackingWorkflow:
         # Create reentry order (should work now since initial is CLOSED)
         reentry_order = orders_repo.create_amo(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=5,
@@ -199,7 +199,7 @@ class TestReentryTrackingWorkflow:
         # Create initial position
         position = positions_repo.upsert(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             initial_entry_price=2500.0,
@@ -215,7 +215,7 @@ class TestReentryTrackingWorkflow:
 
         position = positions_repo.upsert(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=15,  # 10 + 5
             avg_price=2480.0,  # Updated average
             reentry_count=1,
@@ -251,7 +251,7 @@ class TestReentryTrackingWorkflow:
 
         # Create trade history entry with reentry data
         trade = {
-            "symbol": "RELIANCE",
+            "symbol": "RELIANCE-EQ",  # Full symbol after migration
             "status": "open",
             "qty": 15,
             "entry_price": 2480.0,
@@ -265,7 +265,9 @@ class TestReentryTrackingWorkflow:
         engine._update_position_from_trade(trade)
 
         # Verify position was updated
-        position = engine.positions_repo.get_by_symbol(1, "RELIANCE")
+        position = engine.positions_repo.get_by_symbol(
+            1, "RELIANCE-EQ"
+        )  # Full symbol after migration
         assert position is not None
         assert position.quantity == 15
         assert position.avg_price == 2480.0

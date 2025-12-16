@@ -7,12 +7,12 @@ Tests verify that:
 3. Transaction rollback prevents partial updates
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
-from datetime import datetime
+
+import pytest
 
 from modules.kotak_neo_auto_trader.unified_order_monitor import UnifiedOrderMonitor
-from src.infrastructure.db.models import OrderStatus, Orders, Positions
+from src.infrastructure.db.models import Orders, OrderStatus, Positions
 from src.infrastructure.db.timezone_utils import ist_now
 
 
@@ -62,14 +62,12 @@ class TestSellExecutionDuringReentry:
         monitor.orders_repo = mock_orders_repo
         return monitor
 
-    def test_rechecks_closed_at_before_updating_position(
-        self, order_monitor, mock_positions_repo
-    ):
+    def test_rechecks_closed_at_before_updating_position(self, order_monitor, mock_positions_repo):
         """Test that closed_at is re-checked just before updating position"""
         # Initial position (open)
         initial_position = Positions(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=100.0,
             avg_price=100.0,
             opened_at=ist_now(),
@@ -79,7 +77,7 @@ class TestSellExecutionDuringReentry:
         # Position after sell execution (closed)
         closed_position = Positions(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=0.0,
             avg_price=100.0,
             opened_at=ist_now(),
@@ -105,7 +103,9 @@ class TestSellExecutionDuringReentry:
         order_monitor.orders_repo.get = MagicMock(return_value=db_order)
 
         # Mock transaction context manager
-        with patch("modules.kotak_neo_auto_trader.unified_order_monitor.transaction") as mock_transaction:
+        with patch(
+            "modules.kotak_neo_auto_trader.unified_order_monitor.transaction"
+        ) as mock_transaction:
             mock_transaction.return_value.__enter__ = MagicMock(return_value=mock_positions_repo.db)
             mock_transaction.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -130,7 +130,7 @@ class TestSellExecutionDuringReentry:
         # Position (open)
         open_position = Positions(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=100.0,
             avg_price=100.0,
             opened_at=ist_now(),
@@ -138,9 +138,7 @@ class TestSellExecutionDuringReentry:
         )
 
         # Mock reads (position stays open)
-        mock_positions_repo.get_by_symbol_for_update = MagicMock(
-            return_value=open_position
-        )
+        mock_positions_repo.get_by_symbol_for_update = MagicMock(return_value=open_position)
 
         # Mock order
         db_order = Orders(
@@ -156,7 +154,9 @@ class TestSellExecutionDuringReentry:
         order_monitor.orders_repo.get = MagicMock(return_value=db_order)
 
         # Mock transaction context manager
-        with patch("modules.kotak_neo_auto_trader.unified_order_monitor.transaction") as mock_transaction:
+        with patch(
+            "modules.kotak_neo_auto_trader.unified_order_monitor.transaction"
+        ) as mock_transaction:
             mock_transaction.return_value.__enter__ = MagicMock(return_value=mock_positions_repo.db)
             mock_transaction.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -179,7 +179,7 @@ class TestSellExecutionDuringReentry:
         # Position (open)
         open_position = Positions(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=100.0,
             avg_price=100.0,
             opened_at=ist_now(),
@@ -187,9 +187,7 @@ class TestSellExecutionDuringReentry:
         )
 
         # Mock reads
-        mock_positions_repo.get_by_symbol_for_update = MagicMock(
-            return_value=open_position
-        )
+        mock_positions_repo.get_by_symbol_for_update = MagicMock(return_value=open_position)
 
         # Mock order
         db_order = Orders(
@@ -205,7 +203,9 @@ class TestSellExecutionDuringReentry:
         order_monitor.orders_repo.get = MagicMock(return_value=db_order)
 
         # Mock transaction context manager
-        with patch("modules.kotak_neo_auto_trader.unified_order_monitor.transaction") as mock_transaction:
+        with patch(
+            "modules.kotak_neo_auto_trader.unified_order_monitor.transaction"
+        ) as mock_transaction:
             mock_transaction.return_value.__enter__ = MagicMock(return_value=mock_positions_repo.db)
             mock_transaction.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -223,7 +223,7 @@ class TestSellExecutionDuringReentry:
         # Both calls should use get_by_symbol_for_update (locked read)
         for call in calls:
             assert call[0][0] == 1  # user_id
-            assert call[0][1] == "RELIANCE"  # symbol
+            assert call[0][1] == "RELIANCE-EQ"  # Full symbol after migration
 
     def test_skips_update_for_new_position_if_closed_during_processing(
         self, order_monitor, mock_positions_repo
@@ -233,7 +233,7 @@ class TestSellExecutionDuringReentry:
         # Second read: Position was created and closed (by sell execution)
         closed_position = Positions(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=0.0,
             avg_price=105.0,
             opened_at=ist_now(),
@@ -259,7 +259,9 @@ class TestSellExecutionDuringReentry:
         order_monitor.orders_repo.get = MagicMock(return_value=db_order)
 
         # Mock transaction context manager
-        with patch("modules.kotak_neo_auto_trader.unified_order_monitor.transaction") as mock_transaction:
+        with patch(
+            "modules.kotak_neo_auto_trader.unified_order_monitor.transaction"
+        ) as mock_transaction:
             mock_transaction.return_value.__enter__ = MagicMock(return_value=mock_positions_repo.db)
             mock_transaction.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -275,4 +277,3 @@ class TestSellExecutionDuringReentry:
         # Note: For new positions, the re-check might not happen in the same way,
         # but the locked read ensures we see the latest state
         assert mock_positions_repo.get_by_symbol_for_update.call_count >= 1
-

@@ -53,9 +53,13 @@ class TestClosedPositionCleanup:
             )
             manager.orders = mock_orders
             manager.active_sell_orders = {
-                "RELIANCE": {"order_id": "ORDER123", "target_price": 2500.0, "qty": 100}
+                "RELIANCE-EQ": {
+                    "order_id": "ORDER123",
+                    "target_price": 2500.0,
+                    "qty": 100,
+                }  # Full symbol after migration
             }
-            manager.lowest_ema9 = {"RELIANCE": 2500.0}
+            manager.lowest_ema9 = {"RELIANCE-EQ": 2500.0}  # Full symbol after migration
             return manager
 
     def test_closed_position_skipped_in_monitoring(
@@ -63,7 +67,7 @@ class TestClosedPositionCleanup:
     ):
         """Test that closed position is skipped during monitoring."""
         closed_position = Mock(spec=Positions)
-        closed_position.symbol = "RELIANCE"
+        closed_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         closed_position.quantity = 0.0
         closed_position.closed_at = ist_now() - timedelta(minutes=5)
 
@@ -73,7 +77,7 @@ class TestClosedPositionCleanup:
         with patch.object(sell_manager, "_check_and_update_single_stock") as mock_check:
             # Simulate the check that happens in monitor_and_update
             result = {
-                "symbol": "RELIANCE",
+                "symbol": "RELIANCE-EQ",  # Full symbol after migration
                 "action": "skipped",
                 "success": True,
                 "remove_from_tracking": True,
@@ -83,17 +87,17 @@ class TestClosedPositionCleanup:
             # Simulate monitoring cycle
             symbols_to_remove = []
             if result.get("remove_from_tracking"):
-                symbols_to_remove.append("RELIANCE")
+                symbols_to_remove.append("RELIANCE-EQ")
 
             # Verify: Position marked for removal
-            assert "RELIANCE" in symbols_to_remove
+            assert "RELIANCE-EQ" in symbols_to_remove
 
     def test_closed_position_removed_from_active_sell_orders(
         self, sell_manager, mock_positions_repo, mock_orders
     ):
         """Test that closed position is removed from active_sell_orders."""
         closed_position = Mock(spec=Positions)
-        closed_position.symbol = "RELIANCE"
+        closed_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         closed_position.quantity = 0.0
         closed_position.closed_at = ist_now() - timedelta(minutes=5)
 
@@ -111,18 +115,18 @@ class TestClosedPositionCleanup:
     ):
         """Test that closed position is removed from lowest_ema9."""
         closed_position = Mock(spec=Positions)
-        closed_position.symbol = "RELIANCE"
+        closed_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         closed_position.quantity = 0.0
         closed_position.closed_at = ist_now() - timedelta(minutes=5)
 
         mock_positions_repo.get_by_symbol.return_value = closed_position
 
         # Simulate removal
-        if "RELIANCE" in sell_manager.lowest_ema9:
-            del sell_manager.lowest_ema9["RELIANCE"]
+        if "RELIANCE-EQ" in sell_manager.lowest_ema9:
+            del sell_manager.lowest_ema9["RELIANCE-EQ"]
 
         # Verify: Removed from lowest_ema9
-        assert "RELIANCE" not in sell_manager.lowest_ema9
+        assert "RELIANCE-EQ" not in sell_manager.lowest_ema9
 
     def test_multiple_closed_positions_all_removed(
         self, sell_manager, mock_positions_repo, mock_orders
@@ -164,7 +168,7 @@ class TestClosedPositionCleanup:
     ):
         """Test cleanup when position closed by system sell order."""
         closed_position = Mock(spec=Positions)
-        closed_position.symbol = "RELIANCE"
+        closed_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         closed_position.quantity = 0.0
         closed_position.closed_at = ist_now() - timedelta(minutes=2)
 
@@ -173,10 +177,10 @@ class TestClosedPositionCleanup:
         # Position was closed by system sell order
         # Next monitoring cycle should remove it
         if closed_position.closed_at:
-            if "RELIANCE" in sell_manager.active_sell_orders:
-                del sell_manager.active_sell_orders["RELIANCE"]
+            if "RELIANCE-EQ" in sell_manager.active_sell_orders:
+                del sell_manager.active_sell_orders["RELIANCE-EQ"]
 
-        assert "RELIANCE" not in sell_manager.active_sell_orders
+        assert "RELIANCE-EQ" not in sell_manager.active_sell_orders
 
     def test_position_closed_by_manual_sell_order(
         self, sell_manager, mock_positions_repo, mock_orders
@@ -192,10 +196,10 @@ class TestClosedPositionCleanup:
         # Position was closed by manual sell order
         # Next monitoring cycle should remove it
         if closed_position.closed_at:
-            if "RELIANCE" in sell_manager.active_sell_orders:
-                del sell_manager.active_sell_orders["RELIANCE"]
+            if "RELIANCE-EQ" in sell_manager.active_sell_orders:
+                del sell_manager.active_sell_orders["RELIANCE-EQ"]
 
-        assert "RELIANCE" not in sell_manager.active_sell_orders
+        assert "RELIANCE-EQ" not in sell_manager.active_sell_orders
 
     def test_position_closed_by_reconciliation(
         self, sell_manager, mock_positions_repo, mock_orders
@@ -211,7 +215,7 @@ class TestClosedPositionCleanup:
         # Position was closed by reconciliation
         # Next monitoring cycle should remove it
         if closed_position.closed_at:
-            if "RELIANCE" in sell_manager.active_sell_orders:
-                del sell_manager.active_sell_orders["RELIANCE"]
+            if "RELIANCE-EQ" in sell_manager.active_sell_orders:
+                del sell_manager.active_sell_orders["RELIANCE-EQ"]
 
-        assert "RELIANCE" not in sell_manager.active_sell_orders
+        assert "RELIANCE-EQ" not in sell_manager.active_sell_orders

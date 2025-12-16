@@ -80,7 +80,7 @@ class TestReentryTrackingInDatabase:
         initial_position = Positions(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             reentry_count=0,
@@ -98,7 +98,7 @@ class TestReentryTrackingInDatabase:
         reentry_order = Orders(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=5,
@@ -181,7 +181,7 @@ class TestReentryTrackingInDatabase:
         initial_position = Positions(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             reentry_count=0,
@@ -197,7 +197,7 @@ class TestReentryTrackingInDatabase:
         order = Orders(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=5,
@@ -264,7 +264,7 @@ class TestReentryTrackingInDatabase:
         reentry_order = Orders(
             id=2,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=3,
@@ -377,7 +377,7 @@ class TestReentryTrackingInDatabase:
         initial_order = Orders(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=10,
@@ -424,7 +424,7 @@ class TestReentryTrackingInDatabase:
         initial_position = Positions(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             reentry_count=0,
@@ -440,7 +440,7 @@ class TestReentryTrackingInDatabase:
         order = Orders(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=5,
@@ -487,7 +487,7 @@ class TestReentryTrackingInDatabase:
         initial_position = Positions(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             reentry_count=0,
@@ -502,7 +502,7 @@ class TestReentryTrackingInDatabase:
         reentry_order = Orders(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=5,
@@ -543,7 +543,7 @@ class TestReentryTrackingInDatabase:
         initial_position = Positions(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             reentry_count=0,
@@ -560,7 +560,7 @@ class TestReentryTrackingInDatabase:
         reentry_order = Orders(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=5,
@@ -614,7 +614,7 @@ class TestReentryTrackingInDatabase:
         initial_position = Positions(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             reentry_count=0,
@@ -631,7 +631,7 @@ class TestReentryTrackingInDatabase:
         reentry_order = Orders(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=10,  # Order placed for 10 shares
@@ -681,7 +681,7 @@ class TestReentryTrackingInDatabase:
         initial_position = Positions(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             reentry_count=0,
@@ -697,7 +697,7 @@ class TestReentryTrackingInDatabase:
         reentry_order = Orders(
             id=1,
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=5,

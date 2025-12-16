@@ -41,7 +41,7 @@ class TestReentryTrackingInOrders:
         """Test creating AMO order with entry_type='initial'"""
         order = orders_repo.create_amo(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=10,
@@ -54,14 +54,14 @@ class TestReentryTrackingInOrders:
 
         assert order.entry_type == "initial"
         assert order.order_metadata == {"rsi10": 28.5, "ema9": 2500.0}
-        assert order.symbol == "RELIANCE"
+        assert order.symbol == "RELIANCE-EQ"  # Full symbol after migration
         assert order.quantity == 10
 
     def test_create_amo_with_entry_type_reentry(self, orders_repo, user_id):
         """Test creating AMO order with entry_type='reentry'"""
         order = orders_repo.create_amo(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=5,
@@ -86,7 +86,7 @@ class TestReentryTrackingInOrders:
         """Test creating AMO order without entry_type (backward compatibility)"""
         order = orders_repo.create_amo(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=10,
@@ -103,7 +103,7 @@ class TestReentryTrackingInOrders:
         # Create initial order
         initial_order = orders_repo.create_amo(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=10,
@@ -122,7 +122,7 @@ class TestReentryTrackingInOrders:
         for i in range(3):
             reentry_order = orders_repo.create_amo(
                 user_id=user_id,
-                symbol="RELIANCE",
+                symbol="RELIANCE-EQ",  # Full symbol after migration
                 side="buy",
                 order_type="market",
                 quantity=5,
@@ -153,7 +153,7 @@ class TestReentryTrackingInOrders:
         """Test that reentry order metadata has all required fields"""
         order = orders_repo.create_amo(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=5,
@@ -180,7 +180,7 @@ class TestReentryTrackingInOrders:
         # Create initial order
         initial_order = orders_repo.create_amo(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=10,
@@ -198,7 +198,7 @@ class TestReentryTrackingInOrders:
         for i in range(3):
             reentry_order = orders_repo.create_amo(
                 user_id=user_id,
-                symbol="RELIANCE",
+                symbol="RELIANCE-EQ",  # Full symbol after migration
                 side="buy",
                 order_type="market",
                 quantity=5,

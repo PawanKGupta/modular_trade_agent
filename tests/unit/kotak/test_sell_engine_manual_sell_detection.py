@@ -61,7 +61,7 @@ class TestManualSellDetection:
         """Test reconciliation detects manual full sell and marks position as closed."""
         # Setup: Position in DB shows 35 shares, broker has 0
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 35.0
         position.closed_at = None
 
@@ -82,13 +82,13 @@ class TestManualSellDetection:
         mock_positions_repo.mark_closed.assert_called_once()
         call_args = mock_positions_repo.mark_closed.call_args
         assert call_args.kwargs["user_id"] == 1
-        assert call_args.kwargs["symbol"] == "RELIANCE"
+        assert call_args.kwargs["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
 
     def test_reconcile_manual_partial_sell(self, sell_manager, mock_positions_repo, mock_portfolio):
         """Test reconciliation detects manual partial sell and reduces quantity."""
         # Setup: Position in DB shows 35 shares, broker has 30
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 35.0
         position.closed_at = None
 
@@ -115,14 +115,14 @@ class TestManualSellDetection:
         mock_positions_repo.reduce_quantity.assert_called_once()
         call_args = mock_positions_repo.reduce_quantity.call_args
         assert call_args.kwargs["user_id"] == 1
-        assert call_args.kwargs["symbol"] == "RELIANCE"
+        assert call_args.kwargs["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
         assert call_args.kwargs["sold_quantity"] == 5.0
 
     def test_reconcile_manual_buy_ignored(self, sell_manager, mock_positions_repo, mock_portfolio):
         """Test reconciliation ignores manual buys (broker_qty > positions_qty)."""
         # Setup: Position in DB shows 35 shares, broker has 45
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 35.0
         position.closed_at = None
 
@@ -153,7 +153,7 @@ class TestManualSellDetection:
         """Test reconciliation when positions match broker holdings."""
         # Setup: Position in DB shows 35 shares, broker has 35
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 35.0
         position.closed_at = None
 
@@ -186,7 +186,7 @@ class TestManualSellDetection:
         """Test get_open_positions uses min(positions_qty, broker_qty) for sell orders."""
         # Setup: Position in DB shows 35 shares, broker has 30
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 35.0
         position.avg_price = 2500.0
         position.opened_at = Mock()
@@ -210,7 +210,7 @@ class TestManualSellDetection:
 
         # Verify: Uses min(35, 30) = 30 for sell order quantity
         assert len(open_positions) == 1
-        assert open_positions[0]["symbol"] == "RELIANCE"
+        assert open_positions[0]["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
         assert open_positions[0]["qty"] == 30  # Uses broker_qty (30), not positions_qty (35)
 
     def test_get_open_positions_uses_positions_qty_when_broker_more(
@@ -219,7 +219,7 @@ class TestManualSellDetection:
         """Test get_open_positions uses positions_qty when broker has more (manual buy ignored)."""
         # Setup: Position in DB shows 35 shares, broker has 45
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 35.0
         position.avg_price = 2500.0
         position.opened_at = Mock()
@@ -243,7 +243,7 @@ class TestManualSellDetection:
 
         # Verify: Uses min(35, 45) = 35 (positions_qty, not broker_qty)
         assert len(open_positions) == 1
-        assert open_positions[0]["symbol"] == "RELIANCE"
+        assert open_positions[0]["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
         assert open_positions[0]["qty"] == 35  # Uses positions_qty (35), ignores manual buy
 
     def test_get_open_positions_filters_zero_quantity_issue_2(
@@ -252,7 +252,7 @@ class TestManualSellDetection:
         """Test Issue #2: get_open_positions filters zero quantity positions."""
         # Setup: Position in DB shows 35 shares, but broker has 0 (user sold all manually)
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 35.0
         position.avg_price = 2500.0
         position.opened_at = Mock()
@@ -284,7 +284,7 @@ class TestManualSellDetection:
         """Test Issue #2: get_open_positions filters when positions_qty is 0."""
         # Setup: Position in DB shows 0 shares (shouldn't happen, but test edge case)
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 0.0
         position.avg_price = 2500.0
         position.opened_at = Mock()

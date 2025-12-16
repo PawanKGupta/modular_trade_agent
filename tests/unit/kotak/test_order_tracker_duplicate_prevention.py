@@ -48,13 +48,13 @@ class TestOrderTrackerDuplicatePrevention:
         pending = order_tracker.get_pending_orders()
         assert len(pending) == 1
         assert pending[0]["order_id"] == "251106000008974"
-    
+
     def test_add_pending_order_with_entry_type(self, order_tracker):
         """Test adding order with entry_type"""
         # Add initial order
         order_tracker.add_pending_order(
             order_id="ORDER001",
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             ticker="RELIANCE.NS",
             qty=10,
             order_type="MARKET",
@@ -63,11 +63,11 @@ class TestOrderTrackerDuplicatePrevention:
             entry_type="initial",
             order_metadata={"rsi10": 28.5},
         )
-        
+
         # Add reentry order
         order_tracker.add_pending_order(
             order_id="ORDER002",
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             ticker="RELIANCE.NS",
             qty=5,
             order_type="MARKET",
@@ -76,14 +76,14 @@ class TestOrderTrackerDuplicatePrevention:
             entry_type="reentry",
             order_metadata={"rsi_level": 30, "reentry_index": 1},
         )
-        
+
         pending = order_tracker.get_pending_orders()
         assert len(pending) == 2
-        
+
         # Find orders by ID (order may vary)
         order1 = next((o for o in pending if o["order_id"] == "ORDER001"), None)
         order2 = next((o for o in pending if o["order_id"] == "ORDER002"), None)
-        
+
         assert order1 is not None
         assert order2 is not None
         # Note: entry_type is stored in DB when using DB mode, not in JSON
@@ -94,7 +94,11 @@ class TestOrderTrackerDuplicatePrevention:
         """Test that multiple duplicate attempts are prevented"""
         # Add order first time
         order_tracker.add_pending_order(
-            order_id="12345", symbol="RELIANCE", ticker="RELIANCE.NS", qty=10, price=2500.0
+            order_id="12345",
+            symbol="RELIANCE-EQ",
+            ticker="RELIANCE.NS",
+            qty=10,
+            price=2500.0,  # Full symbol after migration
         )
 
         # Try to add same order multiple times
@@ -196,7 +200,11 @@ class TestOrderTrackerDuplicatePrevention:
         """Test that order can be added again after removal"""
         # Add order
         order_tracker.add_pending_order(
-            order_id="12345", symbol="RELIANCE", ticker="RELIANCE.NS", qty=10, price=2500.0
+            order_id="12345",
+            symbol="RELIANCE-EQ",
+            ticker="RELIANCE.NS",
+            qty=10,
+            price=2500.0,  # Full symbol after migration
         )
 
         # Remove order
@@ -208,7 +216,11 @@ class TestOrderTrackerDuplicatePrevention:
 
         # Add same order_id again (should work after removal)
         order_tracker.add_pending_order(
-            order_id="12345", symbol="RELIANCE", ticker="RELIANCE.NS", qty=10, price=2500.0
+            order_id="12345",
+            symbol="RELIANCE-EQ",
+            ticker="RELIANCE.NS",
+            qty=10,
+            price=2500.0,  # Full symbol after migration
         )
 
         # Should be added successfully

@@ -266,7 +266,7 @@ class TestPlaceReentryOrders:
 
         # Mock position without entry_rsi
         mock_position = Mock()
-        mock_position.symbol = "RELIANCE"
+        mock_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_position.entry_rsi = None
         mock_position.closed_at = None
 
@@ -296,7 +296,7 @@ class TestPlaceReentryOrders:
 
         # Mock position
         mock_position = Mock()
-        mock_position.symbol = "RELIANCE"
+        mock_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_position.entry_rsi = 25.0
         mock_position.closed_at = None
 
@@ -340,7 +340,7 @@ class TestPlaceReentryOrders:
 
         # Mock position
         mock_position = Mock()
-        mock_position.symbol = "RELIANCE"
+        mock_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_position.entry_rsi = 25.0
         mock_position.closed_at = None
         mock_position.reentry_count = 0
@@ -412,7 +412,7 @@ class TestPlaceReentryOrders:
 
         # Mock position
         mock_position = Mock()
-        mock_position.symbol = "RELIANCE"
+        mock_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_position.entry_rsi = 25.0
         mock_position.closed_at = None
         mock_position.reentries = None  # No re-entries yet
@@ -460,7 +460,7 @@ class TestPlaceReentryOrders:
 
         # Mock position
         mock_position = Mock()
-        mock_position.symbol = "RELIANCE"
+        mock_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_position.entry_rsi = 25.0
         mock_position.closed_at = None
 
@@ -521,7 +521,7 @@ class TestPlaceReentryOrders:
         mock_position1.closed_at = None
 
         mock_position2 = Mock()
-        mock_position2.symbol = "TCS"
+        mock_position2.symbol = "TCS-EQ"  # Full symbol after migration
         mock_position2.entry_rsi = 18.0  # Entry at RSI < 20
         mock_position2.closed_at = None
 
@@ -636,7 +636,7 @@ class TestPlaceReentryOrders:
 
         # Mock position
         mock_position = Mock()
-        mock_position.symbol = "RELIANCE"
+        mock_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_position.entry_rsi = 25.0
         mock_position.closed_at = None
         mock_position.reentries = None  # No re-entries yet
@@ -684,7 +684,7 @@ class TestPlaceReentryOrders:
 
         # Mock position
         mock_position = Mock()
-        mock_position.symbol = "RELIANCE"
+        mock_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_position.entry_rsi = 25.0
         mock_position.closed_at = None
 

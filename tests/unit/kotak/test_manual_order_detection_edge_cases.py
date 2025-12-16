@@ -6,7 +6,7 @@ Tests edge cases and uncovered lines in manual order detection methods.
 
 import sys
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -108,7 +108,9 @@ class TestManualOrderDetectionEdgeCases:
         auto_trade_engine.orders.get_pending_orders.return_value = [sell_order]
 
         # Mock OrderFieldExtractor
-        with patch("modules.kotak_neo_auto_trader.auto_trade_engine.OrderFieldExtractor") as MockExtractor:
+        with patch(
+            "modules.kotak_neo_auto_trader.auto_trade_engine.OrderFieldExtractor"
+        ) as MockExtractor:
             MockExtractor.get_symbol.return_value = symbol
             MockExtractor.get_transaction_type.return_value = "SELL"  # Not BUY
             MockExtractor.get_order_id.return_value = "SELL123"
@@ -143,7 +145,9 @@ class TestManualOrderDetectionEdgeCases:
         auto_trade_engine.orders.get_pending_orders.return_value = [order]
 
         # Mock OrderFieldExtractor
-        with patch("modules.kotak_neo_auto_trader.auto_trade_engine.OrderFieldExtractor") as MockExtractor:
+        with patch(
+            "modules.kotak_neo_auto_trader.auto_trade_engine.OrderFieldExtractor"
+        ) as MockExtractor:
             MockExtractor.get_symbol.return_value = different_symbol  # Different symbol
             MockExtractor.get_transaction_type.return_value = "BUY"
             MockExtractor.get_order_id.return_value = "ORDER123"
@@ -175,7 +179,9 @@ class TestManualOrderDetectionEdgeCases:
         auto_trade_engine.orders.get_pending_orders.return_value = [order]
 
         # Mock OrderFieldExtractor
-        with patch("modules.kotak_neo_auto_trader.auto_trade_engine.OrderFieldExtractor") as MockExtractor:
+        with patch(
+            "modules.kotak_neo_auto_trader.auto_trade_engine.OrderFieldExtractor"
+        ) as MockExtractor:
             MockExtractor.get_symbol.return_value = symbol
             MockExtractor.get_transaction_type.return_value = "BUY"
             MockExtractor.get_order_id.return_value = None  # No order ID
@@ -194,7 +200,7 @@ class TestManualOrderDetectionEdgeCases:
 
     def test_should_skip_retry_due_to_manual_order_no_manual_orders(self, auto_trade_engine):
         """Test that _should_skip_retry_due_to_manual_order returns False when no manual orders"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
         retry_qty = 10
 
         manual_order_info = {
@@ -211,7 +217,7 @@ class TestManualOrderDetectionEdgeCases:
 
     def test_should_skip_retry_due_to_manual_order_empty_list(self, auto_trade_engine):
         """Test that _should_skip_retry_due_to_manual_order handles empty manual_orders list"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
         retry_qty = 10
 
         manual_order_info = {
@@ -228,16 +234,18 @@ class TestManualOrderDetectionEdgeCases:
 
     def test_should_skip_retry_due_to_manual_order_exact_match(self, auto_trade_engine):
         """Test that retry is skipped when manual order qty exactly matches retry qty"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
         retry_qty = 10
 
         manual_order_info = {
             "has_manual_order": True,
-            "manual_orders": [{
-                "order_id": "MANUAL123",
-                "quantity": 10,  # Exactly matches retry qty
-                "price": 2450.0,
-            }]
+            "manual_orders": [
+                {
+                    "order_id": "MANUAL123",
+                    "quantity": 10,  # Exactly matches retry qty
+                    "price": 2450.0,
+                }
+            ],
         }
 
         should_skip, reason = auto_trade_engine._should_skip_retry_due_to_manual_order(
@@ -247,18 +255,22 @@ class TestManualOrderDetectionEdgeCases:
         assert should_skip is True
         assert ">= retry qty" in reason.lower() or "similar" in reason.lower()
 
-    def test_should_skip_retry_due_to_manual_order_proceed_with_different_qty(self, auto_trade_engine):
+    def test_should_skip_retry_due_to_manual_order_proceed_with_different_qty(
+        self, auto_trade_engine
+    ):
         """Test that retry proceeds when manual order qty is significantly different"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
         retry_qty = 10
 
         manual_order_info = {
             "has_manual_order": True,
-            "manual_orders": [{
-                "order_id": "MANUAL123",
-                "quantity": 5,  # Much less than retry qty (10)
-                "price": 2450.0,
-            }]
+            "manual_orders": [
+                {
+                    "order_id": "MANUAL123",
+                    "quantity": 5,  # Much less than retry qty (10)
+                    "price": 2450.0,
+                }
+            ],
         }
 
         should_skip, reason = auto_trade_engine._should_skip_retry_due_to_manual_order(
@@ -271,4 +283,3 @@ class TestManualOrderDetectionEdgeCases:
         # Also 5 < 10 * 1.5 = 15, so doesn't match "much larger" condition
         assert should_skip is False
         assert "will cancel and replace" in reason.lower()
-

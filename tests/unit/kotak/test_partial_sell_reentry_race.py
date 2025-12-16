@@ -107,7 +107,7 @@ class TestPartialSellReentryRace:
         # Mock sell order exists with quantity 50 (remaining after partial sell)
         mock_sell_manager.get_existing_sell_orders = Mock(
             return_value={
-                "RELIANCE": {
+                "RELIANCE-EQ": {  # Full symbol after migration
                     "order_id": "SELL123",
                     "qty": 50,  # Remaining quantity after partial sell
                     "price": 9.50,
@@ -147,7 +147,7 @@ class TestPartialSellReentryRace:
         assert mock_sell_manager.update_sell_order.called
         update_call = mock_sell_manager.update_sell_order.call_args[1]
         assert update_call["qty"] == 70  # Should match new position quantity
-        assert update_call["symbol"] == "RELIANCE"
+        assert update_call["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
         assert update_call["order_id"] == "SELL123"
         assert update_call["new_price"] == 9.50  # Price unchanged
 
@@ -179,7 +179,7 @@ class TestPartialSellReentryRace:
         # Sell order has 50 shares (remaining after partial sell)
         mock_sell_manager.get_existing_sell_orders = Mock(
             return_value={
-                "RELIANCE": {
+                "RELIANCE-EQ": {  # Full symbol after migration
                     "order_id": "SELL123",
                     "qty": 50,  # Mismatch: position will be 70 after reentry
                     "price": 9.50,
@@ -237,7 +237,7 @@ class TestPartialSellReentryRace:
         # Sell order has 50 shares (matches current position, but will mismatch after reentry)
         mock_sell_manager.get_existing_sell_orders = Mock(
             return_value={
-                "RELIANCE": {
+                "RELIANCE-EQ": {  # Full symbol after migration
                     "order_id": "SELL123",
                     "qty": 50,  # Matches current position, but will be 70 after reentry
                     "price": 9.50,
@@ -294,7 +294,7 @@ class TestPartialSellReentryRace:
         # Sell order has 30 shares (remaining)
         mock_sell_manager.get_existing_sell_orders = Mock(
             return_value={
-                "RELIANCE": {
+                "RELIANCE-EQ": {  # Full symbol after migration
                     "order_id": "SELL123",
                     "qty": 30,
                     "price": 9.50,
@@ -402,7 +402,7 @@ class TestPartialSellReentryRace:
         # Sell order exists
         mock_sell_manager.get_existing_sell_orders = Mock(
             return_value={
-                "RELIANCE": {
+                "RELIANCE-EQ": {  # Full symbol after migration
                     "order_id": "SELL123",
                     "qty": 50,
                     "price": 9.50,

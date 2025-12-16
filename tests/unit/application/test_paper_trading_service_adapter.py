@@ -382,7 +382,7 @@ class TestPaperTradingEngineAdapter:
 
         # Mock holding
         mock_holding = MagicMock()
-        mock_holding.symbol = "RELIANCE"
+        mock_holding.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_paper_broker.get_holdings.return_value = [mock_holding]
         mock_paper_broker.config = MagicMock()
         mock_paper_broker.config.max_position_size = 100000.0
@@ -494,7 +494,7 @@ class TestPaperTradingEngineAdapter:
 
         # Create a pending buy order for RELIANCE
         pending_order = MagicMock()
-        pending_order.symbol = "RELIANCE"
+        pending_order.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pending_order.status = OrderStatus.OPEN
         pending_order.transaction_type = TransactionType.BUY
         pending_order.is_buy_order.return_value = True
@@ -538,19 +538,19 @@ class TestPaperTradingEngineAdapter:
 
         # Mock holdings with one stock
         mock_holding = MagicMock()
-        mock_holding.symbol = "TCS"
+        mock_holding.symbol = "TCS-EQ"  # Full symbol after migration
         mock_paper_broker.get_holdings.return_value = [mock_holding]
 
         # Create pending orders
         pending_reliance = MagicMock()
-        pending_reliance.symbol = "RELIANCE"
+        pending_reliance.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pending_reliance.status = OrderStatus.OPEN
         pending_reliance.transaction_type = TransactionType.BUY
         pending_reliance.is_buy_order.return_value = True
         pending_reliance.is_active.return_value = True
 
         pending_infy = MagicMock()
-        pending_infy.symbol = "INFY"
+        pending_infy.symbol = "INFY-EQ"  # Full symbol after migration
         pending_infy.status = OrderStatus.OPEN
         pending_infy.transaction_type = TransactionType.BUY
         pending_infy.is_buy_order.return_value = True
@@ -935,7 +935,7 @@ class TestPaperTradingSellMonitoring:
 
         # Set up active sell order
         adapter.active_sell_orders = {
-            "RELIANCE": {
+            "RELIANCE-EQ": {  # Full symbol after migration
                 "order_id": "SELL_ORDER_123",
                 "target_price": 2600.0,
                 "qty": 40,
@@ -989,7 +989,7 @@ class TestPaperTradingSellMonitoring:
         adapter.converted_to_market = set()  # Initialize RSI exit tracking
 
         adapter.active_sell_orders = {
-            "RELIANCE": {
+            "RELIANCE-EQ": {  # Full symbol after migration
                 "order_id": "SELL_ORDER_123",
                 "target_price": 2600.0,
                 "qty": 40,
@@ -1057,7 +1057,7 @@ class TestPaperTradingSellMonitoring:
 
         # Create mock holdings
         mock_holding = MagicMock()
-        mock_holding.symbol = "RELIANCE"
+        mock_holding.symbol = "RELIANCE-EQ"  # Full symbol after migration
         adapter.broker.get_holdings.return_value = [mock_holding]
 
         # Create mock pending orders (empty)
@@ -1351,7 +1351,7 @@ class TestPaperTradingSellMonitoring:
 
         # Mock broker to simulate holdings increase (re-entry happened)
         mock_holding = MagicMock()
-        mock_holding.symbol = "RELIANCE"
+        mock_holding.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_holding.quantity = 60  # Increased from 40 to 60 (re-entry added 20)
         adapter_with_holdings.broker.get_holdings.return_value = [mock_holding]
 
@@ -1504,7 +1504,7 @@ class TestPaperTradingSellMonitoring:
 
         # Mock holdings with increased quantity (re-entry happened)
         mock_holding = MagicMock()
-        mock_holding.symbol = "RELIANCE"
+        mock_holding.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_holding.quantity = 60  # Increased from 40
         adapter_with_holdings.broker.get_holdings.return_value = [mock_holding]
 

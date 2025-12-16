@@ -7,7 +7,6 @@ Tests verify that:
 3. Race conditions in reentry processing are prevented
 """
 
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -16,9 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.infrastructure.db.base import Base
-from src.infrastructure.db.models import OrderStatus, Orders, Positions, UserRole, Users
-from src.infrastructure.db.timezone_utils import ist_now
-from src.infrastructure.persistence.orders_repository import OrdersRepository
+from src.infrastructure.db.models import UserRole, Users
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 
@@ -58,14 +55,16 @@ class TestPositionLocking:
         # Create position
         position = positions_repo.upsert(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=100.0,
             avg_price=100.0,
         )
 
         # Use nested transaction (savepoint) to test locking
         savepoint = session.begin_nested()
-        locked_position = positions_repo.get_by_symbol_for_update(user_id, "RELIANCE")
+        locked_position = positions_repo.get_by_symbol_for_update(
+            user_id, "RELIANCE-EQ"
+        )  # Full symbol after migration
 
         assert locked_position is not None
         assert locked_position.quantity == 100.0
@@ -81,7 +80,7 @@ class TestPositionLocking:
         # Create initial position
         position = positions_repo.upsert(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=100.0,
             avg_price=100.0,
         )
@@ -115,7 +114,9 @@ class TestPositionLocking:
                 thread_repo = PositionsRepository(thread_session)
 
                 # Use FOR UPDATE lock
-                existing_pos = thread_repo.get_by_symbol_for_update(user_id, "RELIANCE")
+                existing_pos = thread_repo.get_by_symbol_for_update(
+                    user_id, "RELIANCE-EQ"
+                )  # Full symbol after migration
                 if existing_pos:
                     existing_qty = existing_pos.quantity
                     new_qty = existing_qty + qty_to_add
@@ -125,7 +126,7 @@ class TestPositionLocking:
 
                     thread_repo.upsert(
                         user_id=user_id,
-                        symbol="RELIANCE",
+                        symbol="RELIANCE-EQ",  # Full symbol after migration
                         quantity=new_qty,
                         avg_price=existing_pos.avg_price,
                         auto_commit=True,
@@ -137,9 +138,7 @@ class TestPositionLocking:
 
         # Run concurrent updates
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [
-                executor.submit(update_position, i, 10.0) for i in range(5)
-            ]
+            futures = [executor.submit(update_position, i, 10.0) for i in range(5)]
             for future in as_completed(futures):
                 future.result()
 
@@ -157,7 +156,7 @@ class TestPositionLocking:
         # Create position
         position = positions_repo.upsert(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=100.0,
             avg_price=100.0,
         )
@@ -181,13 +180,15 @@ class TestPositionLocking:
         # Create position
         position = positions_repo.upsert(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=100.0,
             avg_price=100.0,
         )
 
         # Mark as closed - should use FOR UPDATE lock
-        closed_position = positions_repo.mark_closed(user_id, "RELIANCE")
+        closed_position = positions_repo.mark_closed(
+            user_id, "RELIANCE-EQ"
+        )  # Full symbol after migration
 
         assert closed_position is not None
         assert closed_position.closed_at is not None
@@ -201,17 +202,18 @@ class TestPositionLocking:
         # Create position
         position = positions_repo.upsert(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=100.0,
             avg_price=100.0,
         )
 
         # Reduce quantity - should use FOR UPDATE lock
         reduced_position = positions_repo.reduce_quantity(
-            user_id, "RELIANCE", sold_quantity=50.0
+            user_id,
+            "RELIANCE-EQ",
+            sold_quantity=50.0,  # Full symbol after migration
         )
 
         assert reduced_position is not None
         assert reduced_position.quantity == 50.0
         assert reduced_position.closed_at is None  # Still open
-

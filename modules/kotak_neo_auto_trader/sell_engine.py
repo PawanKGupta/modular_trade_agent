@@ -229,8 +229,8 @@ class SellOrderManager:
                 **kwargs,
             )
             # Sync active_sell_orders for backward compatibility
-            base_symbol = extract_base_symbol(symbol).upper()
-            self.active_sell_orders[base_symbol] = {
+            full_symbol = symbol.upper()  # Already has suffix from scrip master
+            self.active_sell_orders[full_symbol] = {
                 "order_id": order_id,
                 "target_price": target_price,
                 "qty": qty,
@@ -239,8 +239,8 @@ class SellOrderManager:
             }
         else:
             # Legacy mode
-            base_symbol = extract_base_symbol(symbol).upper()
-            self.active_sell_orders[base_symbol] = {
+            full_symbol = symbol.upper()  # Already has suffix from scrip master
+            self.active_sell_orders[full_symbol] = {
                 "order_id": order_id,
                 "target_price": target_price,
                 "qty": qty,
@@ -263,15 +263,15 @@ class SellOrderManager:
             result = self.state_manager.update_sell_order_price(symbol, new_price)
             if result:
                 # Sync active_sell_orders for backward compatibility
-                base_symbol = extract_base_symbol(symbol).upper()
-                if base_symbol in self.active_sell_orders:
-                    self.active_sell_orders[base_symbol]["target_price"] = new_price
+                full_symbol = symbol.upper()
+                if full_symbol in self.active_sell_orders:
+                    self.active_sell_orders[full_symbol]["target_price"] = new_price
             return result
         else:
             # Legacy mode
-            base_symbol = extract_base_symbol(symbol).upper()
-            if base_symbol in self.active_sell_orders:
-                self.active_sell_orders[base_symbol]["target_price"] = new_price
+            full_symbol = symbol.upper()
+            if full_symbol in self.active_sell_orders:
+                self.active_sell_orders[full_symbol]["target_price"] = new_price
                 return True
             return False
 
@@ -286,7 +286,9 @@ class SellOrderManager:
         Returns:
             True if removed, False otherwise
         """
-        base_symbol = extract_base_symbol(symbol).upper()
+        full_symbol = symbol.upper()
+
+        full_symbol = symbol.upper() if symbol else ""  # symbol is already full symbol
 
         if self.state_manager:
             # Always sync from OrderStateManager first to ensure consistency
@@ -299,16 +301,16 @@ class SellOrderManager:
             # Always remove from self.active_sell_orders if present (for backward compatibility)
             # This ensures removal even if OrderStateManager didn't have it
             removed = False
-            if base_symbol in self.active_sell_orders:
-                del self.active_sell_orders[base_symbol]
+            if full_symbol in self.active_sell_orders:
+                del self.active_sell_orders[full_symbol]
                 removed = True
 
             # Return True if either OrderStateManager had it or we removed from local dict
             return result or removed
         else:
             # Legacy mode
-            if base_symbol in self.active_sell_orders:
-                del self.active_sell_orders[base_symbol]
+            if full_symbol in self.active_sell_orders:
+                del self.active_sell_orders[full_symbol]
                 return True
             return False
 
@@ -361,15 +363,15 @@ class SellOrderManager:
             )
             if result:
                 # Sync active_sell_orders for backward compatibility
-                base_symbol = extract_base_symbol(symbol).upper()
-                if base_symbol in self.active_sell_orders:
-                    del self.active_sell_orders[base_symbol]
+                full_symbol = symbol.upper()
+                if full_symbol in self.active_sell_orders:
+                    del self.active_sell_orders[full_symbol]
             return result
         else:
             # Legacy mode - just remove from tracking
-            base_symbol = extract_base_symbol(symbol).upper()
-            if base_symbol in self.active_sell_orders:
-                del self.active_sell_orders[base_symbol]
+            full_symbol = symbol.upper()
+            if full_symbol in self.active_sell_orders:
+                del self.active_sell_orders[full_symbol]
                 return True
             return False
 
@@ -468,7 +470,7 @@ class SellOrderManager:
                     if not symbol:
                         continue
 
-                    base_symbol = extract_base_symbol(symbol).upper()
+                    full_symbol = symbol.upper()  # Keep full symbol from broker
                     qty = int(
                         holding.get("quantity")
                         or holding.get("qty")
@@ -479,8 +481,8 @@ class SellOrderManager:
 
                     # Issue #2 Fix: Track all holdings including zero quantity
                     # This ensures we detect when broker has 0 shares (user sold all manually)
-                    if base_symbol:
-                        broker_holdings_map[base_symbol] = qty
+                    if full_symbol:
+                        broker_holdings_map[full_symbol] = qty
         except Exception as e:
             logger.debug(f"Could not fetch broker holdings for validation: {e}")
 
@@ -815,22 +817,24 @@ class SellOrderManager:
                             DbOrderStatus.PENDING,
                             DbOrderStatus.ONGOING,
                         }:
-                            # Extract base symbol
-                            base_symbol = extract_base_symbol(order.symbol).upper()
-                            if base_symbol:
-                                existing_sell_symbols.add(base_symbol)
+                            # Use full symbol (orders already have full symbols)
+                            full_symbol = order.symbol.upper()
+                            if full_symbol:
+                                existing_sell_symbols.add(full_symbol)
                 except Exception as e:
                     logger.debug(f"Failed to get sell orders from database: {e}")
 
             positions_without_orders = []
             for pos in open_positions:
-                symbol = pos.symbol.upper()
+                symbol = pos.symbol.upper()  # Full symbol (e.g., "RELIANCE-EQ")
                 if symbol in existing_sell_symbols:
                     continue  # Has sell order in database, skip
 
                 # Get ticker and broker_symbol from order metadata if available
-                ticker = f"{symbol}.NS"
-                broker_sym = f"{symbol}-EQ"
+                # Extract base symbol for ticker creation (yfinance needs base symbol)
+                base_symbol = extract_base_symbol(symbol).upper()
+                ticker = f"{base_symbol}.NS"
+                broker_sym = symbol  # Use full symbol as broker_symbol
 
                 if self.orders_repo:
                     try:
@@ -843,7 +847,7 @@ class SellOrderManager:
                         for order in ongoing_orders:
                             if (
                                 order.side.lower() == "buy"
-                                and extract_base_symbol(order.symbol).upper() == symbol
+                                and extract_base_symbol(order.symbol).upper() == base_symbol
                             ):
                                 if order.order_metadata and isinstance(order.order_metadata, dict):
                                     ticker = order.order_metadata.get("ticker", ticker)
@@ -992,10 +996,10 @@ class SellOrderManager:
                 if not trading_symbol:
                     continue
 
-                base_symbol = extract_base_symbol(trading_symbol).upper()
-                if not base_symbol or base_symbol not in symbol_to_position:
+                full_symbol = trading_symbol.upper()  # Already full symbol from broker
+                if not full_symbol or full_symbol not in symbol_to_position:
                     logger.debug(
-                        f"Skipping manual sell order {order_id} for {base_symbol}: "
+                        f"Skipping manual sell order {order_id} for {full_symbol}: "
                         f"Not in tracked positions (likely manual buy or never traded by system)"
                     )
                     continue  # Not one of our tracked positions
@@ -1004,14 +1008,14 @@ class SellOrderManager:
                 # Handles race conditions where position was closed by our system's sell order
                 # or by a previous manual sell order in the same batch
                 try:
-                    position_obj = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+                    position_obj = self.positions_repo.get_by_symbol(self.user_id, full_symbol)
                     if not position_obj or position_obj.closed_at is not None:
                         logger.debug(
-                            f"Position {base_symbol} already closed, skipping manual sell order {order_id}"
+                            f"Position {full_symbol} already closed, skipping manual sell order {order_id}"
                         )
                         continue
                 except Exception as e:
-                    logger.debug(f"Error checking position status for {base_symbol}: {e}")
+                    logger.debug(f"Error checking position status for {full_symbol}: {e}")
                     continue
 
                 # NEW FIX: Only apply timestamp check for positions created from SYSTEM buy orders
@@ -1036,9 +1040,8 @@ class SellOrderManager:
                                 if buy_order.side.lower() != "buy":
                                     continue
 
-                                # Extract base symbol from order
-                                order_base_symbol = extract_base_symbol(buy_order.symbol).upper()
-                                if order_base_symbol != base_symbol:
+                                # Compare full symbols (orders already have full symbols)
+                                if buy_order.symbol.upper() != full_symbol:
                                     continue
 
                                 # Check if this is a system order (not manual)
@@ -1084,7 +1087,7 @@ class SellOrderManager:
                                     if time_diff <= 3600:  # 1 hour window
                                         is_system_position = True
                                         logger.debug(
-                                            f"Position {base_symbol} identified as system position: "
+                                            f"Position {full_symbol} identified as system position: "
                                             f"buy order {buy_order.id} executed at {order_execution_time}, "
                                             f"position opened at {position_opened_at}"
                                         )
@@ -1092,7 +1095,7 @@ class SellOrderManager:
 
                     except Exception as e:
                         logger.debug(
-                            f"Error checking if position {base_symbol} is from system order: {e}. "
+                            f"Error checking if position {full_symbol} is from system order: {e}. "
                             f"Will skip timestamp check to avoid false negatives."
                         )
                         # If we can't determine, assume it's NOT a system position (skip timestamp check)
@@ -1102,7 +1105,7 @@ class SellOrderManager:
                 # If position is not from system order, skip manual sell detection
                 if not is_system_position:
                     logger.debug(
-                        f"Skipping manual sell detection for {base_symbol}: "
+                        f"Skipping manual sell detection for {full_symbol}: "
                         f"Position is not from system buy order (manual buy or unknown source). "
                         f"System does not track manual positions."
                     )
@@ -1170,7 +1173,7 @@ class SellOrderManager:
                             # Only process if sell order happened AFTER position was opened
                             if sell_order_time < position_opened_at:
                                 logger.debug(
-                                    f"Skipping manual sell order {order_id} for {base_symbol}: "
+                                    f"Skipping manual sell order {order_id} for {full_symbol}: "
                                     f"sell executed at {sell_order_time} is BEFORE position opened at "
                                     f"{position_opened_at}. "
                                     f"This is likely an old manual sell order that predates the system's buy."
@@ -1180,7 +1183,7 @@ class SellOrderManager:
                         # If we can't determine sell order time, log but proceed (better to process than skip)
                         logger.debug(
                             f"Cannot determine execution time for manual sell order {order_id} "
-                            f"for {base_symbol}. Proceeding with manual sell detection to avoid false negatives."
+                            f"for {full_symbol}. Proceeding with manual sell detection to avoid false negatives."
                         )
 
                 # Manual sell detected!
@@ -1190,13 +1193,13 @@ class SellOrderManager:
                     position_qty = int(position_obj.quantity or 0)
                 else:
                     # Fallback to symbol_to_position if position_obj is not available
-                    position = symbol_to_position.get(base_symbol, {})
+                    position = symbol_to_position.get(full_symbol, {})
                     position_qty = int(position.get("qty", 0) or 0)
 
                 # Edge Case Fix #6: Validate position quantity
                 if position_qty <= 0:
                     logger.warning(
-                        f"Invalid position quantity for {base_symbol}: {position_qty}, skipping"
+                        f"Invalid position quantity for {full_symbol}: {position_qty}, skipping"
                     )
                     continue
 
@@ -1206,7 +1209,7 @@ class SellOrderManager:
                 if executed_qty > position_qty:
                     logger.warning(
                         f"Manual sell executed quantity ({executed_qty}) exceeds position quantity "
-                        f"({position_qty}) for {base_symbol}. This might indicate position was already "
+                        f"({position_qty}) for {full_symbol}. This might indicate position was already "
                         f"partially sold or data inconsistency. Marking position as closed."
                     )
 
@@ -1244,12 +1247,12 @@ class SellOrderManager:
                         is_manual=True,  # Mark as manual sell order
                     )
                     logger.info(
-                        f"Tracked manual sell order {order_id} for {base_symbol}: "
+                        f"Tracked manual sell order {order_id} for {full_symbol}: "
                         f"qty={sell_order_qty}, price=Rs {sell_order_price:.2f}"
                     )
                 except Exception as e:
                     logger.warning(
-                        f"Failed to track manual sell order {order_id} for {base_symbol}: {e}. "
+                        f"Failed to track manual sell order {order_id} for {full_symbol}: {e}. "
                         f"Will still close position."
                     )
 
@@ -1257,7 +1260,7 @@ class SellOrderManager:
                 if executed_qty >= position_qty:
                     price_str = f"{exit_price:.2f}" if exit_price is not None else "unknown"
                     logger.warning(
-                        f"Manual full sell detected for {base_symbol} via get_orders(): "
+                        f"Manual full sell detected for {full_symbol} via get_orders(): "
                         f"Order ID {order_id}, executed {executed_qty} shares @ Rs {price_str}. "
                         f"Position had {position_qty} shares. Marking position as closed."
                     )
@@ -1290,14 +1293,14 @@ class SellOrderManager:
                         if closed_at_time:
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
-                                symbol=base_symbol,
+                                symbol=full_symbol,
                                 closed_at=closed_at_time,
                                 exit_price=exit_price,  # Save exit price from manual sell order
                             )
                         stats["closed"] += 1
                         price_str = f"{exit_price:.2f}" if exit_price is not None else "unknown"
                         logger.info(
-                            f"Position {base_symbol} marked as closed due to manual full sell "
+                            f"Position {full_symbol} marked as closed due to manual full sell "
                             f"(detected via get_orders()): exit_price=Rs {price_str}, "
                             f"closed_at={closed_at_time}"
                         )
@@ -1310,27 +1313,27 @@ class SellOrderManager:
                             or "not found" in error_str
                         ):
                             logger.debug(
-                                f"Position {base_symbol} was already closed/updated by another process: {e}"
+                                f"Position {full_symbol} was already closed/updated by another process: {e}"
                             )
                         else:
-                            logger.error(f"Error marking position {base_symbol} as closed: {e}")
+                            logger.error(f"Error marking position {full_symbol} as closed: {e}")
 
                 # Case 2: Partial sell (executed_qty < position_qty)
                 else:
                     logger.warning(
-                        f"Manual partial sell detected for {base_symbol} via get_orders(): "
+                        f"Manual partial sell detected for {full_symbol} via get_orders(): "
                         f"Order ID {order_id}, executed {executed_qty} shares. "
                         f"Position had {position_qty} shares. Updating position quantity."
                     )
                     try:
                         self.positions_repo.reduce_quantity(
                             user_id=self.user_id,
-                            symbol=base_symbol,
+                            symbol=full_symbol,
                             sold_quantity=float(executed_qty),
                         )
                         stats["updated"] += 1
                         logger.info(
-                            f"Position {base_symbol} quantity updated: {position_qty} -> "
+                            f"Position {full_symbol} quantity updated: {position_qty} -> "
                             f"{position_qty - executed_qty} (manual sell of {executed_qty} shares "
                             f"detected via get_orders())"
                         )
@@ -1343,10 +1346,10 @@ class SellOrderManager:
                             or "not found" in error_str
                         ):
                             logger.debug(
-                                f"Position {base_symbol} was already closed/updated by another process: {e}"
+                                f"Position {full_symbol} was already closed/updated by another process: {e}"
                             )
                         else:
-                            logger.error(f"Error updating position {base_symbol} quantity: {e}")
+                            logger.error(f"Error updating position {full_symbol} quantity: {e}")
 
             if stats["detected"] > 0:
                 logger.info(
@@ -1432,10 +1435,10 @@ class SellOrderManager:
                     if not trading_symbol:
                         continue
 
-                    base_symbol = extract_base_symbol(trading_symbol).upper()
-                    if not base_symbol or base_symbol not in symbol_to_position:
+                    full_symbol = trading_symbol.upper()  # Already full symbol from broker
+                    if not full_symbol or full_symbol not in symbol_to_position:
                         logger.debug(
-                            f"Skipping pending manual sell order {order_id} for {base_symbol}: "
+                            f"Skipping pending manual sell order {order_id} for {full_symbol}: "
                             f"Not in tracked positions (likely manual buy or never traded by system)"
                         )
                         continue  # Not one of our tracked positions
@@ -1443,11 +1446,11 @@ class SellOrderManager:
                     # Check if this is a system position (not manual buy)
                     position_obj = None
                     try:
-                        position_obj = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+                        position_obj = self.positions_repo.get_by_symbol(self.user_id, full_symbol)
                         if not position_obj or position_obj.closed_at is not None:
                             continue
                     except Exception as e:
-                        logger.debug(f"Error checking position for {base_symbol}: {e}")
+                        logger.debug(f"Error checking position for {full_symbol}: {e}")
                         continue
 
                     # Check if position is from system buy order
@@ -1464,10 +1467,8 @@ class SellOrderManager:
                                     if buy_order.side.lower() != "buy":
                                         continue
 
-                                    order_base_symbol = extract_base_symbol(
-                                        buy_order.symbol
-                                    ).upper()
-                                    if order_base_symbol != base_symbol:
+                                    # Compare full symbols (orders already have full symbols)
+                                    if buy_order.symbol.upper() != full_symbol:
                                         continue
 
                                     # Check if this is a system order (not manual)
@@ -1517,7 +1518,7 @@ class SellOrderManager:
                                             break
                         except Exception as e:
                             logger.debug(
-                                f"Error checking if position {base_symbol} is from system order: {e}"
+                                f"Error checking if position {full_symbol} is from system order: {e}"
                             )
 
                     # Only track pending manual sell orders for system positions
@@ -1541,12 +1542,12 @@ class SellOrderManager:
                             )
                             stats["tracked"] += 1
                             logger.info(
-                                f"Tracked pending manual sell order {order_id} for {base_symbol}: "
+                                f"Tracked pending manual sell order {order_id} for {full_symbol}: "
                                 f"qty={order_qty}, price=Rs {order_price:.2f}"
                             )
                         except Exception as e:
                             logger.warning(
-                                f"Failed to track pending manual sell order {order_id} for {base_symbol}: {e}"
+                                f"Failed to track pending manual sell order {order_id} for {full_symbol}: {e}"
                             )
 
                 except Exception as e:
@@ -1633,8 +1634,8 @@ class SellOrderManager:
                 if not symbol:
                     continue
 
-                # Extract base symbol (remove -EQ suffix)
-                base_symbol = extract_base_symbol(symbol).upper()
+                # Keep full symbol from broker
+                full_symbol = symbol.upper()
 
                 # Extract quantity (handle various field names)
                 qty = int(
@@ -1645,8 +1646,8 @@ class SellOrderManager:
                     or 0
                 )
 
-                if base_symbol and qty > 0:
-                    broker_holdings_map[base_symbol] = qty
+                if full_symbol and qty > 0:
+                    broker_holdings_map[full_symbol] = qty
 
             # Get all open positions from database
             open_positions = self.positions_repo.list(self.user_id)
@@ -1809,9 +1810,8 @@ class SellOrderManager:
                 if order.side.lower() != "buy":
                     continue
 
-                # Extract base symbol from order symbol (handle -EQ suffix)
-                order_base_symbol = extract_base_symbol(order.symbol).upper()
-                if order_base_symbol != symbol.upper():
+                # Compare full symbols (orders already have full symbols, symbol is full after migration)
+                if order.symbol.upper() != symbol.upper():
                     continue
 
                 # Check if order was executed recently
@@ -1896,8 +1896,8 @@ class SellOrderManager:
                 if not holding_symbol:
                     continue
 
-                base_symbol = extract_base_symbol(holding_symbol).upper()
-                if base_symbol == symbol.upper():
+                full_symbol = holding_symbol.upper()  # Keep full symbol from broker
+                if full_symbol == symbol.upper():  # ✅ Exact match
                     broker_qty = int(
                         holding.get("quantity")
                         or holding.get("qty")
@@ -2993,8 +2993,10 @@ class SellOrderManager:
 
                         if circuit_limits and ema9_target > circuit_limits.get("upper", 0):
                             # EMA9 exceeds upper circuit - wait for expansion
-                            base_symbol = symbol.upper()
-                            self.waiting_for_circuit_expansion[base_symbol] = {
+                            full_symbol = (
+                                symbol.upper()
+                            )  # symbol is already full symbol from active_sell_orders
+                            self.waiting_for_circuit_expansion[full_symbol] = {
                                 "upper_circuit": circuit_limits["upper"],
                                 "lower_circuit": circuit_limits["lower"],
                                 "ema9_target": ema9_target,
@@ -3007,7 +3009,7 @@ class SellOrderManager:
                                 "rejection_reason": rejection_reason,
                             }
                             logger.info(
-                                f"{base_symbol}: Order rejected due to circuit limit breach. "
+                                f"{full_symbol}: Order rejected due to circuit limit breach. "
                                 f"EMA9 (Rs {ema9_target:.2f}) > Upper Circuit (Rs {circuit_limits['upper']:.2f}). "
                                 f"Waiting for circuit expansion..."
                             )
@@ -3633,8 +3635,10 @@ class SellOrderManager:
             # Skip stocks that are no longer in trade (position closed manually or by other process)
             if self.positions_repo and self.user_id:
                 try:
-                    base_symbol = extract_base_symbol(symbol).upper()
-                    position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+                    full_symbol = (
+                        symbol.upper()
+                    )  # symbol is already full symbol from active_sell_orders
+                    position = self.positions_repo.get_by_symbol(self.user_id, full_symbol)
                     if not position or position.closed_at is not None:
                         logger.debug(
                             f"Skipping {symbol}: Position is closed or doesn't exist "
@@ -3772,22 +3776,27 @@ class SellOrderManager:
 
         for symbol, order_info in list(self.active_sell_orders.items()):
             try:
-                base_symbol = extract_base_symbol(symbol).upper()
+                full_symbol = (
+                    symbol.upper()
+                )  # symbol is already full symbol from active_sell_orders
+                base_symbol_for_lookup = extract_base_symbol(
+                    symbol
+                ).upper()  # For existing_orders lookup
 
-                # Get position quantity from database
-                position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+                # Get position quantity from database (positions now use full symbols)
+                position = self.positions_repo.get_by_symbol(self.user_id, full_symbol)
                 if not position or position.closed_at:
                     # Position doesn't exist or is closed - skip
                     continue
 
                 position_qty = position.quantity
 
-                # Get sell order quantity from broker
-                if base_symbol not in existing_orders:
+                # Get sell order quantity from broker (existing_orders uses base symbols)
+                if base_symbol_for_lookup not in existing_orders:
                     # Sell order doesn't exist in broker (might have been executed/cancelled)
                     continue
 
-                sell_order = existing_orders[base_symbol]
+                sell_order = existing_orders[base_symbol_for_lookup]
                 sell_order_qty = sell_order.get("qty", 0)
                 sell_order_id = sell_order.get("order_id")
                 sell_order_price = sell_order.get("price", 0)
@@ -3795,7 +3804,7 @@ class SellOrderManager:
                 # Check for mismatch
                 if sell_order_id and position_qty != sell_order_qty:
                     logger.info(
-                        f"Detected sell order quantity mismatch for {base_symbol}: "
+                        f"Detected sell order quantity mismatch for {full_symbol}: "
                         f"Position={position_qty}, Sell order={sell_order_qty}. "
                         f"Attempting to fix..."
                     )
@@ -3803,12 +3812,12 @@ class SellOrderManager:
                     # Update sell order to match position quantity
                     if self.update_sell_order(
                         order_id=str(sell_order_id),
-                        symbol=base_symbol,
+                        symbol=full_symbol,
                         qty=int(position_qty),
                         new_price=sell_order_price,
                     ):
                         logger.info(
-                            f"Fixed sell order quantity mismatch for {base_symbol}: "
+                            f"Fixed sell order quantity mismatch for {full_symbol}: "
                             f"{sell_order_qty} -> {position_qty} shares"
                         )
                         # Update tracking with new quantity
@@ -3818,12 +3827,12 @@ class SellOrderManager:
                             target_price=sell_order_price,
                             qty=position_qty,
                             ticker=order_info.get("ticker"),
-                            placed_symbol=order_info.get("placed_symbol") or f"{base_symbol}-EQ",
+                            placed_symbol=order_info.get("placed_symbol") or full_symbol,
                         )
                         fixed_count += 1
                     else:
                         logger.warning(
-                            f"Failed to fix sell order quantity mismatch for {base_symbol}. "
+                            f"Failed to fix sell order quantity mismatch for {full_symbol}. "
                             f"Will retry in next check cycle."
                         )
 
@@ -3849,7 +3858,7 @@ class SellOrderManager:
 
         retried_count = 0
 
-        for base_symbol, wait_info in list(self.waiting_for_circuit_expansion.items()):
+        for full_symbol, wait_info in list(self.waiting_for_circuit_expansion.items()):
             try:
                 trade = wait_info["trade"]
                 ticker = trade.get("ticker", "")
@@ -3866,7 +3875,7 @@ class SellOrderManager:
                     )
 
                 if not ticker:
-                    logger.debug(f"{base_symbol}: No ticker available for circuit check")
+                    logger.debug(f"{full_symbol}: No ticker available for circuit check")
                     continue
 
                 # Get current EMA9
@@ -3881,7 +3890,7 @@ class SellOrderManager:
                 if current_ema9 > upper_circuit:
                     # EMA9 still exceeds circuit - wait
                     logger.debug(
-                        f"{base_symbol}: EMA9 (Rs {current_ema9:.2f}) still exceeds upper circuit "
+                        f"{full_symbol}: EMA9 (Rs {current_ema9:.2f}) still exceeds upper circuit "
                         f"(Rs {upper_circuit:.2f}). Waiting..."
                     )
                     continue
@@ -3891,7 +3900,7 @@ class SellOrderManager:
                 target_price = min(current_ema9, ema9_target)
 
                 logger.info(
-                    f"{base_symbol}: EMA9 (Rs {current_ema9:.2f}) is now within circuit limit "
+                    f"{full_symbol}: EMA9 (Rs {current_ema9:.2f}) is now within circuit limit "
                     f"(Rs {upper_circuit:.2f}). Retrying order placement at Rs {target_price:.2f}..."
                 )
 
@@ -3902,16 +3911,16 @@ class SellOrderManager:
                 if order_id:
                     # Order placed successfully - remove from waiting list
                     logger.info(
-                        f"{base_symbol}: Order placed successfully at Rs {target_price:.2f}, "
+                        f"{full_symbol}: Order placed successfully at Rs {target_price:.2f}, "
                         f"Order ID: {order_id}"
                     )
-                    del self.waiting_for_circuit_expansion[base_symbol]
+                    del self.waiting_for_circuit_expansion[full_symbol]
                     retried_count += 1
 
                     # Register the order for tracking
                     qty = trade.get("qty", 0)
                     ticker = trade.get("ticker", "")
-                    placed_symbol = trade.get("placed_symbol", trade.get("symbol", base_symbol))
+                    placed_symbol = trade.get("placed_symbol", trade.get("symbol", full_symbol))
                     self._register_order(
                         symbol=placed_symbol,
                         order_id=order_id,
@@ -3922,11 +3931,11 @@ class SellOrderManager:
                     )
                 else:
                     logger.debug(
-                        f"{base_symbol}: Order placement failed. Will check again on next cycle."
+                        f"{full_symbol}: Order placement failed. Will check again on next cycle."
                     )
 
             except Exception as e:
-                logger.error(f"Error checking circuit expansion for {base_symbol}: {e}")
+                logger.error(f"Error checking circuit expansion for {full_symbol}: {e}")
                 continue
 
         return retried_count
@@ -4150,7 +4159,9 @@ class SellOrderManager:
                 # Update positions table (Edge Case #8 fix)
                 if self.positions_repo and self.user_id:
                     try:
-                        base_symbol = extract_base_symbol(symbol).upper()
+                        full_symbol = (
+                            symbol.upper()
+                        )  # symbol is already full symbol from active_sell_orders
                         if filled_qty > 0:
                             if filled_qty >= order_qty or filled_qty >= order_info.get("qty", 0):
                                 # Full execution - mark position as closed
@@ -4159,34 +4170,42 @@ class SellOrderManager:
                                     with transaction(self.positions_repo.db):
                                         self.positions_repo.mark_closed(
                                             user_id=self.user_id,
-                                            symbol=base_symbol,
+                                            symbol=full_symbol,
                                             closed_at=ist_now(),
                                             exit_price=order_price,
                                             auto_commit=False,  # Transaction handles commit
                                         )
                                         logger.info(
-                                            f"Position marked as closed in database: {base_symbol} "
+                                            f"Position marked as closed in database: {full_symbol} "
                                             f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
                                         )
 
                                         # Close corresponding ONGOING buy orders (within same transaction)
-                                        self._close_buy_orders_for_symbol(base_symbol)
+                                        # Extract base symbol for _close_buy_orders_for_symbol which uses base symbols
+                                        base_symbol_for_buy_orders = extract_base_symbol(
+                                            symbol
+                                        ).upper()
+                                        self._close_buy_orders_for_symbol(
+                                            base_symbol_for_buy_orders
+                                        )
 
                                 # Edge Case #12: Cancel pending reentry orders for closed position
                                 # Note: This includes broker API calls, so it's outside the transaction
-                                self._cancel_pending_reentry_orders(base_symbol)
+                                # Extract base symbol for _cancel_pending_reentry_orders which uses base symbols
+                                base_symbol_for_reentry = extract_base_symbol(symbol).upper()
+                                self._cancel_pending_reentry_orders(base_symbol_for_reentry)
 
                                 # Cache removed - holdings fetched when needed
                             else:
                                 # Partial execution - reduce quantity, keep position open
                                 self.positions_repo.reduce_quantity(
                                     user_id=self.user_id,
-                                    symbol=base_symbol,
+                                    symbol=full_symbol,
                                     sold_quantity=float(filled_qty),
                                 )
                                 # Cache removed - holdings fetched when needed
                                 logger.info(
-                                    f"Position quantity reduced in database: {base_symbol} "
+                                    f"Position quantity reduced in database: {full_symbol} "
                                     f"(sold {filled_qty} shares, remaining quantity updated)"
                                 )
                     except Exception as e:
@@ -4212,25 +4231,29 @@ class SellOrderManager:
                 # Update positions table (Edge Case #8 fix)
                 if self.positions_repo and self.user_id:
                     try:
-                        base_symbol = extract_base_symbol(symbol).upper()
+                        full_symbol = (
+                            symbol.upper()
+                        )  # symbol is already full symbol from active_sell_orders
                         # Assume full execution if we don't have filled_qty info
                         # Wrap position and order updates in transaction for atomicity
                         if transaction and ist_now:
                             with transaction(self.positions_repo.db):
                                 self.positions_repo.mark_closed(
                                     user_id=self.user_id,
-                                    symbol=base_symbol,
+                                    symbol=full_symbol,
                                     closed_at=ist_now(),
                                     exit_price=current_price,
                                     auto_commit=False,  # Transaction handles commit
                                 )
                                 logger.info(
-                                    f"Position marked as closed in database: {base_symbol} "
+                                    f"Position marked as closed in database: {full_symbol} "
                                     f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
                                 )
 
                                 # Close corresponding ONGOING buy orders (within same transaction)
-                                self._close_buy_orders_for_symbol(base_symbol)
+                                # Extract base symbol for _close_buy_orders_for_symbol which uses base symbols
+                                base_symbol_for_buy_orders = extract_base_symbol(symbol).upper()
+                                self._close_buy_orders_for_symbol(base_symbol_for_buy_orders)
 
                         # Invalidate cache since position was closed (broker holdings changed)
                         self._invalidate_holdings_cache()
