@@ -50,7 +50,8 @@ def upgrade() -> None:
                 WHERE o.user_id = positions.user_id
                   AND o.side = 'buy'
                   AND o.status = 'ONGOING'
-                  AND UPPER(SUBSTR(o.symbol, 1, INSTR(o.symbol || '-', '-') - 1)) = UPPER(positions.symbol)
+                  AND UPPER(SUBSTR(o.symbol, 1, INSTR(o.symbol || '-', '-') - 1)) = \
+                      UPPER(positions.symbol)
                 ORDER BY o.placed_at DESC
                 LIMIT 1
             )
@@ -63,7 +64,8 @@ def upgrade() -> None:
                   WHERE o.user_id = positions.user_id
                     AND o.side = 'buy'
                     AND o.status = 'ONGOING'
-                    AND UPPER(SUBSTR(o.symbol, 1, INSTR(o.symbol || '-', '-') - 1)) = UPPER(positions.symbol)
+                    AND UPPER(SUBSTR(o.symbol, 1, INSTR(o.symbol || '-', '-') - 1)) = \
+                      UPPER(positions.symbol)
               )
         """
             )
@@ -103,7 +105,7 @@ def upgrade() -> None:
             for row in remaining:
                 print(f"  User {row[0]}: {row[1]} (qty: {row[2]})")
     else:
-        # PostgreSQL version
+        # PostgreSQL version (not SQLite)
         # Step 1: Update positions from matching orders
         op.execute(
             text(
@@ -185,7 +187,8 @@ def downgrade() -> None:
                 """
             UPDATE positions
             SET symbol = UPPER(SUBSTR(symbol, 1, INSTR(symbol || '-', '-') - 1))
-            WHERE symbol LIKE '%-EQ' OR symbol LIKE '%-BE' OR symbol LIKE '%-BL' OR symbol LIKE '%-BZ'
+            WHERE symbol LIKE '%-EQ' OR symbol LIKE '%-BE' \
+                OR symbol LIKE '%-BL' OR symbol LIKE '%-BZ'
         """
             )
         )
@@ -196,7 +199,8 @@ def downgrade() -> None:
                 """
             UPDATE positions
             SET symbol = UPPER(SPLIT_PART(symbol, '-', 1))
-            WHERE symbol LIKE '%-EQ' OR symbol LIKE '%-BE' OR symbol LIKE '%-BL' OR symbol LIKE '%-BZ'
+            WHERE symbol LIKE '%-EQ' OR symbol LIKE '%-BE' \
+                OR symbol LIKE '%-BL' OR symbol LIKE '%-BZ'
         """
             )
         )

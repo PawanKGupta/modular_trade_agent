@@ -899,7 +899,10 @@ def test_scrip_master_resolution_consistent():
 
 ### 5.1 Pre-Migration Checklist
 
-- [ ] Backup production database
+- [x] Create migration test script ✅ (`scripts/test_migration_docker.py`)
+- [x] Create Docker testing documentation ✅
+- [x] Install psycopg2-binary dependency ✅
+- [ ] Backup production database (when ready for production)
 - [ ] Verify scrip master is loaded and working
 - [ ] Test scrip master resolution for all active positions
 - [ ] Document current symbol formats in database
@@ -908,13 +911,21 @@ def test_scrip_master_resolution_consistent():
 - [ ] Prepare rollback plan
 - [ ] Schedule migration window (low-traffic period)
 
+**Status**: ✅ Test scripts and documentation ready. Ready to test migration on development database.
+
 ### 5.2 Migration Steps
 
 **Step 1: Database Migration**
-- [ ] Run Alembic migration script
+- [ ] Run Alembic migration script (use `scripts/test_migration_docker.py` or docker exec)
 - [ ] Verify migration completed successfully
 - [ ] Check for any errors or warnings
 - [ ] Verify all positions have full symbols
+
+**Test Script Available**: `scripts/test_migration_docker.py`
+- Shows current state before migration
+- Runs migration with confirmation
+- Verifies results after migration
+- Optional rollback testing
 
 **Step 2: Code Deployment**
 - [ ] Deploy updated code
