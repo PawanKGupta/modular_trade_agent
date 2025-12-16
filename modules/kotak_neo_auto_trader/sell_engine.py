@@ -894,6 +894,676 @@ class SellOrderManager:
             logger.error(f"Failed to get positions without sell orders (DB-only): {e}")
             return []
 
+    def _detect_manual_sells_from_orders(
+        self, all_orders_response: dict[str, Any] | None = None
+    ) -> dict[str, int]:
+        """
+        Detect manual sells using get_orders() data (optimized approach).
+
+        This method detects manual sells immediately by checking for executed SELL orders
+        that are not in our tracked sell orders list. This is more efficient than using
+        Holdings API which only updates T+1 (next day after settlement).
+
+        Args:
+            all_orders_response: Optional orders response from get_orders() API call.
+                                If provided, uses this data instead of making a new API call.
+                                This allows reusing data from frequent monitoring calls.
+
+        Returns:
+            Dictionary with stats: {"checked": int, "detected": int, "closed": int, "updated": int}
+        """
+        stats = {"checked": 0, "detected": 0, "closed": 0, "updated": 0}
+
+        if not self.positions_repo or not self.user_id:
+            return stats
+
+        # Get orders data if not provided
+        if not all_orders_response:
+            if not self.orders:
+                return stats
+            try:
+                all_orders_response = self.orders.get_orders()
+            except Exception as e:
+                logger.debug(f"Failed to fetch orders for manual sell detection: {e}")
+                return stats
+
+        if not all_orders_response or "data" not in all_orders_response:
+            return stats
+
+        # Get our tracked sell order IDs
+        tracked_sell_order_ids = set()
+        for order_info in self.active_sell_orders.values():
+            order_id = order_info.get("order_id")
+            if order_id:
+                tracked_sell_order_ids.add(str(order_id))
+
+        # Get all open positions
+        try:
+            open_positions = self.get_open_positions()
+            if not open_positions:
+                return stats
+
+            # Build symbol to position mapping
+            symbol_to_position = {}
+            for position in open_positions:
+                symbol = position.get("symbol", "").upper()
+                if symbol:
+                    symbol_to_position[symbol] = position
+
+            stats["checked"] = len(symbol_to_position)
+
+            # Check each order in broker response
+            for order in all_orders_response.get("data", []):
+                # Only check SELL orders
+                if not OrderFieldExtractor.is_sell_order(order):
+                    continue
+
+                # Get order status and executed quantity
+                status = OrderFieldExtractor.get_status(order)
+                executed_qty = OrderFieldExtractor.get_filled_quantity(order)
+
+                # Only process orders that are actually executed (have filled quantity)
+                # Edge Case Fix #1: "ongoing" status might include pending orders (filled_qty = 0)
+                if status in ["executed", "filled", "complete"]:
+                    # These statuses indicate execution, but still check filled_qty > 0
+                    if executed_qty <= 0:
+                        continue
+                elif status == "ongoing":
+                    # For "ongoing" status, only process if order has been partially/fully filled
+                    if executed_qty <= 0:
+                        continue  # Order is pending, not executed yet
+                else:
+                    # Other statuses (pending, cancelled, rejected, etc.) - skip
+                    continue
+
+                order_id = OrderFieldExtractor.get_order_id(order)
+                if not order_id:
+                    continue
+
+                # Normalize order ID for consistent comparison
+                order_id = str(order_id).strip()
+
+                # Skip if this is our tracked sell order
+                if order_id in tracked_sell_order_ids:
+                    continue
+
+                # Extract symbol and quantity
+                trading_symbol = OrderFieldExtractor.get_symbol(order)
+                if not trading_symbol:
+                    continue
+
+                base_symbol = extract_base_symbol(trading_symbol).upper()
+                if not base_symbol or base_symbol not in symbol_to_position:
+                    logger.debug(
+                        f"Skipping manual sell order {order_id} for {base_symbol}: "
+                        f"Not in tracked positions (likely manual buy or never traded by system)"
+                    )
+                    continue  # Not one of our tracked positions
+
+                # Edge Case Fix #2 & #3: Re-check position status before processing
+                # Handles race conditions where position was closed by our system's sell order
+                # or by a previous manual sell order in the same batch
+                try:
+                    position_obj = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+                    if not position_obj or position_obj.closed_at is not None:
+                        logger.debug(
+                            f"Position {base_symbol} already closed, skipping manual sell order {order_id}"
+                        )
+                        continue
+                except Exception as e:
+                    logger.debug(f"Error checking position status for {base_symbol}: {e}")
+                    continue
+
+                # NEW FIX: Only apply timestamp check for positions created from SYSTEM buy orders
+                # Reason: If system was down/failed and couldn't place/execute sell order, OR user manually
+                # closed the position, we still want to detect and update the position table.
+                # But we need to prevent false positives from old manual sell orders that happened
+                # BEFORE the system bought the stock.
+                is_system_position = False
+                if self.orders_repo and position_obj.opened_at:
+                    try:
+                        # Check if there's a system buy order (orig_source != 'manual') for this symbol
+                        # that was executed around the time the position was opened
+                        if DbOrderStatus:
+                            # Get all buy orders for this symbol
+                            buy_orders = self.orders_repo.list(
+                                self.user_id,
+                                status=DbOrderStatus.ONGOING,  # Only executed orders
+                            )
+
+                            # Filter for buy orders matching this symbol
+                            for buy_order in buy_orders:
+                                if buy_order.side.lower() != "buy":
+                                    continue
+
+                                # Extract base symbol from order
+                                order_base_symbol = extract_base_symbol(buy_order.symbol).upper()
+                                if order_base_symbol != base_symbol:
+                                    continue
+
+                                # Check if this is a system order (not manual)
+                                # System orders have orig_source != 'manual' (could be 'signal', None, etc.)
+                                if (
+                                    buy_order.orig_source
+                                    and buy_order.orig_source.lower() == "manual"
+                                ):
+                                    continue  # Skip manual orders
+
+                                # Check if order execution time matches position opened_at (within reasonable window)
+                                order_execution_time = None
+                                if (
+                                    hasattr(buy_order, "execution_time")
+                                    and buy_order.execution_time
+                                ):
+                                    order_execution_time = buy_order.execution_time
+                                elif hasattr(buy_order, "filled_at") and buy_order.filled_at:
+                                    order_execution_time = buy_order.filled_at
+
+                                if order_execution_time:
+                                    # Normalize both timestamps to IST for comparison
+                                    from src.infrastructure.db.timezone_utils import IST
+
+                                    if order_execution_time.tzinfo is None:
+                                        order_execution_time = order_execution_time.replace(
+                                            tzinfo=IST
+                                        )
+                                    else:
+                                        order_execution_time = order_execution_time.astimezone(IST)
+
+                                    position_opened_at = position_obj.opened_at
+                                    if position_opened_at.tzinfo is None:
+                                        position_opened_at = position_opened_at.replace(tzinfo=IST)
+                                    else:
+                                        position_opened_at = position_opened_at.astimezone(IST)
+
+                                    # Check if order execution is within 1 hour of position opened_at
+                                    # (allows for slight timing differences)
+                                    time_diff = abs(
+                                        (order_execution_time - position_opened_at).total_seconds()
+                                    )
+                                    if time_diff <= 3600:  # 1 hour window
+                                        is_system_position = True
+                                        logger.debug(
+                                            f"Position {base_symbol} identified as system position: "
+                                            f"buy order {buy_order.id} executed at {order_execution_time}, "
+                                            f"position opened at {position_opened_at}"
+                                        )
+                                        break
+
+                    except Exception as e:
+                        logger.debug(
+                            f"Error checking if position {base_symbol} is from system order: {e}. "
+                            f"Will skip timestamp check to avoid false negatives."
+                        )
+                        # If we can't determine, assume it's NOT a system position (skip timestamp check)
+                        is_system_position = False
+
+                # Skip positions created from manual buys - system does not track manual buys
+                # If position is not from system order, skip manual sell detection
+                if not is_system_position:
+                    logger.debug(
+                        f"Skipping manual sell detection for {base_symbol}: "
+                        f"Position is not from system buy order (manual buy or unknown source). "
+                        f"System does not track manual positions."
+                    )
+                    continue
+
+                # Apply timestamp check ONLY for system positions
+                if is_system_position and position_obj.opened_at:
+                    # Get sell order execution time
+                    sell_order_time = None
+
+                    # Try to extract execution time from order (format varies by broker)
+                    # Check common fields for execution time
+                    if isinstance(order, dict):
+                        if order.get("execution_time"):
+                            sell_order_time = order.get("execution_time")
+                        elif order.get("filled_at"):
+                            sell_order_time = order.get("filled_at")
+                        else:
+                            # Try OrderFieldExtractor
+                            order_time_str = OrderFieldExtractor.get_order_time(order)
+                            if order_time_str:
+                                try:
+                                    from datetime import datetime
+
+                                    from src.infrastructure.db.timezone_utils import IST
+
+                                    # Parse order time (format varies by broker)
+                                    # Try ISO format first
+                                    try:
+                                        sell_order_time = datetime.fromisoformat(
+                                            order_time_str.replace("Z", "+00:00")
+                                        )
+                                    except ValueError:
+                                        # Try other formats if needed
+                                        # For now, if parsing fails, we'll skip the check
+                                        pass
+                                except Exception:
+                                    pass
+
+                    if sell_order_time:
+                        # Normalize to IST for comparison
+                        from src.infrastructure.db.timezone_utils import IST
+
+                        if isinstance(sell_order_time, str):
+                            try:
+                                sell_order_time = datetime.fromisoformat(
+                                    sell_order_time.replace("Z", "+00:00")
+                                )
+                            except ValueError:
+                                sell_order_time = None
+
+                        if sell_order_time:
+                            if sell_order_time.tzinfo is None:
+                                sell_order_time = sell_order_time.replace(tzinfo=IST)
+                            else:
+                                sell_order_time = sell_order_time.astimezone(IST)
+
+                            # Normalize position opened_at to IST
+                            position_opened_at = position_obj.opened_at
+                            if position_opened_at.tzinfo is None:
+                                position_opened_at = position_opened_at.replace(tzinfo=IST)
+                            else:
+                                position_opened_at = position_opened_at.astimezone(IST)
+
+                            # Only process if sell order happened AFTER position was opened
+                            if sell_order_time < position_opened_at:
+                                logger.debug(
+                                    f"Skipping manual sell order {order_id} for {base_symbol}: "
+                                    f"sell executed at {sell_order_time} is BEFORE position opened at "
+                                    f"{position_opened_at}. "
+                                    f"This is likely an old manual sell order that predates the system's buy."
+                                )
+                                continue
+                    else:
+                        # If we can't determine sell order time, log but proceed (better to process than skip)
+                        logger.debug(
+                            f"Cannot determine execution time for manual sell order {order_id} "
+                            f"for {base_symbol}. Proceeding with manual sell detection to avoid false negatives."
+                        )
+
+                # Manual sell detected!
+                # Use the refreshed position_obj from database (not the stale symbol_to_position)
+                # This ensures we see the updated quantity after previous orders in the same batch
+                if position_obj and hasattr(position_obj, "quantity"):
+                    position_qty = int(position_obj.quantity or 0)
+                else:
+                    # Fallback to symbol_to_position if position_obj is not available
+                    position = symbol_to_position.get(base_symbol, {})
+                    position_qty = int(position.get("qty", 0) or 0)
+
+                # Edge Case Fix #6: Validate position quantity
+                if position_qty <= 0:
+                    logger.warning(
+                        f"Invalid position quantity for {base_symbol}: {position_qty}, skipping"
+                    )
+                    continue
+
+                stats["detected"] += 1
+
+                # Edge Case Fix #7: Validate executed_qty vs position_qty
+                if executed_qty > position_qty:
+                    logger.warning(
+                        f"Manual sell executed quantity ({executed_qty}) exceeds position quantity "
+                        f"({position_qty}) for {base_symbol}. This might indicate position was already "
+                        f"partially sold or data inconsistency. Marking position as closed."
+                    )
+
+                # Extract exit price from manual sell order
+                exit_price = OrderFieldExtractor.get_price(order)
+                if not exit_price or exit_price <= 0:
+                    # Try to get execution price if available
+                    exit_price = (
+                        order.get("execution_price")
+                        or order.get("avgPrc")
+                        or order.get("prc")
+                        or None
+                    )
+                    if exit_price:
+                        try:
+                            exit_price = float(exit_price)
+                        except (ValueError, TypeError):
+                            exit_price = None
+
+                # Track manual sell order in active_sell_orders to prevent duplicate placement
+                # This ensures system doesn't place another sell order for the same symbol
+                try:
+                    # Get sell order details for tracking
+                    sell_order_price = exit_price or OrderFieldExtractor.get_price(order) or 0.0
+                    sell_order_qty = executed_qty
+                    trading_symbol_full = trading_symbol  # Keep full symbol with suffix
+
+                    # Register manual sell order in active_sell_orders
+                    self._register_order(
+                        symbol=trading_symbol_full,
+                        order_id=order_id,
+                        target_price=sell_order_price,
+                        qty=int(sell_order_qty),
+                        ticker=None,  # Will be constructed if needed
+                        is_manual=True,  # Mark as manual sell order
+                    )
+                    logger.info(
+                        f"Tracked manual sell order {order_id} for {base_symbol}: "
+                        f"qty={sell_order_qty}, price=Rs {sell_order_price:.2f}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to track manual sell order {order_id} for {base_symbol}: {e}. "
+                        f"Will still close position."
+                    )
+
+                # Case 1: Full sell (executed_qty >= position_qty)
+                if executed_qty >= position_qty:
+                    price_str = f"{exit_price:.2f}" if exit_price is not None else "unknown"
+                    logger.warning(
+                        f"Manual full sell detected for {base_symbol} via get_orders(): "
+                        f"Order ID {order_id}, executed {executed_qty} shares @ Rs {price_str}. "
+                        f"Position had {position_qty} shares. Marking position as closed."
+                    )
+                    try:
+                        # Get execution time from order if available
+                        execution_time = None
+                        if isinstance(order, dict):
+                            # Try to get execution time from order
+                            order_time_str = OrderFieldExtractor.get_order_time(order)
+                            if order_time_str:
+                                try:
+                                    from datetime import datetime
+
+                                    from src.infrastructure.db.timezone_utils import IST
+
+                                    execution_time = datetime.fromisoformat(
+                                        order_time_str.replace("Z", "+00:00")
+                                    )
+                                    if execution_time.tzinfo is None:
+                                        execution_time = execution_time.replace(tzinfo=IST)
+                                    else:
+                                        execution_time = execution_time.astimezone(IST)
+                                except Exception:
+                                    pass
+
+                        closed_at_time = (
+                            execution_time if execution_time else (ist_now() if ist_now else None)
+                        )
+
+                        if closed_at_time:
+                            self.positions_repo.mark_closed(
+                                user_id=self.user_id,
+                                symbol=base_symbol,
+                                closed_at=closed_at_time,
+                                exit_price=exit_price,  # Save exit price from manual sell order
+                            )
+                        stats["closed"] += 1
+                        price_str = f"{exit_price:.2f}" if exit_price is not None else "unknown"
+                        logger.info(
+                            f"Position {base_symbol} marked as closed due to manual full sell "
+                            f"(detected via get_orders()): exit_price=Rs {price_str}, "
+                            f"closed_at={closed_at_time}"
+                        )
+                    except Exception as e:
+                        # Edge Case Fix #8: Check if it's a database constraint violation or concurrent modification
+                        error_str = str(e).lower()
+                        if (
+                            "closed" in error_str
+                            or "does not exist" in error_str
+                            or "not found" in error_str
+                        ):
+                            logger.debug(
+                                f"Position {base_symbol} was already closed/updated by another process: {e}"
+                            )
+                        else:
+                            logger.error(f"Error marking position {base_symbol} as closed: {e}")
+
+                # Case 2: Partial sell (executed_qty < position_qty)
+                else:
+                    logger.warning(
+                        f"Manual partial sell detected for {base_symbol} via get_orders(): "
+                        f"Order ID {order_id}, executed {executed_qty} shares. "
+                        f"Position had {position_qty} shares. Updating position quantity."
+                    )
+                    try:
+                        self.positions_repo.reduce_quantity(
+                            user_id=self.user_id,
+                            symbol=base_symbol,
+                            sold_quantity=float(executed_qty),
+                        )
+                        stats["updated"] += 1
+                        logger.info(
+                            f"Position {base_symbol} quantity updated: {position_qty} -> "
+                            f"{position_qty - executed_qty} (manual sell of {executed_qty} shares "
+                            f"detected via get_orders())"
+                        )
+                    except Exception as e:
+                        # Edge Case Fix #8: Check if it's a database constraint violation or concurrent modification
+                        error_str = str(e).lower()
+                        if (
+                            "closed" in error_str
+                            or "does not exist" in error_str
+                            or "not found" in error_str
+                        ):
+                            logger.debug(
+                                f"Position {base_symbol} was already closed/updated by another process: {e}"
+                            )
+                        else:
+                            logger.error(f"Error updating position {base_symbol} quantity: {e}")
+
+            if stats["detected"] > 0:
+                logger.info(
+                    f"Manual sell detection via get_orders(): {stats['checked']} positions checked, "
+                    f"{stats['detected']} manual sells detected, "
+                    f"{stats['closed']} positions closed, {stats['updated']} positions updated"
+                )
+
+        except Exception as e:
+            logger.error(f"Error during manual sell detection from orders: {e}", exc_info=True)
+
+        return stats
+
+    def _detect_and_track_pending_manual_sell_orders(
+        self,
+    ) -> dict[str, int]:
+        """
+        Detect and track pending manual sell orders for system positions.
+
+        This ensures that if user manually places a sell order for a system position,
+        it is tracked in active_sell_orders to prevent duplicate sell order placement.
+
+        Returns:
+            Dictionary with stats: {"checked": int, "tracked": int}
+        """
+        stats = {"checked": 0, "tracked": 0}
+
+        if not self.positions_repo or not self.user_id or not self.orders:
+            return stats
+
+        try:
+            # Get all open system positions
+            open_positions = self.get_open_positions()
+            if not open_positions:
+                return stats
+
+            # Build symbol to position mapping (only system positions)
+            symbol_to_position = {}
+            for position in open_positions:
+                symbol = position.get("symbol", "").upper()
+                if symbol:
+                    symbol_to_position[symbol] = position
+
+            stats["checked"] = len(symbol_to_position)
+
+            # Get pending orders from broker (includes manual pending sell orders)
+            try:
+                pending_orders = self.orders.get_pending_orders()
+            except Exception as e:
+                logger.debug(f"Failed to fetch pending orders for manual sell tracking: {e}")
+                return stats
+
+            if not pending_orders:
+                return stats
+
+            # Get our tracked sell order IDs
+            tracked_sell_order_ids = set()
+            for order_info in self.active_sell_orders.values():
+                order_id = order_info.get("order_id")
+                if order_id:
+                    tracked_sell_order_ids.add(str(order_id))
+
+            # Check each pending order
+            for order in pending_orders:
+                try:
+                    # Only check SELL orders
+                    if not OrderFieldExtractor.is_sell_order(order):
+                        continue
+
+                    order_id = OrderFieldExtractor.get_order_id(order)
+                    if not order_id:
+                        continue
+
+                    # Normalize order ID for consistent comparison
+                    order_id = str(order_id).strip()
+
+                    # Skip if this is our tracked sell order
+                    if order_id in tracked_sell_order_ids:
+                        continue
+
+                    # Extract symbol
+                    trading_symbol = OrderFieldExtractor.get_symbol(order)
+                    if not trading_symbol:
+                        continue
+
+                    base_symbol = extract_base_symbol(trading_symbol).upper()
+                    if not base_symbol or base_symbol not in symbol_to_position:
+                        logger.debug(
+                            f"Skipping pending manual sell order {order_id} for {base_symbol}: "
+                            f"Not in tracked positions (likely manual buy or never traded by system)"
+                        )
+                        continue  # Not one of our tracked positions
+
+                    # Check if this is a system position (not manual buy)
+                    position_obj = None
+                    try:
+                        position_obj = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+                        if not position_obj or position_obj.closed_at is not None:
+                            continue
+                    except Exception as e:
+                        logger.debug(f"Error checking position for {base_symbol}: {e}")
+                        continue
+
+                    # Check if position is from system buy order
+                    is_system_position = False
+                    if self.orders_repo and position_obj.opened_at:
+                        try:
+                            if DbOrderStatus:
+                                buy_orders = self.orders_repo.list(
+                                    self.user_id,
+                                    status=DbOrderStatus.ONGOING,
+                                )
+
+                                for buy_order in buy_orders:
+                                    if buy_order.side.lower() != "buy":
+                                        continue
+
+                                    order_base_symbol = extract_base_symbol(
+                                        buy_order.symbol
+                                    ).upper()
+                                    if order_base_symbol != base_symbol:
+                                        continue
+
+                                    # Check if this is a system order (not manual)
+                                    if (
+                                        buy_order.orig_source
+                                        and buy_order.orig_source.lower() == "manual"
+                                    ):
+                                        continue
+
+                                    # Check if order execution time matches position opened_at
+                                    order_execution_time = None
+                                    if (
+                                        hasattr(buy_order, "execution_time")
+                                        and buy_order.execution_time
+                                    ):
+                                        order_execution_time = buy_order.execution_time
+                                    elif hasattr(buy_order, "filled_at") and buy_order.filled_at:
+                                        order_execution_time = buy_order.filled_at
+
+                                    if order_execution_time:
+                                        from src.infrastructure.db.timezone_utils import IST
+
+                                        if order_execution_time.tzinfo is None:
+                                            order_execution_time = order_execution_time.replace(
+                                                tzinfo=IST
+                                            )
+                                        else:
+                                            order_execution_time = order_execution_time.astimezone(
+                                                IST
+                                            )
+
+                                        position_opened_at = position_obj.opened_at
+                                        if position_opened_at.tzinfo is None:
+                                            position_opened_at = position_opened_at.replace(
+                                                tzinfo=IST
+                                            )
+                                        else:
+                                            position_opened_at = position_opened_at.astimezone(IST)
+
+                                        time_diff = abs(
+                                            (
+                                                order_execution_time - position_opened_at
+                                            ).total_seconds()
+                                        )
+                                        if time_diff <= 3600:  # 1 hour window
+                                            is_system_position = True
+                                            break
+                        except Exception as e:
+                            logger.debug(
+                                f"Error checking if position {base_symbol} is from system order: {e}"
+                            )
+
+                    # Only track pending manual sell orders for system positions
+                    if not is_system_position:
+                        continue
+
+                    # Extract order details
+                    order_qty = OrderFieldExtractor.get_quantity(order)
+                    order_price = OrderFieldExtractor.get_price(order) or 0.0
+
+                    if order_qty > 0:
+                        # Track pending manual sell order
+                        try:
+                            self._register_order(
+                                symbol=trading_symbol,
+                                order_id=order_id,
+                                target_price=order_price,
+                                qty=int(order_qty),
+                                ticker=None,
+                                is_manual=True,  # Mark as manual sell order
+                            )
+                            stats["tracked"] += 1
+                            logger.info(
+                                f"Tracked pending manual sell order {order_id} for {base_symbol}: "
+                                f"qty={order_qty}, price=Rs {order_price:.2f}"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to track pending manual sell order {order_id} for {base_symbol}: {e}"
+                            )
+
+                except Exception as e:
+                    logger.debug(f"Error processing pending order for manual sell tracking: {e}")
+                    continue
+
+            if stats["tracked"] > 0:
+                logger.info(
+                    f"Pending manual sell order tracking: {stats['checked']} positions checked, "
+                    f"{stats['tracked']} pending manual sell orders tracked"
+                )
+
+        except Exception as e:
+            logger.error(f"Error during pending manual sell order tracking: {e}", exc_info=True)
+
+        return stats
+
     def _reconcile_positions_with_broker_holdings(
         self, holdings_response: dict[str, Any] | None = None
     ) -> dict[str, int]:
@@ -902,6 +1572,10 @@ class SellOrderManager:
 
         Edge Case #14, #15, #17 fix: Detects when manual trades affect system holdings
         and updates positions table accordingly.
+
+        NOTE: Holdings API only updates T+1 (next day after settlement), so this method
+        is primarily useful at market open to catch yesterday's manual trades. For immediate
+        detection during market hours, use _detect_manual_sells_from_orders() instead.
 
         Logic:
         - If broker_qty < positions_qty: Manual sell detected → Update positions table
@@ -990,6 +1664,21 @@ class SellOrderManager:
 
                 # Case 1: Manual full sell detected (broker_qty = 0, positions_qty > 0)
                 if broker_qty == 0 and positions_qty > 0:
+                    # BUG FIX: Check for recent executed buy orders before marking as closed
+                    # This prevents incorrectly closing positions when broker holdings haven't
+                    # been updated yet after order execution (race condition fix)
+                    # Uses 5-minute window for executed orders, but also checks if position
+                    # was created within last 2 minutes (more precise)
+                    if self._has_recent_executed_buy_order(symbol, minutes=5):
+                        logger.info(
+                            f"Skipping reconciliation for {symbol}: "
+                            f"Recent executed buy order detected (within last 10 minutes). "
+                            f"Broker holdings may not be updated yet. "
+                            f"Will reconcile on next cycle."
+                        )
+                        stats["ignored"] += 1
+                        continue
+
                     logger.warning(
                         f"Manual full sell detected for {symbol}: "
                         f"positions table shows {positions_qty} shares, "
@@ -1059,6 +1748,98 @@ class SellOrderManager:
             logger.error(f"Error during positions reconciliation: {e}", exc_info=True)
 
         return stats
+
+    def _has_recent_executed_buy_order(self, symbol: str, minutes: int = 5) -> bool:
+        """
+        Check if there's a recently executed buy order for this symbol.
+
+        This prevents reconciliation from incorrectly closing positions when:
+        - Broker holdings API hasn't updated yet after order execution
+        - Order executed recently but holdings fetch happened before execution
+
+        Strategy:
+        1. First check if position was created very recently (within 2 minutes) - most precise
+        2. Fallback to checking executed orders within time window
+
+        Args:
+            symbol: Base symbol to check (e.g., 'ASTERDM')
+            minutes: Time window in minutes to check executed orders (default: 5 minutes)
+                     Note: Position creation check uses 2 minutes (broker API typically updates within 1-2 min)
+
+        Returns:
+            True if there's a recent executed buy order or recently created position, False otherwise
+        """
+        if not self.positions_repo or not self.user_id:
+            return False
+
+        try:
+            from datetime import timedelta
+
+            if not ist_now:
+                return False
+
+            now = ist_now()
+
+            # Strategy 1: Check if position was created very recently (most precise)
+            # Broker APIs typically update within 1-2 minutes, so 2 minutes is sufficient
+            position = self.positions_repo.get_by_symbol(self.user_id, symbol)
+            if position and position.opened_at:
+                position_age = (now - position.opened_at).total_seconds() / 60  # minutes
+                if position_age <= 2:  # Position created within last 2 minutes
+                    logger.debug(
+                        f"Position {symbol} was created {position_age:.1f} minutes ago. "
+                        f"Skipping reconciliation (broker holdings may not be updated yet)."
+                    )
+                    return True
+
+            # Strategy 2: Check for executed buy orders within time window
+            # Use shorter window (5 minutes) since broker APIs usually update within 1-2 minutes
+            # 5 minutes provides safety margin without being too conservative
+            if not self.orders_repo:
+                return False
+
+            cutoff_time = now - timedelta(minutes=minutes)
+
+            # Get all buy orders for this user
+            orders = self.orders_repo.list(self.user_id)
+
+            # Filter for buy orders matching this symbol
+            for order in orders:
+                # Check if this is a buy order for the symbol
+                if order.side.lower() != "buy":
+                    continue
+
+                # Extract base symbol from order symbol (handle -EQ suffix)
+                order_base_symbol = extract_base_symbol(order.symbol).upper()
+                if order_base_symbol != symbol.upper():
+                    continue
+
+                # Check if order was executed recently
+                # Executed orders have status='ongoing' and execution_time or filled_at set
+                if order.status == DbOrderStatus.ONGOING:
+                    # Check execution_time first (more accurate)
+                    if hasattr(order, "execution_time") and order.execution_time:
+                        if order.execution_time >= cutoff_time:
+                            logger.debug(
+                                f"Found recent executed buy order for {symbol}: "
+                                f"order_id={order.id}, execution_time={order.execution_time}"
+                            )
+                            return True
+
+                    # Fallback to filled_at if execution_time not available
+                    if hasattr(order, "filled_at") and order.filled_at:
+                        if order.filled_at >= cutoff_time:
+                            logger.debug(
+                                f"Found recent executed buy order for {symbol}: "
+                                f"order_id={order.id}, filled_at={order.filled_at}"
+                            )
+                            return True
+
+            return False
+
+        except Exception as e:
+            logger.debug(f"Error checking recent executed orders for {symbol}: {e}")
+            return False
 
     def _reconcile_single_symbol(
         self, symbol: str, holdings_response: dict[str, Any] | None = None
@@ -1130,6 +1911,17 @@ class SellOrderManager:
 
             # Manual full sell detected
             if broker_qty == 0 and positions_qty > 0:
+                # BUG FIX: Check for recent executed buy orders before marking as closed
+                # Uses 5-minute window for executed orders, but also checks if position
+                # was created within last 2 minutes (more precise)
+                if self._has_recent_executed_buy_order(symbol, minutes=5):
+                    logger.info(
+                        f"Skipping single symbol reconciliation for {symbol}: "
+                        f"Recent executed buy order detected. "
+                        f"Broker holdings may not be updated yet."
+                    )
+                    return False
+
                 logger.warning(
                     f"Manual full sell detected for {symbol} during sell order update. "
                     f"Marking position as closed."
@@ -2837,6 +3629,26 @@ class SellOrderManager:
                 result["success"] = True
                 return result
 
+            # Check if position is still open before monitoring
+            # Skip stocks that are no longer in trade (position closed manually or by other process)
+            if self.positions_repo and self.user_id:
+                try:
+                    base_symbol = extract_base_symbol(symbol).upper()
+                    position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+                    if not position or position.closed_at is not None:
+                        logger.debug(
+                            f"Skipping {symbol}: Position is closed or doesn't exist "
+                            f"(closed_at={position.closed_at if position else 'N/A'})"
+                        )
+                        result["action"] = "skipped"
+                        result["success"] = True
+                        # Mark for removal from active_sell_orders
+                        result["remove_from_tracking"] = True
+                        return result
+                except Exception as e:
+                    logger.debug(f"Error checking position status for {symbol}: {e}")
+                    # Continue monitoring if position check fails (fail-safe)
+
             # Get current EMA9
             ticker = order_info.get("ticker")
             if not ticker:
@@ -3135,36 +3947,20 @@ class SellOrderManager:
             "missing_orders_placed": 0,  # Issue #5: Track orders placed for missing positions
         }
 
-        # Manual Trade Detection Timing Fix: Periodic reconciliation during market hours
-        # Run reconciliation every 30 minutes to detect manual trades
+        # Optimized Manual Sell Detection: Use get_orders() for immediate detection
+        # Holdings API only updates T+1 (next day after settlement), so running it every 30 minutes
+        # during market hours is wasteful. Instead, we detect manual sells immediately using
+        # get_orders() data which is already fetched every minute in monitor_all_orders().
         now = datetime.now()
 
-        # Flaw #7 Optimization: Fetch holdings once and reuse for reconciliation and mismatch check
-        # This eliminates the need for separate cache mechanism - we reuse data from monitoring cycle
-        holdings_response = None
-        if now.minute in [0, 30] and now.second < 10:
-            # Fetch holdings once for reconciliation (reused for mismatch check if needed)
-            try:
-                holdings_response = self.portfolio.get_holdings() if self.portfolio else None
-            except Exception as e:
-                logger.debug(f"Failed to fetch holdings for reconciliation: {e}")
-
-        # Run reconciliation at :00, :30 minutes of each hour
-        if now.minute in [0, 30] and now.second < 10:
-            try:
-                reconciliation_stats = self._reconcile_positions_with_broker_holdings(
-                    holdings_response
-                )
-                if (
-                    reconciliation_stats.get("updated", 0) > 0
-                    or reconciliation_stats.get("closed", 0) > 0
-                ):
-                    logger.info(
-                        f"Periodic reconciliation: {reconciliation_stats.get('updated', 0)} positions updated, "
-                        f"{reconciliation_stats.get('closed', 0)} positions closed"
-                    )
-            except Exception as e:
-                logger.debug(f"Periodic reconciliation failed (non-critical): {e}")
+        # Detect and track pending manual sell orders for system positions
+        # This ensures manual sell orders are tracked to prevent duplicate placement
+        pending_manual_sell_stats = self._detect_and_track_pending_manual_sell_orders()
+        if pending_manual_sell_stats.get("tracked", 0) > 0:
+            logger.info(
+                f"Tracked {pending_manual_sell_stats['tracked']} pending manual sell orders "
+                f"for system positions"
+            )
 
         # Clean up any rejected/cancelled orders before monitoring
         self._cleanup_rejected_orders()
@@ -3299,6 +4095,21 @@ class SellOrderManager:
             all_orders_response = self.orders.get_orders()
         except Exception as e:
             logger.debug(f"Failed to fetch orders for monitoring: {e}")
+
+        # Optimized: Detect manual sells immediately using get_orders() data (every minute)
+        # This is more efficient than Holdings API which only updates T+1
+        if all_orders_response:
+            try:
+                manual_sell_stats = self._detect_manual_sells_from_orders(all_orders_response)
+                if manual_sell_stats.get("detected", 0) > 0:
+                    logger.info(
+                        f"Manual sell detection via get_orders(): "
+                        f"{manual_sell_stats.get('detected', 0)} detected, "
+                        f"{manual_sell_stats.get('closed', 0)} closed, "
+                        f"{manual_sell_stats.get('updated', 0)} updated"
+                    )
+            except Exception as e:
+                logger.debug(f"Manual sell detection from orders failed (non-critical): {e}")
 
         # Check for executed orders first (using the orders data we just fetched)
         executed_ids = self.check_order_execution(all_orders_response)
@@ -3482,6 +4293,7 @@ class SellOrderManager:
 
             # Process results as they complete
             symbols_to_update_ema = {}
+            symbols_to_remove = []  # Track symbols to remove due to closed positions
 
             for future in as_completed(future_to_symbol):
                 symbol = future_to_symbol[future]
@@ -3490,15 +4302,29 @@ class SellOrderManager:
                     result = future.result()
                     action = result.get("action")
 
+                    # Remove closed positions from tracking
+                    if result.get("remove_from_tracking"):
+                        symbols_to_remove.append(symbol)
+                        logger.info(
+                            f"Removing {symbol} from sell order tracking: position is closed"
+                        )
+                        continue
+
                     if action == "updated":
                         symbols_to_update_ema[symbol] = result.get("ema9")
                         stats["updated"] += 1
-                    elif action in ["checked", "error"]:
+                    elif action in ["checked", "error", "skipped"]:
                         stats["checked"] += 1
 
                 except Exception as e:
                     logger.error(f"Error processing result for {symbol}: {e}")
                     stats["checked"] += 1
+
+            # Remove closed positions from active_sell_orders
+            for symbol in symbols_to_remove:
+                self._remove_order(symbol, reason="Position closed")
+                if symbol in self.lowest_ema9:
+                    del self.lowest_ema9[symbol]
 
             # Update lowest EMA9 tracking for updated orders
             for symbol, ema9 in symbols_to_update_ema.items():

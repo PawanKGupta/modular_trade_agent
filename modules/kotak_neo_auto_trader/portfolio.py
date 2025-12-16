@@ -232,26 +232,53 @@ class KotakNeoPortfolio:
             positions = client.positions()
 
             if "error" in positions:
-                logger.error(" Failed to get positions: {positions['error'][0]['message']}")
+                error_msg = (
+                    positions["error"][0]["message"]
+                    if isinstance(positions.get("error"), list)
+                    else str(positions.get("error"))
+                )
+                logger.error(f" Failed to get positions: {error_msg}")
                 return None
 
             # Process and display positions
             if "data" in positions and positions["data"]:
                 positions_data = positions["data"]
-                logger.info(" Found {len(positions_data)} positions")
+                logger.info(f" Found {len(positions_data)} positions")
 
                 active_positions = 0
                 for position in positions_data:
-                    symbol = position.get("tradingSymbol", "N/A")
-                    net_quantity = position.get("netQuantity", 0)
-                    buy_quantity = position.get("buyQuantity", 0)
-                    sell_quantity = position.get("sellQuantity", 0)
+                    # Extract symbol with fallbacks (API uses 'trdSym')
+                    symbol = (
+                        position.get("trdSym")
+                        or position.get("tradingSymbol")
+                        or position.get("symbol")
+                        or "N/A"
+                    )
+
+                    # Extract quantities with fallbacks (API uses 'flBuyQty' and 'flSellQty')
+                    buy_quantity = int(
+                        position.get("flBuyQty")
+                        or position.get("buyQuantity")
+                        or position.get("cfBuyQty")  # Carried forward buy quantity
+                        or 0
+                    )
+                    sell_quantity = int(
+                        position.get("flSellQty")
+                        or position.get("sellQuantity")
+                        or position.get("cfSellQty")  # Carried forward sell quantity
+                        or 0
+                    )
+
+                    # Calculate net quantity (buy - sell)
+                    # Positive = long position, Negative = short position
+                    net_quantity = buy_quantity - sell_quantity
+
                     pnl = position.get("pnl", 0)
                     ltp = position.get("ltp", 0)
 
                     if net_quantity != 0:  # Only show positions with non-zero quantity
                         logger.info(
-                            " {symbol}: Net={net_quantity} (Buy={buy_quantity}, Sell={sell_quantity}), P&L=Rs {pnl}, LTP=Rs {ltp}"
+                            f" {symbol}: Net={net_quantity} (Buy={buy_quantity}, Sell={sell_quantity}), P&L=Rs {pnl}, LTP=Rs {ltp}"
                         )
                         active_positions += 1
 
@@ -262,8 +289,8 @@ class KotakNeoPortfolio:
 
             return positions
 
-        except Exception:
-            logger.error(" Error getting positions: {e}")
+        except Exception as e:
+            logger.error(f" Error getting positions: {e}")
             return None
 
     @handle_reauth

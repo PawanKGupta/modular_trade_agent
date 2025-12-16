@@ -1,9 +1,13 @@
 # Sell Order Implementation - Complete Documentation
 
 **Date**: 2025-01-27
-**Last Updated**: 2025-12-13 (Issue #5 Enhancements)
+**Last Updated**: 2025-12-17 (Documentation Consolidation)
 **Status**: ✅ Current Implementation
 **Version**: Database-Based (Post-Unified-Service)
+
+**Note**: This is the primary documentation for sell order implementation. For specific technical fixes, see:
+- `documents/RACE_CONDITION_FIX.md` - Database-level locking for concurrent reentry executions
+- `documents/kotak_neo_trader/KOTAK_NEO_REENTRY_LOGIC_DETAILS.md` - Detailed re-entry logic explanations
 
 ---
 
@@ -14,11 +18,12 @@
 3. [Database Schema](#database-schema)
 4. [Sell Order Placement Flow](#sell-order-placement-flow)
 5. [Sell Order Monitoring Flow](#sell-order-monitoring-flow)
-6. [Integration with Unified Service](#integration-with-unified-service)
-7. [Position Reconciliation](#position-reconciliation)
-8. [Blocking Issues & Recommendations](#blocking-issues--recommendations)
-9. [Configuration & Usage](#configuration--usage)
-10. [Troubleshooting](#troubleshooting)
+6. [Manual Sell Order Detection & Tracking](#manual-sell-order-detection--tracking)
+7. [Integration with Unified Service](#integration-with-unified-service)
+8. [Position Reconciliation](#position-reconciliation)
+9. [Blocking Issues & Recommendations](#blocking-issues--recommendations)
+10. [Configuration & Usage](#configuration--usage)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -229,7 +234,24 @@ WHERE user_id = ? AND closed_at IS NULL
 ### Flow Diagram
 
 ```
+0. Detect and Track Manual Sell Orders (NEW):
+   ├─> Detect Pending Manual Sells
+   │   └─> _detect_and_track_pending_manual_sell_orders()
+   │       └─> Track in active_sell_orders (prevents duplicate placement)
+   │
+   └─> Detect Executed Manual Sells
+       └─> _detect_manual_sells_from_orders()
+           ├─> Extract exit price and execution time
+           ├─> Track in active_sell_orders
+           └─> Close position with exit_price and closed_at
+
 1. For Each Active Sell Order:
+   └─> Check if Position is Closed
+       └─> If closed_at is set:
+           └─> Skip monitoring
+           └─> Remove from active_sell_orders
+           └─> Continue to next order
+
    └─> Check Current EMA9 Price
        └─> get_current_ema9(ticker, broker_symbol)
        └─> Real-time calculation with LTP
@@ -250,8 +272,8 @@ WHERE user_id = ? AND closed_at IS NULL
 
    └─> If Full Execution (filled_qty == order_qty):
        ├─> PositionsRepository.mark_closed()
-       │   ├─> closed_at = current_time
-       │   ├─> exit_price = execution_price
+       │   ├─> closed_at = execution_time (from order)
+       │   ├─> exit_price = execution_price (from order)
        │   └─> quantity = 0
        │
        ├─> Close Corresponding Buy Orders
@@ -287,7 +309,9 @@ WHERE user_id = ? AND closed_at IS NULL
 **File**: `modules/kotak_neo_auto_trader/sell_engine.py`
 
 **Key Methods**:
-- `monitor_and_update()`: Lines ~2740-2900
+- `monitor_and_update()`: Lines ~3691-4522
+- `_detect_manual_sells_from_orders()`: Lines ~897-1322 (NEW)
+- `_detect_and_track_pending_manual_sell_orders()`: Lines ~1324-1517 (NEW)
 - `update_sell_order()`: Lines ~1000-1100
 - `check_order_execution()`: Lines ~1100-1200
 - `_close_buy_orders_for_symbol()`: Lines ~1200-1300
@@ -297,7 +321,135 @@ WHERE user_id = ? AND closed_at IS NULL
 
 **During Monitoring**:
 - `positions` table: `closed_at` set or `quantity` reduced
+- `positions` table: `exit_price` saved from order execution (system or manual)
 - `orders` table: Buy orders marked as `CLOSED`, reentry orders marked as `CANCELLED`
+
+---
+
+## Manual Sell Order Detection & Tracking
+
+### Overview
+
+The system now detects and tracks manual sell orders (both pending and executed) for system positions to:
+- Prevent duplicate sell order placement
+- Ensure all system positions have exit price and time recorded
+- Maintain accurate position tracking
+
+### Key Requirements
+
+1. **System Buy Orders**:
+   - Sell monitor places sell orders and tracks them
+   - If manual sell order is created for same stock/quantity, sell monitor tracks it
+   - No duplicate sell orders (system or manual) for same stock
+   - All system buy orders must have exit price and time recorded
+
+2. **Manual Buy Orders**:
+   - System does NOT track manual buy orders
+   - Manual buy positions are not monitored
+   - No sell orders placed for manual buy positions
+
+### Manual Sell Detection Methods
+
+#### 1. Executed Manual Sell Detection
+
+**Method**: `_detect_manual_sells_from_orders()`
+
+**When**: Every minute during monitoring cycle
+
+**How It Works**:
+```
+1. Fetch all orders from broker API (get_orders())
+2. Filter for executed SELL orders (status: executed/filled/complete, or ongoing with filled_qty > 0)
+3. Check if order is NOT in tracked sell orders list
+4. Verify position is from system buy order (not manual buy)
+5. Apply timestamp check: sell order execution time must be AFTER position opened_at
+6. Extract exit price and execution time from order
+7. Track order in active_sell_orders (prevents duplicate placement)
+8. Close position with exit_price and closed_at
+```
+
+**Code Location**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- `_detect_manual_sells_from_orders()`: Lines ~897-1322
+
+**Key Features**:
+- Extracts exit price from order (with fallbacks: `avgPrc`, `prc`, `execution_price`)
+- Extracts execution time from order (with timezone normalization to IST)
+- Tracks executed manual sell in `active_sell_orders` to prevent duplicate placement
+- Handles full and partial sells
+- Validates position is from system buy (not manual buy)
+
+#### 2. Pending Manual Sell Detection
+
+**Method**: `_detect_and_track_pending_manual_sell_orders()`
+
+**When**: Every minute during monitoring cycle (called from `monitor_and_update()`)
+
+**How It Works**:
+```
+1. Get all open system positions
+2. Fetch pending orders from broker API (get_pending_orders())
+3. Filter for SELL orders that are NOT in tracked sell orders list
+4. Verify position is from system buy order (not manual buy)
+5. Track pending manual sell order in active_sell_orders
+6. This prevents system from placing duplicate sell order
+```
+
+**Code Location**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- `_detect_and_track_pending_manual_sell_orders()`: Lines ~1324-1517
+
+**Key Features**:
+- Detects pending manual sell orders before they execute
+- Tracks them in `active_sell_orders` immediately
+- Prevents duplicate sell order placement
+- Only tracks for system positions (not manual buy positions)
+
+### Exit Price & Time Recording
+
+**For System Sell Orders**:
+- Exit price and time are tracked via normal sell order execution flow
+- Stored in `positions` table: `exit_price` and `closed_at`
+
+**For Manual Sell Orders**:
+- Exit price extracted from order using `OrderFieldExtractor.get_price()` with fallbacks
+- Execution time extracted from order using `OrderFieldExtractor.get_order_time()`
+- Both saved when closing position via `positions_repo.mark_closed()`
+- Ensures all system positions have complete exit information
+
+### Duplicate Prevention
+
+**Layers of Protection**:
+
+1. **Pending Order Check** (`get_existing_sell_orders()`):
+   - Checks broker API for existing pending sell orders
+   - Includes both system and manual pending sell orders
+   - Prevents placement if any sell order exists
+
+2. **Active Tracking** (`active_sell_orders`):
+   - Tracks all sell orders (system and manual) in memory
+   - Checked before placing new sell orders
+   - Manual sell orders are added to this tracking
+
+3. **Completed Order Check** (`has_completed_sell_order()`):
+   - Checks for completed sell orders (system or manual)
+   - Prevents placement if position already sold
+
+### Closed Position Cleanup
+
+**When Position is Closed**:
+```
+1. Position marked as closed in database (closed_at is set)
+2. Next monitoring cycle:
+   - Check position status → finds closed_at is set
+   - Skip monitoring (no EMA9 check, no order updates)
+   - Mark for removal (remove_from_tracking = True)
+   - Remove from active_sell_orders dictionary
+   - Remove from lowest_ema9 tracking
+3. Result: Position is no longer monitored ✅
+```
+
+**Code Location**: `modules/kotak_neo_auto_trader/sell_engine.py`
+- `_check_and_update_single_stock()`: Lines ~3571-3586
+- `monitor_and_update()`: Lines ~4245-4264
 
 ---
 
@@ -372,12 +524,14 @@ Reconciles positions in the database with actual broker holdings to detect:
 
 1. **At Market Open** (~9:15 AM):
    - `run_at_market_open()` calls reconciliation before placing sell orders
+   - Uses Holdings API to check T+1 settlement (yesterday's changes)
    - Ensures positions table is up-to-date before order placement
 
-2. **During Market Hours** (Every 30 minutes):
-   - `monitor_and_update()` runs reconciliation at :00 and :30 minutes of each hour
-   - Periodic reconciliation to detect manual trades during market hours
-   - Example: 10:00, 10:30, 11:00, 11:30, etc.
+2. **During Market Hours** (Optimized - No longer every 30 minutes):
+   - **Immediate Detection**: Manual sells detected via `get_orders()` API every minute
+   - **Holdings API**: Only used at market open for T+1 settlement check
+   - **Reason**: Holdings API only updates T+1 (next day), so running every 30 minutes is wasteful
+   - Manual sell detection now uses `_detect_manual_sells_from_orders()` which runs every minute
 
 3. **Before Reentry Orders**:
    - `place_reentry_orders()` calls reconciliation before placing reentry orders
@@ -407,8 +561,8 @@ Reconciles positions in the database with actual broker holdings to detect:
 ```
 
 **When Positions Table is Updated**:
-- **Market Open**: Once at ~9:15 AM when `run_at_market_open()` executes
-- **During Market Hours**: Every 30 minutes (at :00 and :30 minutes) during `monitor_and_update()`
+- **Market Open**: Once at ~9:15 AM when `run_at_market_open()` executes (Holdings API for T+1 check)
+- **During Market Hours**: Every minute via `_detect_manual_sells_from_orders()` (immediate detection via get_orders())
 - **Before Reentry**: When reentry logic runs to ensure accurate position data
 
 ### Edge Cases Handled
@@ -1063,6 +1217,8 @@ if transaction and ist_now:
 ### Edge Cases Handled
 
 #### ✅ **Race Conditions**
+
+**Related Documentation**: See `documents/RACE_CONDITION_FIX.md` for detailed implementation of database-level locking using `SELECT ... FOR UPDATE` to prevent concurrent reentry execution race conditions.
 
 1. **Reentry During Order Placement**:
    - Fixed with re-read of position quantity before updating order

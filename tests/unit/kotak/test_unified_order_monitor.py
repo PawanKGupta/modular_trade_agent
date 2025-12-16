@@ -1232,6 +1232,53 @@ class TestUnifiedOrderMonitor:
 
         assert count == 0
 
+    def test_check_and_place_sell_orders_for_new_holdings_skips_manual_buy_orders(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Test that manual buy orders are skipped in sell order placement"""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        execution_time = ist_now().replace(hour=10, minute=30)
+
+        # Manual buy order (orig_source='manual')
+        manual_buy_order = Mock()
+        manual_buy_order.side = "buy"
+        manual_buy_order.orig_source = "manual"
+        manual_buy_order.symbol = "RELIANCE-EQ"
+        manual_buy_order.execution_time = execution_time
+        manual_buy_order.filled_at = execution_time
+
+        # System buy order (orig_source='signal')
+        system_buy_order = Mock()
+        system_buy_order.side = "buy"
+        system_buy_order.orig_source = "signal"
+        system_buy_order.symbol = "TCS-EQ"
+        system_buy_order.execution_time = execution_time
+        system_buy_order.filled_at = execution_time
+        system_buy_order.order_metadata = {"ticker": "TCS.NS"}
+        system_buy_order.execution_price = 3000.0
+        system_buy_order.execution_qty = 10.0
+        system_buy_order.quantity = 10.0
+        system_buy_order.avg_price = 3000.0
+        system_buy_order.price = 3000.0
+
+        mock_orders_repo.list.return_value = [manual_buy_order, system_buy_order]
+
+        # Mock get_existing_sell_orders to return empty dict
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.lowest_ema9 = {}  # Initialize as dict, not Mock
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager._get_ema9_with_retry.return_value = 2500.0
+        mock_sell_manager._register_order = Mock()  # Mock the register_order method
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        # Verify: Only system buy order processed (manual buy skipped)
+        assert count == 1
+        # Only TCS should have sell order placed
+        assert mock_sell_manager.place_sell_order.call_count == 1
+
     def test_check_and_place_sell_orders_for_new_holdings_error_handling(
         self, unified_monitor, mock_orders_repo, mock_sell_manager
     ):
