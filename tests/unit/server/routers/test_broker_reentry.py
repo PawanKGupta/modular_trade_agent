@@ -37,6 +37,10 @@ class DummyPositionsRepository:
     def get_by_symbol(self, user_id, symbol):
         return self.positions.get((user_id, symbol.upper()))
 
+    def list(self, user_id):
+        """Return all positions for a user (for fallback matching)"""
+        return [pos for (uid, _), pos in self.positions.items() if uid == user_id]
+
 
 class DummyBroker:
     def __init__(self):
@@ -128,7 +132,7 @@ def test_get_broker_portfolio_with_reentry_data(monkeypatch):
     }
 
     positions_repo = DummyPositionsRepository(None)
-    positions_repo.positions[(42, "RELIANCE")] = mock_position
+    positions_repo.positions[(42, "RELIANCE-EQ")] = mock_position
 
     def mock_positions_repo_init(db):
         return positions_repo
@@ -265,7 +269,7 @@ def test_get_broker_portfolio_reentry_data_symbol_normalization(monkeypatch):
         mock_broker_factory_create,
     )
 
-    # Mock positions repository - position stored as "RELIANCE" (normalized)
+    # Mock positions repository - position stored as "RELIANCE-EQ" (full symbol after migration)
     mock_position = MagicMock(spec=Positions)
     mock_position.reentry_count = 1
     mock_position.entry_rsi = 28.0
@@ -275,7 +279,7 @@ def test_get_broker_portfolio_reentry_data_symbol_normalization(monkeypatch):
     }
 
     positions_repo = DummyPositionsRepository(None)
-    positions_repo.positions[(42, "RELIANCE")] = mock_position
+    positions_repo.positions[(42, "RELIANCE-EQ")] = mock_position
 
     def mock_positions_repo_init(db):
         return positions_repo
@@ -296,7 +300,7 @@ def test_get_broker_portfolio_reentry_data_symbol_normalization(monkeypatch):
 
         assert len(result.holdings) == 1
         holding = result.holdings[0]
-        # RELIANCE-EQ should match RELIANCE in database
+        # After migration, both broker holdings and positions have full symbols, so exact match works
         assert holding.symbol == "RELIANCE-EQ"
         assert holding.reentry_count == 1
         assert holding.entry_rsi == 28.0
@@ -348,7 +352,7 @@ def test_get_broker_portfolio_reentry_data_invalid_format(monkeypatch):
     mock_position.reentries = "invalid_format"  # Invalid format - neither dict nor list
 
     positions_repo = DummyPositionsRepository(None)
-    positions_repo.positions[(42, "RELIANCE")] = mock_position
+    positions_repo.positions[(42, "RELIANCE-EQ")] = mock_position
 
     def mock_positions_repo_init(db):
         return positions_repo

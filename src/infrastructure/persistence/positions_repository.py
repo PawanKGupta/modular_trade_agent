@@ -27,6 +27,13 @@ class PositionsRepository:
 
         Returns only open positions (closed_at IS NULL) to support multiple positions per symbol.
         For closed positions, use get_by_symbol_any(include_closed=True).
+
+        Args:
+            user_id: User ID
+            symbol: Full trading symbol (e.g., "RELIANCE-EQ", "SALSTEEL-BE")
+
+        Returns:
+            Most recent open position, or None if not found
         """
         stmt = (
             select(Positions)

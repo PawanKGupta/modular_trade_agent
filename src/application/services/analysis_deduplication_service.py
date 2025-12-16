@@ -12,6 +12,7 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 from src.infrastructure.db.models import Signals, SignalStatus
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.orders_repository import OrdersRepository
@@ -35,6 +36,81 @@ class AnalysisDeduplicationService:
         self._positions_repo = PositionsRepository(db)
         self._orders_repo = OrdersRepository(db)
         self.user_id = user_id
+
+    def _find_position_by_symbol(self, user_id: int, symbol: str, include_closed: bool = False):
+        """
+        Find position by symbol with fallback to base symbol matching.
+
+        After migration, positions have full symbols (e.g., "RELIANCE-EQ"),
+        but signals may still have base symbols (e.g., "RELIANCE").
+        This method tries exact match first, then falls back to base symbol matching.
+
+        Args:
+            user_id: User ID
+            symbol: Symbol from signal (may be base or full symbol)
+            include_closed: If True, includes closed positions
+
+        Returns:
+            Position if found, None otherwise
+        """
+        # Try exact match first (in case signal has full symbol)
+        position = self._positions_repo.get_by_symbol_any(
+            user_id, symbol, include_closed=include_closed
+        )
+        if position:
+            return position
+
+        # Fallback: If not found and symbol might be base symbol, try base symbol matching
+        # Check if symbol is a base symbol (no segment suffix)
+        if "-" not in symbol.upper():
+            # Query all positions and match by base symbol
+            all_positions = self._positions_repo.list(user_id)
+            base_symbol = extract_base_symbol(symbol).upper()
+            for pos in all_positions:
+                if extract_base_symbol(pos.symbol).upper() == base_symbol:
+                    # Check if position matches include_closed requirement
+                    if include_closed or pos.closed_at is None:
+                        return pos
+
+        return None
+
+    def _has_ongoing_buy_order_by_symbol(self, user_id: int, symbol: str) -> bool:
+        """
+        Check if user has an ONGOING buy order for a symbol with fallback to base symbol matching.
+
+        After migration, orders have full symbols (e.g., "RELIANCE-EQ"),
+        but signals may still have base symbols (e.g., "RELIANCE").
+        This method tries exact match first, then falls back to base symbol matching.
+
+        Args:
+            user_id: User ID
+            symbol: Symbol from signal (may be base or full symbol)
+
+        Returns:
+            True if user has an ONGOING buy order, False otherwise
+        """
+        # Try exact match first (in case signal has full symbol)
+        if self._orders_repo.has_ongoing_buy_order(user_id, symbol):
+            return True
+
+        # Fallback: If not found and symbol might be base symbol, try base symbol matching
+        # Check if symbol is a base symbol (no segment suffix)
+        if "-" not in symbol.upper():
+            # Query all ongoing buy orders and match by base symbol
+            from src.infrastructure.db.models import Orders, OrderStatus
+
+            stmt = select(Orders).where(
+                Orders.user_id == user_id,
+                Orders.side == "buy",
+                Orders.status == OrderStatus.ONGOING,
+            )
+            all_orders = self.db.execute(stmt).scalars().all()
+            base_symbol = extract_base_symbol(symbol).upper()
+            for order in all_orders:
+                if extract_base_symbol(order.symbol).upper() == base_symbol:
+                    return True
+
+        return False
 
     def get_current_trading_day_window(self) -> tuple[datetime, datetime]:
         """
@@ -204,7 +280,7 @@ class AnalysisDeduplicationService:
                         # If order is ONGOING, we can assume position is open
                         # If order is CLOSED/FAILED/CANCELLED, treat as if not traded
                         if user_has_traded:
-                            user_has_ongoing_order = self._orders_repo.has_ongoing_buy_order(
+                            user_has_ongoing_order = self._has_ongoing_buy_order_by_symbol(
                                 self.user_id, symbol
                             )
 
@@ -215,8 +291,9 @@ class AnalysisDeduplicationService:
                             else:
                                 # Order is ONGOING, so position should be open
                                 # Double-check position status for safety
-                                # Use get_by_symbol_any to check for closed positions
-                                position = self._positions_repo.get_by_symbol_any(
+                                # Use _find_position_by_symbol to check for closed positions
+                                # (handles base symbol matching)
+                                position = self._find_position_by_symbol(
                                     self.user_id, symbol, include_closed=True
                                 )
                                 user_has_open_position = (
@@ -285,15 +362,16 @@ class AnalysisDeduplicationService:
                             # Check if user has ONGOING buy order
                             user_has_ongoing_order = False
                             if self.user_id:
-                                user_has_ongoing_order = self._orders_repo.has_ongoing_buy_order(
+                                user_has_ongoing_order = self._has_ongoing_buy_order_by_symbol(
                                     self.user_id, symbol
                                 )
 
                                 if user_has_ongoing_order:
                                     # If ONGOING order exists, check if position is explicitly closed
                                     # (ONGOING order implies position is open unless explicitly closed)
-                                    # Use get_by_symbol_any to check for closed positions
-                                    position = self._positions_repo.get_by_symbol_any(
+                                    # Use _find_position_by_symbol to check for closed positions
+                                    # (handles base symbol matching)
+                                    position = self._find_position_by_symbol(
                                         self.user_id, symbol, include_closed=True
                                     )
                                     if position is not None and position.closed_at is not None:
