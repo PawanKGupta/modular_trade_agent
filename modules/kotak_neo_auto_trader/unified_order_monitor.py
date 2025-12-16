@@ -926,6 +926,10 @@ class UnifiedOrderMonitor:
                     logger.warning(f"Failed to send position creation failure alert: {e}")
             return
 
+        # BUG FIX: Initialize base_symbol early to ensure it's always defined in exception handlers
+        base_symbol = None
+        symbol = None
+
         try:
             # Issue #1 Fix: Enhanced symbol extraction with fallbacks
             symbol = order_info.get("symbol", "").upper()
@@ -1451,8 +1455,10 @@ class UnifiedOrderMonitor:
         except ValueError as e:
             # Issue #1 Fix: Track metrics and send alert
             self._position_creation_metrics["failed_exception"] += 1
+            # BUG FIX: Use fallback symbol if base_symbol not set
+            symbol_hint = base_symbol or symbol or order_info.get("symbol", "UNKNOWN") or order_id
             logger.error(
-                f"Invalid data for position update: {base_symbol}, order_id={order_id}: {e}. "
+                f"Invalid data for position update: {symbol_hint}, order_id={order_id}: {e}. "
                 f"Execution: {execution_qty} @ Rs {execution_price:.2f}. "
                 f"This will prevent sell order placement.",
                 exc_info=True,
@@ -1464,7 +1470,7 @@ class UnifiedOrderMonitor:
                         alert_type="POSITION_CREATION_FAILED",
                         message_text=(
                             f"Order {order_id} executed but position not created. "
-                            f"Symbol: {base_symbol}, Qty: {execution_qty}, "
+                            f"Symbol: {symbol_hint}, Qty: {execution_qty}, "
                             f"Price: Rs {execution_price:.2f}. "
                             f"Reason: Invalid data - {str(e)}. "
                             f"Sell order will NOT be placed."
@@ -1477,8 +1483,10 @@ class UnifiedOrderMonitor:
         except KeyError as e:
             # Issue #1 Fix: Track metrics and send alert
             self._position_creation_metrics["failed_exception"] += 1
+            # BUG FIX: Use fallback symbol if base_symbol not set
+            symbol_hint = base_symbol or symbol or order_info.get("symbol", "UNKNOWN") or order_id
             logger.error(
-                f"Missing required field in order_info for {base_symbol}, "
+                f"Missing required field in order_info for {symbol_hint}, "
                 f"order_id={order_id}: {e}. "
                 f"Execution: {execution_qty} @ Rs {execution_price:.2f}. "
                 f"This will prevent sell order placement.",
@@ -1491,7 +1499,7 @@ class UnifiedOrderMonitor:
                         alert_type="POSITION_CREATION_FAILED",
                         message_text=(
                             f"Order {order_id} executed but position not created. "
-                            f"Symbol: {base_symbol}, Qty: {execution_qty}, "
+                            f"Symbol: {symbol_hint}, Qty: {execution_qty}, "
                             f"Price: Rs {execution_price:.2f}. "
                             f"Reason: Missing field - {str(e)}. "
                             f"Sell order will NOT be placed."
@@ -1504,8 +1512,10 @@ class UnifiedOrderMonitor:
         except Exception as e:
             # Issue #1 Fix: Track metrics and send alert
             self._position_creation_metrics["failed_exception"] += 1
+            # BUG FIX: Use fallback symbol if base_symbol not set
+            symbol_hint = base_symbol or symbol or order_info.get("symbol", "UNKNOWN") or order_id
             logger.error(
-                f"Unexpected error updating position for {base_symbol}, order_id={order_id}: {e}. "
+                f"Unexpected error updating position for {symbol_hint}, order_id={order_id}: {e}. "
                 f"Execution: {execution_qty} @ Rs {execution_price:.2f}. "
                 f"This will prevent sell order placement.",
                 exc_info=True,
@@ -1517,7 +1527,7 @@ class UnifiedOrderMonitor:
                         alert_type="POSITION_CREATION_FAILED",
                         message_text=(
                             f"Order {order_id} executed but position not created. "
-                            f"Symbol: {base_symbol}, Qty: {execution_qty}, "
+                            f"Symbol: {symbol_hint}, Qty: {execution_qty}, "
                             f"Price: Rs {execution_price:.2f}. "
                             f"Reason: Unexpected error - {str(e)}. "
                             f"Sell order will NOT be placed."
@@ -1723,6 +1733,11 @@ class UnifiedOrderMonitor:
             for order in all_orders:
                 # Only process buy orders
                 if order.side.lower() != "buy":
+                    continue
+
+                # Skip manual orders - system does not track manual buys
+                if order.orig_source and order.orig_source.lower() == "manual":
+                    skipped_orders.append(f"{order.symbol}: manual order (not tracked)")
                     continue
 
                 # Check if order was executed today

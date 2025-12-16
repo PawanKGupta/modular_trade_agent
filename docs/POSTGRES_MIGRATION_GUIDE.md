@@ -201,15 +201,39 @@ A full validation was performed across the entire codebase. All SQLite-specific 
 #### Step 0: Stop the Stack
 ```bash
 cd /path/to/modular_trade_agent
-docker compose -f docker/docker-compose.yml down
+docker-compose -f docker/docker-compose.yml down
 ```
 
 #### Step 1: Backup Existing SQLite
+
+**Note**: If your `docker-compose.yml` is already configured for PostgreSQL, you'll need to either:
+- Option A: Temporarily switch to SQLite for backup, OR
+- Option B: Copy SQLite file directly from host if it exists
+
+**Option A: Use SQLite temporarily**
 ```bash
-docker compose -f docker/docker-compose.yml up -d api-server
+# Stop containers
+docker-compose -f docker/docker-compose.yml down
+
+# Temporarily modify docker-compose.yml DB_URL to: sqlite:///./data/app.db
+# Or use environment override:
+docker-compose -f docker/docker-compose.yml run --rm -e DB_URL=sqlite:///./data/app.db api-server sh -c "cp /app/data/app.db /app/data/app.db.bak.\$(date -u +%Y%m%d%H%M%S)"
+
+# Restore PostgreSQL DB_URL in docker-compose.yml
+```
+
+**Option B: Copy from host (if SQLite file exists)**
+```bash
+# Copy SQLite file directly
+cp ~/modular_trade_agent/data/app.db ~/modular_trade_agent/data/app.db.bak.$(date -u +%Y%m%d%H%M%S)
+```
+
+**Original method (if container is running with SQLite)**
+```bash
+docker-compose -f docker/docker-compose.yml up -d api-server
 docker exec tradeagent-api sh -c "cp /app/data/app.db /app/data/app.db.bak.$(date -u +%Y%m%d%H%M%S)"
 docker cp tradeagent-api:/app/data/app.db.bak.* ./data/   # optional: pull backup to host
-docker compose -f docker/docker-compose.yml down
+docker-compose -f docker/docker-compose.yml down
 ```
 
 #### Step 2: Configure Docker Compose for Postgres
@@ -224,7 +248,7 @@ Ensure `docker/docker-compose.yml` has:
 
 #### Step 3: Start Postgres Only
 ```bash
-docker compose -f docker/docker-compose.yml up -d tradeagent-db
+docker-compose -f docker/docker-compose.yml up -d tradeagent-db
 docker exec tradeagent-db pg_isready -U trader -d tradeagent
 ```
 
@@ -237,7 +261,7 @@ docker exec -e PGPASSWORD=changeme tradeagent-db psql -U trader -c "CREATE DATAB
 
 #### Step 5: Initialize Schema + Alembic Version
 ```bash
-docker compose -f docker/docker-compose.yml up -d api-server
+docker-compose -f docker/docker-compose.yml up -d api-server
 
 docker exec tradeagent-api python - <<'PY'
 from sqlalchemy import create_engine, text
@@ -317,7 +341,7 @@ PY
 
 #### Step 7: Restart Full Stack on Postgres
 ```bash
-docker compose -f docker/docker-compose.yml restart api-server web-frontend
+docker-compose -f docker/docker-compose.yml restart api-server web-frontend
 ```
 
 #### Step 8: Smoke Verification

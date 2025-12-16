@@ -73,7 +73,14 @@ class OrderFieldExtractor:
         Returns:
             Order status lowercase, empty string if not found
         """
-        return (order.get("orderStatus") or order.get("ordSt") or order.get("status") or "").lower()
+        # Check multiple field names, including 'stat' from order_report API
+        return (
+            order.get("orderStatus")
+            or order.get("ordSt")
+            or order.get("stat")  # Add 'stat' field from order_report API
+            or order.get("status")
+            or ""
+        ).lower()
 
     @staticmethod
     def get_quantity(order: dict[str, Any]) -> int:
