@@ -37,7 +37,9 @@ def _recalculate_order_quantity(order, user_id: int, db: Session, order_id: int)
         user_capital = trading_config.capital_per_trade if trading_config else 20000.0
 
         # Get current price from yfinance
-        ticker = getattr(order, "ticker", None) or f"{order.symbol}.NS"
+        from modules.kotak_neo_auto_trader.utils.symbol_utils import get_ticker_from_full_symbol
+
+        ticker = getattr(order, "ticker", None) or get_ticker_from_full_symbol(order.symbol)
         stock = yf.Ticker(ticker)
         hist = stock.history(period="1d")
         if hist.empty:

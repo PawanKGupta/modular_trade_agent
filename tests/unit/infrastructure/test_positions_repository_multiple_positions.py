@@ -65,7 +65,7 @@ class TestGetBySymbolMultiplePositions:
 
     def test_get_by_symbol_returns_open_position_only(self, positions_repo, user_id):
         """Test that get_by_symbol() returns only open positions"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create closed position (older)
         closed_pos = Positions(
@@ -98,7 +98,7 @@ class TestGetBySymbolMultiplePositions:
         self, positions_repo, user_id
     ):
         """Test that get_by_symbol() returns None when only closed positions exist"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create closed position
         closed_pos = Positions(
@@ -116,11 +116,9 @@ class TestGetBySymbolMultiplePositions:
         result = positions_repo.get_by_symbol(user_id, symbol)
         assert result is None
 
-    def test_get_by_symbol_returns_most_recent_open_position(
-        self, positions_repo, user_id
-    ):
+    def test_get_by_symbol_returns_most_recent_open_position(self, positions_repo, user_id):
         """Test that get_by_symbol() returns the most recent open position"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create multiple closed positions
         for i in range(3):
@@ -154,11 +152,9 @@ class TestGetBySymbolMultiplePositions:
 class TestGetBySymbolForUpdateMultiplePositions:
     """Test get_by_symbol_for_update() with multiple positions"""
 
-    def test_get_by_symbol_for_update_returns_open_position_only(
-        self, positions_repo, user_id
-    ):
+    def test_get_by_symbol_for_update_returns_open_position_only(self, positions_repo, user_id):
         """Test that get_by_symbol_for_update() returns only open positions"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create closed position
         closed_pos = Positions(
@@ -186,11 +182,9 @@ class TestGetBySymbolForUpdateMultiplePositions:
         assert result.id == open_pos.id
         assert result.closed_at is None
 
-    def test_get_by_symbol_for_update_returns_none_when_only_closed(
-        self, positions_repo, user_id
-    ):
+    def test_get_by_symbol_for_update_returns_none_when_only_closed(self, positions_repo, user_id):
         """Test that get_by_symbol_for_update() returns None when only closed positions exist"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create closed position
         closed_pos = Positions(
@@ -212,11 +206,9 @@ class TestGetBySymbolForUpdateMultiplePositions:
 class TestGetBySymbolAny:
     """Test get_by_symbol_any() method"""
 
-    def test_get_by_symbol_any_with_include_closed_false(
-        self, positions_repo, user_id
-    ):
+    def test_get_by_symbol_any_with_include_closed_false(self, positions_repo, user_id):
         """Test get_by_symbol_any() with include_closed=False (same as get_by_symbol())"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create closed position
         closed_pos = Positions(
@@ -244,11 +236,9 @@ class TestGetBySymbolAny:
         assert result.id == open_pos.id
         assert result.closed_at is None
 
-    def test_get_by_symbol_any_with_include_closed_true(
-        self, positions_repo, user_id
-    ):
+    def test_get_by_symbol_any_with_include_closed_true(self, positions_repo, user_id):
         """Test get_by_symbol_any() with include_closed=True returns closed positions"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create closed position (older)
         closed_pos = Positions(
@@ -279,7 +269,7 @@ class TestGetBySymbolAny:
         self, positions_repo, user_id
     ):
         """Test get_by_symbol_any() returns closed position when only closed positions exist"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create closed position
         closed_pos = Positions(
@@ -303,11 +293,9 @@ class TestGetBySymbolAny:
 class TestUpsertWithMultiplePositions:
     """Test upsert() behavior with multiple positions"""
 
-    def test_upsert_creates_new_position_when_only_closed_exists(
-        self, positions_repo, user_id
-    ):
+    def test_upsert_creates_new_position_when_only_closed_exists(self, positions_repo, user_id):
         """Test that upsert() creates a new position when only closed positions exist"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create closed position
         closed_pos = Positions(
@@ -341,19 +329,19 @@ class TestUpsertWithMultiplePositions:
         assert old_pos.id == new_pos.id
 
         # Verify we can get the closed position by querying all
-        all_positions = positions_repo.db.query(Positions).filter(
-            Positions.user_id == user_id, Positions.symbol == symbol
-        ).all()
+        all_positions = (
+            positions_repo.db.query(Positions)
+            .filter(Positions.user_id == user_id, Positions.symbol == symbol)
+            .all()
+        )
         assert len(all_positions) == 2
         closed_found = [p for p in all_positions if p.closed_at is not None]
         assert len(closed_found) == 1
         assert closed_found[0].id == closed_pos_id
 
-    def test_upsert_updates_existing_open_position(
-        self, positions_repo, user_id
-    ):
+    def test_upsert_updates_existing_open_position(self, positions_repo, user_id):
         """Test that upsert() updates existing open position"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create open position
         open_pos = positions_repo.upsert(
@@ -377,11 +365,9 @@ class TestUpsertWithMultiplePositions:
         assert updated_pos.avg_price == 2550.0
         assert updated_pos.closed_at is None
 
-    def test_upsert_with_multiple_closed_positions(
-        self, positions_repo, user_id
-    ):
+    def test_upsert_with_multiple_closed_positions(self, positions_repo, user_id):
         """Test that upsert() works correctly when multiple closed positions exist"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create multiple closed positions
         for i in range(3):
@@ -409,20 +395,20 @@ class TestUpsertWithMultiplePositions:
         assert new_pos.quantity == 10.0
 
         # Verify all positions exist
-        all_positions = positions_repo.db.query(Positions).filter(
-            Positions.user_id == user_id, Positions.symbol == symbol
-        ).all()
+        all_positions = (
+            positions_repo.db.query(Positions)
+            .filter(Positions.user_id == user_id, Positions.symbol == symbol)
+            .all()
+        )
         assert len(all_positions) == 4  # 3 closed + 1 open
 
 
 class TestCompleteBuyCloseBuyCycle:
     """Test complete flow: Buy → Close → Buy again"""
 
-    def test_buy_close_buy_again_creates_multiple_positions(
-        self, positions_repo, user_id
-    ):
+    def test_buy_close_buy_again_creates_multiple_positions(self, positions_repo, user_id):
         """Test that buying, closing, and buying again creates multiple position records"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # First buy
         pos1 = positions_repo.upsert(
@@ -438,9 +424,7 @@ class TestCompleteBuyCloseBuyCycle:
         positions_repo.db.commit()
 
         # Verify first position is closed
-        closed_pos1 = positions_repo.db.query(Positions).filter(
-            Positions.id == pos1_id
-        ).first()
+        closed_pos1 = positions_repo.db.query(Positions).filter(Positions.id == pos1_id).first()
         assert closed_pos1.closed_at is not None
         assert closed_pos1.quantity == 0.0
 
@@ -464,9 +448,11 @@ class TestCompleteBuyCloseBuyCycle:
         assert current_pos.closed_at is None
 
         # Verify both positions exist
-        all_positions = positions_repo.db.query(Positions).filter(
-            Positions.user_id == user_id, Positions.symbol == symbol
-        ).all()
+        all_positions = (
+            positions_repo.db.query(Positions)
+            .filter(Positions.user_id == user_id, Positions.symbol == symbol)
+            .all()
+        )
         assert len(all_positions) == 2
 
         # Verify one is closed, one is open
@@ -474,4 +460,3 @@ class TestCompleteBuyCloseBuyCycle:
         open_count = sum(1 for p in all_positions if p.closed_at is None)
         assert closed_count == 1
         assert open_count == 1
-

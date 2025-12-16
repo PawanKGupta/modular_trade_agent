@@ -8,15 +8,13 @@ only blocked if there's an active buy order.
 
 import sys
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
-from math import floor
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.kotak_neo_auto_trader import config
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
 
@@ -48,20 +46,22 @@ class TestReentryLogicFix:
 
     def test_reentry_allowed_when_holding_exists(self, auto_trade_engine):
         """Test that reentry is allowed when user has holdings (averaging down)"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
         ticker = "RELIANCE.NS"
 
         # Mock _load_trades_history to return proper data structure
         mock_trade_history = {
-            "trades": [{
-                "symbol": symbol,
-                "ticker": ticker,
-                "qty": 10,
-                "entry_price": 2500.0,
-                "levels_taken": {"30": True, "20": False, "10": False},
-                "reset_ready": False,
-                "status": "open",
-            }]
+            "trades": [
+                {
+                    "symbol": symbol,
+                    "ticker": ticker,
+                    "qty": 10,
+                    "entry_price": 2500.0,
+                    "levels_taken": {"30": True, "20": False, "10": False},
+                    "reset_ready": False,
+                    "status": "open",
+                }
+            ]
         }
         auto_trade_engine._load_trades_history = Mock(return_value=mock_trade_history)
         auto_trade_engine._save_trades_history = Mock()  # Mock save method
@@ -85,11 +85,13 @@ class TestReentryLogicFix:
         auto_trade_engine.reentries_today = Mock(return_value=0)  # Not reached daily cap
         auto_trade_engine.get_affordable_qty = Mock(return_value=20)  # Sufficient balance
         auto_trade_engine.calculate_execution_capital = Mock(return_value=50000.0)
-        auto_trade_engine.orders.place_market_buy = Mock(return_value={
-            "nOrdNo": "REENTRY123",
-            "stat": "Ok",
-            "stCode": 200,
-        })
+        auto_trade_engine.orders.place_market_buy = Mock(
+            return_value={
+                "nOrdNo": "REENTRY123",
+                "stat": "Ok",
+                "stCode": 200,
+            }
+        )
 
         # Mock order tracker
         with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order") as mock_add:
@@ -106,20 +108,22 @@ class TestReentryLogicFix:
 
     def test_reentry_blocked_when_active_buy_order_exists(self, auto_trade_engine):
         """Test that reentry is blocked when there's an active buy order"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
         ticker = "RELIANCE.NS"
 
         # Mock _load_trades_history to return proper data structure
         mock_trade_history = {
-            "trades": [{
-                "symbol": symbol,
-                "ticker": ticker,
-                "qty": 10,
-                "entry_price": 2500.0,
-                "levels_taken": {"30": True, "20": False, "10": False},
-                "reset_ready": False,
-                "status": "open",
-            }]
+            "trades": [
+                {
+                    "symbol": symbol,
+                    "ticker": ticker,
+                    "qty": 10,
+                    "entry_price": 2500.0,
+                    "levels_taken": {"30": True, "20": False, "10": False},
+                    "reset_ready": False,
+                    "status": "open",
+                }
+            ]
         }
         auto_trade_engine._load_trades_history = Mock(return_value=mock_trade_history)
         auto_trade_engine._save_trades_history = Mock()  # Mock save method
@@ -157,20 +161,22 @@ class TestReentryLogicFix:
 
     def test_reentry_allowed_even_with_holdings_at_rsi_30(self, auto_trade_engine):
         """Test that reentry at RSI < 30 is allowed even with holdings (after reset)"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
         ticker = "RELIANCE.NS"
 
         # Mock _load_trades_history to return proper data structure
         mock_trade_history = {
-            "trades": [{
-                "symbol": symbol,
-                "ticker": ticker,
-                "qty": 10,
-                "entry_price": 2500.0,
-                "levels_taken": {"30": True, "20": True, "10": True},  # All levels taken
-                "reset_ready": True,  # Ready for new cycle
-                "status": "open",
-            }]
+            "trades": [
+                {
+                    "symbol": symbol,
+                    "ticker": ticker,
+                    "qty": 10,
+                    "entry_price": 2500.0,
+                    "levels_taken": {"30": True, "20": True, "10": True},  # All levels taken
+                    "reset_ready": True,  # Ready for new cycle
+                    "status": "open",
+                }
+            ]
         }
         auto_trade_engine._load_trades_history = Mock(return_value=mock_trade_history)
         auto_trade_engine._save_trades_history = Mock()  # Mock save method
@@ -206,18 +212,20 @@ class TestReentryLogicFix:
 
     def test_reentry_logic_only_checks_active_buy_order_not_holdings(self, auto_trade_engine):
         """Test that reentry logic only checks active_buy_order, not holdings"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
         ticker = "RELIANCE.NS"
 
         # Mock existing position
-        entries = [{
-            "symbol": symbol,
-            "qty": 10,
-            "entry_price": 2500.0,
-            "levels_taken": {"30": True, "20": False, "10": False},
-            "reset_ready": False,
-            "status": "open",
-        }]
+        entries = [
+            {
+                "symbol": symbol,
+                "qty": 10,
+                "entry_price": 2500.0,
+                "levels_taken": {"30": True, "20": False, "10": False},
+                "reset_ready": False,
+                "status": "open",
+            }
+        ]
 
         # Mock has_holding returns True
         auto_trade_engine.has_holding = Mock(return_value=True)
@@ -238,11 +246,13 @@ class TestReentryLogicFix:
         auto_trade_engine.reentries_today = Mock(return_value=0)
         auto_trade_engine.get_affordable_qty = Mock(return_value=20)
         auto_trade_engine.calculate_execution_capital = Mock(return_value=50000.0)
-        auto_trade_engine.orders.place_market_buy = Mock(return_value={
-            "nOrdNo": "REENTRY123",
-            "stat": "Ok",
-            "stCode": 200,
-        })
+        auto_trade_engine.orders.place_market_buy = Mock(
+            return_value={
+                "nOrdNo": "REENTRY123",
+                "stat": "Ok",
+                "stCode": 200,
+            }
+        )
 
         # Mock order tracker
         with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"):
@@ -263,4 +273,3 @@ class TestReentryLogicFix:
             # is the check used (not has_holding for blocking reentry)
             assert auto_trade_engine.has_active_buy_order is not None
             assert hasattr(auto_trade_engine, "has_active_buy_order")
-

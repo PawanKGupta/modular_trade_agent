@@ -17,7 +17,6 @@ sys.path.insert(0, str(project_root))
 
 from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
 from modules.kotak_neo_auto_trader.unified_order_monitor import UnifiedOrderMonitor
-from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
 
 
 class TestPartialExecutionReconciliation:
@@ -148,9 +147,7 @@ class TestPartialExecutionReconciliation:
         assert result["filled_qty"] == 7  # Should use latest entry
         assert result["execution_price"] == 9.39
 
-    def test_get_filled_quantity_from_order_history_filters_by_order_id(
-        self, unified_monitor
-    ):
+    def test_get_filled_quantity_from_order_history_filters_by_order_id(self, unified_monitor):
         """Test that only matching order_id entries are considered"""
         mock_response = {
             "data": {
@@ -212,9 +209,7 @@ class TestPartialExecutionReconciliation:
 
         assert result is None  # Should return None if not complete
 
-    def test_get_filled_quantity_from_order_history_handles_missing_order(
-        self, unified_monitor
-    ):
+    def test_get_filled_quantity_from_order_history_handles_missing_order(self, unified_monitor):
         """Test that None is returned if order not found in history"""
         mock_response = {
             "data": {
@@ -230,9 +225,7 @@ class TestPartialExecutionReconciliation:
 
         assert result is None
 
-    def test_get_filled_quantity_from_order_history_fallback_to_full_history(
-        self, unified_monitor
-    ):
+    def test_get_filled_quantity_from_order_history_fallback_to_full_history(self, unified_monitor):
         """Test that falls back to full history if specific order_id fails"""
         # First call (with order_id) returns None
         # Second call (without order_id) returns full history
@@ -303,9 +296,7 @@ class TestPartialExecutionReconciliation:
         assert call_args[1]["execution_qty"] == 7.0  # fldQty, not 10
         assert stats["executed"] == 1
 
-    def test_reconciliation_priority_order_history_second(
-        self, unified_monitor, mock_orders_repo
-    ):
+    def test_reconciliation_priority_order_history_second(self, unified_monitor, mock_orders_repo):
         """Test that order_history() is checked second (Priority 2)"""
         # Setup: Order NOT in order_report, but in order_history
         broker_orders = []  # Not in order_report
@@ -345,7 +336,16 @@ class TestPartialExecutionReconciliation:
 
         # Mock holdings (should not be used since order_history has it)
         unified_monitor.sell_manager.portfolio.get_holdings = Mock(
-            return_value={"data": [{"symbol": "IDEA", "quantity": 7, "averagePrice": 9.39}]}
+            return_value={
+                "data": [
+                    {
+                        "symbol": "IDEA-EQ",
+                        "displaySymbol": "IDEA-EQ",
+                        "quantity": 7,
+                        "averagePrice": 9.39,
+                    }
+                ]
+            }
         )
 
         stats = unified_monitor.check_buy_order_status(broker_orders=broker_orders)
@@ -382,7 +382,7 @@ class TestPartialExecutionReconciliation:
             return_value={
                 "data": [
                     {
-                        "symbol": "IDEA",
+                        "symbol": "IDEA-EQ",  # Full symbol after migration
                         "displaySymbol": "IDEA-EQ",
                         "quantity": 7,  # Holdings quantity
                         "averagePrice": 9.39,
@@ -426,7 +426,7 @@ class TestPartialExecutionReconciliation:
             return_value={
                 "data": [
                     {
-                        "symbol": "IDEA",
+                        "symbol": "IDEA-EQ",  # Full symbol after migration
                         "displaySymbol": "IDEA-EQ",
                         "quantity": 10,  # Holdings quantity (but we'll use DB as last resort)
                         "averagePrice": 9.00,
@@ -474,9 +474,7 @@ class TestPartialExecutionReconciliation:
         call_args = unified_monitor._create_position_from_executed_order.call_args
         assert call_args[0][3] == 7.0  # execution_qty should be 7 (fldQty), not 10
 
-    def test_handle_buy_order_execution_uses_pre_set_execution_qty(
-        self, unified_monitor
-    ):
+    def test_handle_buy_order_execution_uses_pre_set_execution_qty(self, unified_monitor):
         """Test that _handle_buy_order_execution uses pre-set execution_qty"""
         broker_order = {
             "neoOrdNo": "250122000624384",
@@ -502,4 +500,3 @@ class TestPartialExecutionReconciliation:
         # Verify that pre-set execution_qty (7) is used, not fldQty from broker_order (5)
         call_args = unified_monitor._create_position_from_executed_order.call_args
         assert call_args[0][3] == 7.0  # Should use pre-set value
-

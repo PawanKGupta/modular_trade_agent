@@ -96,7 +96,7 @@ class TestRSIExitIntegrationRealTrading:
         positions_repo = PositionsRepository(db_session)
         position = positions_repo.upsert(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=40,
             avg_price=2500.0,
             entry_rsi=25.0,
@@ -267,7 +267,7 @@ class TestReentryIntegrationRealTrading:
         positions_repo = PositionsRepository(db_session)
         position = positions_repo.upsert(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=40,
             avg_price=2500.0,
             entry_rsi=25.0,  # Entry at RSI < 30
@@ -338,7 +338,7 @@ class TestReentryIntegrationRealTrading:
         positions_repo = PositionsRepository(db_session)
         position = positions_repo.upsert(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=0,
             avg_price=2500.0,
         )
@@ -351,7 +351,7 @@ class TestReentryIntegrationRealTrading:
         orders_repo = OrdersRepository(db_session)
         reentry_order = orders_repo.create_amo(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="limit",
             quantity=40,
@@ -516,7 +516,7 @@ class TestReentryIntegrationPaperTrading:
         positions_repo = PositionsRepository(db_session)
         position = positions_repo.upsert(
             user_id=test_user.id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=40,
             avg_price=2500.0,
             entry_rsi=25.0,
@@ -569,7 +569,7 @@ class TestReentryIntegrationPaperTrading:
 
         # Create mock order for broker
         reentry_order = Order(
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=40,
             order_type=OrderType.LIMIT,
             transaction_type=TransactionType.BUY,

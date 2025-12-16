@@ -10,8 +10,6 @@ Tests verify that:
 
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -22,8 +20,7 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.infrastructure.db.base import Base
-from src.infrastructure.db.models import OrderStatus, UserRole, Users
-from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.db.models import UserRole, Users
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 
@@ -77,11 +74,9 @@ def user_id(db_session):
 class TestBuyCloseBuyAgainReentryFlow:
     """Test complete flow: Buy → Close → Buy again → Re-entry"""
 
-    def test_buy_close_buy_again_reentry_flow(
-        self, positions_repo, orders_repo, user_id
-    ):
+    def test_buy_close_buy_again_reentry_flow(self, positions_repo, orders_repo, user_id):
         """Test that buying, closing, buying again, and re-entry works correctly"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Step 1: First buy
         pos1 = positions_repo.upsert(
@@ -100,6 +95,7 @@ class TestBuyCloseBuyAgainReentryFlow:
 
         # Verify first position is closed
         from src.infrastructure.db.models import Positions as PositionsModel
+
         closed_pos1 = positions_repo.db.query(PositionsModel).filter_by(id=pos1_id).first()
         assert closed_pos1.closed_at is not None
 
@@ -134,10 +130,15 @@ class TestBuyCloseBuyAgainReentryFlow:
 
         # Step 6: Verify all positions exist
         from src.infrastructure.db.models import Positions as PositionsModel
-        all_positions = positions_repo.db.query(PositionsModel).filter(
-            PositionsModel.user_id == user_id,
-            PositionsModel.symbol == symbol,
-        ).all()
+
+        all_positions = (
+            positions_repo.db.query(PositionsModel)
+            .filter(
+                PositionsModel.user_id == user_id,
+                PositionsModel.symbol == symbol,
+            )
+            .all()
+        )
         assert len(all_positions) == 2  # 1 closed + 1 open
 
         # Verify one is closed, one is open
@@ -150,11 +151,9 @@ class TestBuyCloseBuyAgainReentryFlow:
 class TestConcurrentBuyOrdersRaceCondition:
     """Test concurrent buy orders (race condition)"""
 
-    def test_concurrent_upsert_creates_only_one_open_position(
-        self, positions_repo, user_id
-    ):
+    def test_concurrent_upsert_creates_only_one_open_position(self, positions_repo, user_id):
         """Test that concurrent upsert() calls don't create multiple open positions"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Simulate concurrent upsert calls
         # In real scenario, this would be handled by database constraints
@@ -181,18 +180,21 @@ class TestConcurrentBuyOrdersRaceCondition:
 
         # Verify only one open position exists
         from src.infrastructure.db.models import Positions as PositionsModel
-        open_positions = positions_repo.db.query(PositionsModel).filter(
-            PositionsModel.user_id == user_id,
-            PositionsModel.symbol == symbol,
-            PositionsModel.closed_at.is_(None),
-        ).all()
+
+        open_positions = (
+            positions_repo.db.query(PositionsModel)
+            .filter(
+                PositionsModel.user_id == user_id,
+                PositionsModel.symbol == symbol,
+                PositionsModel.closed_at.is_(None),
+            )
+            .all()
+        )
         assert len(open_positions) == 1
 
-    def test_concurrent_upsert_with_closed_position_creates_new(
-        self, positions_repo, user_id
-    ):
+    def test_concurrent_upsert_with_closed_position_creates_new(self, positions_repo, user_id):
         """Test that upsert() creates new position when closed position exists"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create and close first position
         pos1 = positions_repo.upsert(
@@ -218,21 +220,24 @@ class TestConcurrentBuyOrdersRaceCondition:
 
         # Verify both positions exist
         from src.infrastructure.db.models import Positions as PositionsModel
-        all_positions = positions_repo.db.query(PositionsModel).filter(
-            PositionsModel.user_id == user_id,
-            PositionsModel.symbol == symbol,
-        ).all()
+
+        all_positions = (
+            positions_repo.db.query(PositionsModel)
+            .filter(
+                PositionsModel.user_id == user_id,
+                PositionsModel.symbol == symbol,
+            )
+            .all()
+        )
         assert len(all_positions) == 2
 
 
 class TestSellOrderPlacementWithMultiplePositions:
     """Test sell order placement with multiple positions"""
 
-    def test_sell_order_on_open_position_only(
-        self, positions_repo, orders_repo, user_id
-    ):
+    def test_sell_order_on_open_position_only(self, positions_repo, orders_repo, user_id):
         """Test that sell orders are placed on open position only"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create closed position
         closed_pos = positions_repo.upsert(
@@ -273,15 +278,16 @@ class TestSellOrderPlacementWithMultiplePositions:
 
         # Verify closed position unchanged
         from src.infrastructure.db.models import Positions as PositionsModel
-        closed_pos_check = positions_repo.db.query(PositionsModel).filter_by(id=closed_pos.id).first()
+
+        closed_pos_check = (
+            positions_repo.db.query(PositionsModel).filter_by(id=closed_pos.id).first()
+        )
         assert closed_pos_check.closed_at is not None
         assert closed_pos_check.quantity == 0.0
 
-    def test_sell_order_after_multiple_closed_positions(
-        self, positions_repo, user_id
-    ):
+    def test_sell_order_after_multiple_closed_positions(self, positions_repo, user_id):
         """Test sell order placement when multiple closed positions exist"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create multiple closed positions
         for i in range(3):
@@ -318,21 +324,24 @@ class TestSellOrderPlacementWithMultiplePositions:
 
         # Verify all closed positions still exist
         from src.infrastructure.db.models import Positions as PositionsModel
-        all_positions = positions_repo.db.query(PositionsModel).filter(
-            PositionsModel.user_id == user_id,
-            PositionsModel.symbol == symbol,
-        ).all()
+
+        all_positions = (
+            positions_repo.db.query(PositionsModel)
+            .filter(
+                PositionsModel.user_id == user_id,
+                PositionsModel.symbol == symbol,
+            )
+            .all()
+        )
         assert len(all_positions) == 4  # 3 closed + 1 open
 
 
 class TestReentryLogicWithMultiplePositions:
     """Test re-entry logic with multiple positions"""
 
-    def test_reentry_on_new_position_after_closed(
-        self, positions_repo, user_id
-    ):
+    def test_reentry_on_new_position_after_closed(self, positions_repo, user_id):
         """Test that re-entry logic works on new position after previous closed"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create and close first position
         pos1 = positions_repo.upsert(
@@ -373,11 +382,9 @@ class TestReentryLogicWithMultiplePositions:
         assert current_pos.id == pos2.id
         assert current_pos.quantity == 25.0
 
-    def test_reentry_tracking_with_multiple_closed_positions(
-        self, positions_repo, user_id
-    ):
+    def test_reentry_tracking_with_multiple_closed_positions(self, positions_repo, user_id):
         """Test that re-entry tracking works correctly with multiple closed positions"""
-        symbol = "RELIANCE"
+        symbol = "RELIANCE-EQ"  # Full symbol after migration
 
         # Create and close first position with re-entries
         pos1 = positions_repo.upsert(
@@ -410,12 +417,10 @@ class TestReentryLogicWithMultiplePositions:
         # Verify new position has no re-entries
         assert pos2.reentry_count == 0
         assert pos2.reentries is None or (
-            isinstance(pos2.reentries, dict)
-            and len(pos2.reentries.get("reentries", [])) == 0
+            isinstance(pos2.reentries, dict) and len(pos2.reentries.get("reentries", [])) == 0
         )
 
         # Verify get_by_symbol() returns new position
         current_pos = positions_repo.get_by_symbol(user_id, symbol)
         assert current_pos.id == pos2.id
         assert current_pos.reentry_count == 0
-

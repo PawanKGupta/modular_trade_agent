@@ -11,20 +11,20 @@ SOLID Principles:
 Phase 2 Feature: Manual order matching during reconciliation
 """
 
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List, Tuple
-from pathlib import Path
-
 # Use existing project logger
 import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger
 
+from .order_tracker import OrderTracker, get_order_tracker
+
 # Import Phase 1 modules
 from .tracking_scope import TrackingScope, get_tracking_scope
-from .order_tracker import OrderTracker, get_order_tracker
 
 
 class ManualOrderMatcher:
@@ -35,8 +35,8 @@ class ManualOrderMatcher:
 
     def __init__(
         self,
-        tracking_scope: Optional[TrackingScope] = None,
-        order_tracker: Optional[OrderTracker] = None,
+        tracking_scope: TrackingScope | None = None,
+        order_tracker: OrderTracker | None = None,
     ):
         """
         Initialize manual order matcher.
@@ -49,8 +49,8 @@ class ManualOrderMatcher:
         self.order_tracker = order_tracker or get_order_tracker()
 
     def reconcile_holdings_with_tracking(
-        self, broker_holdings: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, broker_holdings: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """
         Reconcile broker holdings with tracking scope.
         Detects manual trades for tracked symbols and updates quantities.
@@ -82,13 +82,19 @@ class ManualOrderMatcher:
                 or ""
             )
             if symbol:
-                # Remove common suffixes (-EQ, -BE, etc.) to get base symbol
-                base_symbol = symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").strip()
+                # Extract base symbol using utility function for consistency
+                # After migration, holdings may have full symbols (e.g., "RELIANCE-EQ")
+                # We extract base symbol for matching with tracking scope (which uses base symbols)
+                from .utils.symbol_utils import extract_base_symbol
+
+                base_symbol = extract_base_symbol(symbol)
                 if base_symbol:
                     holdings_symbols.append(base_symbol.upper())
                     holdings_dict[base_symbol.upper()] = holding
 
-        logger.info(f"Found {len(holdings_symbols)} holdings in portfolio: {', '.join(holdings_symbols)}")
+        logger.info(
+            f"Found {len(holdings_symbols)} holdings in portfolio: {', '.join(holdings_symbols)}"
+        )
 
         tracked_symbols = self.tracking_scope.get_tracked_symbols(status="active")
         all_tracked_symbols = self.tracking_scope.get_tracked_symbols(status="all")
@@ -110,7 +116,9 @@ class ManualOrderMatcher:
                 logger.info("Completed tracking entries details:")
                 for completed_symbol in completed_tracked_symbols:
                     try:
-                        entry = self.tracking_scope.get_tracking_entry(completed_symbol, status="completed")
+                        entry = self.tracking_scope.get_tracking_entry(
+                            completed_symbol, status="completed"
+                        )
                         if entry:
                             completed_at = entry.get("tracking_ended_at", "unknown")
                             tracked_qty = entry.get("current_tracked_qty", 0)
@@ -123,7 +131,9 @@ class ManualOrderMatcher:
                                 f"Initial Order ID: {initial_order_id}, Completed At: {completed_at}"
                             )
                         else:
-                            logger.warning(f"  Could not retrieve tracking entry for {completed_symbol}")
+                            logger.warning(
+                                f"  Could not retrieve tracking entry for {completed_symbol}"
+                            )
                     except Exception as e:
                         logger.warning(f"  Error retrieving entry for {completed_symbol}: {e}")
             except Exception as e:
@@ -137,12 +147,12 @@ class ManualOrderMatcher:
             for idx, entry in enumerate(data.get("symbols", [])):
                 try:
                     logger.info(
-                        f"  Entry #{idx+1}: symbol={entry.get('symbol')}, status={entry.get('tracking_status')}, "
+                        f"  Entry #{idx + 1}: symbol={entry.get('symbol')}, status={entry.get('tracking_status')}, "
                         f"qty={entry.get('current_tracked_qty')}, ticker={entry.get('ticker')}, "
                         f"order_id={entry.get('initial_order_id')}"
                     )
                 except Exception as e:
-                    logger.warning(f"  Error logging entry #{idx+1}: {e}")
+                    logger.warning(f"  Error logging entry #{idx + 1}: {e}")
         except Exception as e:
             logger.warning(f"Error loading tracking data for debugging: {e}")
 
@@ -167,7 +177,9 @@ class ManualOrderMatcher:
                 # Previously tracked but now completed - get details
                 # Wrap in try-catch to handle corrupted data gracefully
                 try:
-                    entry = self.tracking_scope.get_tracking_entry(holding_symbol, status="completed")
+                    entry = self.tracking_scope.get_tracking_entry(
+                        holding_symbol, status="completed"
+                    )
                     if entry:
                         completed_at = entry.get("tracking_ended_at", "unknown")
                         final_qty = entry.get("current_tracked_qty", 0)
@@ -178,7 +190,9 @@ class ManualOrderMatcher:
                 except Exception as e:
                     logger.debug(f"Error retrieving tracking entry for {holding_symbol}: {e}")
                     # Still add to previously_tracked_holdings even if we can't get details
-                    previously_tracked_holdings.append(f"{holding_symbol} (qty: {qty}, details unavailable)")
+                    previously_tracked_holdings.append(
+                        f"{holding_symbol} (qty: {qty}, details unavailable)"
+                    )
             elif not is_tracked_any:
                 untracked_holdings.append(f"{holding_symbol} (qty: {qty})")
 
@@ -219,7 +233,9 @@ class ManualOrderMatcher:
                 # Wrap in try-catch to handle corrupted data gracefully
                 try:
                     tracking_entry = self.tracking_scope.get_tracking_entry(tracked_symbol)
-                    tracked_qty = tracking_entry.get("current_tracked_qty", 0) if tracking_entry else 0
+                    tracked_qty = (
+                        tracking_entry.get("current_tracked_qty", 0) if tracking_entry else 0
+                    )
                     tracked_not_in_holdings.append(f"{tracked_symbol} (tracked qty: {tracked_qty})")
                 except Exception as e:
                     logger.debug(f"Error retrieving tracking entry for {tracked_symbol}: {e}")
@@ -330,7 +346,9 @@ class ManualOrderMatcher:
                 )
 
                 if manual_orders:
-                    logger.info(f"Found {len(manual_orders)} potential manual order(s) for {symbol}")
+                    logger.info(
+                        f"Found {len(manual_orders)} potential manual order(s) for {symbol}"
+                    )
                     discrepancy["manual_orders"] = manual_orders
 
                     # Add to related orders
@@ -344,7 +362,8 @@ class ManualOrderMatcher:
                     self.tracking_scope.update_tracked_qty(symbol, qty_diff)
                     results["updated_symbols"].append(symbol)
                     logger.info(
-                        f"[OK] Updated tracking for {symbol}: " f"{system_qty} -> {system_qty + qty_diff}"
+                        f"[OK] Updated tracking for {symbol}: "
+                        f"{system_qty} -> {system_qty + qty_diff}"
                     )
                 except Exception as e:
                     logger.warning(f"Failed to update tracking for {symbol}: {e}")
@@ -365,8 +384,8 @@ class ManualOrderMatcher:
         return results
 
     def _find_manual_orders_for_symbol(
-        self, symbol: str, qty: int, tracking_entry: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, symbol: str, qty: int, tracking_entry: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """
         Search for manual orders in recent broker order book.
 
@@ -392,7 +411,7 @@ class ManualOrderMatcher:
 
         return []
 
-    def detect_position_closures(self, broker_holdings: List[Dict[str, Any]]) -> List[str]:
+    def detect_position_closures(self, broker_holdings: list[dict[str, Any]]) -> list[str]:
         """
         Detect tracked symbols that have been fully sold (position closed).
 
@@ -428,8 +447,7 @@ class ManualOrderMatcher:
                     # Position was closed
                     tracked_qty = tracking_entry.get("current_tracked_qty", 0)
                     logger.info(
-                        f"? Position closed detected: {symbol} "
-                        f"(was tracking {tracked_qty} shares)"
+                        f"? Position closed detected: {symbol} (was tracking {tracked_qty} shares)"
                     )
 
                     # Stop tracking - wrap in try-catch to handle errors gracefully
@@ -447,7 +465,7 @@ class ManualOrderMatcher:
 
         return closed_positions
 
-    def reconcile_partial_positions(self, broker_holdings: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def reconcile_partial_positions(self, broker_holdings: list[dict[str, Any]]) -> dict[str, Any]:
         """
         Handle partial position closures (partial manual sells).
 
@@ -514,7 +532,7 @@ class ManualOrderMatcher:
 
         return results
 
-    def get_reconciliation_summary(self, reconciliation_results: Dict[str, Any]) -> str:
+    def get_reconciliation_summary(self, reconciliation_results: dict[str, Any]) -> str:
         """
         Generate human-readable summary of reconciliation.
 
@@ -557,11 +575,11 @@ class ManualOrderMatcher:
 
 
 # Singleton instance
-_matcher_instance: Optional[ManualOrderMatcher] = None
+_matcher_instance: ManualOrderMatcher | None = None
 
 
 def get_manual_order_matcher(
-    tracking_scope: Optional[TrackingScope] = None, order_tracker: Optional[OrderTracker] = None
+    tracking_scope: TrackingScope | None = None, order_tracker: OrderTracker | None = None
 ) -> ManualOrderMatcher:
     """
     Get or create manual order matcher singleton.

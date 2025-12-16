@@ -447,9 +447,10 @@ class UnifiedOrderMonitor:
                     # Use holdings() API to check if order was executed
                     # If symbol appears in holdings, order likely executed while service was down
                     symbol = order_info.get("symbol", "")
+                    full_symbol = symbol.upper() if symbol else ""  # symbol is already full symbol
                     base_symbol = extract_base_symbol(symbol).upper() if symbol else ""
 
-                    if base_symbol and holdings_data is not None:
+                    if full_symbol and holdings_data is not None:
                         try:
                             # Look for symbol in holdings (indicates order was executed)
                             found_in_holdings = False
@@ -463,9 +464,9 @@ class UnifiedOrderMonitor:
                                     or holding.get("tradingSymbol")
                                     or ""
                                 )
-                                holding_base = extract_base_symbol(holding_symbol).upper()
+                                holding_full_symbol = holding_symbol.upper()
 
-                                if holding_base == base_symbol:
+                                if holding_full_symbol == full_symbol:  # ✅ Exact match
                                     found_in_holdings = True
                                     holding_info = holding
                                     break
@@ -629,7 +630,7 @@ class UnifiedOrderMonitor:
                                             order_ids_to_remove.append(order_id)
                                         else:
                                             logger.warning(
-                                                f"Holdings found for {base_symbol} but missing "
+                                                f"Holdings found for {full_symbol} but missing "
                                                 f"price/qty data - cannot reconcile order "
                                                 f"{order_id}"
                                             )
@@ -990,8 +991,8 @@ class UnifiedOrderMonitor:
                         logger.warning(f"Failed to send position creation failure alert: {e}")
                 return
 
-            # Extract base symbol (remove -EQ suffix if present)
-            base_symbol = extract_base_symbol(symbol).upper()
+            # Use full symbol (already has suffix from broker/order)
+            full_symbol = symbol.upper()
 
             # Extract entry RSI from order metadata
             entry_rsi = None
@@ -1011,17 +1012,17 @@ class UnifiedOrderMonitor:
             if entry_rsi is None:
                 entry_rsi = 29.5
                 logger.debug(
-                    f"No entry RSI found in order metadata for {base_symbol}, defaulting to 29.5"
+                    f"No entry RSI found in order metadata for {full_symbol}, defaulting to 29.5"
                 )
 
             # Check if position already exists
             # Use FOR UPDATE lock to prevent race conditions with concurrent reentry executions
-            existing_pos = self.positions_repo.get_by_symbol_for_update(self.user_id, base_symbol)
+            existing_pos = self.positions_repo.get_by_symbol_for_update(self.user_id, full_symbol)
 
             # Improvement: Check if position is closed - don't add reentry to closed positions
             if existing_pos and existing_pos.closed_at is not None:
                 logger.warning(
-                    f"Reentry order executed for closed position {base_symbol}. "
+                    f"Reentry order executed for closed position {full_symbol}. "
                     f"Position was closed at {existing_pos.closed_at}. "
                     f"Skipping reentry update to prevent reopening closed position."
                 )
@@ -1167,7 +1168,7 @@ class UnifiedOrderMonitor:
                     # Improvement: Validate reentry data before writing
                     if not self._validate_reentry_data(reentry_data):
                         logger.error(
-                            f"Invalid reentry data for {base_symbol} (order_id: {order_id}). "
+                            f"Invalid reentry data for {full_symbol} (order_id: {order_id}). "
                             f"Skipping reentry update to prevent data corruption."
                         )
                         # Don't update reentry fields, but still update quantity and avg_price
@@ -1202,7 +1203,7 @@ class UnifiedOrderMonitor:
                         )
                         if existing_reentry:
                             logger.warning(
-                                f"Duplicate reentry detected for {base_symbol} "
+                                f"Duplicate reentry detected for {full_symbol} "
                                 f"(order_id: {order_id}). Skipping to prevent duplicate entry."
                             )
                             # Don't update reentry fields, but still update quantity and avg_price
@@ -1220,7 +1221,7 @@ class UnifiedOrderMonitor:
                             last_reentry_price = execution_price
 
                     logger.info(
-                        f"Reentry detected for {base_symbol}: Adding reentry #{reentry_count} "
+                        f"Reentry detected for {full_symbol}: Adding reentry #{reentry_count} "
                         f"(qty: {execution_qty}, price: Rs {execution_price:.2f})"
                     )
                     # Note: Database is updated here (source of truth).
@@ -1235,11 +1236,11 @@ class UnifiedOrderMonitor:
                     # This prevents reopening a position that was closed during processing
                     # (e.g., if sell order executed while reentry was being processed)
                     current_position = self.positions_repo.get_by_symbol_for_update(
-                        self.user_id, base_symbol
+                        self.user_id, full_symbol
                     )
                     if current_position and current_position.closed_at is not None:
                         logger.warning(
-                            f"Reentry order execution aborted for {base_symbol}: "
+                            f"Reentry order execution aborted for {full_symbol}: "
                             f"Position was closed at {current_position.closed_at} "
                             f"while reentry was being processed. "
                             f"Skipping update to prevent reopening closed position."
@@ -1285,7 +1286,7 @@ class UnifiedOrderMonitor:
 
                         if duplicate_found:
                             logger.warning(
-                                f"Duplicate reentry detected for {base_symbol} "
+                                f"Duplicate reentry detected for {full_symbol} "
                                 f"(order_id: {order_id}) during final check. "
                                 f"Another process may have already added this reentry. "
                                 f"Skipping entire update to prevent duplicate entry "  # noqa: E501
@@ -1307,8 +1308,8 @@ class UnifiedOrderMonitor:
                         try:
                             # Check for existing sell order
                             existing_orders = self.sell_manager.get_existing_sell_orders()
-                            if base_symbol.upper() in existing_orders:
-                                existing_order = existing_orders[base_symbol.upper()]
+                            if full_symbol.upper() in existing_orders:
+                                existing_order = existing_orders[full_symbol.upper()]
                                 existing_order_qty = existing_order.get("qty", 0)
                                 existing_order_price = existing_order.get("price", 0)
                                 existing_order_id = existing_order.get("order_id")
@@ -1317,13 +1318,13 @@ class UnifiedOrderMonitor:
                                 if existing_order_id and new_qty != existing_order_qty:
                                     if new_qty > existing_order_qty:
                                         logger.info(
-                                            f"Reentry detected for {base_symbol}: "
+                                            f"Reentry detected for {full_symbol}: "
                                             f"Updating sell order quantity from {existing_order_qty} "  # noqa: E501
                                             f"to {new_qty} (Order ID: {existing_order_id})"
                                         )
                                     else:
                                         logger.info(
-                                            f"Sell order quantity mismatch for {base_symbol}: "
+                                            f"Sell order quantity mismatch for {full_symbol}: "
                                             f"Position={new_qty}, Sell order={existing_order_qty}. "
                                             f"Updating to match position "  # noqa: E501
                                             f"(Order ID: {existing_order_id})"
@@ -1334,20 +1335,20 @@ class UnifiedOrderMonitor:
                                     # but log warning for retry later (Flaw #7 fix handles this)
                                     sell_order_update_success = self.sell_manager.update_sell_order(
                                         order_id=str(existing_order_id),
-                                        symbol=base_symbol,
+                                        symbol=full_symbol,
                                         qty=int(new_qty),
                                         new_price=existing_order_price,
                                     )
 
                                     if sell_order_update_success:
                                         logger.info(
-                                            f"Successfully updated sell order for {base_symbol}: "
+                                            f"Successfully updated sell order for {full_symbol}: "
                                             f"{existing_order_qty} -> {new_qty} shares "
                                             f"@ Rs {existing_order_price:.2f}"
                                         )
                                     else:
                                         logger.warning(
-                                            f"Failed to update sell order for {base_symbol} "
+                                            f"Failed to update sell order for {full_symbol} "
                                             f"via broker API. Position will still be updated "
                                             f"(primary operation - order executed). "
                                             f"Sell order will be retried later via periodic "
@@ -1356,7 +1357,7 @@ class UnifiedOrderMonitor:
                         except Exception as e:
                             # Broker API call failed - log warning but continue with position update
                             logger.warning(
-                                f"Error updating sell order after reentry for {base_symbol}: {e}. "
+                                f"Error updating sell order after reentry for {full_symbol}: {e}. "
                                 f"Position will still be updated "  # noqa: E501
                                 f"(primary operation - order executed). "
                                 f"Sell order will be retried later via periodic mismatch check "
@@ -1385,7 +1386,7 @@ class UnifiedOrderMonitor:
 
                     self.positions_repo.upsert(
                         user_id=self.user_id,
-                        symbol=base_symbol,
+                        symbol=full_symbol,
                         quantity=new_qty,
                         avg_price=new_avg_price,
                         opened_at=existing_pos.opened_at,  # Preserve original open time
@@ -1400,13 +1401,13 @@ class UnifiedOrderMonitor:
                     # Use FOR UPDATE lock to prevent race conditions during integrity check
                     if is_reentry:
                         updated_position = self.positions_repo.get_by_symbol_for_update(
-                            self.user_id, base_symbol
+                            self.user_id, full_symbol
                         )
                         if updated_position:
                             actual_count = len(updated_position.reentries or [])
                             if updated_position.reentry_count != actual_count:
                                 logger.warning(
-                                    f"Reentry count mismatch for {base_symbol}: "
+                                    f"Reentry count mismatch for {full_symbol}: "
                                     f"count={updated_position.reentry_count}, "  # noqa: E501
                                     f"array_length={actual_count}. "
                                     f"Fixing..."
@@ -1414,7 +1415,7 @@ class UnifiedOrderMonitor:
                                 # Fix the mismatch - preserve the last_reentry_price we just set
                                 self.positions_repo.upsert(
                                     user_id=self.user_id,
-                                    symbol=base_symbol,
+                                    symbol=full_symbol,
                                     reentry_count=actual_count,
                                     # Preserve other fields including the newly set
                                     # last_reentry_price
@@ -1430,7 +1431,7 @@ class UnifiedOrderMonitor:
                                 self.positions_repo.db.refresh(updated_position)
 
                 logger.info(
-                    f"Updated position for {base_symbol}: qty {existing_qty} -> {new_qty}, "
+                    f"Updated position for {full_symbol}: qty {existing_qty} -> {new_qty}, "
                     f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}"
                     + (f", reentry_count: {reentry_count}" if is_reentry else "")
                 )
@@ -1440,7 +1441,7 @@ class UnifiedOrderMonitor:
                 with transaction(self.positions_repo.db):
                     self.positions_repo.upsert(
                         user_id=self.user_id,
-                        symbol=base_symbol,
+                        symbol=full_symbol,
                         quantity=execution_qty,
                         avg_price=execution_price,
                         opened_at=execution_time,
@@ -1769,13 +1770,13 @@ class UnifiedOrderMonitor:
             # Get existing sell orders to avoid duplicates
             existing_sell_orders = self.sell_manager.get_existing_sell_orders()
             existing_symbols = {
-                extract_base_symbol(symbol).upper() for symbol in existing_sell_orders.keys()
+                symbol.upper() for symbol in existing_sell_orders.keys()  # Already full symbols
             }
 
             # Get currently tracked sell orders
             active_sell_symbols = {
-                extract_base_symbol(symbol).upper()
-                for symbol in self.sell_manager.active_sell_orders.keys()
+                symbol.upper()
+                for symbol in self.sell_manager.active_sell_orders.keys()  # Already full symbols
             }
 
             # Optimization: Fetch orders once and reuse for has_completed_sell_order checks
@@ -1789,20 +1790,20 @@ class UnifiedOrderMonitor:
 
             for db_order in newly_executed_orders:
                 try:
-                    base_symbol = extract_base_symbol(db_order.symbol).upper()
+                    full_symbol = db_order.symbol.upper()  # Already full symbol from orders table
 
                     # Skip if already has sell order
-                    if base_symbol in existing_symbols or base_symbol in active_sell_symbols:
-                        logger.info(f"Skipping {base_symbol}: Already has sell order")
+                    if full_symbol in existing_symbols or full_symbol in active_sell_symbols:
+                        logger.info(f"Skipping {full_symbol}: Already has sell order")
                         continue
 
                     # Check if position already has a completed sell order
                     # Reuse orders data to avoid duplicate API calls
                     completed_order_info = self.sell_manager.has_completed_sell_order(
-                        base_symbol, all_orders_response
+                        full_symbol, all_orders_response
                     )
                     if completed_order_info:
-                        logger.debug(f"Skipping {base_symbol}: Already has completed sell order")
+                        logger.debug(f"Skipping {full_symbol}: Already has completed sell order")
                         continue
 
                     # Convert order to trade format
@@ -1812,9 +1813,12 @@ class UnifiedOrderMonitor:
                         ticker = db_order.order_metadata.get("ticker")
 
                     if not ticker:
-                        # Construct ticker from symbol (e.g., "RELIANCE-EQ" -> "RELIANCE.NS")
-                        base_sym = extract_base_symbol(db_order.symbol).upper()
-                        ticker = f"{base_sym}.NS"
+                        # Use helper function to create ticker from full symbol
+                        from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                            get_ticker_from_full_symbol,
+                        )
+
+                        ticker = get_ticker_from_full_symbol(full_symbol)
 
                     # Get execution price and quantity
                     execution_price = (
@@ -1826,7 +1830,7 @@ class UnifiedOrderMonitor:
 
                     if not execution_price or execution_qty <= 0:
                         logger.warning(
-                            f"Skipping {base_symbol}: Invalid execution price or quantity"
+                            f"Skipping {full_symbol}: Invalid execution price or quantity"
                         )
                         continue
 
@@ -1840,11 +1844,11 @@ class UnifiedOrderMonitor:
 
                     # Create trade dict in format expected by place_sell_order
                     trade = {
-                        "symbol": base_symbol,
+                        "symbol": full_symbol,  # ✅ Full symbol for matching
                         "ticker": ticker,
                         "qty": int(execution_qty),
                         "entry_price": execution_price,
-                        "placed_symbol": db_order.symbol,  # Keep original broker symbol
+                        "placed_symbol": db_order.symbol,  # Keep original broker symbol (full)
                         "entry_time": (
                             order_execution_time.isoformat()
                             if order_execution_time
@@ -1855,11 +1859,11 @@ class UnifiedOrderMonitor:
                     # Issue #3 Fix: Get current EMA9 with retry and fallback
                     broker_sym = db_order.symbol
                     ema9 = self.sell_manager._get_ema9_with_retry(
-                        ticker, broker_symbol=broker_sym, symbol=base_symbol
+                        ticker, broker_symbol=broker_sym, symbol=full_symbol
                     )
                     if not ema9:
                         logger.error(
-                            f"Issue #3: Skipping {base_symbol}: Failed to calculate EMA9 after retries "
+                            f"Issue #3: Skipping {full_symbol}: Failed to calculate EMA9 after retries "
                             f"and fallback. Position exists but sell order cannot be placed."
                         )
                         continue
@@ -1870,26 +1874,26 @@ class UnifiedOrderMonitor:
 
                     # Place sell order
                     logger.info(
-                        f"Placing sell order for {base_symbol}: qty={int(execution_qty)}, "
+                        f"Placing sell order for {full_symbol}: qty={int(execution_qty)}, "
                         f"entry_price={execution_price:.2f}, ema9={ema9:.2f}"
                     )
                     order_id = self.sell_manager.place_sell_order(trade, ema9)
 
                     if order_id:
-                        logger.info(f"Successfully placed sell order for {base_symbol}: {order_id}")
+                        logger.info(f"Successfully placed sell order for {full_symbol}: {order_id}")
                         # Track the order
                         self.sell_manager._register_order(
-                            symbol=base_symbol,
+                            symbol=full_symbol,
                             order_id=order_id,
                             target_price=ema9,
                             qty=int(execution_qty),
                             ticker=ticker,
                             placed_symbol=broker_sym,
                         )
-                        self.sell_manager.lowest_ema9[base_symbol] = ema9
+                        self.sell_manager.lowest_ema9[full_symbol] = ema9
                         orders_placed += 1
                         logger.info(
-                            f"Placed sell order for newly executed holding: {base_symbol} "
+                            f"Placed sell order for newly executed holding: {full_symbol} "
                             f"(Order ID: {order_id}, Target: Rs {ema9:.2f})"
                         )
 

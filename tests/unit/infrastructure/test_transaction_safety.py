@@ -56,14 +56,16 @@ class TestTransactionUtility:
         with transaction(session):
             positions_repo.upsert(
                 user_id=user_id,
-                symbol="RELIANCE",
+                symbol="RELIANCE-EQ",  # Full symbol after migration
                 quantity=10.0,
                 avg_price=100.0,
                 auto_commit=False,
             )
 
         # Verify position was committed
-        position = positions_repo.get_by_symbol(user_id, "RELIANCE")
+        position = positions_repo.get_by_symbol(
+            user_id, "RELIANCE-EQ"
+        )  # Full symbol after migration
         assert position is not None
         assert position.quantity == 10.0
 
@@ -85,7 +87,9 @@ class TestTransactionUtility:
                 raise ValueError("Test exception")
 
         # Verify position was NOT committed (rolled back)
-        position = positions_repo.get_by_symbol(user_id, "RELIANCE")
+        position = positions_repo.get_by_symbol(
+            user_id, "RELIANCE-EQ"
+        )  # Full symbol after migration
         assert position is None
 
     def test_transaction_nested_transactions(self, db_session):
@@ -97,7 +101,7 @@ class TestTransactionUtility:
         with transaction(session):
             positions_repo.upsert(
                 user_id=user_id,
-                symbol="RELIANCE",
+                symbol="RELIANCE-EQ",  # Full symbol after migration
                 quantity=10.0,
                 avg_price=100.0,
                 auto_commit=False,
@@ -107,15 +111,19 @@ class TestTransactionUtility:
             with transaction(session):
                 positions_repo.upsert(
                     user_id=user_id,
-                    symbol="TCS",
+                    symbol="TCS-EQ",  # Full symbol after migration
                     quantity=5.0,
                     avg_price=200.0,
                     auto_commit=False,
                 )
 
         # Both should be committed
-        rel_position = positions_repo.get_by_symbol(user_id, "RELIANCE")
-        tcs_position = positions_repo.get_by_symbol(user_id, "TCS")
+        rel_position = positions_repo.get_by_symbol(
+            user_id, "RELIANCE-EQ"
+        )  # Full symbol after migration
+        tcs_position = positions_repo.get_by_symbol(
+            user_id, "TCS-EQ"
+        )  # Full symbol after migration
         assert rel_position is not None
         assert tcs_position is not None
 
@@ -240,7 +248,7 @@ class TestMultiStepTransactionSafety:
             # Step 2: Create position
             positions_repo.upsert(
                 user_id=user_id,
-                symbol="RELIANCE",
+                symbol="RELIANCE-EQ",  # Full symbol after migration
                 quantity=10.0,
                 avg_price=100.0,
                 auto_commit=False,
@@ -248,7 +256,9 @@ class TestMultiStepTransactionSafety:
 
         # Both should be committed
         executed_order = orders_repo.get(order.id)
-        position = positions_repo.get_by_symbol(user_id, "RELIANCE")
+        position = positions_repo.get_by_symbol(
+            user_id, "RELIANCE-EQ"
+        )  # Full symbol after migration
 
         assert executed_order.status == OrderStatus.ONGOING
         assert position is not None

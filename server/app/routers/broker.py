@@ -643,14 +643,25 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                     )
 
                     positions_repo = PositionsRepository(db)
-                    # Normalize symbol: remove .NS/.BO suffix and -EQ/-BE suffix,
-                    # convert to uppercase
-                    normalized_symbol = symbol.upper().replace(".NS", "").replace(".BO", "")
-                    # Remove broker-specific suffixes like -EQ, -BE
-                    if "-" in normalized_symbol:
-                        normalized_symbol = normalized_symbol.split("-")[0]
+                    # After migration, positions have full symbols (e.g., "RELIANCE-EQ")
+                    # Try exact match first (broker may return full symbol)
+                    full_symbol = symbol.upper().replace(".NS", "").replace(".BO", "")
+                    position = positions_repo.get_by_symbol(current.id, full_symbol)
 
-                    position = positions_repo.get_by_symbol(current.id, normalized_symbol)
+                    # Fallback: If not found and symbol has segment suffix, try base symbol matching
+                    # This handles cases where broker returns base symbol but position has full symbol
+                    if not position and "-" in full_symbol:
+                        from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                            extract_base_symbol,
+                        )
+
+                        base_symbol = extract_base_symbol(full_symbol).upper()
+                        # Query all positions and find one matching base symbol
+                        all_positions = positions_repo.list(current.id)
+                        for pos in all_positions:
+                            if extract_base_symbol(pos.symbol).upper() == base_symbol:
+                                position = pos
+                                break
                     if position:
                         reentry_count = position.reentry_count or 0
                         entry_rsi = position.entry_rsi
@@ -671,14 +682,14 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
 
                         logger.debug(
                             f"Found reentry data for {symbol} "
-                            f"(normalized: {normalized_symbol}): "
+                            f"(full_symbol: {full_symbol}): "
                             f"count={reentry_count}, "
                             f"reentries={len(reentries_list) if reentries_list else 0}"
                         )
                     else:
                         logger.debug(
                             f"No position found for {symbol} "
-                            f"(normalized: {normalized_symbol}) in database"
+                            f"(full_symbol: {full_symbol}) in database"
                         )
                 except Exception as e:
                     logger.debug(f"Could not fetch reentry details for {symbol}: {e}")

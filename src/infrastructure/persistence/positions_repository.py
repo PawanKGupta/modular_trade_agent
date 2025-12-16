@@ -27,6 +27,13 @@ class PositionsRepository:
 
         Returns only open positions (closed_at IS NULL) to support multiple positions per symbol.
         For closed positions, use get_by_symbol_any(include_closed=True).
+
+        Args:
+            user_id: User ID
+            symbol: Full trading symbol (e.g., "RELIANCE-EQ", "SALSTEEL-BE")
+
+        Returns:
+            Most recent open position, or None if not found
         """
         stmt = (
             select(Positions)
@@ -50,7 +57,7 @@ class PositionsRepository:
 
         Args:
             user_id: User ID
-            symbol: Base symbol (without suffix)
+            symbol: Full trading symbol (e.g., "RELIANCE-EQ", "SALSTEEL-BE")
 
         Returns:
             Positions object with row lock, or None if not found
@@ -78,7 +85,7 @@ class PositionsRepository:
 
         Args:
             user_id: User ID
-            symbol: Base symbol (without suffix)
+            symbol: Full trading symbol (e.g., "RELIANCE-EQ", "SALSTEEL-BE")
             include_closed: If True, returns closed positions. If False, same as get_by_symbol().
 
         Returns:
@@ -199,7 +206,7 @@ class PositionsRepository:
 
         Args:
             user_id: User ID
-            symbol: Base symbol (without suffix)
+            symbol: Full trading symbol (e.g., "RELIANCE-EQ", "SALSTEEL-BE")
             closed_at: Closing timestamp (defaults to current time)
             exit_price: Exit price (optional, for future use)
             auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
@@ -235,7 +242,7 @@ class PositionsRepository:
 
         Args:
             user_id: User ID
-            symbol: Base symbol (without suffix)
+            symbol: Full trading symbol (e.g., "RELIANCE-EQ", "SALSTEEL-BE")
             sold_quantity: Quantity sold (to subtract from current quantity)
             auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
 

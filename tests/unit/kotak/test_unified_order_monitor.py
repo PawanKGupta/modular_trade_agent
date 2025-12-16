@@ -276,7 +276,7 @@ class TestUnifiedOrderMonitor:
         mock_order1.id = 1
         mock_order1.broker_order_id = "BROKER123"
         mock_order1.order_id = "ORDER123"
-        mock_order1.symbol = "RELIANCE"
+        mock_order1.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_order1.quantity = 10.0
         mock_order1.status = Mock(value="amo")
         mock_order1.placed_at = datetime.now()
@@ -285,7 +285,7 @@ class TestUnifiedOrderMonitor:
         mock_order2.id = 2
         mock_order2.broker_order_id = "BROKER456"
         mock_order2.order_id = "ORDER456"
-        mock_order2.symbol = "TCS"
+        mock_order2.symbol = "TCS-EQ"  # Full symbol after migration
         mock_order2.quantity = 5.0
         mock_order2.status = Mock(value="amo")
         mock_order2.placed_at = datetime.now()
@@ -298,8 +298,8 @@ class TestUnifiedOrderMonitor:
         assert len(unified_monitor.active_buy_orders) == 2
         assert "BROKER123" in unified_monitor.active_buy_orders
         assert "BROKER456" in unified_monitor.active_buy_orders
-        assert unified_monitor.active_buy_orders["BROKER123"]["symbol"] == "RELIANCE"
-        assert unified_monitor.active_buy_orders["BROKER456"]["symbol"] == "TCS"
+        assert unified_monitor.active_buy_orders["BROKER123"]["symbol"] == "RELIANCE-EQ"
+        assert unified_monitor.active_buy_orders["BROKER456"]["symbol"] == "TCS-EQ"
 
     def test_load_pending_buy_orders_no_broker_order_id(self, unified_monitor, mock_orders_repo):
         """Test loading orders without broker_order_id uses order_id"""
@@ -307,7 +307,7 @@ class TestUnifiedOrderMonitor:
         mock_order.id = 1
         mock_order.broker_order_id = None
         mock_order.order_id = "ORDER123"
-        mock_order.symbol = "RELIANCE"
+        mock_order.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_order.quantity = 10.0
         mock_order.status = Mock(value="amo")
         mock_order.placed_at = datetime.now()
@@ -346,7 +346,7 @@ class TestUnifiedOrderMonitor:
         """Test checking status for executed order"""
         # Setup active buy order
         unified_monitor.active_buy_orders["ORDER123"] = {
-            "symbol": "RELIANCE",
+            "symbol": "RELIANCE-EQ",  # Full symbol after migration
             "quantity": 10.0,
             "order_id": "ORDER123",
             "db_order_id": 1,
@@ -379,7 +379,7 @@ class TestUnifiedOrderMonitor:
     def test_check_buy_order_status_rejected(self, unified_monitor, mock_orders_repo):
         """Test checking status for rejected order"""
         unified_monitor.active_buy_orders["ORDER123"] = {
-            "symbol": "RELIANCE",
+            "symbol": "RELIANCE-EQ",  # Full symbol after migration
             "quantity": 10.0,
             "order_id": "ORDER123",
             "db_order_id": 1,
@@ -408,7 +408,7 @@ class TestUnifiedOrderMonitor:
     def test_check_buy_order_status_cancelled(self, unified_monitor, mock_orders_repo):
         """Test checking status for cancelled order"""
         unified_monitor.active_buy_orders["ORDER123"] = {
-            "symbol": "RELIANCE",
+            "symbol": "RELIANCE-EQ",  # Full symbol after migration
             "quantity": 10.0,
             "order_id": "ORDER123",
             "db_order_id": 1,
@@ -436,7 +436,7 @@ class TestUnifiedOrderMonitor:
     def test_check_buy_order_status_fetch_from_broker(self, unified_monitor, mock_sell_manager):
         """Test fetching orders from broker when not provided"""
         unified_monitor.active_buy_orders["ORDER123"] = {
-            "symbol": "RELIANCE",
+            "symbol": "RELIANCE-EQ",  # Full symbol after migration
             "quantity": 10.0,
             "order_id": "ORDER123",
             "db_order_id": 1,
@@ -457,7 +457,7 @@ class TestUnifiedOrderMonitor:
     def test_check_buy_order_status_order_not_found(self, unified_monitor):
         """Test when order is not found in broker orders"""
         unified_monitor.active_buy_orders["ORDER123"] = {
-            "symbol": "RELIANCE",
+            "symbol": "RELIANCE-EQ",  # Full symbol after migration
             "quantity": 10.0,
             "order_id": "ORDER123",
             "db_order_id": 1,
@@ -575,7 +575,7 @@ class TestUnifiedOrderMonitor:
         """Test monitoring with both buy and sell orders"""
         # Setup buy orders
         unified_monitor.active_buy_orders["ORDER123"] = {
-            "symbol": "RELIANCE",
+            "symbol": "RELIANCE-EQ",  # Full symbol after migration
             "quantity": 10.0,
             "order_id": "ORDER123",
             "db_order_id": 1,
@@ -607,7 +607,7 @@ class TestUnifiedOrderMonitor:
         mock_order.id = 1
         mock_order.broker_order_id = "BROKER123"
         mock_order.order_id = "ORDER123"
-        mock_order.symbol = "RELIANCE"
+        mock_order.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_order.quantity = 10.0
         mock_order.status = Mock(value="amo")
         mock_order.placed_at = datetime.now()
@@ -672,7 +672,7 @@ class TestUnifiedOrderMonitor:
     def test_check_buy_order_status_error_handling(self, unified_monitor):
         """Test error handling in check_buy_order_status"""
         unified_monitor.active_buy_orders["ORDER123"] = {
-            "symbol": "RELIANCE",
+            "symbol": "RELIANCE-EQ",  # Full symbol after migration
             "quantity": 10.0,
             "order_id": "ORDER123",
             "db_order_id": 1,
@@ -767,14 +767,14 @@ class TestUnifiedOrderMonitor:
 
         # Add some buy orders
         unified_monitor.active_buy_orders["ORDER1"] = {
-            "symbol": "RELIANCE",
+            "symbol": "RELIANCE-EQ",  # Full symbol after migration
             "quantity": 10.0,
             "order_id": "ORDER1",
             "price": 2450.0,
             "ticker": "RELIANCE.NS",
         }
         unified_monitor.active_buy_orders["ORDER2"] = {
-            "symbol": "TCS",
+            "symbol": "TCS-EQ",  # Full symbol after migration
             "quantity": 5.0,
             "order_id": "ORDER2",
             "price": None,  # Market order
@@ -786,14 +786,14 @@ class TestUnifiedOrderMonitor:
         assert count == 2
         assert mock_state_manager.register_buy_order.call_count == 2
         mock_state_manager.register_buy_order.assert_any_call(
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             order_id="ORDER1",
             quantity=10.0,
             price=2450.0,
             ticker="RELIANCE.NS",
         )
         mock_state_manager.register_buy_order.assert_any_call(
-            symbol="TCS",
+            symbol="TCS-EQ",  # Full symbol after migration
             order_id="ORDER2",
             quantity=5.0,
             price=None,
@@ -821,17 +821,17 @@ class TestUnifiedOrderMonitor:
         unified_monitor.sell_manager.state_manager = mock_state_manager
 
         unified_monitor.active_buy_orders["ORDER1"] = {
-            "symbol": "RELIANCE",
+            "symbol": "RELIANCE-EQ",  # Full symbol after migration
             "quantity": 10.0,
             "order_id": "ORDER1",
         }
         unified_monitor.active_buy_orders["ORDER2"] = {
-            "symbol": "TCS",
+            "symbol": "TCS-EQ",  # Full symbol after migration
             "quantity": 5.0,
             "order_id": "ORDER2",
         }
         unified_monitor.active_buy_orders["ORDER3"] = {
-            "symbol": "INFY",
+            "symbol": "INFY-EQ",  # Full symbol after migration
             "quantity": 3.0,
             "order_id": "ORDER3",
         }
@@ -847,13 +847,13 @@ class TestUnifiedOrderMonitor:
         mock_state_manager.mark_buy_order_executed = Mock(return_value=True)
         unified_monitor.sell_manager.state_manager = mock_state_manager
 
-        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}  # Full symbol after migration
         broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
 
         unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
 
         mock_state_manager.mark_buy_order_executed.assert_called_once_with(
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             order_id="ORDER1",
             execution_price=2455.50,
             execution_qty=10,
@@ -865,7 +865,7 @@ class TestUnifiedOrderMonitor:
         mock_state_manager.remove_buy_order_from_tracking = Mock(return_value=True)
         unified_monitor.sell_manager.state_manager = mock_state_manager
 
-        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}  # Full symbol after migration
         broker_order = {"neoOrdNo": "ORDER1", "rejRsn": "Insufficient balance"}
 
         unified_monitor._handle_buy_order_rejection("ORDER1", order_info, broker_order)
@@ -881,7 +881,7 @@ class TestUnifiedOrderMonitor:
         mock_state_manager.remove_buy_order_from_tracking = Mock(return_value=True)
         unified_monitor.sell_manager.state_manager = mock_state_manager
 
-        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}  # Full symbol after migration
         # Note: OrderFieldExtractor.get_rejection_reason() is used for cancellation
         # and may return None/Unknown if cancellation reason is not in expected format
         broker_order = {"neoOrdNo": "ORDER1", "rejRsn": "User cancelled"}
@@ -898,7 +898,7 @@ class TestUnifiedOrderMonitor:
         """Test buy order execution handler when OrderStateManager is not available"""
         unified_monitor.sell_manager.state_manager = None
 
-        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}  # Full symbol after migration
         broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
 
         # Should not raise exception
@@ -915,13 +915,13 @@ class TestUnifiedOrderMonitor:
         mock_telegram._should_send_notification = Mock(return_value=True)  # Always allow
         unified_monitor.telegram_notifier = mock_telegram
 
-        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}  # Full symbol after migration
         broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
 
         unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
 
         mock_telegram.notify_order_execution.assert_called_once_with(
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             order_id="ORDER1",
             quantity=10,
             executed_price=2455.50,
@@ -935,7 +935,7 @@ class TestUnifiedOrderMonitor:
         mock_telegram.notify_order_execution = Mock()
         unified_monitor.telegram_notifier = mock_telegram
 
-        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}  # Full symbol after migration
         broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
 
         unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
@@ -952,13 +952,13 @@ class TestUnifiedOrderMonitor:
         mock_telegram._should_send_notification = Mock(return_value=True)  # Always allow
         unified_monitor.telegram_notifier = mock_telegram
 
-        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}  # Full symbol after migration
         broker_order = {"neoOrdNo": "ORDER1", "rejRsn": "Insufficient balance"}
 
         unified_monitor._handle_buy_order_rejection("ORDER1", order_info, broker_order)
 
         mock_telegram.notify_order_rejection.assert_called_once_with(
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             order_id="ORDER1",
             quantity=10,
             rejection_reason="Insufficient balance",
@@ -975,13 +975,13 @@ class TestUnifiedOrderMonitor:
         mock_telegram._should_send_notification = Mock(return_value=True)  # Always allow
         unified_monitor.telegram_notifier = mock_telegram
 
-        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}  # Full symbol after migration
         broker_order = {"neoOrdNo": "ORDER1"}  # No rejection reason
 
         unified_monitor._handle_buy_order_rejection("ORDER1", order_info, broker_order)
 
         mock_telegram.notify_order_rejection.assert_called_once_with(
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             order_id="ORDER1",
             quantity=10,
             rejection_reason="Unknown",
@@ -998,13 +998,13 @@ class TestUnifiedOrderMonitor:
         mock_telegram._should_send_notification = Mock(return_value=True)  # Always allow
         unified_monitor.telegram_notifier = mock_telegram
 
-        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}  # Full symbol after migration
         broker_order = {"neoOrdNo": "ORDER1", "rejRsn": "User cancelled"}
 
         unified_monitor._handle_buy_order_cancellation("ORDER1", order_info, broker_order)
 
         mock_telegram.notify_order_cancelled.assert_called_once_with(
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             order_id="ORDER1",
             cancellation_reason="User cancelled",
             user_id=unified_monitor.user_id,
@@ -1017,7 +1017,7 @@ class TestUnifiedOrderMonitor:
         mock_telegram.notify_order_cancelled = Mock()
         unified_monitor.telegram_notifier = mock_telegram
 
-        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}  # Full symbol after migration
         broker_order = {"neoOrdNo": "ORDER1", "rejRsn": "User cancelled"}
 
         unified_monitor._handle_buy_order_cancellation("ORDER1", order_info, broker_order)
@@ -1031,7 +1031,7 @@ class TestUnifiedOrderMonitor:
         mock_telegram.notify_order_execution = Mock(side_effect=Exception("Notification error"))
         unified_monitor.telegram_notifier = mock_telegram
 
-        order_info = {"symbol": "RELIANCE", "quantity": 10.0}
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}  # Full symbol after migration
         broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
 
         # Should not raise exception
@@ -1124,7 +1124,7 @@ class TestUnifiedOrderMonitor:
         assert count == 1
         mock_sell_manager.place_sell_order.assert_called_once()
         mock_sell_manager._register_order.assert_called_once()
-        assert "RELIANCE" in mock_sell_manager.lowest_ema9
+        assert "RELIANCE-EQ" in mock_sell_manager.lowest_ema9
 
     def test_check_and_place_sell_orders_for_new_holdings_already_has_sell_order(
         self, unified_monitor, mock_orders_repo, mock_sell_manager
@@ -1190,7 +1190,7 @@ class TestUnifiedOrderMonitor:
         assert count == 1
         mock_sell_manager.place_sell_order.assert_called_once()
         mock_sell_manager._register_order.assert_called_once()
-        assert "RELIANCE" in mock_sell_manager.lowest_ema9
+        assert "RELIANCE-EQ" in mock_sell_manager.lowest_ema9
 
     def test_check_and_place_sell_orders_for_new_holdings_skips_sell_orders(
         self, unified_monitor, mock_orders_repo
@@ -1543,7 +1543,7 @@ class TestUnifiedOrderMonitor:
         assert count == 1
         assert mock_sell_manager._get_ema9_with_retry.call_count == 2
         assert mock_sell_manager.place_sell_order.call_count == 1
-        assert "TCS" in mock_sell_manager.lowest_ema9
+        assert "TCS-EQ" in mock_sell_manager.lowest_ema9
 
     def test_check_and_place_sell_orders_for_new_holdings_timezone_naive_datetime(
         self, unified_monitor, mock_orders_repo, mock_sell_manager
@@ -1591,7 +1591,7 @@ class TestUnifiedOrderMonitor:
         assert count == 1
         mock_sell_manager.place_sell_order.assert_called_once()
         mock_sell_manager._register_order.assert_called_once()
-        assert "RELIANCE" in mock_sell_manager.lowest_ema9
+        assert "RELIANCE-EQ" in mock_sell_manager.lowest_ema9
 
     def test_check_and_place_sell_orders_for_new_holdings_timezone_naive_filled_at(
         self, unified_monitor, mock_orders_repo, mock_sell_manager
@@ -1636,4 +1636,4 @@ class TestUnifiedOrderMonitor:
 
         assert count == 1
         mock_sell_manager.place_sell_order.assert_called_once()
-        assert "TCS" in mock_sell_manager.lowest_ema9
+        assert "TCS-EQ" in mock_sell_manager.lowest_ema9

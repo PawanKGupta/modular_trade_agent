@@ -73,7 +73,7 @@ class TestOrderExecutionTransactionSafety:
         # Create order
         order = orders_repo.create_amo(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=10.0,
@@ -95,7 +95,7 @@ class TestOrderExecutionTransactionSafety:
             # Create position
             positions_repo.upsert(
                 user_id=user_id,
-                symbol="RELIANCE",
+                symbol="RELIANCE-EQ",  # Full symbol after migration
                 quantity=10.0,
                 avg_price=100.0,
                 auto_commit=False,
@@ -103,7 +103,9 @@ class TestOrderExecutionTransactionSafety:
 
         # Both should be committed
         executed_order = orders_repo.get(order.id)
-        position = positions_repo.get_by_symbol(user_id, "RELIANCE")
+        position = positions_repo.get_by_symbol(
+            user_id, "RELIANCE-EQ"
+        )  # Full symbol after migration
 
         assert executed_order.status == OrderStatus.ONGOING
         assert position is not None
@@ -120,7 +122,7 @@ class TestOrderExecutionTransactionSafety:
         # Create order
         order = orders_repo.create_amo(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=10.0,
@@ -283,7 +285,7 @@ class TestSellExecutionTransactionSafety:
         # Create buy orders
         buy_order1 = orders_repo.create_amo(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=50.0,
@@ -293,7 +295,7 @@ class TestSellExecutionTransactionSafety:
 
         buy_order2 = orders_repo.create_amo(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=50.0,
@@ -353,7 +355,7 @@ class TestSellExecutionTransactionSafety:
         # Create buy order
         buy_order = orders_repo.create_amo(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=50.0,

@@ -78,13 +78,13 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         """Test when all positions have sell orders in database."""
         # Setup: 2 open positions
         pos1 = Mock(spec=Positions)
-        pos1.symbol = "RELIANCE"
+        pos1.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pos1.quantity = 10.0
         pos1.avg_price = 2500.0
         pos1.closed_at = None
 
         pos2 = Mock(spec=Positions)
-        pos2.symbol = "TCS"
+        pos2.symbol = "TCS-EQ"  # Full symbol after migration
         pos2.quantity = 5.0
         pos2.avg_price = 3500.0
         pos2.closed_at = None
@@ -116,19 +116,19 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         """Test when some positions have sell orders, some don't."""
         # Setup: 3 open positions
         pos1 = Mock(spec=Positions)
-        pos1.symbol = "RELIANCE"
+        pos1.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pos1.quantity = 10.0
         pos1.avg_price = 2500.0
         pos1.closed_at = None
 
         pos2 = Mock(spec=Positions)
-        pos2.symbol = "TCS"
+        pos2.symbol = "TCS-EQ"  # Full symbol after migration
         pos2.quantity = 5.0
         pos2.avg_price = 3500.0
         pos2.closed_at = None
 
         pos3 = Mock(spec=Positions)
-        pos3.symbol = "INFY"
+        pos3.symbol = "INFY-EQ"  # Full symbol after migration
         pos3.quantity = 8.0
         pos3.avg_price = 1500.0
         pos3.closed_at = None
@@ -150,9 +150,9 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
 
         assert len(result) == 2  # TCS and INFY
         symbols = [r["symbol"] for r in result]
-        assert "TCS" in symbols
-        assert "INFY" in symbols
-        assert "RELIANCE" not in symbols
+        assert "TCS-EQ" in symbols  # Full symbol after migration
+        assert "INFY-EQ" in symbols  # Full symbol after migration
+        assert "RELIANCE-EQ" not in symbols
 
         # Verify all have valid structure
         for r in result:
@@ -166,7 +166,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
     def test_ema9_calculation_failure(self, sell_manager, mock_positions_repo, mock_orders_repo):
         """Test when EMA9 calculation fails."""
         pos = Mock(spec=Positions)
-        pos.symbol = "RELIANCE"
+        pos.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pos.quantity = 10.0
         pos.avg_price = 2500.0
         pos.closed_at = None
@@ -181,13 +181,13 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         result = sell_manager.get_positions_without_sell_orders(skip_ema9_check=False)
 
         assert len(result) == 1
-        assert result[0]["symbol"] == "RELIANCE"
+        assert result[0]["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
         assert result[0]["reason"] == "EMA9 calculation failed (Issue #3)"
 
     def test_zero_quantity_position(self, sell_manager, mock_positions_repo, mock_orders_repo):
         """Test when position has zero quantity."""
         pos = Mock(spec=Positions)
-        pos.symbol = "RELIANCE"
+        pos.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pos.quantity = 0.0
         pos.avg_price = 2500.0
         pos.closed_at = None
@@ -201,7 +201,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         result = sell_manager.get_positions_without_sell_orders()
 
         assert len(result) == 1
-        assert result[0]["symbol"] == "RELIANCE"
+        assert result[0]["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
         assert result[0]["reason"] == "Zero or invalid quantity (Issue #2)"
 
     def test_closed_positions_excluded(self, sell_manager, mock_positions_repo, mock_orders_repo):
@@ -209,13 +209,13 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         from datetime import datetime
 
         open_pos = Mock(spec=Positions)
-        open_pos.symbol = "RELIANCE"
+        open_pos.symbol = "RELIANCE-EQ"  # Full symbol after migration
         open_pos.quantity = 10.0
         open_pos.avg_price = 2500.0
         open_pos.closed_at = None
 
         closed_pos = Mock(spec=Positions)
-        closed_pos.symbol = "TCS"
+        closed_pos.symbol = "TCS-EQ"  # Full symbol after migration
         closed_pos.quantity = 5.0
         closed_pos.avg_price = 3500.0
         closed_pos.closed_at = datetime.now()
@@ -228,15 +228,15 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         result = sell_manager.get_positions_without_sell_orders()
 
         assert len(result) == 1
-        assert result[0]["symbol"] == "RELIANCE"
-        assert "TCS" not in [r["symbol"] for r in result]
+        assert result[0]["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
+        assert "TCS-EQ" not in [r["symbol"] for r in result]  # Full symbol after migration
 
     def test_orders_repo_not_available(self, sell_manager, mock_positions_repo):
         """Test when orders_repo is not available."""
         sell_manager.orders_repo = None
 
         pos = Mock(spec=Positions)
-        pos.symbol = "RELIANCE"
+        pos.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pos.quantity = 10.0
         pos.avg_price = 2500.0
         pos.closed_at = None
@@ -249,14 +249,14 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
 
         # Should still work, just won't check for existing sell orders
         assert len(result) == 1
-        assert result[0]["symbol"] == "RELIANCE"
+        assert result[0]["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
 
     def test_enriches_metadata_from_orders(
         self, sell_manager, mock_positions_repo, mock_orders_repo
     ):
         """Test that ticker and broker_symbol are enriched from buy orders."""
         pos = Mock(spec=Positions)
-        pos.symbol = "RELIANCE"
+        pos.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pos.quantity = 10.0
         pos.avg_price = 2500.0
         pos.closed_at = None
@@ -284,13 +284,15 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         result = sell_manager.get_positions_without_sell_orders()
 
         assert len(result) == 1
+        # Ticker should use base symbol (RELIANCE.NS), not full symbol (RELIANCE-EQ.NS)
         assert result[0]["ticker"] == "RELIANCE.NS"
         assert result[0]["broker_symbol"] == "RELIANCE-EQ"
+        assert result[0]["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
 
     def test_exception_during_analysis(self, sell_manager, mock_positions_repo, mock_orders_repo):
         """Test when exception occurs during analysis."""
         pos = Mock(spec=Positions)
-        pos.symbol = "RELIANCE"
+        pos.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pos.quantity = 10.0
         pos.avg_price = 2500.0
         pos.closed_at = None
@@ -305,7 +307,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         result = sell_manager.get_positions_without_sell_orders(skip_ema9_check=False)
 
         assert len(result) == 1
-        assert result[0]["symbol"] == "RELIANCE"
+        assert result[0]["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
         assert "Error during analysis" in result[0]["reason"]
 
     def test_missing_positions_repo(self, sell_manager):
@@ -387,7 +389,7 @@ class TestGetPositionsWithoutSellOrdersBrokerAPIMode:
         sell_manager.get_open_positions = Mock(
             return_value=[
                 {
-                    "symbol": "RELIANCE",
+                    "symbol": "RELIANCE-EQ",  # Full symbol after migration
                     "qty": 10,
                     "entry_price": 2500.0,
                     "ticker": "RELIANCE.NS",
@@ -409,7 +411,7 @@ class TestGetPositionsWithoutSellOrdersBrokerAPIMode:
         sell_manager.get_existing_sell_orders.assert_called_once()
 
         assert len(result) == 1
-        assert result[0]["symbol"] == "RELIANCE"
+        assert result[0]["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
 
     def test_broker_api_validates_holdings(
         self, sell_manager, mock_positions_repo, mock_portfolio, mock_broker_orders
@@ -722,21 +724,21 @@ class TestCheckPositionsWithoutSellOrders:
 
         # Setup: 3 open positions with required fields
         pos1 = Mock(spec=Positions)
-        pos1.symbol = "RELIANCE"
+        pos1.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pos1.quantity = 10.0
         pos1.avg_price = 2500.0
         pos1.opened_at = datetime.now()
         pos1.closed_at = None
 
         pos2 = Mock(spec=Positions)
-        pos2.symbol = "TCS"
+        pos2.symbol = "TCS-EQ"  # Full symbol after migration
         pos2.quantity = 5.0
         pos2.avg_price = 3500.0
         pos2.opened_at = datetime.now()
         pos2.closed_at = None
 
         pos3 = Mock(spec=Positions)
-        pos3.symbol = "INFY"
+        pos3.symbol = "INFY-EQ"  # Full symbol after migration
         pos3.quantity = 8.0
         pos3.avg_price = 1500.0
         pos3.opened_at = datetime.now()
@@ -750,7 +752,9 @@ class TestCheckPositionsWithoutSellOrders:
 
         # Mock get_existing_sell_orders to return only RELIANCE
         sell_manager.get_existing_sell_orders = Mock(
-            return_value={"RELIANCE": {"order_id": "ORDER123", "qty": 10, "price": 2500.0}}
+            return_value={
+                "RELIANCE-EQ": {"order_id": "ORDER123", "qty": 10, "price": 2500.0}
+            }  # Full symbol after migration
         )
 
         count = sell_manager._check_positions_without_sell_orders()
@@ -775,14 +779,14 @@ class TestCheckPositionsWithoutSellOrders:
         from datetime import datetime
 
         open_pos = Mock(spec=Positions)
-        open_pos.symbol = "RELIANCE"
+        open_pos.symbol = "RELIANCE-EQ"  # Full symbol after migration
         open_pos.quantity = 10.0
         open_pos.avg_price = 2500.0
         open_pos.opened_at = datetime.now()
         open_pos.closed_at = None
 
         closed_pos = Mock(spec=Positions)
-        closed_pos.symbol = "TCS"
+        closed_pos.symbol = "TCS-EQ"  # Full symbol after migration
         closed_pos.quantity = 5.0
         closed_pos.avg_price = 3500.0
         closed_pos.opened_at = datetime.now()
@@ -1035,11 +1039,11 @@ class TestTelegramAlertEnhancements:
         sell_manager.active_sell_orders = {}
 
         pos1 = Mock(spec=Positions)
-        pos1.symbol = "RELIANCE"
+        pos1.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pos1.closed_at = None
 
         pos2 = Mock(spec=Positions)
-        pos2.symbol = "TCS"
+        pos2.symbol = "TCS-EQ"  # Full symbol after migration
         pos2.closed_at = None
 
         mock_positions_repo.list.return_value = [pos1, pos2]

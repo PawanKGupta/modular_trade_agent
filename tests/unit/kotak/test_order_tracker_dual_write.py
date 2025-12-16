@@ -82,7 +82,7 @@ class TestOrderTrackerDualWrite:
 
         order_tracker_with_db.add_pending_order(
             order_id="ORDER123",
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             ticker="RELIANCE.NS",
             qty=10,
             order_type="MARKET",
@@ -94,7 +94,7 @@ class TestOrderTrackerDualWrite:
         mock_orders_repo.create_amo.assert_called_once()
         call_args = mock_orders_repo.create_amo.call_args
         assert call_args.kwargs["user_id"] == 1
-        assert call_args.kwargs["symbol"] == "RELIANCE"
+        assert call_args.kwargs["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
         assert call_args.kwargs["quantity"] == 10
 
         # Should also write to JSON
@@ -109,7 +109,7 @@ class TestOrderTrackerDualWrite:
         """Test adding pending order with JSON only (no DB)"""
         order_tracker_json_only.add_pending_order(
             order_id="ORDER123",
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             ticker="RELIANCE.NS",
             qty=10,
         )
@@ -151,7 +151,7 @@ class TestOrderTrackerDualWrite:
         mock_order = Mock()
         mock_order.broker_order_id = "ORDER123"
         mock_order.order_id = "ORDER123"
-        mock_order.symbol = "RELIANCE"
+        mock_order.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_order.quantity = 10
         mock_order.price = 2450.0
         mock_order.order_type = "market"
@@ -167,7 +167,7 @@ class TestOrderTrackerDualWrite:
         # Should read from DB
         assert len(orders) == 1
         assert orders[0]["order_id"] == "ORDER123"
-        assert orders[0]["symbol"] == "RELIANCE"
+        assert orders[0]["symbol"] == "RELIANCE-EQ"  # Full symbol after migration
         mock_orders_repo.list.assert_called_once_with(1)
 
     def test_get_pending_orders_json_fallback(self, order_tracker_with_db, mock_orders_repo):
@@ -257,7 +257,7 @@ class TestOrderTrackerDualWrite:
         mock_order = Mock()
         mock_order.broker_order_id = "ORDER123"
         mock_order.order_id = "ORDER123"
-        mock_order.symbol = "RELIANCE"
+        mock_order.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_order.quantity = 10
         mock_order.price = 2450.0
         mock_order.order_type = "market"
@@ -511,7 +511,9 @@ class TestOrderTrackerDualWrite:
         assert result is False
         mock_orders_repo.mark_cancelled.assert_not_called()
 
-    def test_remove_pending_order_cancels_pending_status(self, order_tracker_with_db, mock_orders_repo):
+    def test_remove_pending_order_cancels_pending_status(
+        self, order_tracker_with_db, mock_orders_repo
+    ):
         """Test that removing PENDING order cancels it"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
@@ -531,7 +533,9 @@ class TestOrderTrackerDualWrite:
             mock_order, cancelled_reason="Removed from pending tracking"
         )
 
-    def test_remove_pending_order_cancels_failed_status(self, order_tracker_with_db, mock_orders_repo):
+    def test_remove_pending_order_cancels_failed_status(
+        self, order_tracker_with_db, mock_orders_repo
+    ):
         """Test that removing FAILED order cancels it"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
@@ -551,7 +555,9 @@ class TestOrderTrackerDualWrite:
             mock_order, cancelled_reason="Removed from pending tracking"
         )
 
-    def test_remove_pending_order_does_not_cancel_ongoing_status(self, order_tracker_with_db, mock_orders_repo):
+    def test_remove_pending_order_does_not_cancel_ongoing_status(
+        self, order_tracker_with_db, mock_orders_repo
+    ):
         """Test that removing ONGOING order does NOT cancel it (just removes from tracking)"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
@@ -573,7 +579,9 @@ class TestOrderTrackerDualWrite:
         assert result is True
         mock_orders_repo.mark_cancelled.assert_not_called()
 
-    def test_remove_pending_order_does_not_cancel_closed_status(self, order_tracker_with_db, mock_orders_repo):
+    def test_remove_pending_order_does_not_cancel_closed_status(
+        self, order_tracker_with_db, mock_orders_repo
+    ):
         """Test that removing CLOSED order does NOT cancel it"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
@@ -590,7 +598,9 @@ class TestOrderTrackerDualWrite:
         assert result is True
         mock_orders_repo.mark_cancelled.assert_not_called()
 
-    def test_remove_pending_order_does_not_cancel_cancelled_status(self, order_tracker_with_db, mock_orders_repo):
+    def test_remove_pending_order_does_not_cancel_cancelled_status(
+        self, order_tracker_with_db, mock_orders_repo
+    ):
         """Test that removing CANCELLED order does NOT cancel it again"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
@@ -617,7 +627,7 @@ class TestOrderTrackerDualWrite:
         mock_order = Mock()
         mock_order.broker_order_id = "ORDER1"
         mock_order.order_id = "ORDER1"
-        mock_order.symbol = "RELIANCE"
+        mock_order.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_order.quantity = 10
         mock_order.price = 2450.0
         mock_order.order_type = "market"
@@ -642,7 +652,7 @@ class TestOrderTrackerDualWrite:
         mock_order = Mock()
         mock_order.broker_order_id = "ORDER1"
         mock_order.order_id = "ORDER1"
-        mock_order.symbol = "RELIANCE"
+        mock_order.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_order.quantity = 10
         mock_order.price = 2450.0
         mock_order.order_type = "market"

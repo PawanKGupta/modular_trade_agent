@@ -59,7 +59,7 @@ def sample_position(positions_repo, user_id):
     """Create a sample open position for testing"""
     return positions_repo.upsert(
         user_id=user_id,
-        symbol="RELIANCE",
+        symbol="RELIANCE-EQ",  # Full symbol after migration
         quantity=35.0,
         avg_price=2500.0,
         opened_at=ist_now(),
@@ -191,7 +191,7 @@ class TestMonitorAndUpdatePositionTableUpdates:
                 with patch.object(sell_manager, "mark_position_closed", return_value=True):
                     # Setup active sell order
                     sell_manager.active_sell_orders = {
-                        "RELIANCE": {
+                        "RELIANCE-EQ": {  # Full symbol after migration
                             "order_id": "ORDER123",
                             "qty": 35,
                             "target_price": 2550.0,
@@ -225,7 +225,7 @@ class TestMonitorAndUpdatePositionTableUpdates:
                 with patch.object(sell_manager, "mark_position_closed", return_value=True):
                     # Setup active sell order
                     sell_manager.active_sell_orders = {
-                        "RELIANCE": {
+                        "RELIANCE-EQ": {  # Full symbol after migration
                             "order_id": "ORDER123",
                             "qty": 35,
                             "target_price": 2550.0,
@@ -251,7 +251,7 @@ class TestMonitorAndUpdatePositionTableUpdates:
                     with patch.object(sell_manager, "mark_position_closed", return_value=True):
                         # Setup active sell order
                         sell_manager.active_sell_orders = {
-                            "RELIANCE": {
+                            "RELIANCE-EQ": {  # Full symbol after migration
                                 "order_id": "ORDER123",
                                 "qty": 35,
                                 "target_price": 2550.0,
@@ -284,7 +284,7 @@ class TestMonitorAndUpdatePositionTableUpdates:
             with patch.object(sell_manager, "state_manager", None):
                 with patch.object(sell_manager, "mark_position_closed", return_value=True):
                     sell_manager.active_sell_orders = {
-                        "RELIANCE": {
+                        "RELIANCE-EQ": {  # Full symbol after migration
                             "order_id": "ORDER123",
                             "qty": 35,
                             "target_price": 2550.0,
@@ -316,7 +316,7 @@ class TestMonitorAndUpdatePositionTableUpdates:
             with patch.object(sell_manager, "state_manager", None):
                 with patch.object(sell_manager, "mark_position_closed", return_value=True):
                     sell_manager.active_sell_orders = {
-                        "RELIANCE": {
+                        "RELIANCE-EQ": {  # Full symbol after migration
                             "order_id": "ORDER123",
                             "qty": 35,  # This will be used for comparison
                             "target_price": 2550.0,
@@ -371,7 +371,7 @@ class TestMonitorAndUpdatePositionTableUpdates:
         # Create position with base symbol
         position = positions_repo.upsert(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=35.0,
             avg_price=2500.0,
         )

@@ -45,7 +45,7 @@ def mock_position():
     position.entry_rsi = None
     position.reentries = None
     position.user_id = 1
-    position.symbol = "RELIANCE"
+    position.symbol = "RELIANCE-EQ"  # Full symbol after migration
     return position
 
 

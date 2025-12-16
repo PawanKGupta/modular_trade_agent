@@ -45,7 +45,7 @@ def sample_position(positions_repo, user_id):
     """Create a sample open position for testing"""
     return positions_repo.upsert(
         user_id=user_id,
-        symbol="RELIANCE",
+        symbol="RELIANCE-EQ",  # Full symbol after migration
         quantity=35.0,
         avg_price=2500.0,
         opened_at=datetime.now(),
@@ -66,14 +66,14 @@ class TestMarkClosed:
         # Mark as closed
         closed_position = positions_repo.mark_closed(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
         )
 
         # Verify position is closed
         assert closed_position is not None
         assert closed_position.closed_at is not None
         assert closed_position.quantity == 0.0
-        assert closed_position.symbol == "RELIANCE"
+        assert closed_position.symbol == "RELIANCE-EQ"  # Full symbol after migration
 
     def test_mark_closed_with_custom_closed_at(self, positions_repo, user_id, sample_position):
         """Test that mark_closed() accepts custom closed_at timestamp"""
@@ -81,7 +81,7 @@ class TestMarkClosed:
 
         closed_position = positions_repo.mark_closed(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             closed_at=custom_time,
         )
 
@@ -92,7 +92,7 @@ class TestMarkClosed:
         """Test that mark_closed() accepts exit_price parameter (for future use)"""
         closed_position = positions_repo.mark_closed(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             exit_price=2550.0,
         )
 
@@ -113,7 +113,7 @@ class TestMarkClosed:
         # Try to close position with wrong user_id
         result = positions_repo.mark_closed(
             user_id=999,  # Different user
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
         )
 
         assert result is None
@@ -138,7 +138,7 @@ class TestReduceQuantity:
         # Reduce quantity by 20 (partial sell)
         updated_position = positions_repo.reduce_quantity(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             sold_quantity=20.0,
         )
 
@@ -151,7 +151,7 @@ class TestReduceQuantity:
         # Reduce quantity by full amount
         updated_position = positions_repo.reduce_quantity(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             sold_quantity=35.0,
         )
 
@@ -166,7 +166,7 @@ class TestReduceQuantity:
         # Try to reduce more than available
         updated_position = positions_repo.reduce_quantity(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             sold_quantity=50.0,  # More than 35
         )
 
@@ -179,7 +179,7 @@ class TestReduceQuantity:
         # First partial sell: 10 shares
         pos1 = positions_repo.reduce_quantity(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             sold_quantity=10.0,
         )
         assert pos1.quantity == 25.0  # 35 - 10
@@ -188,7 +188,7 @@ class TestReduceQuantity:
         # Second partial sell: 15 shares
         pos2 = positions_repo.reduce_quantity(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             sold_quantity=15.0,
         )
         assert pos2.quantity == 10.0  # 25 - 15
@@ -197,7 +197,7 @@ class TestReduceQuantity:
         # Third partial sell: remaining 10 shares
         pos3 = positions_repo.reduce_quantity(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             sold_quantity=10.0,
         )
         assert pos3.quantity == 0.0
@@ -218,7 +218,7 @@ class TestReduceQuantity:
         # Try to reduce quantity with wrong user_id
         result = positions_repo.reduce_quantity(
             user_id=999,  # Different user
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             sold_quantity=10.0,
         )
 
@@ -279,7 +279,7 @@ class TestSellOrderExecutionUpdatesPositions:
                 with patch.object(sell_manager, "mark_position_closed", return_value=True):
                     # Setup active sell order
                     sell_manager.active_sell_orders = {
-                        "RELIANCE": {
+                        "RELIANCE-EQ": {  # Full symbol after migration
                             "order_id": "ORDER123",
                             "qty": 35,
                             "target_price": 2550.0,
@@ -315,7 +315,7 @@ class TestSellOrderExecutionUpdatesPositions:
                 with patch.object(sell_manager, "mark_position_closed", return_value=True):
                     # Setup active sell order
                     sell_manager.active_sell_orders = {
-                        "RELIANCE": {
+                        "RELIANCE-EQ": {  # Full symbol after migration
                             "order_id": "ORDER123",
                             "qty": 35,
                             "target_price": 2550.0,
@@ -350,7 +350,7 @@ class TestSellOrderExecutionUpdatesPositions:
             with patch.object(sell_manager, "state_manager", None):
                 with patch.object(sell_manager, "mark_position_closed", return_value=True):
                     sell_manager.active_sell_orders = {
-                        "RELIANCE": {
+                        "RELIANCE-EQ": {  # Full symbol after migration
                             "order_id": "ORDER123",
                             "qty": 35,
                             "target_price": 2550.0,
@@ -383,7 +383,7 @@ class TestSellOrderExecutionUpdatesPositions:
             with patch.object(sell_manager, "state_manager", None):
                 with patch.object(sell_manager, "mark_position_closed", return_value=True):
                     sell_manager.active_sell_orders = {
-                        "RELIANCE": {
+                        "RELIANCE-EQ": {  # Full symbol after migration
                             "order_id": "ORDER123",
                             "qty": 35,
                             "target_price": 2550.0,

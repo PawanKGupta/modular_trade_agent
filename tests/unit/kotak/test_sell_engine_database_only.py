@@ -72,7 +72,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Create mock position
         mock_position = Mock()
-        mock_position.symbol = "IFBIND"
+        mock_position.symbol = "IFBIND-EQ"
         mock_position.quantity = 10.0
         mock_position.avg_price = 1500.0
         mock_position.opened_at = ist_now()
@@ -96,7 +96,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Verify result
         assert len(result) == 1
-        assert result[0]["symbol"] == "IFBIND"
+        assert result[0]["symbol"] == "IFBIND-EQ"
         assert result[0]["qty"] == 10.0
         assert result[0]["entry_price"] == 1500.0
         assert result[0]["status"] == "open"
@@ -113,14 +113,14 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Create mock positions (one open, one closed)
         mock_open_position = Mock()
-        mock_open_position.symbol = "RELIANCE"
+        mock_open_position.symbol = "RELIANCE-EQ"
         mock_open_position.quantity = 10.0
         mock_open_position.avg_price = 2500.0
         mock_open_position.opened_at = ist_now()
         mock_open_position.closed_at = None  # Open position
 
         mock_closed_position = Mock()
-        mock_closed_position.symbol = "TCS"
+        mock_closed_position.symbol = "TCS-EQ"
         mock_closed_position.quantity = 5.0
         mock_closed_position.avg_price = 3500.0
         mock_closed_position.opened_at = ist_now()
@@ -141,7 +141,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Verify only open position is returned
         assert len(result) == 1
-        assert result[0]["symbol"] == "RELIANCE"
+        assert result[0]["symbol"] == "RELIANCE-EQ"
         # Note: closed_at is not included in returned dict - it's only used for filtering
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
@@ -156,7 +156,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Create mock position
         mock_position = Mock()
-        mock_position.symbol = "IFBIND"
+        mock_position.symbol = "IFBIND-EQ"
         mock_position.quantity = 10.0
         mock_position.avg_price = 1500.0
         mock_position.opened_at = ist_now()
@@ -198,6 +198,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Verify metadata was enriched
         assert len(result) == 1
+        assert result[0]["symbol"] == "IFBIND-EQ"
         assert result[0]["ticker"] == "IFBIND.NS"  # From order metadata
         assert result[0]["placed_symbol"] == "IFBIND-EQ"  # From order symbol
 
@@ -211,7 +212,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Create mock position
         mock_position = Mock()
-        mock_position.symbol = "RELIANCE"
+        mock_position.symbol = "RELIANCE-EQ"
         mock_position.quantity = 10.0
         mock_position.avg_price = 2500.0
         mock_position.opened_at = ist_now()
@@ -233,6 +234,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Verify result uses default values
         assert len(result) == 1
+        assert result[0]["symbol"] == "RELIANCE-EQ"
         assert result[0]["ticker"] == "RELIANCE.NS"  # Default ticker
         assert result[0]["placed_symbol"] == "RELIANCE-EQ"  # Default placed_symbol
 
@@ -313,7 +315,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Create mock position
         mock_position = Mock()
-        mock_position.symbol = "RELIANCE"
+        mock_position.symbol = "RELIANCE-EQ"
         mock_position.quantity = 10.0
         mock_position.avg_price = 2500.0
         mock_position.opened_at = ist_now()
@@ -338,6 +340,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Verify result uses default values (error handled gracefully)
         assert len(result) == 1
+        assert result[0]["symbol"] == "RELIANCE-EQ"
         assert result[0]["ticker"] == "RELIANCE.NS"  # Default ticker
         assert result[0]["placed_symbol"] == "RELIANCE-EQ"  # Default placed_symbol
 
@@ -351,7 +354,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Create multiple mock positions
         positions = []
-        for i, symbol in enumerate(["RELIANCE", "TCS", "INFY"]):
+        for i, symbol in enumerate(["RELIANCE-EQ", "TCS-EQ", "INFY-EQ"]):
             mock_position = Mock()
             mock_position.symbol = symbol
             mock_position.quantity = 10.0 + i
@@ -375,9 +378,9 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Verify all positions are returned
         assert len(result) == 3
-        assert result[0]["symbol"] == "RELIANCE"
-        assert result[1]["symbol"] == "TCS"
-        assert result[2]["symbol"] == "INFY"
+        assert result[0]["symbol"] == "RELIANCE-EQ"
+        assert result[1]["symbol"] == "TCS-EQ"
+        assert result[2]["symbol"] == "INFY-EQ"
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
@@ -391,7 +394,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Create mock position
         mock_position = Mock()
-        mock_position.symbol = "IFBIND"
+        mock_position.symbol = "IFBIND-EQ"
         mock_position.quantity = 10.0
         mock_position.avg_price = 1500.0
         mock_position.opened_at = ist_now()
@@ -437,7 +440,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Verify matching order's metadata was used
         assert len(result) == 1
-        assert result[0]["symbol"] == "IFBIND"
+        assert result[0]["symbol"] == "IFBIND-EQ"
         assert result[0]["ticker"] == "IFBIND.NS"  # From matching order
         assert result[0]["placed_symbol"] == "IFBIND-EQ"  # From matching order
 
@@ -453,7 +456,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Create mock position
         mock_position = Mock()
-        mock_position.symbol = "RELIANCE"
+        mock_position.symbol = "RELIANCE-EQ"
         mock_position.quantity = 10.0
         mock_position.avg_price = 2500.0
         mock_position.opened_at = ist_now()
@@ -499,7 +502,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
         # Verify buy order's metadata was used (sell order ignored)
         assert len(result) == 1
-        assert result[0]["symbol"] == "RELIANCE"
+        assert result[0]["symbol"] == "RELIANCE-EQ"
         assert result[0]["ticker"] == "RELIANCE.NS"  # From buy order
         assert result[0]["placed_symbol"] == "RELIANCE-EQ"  # From buy order
 
@@ -527,7 +530,7 @@ class TestSellOrderManagerRunAtMarketOpenDatabaseOnly:
 
         # Create mock position
         mock_position = Mock()
-        mock_position.symbol = "IFBIND"
+        mock_position.symbol = "IFBIND-EQ"
         mock_position.quantity = 10.0
         mock_position.avg_price = 1500.0
         mock_position.opened_at = ist_now()

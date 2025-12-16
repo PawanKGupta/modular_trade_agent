@@ -104,7 +104,7 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
 
         # Mock existing sell order (35 shares)
         mock_sell_manager.get_existing_sell_orders.return_value = {
-            "RELIANCE": {
+            "RELIANCE-EQ": {  # Full symbol after migration
                 "order_id": "SELL123",
                 "qty": 35,
                 "price": 9.50,
@@ -127,7 +127,7 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
         # Verify sell order was updated
         mock_sell_manager.update_sell_order.assert_called_once_with(
             order_id="SELL123",
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             qty=45,  # Updated quantity
             new_price=9.50,  # Same price
         )
@@ -192,7 +192,7 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
         mock_orders_repo.get.return_value = db_order
 
         mock_sell_manager.get_existing_sell_orders.return_value = {
-            "RELIANCE": {
+            "RELIANCE-EQ": {  # Full symbol after migration
                 "order_id": "SELL123",
                 "qty": 35,
                 "price": 9.50,

@@ -222,7 +222,6 @@ class OrdersRepository:
         if side == "buy":
             existing_orders = self.list(user_id)
             symbol_upper = symbol.upper().strip()
-            base_symbol = symbol_upper.split("-")[0].strip()
 
             for existing_order in existing_orders:
                 if existing_order.side != "buy":
@@ -231,23 +230,13 @@ class OrdersRepository:
                     continue
 
                 existing_symbol_upper = existing_order.symbol.upper().strip()
-                existing_base = existing_symbol_upper.split("-")[0].strip()
 
-                # First: Check exact symbol match (most common - same format)
+                # Only exact match (full symbols are different instruments)
                 if existing_symbol_upper == symbol_upper:
                     logger.warning(
-                        f"Duplicate order prevented: Active buy order already exists with exact symbol '{symbol}'. "
+                        f"Duplicate order prevented: Active buy order already exists with symbol '{symbol}'. "
                         f"Existing order: {existing_order.symbol} (id: {existing_order.id}, status: {existing_order.status}). "
                         f"Returning existing order."
-                    )
-                    return existing_order
-
-                # Second: Check base symbol match (fallback for different formats)
-                if existing_base == base_symbol:
-                    logger.warning(
-                        f"Duplicate order prevented: Active buy order already exists for base symbol '{base_symbol}'. "
-                        f"Existing order: {existing_order.symbol} (id: {existing_order.id}, status: {existing_order.status}). "
-                        f"Requested symbol: {symbol}. Returning existing order."
                     )
                     return existing_order
 

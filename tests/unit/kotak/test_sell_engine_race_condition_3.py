@@ -54,7 +54,7 @@ class TestReentryDuringSellOrderUpdate:
         # Initial position read (stale quantity)
         initial_position = Positions(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=100.0,
             avg_price=100.0,
             opened_at=ist_now(),
@@ -63,7 +63,7 @@ class TestReentryDuringSellOrderUpdate:
         # Updated position (after reentry executed)
         updated_position = Positions(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=110.0,  # Reentry added 10 shares
             avg_price=105.0,
             opened_at=ist_now(),
@@ -73,7 +73,7 @@ class TestReentryDuringSellOrderUpdate:
         sell_manager.get_open_positions = MagicMock(
             return_value=[
                 {
-                    "symbol": "RELIANCE",
+                    "symbol": "RELIANCE-EQ",  # Full symbol after migration
                     "ticker": "RELIANCE.NS",
                     "qty": 100.0,  # Stale quantity
                     "entry_price": 100.0,
@@ -84,7 +84,7 @@ class TestReentryDuringSellOrderUpdate:
         # Mock existing sell order with LOWER quantity (triggers update path)
         sell_manager.get_existing_sell_orders = MagicMock(
             return_value={
-                "RELIANCE": {
+                "RELIANCE-EQ": {  # Full symbol after migration
                     "order_id": "SELL123",
                     "qty": 90,  # Existing order has LESS quantity (triggers qty > existing_qty)
                     "price": 100.0,
@@ -102,7 +102,9 @@ class TestReentryDuringSellOrderUpdate:
         # Verify position was re-read with lock
         # Note: Called twice - once for re-read before update, once for _reconcile_single_symbol()
         assert mock_positions_repo.get_by_symbol_for_update.call_count == 2
-        mock_positions_repo.get_by_symbol_for_update.assert_any_call(1, "RELIANCE")
+        mock_positions_repo.get_by_symbol_for_update.assert_any_call(
+            1, "RELIANCE-EQ"
+        )  # Full symbol after migration
 
         # Verify sell order was updated with latest quantity (110, not 100)
         sell_manager.update_sell_order.assert_called_once()
@@ -115,7 +117,7 @@ class TestReentryDuringSellOrderUpdate:
         sell_manager.get_open_positions = MagicMock(
             return_value=[
                 {
-                    "symbol": "RELIANCE",
+                    "symbol": "RELIANCE-EQ",  # Full symbol after migration
                     "ticker": "RELIANCE.NS",
                     "qty": 100.0,
                     "entry_price": 100.0,
@@ -126,7 +128,7 @@ class TestReentryDuringSellOrderUpdate:
         # Mock existing sell order with LOWER quantity (triggers update path)
         sell_manager.get_existing_sell_orders = MagicMock(
             return_value={
-                "RELIANCE": {
+                "RELIANCE-EQ": {  # Full symbol after migration
                     "order_id": "SELL123",
                     "qty": 90,  # Existing order has LESS quantity (triggers qty > existing_qty)
                     "price": 100.0,
@@ -189,7 +191,7 @@ class TestReentryDuringSellOrderUpdate:
         # Setup
         updated_position = Positions(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=110.0,
             avg_price=105.0,
             opened_at=ist_now(),
@@ -198,7 +200,7 @@ class TestReentryDuringSellOrderUpdate:
         sell_manager.get_open_positions = MagicMock(
             return_value=[
                 {
-                    "symbol": "RELIANCE",
+                    "symbol": "RELIANCE-EQ",  # Full symbol after migration
                     "ticker": "RELIANCE.NS",
                     "qty": 100.0,
                     "entry_price": 100.0,
@@ -208,7 +210,7 @@ class TestReentryDuringSellOrderUpdate:
 
         sell_manager.get_existing_sell_orders = MagicMock(
             return_value={
-                "RELIANCE": {
+                "RELIANCE-EQ": {  # Full symbol after migration
                     "order_id": "SELL123",
                     "qty": 90,  # Existing order has LESS quantity (triggers qty > existing_qty)
                     "price": 100.0,

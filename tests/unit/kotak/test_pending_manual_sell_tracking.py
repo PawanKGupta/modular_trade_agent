@@ -67,7 +67,7 @@ class TestDetectPendingManualSellOrders:
         """Test that pending manual sell is detected and tracked for system position."""
         # Setup: System position
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -84,7 +84,7 @@ class TestDetectPendingManualSellOrders:
         mock_orders_repo.list.return_value = [system_buy_order]
 
         # Mock get_open_positions
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         # Mock pending orders with manual sell
         mock_orders.get_pending_orders.return_value = [
@@ -106,8 +106,8 @@ class TestDetectPendingManualSellOrders:
         assert stats["tracked"] == 1
 
         # Verify: Tracked in active_sell_orders
-        assert "RELIANCE" in sell_manager.active_sell_orders
-        tracked_order = sell_manager.active_sell_orders["RELIANCE"]
+        assert "RELIANCE-EQ" in sell_manager.active_sell_orders
+        tracked_order = sell_manager.active_sell_orders["RELIANCE-EQ"]
         assert tracked_order["order_id"] == "PENDING123"
         assert tracked_order["target_price"] == 2500.0
         assert tracked_order["qty"] == 100
@@ -118,7 +118,7 @@ class TestDetectPendingManualSellOrders:
     ):
         """Test that pending manual sell is tracked in active_sell_orders."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -133,7 +133,7 @@ class TestDetectPendingManualSellOrders:
         system_buy_order.execution_time = position.opened_at
         mock_orders_repo.list.return_value = [system_buy_order]
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         mock_orders.get_pending_orders.return_value = [
             {
@@ -149,20 +149,20 @@ class TestDetectPendingManualSellOrders:
         stats = sell_manager._detect_and_track_pending_manual_sell_orders()
 
         assert stats["tracked"] == 1
-        assert "RELIANCE" in sell_manager.active_sell_orders
+        assert "RELIANCE-EQ" in sell_manager.active_sell_orders
 
     def test_skips_tracked_pending_orders(
         self, sell_manager, mock_positions_repo, mock_orders_repo, mock_orders
     ):
         """Test that already tracked pending orders are skipped."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
 
         mock_positions_repo.list.return_value = [position]
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         # Order already tracked
         sell_manager.active_sell_orders = {
@@ -214,7 +214,7 @@ class TestDetectPendingManualSellOrders:
     ):
         """Test that pending manual sell for closed position is skipped."""
         closed_position = Mock(spec=Positions)
-        closed_position.symbol = "RELIANCE"
+        closed_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         closed_position.quantity = 0.0
         closed_position.closed_at = ist_now() - timedelta(minutes=5)
 
@@ -244,7 +244,7 @@ class TestDetectPendingManualSellOrders:
     ):
         """Test that only system positions are tracked."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -255,7 +255,7 @@ class TestDetectPendingManualSellOrders:
         # No system buy order (manual buy position)
         mock_orders_repo.list.return_value = []
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         mock_orders.get_pending_orders.return_value = [
             {
@@ -279,12 +279,12 @@ class TestDetectPendingManualSellOrders:
     ):
         """Test that pending orders API failure is handled gracefully."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
 
         mock_positions_repo.list.return_value = [position]
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         # API failure
         mock_orders.get_pending_orders.side_effect = Exception("API Error")
@@ -320,7 +320,7 @@ class TestDetectPendingManualSellOrders:
     ):
         """Test that tracking prevents system from placing duplicate sell order."""
         position = Mock(spec=Positions)
-        position.symbol = "RELIANCE"
+        position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         position.quantity = 100.0
         position.closed_at = None
         position.opened_at = ist_now() - timedelta(hours=2)
@@ -335,7 +335,7 @@ class TestDetectPendingManualSellOrders:
         system_buy_order.execution_time = position.opened_at
         mock_orders_repo.list.return_value = [system_buy_order]
 
-        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE", "qty": 100}])
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
         mock_orders.get_pending_orders.return_value = [
             {
@@ -353,5 +353,5 @@ class TestDetectPendingManualSellOrders:
         assert stats["tracked"] == 1
 
         # Verify: System would skip placing sell order because it's in active_sell_orders
-        assert "RELIANCE" in sell_manager.active_sell_orders
+        assert "RELIANCE-EQ" in sell_manager.active_sell_orders
         # This prevents duplicate placement in check_and_place_sell_orders_for_new_holdings()
