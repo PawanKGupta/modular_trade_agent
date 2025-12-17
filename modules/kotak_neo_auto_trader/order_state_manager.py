@@ -32,7 +32,6 @@ except ImportError:
     from modules.kotak_neo_auto_trader.domain.value_objects.order_enums import OrderStatus
     from modules.kotak_neo_auto_trader.order_tracker import OrderTracker
     from modules.kotak_neo_auto_trader.storage import (
-        append_trade,
         cleanup_expired_failed_orders,
         load_history,
         mark_position_closed,
@@ -354,28 +353,31 @@ class OrderStateManager:
                     order_id=order_id, status="EXECUTED", executed_qty=int(execution_qty)
                 )
 
-                # 3. Add new position to trade history
-                try:
-                    new_trade = {
-                        "symbol": base_symbol,
-                        "ticker": order_info.get("ticker", base_symbol),
-                        "entry_price": execution_price,
-                        "qty": execution_qty,
-                        "entry_time": datetime.now().isoformat(),
-                        "status": "open",
-                        "buy_order_id": order_id,
-                        "source": "AMO",
-                    }
-                    append_trade(self.history_path, new_trade)
-
-                    logger.info(
-                        f"Added new position to trade history: {base_symbol} "
+                # 3. Add to trade history (DB-only mode if DB available, JSON fallback otherwise)
+                if self.orders_repo and self.user_id:
+                    # DB-only mode: Position is already created in DB via _create_position_from_executed_order()
+                    # No need to write to JSON file (DB-only mode for consistency with sell orders)
+                    logger.debug(
+                        f"Position already in DB for {base_symbol} "
                         f"(order_id: {order_id}, "
                         f"entry_price: Rs {execution_price:.2f}, qty: {execution_qty})"
                     )
-                except Exception as e:
-                    logger.error(f"Error adding position to trade history: {e}")
-                    # Continue even if trade history update fails
+                else:
+                    # File fallback: Write to JSON when DB is not available
+                    trade_data = {
+                        "symbol": base_symbol,
+                        "entry_price": execution_price,
+                        "qty": execution_qty,
+                        "status": "open",
+                        "buy_order_id": order_id,
+                        "placed_at": datetime.now().date().isoformat(),
+                    }
+                    append_trade(self.history_path, trade_data)
+                    logger.debug(
+                        f"Added trade to JSON history for {base_symbol} "
+                        f"(order_id: {order_id}, "
+                        f"entry_price: Rs {execution_price:.2f}, qty: {execution_qty})"
+                    )
 
                 logger.info(
                     f"Marked buy order as executed: {base_symbol} "

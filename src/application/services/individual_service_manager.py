@@ -14,8 +14,10 @@ import sys
 import threading
 import time
 import traceback
+from datetime import datetime, timedelta
 from pathlib import Path
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 # Import trading service module at top level to avoid linting issues
@@ -43,6 +45,7 @@ try:
     EMAIL_NOTIFIER_AVAILABLE = True
 except ImportError:
     EMAIL_NOTIFIER_AVAILABLE = False
+from src.infrastructure.db.dialect import is_postgresql
 from src.infrastructure.persistence.individual_service_status_repository import (
     IndividualServiceStatusRepository,
 )
@@ -226,6 +229,178 @@ class IndividualServiceManager:
             logger.error(f"Failed to stop individual service: {task_name}", exc_info=e)
             return False, f"Failed to stop service: {str(e)}"
 
+    def _cleanup_stale_execution(
+        self, user_id: int, task_name: str, context: str = "unknown"
+    ) -> bool:
+        """
+        Clean up ALL stale 'running' executions for a task.
+
+        This method proactively marks ALL stale executions as 'failed' to prevent
+        them from blocking new executions.
+
+        Args:
+            user_id: User ID
+            task_name: Task name
+            context: Context where cleanup is called from (e.g., "run_once", "get_status")
+
+        Returns:
+            True if any stale execution was found and cleaned up, False otherwise
+        """
+        import json  # noqa: PLC0415
+
+        from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
+
+        timeout_minutes = 5  # All tasks use 5 minute timeout
+
+        logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+
+        # Get ALL running executions for this task using raw SQL
+        # This ensures we clean up ALL stale executions, not just the latest one
+        # PostgreSQL stores timestamps in UTC, but we interpret them as IST
+        # Convert from UTC (storage) to IST (our timezone) for accurate age calculation
+        if is_postgresql(self.db):
+            # PostgreSQL: Use AT TIME ZONE to convert from UTC to IST
+            sql = text(
+                """
+                SELECT id,
+                       (executed_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata' as executed_at_ist
+                FROM individual_service_task_execution
+                WHERE user_id = :user_id
+                  AND task_name = :task_name
+                  AND status = 'running'
+                ORDER BY executed_at DESC
+            """
+            )
+        else:
+            # SQLite: Select executed_at directly (no timezone conversion in SQL)
+            sql = text(
+                """
+                SELECT id, executed_at as executed_at_ist
+                FROM individual_service_task_execution
+                WHERE user_id = :user_id
+                  AND task_name = :task_name
+                  AND status = 'running'
+                ORDER BY executed_at DESC
+            """
+            )
+        results = self.db.execute(sql, {"user_id": user_id, "task_name": task_name}).fetchall()
+
+        if not results:
+            logger.debug(
+                f"[{context}] No running executions found for '{task_name}' to check for staleness",
+                action="cleanup_stale_execution",
+                task_name=task_name,
+            )
+            return False  # No running executions to clean up
+
+        logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+
+        cleaned_count = 0
+        thread_key = (user_id, task_name)
+        thread = self._run_once_threads.get(thread_key)
+        thread_is_alive = thread.is_alive() if thread else False
+
+        # Check each running execution to see if it's stale
+        for row in results:
+            execution_id = row[0]
+            executed_at = row[1]
+
+            # Normalize executed_at to timezone-aware IST
+            # SQLite may return datetime as string, PostgreSQL returns datetime object
+            if isinstance(executed_at, str):
+                # Parse string datetime (SQLite)
+                try:
+                    if "Z" in executed_at:
+                        executed_at = datetime.fromisoformat(executed_at.replace("Z", "+00:00"))
+                    else:
+                        executed_at = datetime.fromisoformat(executed_at)
+                except (ValueError, AttributeError):
+                    # Fallback: try parsing common SQLite datetime formats
+                    try:
+                        executed_at = datetime.strptime(executed_at, "%Y-%m-%d %H:%M:%S.%f")
+                    except ValueError:
+                        try:
+                            executed_at = datetime.strptime(executed_at, "%Y-%m-%d %H:%M:%S")
+                        except ValueError:
+                            logger.warning(
+                                f"[{context}] Failed to parse executed_at '{executed_at}' for execution {execution_id}",
+                                action="cleanup_stale_execution",
+                            )
+                            continue  # Skip this execution if we can't parse the datetime
+
+            # Ensure timezone-aware IST
+            if isinstance(executed_at, datetime):
+                if executed_at.tzinfo is None:
+                    # Naive datetime: For PostgreSQL, it's already in IST (from AT TIME ZONE conversion)
+                    # For SQLite, we assume it's stored in IST (since SQLite doesn't have timezone support)
+                    executed_at = executed_at.replace(tzinfo=IST)
+                elif executed_at.tzinfo != IST:
+                    # Convert to IST if it has a different timezone
+                    executed_at = executed_at.astimezone(IST)
+            else:
+                logger.warning(
+                    f"[{context}] executed_at is not a datetime for execution {execution_id}: {type(executed_at)}",
+                    action="cleanup_stale_execution",
+                )
+                continue  # Skip this execution if it's not a datetime
+
+            execution_age = ist_now() - executed_at
+
+            # If execution is stale, mark it as failed
+            if execution_age > timedelta(minutes=timeout_minutes):
+                logger.warning(
+                    f"Detected stale 'running' execution for {task_name} "
+                    f"(id: {execution_id}, age: {execution_age.total_seconds():.0f}s). Marking as failed.",
+                    action="cleanup_stale_execution",
+                    task_name=task_name,
+                )
+
+                # Build JSON in Python for cross-database compatibility
+                details_json = json.dumps(
+                    {
+                        "error": "Execution timed out or process crashed",
+                        "stale_execution": 1,
+                        "age_seconds": execution_age.total_seconds(),
+                        "thread_was_alive": 1 if thread_is_alive else 0,
+                    }
+                )
+
+                update_sql = text(
+                    """
+                    UPDATE individual_service_task_execution
+                    SET status = 'failed',
+                        details = :details_json
+                    WHERE id = :execution_id AND status = 'running'
+                """
+                )
+                result = self.db.execute(
+                    update_sql,
+                    {
+                        "execution_id": execution_id,
+                        "details_json": details_json,
+                    },
+                )
+                # SQLite may not set rowcount correctly, so we always increment if we got here
+                # (we only get here if the execution was stale, so it should be updated)
+                if hasattr(result, "rowcount") and result.rowcount is not None:
+                    cleaned_count += result.rowcount
+                else:
+                    # For SQLite or when rowcount is not available, assume 1 row was updated
+                    cleaned_count += 1
+
+        if cleaned_count > 0:
+            self.db.commit()
+            # Expire all objects in session to force fresh queries
+            self.db.expire_all()
+
+            # Clean up thread reference if it exists
+            if thread_key in self._run_once_threads:
+                del self._run_once_threads[thread_key]
+
+            return True  # Return True if we cleaned up any stale executions
+
+        return False  # No stale executions found
+
     def run_once(
         self, user_id: int, task_name: str, execution_type: str = "run_once"
     ) -> tuple[bool, str, dict]:
@@ -240,6 +415,25 @@ class IndividualServiceManager:
         Returns:
             (success: bool, message: str, execution_details: dict)
         """
+        # Clean up any stale executions before checking if task is running
+        # This prevents stale "running" executions from blocking new runs
+        logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+        stale_cleaned = self._cleanup_stale_execution(user_id, task_name, context="run_once")
+
+        if stale_cleaned:
+            logger.info(
+                f"Cleaned up stale execution(s) for '{task_name}'",
+                action="run_once",
+                task_name=task_name,
+            )
+
+        # Refresh session to ensure ConflictDetectionService sees updated status
+        # This is critical because both services share the same session
+        self.db.expire_all()
+
+        # Force a flush to ensure cleanup is visible to other queries in the same session
+        self.db.flush()
+
         # CRITICAL: Block run-once if unified service is running (prevents session conflicts)
         # Exception: Analysis task doesn't need broker session, so it's safe
         if task_name != "analysis" and self._conflict_service.is_unified_service_running(user_id):
@@ -252,9 +446,16 @@ class IndividualServiceManager:
                 {},
             )
 
-        # Check if task is already running
-        if self._conflict_service.is_task_running(user_id, task_name):
-            return False, f"Task '{task_name}' is already running", {}
+        # If we just cleaned up a stale execution, skip the running check
+        # (the cleanup already verified the task wasn't actually running)
+        # Otherwise, check if task is already running using raw SQL for immediate visibility
+        if not stale_cleaned:
+            # Double-check using raw SQL to ensure we see the latest state
+            running_tasks = self._execution_repo.get_running_tasks_raw(user_id, task_name)
+            if running_tasks:
+                # Filter out any tasks that are actually stale (should have been cleaned up)
+                # But if we get here, it means cleanup didn't find them, so they're legitimately running
+                return False, f"Task '{task_name}' is already running", {}
 
         try:
             # Create execution record
@@ -1460,84 +1661,15 @@ class IndividualServiceManager:
                     self.db.expire_all()
                     latest_execution = self._execution_repo.get_latest(user_id, task_name)
 
-                # Log for debugging
-                if latest_execution:
-                    logger = get_user_logger(
-                        user_id=user_id, db=self.db, module="IndividualService"
-                    )
-                    logger.debug(
-                        f"Thread finished for {task_name}, refreshed execution "
-                        f"status: {latest_execution.status}",
-                        action="get_status",
-                        task_name=task_name,
-                    )
-
             # Check for stale "running" executions (timeout check)
-            # Use raw SQL to check actual database status (bypasses session cache)
-            if latest_execution_raw and latest_execution_raw["status"] == "running":
-                from datetime import timedelta  # noqa: PLC0415
+            # Use the centralized cleanup method
+            self._cleanup_stale_execution(user_id, task_name, context="get_status")
 
-                from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
-
-                # Normalize executed_at to timezone-aware if it's naive
-                executed_at = latest_execution_raw["executed_at"]
-                if executed_at.tzinfo is None:
-                    executed_at = executed_at.replace(tzinfo=IST)
-
-                execution_age = ist_now() - executed_at
-                timeout_minutes = 5
-                if execution_age > timedelta(minutes=timeout_minutes):
-                    # Mark stale execution as failed (regardless of thread status)
-                    logger = get_user_logger(
-                        user_id=user_id, db=self.db, module="IndividualService"
-                    )
-                    logger.warning(
-                        f"Detected stale 'running' execution for {task_name} "
-                        f"(age: {execution_age.total_seconds():.0f}s, "
-                        f"thread_alive: {thread_is_alive}). Marking as failed.",
-                        action="get_status",
-                        task_name=task_name,
-                    )
-                    # Use raw SQL to update status directly (bypasses session issues)
-                    from sqlalchemy import text  # noqa: PLC0415
-
-                    # Build JSON in Python for cross-database compatibility
-                    # SQLite has json_object() but PostgreSQL doesn't
-                    details_json = json.dumps(
-                        {
-                            "error": "Execution timed out or process crashed",
-                            "stale_execution": 1,
-                            "age_seconds": execution_age.total_seconds(),
-                            "thread_was_alive": 1 if thread_is_alive else 0,
-                        }
-                    )
-
-                    update_sql = text(
-                        """
-                        UPDATE individual_service_task_execution
-                        SET status = 'failed',
-                            details = :details_json
-                        WHERE id = :execution_id AND status = 'running'
-                    """
-                    )
-                    self.db.execute(
-                        update_sql,
-                        {
-                            "execution_id": latest_execution_raw["id"],
-                            "details_json": details_json,
-                        },
-                    )
-                    self.db.commit()
-                    # Refresh the raw status after update
-                    latest_execution_raw = self._execution_repo.get_latest_status_raw(
-                        user_id, task_name
-                    )
-                    if latest_execution_raw and latest_execution:
-                        latest_execution.status = latest_execution_raw["status"]
-                        latest_execution.details = latest_execution_raw.get("details")
-                    # Clean up thread reference if it exists
-                    if thread_key in self._run_once_threads:
-                        del self._run_once_threads[thread_key]
+            # Refresh the raw status after cleanup
+            latest_execution_raw = self._execution_repo.get_latest_status_raw(user_id, task_name)
+            if latest_execution_raw and latest_execution:
+                latest_execution.status = latest_execution_raw["status"]
+                latest_execution.details = latest_execution_raw.get("details")
 
             process_id = None
             if service and service.process_id:
@@ -1636,21 +1768,18 @@ class IndividualServiceManager:
                 from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
 
                 executed_at = latest_execution_raw["executed_at"]
+                # executed_at from get_latest_status_raw() is already converted to IST via SQL
                 if executed_at.tzinfo is None:
                     executed_at = executed_at.replace(tzinfo=IST)
+                # Ensure it's in IST for comparison
+                elif executed_at.tzinfo != IST:
+                    executed_at = executed_at.astimezone(IST)
                 execution_age = ist_now() - executed_at
 
+                # Use 5 minute timeout for all tasks
                 timeout_minutes = 5
                 if execution_age > timedelta(minutes=timeout_minutes):
                     actual_execution_status = "failed"
-                    logger = get_user_logger(
-                        user_id=user_id, db=self.db, module="IndividualService"
-                    )
-                    logger.warning(
-                        f"Forcing execution status to 'failed' in response for {task_name} (age: {execution_age.total_seconds():.0f}s) - database update may have failed",
-                        action="get_status",
-                        task_name=task_name,
-                    )
 
             # Get is_running from service status (synced above if needed)
             is_running = service.is_running if service else False

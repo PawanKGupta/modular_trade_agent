@@ -58,6 +58,15 @@ This release focuses on completing all pending dashboard enhancements, visual an
 
 **Scope:** All pending features from v2.0 release plan that are not yet implemented.
 
+### Related Infrastructure Work
+
+**Unified DB-Only Storage Migration** (Future Release)
+- 📄 **Implementation Plan**: [`documents/kotak_neo_trader/UNIFIED_DB_IMPLEMENTATION_COMPLETE.md`](../documents/kotak_neo_trader/UNIFIED_DB_IMPLEMENTATION_COMPLETE.md)
+- **Goal**: Migrate from hybrid storage (paper=file, real=DB) to unified DB-only approach
+- **Timeline**: 6-8 weeks
+- **Status**: Planning phase
+- **Impact**: This infrastructure improvement will enable unified reporting and better data consistency across paper and real trading modes
+
 ---
 
 ## 🎯 Release Goals
@@ -731,14 +740,22 @@ If critical issues are found:
 
 ## 🎯 Future Considerations (Not in v26.1.1)
 
+### UI/UX Features
 - WebSocket real-time updates for charts
 - Advanced portfolio analytics
 - Social features
 - Mobile app
-- Advanced order management
-- Multi-broker support
 - Price alerts for watchlist
 - Email delivery for PDF reports
+
+### Infrastructure & Backend
+- **Unified DB-Only Storage**: Migrate from hybrid storage (paper=file, real=DB) to unified DB-only approach
+  - 📄 **Implementation Plan**: [`documents/kotak_neo_trader/UNIFIED_DB_IMPLEMENTATION_COMPLETE.md`](../documents/kotak_neo_trader/UNIFIED_DB_IMPLEMENTATION_COMPLETE.md)
+  - **Timeline**: 6-8 weeks
+  - **Benefits**: Single codebase, consistency, unified reporting, data integrity
+  - **Status**: Planning phase
+- Advanced order management
+- Multi-broker support
 
 ---
 

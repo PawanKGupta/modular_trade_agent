@@ -12,6 +12,7 @@ import os
 # Project logger
 import sys
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
 from math import floor
@@ -41,6 +42,7 @@ try:
         add_pending_order,
         configure_order_tracker,
         extract_order_id,
+        get_order_tracker,
         search_order_in_broker_orderbook,
     )
     from .orders import KotakNeoOrders
@@ -77,6 +79,7 @@ except ImportError:
         add_pending_order,
         configure_order_tracker,
         extract_order_id,
+        get_order_tracker,
         search_order_in_broker_orderbook,
     )
     from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
@@ -184,7 +187,9 @@ class AutoTradeEngine:
                     user_id=self.user_id,
                     use_db=True,
                 )
-                logger.info("OrderTracker configured with DB session for dual-write support")
+                logger.info(
+                    "OrderTracker configured with DB session (DB-only mode enabled by default)"
+                )
             except Exception as tracker_error:
                 logger.warning(f"Failed to configure OrderTracker with DB session: {tracker_error}")
         else:
@@ -283,6 +288,7 @@ class AutoTradeEngine:
             bot_token = preferences.telegram_bot_token if preferences else None
             if not bot_token:
                 import os
+
                 bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 
             chat_id = preferences.telegram_chat_id if preferences else None
@@ -306,7 +312,9 @@ class AutoTradeEngine:
                 db_session=self.db,
             )
         except Exception as e:
-            logger.warning(f"Failed to get user-specific Telegram notifier: {e}. Falling back to singleton.")
+            logger.warning(
+                f"Failed to get user-specific Telegram notifier: {e}. Falling back to singleton."
+            )
             # Fallback to singleton pattern on error
             return get_telegram_notifier(db_session=self.db)
 
@@ -517,13 +525,12 @@ class AutoTradeEngine:
         Save trades history to repository or file-based storage.
         Note: For bulk sync operations, this still syncs all trades to positions.
         For individual trade updates, use _update_position_from_trade() instead.
+
+        DB-only mode: When DB is available, skip JSON writes for consistency with sell orders.
         """
         if self.orders_repo and self.user_id:
-            # Save to file if history_path is available
-            if self.history_path:
-                save_history(self.history_path, data)
-
-            # Bulk sync all trades to positions (for initial load or reconciliation)
+            # DB-only mode: Bulk sync all trades to positions (no JSON write)
+            # This aligns with sell order tracking which is DB-only
             if self.positions_repo:
                 trades = data.get("trades", [])
                 for trade in trades:
@@ -532,7 +539,8 @@ class AutoTradeEngine:
             # Save failed orders metadata in Orders (if any)
             failed_orders = data.get("failed_orders", [])
             # Note: Failed orders are handled separately in add_failed_order/remove_failed_order
-        # Fallback to file-based storage
+            # Skip JSON writes when DB is available (DB-only mode)
+        # Fallback to file-based storage only if DB is not available
         elif self.history_path:
             save_history(self.history_path, data)
 
@@ -540,21 +548,18 @@ class AutoTradeEngine:
         """
         Append a trade to history (repository or file-based).
         Directly updates positions table when trade is added/updated.
+
+        DB-only mode: When DB is available, skip JSON writes for consistency with sell orders.
         """
         if self.orders_repo and self.user_id:
-            # Use repository-based storage
-            data = self._load_trades_history()
-            data.setdefault("trades", [])
-            data["trades"].append(trade)
-            # Save to history
-            if self.history_path:
-                save_history(self.history_path, data)
-
-            # Directly update positions table (optimization: no need to sync all trades)
+            # DB-only mode: Update positions table directly (no JSON write)
+            # This aligns with sell order tracking which is DB-only
             if self.positions_repo:
                 self._update_position_from_trade(trade)
-        # Fallback to file-based storage
+            # Skip JSON writes when DB is available (DB-only mode)
+            # Fallback to file-based storage only if DB is not available
         elif self.history_path:
+            # Fallback: file-based storage when DB is not available
             append_trade(self.history_path, trade)
 
     def _get_failed_orders(
@@ -1676,8 +1681,6 @@ class AutoTradeEngine:
                     logger.warning(f"Order rejected: {symbol} ({order_id}) - {reason}")
                     if self.telegram_notifier and self.telegram_notifier.enabled:
                         # Get quantity from pending orders
-                        from .order_tracker import get_order_tracker
-
                         tracker = get_order_tracker()
                         pending_order = tracker.get_order_by_id(order_id)
                         qty = pending_order.get("qty", 0) if pending_order else 0
@@ -2614,8 +2617,6 @@ class AutoTradeEngine:
                         )
                 else:
                     # Fallback to old method if telegram_notifier not available
-                    from core.telegram import send_telegram
-
                     send_telegram(telegram_msg)
                 return (False, None)
 
@@ -5369,8 +5370,6 @@ class AutoTradeEngine:
         data = self._load_trades_history()
         trades = data.get("trades", [])
         # Group open trades by symbol
-        from collections import defaultdict
-
         open_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for t in trades:
             if t.get("status") == "open":
@@ -5526,8 +5525,6 @@ class AutoTradeEngine:
                                                 )
                                         else:
                                             # Fallback to old method if telegram_notifier not available
-                                            from core.telegram import send_telegram
-
                                             send_telegram(telegram_msg)
                                         logger.error(
                                             f"Sell order retry FAILED for {symbol} - Telegram alert sent"
@@ -5566,8 +5563,6 @@ class AutoTradeEngine:
                                             )
                                     else:
                                         # Fallback to old method if telegram_notifier not available
-                                        from core.telegram import send_telegram
-
                                         send_telegram(telegram_msg)
                                     logger.error(
                                         f"No holdings found for {symbol} - cannot retry sell order - Telegram alert sent"
@@ -5600,8 +5595,6 @@ class AutoTradeEngine:
                                         )
                                 else:
                                     # Fallback to old method if telegram_notifier not available
-                                    from core.telegram import send_telegram
-
                                     send_telegram(telegram_msg)
                                 logger.error(
                                     f"Failed to fetch holdings for retry - cannot determine actual quantity for {symbol} - Telegram alert sent"
@@ -5735,15 +5728,11 @@ class AutoTradeEngine:
                     )
                     if resp_valid:
                         # Extract order ID from response
-                        from .order_tracker import extract_order_id
-
                         reentry_order_id = extract_order_id(resp)
 
                         # Add reentry order to tracking with entry_type="reentry"
                         if reentry_order_id:
                             try:
-                                from .order_tracker import add_pending_order
-
                                 add_pending_order(
                                     order_id=reentry_order_id,
                                     symbol=place_symbol,

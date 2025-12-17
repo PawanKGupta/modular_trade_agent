@@ -158,7 +158,8 @@ class OrderTracker:
         """
         Add order to pending tracking.
 
-        Phase 7: Supports dual-write (JSON + DB).
+        DB-only mode: When DB is available, uses database as single source of truth.
+        JSON writes are skipped for consistency with sell order tracking.
 
         Args:
             order_id: Order ID from broker
@@ -714,15 +715,20 @@ def configure_order_tracker(
 
     Calling this replaces any previously created tracker instance. This is needed
     when the trading engine boots with a live DB session so that pending orders
-    get dual-written to the database immediately.
+    are written to the database (DB-only mode by default for consistency with sell orders).
     """
 
     global _order_tracker_instance
 
     effective_use_db = use_db if use_db is not None else bool(db_session and user_id)
     if db_only_mode is None:
-        env_value = os.getenv("ORDER_TRACKER_DB_ONLY_MODE", "")
-        db_only_mode = env_value.strip().lower() in {"1", "true", "yes"}
+        # Default to DB-only mode when DB is available (for consistency with sell orders)
+        # Can be overridden via env var ORDER_TRACKER_DB_ONLY_MODE=false
+        if effective_use_db:
+            env_value = os.getenv("ORDER_TRACKER_DB_ONLY_MODE", "true")
+            db_only_mode = env_value.strip().lower() not in {"0", "false", "no"}
+        else:
+            db_only_mode = False
 
     _order_tracker_instance = OrderTracker(
         data_dir=data_dir,
