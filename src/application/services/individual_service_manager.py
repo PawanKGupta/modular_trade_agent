@@ -251,14 +251,8 @@ class IndividualServiceManager:
         from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
 
         timeout_minutes = 5  # All tasks use 5 minute timeout
-        cutoff_time = ist_now() - timedelta(minutes=timeout_minutes)
 
         logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
-        logger.info(
-            f"[{context}] Checking for stale executions: task='{task_name}', timeout={timeout_minutes}min",
-            action="cleanup_stale_execution",
-            task_name=task_name,
-        )
 
         # Get ALL running executions for this task using raw SQL
         # This ensures we clean up ALL stale executions, not just the latest one
@@ -290,12 +284,6 @@ class IndividualServiceManager:
             """
             )
         results = self.db.execute(sql, {"user_id": user_id, "task_name": task_name}).fetchall()
-
-        logger.info(
-            f"[{context}] Found {len(results)} running execution(s) for '{task_name}'",
-            action="cleanup_stale_execution",
-            task_name=task_name,
-        )
 
         if not results:
             logger.debug(
@@ -358,27 +346,11 @@ class IndividualServiceManager:
 
             execution_age = ist_now() - executed_at
 
-            # Log age calculation for debugging
-            # Always log for new executions (< 1 minute) to help diagnose immediate failures
-            # Also log for stale executions
-            if execution_age < timedelta(minutes=1) or execution_age > timedelta(
-                minutes=timeout_minutes
-            ):
-                logger.info(
-                    f"[{context}] Execution {execution_id} age calculation: "
-                    f"executed_at={executed_at}, ist_now()={ist_now()}, "
-                    f"age={execution_age.total_seconds():.1f}s ({execution_age.total_seconds() / 60:.2f} min), "
-                    f"timeout={timeout_minutes}min, is_stale={execution_age > timedelta(minutes=timeout_minutes)}",
-                    action="cleanup_stale_execution",
-                    task_name=task_name,
-                )
-
             # If execution is stale, mark it as failed
             if execution_age > timedelta(minutes=timeout_minutes):
                 logger.warning(
                     f"Detected stale 'running' execution for {task_name} "
-                    f"(id: {execution_id}, age: {execution_age.total_seconds():.0f}s, "
-                    f"thread_alive: {thread_is_alive}, context: {context}). Marking as failed.",
+                    f"(id: {execution_id}, age: {execution_age.total_seconds():.0f}s). Marking as failed.",
                     action="cleanup_stale_execution",
                     task_name=task_name,
                 )
@@ -446,22 +418,11 @@ class IndividualServiceManager:
         # Clean up any stale executions before checking if task is running
         # This prevents stale "running" executions from blocking new runs
         logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
-        logger.info(
-            f"[run_once] Checking for stale executions before running '{task_name}'",
-            action="run_once",
-            task_name=task_name,
-        )
         stale_cleaned = self._cleanup_stale_execution(user_id, task_name, context="run_once")
 
         if stale_cleaned:
             logger.info(
-                f"[run_once] Cleaned up stale execution(s) for '{task_name}'. Proceeding with new execution.",
-                action="run_once",
-                task_name=task_name,
-            )
-        else:
-            logger.info(
-                f"[run_once] No stale executions found for '{task_name}'. Proceeding with new execution.",
+                f"Cleaned up stale execution(s) for '{task_name}'",
                 action="run_once",
                 task_name=task_name,
             )
@@ -1700,18 +1661,6 @@ class IndividualServiceManager:
                     self.db.expire_all()
                     latest_execution = self._execution_repo.get_latest(user_id, task_name)
 
-                # Log for debugging
-                if latest_execution:
-                    logger = get_user_logger(
-                        user_id=user_id, db=self.db, module="IndividualService"
-                    )
-                    logger.debug(
-                        f"Thread finished for {task_name}, refreshed execution "
-                        f"status: {latest_execution.status}",
-                        action="get_status",
-                        task_name=task_name,
-                    )
-
             # Check for stale "running" executions (timeout check)
             # Use the centralized cleanup method
             self._cleanup_stale_execution(user_id, task_name, context="get_status")
@@ -1831,14 +1780,6 @@ class IndividualServiceManager:
                 timeout_minutes = 5
                 if execution_age > timedelta(minutes=timeout_minutes):
                     actual_execution_status = "failed"
-                    logger = get_user_logger(
-                        user_id=user_id, db=self.db, module="IndividualService"
-                    )
-                    logger.warning(
-                        f"Forcing execution status to 'failed' in response for {task_name} (age: {execution_age.total_seconds():.0f}s) - database update may have failed",
-                        action="get_status",
-                        task_name=task_name,
-                    )
 
             # Get is_running from service status (synced above if needed)
             is_running = service.is_running if service else False
