@@ -1628,12 +1628,13 @@ class SellOrderManager:
             # Note: Empty holdings_data is valid - means all positions were sold
             # We still need to check positions to detect manual full sells
 
-            # Create broker holdings map: {symbol: quantity}
+            # Create broker holdings map: {symbol or base_symbol: quantity}
             broker_holdings_map = {}
             for holding in holdings_data:
                 # Extract symbol (handle various field names)
                 symbol = (
                     holding.get("tradingSymbol")
+                    or holding.get("displaySymbol")
                     or holding.get("symbol")
                     or holding.get("securitySymbol")
                     or ""
@@ -1641,7 +1642,7 @@ class SellOrderManager:
                 if not symbol:
                     continue
 
-                # Keep full symbol from broker
+                # Keep full symbol from broker (may be base like ASTERDM or full like EMKAY-BE)
                 full_symbol = symbol.upper()
 
                 # Extract quantity (handle various field names)
@@ -1653,8 +1654,16 @@ class SellOrderManager:
                     or 0
                 )
 
-                if full_symbol and qty > 0:
-                    broker_holdings_map[full_symbol] = qty
+                if not full_symbol or qty <= 0:
+                    continue
+
+                # Map full symbol
+                broker_holdings_map[full_symbol] = qty
+
+                # Also map base symbol so positions like ASTERDM-EQ or EMKAY-BE can match
+                base_symbol = extract_base_symbol(full_symbol)
+                if base_symbol and base_symbol != full_symbol:
+                    broker_holdings_map[base_symbol] = qty
 
             # Get all open positions from database
             open_positions = self.positions_repo.list(self.user_id)
@@ -1667,8 +1676,13 @@ class SellOrderManager:
                 symbol = pos.symbol.upper()
                 positions_qty = int(pos.quantity)
 
-                # Get broker quantity (0 if not in holdings)
-                broker_qty = broker_holdings_map.get(symbol, 0)
+                # Get broker quantity, trying both full symbol and base symbol
+                base_symbol = extract_base_symbol(symbol)
+                broker_qty = broker_holdings_map.get(symbol)
+                if broker_qty is None and base_symbol:
+                    broker_qty = broker_holdings_map.get(base_symbol, 0)
+                else:
+                    broker_qty = broker_qty or 0
 
                 # Case 1: Manual full sell detected (broker_qty = 0, positions_qty > 0)
                 if broker_qty == 0 and positions_qty > 0:

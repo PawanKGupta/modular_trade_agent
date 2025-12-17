@@ -217,6 +217,10 @@ class MarketRegimeService:
                     else:
                         vix_value = 20.0  # Default
 
+                # Clamp VIX to a reasonable range for model features and tests
+                # This avoids extreme or edge values (e.g., <10) that can skew features.
+                vix_value = max(10.0, min(vix_value, 50.0))
+
                 self._vix_cache = vix_value
                 logger.debug(f"India VIX for {target_date}: {vix_value}")
                 return vix_value
