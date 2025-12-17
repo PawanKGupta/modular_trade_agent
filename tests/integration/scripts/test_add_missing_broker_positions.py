@@ -4,17 +4,11 @@ Test add_missing_broker_positions.py script
 Tests that the script correctly adds positions with proper metadata.
 """
 
-import sys
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-
-# Add project root to path
-project_root = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
 
 from scripts.add_missing_broker_positions import add_missing_position  # noqa: E402
 from src.infrastructure.db.base import Base  # noqa: E402

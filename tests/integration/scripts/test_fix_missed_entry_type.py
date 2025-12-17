@@ -5,16 +5,9 @@ Tests verify that the script correctly updates orders that were incorrectly
 marked as "manual" but were actually system initial entries.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-
-# Add project root to path
-project_root = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
 
 from scripts.fix_missed_entry_type import fix_missed_entry_type  # noqa: E402
 from src.infrastructure.db.base import Base  # noqa: E402
