@@ -11,6 +11,9 @@ from threading import Lock
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
+from modules.kotak_neo_auto_trader.utils.symbol_utils import (  # noqa: E402
+    get_ticker_from_full_symbol,
+)
 from utils.logger import logger  # noqa: E402
 
 # Import existing data fetcher
@@ -145,31 +148,43 @@ class PriceProvider:
         Fetch live price using data fetcher
 
         Args:
-            symbol: Stock symbol
+            symbol: Stock symbol (full, base, or ticker format)
+                   Examples: 'SALSTEEL-BE', 'AAREYDRUGS', 'RELIANCE.NS'
 
         Returns:
             Current price or None
         """
         price = None
+
+        # Convert broker symbol/full symbol to yfinance-compatible ticker
+        # But skip conversion if already in ticker format (.NS or .BO)
+        if symbol.endswith(".NS") or symbol.endswith(".BO"):
+            # Already a ticker, use as-is
+            ticker = symbol
+        else:
+            # Convert full symbol (e.g., 'SALSTEEL-BE') or base symbol (e.g., 'AAREYDRUGS')
+            # to ticker format (e.g., 'SALSTEEL.NS', 'AAREYDRUGS.NS')
+            ticker = get_ticker_from_full_symbol(symbol)
+
         if self.data_fetcher:
             try:
                 data = self.data_fetcher.fetch_data_yfinance(
-                    symbol=symbol, period="1d", interval="1m"
+                    symbol=ticker, period="1d", interval="1m"
                 )
 
                 if data is not None and not data.empty:
                     latest_price = float(data["close"].iloc[-1])
-                    logger.debug(f"? Fetched live price for {symbol}: Rs {latest_price:.2f}")
+                    logger.debug(f"? Fetched live price for {ticker}: Rs {latest_price:.2f}")
                     return latest_price
-                logger.warning(f"[WARN]? No broker data available for {symbol}")
+                logger.warning(f"[WARN]? No broker data available for {ticker}")
             except Exception as e:
-                logger.error(f"? Error fetching broker price for {symbol}: {e}")
+                logger.error(f"? Error fetching broker price for {ticker}: {e}")
 
-        price = self._fetch_yfinance_price(symbol)
+        price = self._fetch_yfinance_price(ticker)
         if price is not None:
             return price
 
-        logger.warning(f"[WARN]? Live providers unavailable for {symbol}; falling back to mock")
+        logger.warning(f"[WARN]? Live providers unavailable for {ticker}; falling back to mock")
         return None
 
     def _fetch_yfinance_price(self, symbol: str) -> float | None:

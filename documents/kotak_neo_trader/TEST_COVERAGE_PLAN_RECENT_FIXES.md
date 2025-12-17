@@ -16,7 +16,7 @@ Status markers:
 
 ## 1. Positions & Reconciliation (Broker vs DB)
 
-- **[ ] Holdings symbol mapping (full vs base)**
+- **[x] Holdings symbol mapping (full vs base)**
   - **Goal**: `_reconcile_positions_with_broker_holdings()` correctly matches:
     - `ASTERDM-EQ` ↔ holdings with `symbol='ASTERDM'`, `displaySymbol='ASTERDM'`
     - `EMKAY-BE` ↔ holdings with `symbol='EMKAY'`, `displaySymbol='EMKAY-BE'`
@@ -26,7 +26,7 @@ Status markers:
       - Mock `portfolio.get_holdings()` returning only base symbols / displaySymbol.
     - Assert that `broker_holdings_map` contains both full and base keys.
 
-- **[ ] No false “manual full sell” when holdings exist**
+- **[x] No false "manual full sell" when holdings exist**
   - **Goal**: When DB position has `quantity > 0` and broker holdings show non-zero qty, reconciliation must **not**:
     - Call `mark_closed()`
     - Set `quantity = 0`
@@ -35,19 +35,19 @@ Status markers:
       - Assert `positions_repo.mark_closed` is **not** called.
       - Assert stats `closed == 0`, `updated == 0`, `ignored == 1` or `0` depending on scenario.
 
-- **[ ] Correct behavior when holdings truly missing**
+- **[x] Correct behavior when holdings truly missing**
   - **Goal**: If holdings do not contain the symbol (even via base symbol), and DB shows qty>0:
     - Reconciliation should treat as **manual full sell** and call `mark_closed()` (setting `closed_at` and qty=0).
   - **Test ideas**:
     - holdings_data = `[]` or missing both full/base keys.
     - Assert `positions_repo.mark_closed` is called with correct `symbol` and `user_id`.
 
-- **[ ] Manual partial sells (broker_qty < positions_qty)**
+- **[x] Manual partial sells (broker_qty < positions_qty)**
   - **Goal**: When broker_qty < positions_qty, we detect partial sells and call `reduce_quantity()` correctly.
   - **Test ideas**:
     - DB position qty=100, holdings qty=60; expect `reduce_quantity(... sold_quantity=40)` and stats `updated == 1`.
 
-- **[ ] Manual buys (broker_qty > positions_qty) ignored**
+- **[x] Manual buys (broker_qty > positions_qty) ignored**
   - **Goal**: When broker_qty > positions_qty, reconciliation logs and **does not** modify the DB.
   - **Test ideas**:
     - DB position qty=100, holdings qty=120; assert no `mark_closed` or `reduce_quantity` calls.
@@ -56,7 +56,7 @@ Status markers:
 
 ## 2. SellOrderManager → `orders` Table Persistence
 
-- **[ ] DB persistence on sell placement (happy path)**
+- **[x] DB persistence on sell placement (happy path)**
   - **Goal**: When `place_sell_order()` succeeds:
     - A row is created in `orders` with:
       - `side='sell'`
@@ -69,14 +69,14 @@ Status markers:
       - Mock `self.orders.place_limit_sell` returning a fake response (`{"neoOrdNo": "12345"}`).
       - Mock `orders_repo.create_amo` and assert it is called with expected kwargs.
 
-- **[ ] No DB write when `orders_repo` or `user_id` missing**
+- **[x] No DB write when `orders_repo` or `user_id` missing**
   - **Goal**: Legacy / test-mode paths should still work without DB.
   - **Test ideas**:
     - Initialize `SellOrderManager` with `orders_repo=None` or `user_id=None`.
     - Assert broker call is made and order ID returned.
     - Assert `create_amo` is **not** called.
 
-- **[ ] Handling DB errors during persistence**
+- **[x] Handling DB errors during persistence**
   - **Goal**: If `orders_repo.create_amo` raises, the broker sell order is still considered placed and returned.
   - **Test ideas**:
     - Mock `create_amo` to raise an exception.
@@ -86,7 +86,7 @@ Status markers:
 
 ## 3. Scrip Master & Authentication
 
-- **[ ] No background download when `auth_client` is None**
+- **[x] No background download when `auth_client` is None**
   - **Goal**: Avoid noisy auth errors when only cached scrip master is used.
   - **Test ideas**:
     - Unit test `KotakNeoScripMaster.load_scrip_master(force_download=False)`:
@@ -94,13 +94,13 @@ Status markers:
       - Assert `_download_scrip_master` is **not** called.
       - Assert a debug log like “skipping background download … auth_client not available” is emitted.
 
-- **[ ] Background download when `auth_client` present**
+- **[x] Background download when `auth_client` present**
   - **Goal**: When authenticated, background refresh should be attempted and cache updated.
   - **Test ideas**:
     - Mock `self.auth_client` and `_download_scrip_master` to return a small instrument list.
     - Assert `_save_to_cache` is called and the returned `instruments` are updated.
 
-- **[ ] Symbol resolution for sell placement**
+- **[x] Symbol resolution for sell placement**
   - **Goal**: `place_sell_order()` uses scrip master correctly when available.
   - **Test ideas**:
     - Mock `self.scrip_master.symbol_map` so `get_trading_symbol("ASTERDM-EQ", exchange="NSE")` returns `ASTERDM-EQ` or alternate mapping.
@@ -110,7 +110,7 @@ Status markers:
 
 ## 4. MarketRegimeService & ML Features (VIX)
 
-- **[ ] VIX clamping range in `_get_vix`**
+- **[x] VIX clamping range in `_get_vix`**
   - **Goal**: `_get_vix()` always returns `10.0 <= india_vix <= 50.0`.
   - **Test ideas**:
     - Patch `yf.download` to return `Close`=9.0 → expect 10.0.
@@ -180,14 +180,14 @@ Status markers:
   - **Test ideas**:
     - Use `caplog` in unit tests to assert presence of messages when reconciliation runs.
 
-- **[ ] Sell order persistence logs**
+- **[x] Sell order persistence logs**
   - **Goal**:
     - Log when sell order is placed and persisted to DB.
     - Log warning when DB persistence fails but broker order succeeded.
   - **Test ideas**:
     - Unit test `place_sell_order` with a caplog fixture.
 
-- **[ ] Scrip master cache/skip logs**
+- **[x] Scrip master cache/skip logs**
   - **Goal**: Clear logging around cache usage and background download behavior.
   - **Test ideas**:
     - Unit test `load_scrip_master` with/without `auth_client` and assert expected log lines.
@@ -196,12 +196,10 @@ Status markers:
 
 ## 8. Execution Checklist
 
-- **[ ] Implement unit tests for reconciliation mapping & behavior (Section 1).**
-- **[ ] Implement unit tests for sell order DB persistence (Section 2).**
-- **[ ] Implement scrip master auth/cache tests (Section 3).**
-- **[ ] Implement VIX clamping & ML feature tests (Section 4).**
-- **[ ] Add migration & script tests around full-symbols (Section 5).**
-- **[ ] Add scheduler/session tests once final design is agreed (Section 6).**
-- **[ ] Add caplog-based logging tests for critical flows (Section 7).**
-
-
+- **[x] Implement unit tests for reconciliation mapping & behavior (Section 1).**
+- **[x] Implement unit tests for sell order DB persistence (Section 2).**
+- **[x] Implement scrip master auth/cache tests (Section 3).**
+- **[x] Implement VIX clamping & ML feature tests (Section 4).**
+- **[~] Add migration & script tests around full-symbols (Section 5).** - *Not required (manual/integration tests)*
+- **[ ] Add scheduler/session tests once final design is agreed (Section 6).** - *Pending design*
+- **[~] Add caplog-based logging tests for critical flows (Section 7).** - *Partially implemented (2/3 areas)*
