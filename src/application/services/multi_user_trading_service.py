@@ -89,6 +89,10 @@ class MultiUserTradingService:
         thread_db = SessionLocal()
 
         try:
+            # Create thread-local ScheduleManager to avoid session conflicts
+            # CRITICAL: Use thread_db instead of main thread's session
+            thread_schedule_manager = ScheduleManager(thread_db)
+
             user_logger = get_user_logger(
                 user_id=user_id, db=thread_db, module="PaperTradingScheduler"
             )
@@ -118,7 +122,7 @@ class MultiUserTradingService:
 
                     # Task scheduling (uses database schedule configuration)
                     # Pre-market retry
-                    premarket_schedule = self._schedule_manager.get_schedule("premarket_retry")
+                    premarket_schedule = thread_schedule_manager.get_schedule("premarket_retry")
                     if premarket_schedule and premarket_schedule.enabled:
                         premarket_time = premarket_schedule.schedule_time
                         if (
@@ -163,7 +167,7 @@ class MultiUserTradingService:
                                 )
 
                     # Sell monitoring (continuous during market hours, uses DB schedule)
-                    sell_schedule = self._schedule_manager.get_schedule("sell_monitor")
+                    sell_schedule = thread_schedule_manager.get_schedule("sell_monitor")
                     if sell_schedule and sell_schedule.enabled and sell_schedule.is_continuous:
                         start_time = sell_schedule.schedule_time
                         end_time = sell_schedule.end_time or dt_time(15, 30)
@@ -181,7 +185,7 @@ class MultiUserTradingService:
 
                     # 4:00 PM - Analysis (check custom schedule from DB and trigger via
                     # Individual Service Manager)
-                    analysis_schedule = self._schedule_manager.get_schedule("analysis")
+                    analysis_schedule = thread_schedule_manager.get_schedule("analysis")
                     if analysis_schedule and analysis_schedule.enabled:
                         analysis_time = analysis_schedule.schedule_time
                         analysis_hour = analysis_time.hour
@@ -242,7 +246,7 @@ class MultiUserTradingService:
                                     )
 
                     # Buy orders (uses DB schedule)
-                    buy_schedule = self._schedule_manager.get_schedule("buy_orders")
+                    buy_schedule = thread_schedule_manager.get_schedule("buy_orders")
                     if buy_schedule and buy_schedule.enabled:
                         buy_time = buy_schedule.schedule_time
                         if (
@@ -261,7 +265,7 @@ class MultiUserTradingService:
                                     )
 
                     # EOD cleanup (uses DB schedule)
-                    eod_schedule = self._schedule_manager.get_schedule("eod_cleanup")
+                    eod_schedule = thread_schedule_manager.get_schedule("eod_cleanup")
                     if eod_schedule and eod_schedule.enabled:
                         eod_time = eod_schedule.schedule_time
                         if (
