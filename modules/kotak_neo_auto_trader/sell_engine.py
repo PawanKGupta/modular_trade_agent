@@ -2126,6 +2126,7 @@ class SellOrderManager:
         """
         try:
             symbol = trade.get("placed_symbol") or trade.get("symbol")
+            ticker = trade.get("ticker")
             if not symbol:
                 logger.error("No symbol found in trade entry")
                 return None
@@ -2190,10 +2191,49 @@ class SellOrderManager:
             )
 
             if order_id:
+                order_id_str = str(order_id)
                 logger.info(
-                    f"Sell order placed: {symbol} @ Rs {rounded_price:.2f}, Order ID: {order_id}"
+                    f"Sell order placed: {symbol} @ Rs {rounded_price:.2f}, Order ID: {order_id_str}"
                 )
-                return str(order_id)
+
+                # Phase 7: Persist sell order to database (dual-write JSON + DB)
+                # This ensures unified tracking in Orders table for monitoring and reporting.
+                if self.orders_repo and self.user_id:
+                    try:
+                        # Build metadata consistent with buy-side orders
+                        base_symbol = extract_base_symbol(symbol)
+                        order_metadata = {
+                            "ticker": ticker,
+                            "exchange": exchange,
+                            "base_symbol": base_symbol,
+                            "full_symbol": symbol,
+                            "variety": "REGULAR",
+                            "source": "sell_engine_run_at_market_open",
+                        }
+
+                        # Create DB order with side='sell'
+                        self.orders_repo.create_amo(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            side="sell",
+                            order_type="limit",
+                            quantity=float(qty),
+                            price=float(rounded_price),
+                            broker_order_id=order_id_str,
+                            entry_type="exit",
+                            order_metadata=order_metadata,
+                            reason="Sell order placed by SellOrderManager at market open",
+                        )
+                        logger.debug(
+                            f"Persisted sell order to DB for {symbol} "
+                            f"(user_id={self.user_id}, broker_order_id={order_id_str})"
+                        )
+                    except Exception as e:  # pragma: no cover - defensive logging
+                        logger.warning(
+                            f"Failed to persist sell order {order_id_str} for {symbol} to DB: {e}"
+                        )
+
+                return order_id_str
             else:
                 logger.warning(f"Order placed but no ID returned: {response}")
                 return None
