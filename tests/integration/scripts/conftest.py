@@ -22,3 +22,15 @@ project_root = Path(__file__).resolve().parent.parent.parent.parent
 project_root_str = str(project_root)
 if project_root_str not in sys.path:
     sys.path.insert(0, project_root_str)
+
+
+def pytest_configure(config):
+    """
+    Ensure DB_URL is set before any test collection happens.
+    This hook runs very early in the pytest lifecycle.
+    """
+    # Force in-memory database before any imports
+    if "DB_URL" not in os.environ or not os.environ.get("DB_URL", "").startswith(
+        "sqlite:///:memory"
+    ):
+        os.environ["DB_URL"] = "sqlite:///:memory:"

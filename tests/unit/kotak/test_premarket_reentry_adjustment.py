@@ -820,3 +820,396 @@ class TestPaperTradingPremarketAdjustment:
         # Verify order was processed (adjustment logic runs)
         # Note: Position closure check for paper trading may be handled differently
         assert summary["total_orders"] >= 0
+
+
+class TestEODCancellationHandling:
+    """Test EOD cancellation handling - orders not found at broker"""
+
+    def test_order_not_found_at_broker_marked_as_cancelled(
+        self, db_session, test_user, mock_engine_with_repos
+    ):
+        """Test that PENDING re-entry order not found at broker is marked as CANCELLED"""
+        engine = mock_engine_with_repos
+
+        # Create re-entry order that was placed yesterday (old enough)
+        from datetime import timedelta
+
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        placed_at = ist_now() - timedelta(hours=2)  # 2 hours old
+
+        reentry_order = Orders(
+            user_id=test_user.id,
+            symbol="RELIANCE-EQ",
+            side="buy",
+            order_type="limit",
+            quantity=40,
+            price=2500.0,
+            status=OrderStatus.PENDING,
+            broker_order_id="REENTRY_ORDER_123",
+            entry_type="reentry",
+            placed_at=placed_at,
+        )
+        db_session.add(reentry_order)
+        db_session.commit()
+
+        # Mock broker to return empty list (order not found - cancelled at EOD)
+        engine.orders.get_order_book = Mock(return_value=[])
+
+        summary = engine.adjust_amo_quantities_premarket()
+
+        # Verify order was marked as CANCELLED
+        db_session.refresh(reentry_order)
+        assert reentry_order.status == OrderStatus.CANCELLED
+        assert "Order not found at broker" in reentry_order.reason
+        assert summary.get("cancelled", 0) == 1
+
+    def test_order_not_found_but_status_changed_skips_cancellation(
+        self, db_session, test_user, mock_engine_with_repos
+    ):
+        """Test that order not found at broker but status changed to ONGOING is not cancelled"""
+        engine = mock_engine_with_repos
+
+        # Create re-entry order
+        from datetime import timedelta
+
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        placed_at = ist_now() - timedelta(hours=2)  # 2 hours old
+
+        reentry_order = Orders(
+            user_id=test_user.id,
+            symbol="RELIANCE-EQ",
+            side="buy",
+            order_type="limit",
+            quantity=40,
+            price=2500.0,
+            status=OrderStatus.PENDING,
+            broker_order_id="REENTRY_ORDER_123",
+            entry_type="reentry",
+            placed_at=placed_at,
+        )
+        db_session.add(reentry_order)
+        db_session.commit()
+
+        # Simulate UnifiedOrderMonitor updating order status to ONGOING
+        # (between initial fetch and cancellation check)
+        reentry_order.status = OrderStatus.ONGOING
+        db_session.commit()
+
+        # Mock broker to return empty list (order not found)
+        engine.orders.get_order_book = Mock(return_value=[])
+
+        summary = engine.adjust_amo_quantities_premarket()
+
+        # Verify order was NOT cancelled (status changed)
+        db_session.refresh(reentry_order)
+        assert reentry_order.status == OrderStatus.ONGOING  # Still ONGOING
+        assert summary.get("cancelled", 0) == 0
+
+    def test_order_not_found_but_too_recent_skips_cancellation(
+        self, db_session, test_user, mock_engine_with_repos
+    ):
+        """Test that order not found at broker but too recent (< 1 hour) is not cancelled"""
+        engine = mock_engine_with_repos
+
+        # Create re-entry order placed 30 minutes ago (too recent)
+        from datetime import timedelta
+
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        placed_at = ist_now() - timedelta(minutes=30)  # 30 minutes old
+
+        reentry_order = Orders(
+            user_id=test_user.id,
+            symbol="RELIANCE-EQ",
+            side="buy",
+            order_type="limit",
+            quantity=40,
+            price=2500.0,
+            status=OrderStatus.PENDING,
+            broker_order_id="REENTRY_ORDER_123",
+            entry_type="reentry",
+            placed_at=placed_at,
+        )
+        db_session.add(reentry_order)
+        db_session.commit()
+
+        # Mock broker to return empty list (order not found)
+        engine.orders.get_order_book = Mock(return_value=[])
+
+        summary = engine.adjust_amo_quantities_premarket()
+
+        # Verify order was NOT cancelled (too recent)
+        db_session.refresh(reentry_order)
+        assert reentry_order.status == OrderStatus.PENDING  # Still PENDING
+        assert summary.get("cancelled", 0) == 0
+
+    def test_order_not_found_already_cancelled_skips_cancellation(
+        self, db_session, test_user, mock_engine_with_repos
+    ):
+        """Test that order not found at broker but already CANCELLED is not cancelled again"""
+        engine = mock_engine_with_repos
+
+        # Create re-entry order already CANCELLED
+        from datetime import timedelta
+
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        placed_at = ist_now() - timedelta(hours=2)  # 2 hours old
+
+        reentry_order = Orders(
+            user_id=test_user.id,
+            symbol="RELIANCE-EQ",
+            side="buy",
+            order_type="limit",
+            quantity=40,
+            price=2500.0,
+            status=OrderStatus.CANCELLED,  # Already CANCELLED
+            broker_order_id="REENTRY_ORDER_123",
+            entry_type="reentry",
+            placed_at=placed_at,
+        )
+        db_session.add(reentry_order)
+        db_session.commit()
+
+        # Mock broker to return empty list (order not found)
+        engine.orders.get_order_book = Mock(return_value=[])
+
+        summary = engine.adjust_amo_quantities_premarket()
+
+        # Verify order was NOT cancelled again
+        db_session.refresh(reentry_order)
+        assert reentry_order.status == OrderStatus.CANCELLED  # Still CANCELLED
+        assert summary.get("cancelled", 0) == 0
+
+    def test_order_not_found_missing_placed_at_skips_cancellation(
+        self, db_session, test_user, mock_engine_with_repos
+    ):
+        """Test that order not found at broker but missing placed_at is not cancelled"""
+        engine = mock_engine_with_repos
+
+        # Create re-entry order without placed_at
+        reentry_order = Orders(
+            user_id=test_user.id,
+            symbol="RELIANCE-EQ",
+            side="buy",
+            order_type="limit",
+            quantity=40,
+            price=2500.0,
+            status=OrderStatus.PENDING,
+            broker_order_id="REENTRY_ORDER_123",
+            entry_type="reentry",
+            placed_at=None,  # Missing placed_at
+        )
+        db_session.add(reentry_order)
+        db_session.commit()
+
+        # Mock broker to return empty list (order not found)
+        engine.orders.get_order_book = Mock(return_value=[])
+
+        summary = engine.adjust_amo_quantities_premarket()
+
+        # Verify order was NOT cancelled (missing placed_at)
+        db_session.refresh(reentry_order)
+        assert reentry_order.status == OrderStatus.PENDING  # Still PENDING
+        assert summary.get("cancelled", 0) == 0
+
+    def test_multiple_orders_some_cancelled_some_not(
+        self, db_session, test_user, mock_engine_with_repos
+    ):
+        """Test multiple orders - some cancelled, some not"""
+        engine = mock_engine_with_repos
+
+        from datetime import timedelta
+
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        # Order 1: Old enough, not found at broker → Should be cancelled
+        order1 = Orders(
+            user_id=test_user.id,
+            symbol="RELIANCE-EQ",
+            side="buy",
+            order_type="limit",
+            quantity=40,
+            price=2500.0,
+            status=OrderStatus.PENDING,
+            broker_order_id="REENTRY_ORDER_1",
+            entry_type="reentry",
+            placed_at=ist_now() - timedelta(hours=2),
+        )
+        db_session.add(order1)
+
+        # Order 2: Too recent, not found at broker → Should NOT be cancelled
+        order2 = Orders(
+            user_id=test_user.id,
+            symbol="TCS-EQ",
+            side="buy",
+            order_type="limit",
+            quantity=30,
+            price=3600.0,
+            status=OrderStatus.PENDING,
+            broker_order_id="REENTRY_ORDER_2",
+            entry_type="reentry",
+            placed_at=ist_now() - timedelta(minutes=30),
+        )
+        db_session.add(order2)
+
+        # Order 3: Found at broker → Should NOT be cancelled
+        order3 = Orders(
+            user_id=test_user.id,
+            symbol="WIPRO-EQ",
+            side="buy",
+            order_type="limit",
+            quantity=50,
+            price=500.0,
+            status=OrderStatus.PENDING,
+            broker_order_id="REENTRY_ORDER_3",
+            entry_type="reentry",
+            placed_at=ist_now() - timedelta(hours=2),
+        )
+        db_session.add(order3)
+        db_session.commit()
+
+        # Mock broker to return order3 only (order1 and order2 not found)
+        broker_order = {
+            "nOrdNo": "REENTRY_ORDER_3",
+            "tradingSymbol": "WIPRO-EQ",
+            "quantity": 50,
+            "orderValidity": "DAY",
+            "orderStatus": "PENDING",
+            "transactionType": "BUY",
+        }
+        engine.orders.get_order_book = Mock(return_value=[broker_order])
+
+        summary = engine.adjust_amo_quantities_premarket()
+
+        # Verify results
+        db_session.refresh(order1)
+        db_session.refresh(order2)
+        db_session.refresh(order3)
+
+        assert order1.status == OrderStatus.CANCELLED  # Cancelled (old, not found)
+        assert order2.status == OrderStatus.PENDING  # Not cancelled (too recent)
+        assert order3.status == OrderStatus.PENDING  # Not cancelled (found at broker)
+        assert summary.get("cancelled", 0) == 1  # Only order1 cancelled
+
+    def test_order_not_found_database_update_fails_gracefully(
+        self, db_session, test_user, mock_engine_with_repos
+    ):
+        """Test that database update failure is handled gracefully"""
+        engine = mock_engine_with_repos
+
+        from datetime import timedelta
+
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        placed_at = ist_now() - timedelta(hours=2)  # 2 hours old
+
+        reentry_order = Orders(
+            user_id=test_user.id,
+            symbol="RELIANCE-EQ",
+            side="buy",
+            order_type="limit",
+            quantity=40,
+            price=2500.0,
+            status=OrderStatus.PENDING,
+            broker_order_id="REENTRY_ORDER_123",
+            entry_type="reentry",
+            placed_at=placed_at,
+        )
+        db_session.add(reentry_order)
+        db_session.commit()
+
+        # Mock broker to return empty list (order not found)
+        engine.orders.get_order_book = Mock(return_value=[])
+
+        # Mock orders_repo.update to raise exception
+        original_update = engine.orders_repo.update
+
+        def failing_update(order, **kwargs):
+            raise Exception("Database update failed")
+
+        engine.orders_repo.update = Mock(side_effect=failing_update)
+
+        # Should not raise exception
+        summary = engine.adjust_amo_quantities_premarket()
+
+        # Verify order was NOT updated (update failed)
+        db_session.refresh(reentry_order)
+        assert reentry_order.status == OrderStatus.PENDING  # Still PENDING (update failed)
+        assert summary.get("cancelled", 0) == 0  # Not counted as cancelled
+
+    def test_order_not_found_exact_one_hour_boundary(
+        self, db_session, test_user, mock_engine_with_repos
+    ):
+        """Test that order exactly 1 hour old is cancelled (boundary condition)"""
+        engine = mock_engine_with_repos
+
+        from datetime import timedelta
+
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        placed_at = ist_now() - timedelta(hours=1, seconds=1)  # Just over 1 hour
+
+        reentry_order = Orders(
+            user_id=test_user.id,
+            symbol="RELIANCE-EQ",
+            side="buy",
+            order_type="limit",
+            quantity=40,
+            price=2500.0,
+            status=OrderStatus.PENDING,
+            broker_order_id="REENTRY_ORDER_123",
+            entry_type="reentry",
+            placed_at=placed_at,
+        )
+        db_session.add(reentry_order)
+        db_session.commit()
+
+        # Mock broker to return empty list (order not found)
+        engine.orders.get_order_book = Mock(return_value=[])
+
+        summary = engine.adjust_amo_quantities_premarket()
+
+        # Verify order was cancelled (just over 1 hour)
+        db_session.refresh(reentry_order)
+        assert reentry_order.status == OrderStatus.CANCELLED
+        assert summary.get("cancelled", 0) == 1
+
+    def test_order_not_found_just_under_one_hour_skips(
+        self, db_session, test_user, mock_engine_with_repos
+    ):
+        """Test that order just under 1 hour old is NOT cancelled (boundary condition)"""
+        engine = mock_engine_with_repos
+
+        from datetime import timedelta
+
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        placed_at = ist_now() - timedelta(hours=1, seconds=-1)  # Just under 1 hour
+
+        reentry_order = Orders(
+            user_id=test_user.id,
+            symbol="RELIANCE-EQ",
+            side="buy",
+            order_type="limit",
+            quantity=40,
+            price=2500.0,
+            status=OrderStatus.PENDING,
+            broker_order_id="REENTRY_ORDER_123",
+            entry_type="reentry",
+            placed_at=placed_at,
+        )
+        db_session.add(reentry_order)
+        db_session.commit()
+
+        # Mock broker to return empty list (order not found)
+        engine.orders.get_order_book = Mock(return_value=[])
+
+        summary = engine.adjust_amo_quantities_premarket()
+
+        # Verify order was NOT cancelled (just under 1 hour)
+        db_session.refresh(reentry_order)
+        assert reentry_order.status == OrderStatus.PENDING  # Still PENDING
+        assert summary.get("cancelled", 0) == 0

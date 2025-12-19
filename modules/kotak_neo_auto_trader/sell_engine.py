@@ -1304,6 +1304,15 @@ class SellOrderManager:
                                 closed_at=closed_at_time,
                                 exit_price=exit_price,  # Save exit price from manual sell order
                             )
+                            # Close corresponding ONGOING buy orders
+                            try:
+                                base_symbol = extract_base_symbol(full_symbol).upper()
+                                self._close_buy_orders_for_symbol(base_symbol)
+                            except Exception as close_error:
+                                # Log error but don't fail - position is already closed
+                                logger.warning(
+                                    f"Failed to close buy orders for {full_symbol} after marking position closed: {close_error}"
+                                )
                         stats["closed"] += 1
                         price_str = f"{exit_price:.2f}" if exit_price is not None else "unknown"
                         logger.info(
@@ -1714,6 +1723,15 @@ class SellOrderManager:
                                 closed_at=ist_now(),
                                 exit_price=None,  # Manual sell, price unknown
                             )
+                            # Close corresponding ONGOING buy orders
+                            try:
+                                base_symbol = extract_base_symbol(symbol).upper()
+                                self._close_buy_orders_for_symbol(base_symbol)
+                            except Exception as close_error:
+                                # Log error but don't fail - position is already closed
+                                logger.warning(
+                                    f"Failed to close buy orders for {symbol} after marking position closed: {close_error}"
+                                )
                         stats["closed"] += 1
                         logger.info(f"Position {symbol} marked as closed due to manual full sell")
                     except Exception as e:
@@ -1954,6 +1972,15 @@ class SellOrderManager:
                         closed_at=ist_now(),
                         exit_price=None,
                     )
+                    # Close corresponding ONGOING buy orders
+                    try:
+                        base_symbol = extract_base_symbol(symbol).upper()
+                        self._close_buy_orders_for_symbol(base_symbol)
+                    except Exception as close_error:
+                        # Log error but don't fail - position is already closed
+                        logger.warning(
+                            f"Failed to close buy orders for {symbol} after marking position closed: {close_error}"
+                        )
                 return True
 
             # Manual partial sell detected
