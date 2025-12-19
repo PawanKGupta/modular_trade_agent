@@ -754,6 +754,14 @@ If critical issues are found:
   - **Timeline**: 6-8 weeks
   - **Benefits**: Single codebase, consistency, unified reporting, data integrity
   - **Status**: Planning phase
+- **Order-Position Reconciliation Job**: Background job to reconcile ONGOING orders for closed positions
+  - **Purpose**: Catch any missed order closures when positions are closed (edge case handling)
+  - **Implementation**: Periodic job that queries for closed positions with ONGOING buy orders and updates them to CLOSED
+  - **Frequency**: Run daily (e.g., during EOD cleanup) or on-demand
+  - **Benefits**: Ensures data consistency, handles edge cases where order closure fails after position closure
+  - **Timeline**: 1-2 days
+  - **Status**: Future improvement
+  - **Related Issue**: Fixed in current release - positions now close buy orders, but this provides additional safety net
 - Advanced order management
 - Multi-broker support
 

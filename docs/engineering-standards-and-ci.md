@@ -49,6 +49,10 @@ This document captures the coding standards, tooling, CI gates, and local workfl
   - Avoid broad exceptions; return explicit 4xx/5xx
   - No ORM usage in routers; all DB via repositories
   - Config exclusively via Pydantic Settings (`server/app/core/config.py`)
+  - **DO NOT use Unicode characters (emojis) in log messages or output**
+    - Windows console encoding issues can cause `UnicodeEncodeError`
+    - Use plain text alternatives (e.g., "[OK]", "[FAIL]", "[WARN]" instead of ✅, ❌, ⚠️)
+    - Log files support UTF-8, but console output should remain ASCII-safe for compatibility
 
 ### Web (TypeScript/React)
 

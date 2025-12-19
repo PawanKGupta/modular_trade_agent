@@ -31,8 +31,9 @@ from utils.logger import logger
 
 # Database models
 try:
-    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
     from sqlalchemy import text
+
+    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 except ImportError:
     DbOrderStatus = None
     text = None
@@ -3457,11 +3458,7 @@ class AutoTradeEngine:
         try:
             # 1. Get all pending orders from broker
             logger.info("Fetching pending AMO orders from broker...")
-            pending_orders = self.orders.get_order_book()
-
-            if not pending_orders:
-                logger.info("No pending orders found - nothing to adjust")
-                return summary
+            pending_orders = self.orders.get_order_book() or []
 
             # Filter only AMO/pending orders (including re-entry orders)
             amo_orders = [
@@ -3476,6 +3473,9 @@ class AutoTradeEngine:
             reentry_orders_from_db = []
             if self.orders_repo and self.user_id:
                 try:
+                    # Import here to ensure it's available
+                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
                     all_orders = self.orders_repo.list(self.user_id)
                     reentry_orders_from_db = [
                         db_order
@@ -3492,19 +3492,21 @@ class AutoTradeEngine:
                 except Exception as e:
                     logger.warning(f"Error fetching re-entry orders from database: {e}")
 
-            if not amo_orders:
-                logger.info("No pending AMO buy orders found - nothing to adjust")
-                return summary
+            # Build set of broker order IDs for quick lookup
+            broker_order_ids = set()
+            if pending_orders:
+                broker_order_ids = {
+                    order.get("nOrdNo", order.get("orderId", ""))
+                    for order in pending_orders
+                    if order.get("nOrdNo") or order.get("orderId")
+                }
 
-            logger.info(f"Found {len(amo_orders)} pending AMO buy orders")
+            # Track which re-entry orders we've already cancelled (to skip them in next loop)
+            cancelled_reentry_order_ids = set()
 
-            # Add re-entry orders from database to processing list
-            # Match them with broker orders by order_id
-            reentry_order_ids = {
-                db_order.broker_order_id
-                for db_order in reentry_orders_from_db
-                if db_order.broker_order_id
-            }
+            # Check re-entry orders from database for closed positions FIRST
+            # This must happen even if there are no broker orders, to handle cases where
+            # re-entry orders exist in DB but position was closed
             for db_order in reentry_orders_from_db:
                 # Check if position is closed - cancel re-entry order if closed
                 if self.positions_repo:
@@ -3533,29 +3535,120 @@ class AutoTradeEngine:
                                         status=DbOrderStatus.CANCELLED,
                                         reason="Position closed",
                                     )
+                                    summary["cancelled"] = summary.get("cancelled", 0) + 1
+                                    cancelled_reentry_order_ids.add(db_order.broker_order_id)
                         except Exception as e:
                             logger.warning(
                                 f"Error cancelling re-entry order {db_order.broker_order_id}: {e}"
                             )
                         continue
 
-                # If re-entry order not in broker orders list, add it for processing
-                if db_order.broker_order_id and db_order.broker_order_id not in reentry_order_ids:
-                    # Try to find matching broker order
-                    matching_broker_order = None
-                    for broker_order in pending_orders:
-                        broker_order_id = broker_order.get(
-                            "nOrdNo", broker_order.get("orderId", "")
-                        )
-                        if broker_order_id == db_order.broker_order_id:
-                            matching_broker_order = broker_order
-                            break
+            # Check for re-entry orders not found at broker (EOD cancellation handling)
+            # This must happen even if broker returns empty, to mark stale orders as CANCELLED
+            for db_order in reentry_orders_from_db:
+                # Skip if already cancelled for closed position
+                if db_order.broker_order_id in cancelled_reentry_order_ids:
+                    continue
 
+                # Check if order is found in broker's order list
+                order_found_at_broker = (
+                    db_order.broker_order_id and db_order.broker_order_id in broker_order_ids
+                )
+
+                if order_found_at_broker:
+                    # Order found at broker - add to processing list
+                    matching_broker_order = None
+                    if pending_orders:
+                        for broker_order in pending_orders:
+                            broker_order_id = broker_order.get(
+                                "nOrdNo", broker_order.get("orderId", "")
+                            )
+                            if broker_order_id == db_order.broker_order_id:
+                                matching_broker_order = broker_order
+                                break
                     if matching_broker_order:
-                        amo_orders.append(matching_broker_order)
+                        # Only add if not already in amo_orders (avoid duplicates)
+                        # Re-entry orders might already be in amo_orders from initial broker filter
+                        already_in_list = any(
+                            order.get("nOrdNo", order.get("orderId", ""))
+                            == db_order.broker_order_id
+                            for order in amo_orders
+                        )
+                        if not already_in_list:
+                            amo_orders.append(matching_broker_order)
+                else:
+                    # Order not found at broker - likely cancelled by broker at EOD
+                    # Order not found at broker - likely cancelled by broker at EOD
+                    # Mark PENDING orders as CANCELLED in database, but only if:
+                    # 1. Order is still PENDING (re-check to avoid race conditions)
+                    # 2. Order is old enough (placed before previous day's market close)
+                    #    to avoid marking newly placed orders as CANCELLED
+                    from src.infrastructure.db.models import (
+                        OrderStatus as DbOrderStatus,
+                    )
+
+                    if db_order.status == DbOrderStatus.PENDING and self.orders_repo:
+                        try:
+                            # Re-check order status to avoid race conditions
+                            # (e.g., UnifiedOrderMonitor might have updated it)
+                            # Fetch fresh order from DB using broker_order_id
+                            fresh_order = self.orders_repo.get_by_broker_order_id(
+                                self.user_id, db_order.broker_order_id
+                            )
+                            if not fresh_order or fresh_order.status != DbOrderStatus.PENDING:
+                                logger.debug(
+                                    f"Re-entry order {db_order.broker_order_id} status changed "
+                                    f"(now {fresh_order.status if fresh_order else 'deleted'}) - skipping cancellation"
+                                )
+                                continue
+
+                            # Check if order is old enough (placed before previous day's market close)
+                            # This prevents marking newly placed orders as CANCELLED if broker API
+                            # hasn't synced yet
+                            from src.infrastructure.db.timezone_utils import IST, ist_now
+
+                            now = ist_now()
+                            if now.tzinfo is None:
+                                now = now.replace(tzinfo=IST)
+                            elif now.tzinfo != IST:
+                                now = now.astimezone(IST)
+
+                            # Only mark as CANCELLED if order is at least 1 hour old
+                            # (gives broker API time to sync)
+                            if db_order.placed_at:
+                                placed_at = db_order.placed_at
+                                if placed_at.tzinfo is None:
+                                    placed_at = placed_at.replace(tzinfo=IST)
+                                elif placed_at.tzinfo != IST:
+                                    placed_at = placed_at.astimezone(IST)
+
+                                age_hours = (now - placed_at).total_seconds() / 3600
+                                if age_hours < 1:
+                                    logger.debug(
+                                        f"Re-entry order {db_order.broker_order_id} is too recent "
+                                        f"({age_hours:.1f} hours old) - skipping cancellation "
+                                        f"(broker API may not have synced yet)"
+                                    )
+                                    continue
+
+                            logger.info(
+                                f"Re-entry order {db_order.broker_order_id} not found at broker "
+                                f"(likely cancelled at EOD) - marking as CANCELLED in database"
+                            )
+                            self.orders_repo.update(
+                                fresh_order,
+                                status=DbOrderStatus.CANCELLED,
+                                reason="Order not found at broker (likely cancelled at EOD)",
+                            )
+                            summary["cancelled"] = summary.get("cancelled", 0) + 1
+                        except Exception as e:
+                            logger.warning(
+                                f"Error updating order status for {db_order.broker_order_id}: {e}"
+                            )
                     else:
                         logger.warning(
-                            f"Re-entry order {db_order.broker_order_id} not found in broker orders - may have been executed or cancelled"
+                            f"Re-entry order {db_order.broker_order_id} not found in broker orders - "
+                            f"may have been executed or cancelled (status: {db_order.status})"
                         )
 
             summary["total_orders"] = len(amo_orders)
