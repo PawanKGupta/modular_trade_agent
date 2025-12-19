@@ -649,7 +649,8 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                     position = positions_repo.get_by_symbol(current.id, full_symbol)
 
                     # Fallback: If not found and symbol has segment suffix, try base symbol matching
-                    # This handles cases where broker returns base symbol but position has full symbol
+                    # This handles cases where broker returns base symbol but position has full
+                    # symbol (e.g., RELIANCE vs RELIANCE-EQ)
                     if not position and "-" in full_symbol:
                         from modules.kotak_neo_auto_trader.utils.symbol_utils import (
                             extract_base_symbol,
@@ -916,8 +917,11 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
                         "pending": "pending",
                         "open": "pending",
                         "executed": "ongoing",
-                        "completed": "closed",
+                        "complete": "closed",  # OrderStatus.COMPLETE.value.lower() = "complete"
+                        "completed": "closed",  # Support both variants for compatibility
                         "filled": "closed",
+                        "partially_filled": "ongoing",  # Partially executed orders
+                        "trigger_pending": "pending",  # Trigger pending orders
                         "rejected": "failed",
                         "cancelled": "cancelled",
                         "failed": "failed",
