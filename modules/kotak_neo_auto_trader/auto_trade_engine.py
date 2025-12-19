@@ -29,6 +29,14 @@ from modules.kotak_neo_auto_trader.services import (
 )
 from utils.logger import logger
 
+# Database models
+try:
+    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+    from sqlalchemy import text
+except ImportError:
+    DbOrderStatus = None
+    text = None
+
 # Kotak Neo modules
 try:
     from . import config
@@ -596,7 +604,6 @@ class AutoTradeEngine:
             except Exception as e:
                 logger.warning(f"Error getting failed orders from repository: {e}")
                 # Fallback: Check status manually
-                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                 all_orders = self.orders_repo.list(self.user_id)
                 failed_orders = []
@@ -656,7 +663,6 @@ class AutoTradeEngine:
                 normalized_symbol = normalize_symbol(symbol)
 
                 # Phase 6: Check for existing failed orders using status instead of metadata
-                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                 existing_orders = self.orders_repo.list(self.user_id)
                 existing_failed_orders = [
@@ -821,7 +827,6 @@ class AutoTradeEngine:
         """
         if self.orders_repo and self.user_id:
             # Phase 6: Use repository-based storage with status-based lookup
-            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
             all_orders = self.orders_repo.list(self.user_id)
             for order in all_orders:
@@ -2052,8 +2057,6 @@ class AutoTradeEngine:
         # This prevents duplicates when broker API doesn't return pending orders or is unavailable
         if self.orders_repo and self.user_id:
             try:
-                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                 existing_orders = self.orders_repo.list(self.user_id)
                 for existing_order in existing_orders:
                     # Check if symbol matches (including variants)
@@ -2765,8 +2768,6 @@ class AutoTradeEngine:
             if not status_lower:
                 return
 
-            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
             self.orders_repo.update_status_check(db_order)
 
             if status_lower in {"rejected", "reject"}:
@@ -3233,7 +3234,6 @@ class AutoTradeEngine:
                         )
 
                         # Update DB order with manual order details
-                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                         self.orders_repo.update(
                             db_order,
@@ -3285,8 +3285,6 @@ class AutoTradeEngine:
                     )
                     # Database fallback: Check for pending/ongoing buy orders
                     if self.orders_repo and self.user_id:
-                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                         existing_orders = self.orders_repo.list(self.user_id)
                         for existing_order in existing_orders:
                             if (
@@ -3363,7 +3361,6 @@ class AutoTradeEngine:
                     summary["placed"] += 1
                     # Update order status to PENDING and set broker_order_id
                     # Also update quantity in case it changed due to config changes
-                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                     self.orders_repo.update(
                         db_order,
@@ -3479,8 +3476,6 @@ class AutoTradeEngine:
             reentry_orders_from_db = []
             if self.orders_repo and self.user_id:
                 try:
-                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                     all_orders = self.orders_repo.list(self.user_id)
                     reentry_orders_from_db = [
                         db_order
@@ -3859,9 +3854,7 @@ class AutoTradeEngine:
                 "Holdings API unavailable after retries - using database fallback to check for existing orders"
             )
             # Fallback: Check database for existing orders to prevent duplicates
-            if self.db and self.user_id and hasattr(self, "orders_repo"):
-                from sqlalchemy import text
-
+            if self.db and self.user_id and hasattr(self, "orders_repo") and text:
                 # Check if we have any pending/ongoing buy orders for the recommended symbols
                 symbols_to_check = [
                     self.parse_symbol_for_broker(rec.ticker) for rec in recommendations
@@ -3945,6 +3938,10 @@ class AutoTradeEngine:
             return summary
 
         logger.info("Holdings API healthy - proceeding with order placement")
+
+        # Note: Stale PENDING orders are excluded from portfolio count in PortfolioService
+        # EOD cleanup handles marking stale orders as CANCELLED/FAILED at end of day
+        # The exclusion in portfolio count prevents stale orders from blocking new orders during the day
 
         # OPTIMIZATION: Populate PortfolioService cache with holdings from pre-flight check
         # This prevents redundant API calls when PortfolioService methods are called later
@@ -4183,12 +4180,14 @@ class AutoTradeEngine:
 
             # Use OrderValidationService for capacity check (Phase 3.1)
             # OrderValidationService delegates to PortfolioService
+            # Note: PortfolioService excludes stale PENDING orders (past next trading day market close) from count
             has_capacity, current_count, max_size = (
                 self.order_validation_service.check_portfolio_capacity(include_pending=True)
             )
             if not has_capacity:
-                logger.info(
-                    f"Portfolio limit reached ({current_count}/{max_size}); skipping further entries"
+                logger.warning(
+                    f"Portfolio limit reached ({current_count}/{max_size}); skipping further entries. "
+                    f"Note: Stale PENDING orders (past next trading day market close) are excluded from count."
                 )
                 summary["skipped_portfolio_limit"] += 1
                 summary["skipped"] += 1  # Increment general counter
@@ -4292,8 +4291,6 @@ class AutoTradeEngine:
 
                     # Create/update DB order with manual order details
                     if self.orders_repo and self.user_id:
-                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                         # Check if order already exists in DB
                         existing_order = self.orders_repo.get_by_broker_order_id(
                             self.user_id, manual_order_id
@@ -4374,8 +4371,6 @@ class AutoTradeEngine:
             existing_db_order = None
             if self.orders_repo and self.user_id:
                 try:
-                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                     existing_orders = self.orders_repo.list(self.user_id)
                     for existing_order in existing_orders:
                         order_symbol_base = (
@@ -4411,8 +4406,6 @@ class AutoTradeEngine:
             # If database has an order, we'll check if quantity needs to be updated after calculating new quantity
             # For now, skip if database has ONGOING order (already executed, cannot update)
             if has_db_order and existing_db_order:
-                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                 if existing_db_order.status == DbOrderStatus.ONGOING:
                     logger.info(
                         f"Skipping {broker_symbol}: already has active buy order in database "
@@ -4547,8 +4540,6 @@ class AutoTradeEngine:
             # If database has an existing PENDING order, check if quantity or price needs to be updated
             # due to capital change (e.g., user updated capital per trade config) or price change
             if has_db_order and existing_db_order:
-                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                 # Update quantity/price for orders that can still be modified
                 # Skip ONGOING orders (already executed, cannot update)
                 # Skip CLOSED/CANCELLED orders (already finalized)

@@ -12,6 +12,7 @@ from modules.kotak_neo_auto_trader.services.portfolio_service import (
     PortfolioService,
     get_portfolio_service,
 )
+from src.infrastructure.db.models import OrderStatus
 
 
 class TestPortfolioCache:
@@ -262,7 +263,6 @@ class TestPortfolioServiceGetCurrentPositions:
 
     def test_get_current_positions_includes_database_ongoing_orders(self):
         """Test get_current_positions() includes database ONGOING orders"""
-        from src.infrastructure.db.models import OrderStatus
 
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
@@ -290,7 +290,6 @@ class TestPortfolioServiceGetCurrentPositions:
 
     def test_get_current_positions_includes_database_pending_orders(self):
         """Test get_current_positions() includes database PENDING orders"""
-        from src.infrastructure.db.models import OrderStatus
 
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(return_value={"data": []})
@@ -315,7 +314,6 @@ class TestPortfolioServiceGetCurrentPositions:
 
     def test_get_current_positions_excludes_database_closed_orders(self):
         """Test get_current_positions() excludes database CLOSED orders"""
-        from src.infrastructure.db.models import OrderStatus
 
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(return_value={"data": []})
@@ -340,7 +338,6 @@ class TestPortfolioServiceGetCurrentPositions:
 
     def test_get_current_positions_combines_all_sources(self):
         """Test get_current_positions() combines holdings, broker pending, and database orders"""
-        from src.infrastructure.db.models import OrderStatus
 
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
@@ -499,7 +496,6 @@ class TestPortfolioServiceCheckCapacity:
 
     def test_check_portfolio_capacity_includes_database_orders(self):
         """Test check_portfolio_capacity() includes database ONGOING orders in count"""
-        from src.infrastructure.db.models import OrderStatus
 
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
@@ -532,7 +528,6 @@ class TestPortfolioServiceCheckCapacity:
 
     def test_check_portfolio_capacity_respects_limit_with_database_orders(self):
         """Test check_portfolio_capacity() respects max_portfolio_size when database orders push over limit"""
-        from src.infrastructure.db.models import OrderStatus
 
         mock_portfolio = Mock()
         # 3 holdings from broker
@@ -575,7 +570,6 @@ class TestPortfolioServiceCheckCapacity:
 
     def test_check_portfolio_capacity_exceeds_limit_with_database_orders(self):
         """Test check_portfolio_capacity() correctly identifies when database orders exceed limit"""
-        from src.infrastructure.db.models import OrderStatus
 
         mock_portfolio = Mock()
         # 3 holdings from broker
