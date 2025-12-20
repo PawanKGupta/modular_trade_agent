@@ -7,7 +7,7 @@ Replaces hardcoded magic numbers throughout the codebase.
 
 import os
 from dataclasses import dataclass
-from typing import Optional
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -138,6 +138,7 @@ class StrategyConfig:
     exit_on_ema9_or_rsi50: bool = True  # Exit when price >= EMA9 or RSI > 50
     allow_duplicate_recommendations_same_day: bool = False  # Allow duplicate recommendations
     min_combined_score: int = 25  # Minimum combined score for recommendations
+    enable_premarket_amo_adjustment: bool = True  # Adjust AMO quantities based on pre-market prices
 
     @classmethod
     def from_env(cls) -> "StrategyConfig":
@@ -264,6 +265,10 @@ class StrategyConfig:
             ).lower()
             in ("1", "true", "yes", "on"),
             min_combined_score=int(os.getenv("MIN_COMBINED_SCORE", "25")),
+            enable_premarket_amo_adjustment=os.getenv(
+                "ENABLE_PREMARKET_AMO_ADJUSTMENT", "true"
+            ).lower()
+            in ("1", "true", "yes", "on"),
         )
 
     @classmethod

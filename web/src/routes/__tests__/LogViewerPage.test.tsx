@@ -9,6 +9,17 @@ const mockGetAdminLogs = vi.fn();
 const mockGetUserErrorLogs = vi.fn();
 const mockGetAdminErrorLogs = vi.fn();
 const mockResolveErrorLog = vi.fn();
+const mockListUsers = vi.fn();
+
+// Mock react-syntax-highlighter to avoid ES module issues in tests
+vi.mock('react-syntax-highlighter', () => ({
+	Prism: ({ children }: { children: string }) => <pre>{children}</pre>,
+	default: ({ children }: { children: string }) => <pre>{children}</pre>,
+}));
+
+vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
+	vscDarkPlus: {},
+}));
 
 vi.mock('@/api/logs', () => ({
 	getUserLogs: (params: unknown) => mockGetUserLogs(params),
@@ -16,6 +27,10 @@ vi.mock('@/api/logs', () => ({
 	getUserErrorLogs: (params: unknown) => mockGetUserErrorLogs(params),
 	getAdminErrorLogs: (params: unknown) => mockGetAdminErrorLogs(params),
 	resolveErrorLog: (id: number, payload: unknown) => mockResolveErrorLog(id, payload),
+}));
+
+vi.mock('@/api/admin', () => ({
+	listUsers: () => mockListUsers(),
 }));
 
 const mockUseSessionStore = vi.fn();
@@ -69,6 +84,10 @@ beforeEach(() => {
 		message: 'ok',
 		error: { ...sampleErrors[0], resolved: true },
 	});
+	mockListUsers.mockResolvedValue([
+		{ id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin', is_active: true, created_at: '', updated_at: '' },
+		{ id: 2, email: 'user2@example.com', name: 'User 2', role: 'user', is_active: true, created_at: '', updated_at: '' },
+	]);
 	mockUseSessionStore.mockReturnValue({
 		user: { id: 1, email: 'test@example.com' },
 		isAdmin: true,
@@ -92,8 +111,26 @@ it('switches to admin scope and filters by user id', async () => {
 	renderPage();
 	const scopeSelect = screen.getByLabelText(/Scope/i);
 	await userEvent.selectOptions(scopeSelect, 'all');
-	const userIdInput = screen.getByLabelText(/User ID/i);
-	await userEvent.type(userIdInput, '2');
+
+	// Wait for UserAutocomplete to load and show users
+	await waitFor(() => {
+		const userInput = screen.getByPlaceholderText(/Any/i);
+		expect(userInput).toBeInTheDocument();
+	});
+
+	// Focus the input to open dropdown
+	const userInput = screen.getByPlaceholderText(/Any/i);
+	await userEvent.click(userInput);
+
+	// Wait for dropdown to appear with users
+	await waitFor(() => {
+		expect(screen.getByText(/User 2/i)).toBeInTheDocument();
+	});
+
+	// Click on User 2 to select them
+	const user2Button = screen.getByText(/User 2/i).closest('button');
+	expect(user2Button).toBeInTheDocument();
+	await userEvent.click(user2Button!);
 
 	await waitFor(() => {
 		expect(mockGetAdminLogs).toHaveBeenCalledWith(

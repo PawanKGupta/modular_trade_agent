@@ -5,9 +5,13 @@ import { withProviders } from '@/test/utils';
 import * as serviceApi from '@/api/service';
 
 // Mock the service API
-vi.mock('@/api/service', () => ({
+vi.mock('@/api/service', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@/api/service')>();
+	return {
+		...actual,
 	getIndividualServicesStatus: vi.fn(),
-}));
+	};
+});
 
 // Mock the session store
 vi.mock('@/state/sessionStore', () => ({

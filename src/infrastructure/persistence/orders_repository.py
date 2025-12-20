@@ -1,14 +1,24 @@
 from __future__ import annotations
 
 import builtins
+import json
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Orders, OrderStatus
+from src.infrastructure.db.models import Orders, OrderStatus, Signals, SignalStatus
 from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.persistence.signals_repository import SignalsRepository
+
+# Import logger for duplicate detection logging
+try:
+    from utils.logger import logger
+except ImportError:
+    import logging
+
+    logger = logging.getLogger(__name__)
 
 
 class OrdersRepository:
@@ -21,7 +31,6 @@ class OrdersRepository:
     def list(self, user_id: int, status: OrderStatus | None = None) -> builtins.list[Orders]:
         # Always use raw SQL fallback to avoid enum validation issues
         # This ensures compatibility with database schema regardless of SQLAlchemy metadata cache
-        from sqlalchemy import inspect, text
 
         # Check which columns actually exist in the database
         inspector = inspect(self.db.bind)
@@ -44,6 +53,9 @@ class OrdersRepository:
             "orig_source",
         ]
         optional_columns = []
+        # Handle updated_at as optional for backward compatibility (until migration runs)
+        if "updated_at" in orders_columns:
+            optional_columns.append("updated_at")
         if "order_id" in orders_columns:
             optional_columns.append("order_id")
         if "broker_order_id" in orders_columns:
@@ -134,6 +146,9 @@ class OrdersRepository:
                 "status": status_enum,
                 "avg_price": row_dict.get("avg_price"),
                 "placed_at": parse_datetime(row_dict["placed_at"]),
+                "updated_at": parse_datetime(
+                    row_dict.get("updated_at") or row_dict.get("placed_at")
+                ),  # Fallback to placed_at if updated_at not present (for existing records)
                 "filled_at": parse_datetime(row_dict.get("filled_at")),
                 "closed_at": parse_datetime(row_dict.get("closed_at")),
                 "orig_source": row_dict.get("orig_source"),
@@ -147,8 +162,6 @@ class OrdersRepository:
                 # Handle JSON metadata - might be string or dict
                 metadata_val = row_dict.get("metadata")
                 if isinstance(metadata_val, str):
-                    import json
-
                     try:
                         metadata_val = json.loads(metadata_val)
                     except Exception:
@@ -179,6 +192,10 @@ class OrdersRepository:
                 order_kwargs["execution_qty"] = row_dict.get("execution_qty")
             if "execution_time" in orders_columns:
                 order_kwargs["execution_time"] = parse_datetime(row_dict.get("execution_time"))
+            if "updated_at" in orders_columns:
+                order_kwargs["updated_at"] = parse_datetime(
+                    row_dict.get("updated_at") or row_dict.get("placed_at")
+                )
 
             order = Orders(**order_kwargs)
             orders.append(order)
@@ -199,15 +216,41 @@ class OrdersRepository:
         order_metadata: dict | None = None,
         reason: str | None = None,
     ) -> Orders:
+        # Check for existing active order to prevent duplicates
+        # First check by exact symbol match (most common case - same symbol format)
+        # Then check by base symbol (fallback for different formats like SALSTEEL-BE vs SALSTEEL)
+        if side == "buy":
+            existing_orders = self.list(user_id)
+            symbol_upper = symbol.upper().strip()
+
+            for existing_order in existing_orders:
+                if existing_order.side != "buy":
+                    continue
+                if existing_order.status not in [OrderStatus.PENDING, OrderStatus.ONGOING]:
+                    continue
+
+                existing_symbol_upper = existing_order.symbol.upper().strip()
+
+                # Only exact match (full symbols are different instruments)
+                if existing_symbol_upper == symbol_upper:
+                    logger.warning(
+                        f"Duplicate order prevented: Active buy order already exists with symbol '{symbol}'. "
+                        f"Existing order: {existing_order.symbol} (id: {existing_order.id}, status: {existing_order.status}). "
+                        f"Returning existing order."
+                    )
+                    return existing_order
+
+        now = ist_now()
         order = Orders(
             user_id=user_id,
-            symbol=symbol,
+            symbol=symbol,  # Keep actual symbol format from broker (e.g., SALSTEEL-BE)
             side=side,
             order_type=order_type,
             quantity=quantity,
             price=price,
             status=OrderStatus.PENDING,  # Changed from AMO
-            placed_at=ist_now(),
+            placed_at=now,
+            updated_at=now,  # Set initial updated_at same as placed_at
             order_id=order_id,
             entry_type=entry_type,
             order_metadata=order_metadata,
@@ -231,6 +274,92 @@ class OrdersRepository:
         stmt = select(Orders).where(Orders.user_id == user_id, Orders.order_id == order_id)
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def has_successful_buy_order(self, user_id: int, symbol: str) -> bool:
+        """
+        Check if user has a successful buy order for a symbol.
+
+        A successful order is one that was executed:
+        - side = 'buy'
+        - status in (ONGOING, CLOSED) - meaning it was executed
+
+        Returns:
+            True if user has a successful buy order, False otherwise
+        """
+        stmt = (
+            select(Orders)
+            .where(
+                Orders.user_id == user_id,
+                Orders.symbol == symbol,
+                Orders.side == "buy",
+                Orders.status.in_([OrderStatus.ONGOING, OrderStatus.CLOSED]),
+            )
+            .limit(1)
+        )
+        result = self.db.execute(stmt).scalar_one_or_none()
+        return result is not None
+
+    def has_active_buy_order_by_base_symbol(
+        self, user_id: int, symbol: str, statuses: list[OrderStatus] | None = None
+    ) -> bool:
+        """
+        Check if user has an active buy order for a symbol (comparing by base symbol).
+
+        This prevents duplicate orders when same stock is represented with different
+        symbol formats (e.g., SALSTEEL-BE vs SALSTEEL).
+
+        Args:
+            user_id: User ID
+            symbol: Symbol to check (can be SALSTEEL-BE, SALSTEEL, etc.)
+            statuses: List of statuses to check (default: PENDING, ONGOING)
+
+        Returns:
+            True if active buy order exists for the base symbol, False otherwise
+        """
+        if statuses is None:
+            statuses = [OrderStatus.PENDING, OrderStatus.ONGOING]
+
+        # Extract base symbol (remove segment suffixes)
+        base_symbol = symbol.upper().split("-")[0].strip()
+
+        # Get all buy orders for user
+        all_orders = self.list(user_id)
+
+        for order in all_orders:
+            if order.side != "buy" or order.status not in statuses:
+                continue
+
+            # Extract base symbol from existing order
+            order_base_symbol = order.symbol.upper().split("-")[0].strip()
+
+            # Compare base symbols
+            if order_base_symbol == base_symbol:
+                return True
+
+        return False
+
+    def has_ongoing_buy_order(self, user_id: int, symbol: str) -> bool:
+        """
+        Check if user has an ONGOING buy order for a symbol.
+
+        ONGOING means the order was executed and user still holds the stock.
+        This is more specific than has_successful_buy_order (which includes CLOSED).
+
+        Returns:
+            True if user has an ONGOING buy order, False otherwise
+        """
+        stmt = (
+            select(Orders)
+            .where(
+                Orders.user_id == user_id,
+                Orders.symbol == symbol,
+                Orders.side == "buy",
+                Orders.status == OrderStatus.ONGOING,
+            )
+            .limit(1)
+        )
+        result = self.db.execute(stmt).scalar_one_or_none()
+        return result is not None
+
     def bulk_create(self, orders: list[dict]) -> list[Orders]:
         """Bulk create orders (for migration)"""
         created_orders = []
@@ -243,7 +372,7 @@ class OrdersRepository:
             self.db.refresh(order)
         return created_orders
 
-    def update(self, order: Orders, **fields) -> Orders:
+    def update(self, order: Orders, auto_commit: bool = True, **fields) -> Orders:
         """
         Update an order with the given fields.
 
@@ -252,6 +381,11 @@ class OrdersRepository:
 
         Only updates the fields explicitly passed, avoiding accidental updates
         to datetime fields that might be strings from raw SQL queries.
+
+        Args:
+            order: Order to update
+            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+            **fields: Fields to update on the order
         """
         # Merge order into current session if it's detached
         # This handles cases where the order was loaded in a different session
@@ -270,15 +404,27 @@ class OrdersRepository:
             if hasattr(order, k) and v is not None:
                 setattr(order, k, v)
 
-        self.db.commit()
-        self.db.refresh(order)
+        # Always update updated_at timestamp when order is modified
+        order.updated_at = ist_now()
+
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(order)  # Only refresh after commit to get database state
+        # When auto_commit=False, don't refresh - changes are only in session
         return order
 
-    def cancel(self, order: Orders) -> None:
+    def cancel(self, order: Orders, auto_commit: bool = True) -> None:
+        """Cancel an order (mark as closed without fills)
+
+        Args:
+            order: Order to cancel
+            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+        """
         # For AMO orders, cancel means remove or mark closed without fills
         order.status = OrderStatus.CLOSED
         order.closed_at = ist_now()
-        self.db.commit()
+        if auto_commit:
+            self.db.commit()
 
     def mark_failed(
         self,
@@ -299,6 +445,11 @@ class OrdersRepository:
         # Increment retry_count for monitoring (no max retry limit enforced)
         order.retry_count = (order.retry_count or 0) + 1
         # Note: retry_pending parameter is ignored - all FAILED orders are retriable
+
+        # Mark signal as FAILED if it's a buy order
+        if order.side == "buy":
+            self._mark_signal_as_failed(order)
+
         return self.update(order)
 
     def mark_rejected(self, order: Orders, rejection_reason: str) -> Orders:
@@ -309,6 +460,14 @@ class OrdersRepository:
         order.status = OrderStatus.FAILED  # Changed from REJECTED
         order.reason = f"Broker rejected: {rejection_reason}"  # Use unified reason field
         order.last_status_check = ist_now()
+        # Set first_failed_at if not already set (for retry logic)
+        if not order.first_failed_at:
+            order.first_failed_at = ist_now()
+
+        # Mark signal as FAILED if it's a buy order
+        if order.side == "buy":
+            self._mark_signal_as_failed(order)
+
         return self.update(order)
 
     def mark_cancelled(self, order: Orders, cancelled_reason: str | None = None) -> Orders:
@@ -317,6 +476,11 @@ class OrdersRepository:
         order.reason = cancelled_reason or "Cancelled"  # Use unified reason field
         order.closed_at = ist_now()
         order.last_status_check = ist_now()
+
+        # Mark signal as FAILED if it's a buy order
+        if order.side == "buy":
+            self._mark_signal_as_failed(order)
+
         return self.update(order)
 
     def mark_executed(
@@ -324,8 +488,16 @@ class OrdersRepository:
         order: Orders,
         execution_price: float,
         execution_qty: float | None = None,
+        auto_commit: bool = True,
     ) -> Orders:
-        """Mark an order as executed with execution details"""
+        """Mark an order as executed with execution details
+
+        Args:
+            order: Order to mark as executed
+            execution_price: Price at which order executed
+            execution_qty: Quantity executed (defaults to order quantity)
+            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+        """
         order.status = OrderStatus.ONGOING
         order.execution_price = execution_price
         order.execution_qty = execution_qty or order.quantity
@@ -333,12 +505,77 @@ class OrdersRepository:
         order.filled_at = ist_now()
         order.last_status_check = ist_now()
         order.reason = f"Order executed at Rs {execution_price:.2f}"  # Set reason
-        return self.update(order)
+        return self.update(order, auto_commit=auto_commit)
 
     def update_status_check(self, order: Orders) -> Orders:
         """Update the last status check timestamp"""
         order.last_status_check = ist_now()
         return self.update(order)
+
+    def _mark_signal_as_failed(self, order: Orders) -> None:
+        """
+        Helper method to mark signal as FAILED when order fails.
+
+        Only marks if:
+        - Order is a buy order
+        - Signal exists and is TRADED for this user
+        - All buy orders for this symbol have failed (edge case handling)
+
+        Args:
+            order: The order that failed
+        """
+        if order.side != "buy":
+            return  # Only handle buy orders
+
+        try:
+            signals_repo = SignalsRepository(self.db, user_id=order.user_id)
+
+            # Extract base symbol (remove -EQ, -BE suffixes)
+            base_symbol = order.symbol.split("-")[0] if "-" in order.symbol else order.symbol
+            base_symbol = base_symbol.upper()
+
+            # Find the latest signal for this symbol
+            signal = self.db.execute(
+                select(Signals)
+                .where(Signals.symbol == base_symbol)
+                .order_by(Signals.ts.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if not signal:
+                return  # No signal found
+
+            # Check if user has TRADED status for this signal
+            user_status = signals_repo.get_user_signal_status(signal.id, order.user_id)
+            if user_status != SignalStatus.TRADED:
+                return  # Signal is not TRADED, don't mark as FAILED
+
+            # Edge case: Check if there are other successful orders for this symbol
+            # Only mark as FAILED if ALL buy orders have failed
+            other_orders = self.list(order.user_id)
+            symbol_orders = [
+                o
+                for o in other_orders
+                if o.side == "buy"
+                and (o.symbol.split("-")[0] if "-" in o.symbol else o.symbol).upper() == base_symbol
+                and o.id != order.id  # Exclude current order
+            ]
+
+            # Check if any other order is successful (ONGOING or PENDING)
+            has_successful_order = any(
+                o.status in [OrderStatus.ONGOING, OrderStatus.PENDING] for o in symbol_orders
+            )
+
+            if has_successful_order:
+                # Another order is still processing, keep as TRADED
+                return
+
+            # All orders failed or no other orders - mark signal as FAILED
+            signals_repo.mark_as_failed(signal.id, order.user_id)
+
+        except Exception as e:
+            # Don't fail order update if signal marking fails
+            logger.warning(f"Failed to mark signal as FAILED for order {order.id}: {e}")
 
     def get_pending_amo_orders(self, user_id: int) -> list[Orders]:
         """Get all pending orders that need status checking
@@ -372,7 +609,7 @@ class OrdersRepository:
         Returns:
             List of FAILED orders that haven't expired yet
         """
-        from modules.kotak_neo_auto_trader.utils.trading_day_utils import (
+        from modules.kotak_neo_auto_trader.utils.trading_day_utils import (  # noqa: PLC0415
             get_next_trading_day_close,
         )
 
@@ -419,8 +656,6 @@ class OrdersRepository:
         Returns:
             Dict mapping status to count: {'amo': 5, 'ongoing': 10, 'closed': 20, ...}
         """
-        from sqlalchemy import text
-
         # Query to count orders by status
         query = text(
             """
@@ -466,8 +701,6 @@ class OrdersRepository:
                 'closed_orders': int,
             }
         """
-        from sqlalchemy import text
-
         # Get total count
         total_query = text(
             """

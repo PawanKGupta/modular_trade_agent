@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+from .case_insensitive_enum import CaseInsensitiveEnum
 from .timezone_utils import ist_now
 
 
@@ -44,6 +45,7 @@ class SignalStatus(str, Enum):
     EXPIRED = "expired"  # Expired (past next analysis run)
     TRADED = "traded"  # Order placed for this signal
     REJECTED = "rejected"  # User manually rejected this signal
+    FAILED = "failed"  # Order placed but failed/rejected/cancelled - no position created
 
 
 class Users(Base):
@@ -117,6 +119,9 @@ class Orders(Base):
     placed_at: Mapped[datetime] = mapped_column(
         DateTime, default=ist_now, index=True, nullable=False
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
     filled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     orig_source: Mapped[str | None] = mapped_column(
@@ -150,6 +155,7 @@ class Orders(Base):
     __table_args__ = (
         Index("ix_orders_user_status_symbol_time", "user_id", "status", "symbol", "placed_at"),
         Index("ix_orders_status_last_check", "status", "last_status_check"),
+        Index("ix_orders_updated_at", "updated_at"),
     )
 
 
@@ -171,8 +177,10 @@ class Positions(Base):
     )  # Array of reentry details
     initial_entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_reentry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Entry RSI tracking (for re-entry level progression)
+    entry_rsi: Mapped[float | None] = mapped_column(Float, nullable=True)  # RSI10 at entry
 
-    __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_positions_user_symbol"),)
+    __table_args__ = ()
 
 
 class Fills(Base):
@@ -198,7 +206,10 @@ class Signals(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     status: Mapped[SignalStatus] = mapped_column(
-        SAEnum(SignalStatus), default=SignalStatus.ACTIVE, index=True, nullable=False
+        CaseInsensitiveEnum(SignalStatus),
+        default=SignalStatus.ACTIVE,
+        index=True,
+        nullable=False,
     )
     # Technical indicators
     rsi10: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -285,14 +296,19 @@ class UserSignalStatus(Base):
     Allows each user to have their own status for signals (TRADED, REJECTED)
     while keeping the base signal data shared across users.
     """
+
     __tablename__ = "user_signal_status"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), index=True, nullable=False)
-    symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)  # Denormalized for faster queries
+    symbol: Mapped[str] = mapped_column(
+        String(32), index=True, nullable=False
+    )  # Denormalized for faster queries
     status: Mapped[SignalStatus] = mapped_column(
-        SAEnum(SignalStatus), index=True, nullable=False
+        CaseInsensitiveEnum(SignalStatus),
+        index=True,
+        nullable=False,
     )  # TRADED, REJECTED (per user)
     marked_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
 
@@ -359,7 +375,14 @@ class ServiceTaskExecution(Base):
 
 
 class ServiceLog(Base):
-    """Structured service logs (user-scoped)"""
+    """
+    Structured service logs (user-scoped).
+
+    DEPRECATED: Activity logs now use file-based logging (JSONL files).
+    This model is kept for backward compatibility with existing data.
+    New activity logs are written to files, not this table.
+    Error logs continue to use ErrorLog table.
+    """
 
     __tablename__ = "service_logs"
 
@@ -643,7 +666,7 @@ class ServiceSchedule(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     task_name: Mapped[str] = mapped_column(
         String(64), unique=True, index=True, nullable=False
-    )  # premarket_retry, sell_monitor, position_monitor, analysis, buy_orders, eod_cleanup
+    )  # premarket_retry, sell_monitor, analysis, buy_orders, eod_cleanup
     schedule_time: Mapped[time] = mapped_column(Time, nullable=False)  # HH:MM in IST
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_hourly: Mapped[bool] = mapped_column(

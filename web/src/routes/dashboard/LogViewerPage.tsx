@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
 	getAdminErrorLogs,
@@ -11,6 +11,10 @@ import {
 } from '@/api/logs';
 import { LogTable } from './LogTable';
 import { ErrorLogTable } from './ErrorLogTable';
+import { LogExportButton } from './LogExportButton';
+import { QuickFilters } from './QuickFilters';
+import { ModuleAutocomplete } from './ModuleAutocomplete';
+import { UserAutocomplete } from './UserAutocomplete';
 import { useSessionStore } from '@/state/sessionStore';
 
 type DateFilters = {
@@ -39,6 +43,13 @@ export function LogViewerPage() {
 	const [logDates, setLogDates] = useState<DateFilters>({ start: '', end: '' });
 	const [scope, setScope] = useState<'self' | 'all'>('self');
 	const [adminUserFilter, setAdminUserFilter] = useState('');
+	const [tailMode, setTailMode] = useState(false);
+	const [daysBack, setDaysBack] = useState<number | undefined>(undefined);
+	const [isRefreshing, setIsRefreshing] = useState(false);
+	const [isScrolledUp, setIsScrolledUp] = useState(false);
+	const [showId, setShowId] = useState(false);
+	const [searchInContext, setSearchInContext] = useState(false);
+	const tableContainerRef = useRef<HTMLDivElement>(null);
 
 	const [errorFilters, setErrorFilters] = useState({
 		resolved: 'all',
@@ -48,8 +59,8 @@ export function LogViewerPage() {
 	const [errorDates, setErrorDates] = useState<DateFilters>({ start: '', end: '' });
 
 	const logQueryKey = useMemo(
-		() => ['logs', logFilters, logDates, scope, adminUserFilter, isAdmin],
-		[logFilters, logDates, scope, adminUserFilter, isAdmin]
+		() => ['logs', logFilters, logDates, scope, adminUserFilter, isAdmin, tailMode, daysBack],
+		[logFilters, logDates, scope, adminUserFilter, isAdmin, tailMode, daysBack]
 	);
 
 	const logsQuery = useQuery<ServiceLogEntry[]>({
@@ -59,9 +70,11 @@ export function LogViewerPage() {
 				level: logFilters.level || undefined,
 				module: logFilters.module || undefined,
 				search: logFilters.search || undefined,
-				start_time: toIso(logDates.start),
-				end_time: toIso(logDates.end),
+				start_time: tailMode ? undefined : toIso(logDates.start),
+				end_time: tailMode ? undefined : toIso(logDates.end),
 				limit: logFilters.limit,
+				tail: tailMode ? true : undefined,
+				days_back: daysBack,
 			};
 			if (isAdmin && scope === 'all') {
 				return getAdminLogs({
@@ -71,7 +84,88 @@ export function LogViewerPage() {
 			}
 			return getUserLogs(params);
 		},
+		refetchInterval: tailMode && !isScrolledUp ? 3000 : false,
+		refetchOnWindowFocus: tailMode && !isScrolledUp,
 	});
+
+	// Handle auto-refresh indicator
+	useEffect(() => {
+		if (tailMode && logsQuery.isFetching) {
+			setIsRefreshing(true);
+			const timer = setTimeout(() => setIsRefreshing(false), 500);
+			return () => clearTimeout(timer);
+		}
+		setIsRefreshing(false);
+	}, [tailMode, logsQuery.isFetching]);
+
+	// Disable date filters when tail mode is active
+	useEffect(() => {
+		if (tailMode) {
+			setDaysBack(undefined);
+		}
+	}, [tailMode]);
+
+	// Scroll detection to pause auto-refresh
+	useEffect(() => {
+		if (!tailMode || !tableContainerRef.current) return;
+
+		const container = tableContainerRef.current;
+		let lastScrollTop = container.scrollTop;
+
+		const handleScroll = () => {
+			const currentScrollTop = container.scrollTop;
+			const scrollHeight = container.scrollHeight;
+			const clientHeight = container.clientHeight;
+			const isAtBottom = scrollHeight - currentScrollTop - clientHeight < 50; // 50px threshold
+
+			// If user scrolls up, pause refresh
+			if (currentScrollTop < lastScrollTop && !isAtBottom) {
+				setIsScrolledUp(true);
+			} else if (isAtBottom) {
+				// If user scrolls back to bottom, resume refresh
+				setIsScrolledUp(false);
+			}
+
+			lastScrollTop = currentScrollTop;
+		};
+
+		container.addEventListener('scroll', handleScroll);
+		return () => container.removeEventListener('scroll', handleScroll);
+	}, [tailMode]);
+
+	// Handle quick filter application
+	const handleQuickFilter = (filter: {
+		level?: string;
+		startTime?: string;
+		endTime?: string;
+		daysBack?: number;
+	}) => {
+		if (filter.level) {
+			setLogFilters((prev) => ({ ...prev, level: filter.level! }));
+		}
+		if (filter.startTime && filter.endTime) {
+			const startDate = new Date(filter.startTime);
+			const endDate = new Date(filter.endTime);
+			setLogDates({
+				start: startDate.toISOString().split('T')[0],
+				end: endDate.toISOString().split('T')[0],
+			});
+			setDaysBack(undefined);
+		}
+		if (filter.daysBack !== undefined) {
+			setDaysBack(filter.daysBack);
+			setLogDates({ start: '', end: '' });
+		}
+		setTailMode(false); // Disable tail mode when applying filters
+		setIsScrolledUp(false); // Reset scroll state
+	};
+
+	const handleClearFilters = () => {
+		setLogFilters({ level: '', module: '', search: '', limit: 200 });
+		setLogDates({ start: '', end: '' });
+		setDaysBack(undefined);
+		setTailMode(false);
+	};
 
 	const errorQueryKey = useMemo(
 		() => ['errors', errorFilters, errorDates, scope, adminUserFilter, isAdmin],
@@ -123,8 +217,24 @@ export function LogViewerPage() {
 				<section className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4 space-y-3 sm:space-y-4">
 					<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-2">
 						<h2 className="text-base sm:text-lg font-semibold">Service Logs</h2>
+						<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 text-sm w-full sm:w-auto">
+							<LogExportButton logs={logsQuery.data ?? []} />
+							<label className="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2">
+								<span className="text-xs sm:text-sm whitespace-nowrap">Live Tail</span>
+								<button
+									type="button"
+									onClick={() => setTailMode(!tailMode)}
+									className={`px-3 py-2 sm:px-2 sm:py-1 rounded min-h-[44px] sm:min-h-0 transition-colors ${
+										tailMode
+											? 'bg-green-600 hover:bg-green-700 text-white'
+											: 'bg-[#0f172a] border border-[#1f2937] text-[var(--muted)] hover:bg-[#1a2332]'
+									}`}
+								>
+									{tailMode ? '● Live' : '○ Off'}
+								</button>
+							</label>
 						{isAdmin && (
-							<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 text-sm w-full sm:w-auto">
+								<>
 								<label className="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2">
 									<span className="text-xs sm:text-sm whitespace-nowrap">Scope</span>
 									<select
@@ -138,19 +248,20 @@ export function LogViewerPage() {
 								</label>
 								{scope === 'all' && (
 									<label className="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2">
-										<span className="text-xs sm:text-sm whitespace-nowrap">User ID</span>
-										<input
-											type="number"
+											<span className="text-xs sm:text-sm whitespace-nowrap">User</span>
+											<UserAutocomplete
 											value={adminUserFilter}
-											onChange={(event) => setAdminUserFilter(event.target.value)}
-											className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 w-full sm:w-28 min-h-[44px] sm:min-h-0"
+												onChange={setAdminUserFilter}
 											placeholder="Any"
 										/>
 									</label>
+									)}
+								</>
 								)}
 							</div>
-						)}
 					</div>
+
+					<QuickFilters onFilter={handleQuickFilter} onClear={handleClearFilters} />
 
 					<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-sm">
 						<label className="flex flex-col gap-1">
@@ -171,17 +282,16 @@ export function LogViewerPage() {
 						</label>
 						<label className="flex flex-col gap-1">
 							<span className="text-xs sm:text-sm">Module</span>
-							<input
+							<ModuleAutocomplete
+								logs={logsQuery.data ?? []}
 								value={logFilters.module}
-								onChange={(event) =>
-									setLogFilters((prev) => ({ ...prev, module: event.target.value }))
-								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
+								onChange={(value) => setLogFilters((prev) => ({ ...prev, module: value }))}
 								placeholder="scheduler"
 							/>
 						</label>
 						<label className="flex flex-col gap-1">
 							<span className="text-xs sm:text-sm">Search</span>
+							<div className="flex flex-col gap-1">
 							<input
 								value={logFilters.search}
 								onChange={(event) =>
@@ -190,6 +300,16 @@ export function LogViewerPage() {
 								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
 								placeholder="keyword"
 							/>
+								<label className="flex items-center gap-1 text-xs text-[var(--muted)]">
+									<input
+										type="checkbox"
+										checked={searchInContext}
+										onChange={(e) => setSearchInContext(e.target.checked)}
+										className="w-3 h-3"
+									/>
+									Search in context
+								</label>
+							</div>
 						</label>
 						<label className="flex flex-col gap-1">
 							<span className="text-xs sm:text-sm">Limit</span>
@@ -209,7 +329,24 @@ export function LogViewerPage() {
 						</label>
 					</div>
 
-					<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+					{!tailMode && (
+						<div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+							<label className="flex flex-col gap-1">
+								<span className="text-xs sm:text-sm">Days Back</span>
+								<select
+									value={daysBack || ''}
+									onChange={(event) =>
+										setDaysBack(event.target.value ? Number(event.target.value) : undefined)
+									}
+									className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
+								>
+									<option value="">Custom Date Range</option>
+									<option value="1">Last 1 day</option>
+									<option value="3">Last 3 days</option>
+									<option value="7">Last 7 days</option>
+									<option value="14">Last 14 days</option>
+								</select>
+							</label>
 						<label className="flex flex-col gap-1">
 							<span className="text-xs sm:text-sm">Start Date</span>
 							<input
@@ -218,7 +355,8 @@ export function LogViewerPage() {
 								onChange={(event) =>
 									setLogDates((prev) => ({ ...prev, start: event.target.value }))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
+									disabled={!!daysBack}
+									className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0 disabled:opacity-50 disabled:cursor-not-allowed"
 							/>
 						</label>
 						<label className="flex flex-col gap-1">
@@ -229,12 +367,44 @@ export function LogViewerPage() {
 								onChange={(event) =>
 									setLogDates((prev) => ({ ...prev, end: event.target.value }))
 								}
-								className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0"
+									disabled={!!daysBack}
+									className="bg-[#0f172a] border border-[#1f2937] rounded px-3 py-2 sm:px-2 sm:py-1 min-h-[44px] sm:min-h-0 disabled:opacity-50 disabled:cursor-not-allowed"
 							/>
+							</label>
+						</div>
+					)}
+
+					{tailMode && (
+						<div className="text-xs text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded p-2">
+							{isScrolledUp ? (
+								<span>⏸ Live tail paused - scroll to bottom to resume</span>
+							) : (
+								<span>● Live tail mode active - showing last 200 lines, auto-refreshing every 3 seconds</span>
+							)}
+						</div>
+					)}
+
+					<div className="flex items-center justify-between mb-2">
+						<label className="flex items-center gap-2 text-xs sm:text-sm">
+							<input
+								type="checkbox"
+								checked={showId}
+								onChange={(e) => setShowId(e.target.checked)}
+								className="w-4 h-4"
+							/>
+							<span className="text-[var(--muted)]">Show Log IDs</span>
 						</label>
 					</div>
 
-					<LogTable logs={logsQuery.data ?? []} isLoading={logsQuery.isLoading} />
+					<div ref={tableContainerRef} className="max-h-[600px] overflow-y-auto">
+						<LogTable
+							logs={logsQuery.data ?? []}
+							isLoading={logsQuery.isLoading}
+							isRefreshing={isRefreshing}
+							showId={showId}
+							searchTerm={searchInContext && logFilters.search ? logFilters.search : undefined}
+						/>
+					</div>
 				</section>
 
 				<section className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4 space-y-3 sm:space-y-4">

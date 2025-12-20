@@ -12,6 +12,7 @@ import os
 # Project logger
 import sys
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
 from math import floor
@@ -28,6 +29,15 @@ from modules.kotak_neo_auto_trader.services import (
 )
 from utils.logger import logger
 
+# Database models
+try:
+    from sqlalchemy import text
+
+    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+except ImportError:
+    DbOrderStatus = None
+    text = None
+
 # Kotak Neo modules
 try:
     from . import config
@@ -41,6 +51,7 @@ try:
         add_pending_order,
         configure_order_tracker,
         extract_order_id,
+        get_order_tracker,
         search_order_in_broker_orderbook,
     )
     from .orders import KotakNeoOrders
@@ -77,6 +88,7 @@ except ImportError:
         add_pending_order,
         configure_order_tracker,
         extract_order_id,
+        get_order_tracker,
         search_order_in_broker_orderbook,
     )
     from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
@@ -109,6 +121,7 @@ class Recommendation:
     verdict: str  # strong_buy|buy|watch
     last_close: float
     execution_capital: float | None = None  # Phase 11: Dynamic capital based on liquidity
+    priority_score: float | None = None  # Priority score for sorting (higher = higher priority)
 
 
 class OrderPlacementError(RuntimeError):
@@ -183,7 +196,9 @@ class AutoTradeEngine:
                     user_id=self.user_id,
                     use_db=True,
                 )
-                logger.info("OrderTracker configured with DB session for dual-write support")
+                logger.info(
+                    "OrderTracker configured with DB session (DB-only mode enabled by default)"
+                )
             except Exception as tracker_error:
                 logger.warning(f"Failed to configure OrderTracker with DB session: {tracker_error}")
         else:
@@ -223,6 +238,8 @@ class AutoTradeEngine:
             orders=None,  # Will be set after login
             auth=self.auth,
             strategy_config=self.strategy_config,
+            orders_repo=self.orders_repo if hasattr(self, "orders_repo") else None,
+            user_id=self.user_id,
             enable_caching=True,
         )
 
@@ -237,6 +254,78 @@ class AutoTradeEngine:
             orders_repo=self.orders_repo if hasattr(self, "orders_repo") else None,
             user_id=self.user_id,
         )
+
+    # ---------------------- Telegram Notifier Helper (Phase 3) ----------------------
+    def _get_telegram_notifier(self):
+        """
+        Get Telegram notifier instance with user-specific credentials.
+
+        Creates a new TelegramNotifier instance (not singleton) with user-specific
+        bot_token and chat_id from notification preferences. Falls back to singleton
+        pattern if user_id or db_session is not available (backward compatibility).
+
+        Returns:
+            TelegramNotifier instance or None if not available
+        """
+        try:
+            # Backward compatibility: If no user_id or db, use singleton pattern
+            if not self.user_id or not self.db:
+                logger.debug(
+                    "AutoTradeEngine: No user_id or db_session - using singleton TelegramNotifier"
+                )
+                return get_telegram_notifier(db_session=self.db)
+
+            # Check if telegram notifier module is available
+            try:
+                from services.notification_preference_service import (
+                    NotificationPreferenceService,
+                )
+            except ImportError:
+                logger.debug("NotificationPreferenceService not available - using singleton")
+                return get_telegram_notifier(db_session=self.db)
+
+            # Get user's notification preferences to get Telegram chat ID and bot token
+            pref_service = NotificationPreferenceService(self.db)
+            preferences = pref_service.get_preferences(self.user_id)
+
+            # Check if Telegram is enabled for this user
+            if not preferences or not preferences.telegram_enabled:
+                logger.debug(f"Telegram not enabled for user {self.user_id}")
+                return None
+
+            # Get bot token from user preferences first, then fall back to environment
+            bot_token = preferences.telegram_bot_token if preferences else None
+            if not bot_token:
+                import os
+
+                bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+
+            chat_id = preferences.telegram_chat_id if preferences else None
+
+            # Only create notifier if both bot token and chat ID are available
+            if not bot_token:
+                logger.debug(f"Telegram bot token not available for user {self.user_id}")
+                return None
+            if not chat_id:
+                logger.debug(f"Telegram chat ID not configured for user {self.user_id}")
+                return None
+
+            # Create a new TelegramNotifier instance (not singleton) for this user
+            # This is necessary because each user has a different chat_id
+            from .telegram_notifier import TelegramNotifier
+
+            return TelegramNotifier(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                enabled=True,
+                db_session=self.db,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to get user-specific Telegram notifier: {e}. Falling back to singleton."
+            )
+            # Fallback to singleton pattern on error
+            return get_telegram_notifier(db_session=self.db)
 
     # ---------------------- Storage Abstraction (Phase 2.3) ----------------------
     def _load_trades_history(self) -> dict[str, Any]:
@@ -399,6 +488,20 @@ class AutoTradeEngine:
             if existing_pos and existing_pos.initial_entry_price:
                 initial_entry_price = existing_pos.initial_entry_price
 
+            # Extract entry RSI from trade metadata or order metadata
+            entry_rsi = None
+            if trade.get("entry_rsi") is not None:
+                entry_rsi = trade.get("entry_rsi")
+            elif trade.get("rsi_entry_level") is not None:
+                entry_rsi = trade.get("rsi_entry_level")
+            elif trade.get("rsi10") is not None:
+                entry_rsi = trade.get("rsi10")
+
+            # Only set entry_rsi for new positions (preserve original entry RSI)
+            # If position exists and already has entry_rsi, don't overwrite it
+            if existing_pos and existing_pos.entry_rsi is not None:
+                entry_rsi = None  # Don't update existing entry_rsi
+
             self.positions_repo.upsert(
                 user_id=self.user_id,
                 symbol=symbol,
@@ -411,6 +514,7 @@ class AutoTradeEngine:
                     initial_entry_price if not existing_pos else None
                 ),  # Only set for new positions
                 last_reentry_price=last_reentry_price,
+                entry_rsi=entry_rsi,  # Set entry RSI for new positions
             )
         elif status == "closed":
             # Close position
@@ -430,13 +534,12 @@ class AutoTradeEngine:
         Save trades history to repository or file-based storage.
         Note: For bulk sync operations, this still syncs all trades to positions.
         For individual trade updates, use _update_position_from_trade() instead.
+
+        DB-only mode: When DB is available, skip JSON writes for consistency with sell orders.
         """
         if self.orders_repo and self.user_id:
-            # Save to file if history_path is available
-            if self.history_path:
-                save_history(self.history_path, data)
-
-            # Bulk sync all trades to positions (for initial load or reconciliation)
+            # DB-only mode: Bulk sync all trades to positions (no JSON write)
+            # This aligns with sell order tracking which is DB-only
             if self.positions_repo:
                 trades = data.get("trades", [])
                 for trade in trades:
@@ -445,7 +548,8 @@ class AutoTradeEngine:
             # Save failed orders metadata in Orders (if any)
             failed_orders = data.get("failed_orders", [])
             # Note: Failed orders are handled separately in add_failed_order/remove_failed_order
-        # Fallback to file-based storage
+            # Skip JSON writes when DB is available (DB-only mode)
+        # Fallback to file-based storage only if DB is not available
         elif self.history_path:
             save_history(self.history_path, data)
 
@@ -453,21 +557,18 @@ class AutoTradeEngine:
         """
         Append a trade to history (repository or file-based).
         Directly updates positions table when trade is added/updated.
+
+        DB-only mode: When DB is available, skip JSON writes for consistency with sell orders.
         """
         if self.orders_repo and self.user_id:
-            # Use repository-based storage
-            data = self._load_trades_history()
-            data.setdefault("trades", [])
-            data["trades"].append(trade)
-            # Save to history
-            if self.history_path:
-                save_history(self.history_path, data)
-
-            # Directly update positions table (optimization: no need to sync all trades)
+            # DB-only mode: Update positions table directly (no JSON write)
+            # This aligns with sell order tracking which is DB-only
             if self.positions_repo:
                 self._update_position_from_trade(trade)
-        # Fallback to file-based storage
+            # Skip JSON writes when DB is available (DB-only mode)
+            # Fallback to file-based storage only if DB is not available
         elif self.history_path:
+            # Fallback: file-based storage when DB is not available
             append_trade(self.history_path, trade)
 
     def _get_failed_orders(
@@ -504,7 +605,6 @@ class AutoTradeEngine:
             except Exception as e:
                 logger.warning(f"Error getting failed orders from repository: {e}")
                 # Fallback: Check status manually
-                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                 all_orders = self.orders_repo.list(self.user_id)
                 failed_orders = []
@@ -564,7 +664,6 @@ class AutoTradeEngine:
                 normalized_symbol = normalize_symbol(symbol)
 
                 # Phase 6: Check for existing failed orders using status instead of metadata
-                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                 existing_orders = self.orders_repo.list(self.user_id)
                 existing_failed_orders = [
@@ -632,16 +731,44 @@ class AutoTradeEngine:
                 else:
                     # Phase 6: Create new failed order with proper status
                     # Create order first, then mark as failed
-                    new_order = self.orders_repo.create_amo(
-                        user_id=self.user_id,
-                        symbol=symbol,
-                        side="buy",
-                        order_type="market",
-                        quantity=failed_order.get("qty", 0),
-                        price=failed_order.get("close"),
-                        order_id=None,
-                        broker_order_id=None,
-                    )
+                    try:
+                        new_order = self.orders_repo.create_amo(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            side="buy",
+                            order_type="market",
+                            quantity=failed_order.get("qty", 0),
+                            price=failed_order.get("close"),
+                            order_id=None,
+                            broker_order_id=None,
+                        )
+                    except Exception as create_error:
+                        # Handle database schema errors (e.g., missing column)
+                        from sqlalchemy.exc import OperationalError
+
+                        if isinstance(create_error, OperationalError) or (
+                            hasattr(create_error, "orig")
+                            and isinstance(create_error.orig, Exception)
+                            and "no column named" in str(create_error).lower()
+                        ):
+                            logger.warning(
+                                f"Database schema error when creating failed order for {symbol}: "
+                                f"{create_error}. Migration may not have been applied. "
+                                "Failed order won't be saved to database.",
+                                exc_info=create_error,
+                            )
+                        else:
+                            logger.warning(
+                                f"Failed to create failed order for {symbol}: {create_error}",
+                                exc_info=create_error,
+                            )
+                        # Rollback session to allow subsequent operations
+                        if hasattr(self.orders_repo, "db"):
+                            try:
+                                self.orders_repo.db.rollback()
+                            except Exception:
+                                pass
+                        return  # Exit early if order creation failed
                     # Phase 6: Mark as failed with proper status and metadata in columns
                     try:
                         self.orders_repo.mark_failed(
@@ -701,7 +828,6 @@ class AutoTradeEngine:
         """
         if self.orders_repo and self.user_id:
             # Phase 6: Use repository-based storage with status-based lookup
-            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
             all_orders = self.orders_repo.list(self.user_id)
             for order in all_orders:
@@ -824,15 +950,59 @@ class AutoTradeEngine:
                         )
                     except (ValueError, TypeError):
                         execution_capital = None
+                # Load priority_score from CSV if available (for sorting)
+                priority_score = row.get("priority_score")
+                if priority_score is not None:
+                    try:
+                        priority_score = float(priority_score) if priority_score != "" else None
+                    except (ValueError, TypeError):
+                        priority_score = None
+                else:
+                    # Fallback to combined_score if priority_score not available
+                    combined_score = row.get("combined_score")
+                    if combined_score is not None:
+                        try:
+                            priority_score = float(combined_score) if combined_score != "" else None
+                        except (ValueError, TypeError):
+                            priority_score = None
+                    else:
+                        priority_score = None
+
+                # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
+                # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
+                ml_confidence = row.get("ml_confidence")
+                if ml_confidence is not None and priority_score is not None:
+                    try:
+                        ml_confidence = float(ml_confidence) if ml_confidence != "" else None
+                        if ml_confidence is not None and ml_confidence > 0:
+                            # Boost priority based on ML confidence bands:
+                            # - High confidence (>=70%): +20 points (strong ML conviction)
+                            # - Medium confidence (60-70%): +10 points (good ML conviction)
+                            # - Low confidence (50-60%): +5 points (moderate ML conviction)
+                            if ml_confidence >= 0.70:
+                                priority_score += 20  # High ML confidence boost
+                            elif ml_confidence >= 0.60:
+                                priority_score += 10  # Medium ML confidence boost
+                            elif ml_confidence >= 0.50:
+                                priority_score += 5  # Low ML confidence boost
+                            # ML confidence < 50%: No boost (below threshold)
+                    except (ValueError, TypeError):
+                        pass  # Ignore ML confidence if invalid
+
                 recs.append(
                     Recommendation(
                         ticker=ticker,
                         verdict=row[verdict_col],
                         last_close=last_close,
                         execution_capital=execution_capital,
+                        priority_score=priority_score,
                     )
                 )
-            logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path}")
+            # Sort by priority_score (descending) - higher priority stocks placed first
+            recs.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
+            logger.info(
+                f"Loaded {len(recs)} BUY recommendations from {csv_path} (sorted by priority_score)"
+            )
             return recs
         # Otherwise, DO NOT recompute; trust the CSV that trade_agent produced
         if "verdict" in df.columns:
@@ -850,15 +1020,59 @@ class AutoTradeEngine:
                         )
                     except (ValueError, TypeError):
                         execution_capital = None
+                # Load priority_score from CSV if available (for sorting)
+                priority_score = row.get("priority_score")
+                if priority_score is not None:
+                    try:
+                        priority_score = float(priority_score) if priority_score != "" else None
+                    except (ValueError, TypeError):
+                        priority_score = None
+                else:
+                    # Fallback to combined_score if priority_score not available
+                    combined_score = row.get("combined_score")
+                    if combined_score is not None:
+                        try:
+                            priority_score = float(combined_score) if combined_score != "" else None
+                        except (ValueError, TypeError):
+                            priority_score = None
+                    else:
+                        priority_score = None
+
+                # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
+                # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
+                ml_confidence = row.get("ml_confidence")
+                if ml_confidence is not None and priority_score is not None:
+                    try:
+                        ml_confidence = float(ml_confidence) if ml_confidence != "" else None
+                        if ml_confidence is not None and ml_confidence > 0:
+                            # Boost priority based on ML confidence bands:
+                            # - High confidence (>=70%): +20 points (strong ML conviction)
+                            # - Medium confidence (60-70%): +10 points (good ML conviction)
+                            # - Low confidence (50-60%): +5 points (moderate ML conviction)
+                            if ml_confidence >= 0.70:
+                                priority_score += 20  # High ML confidence boost
+                            elif ml_confidence >= 0.60:
+                                priority_score += 10  # Medium ML confidence boost
+                            elif ml_confidence >= 0.50:
+                                priority_score += 5  # Low ML confidence boost
+                            # ML confidence < 50%: No boost (below threshold)
+                    except (ValueError, TypeError):
+                        pass  # Ignore ML confidence if invalid
+
                 recs.append(
                     Recommendation(
                         ticker=ticker,
                         verdict=str(row.get("verdict", "")).lower(),
                         last_close=last_close,
                         execution_capital=execution_capital,
+                        priority_score=priority_score,
                     )
                 )
-            logger.info(f"Loaded {len(recs)} BUY recommendations from {csv_path} (raw verdicts)")
+            # Sort by priority_score (descending) - higher priority stocks placed first
+            recs.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
+            logger.info(
+                f"Loaded {len(recs)} BUY recommendations from {csv_path} (raw verdicts, sorted by priority_score)"
+            )
             return recs
         logger.warning(
             f"CSV {csv_path} missing 'final_verdict' and 'verdict' columns; no recommendations loaded"
@@ -881,6 +1095,10 @@ class AutoTradeEngine:
 
                 signals_repo = SignalsRepository(self.db, user_id=self.user_id)
 
+                # Mark time-expired signals before loading to ensure database consistency
+                # This prevents trading on expired signals
+                signals_repo.mark_time_expired_signals()
+
                 # Get latest signals (today's or most recent)
                 today = ist_now().date()
                 signals = signals_repo.by_date(today, limit=500)
@@ -900,8 +1118,30 @@ class AutoTradeEngine:
                     active_signals = []
                     for signal in signals:
                         # Get effective status (user-specific if exists, otherwise base status)
+                        # IMPORTANT: EXPIRED base status cannot be overridden by user status
+                        # However, TRADED/REJECTED user status takes precedence over EXPIRED base status
+                        # (from our recent fix - user actions are preserved even when base expires)
                         user_status = signals_repo.get_user_signal_status(signal.id, self.user_id)
-                        effective_status = user_status if user_status is not None else signal.status
+
+                        # Determine effective status:
+                        # 1. If user has TRADED, REJECTED, or FAILED override, use that (completed actions take precedence)
+                        # 2. If base signal is EXPIRED and no user override, effective_status is EXPIRED
+                        # 3. Otherwise, use user status if exists, otherwise use base signal status
+                        if user_status in [
+                            SignalStatus.TRADED,
+                            SignalStatus.REJECTED,
+                            SignalStatus.FAILED,
+                        ]:
+                            # User has completed an action (TRADED/REJECTED/FAILED) - this takes precedence
+                            effective_status = user_status
+                        elif signal.status == SignalStatus.EXPIRED:
+                            # Base signal is EXPIRED and no user action - cannot be overridden with ACTIVE
+                            effective_status = SignalStatus.EXPIRED
+                        else:
+                            # Use user status if exists, otherwise use base signal status
+                            effective_status = (
+                                user_status if user_status is not None else signal.status
+                            )
 
                         # Only include ACTIVE signals
                         if effective_status != SignalStatus.ACTIVE:
@@ -972,17 +1212,44 @@ class AutoTradeEngine:
                             elif signal.trading_params and isinstance(signal.trading_params, dict):
                                 execution_capital = signal.trading_params.get("execution_capital")
 
+                            # Extract priority_score from signal (for sorting)
+                            priority_score = signal.priority_score
+                            if priority_score is None:
+                                # Fallback to combined_score if priority_score not available
+                                priority_score = signal.combined_score or 0.0
+
+                            # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
+                            # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
+                            ml_confidence = signal.ml_confidence
+                            if ml_confidence is not None and ml_confidence > 0:
+                                # Boost priority based on ML confidence bands:
+                                # - High confidence (>=70%): +20 points (strong ML conviction)
+                                # - Medium confidence (60-70%): +10 points (good ML conviction)
+                                # - Low confidence (50-60%): +5 points (moderate ML conviction)
+                                if ml_confidence >= 0.70:
+                                    priority_score += 20  # High ML confidence boost
+                                elif ml_confidence >= 0.60:
+                                    priority_score += 10  # Medium ML confidence boost
+                                elif ml_confidence >= 0.50:
+                                    priority_score += 5  # Low ML confidence boost
+                                # ML confidence < 50%: No boost (below threshold)
+
                             # Create Recommendation object
                             rec = Recommendation(
                                 ticker=ticker,
                                 verdict=verdict,
                                 last_close=last_close,
                                 execution_capital=execution_capital,
+                                priority_score=priority_score,
                             )
                             recommendations.append(rec)
 
+                    # Sort by priority_score (descending) - higher priority stocks placed first
+                    recommendations.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
+
                     logger.info(
-                        f"Converted {len(recommendations)} buy/strong_buy recommendations from database"
+                        f"Converted {len(recommendations)} buy/strong_buy recommendations from database "
+                        f"(sorted by priority_score)"
                     )
                     return recommendations
 
@@ -1345,7 +1612,11 @@ class AutoTradeEngine:
                 self.scrip_master.load_scrip_master(force_download=False)
                 logger.info("Scrip master loaded for buy order symbol resolution")
             except Exception as e:
-                logger.warning(f"Failed to load scrip master: {e}. Will use symbol fallback.")
+                logger.error(
+                    f"Failed to load scrip master: {e}. "
+                    f"Order placement will fail without scrip master. "
+                    f"Please check network connection and try again."
+                )
                 self.scrip_master = None
 
             # Phase 2: Initialize modules
@@ -1377,7 +1648,11 @@ class AutoTradeEngine:
                 self.scrip_master.load_scrip_master(force_download=False)
                 logger.info("Scrip master loaded for buy order symbol resolution")
             except Exception as e:
-                logger.warning(f"Failed to load scrip master: {e}. Will use symbol fallback.")
+                logger.error(
+                    f"Failed to load scrip master: {e}. "
+                    f"Order placement will fail without scrip master. "
+                    f"Please check network connection and try again."
+                )
                 self.scrip_master = None
 
             # Phase 2: Initialize modules
@@ -1389,11 +1664,16 @@ class AutoTradeEngine:
         try:
             # 1. Initialize Telegram Notifier
             if self._enable_telegram:
-                # Phase 3: Pass db_session for preference checking
-                self.telegram_notifier = get_telegram_notifier(db_session=self.db)
-                logger.info(
-                    f"Telegram notifier initialized (enabled: {self.telegram_notifier.enabled})"
-                )
+                # Phase 3: Create user-specific TelegramNotifier with user credentials
+                self.telegram_notifier = self._get_telegram_notifier()
+                if self.telegram_notifier:
+                    logger.info(
+                        f"Telegram notifier initialized (enabled: {self.telegram_notifier.enabled})"
+                    )
+                else:
+                    logger.info(
+                        "Telegram notifier not available (user preferences or credentials missing)"
+                    )
 
             # 2. Initialize Manual Order Matcher
             self.manual_matcher = get_manual_order_matcher()
@@ -1407,8 +1687,6 @@ class AutoTradeEngine:
                     logger.warning(f"Order rejected: {symbol} ({order_id}) - {reason}")
                     if self.telegram_notifier and self.telegram_notifier.enabled:
                         # Get quantity from pending orders
-                        from .order_tracker import get_order_tracker
-
                         tracker = get_order_tracker()
                         pending_order = tracker.get_order_by_id(order_id)
                         qty = pending_order.get("qty", 0) if pending_order else 0
@@ -1456,7 +1734,11 @@ class AutoTradeEngine:
             logger.error(f"Failed to initialize Phase 2 modules: {e}", exc_info=True)
             logger.warning("Continuing without Phase 2 features")
 
-    def monitor_positions(self, live_price_manager=None) -> dict[str, Any]:
+    def monitor_positions(
+        self, live_price_manager=None
+    ) -> dict[
+        str, Any
+    ]:  # Deprecated: Position monitoring removed, exit in sell monitor, re-entry in buy order service
         """
         Monitor all open positions for reentry/exit signals.
 
@@ -1776,8 +2058,6 @@ class AutoTradeEngine:
         # This prevents duplicates when broker API doesn't return pending orders or is unavailable
         if self.orders_repo and self.user_id:
             try:
-                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                 existing_orders = self.orders_repo.list(self.user_id)
                 for existing_order in existing_orders:
                     # Check if symbol matches (including variants)
@@ -1816,33 +2096,356 @@ class AutoTradeEngine:
         return False
 
     def reentries_today(self, base_symbol: str) -> int:
-        """Count successful re-entries recorded today for this symbol (base symbol)."""
+        """
+        Count successful re-entries recorded today for this symbol (base symbol).
+
+        Edge Case #11 Fix: Checks the 'reentries' array within trade entries
+        instead of looking for separate entries with entry_type == 'reentry'.
+        Reentries are stored in the reentries array of existing trade entries.
+
+        Updated: Queries directly from database (Positions table) as the single
+        source of truth. JSON file is kept as backup only (write-only for archival).
+        """
         try:
-            hist = self._load_trades_history()
-            trades = hist.get("trades") or []
+            # Database is the single source of truth
+            if not self.positions_repo or not self.user_id:
+                logger.warning(
+                    "Cannot query reentries: positions_repo or user_id not available. "
+                    "Returning 0 to prevent incorrect reentry cap checks."
+                )
+                return 0
+
+            position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+            if not position or not position.reentries:
+                return 0
+
+            # Count reentries from today
+            # Fix: Check placed_at date (order placement date) instead of time (execution date)
+            # This ensures daily cap is based on when order was placed, not when it executed
+            # Example: Order placed Day 1, executes Day 2 → Should count for Day 1, not Day 2
+            reentries_raw = position.reentries
+
+            # Handle both old format (list) and new format (dict with metadata)
+            if isinstance(reentries_raw, dict):
+                # New format: extract reentries array
+                reentries = reentries_raw.get("reentries", [])
+            elif isinstance(reentries_raw, list):
+                # Old format: directly a list
+                reentries = reentries_raw
+            else:
+                # Invalid format
+                return 0
+
+            if not isinstance(reentries, list):
+                return 0
+
             today = datetime.now().date()
             cnt = 0
-            for t in trades:
-                if t.get("entry_type") != "reentry":
+            for reentry in reentries:
+                if not isinstance(reentry, dict):
                     continue
-                sym = str(t.get("symbol") or "").upper()
-                if sym != base_symbol.upper():
-                    continue
-                ts = t.get("entry_time")
-                if not ts:
-                    continue
-                try:
-                    d = datetime.fromisoformat(ts).date()
-                except Exception:
+
+                # Priority: Check placed_at first (correct date for daily cap)
+                placed_at_str = reentry.get("placed_at")
+                placed_at_checked = False
+                if placed_at_str:
                     try:
-                        d = datetime.strptime(ts.split("T")[0], "%Y-%m-%d").date()
-                    except Exception:
+                        # placed_at is stored as ISO date string (YYYY-MM-DD)
+                        d = datetime.fromisoformat(placed_at_str).date()
+                        placed_at_checked = True  # Successfully parsed placed_at
+                        if d == today:
+                            cnt += 1
+                            continue  # Found match, skip time field check
+                        # If placed_at exists and doesn't match today, skip time field (don't fallback)
                         continue
-                if d == today:
-                    cnt += 1
+                    except Exception:
+                        # If parsing fails, fall through to time field fallback
+                        pass
+
+                # Fallback: Use time field (backward compatibility for old re-entries)
+                # Only use this if placed_at is missing or parsing failed
+                # Old re-entries may not have placed_at field
+                if not placed_at_checked:
+                    reentry_time = reentry.get("time")
+                    if reentry_time:
+                        try:
+                            # Parse ISO format timestamp
+                            d = datetime.fromisoformat(reentry_time).date()
+                        except Exception:
+                            try:
+                                # Fallback: try parsing just the date part
+                                d = datetime.strptime(reentry_time.split("T")[0], "%Y-%m-%d").date()
+                            except Exception:
+                                continue
+                        if d == today:
+                            cnt += 1
             return cnt
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error counting reentries for {base_symbol}: {e}")
             return 0
+
+    def _get_position_cycle_metadata(self, position: Any) -> dict[str, Any]:
+        """
+        Get cycle metadata from position.
+
+        Returns a dict with:
+        - current_cycle: int (default 0)
+        - last_rsi_above_30: str | None (ISO timestamp)
+        - last_rsi_value: float | None
+
+        Args:
+            position: Position object from database
+
+        Returns:
+            Dict with cycle metadata
+        """
+        metadata = {
+            "current_cycle": 0,
+            "last_rsi_above_30": None,
+            "last_rsi_value": None,
+        }
+
+        if not position or not position.reentries:
+            return metadata
+
+        # Check if reentries is a dict with _cycle_metadata key (new format)
+        if isinstance(position.reentries, dict):
+            cycle_meta = position.reentries.get("_cycle_metadata")
+            if isinstance(cycle_meta, dict):
+                metadata["current_cycle"] = cycle_meta.get("current_cycle", 0)
+                metadata["last_rsi_above_30"] = cycle_meta.get("last_rsi_above_30")
+                metadata["last_rsi_value"] = cycle_meta.get("last_rsi_value")
+            return metadata
+
+        # If reentries is a list, metadata might be stored separately
+        # For now, we'll extract from the structure
+        # In the new format, we'll store metadata in a wrapper dict
+        return metadata
+
+    def _set_position_cycle_metadata(
+        self,
+        position: Any,
+        current_cycle: int | None = None,
+        last_rsi_above_30: str | None = None,
+        last_rsi_value: float | None = None,
+    ) -> dict:
+        """
+        Set cycle metadata in position's reentries structure.
+
+        This creates/updates a wrapper structure:
+        {
+            "_cycle_metadata": {
+                "current_cycle": int,
+                "last_rsi_above_30": str | None,
+                "last_rsi_value": float | None
+            },
+            "reentries": [...]
+        }
+
+        Args:
+            position: Position object from database
+            current_cycle: Current cycle number (None to keep existing)
+            last_rsi_above_30: ISO timestamp when RSI was last above 30 (None to keep existing)
+            last_rsi_value: Last known RSI value (None to keep existing)
+
+        Returns:
+            Updated reentries structure (dict with _cycle_metadata and reentries keys)
+        """
+        # Get existing metadata
+        existing_meta = self._get_position_cycle_metadata(position)
+
+        # Get existing reentries array
+        existing_reentries = []
+        if position.reentries:
+            if isinstance(position.reentries, dict):
+                # New format: extract reentries array
+                existing_reentries = position.reentries.get("reentries", [])
+                if not isinstance(existing_reentries, list):
+                    existing_reentries = []
+            elif isinstance(position.reentries, list):
+                # Old format: reentries is directly a list
+                existing_reentries = position.reentries
+
+        # Update metadata
+        if current_cycle is not None:
+            existing_meta["current_cycle"] = current_cycle
+        if last_rsi_above_30 is not None:
+            existing_meta["last_rsi_above_30"] = last_rsi_above_30
+        if last_rsi_value is not None:
+            existing_meta["last_rsi_value"] = last_rsi_value
+
+        # Return wrapper structure
+        return {"_cycle_metadata": existing_meta, "reentries": existing_reentries}
+
+    def has_reentry_at_level(self, base_symbol: str, level: int, allow_reset: bool = False) -> bool:
+        """
+        Check if a re-entry at the specified level already exists in the current cycle.
+
+        Enhanced Hybrid Approach: Now checks by cycle number, not just level.
+        This allows re-entries at the same level after a reset (new cycle).
+
+        This includes checking:
+        1. Initial entry RSI - if initial entry was at this level, block re-entry at same level
+           (Exception: If allow_reset=True, allow it after reset for any level)
+        2. Existing re-entries in current cycle - if a re-entry at this level exists in current cycle, block duplicate
+
+        Args:
+            base_symbol: Symbol to check
+            level: Re-entry level (30, 20, or 10)
+            allow_reset: If True, allow re-entry at this level even if initial entry was at this level
+                        (This handles the reset case where RSI > 30 then < 30, allowing re-entry at any level)
+
+        Returns:
+            True if re-entry at this level already exists in current cycle (including initial entry), False otherwise
+        """
+        try:
+            if not self.positions_repo or not self.user_id:
+                return False
+
+            position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+            if not position:
+                return False
+
+            # Get current cycle from metadata
+            cycle_meta = self._get_position_cycle_metadata(position)
+            current_cycle = cycle_meta.get("current_cycle", 0)
+
+            # Check if initial entry was at this level
+            # Exception: If allow_reset=True, skip this check (reset allows re-entry at any level again)
+            entry_rsi = position.entry_rsi
+            if entry_rsi is not None and not allow_reset:
+                # Determine which level the initial entry was at
+                if level == 30 and entry_rsi < 30:
+                    return True  # Initial entry was at RSI < 30, block re-entry at level 30
+                elif level == 20 and entry_rsi < 20:
+                    return True  # Initial entry was at RSI < 20, block re-entry at level 20
+                elif level == 10 and entry_rsi < 10:
+                    return True  # Initial entry was at RSI < 10, block re-entry at level 10
+
+            # Check existing re-entries in current cycle
+            if not position.reentries:
+                return False
+
+            # Extract reentries array (handle both old and new format)
+            reentries = position.reentries
+            if isinstance(reentries, dict):
+                # New format: extract reentries array
+                reentries = reentries.get("reentries", [])
+            if not isinstance(reentries, list):
+                return False
+
+            for reentry in reentries:
+                if not isinstance(reentry, dict):
+                    continue
+
+                # Check if level matches
+                reentry_level = reentry.get("level")
+                if reentry_level is None:
+                    continue
+
+                try:
+                    # Handle both int and string representations
+                    reentry_level_int = int(reentry_level) if reentry_level is not None else None
+                    if reentry_level_int == level:
+                        # Check cycle number (if stored)
+                        reentry_cycle = reentry.get("cycle")
+                        if reentry_cycle is not None:
+                            # Only block if it's in the same cycle
+                            if int(reentry_cycle) == current_cycle:
+                                return True
+                        # Backward compatibility: if cycle not stored, assume cycle 0
+                        # Only block if current_cycle is also 0 (initial cycle)
+                        elif current_cycle == 0:
+                            return True
+                except (ValueError, TypeError):
+                    continue
+
+            return False
+        except Exception as e:
+            logger.error(f"Error checking reentry level for {base_symbol}: {e}")
+            return False
+
+    def _resolve_broker_symbol(self, base_symbol: str) -> str:
+        """
+        Resolve base symbol to actual broker trading symbol using scrip master.
+
+        Scrip master is the SINGLE SOURCE OF TRUTH for symbol resolution.
+        If scrip master is not available or symbol is not found, raises an error.
+
+        Args:
+            base_symbol: Base symbol (e.g., "SALSTEEL") or already resolved symbol (e.g., "SALSTEEL-BE")
+
+        Returns:
+            Resolved broker symbol (e.g., "SALSTEEL-BE")
+
+        Raises:
+            ValueError: If scrip master is not available or symbol cannot be resolved
+        """
+        # Get exchange from user's trading config (from database UserTradingConfig)
+        # This is the user's preference stored in their trading configuration
+        # Falls back to config.DEFAULT_EXCHANGE only if strategy_config not available (standalone usage)
+        exchange = (
+            self.strategy_config.default_exchange
+            if self.strategy_config
+            else config.DEFAULT_EXCHANGE
+        )
+
+        # If symbol already has suffix, validate it exists in scrip master
+        if any(base_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"]):
+            # Validate that this symbol exists in scrip master
+            if self.scrip_master and self.scrip_master.symbol_map:
+                instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
+                if instrument and instrument.get("symbol"):
+                    # Symbol exists in scrip master, use as-is
+                    logger.debug(
+                        f"Symbol {base_symbol} already has suffix and exists in scrip master ({exchange})"
+                    )
+                    return base_symbol
+                else:
+                    # Symbol has suffix but not in scrip master - this is an error
+                    raise ValueError(
+                        f"Symbol {base_symbol} has suffix but not found in scrip master ({exchange}). "
+                        f"Please verify the symbol is correct."
+                    )
+            else:
+                # Scrip master not available, but symbol has suffix - assume it's valid
+                logger.warning(
+                    f"Scrip master not available, but symbol {base_symbol} has suffix. "
+                    f"Using as-is (not validated)."
+                )
+                return base_symbol
+
+        # Scrip master is REQUIRED for symbol resolution
+        if not self.scrip_master or not self.scrip_master.symbol_map:
+            raise ValueError(
+                f"Scrip master is not available. Cannot resolve symbol {base_symbol}. "
+                f"Please ensure scrip master is loaded before placing orders."
+            )
+
+        try:
+            # Use configurable exchange for symbol resolution
+            instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
+            if instrument and instrument.get("symbol"):
+                resolved = instrument["symbol"]
+                logger.info(
+                    f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange}) - single source of truth"
+                )
+                return resolved
+            else:
+                # Symbol not found in scrip master
+                raise ValueError(
+                    f"Symbol {base_symbol} not found in scrip master ({exchange}). "
+                    f"Please verify the symbol is correct or check if it's listed on {exchange}."
+                )
+        except ValueError:
+            # Re-raise ValueError (our custom errors)
+            raise
+        except Exception as e:
+            # Wrap other exceptions
+            raise ValueError(
+                f"Failed to resolve symbol {base_symbol} via scrip master: {e}. "
+                f"Scrip master is the single source of truth for symbol resolution."
+            ) from e
 
     def _attempt_place_order(
         self,
@@ -1859,7 +2462,7 @@ class AutoTradeEngine:
         Helper method to attempt placing an order with symbol resolution.
 
         Args:
-            broker_symbol: Trading symbol
+            broker_symbol: Trading symbol (should already be resolved, but will resolve if needed)
             ticker: Full ticker (e.g., RELIANCE.NS)
             qty: Order quantity
             close: Current close price
@@ -1900,94 +2503,52 @@ class AutoTradeEngine:
                 f"Using LIMIT order for {broker_symbol} (T2T segment) @ Rs {limit_price:.2f}"
             )
 
-        # Try to resolve symbol using scrip master first
-        resolved_symbol = None
-        if self.scrip_master and self.scrip_master.symbol_map:
-            # Try base symbol first
-            instrument = self.scrip_master.get_instrument(broker_symbol)
-            if instrument:
-                resolved_symbol = instrument["symbol"]
-                logger.debug(f"Resolved {broker_symbol} -> {resolved_symbol} via scrip master")
+        # Symbol should already be resolved from place_new_entries() via scrip master
+        # Scrip master is the SINGLE SOURCE OF TRUTH - use the resolved symbol directly
+        # If symbol doesn't have suffix, it means resolution failed earlier - this is an error
+        place_symbol = broker_symbol
 
-        # If scrip master resolved the symbol, use it directly
-        if resolved_symbol:
-            place_symbol = resolved_symbol
-            if use_limit_order:
-                trial = self.orders.place_limit_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    price=limit_price,
-                    variety=order_variety,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-            else:
-                trial = self.orders.place_market_buy(
-                    symbol=place_symbol,
-                    quantity=qty,
-                    variety=order_variety,
-                    exchange=config.DEFAULT_EXCHANGE,
-                    product=config.DEFAULT_PRODUCT,
-                )
-            # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
-            if isinstance(trial, dict) and "error" not in trial:
-                stat = trial.get("stat", "").lower()
-                if (
-                    stat == "ok"
-                    or "data" in trial
-                    or "order" in trial
-                    or "raw" in trial
-                    or "nordno" in str(trial).lower()
-                ):
-                    resp = trial
-                    placed_symbol = place_symbol
+        # Validate that symbol has suffix (means it was resolved by scrip master)
+        has_suffix = any(place_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"])
+        if not has_suffix:
+            logger.error(
+                f"Symbol {place_symbol} does not have suffix. "
+                f"This indicates scrip master resolution failed earlier. "
+                f"Cannot place order without proper symbol resolution."
+            )
+            return (False, None)
 
-        # Fallback: Try common series suffixes if scrip master didn't work
-        if not resp:
-            series_suffixes = ["-EQ", "-BE", "-BL", "-BZ"]
-            resp = None
-            placed_symbol = None
-            for suf in series_suffixes:
-                place_symbol = (
-                    broker_symbol if broker_symbol.endswith(suf) else f"{broker_symbol}{suf}"
-                )
+        # Place order with scrip master resolved symbol
+        if use_limit_order:
+            trial = self.orders.place_limit_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                price=limit_price,
+                variety=order_variety,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
+        else:
+            trial = self.orders.place_market_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                variety=order_variety,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
 
-                # Check if this suffix requires limit order
-                is_t2t_suf = suf in ["-BE", "-BL", "-BZ"]
-
-                if is_t2t_suf:
-                    limit_price = close * 1.01
-                    logger.debug(f"Trying {place_symbol} with LIMIT @ Rs {limit_price:.2f}")
-                    trial = self.orders.place_limit_buy(
-                        symbol=place_symbol,
-                        quantity=qty,
-                        price=limit_price,
-                        variety=order_variety,
-                        exchange=config.DEFAULT_EXCHANGE,
-                        product=config.DEFAULT_PRODUCT,
-                    )
-                else:
-                    trial = self.orders.place_market_buy(
-                        symbol=place_symbol,
-                        quantity=qty,
-                        variety=order_variety,
-                        exchange=config.DEFAULT_EXCHANGE,
-                        product=config.DEFAULT_PRODUCT,
-                    )
-                # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
-                if isinstance(trial, dict) and "error" not in trial:
-                    stat = trial.get("stat", "").lower()
-                    trial_str = str(trial).lower()
-                    if (
-                        stat == "ok"
-                        or "data" in trial
-                        or "order" in trial
-                        or "raw" in trial
-                        or "nordno" in trial_str
-                    ) and "not_ok" not in trial_str:
-                        resp = trial
-                        placed_symbol = place_symbol
-                        break
+        # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
+        if isinstance(trial, dict) and "error" not in trial:
+            stat = trial.get("stat", "").lower()
+            if (
+                stat == "ok"
+                or "data" in trial
+                or "order" in trial
+                or "raw" in trial
+                or "nordno" in str(trial).lower()
+            ):
+                resp = trial
+                placed_symbol = place_symbol
 
         # Check if order was successful
         # Accept responses with nOrdNo (direct order ID) or data/order/raw structures
@@ -2011,15 +2572,19 @@ class AutoTradeEngine:
         # Extract order ID from response
         order_id = extract_order_id(resp)
 
+        # Use resolved symbol (placed_symbol) everywhere - this is the actual broker format
+        # Define early so it can be used throughout
+        actual_symbol = placed_symbol or broker_symbol  # Prefer placed_symbol (resolved format)
+
         if not order_id:
             # Fallback: Search order book after a shorter wait (reduced from 60s to 10s for performance)
             logger.warning(
-                f"No order ID in response for {broker_symbol}. "
+                f"No order ID in response for {actual_symbol}. "
                 f"Will search order book after 10 seconds..."
             )
             order_id = search_order_in_broker_orderbook(
                 self.orders,
-                placed_symbol or broker_symbol,
+                actual_symbol,
                 qty,
                 placement_time,
                 max_wait_seconds=10,  # Reduced from 60s to 10s for faster execution
@@ -2028,27 +2593,40 @@ class AutoTradeEngine:
             if not order_id:
                 # Still no order ID - uncertain placement
                 logger.error(
-                    f"Order placement uncertain for {broker_symbol}: "
+                    f"Order placement uncertain for {actual_symbol}: "
                     f"No order ID and not found in order book"
                 )
                 # Send notification about uncertain order
-                from core.telegram import send_telegram
-
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                send_telegram(
+                telegram_msg = (
                     f"⚠️ *Order Placement Uncertain*\n\n"
-                    f"Symbol: `{broker_symbol}`\n"
+                    f"Symbol: `{actual_symbol}`\n"
                     f"Qty: {qty}\n"
                     f"Order ID not received and not found in order book.\n"
                     f"Please check broker app manually.\n\n"
                     f"_Time: {timestamp}_"
                 )
+                # Use TelegramNotifier to respect notification preferences
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_system_alert(
+                            alert_type="ORDER_PLACEMENT_UNCERTAIN",
+                            message_text=telegram_msg,
+                            severity="WARNING",
+                            user_id=self.user_id,
+                        )
+                    except Exception as notify_err:
+                        logger.warning(
+                            f"Failed to send order placement uncertain notification: {notify_err}"
+                        )
+                else:
+                    # Fallback to old method if telegram_notifier not available
+                    send_telegram(telegram_msg)
                 return (False, None)
 
         # Order successfully placed with order_id
         logger.info(
-            f"Order placed successfully: {placed_symbol or broker_symbol} "
-            f"(order_id: {order_id}, qty: {qty})"
+            f"Order placed successfully: {actual_symbol} (order_id: {order_id}, qty: {qty})"
         )
 
         # Mark signal as TRADED (Phase 2.3: Database integration)
@@ -2059,13 +2637,14 @@ class AutoTradeEngine:
                 )
 
                 signals_repo = SignalsRepository(self.db, user_id=self.user_id)
-                # Use the base symbol (without series suffix like -EQ)
-                base_symbol = broker_symbol.split("-")[0] if "-" in broker_symbol else broker_symbol
+                # Use the base symbol (without series suffix like -EQ) for signal marking
+                # Signals table stores base symbols, so extract base from actual symbol
+                base_symbol = actual_symbol.split("-")[0] if "-" in actual_symbol else actual_symbol
                 if signals_repo.mark_as_traded(base_symbol, user_id=self.user_id):
                     logger.info(f"Marked signal for {base_symbol} as TRADED (user {self.user_id})")
             except Exception as mark_error:
                 # Don't fail order placement if marking fails
-                logger.warning(f"Failed to mark signal as traded for {broker_symbol}: {mark_error}")
+                logger.warning(f"Failed to mark signal as traded for {actual_symbol}: {mark_error}")
 
         order_type = "LIMIT" if use_limit_order else "MARKET"
 
@@ -2074,7 +2653,7 @@ class AutoTradeEngine:
             try:
                 limit_price = limit_price if use_limit_order else None
                 self.telegram_notifier.notify_order_placed(
-                    symbol=placed_symbol or broker_symbol,
+                    symbol=actual_symbol,  # Use actual resolved symbol format
                     order_id=order_id,
                     quantity=qty,
                     order_type=order_type,
@@ -2090,7 +2669,8 @@ class AutoTradeEngine:
             holdings = self.portfolio.get_holdings() or {}
             for item in holdings.get("data") or []:
                 sym = str(item.get("tradingSymbol", "")).upper()
-                if broker_symbol.upper() in sym:
+                # Check if actual_symbol matches holdings symbol (both should be in broker format)
+                if actual_symbol.upper() in sym or sym in actual_symbol.upper():
                     pre_existing_qty = int(item.get("quantity", 0))
                     break
         except Exception as e:
@@ -2099,7 +2679,7 @@ class AutoTradeEngine:
         # Register in tracking scope (system-recommended)
         try:
             tracking_id = add_tracked_symbol(
-                symbol=broker_symbol,
+                symbol=actual_symbol,  # Use actual resolved symbol format
                 ticker=ticker,
                 initial_order_id=order_id,
                 initial_qty=qty,
@@ -2107,7 +2687,7 @@ class AutoTradeEngine:
                 recommendation_source=recommendation_source,
                 recommendation_verdict=getattr(ind, "verdict", None),
             )
-            logger.debug(f"Added to tracking scope: {broker_symbol} (tracking_id: {tracking_id})")
+            logger.debug(f"Added to tracking scope: {actual_symbol} (tracking_id: {tracking_id})")
         except Exception as e:
             logger.error(f"Failed to add to tracking scope: {e}")
 
@@ -2115,7 +2695,7 @@ class AutoTradeEngine:
         try:
             add_pending_order(
                 order_id=order_id,
-                symbol=placed_symbol or broker_symbol,
+                symbol=actual_symbol,  # Use actual resolved symbol format
                 ticker=ticker,
                 qty=qty,
                 order_type=order_type,
@@ -2131,7 +2711,7 @@ class AutoTradeEngine:
         # Immediately fetch order status from broker and sync DB state
         self._sync_order_status_snapshot(
             order_id=str(order_id),
-            symbol=placed_symbol or broker_symbol,
+            symbol=actual_symbol,  # Use actual resolved symbol format
             quantity=qty,
         )
 
@@ -2139,7 +2719,7 @@ class AutoTradeEngine:
         # This checks if the order was immediately rejected by the broker
         try:
             is_valid, rejection_reason = self._verify_order_placement(
-                order_id=order_id, symbol=placed_symbol or broker_symbol, wait_seconds=15
+                order_id=order_id, symbol=actual_symbol, wait_seconds=15
             )
             if not is_valid:
                 logger.error(
@@ -2188,8 +2768,6 @@ class AutoTradeEngine:
             status_lower = status.lower()
             if not status_lower:
                 return
-
-            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
             self.orders_repo.update_status_check(db_order)
 
@@ -2332,7 +2910,26 @@ class AutoTradeEngine:
                                 f"Please check broker app.\n\n"
                                 f"_Time: {timestamp}_"
                             )
-                            send_telegram(telegram_msg)
+                            # Use TelegramNotifier to respect notification preferences
+                            if self.telegram_notifier and self.telegram_notifier.enabled:
+                                try:
+                                    # Use notify_order_rejection for order rejections
+                                    self.telegram_notifier.notify_order_rejection(
+                                        symbol=symbol,
+                                        order_id=order_id,
+                                        quantity=0,  # Quantity not available in this context
+                                        reason=rejection_reason,
+                                        user_id=self.user_id,
+                                    )
+                                except Exception as notify_err:
+                                    logger.warning(
+                                        f"Failed to send rejection notification: {notify_err}"
+                                    )
+                            else:
+                                # Fallback to old method if telegram_notifier not available
+                                from core.telegram import send_telegram
+
+                                send_telegram(telegram_msg)
                         except Exception as e:
                             logger.warning(f"Failed to send rejection notification: {e}")
 
@@ -2363,9 +2960,15 @@ class AutoTradeEngine:
             # On error, assume order is valid (don't block on verification failures)
             return (True, None)
 
-    def _check_for_manual_orders(self, symbol: str) -> dict[str, Any]:
+    def _check_for_manual_orders(
+        self, symbol: str, cached_pending_orders: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         """
         Check for manual orders (orders not in our database) for a given symbol.
+
+        Args:
+            symbol: Symbol to check
+            cached_pending_orders: Optional cached pending orders to avoid redundant API calls
 
         Returns:
             {
@@ -2386,8 +2989,11 @@ class AutoTradeEngine:
             return result
 
         try:
-            # Get active orders from broker
-            pending_orders = self.orders.get_pending_orders() or []
+            # Use cached orders if provided, otherwise fetch
+            if cached_pending_orders is not None:
+                pending_orders = cached_pending_orders
+            else:
+                pending_orders = self.orders.get_pending_orders() or []
             variants = set(self._symbol_variants(symbol))
 
             from .utils.order_field_extractor import OrderFieldExtractor
@@ -2539,6 +3145,24 @@ class AutoTradeEngine:
                 summary["retried"] += 1
                 symbol = db_order.symbol
 
+                # Validate symbol exists in scrip master (single source of truth)
+                # Symbol in DB should already be resolved, but validate it exists
+                # Use user's trading config preference for exchange
+                exchange = (
+                    self.strategy_config.default_exchange
+                    if self.strategy_config
+                    else config.DEFAULT_EXCHANGE
+                )
+                if self.scrip_master and self.scrip_master.symbol_map:
+                    instrument = self.scrip_master.get_instrument(symbol, exchange=exchange)
+                    if not instrument or not instrument.get("symbol"):
+                        logger.warning(
+                            f"Symbol {symbol} from DB not found in scrip master ({exchange}). "
+                            f"Skipping retry (symbol may have been delisted or changed)."
+                        )
+                        summary["skipped"] += 1
+                        continue
+
                 # Check portfolio limit
                 if not has_capacity:
                     logger.info(
@@ -2611,7 +3235,6 @@ class AutoTradeEngine:
                         )
 
                         # Update DB order with manual order details
-                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                         self.orders_repo.update(
                             db_order,
@@ -2663,8 +3286,6 @@ class AutoTradeEngine:
                     )
                     # Database fallback: Check for pending/ongoing buy orders
                     if self.orders_repo and self.user_id:
-                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                         existing_orders = self.orders_repo.list(self.user_id)
                         for existing_order in existing_orders:
                             if (
@@ -2741,7 +3362,6 @@ class AutoTradeEngine:
                     summary["placed"] += 1
                     # Update order status to PENDING and set broker_order_id
                     # Also update quantity in case it changed due to config changes
-                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                     self.orders_repo.update(
                         db_order,
@@ -2811,6 +3431,7 @@ class AutoTradeEngine:
             "price_unavailable": 0,
             "modification_failed": 0,
             "skipped_not_enabled": 0,
+            "cancelled_above_ema9": 0,
         }
 
         # Check if feature is enabled
@@ -2837,13 +3458,9 @@ class AutoTradeEngine:
         try:
             # 1. Get all pending orders from broker
             logger.info("Fetching pending AMO orders from broker...")
-            pending_orders = self.orders.get_order_book()
+            pending_orders = self.orders.get_order_book() or []
 
-            if not pending_orders:
-                logger.info("No pending orders found - nothing to adjust")
-                return summary
-
-            # Filter only AMO/pending orders
+            # Filter only AMO/pending orders (including re-entry orders)
             amo_orders = [
                 order
                 for order in pending_orders
@@ -2852,11 +3469,188 @@ class AutoTradeEngine:
                 and order.get("transactionType", "").upper() == "BUY"
             ]
 
-            if not amo_orders:
-                logger.info("No pending AMO buy orders found - nothing to adjust")
-                return summary
+            # Also get re-entry orders from database (if available)
+            reentry_orders_from_db = []
+            if self.orders_repo and self.user_id:
+                try:
+                    # Import here to ensure it's available
+                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-            logger.info(f"Found {len(amo_orders)} pending AMO buy orders")
+                    all_orders = self.orders_repo.list(self.user_id)
+                    reentry_orders_from_db = [
+                        db_order
+                        for db_order in all_orders
+                        if db_order.side == "buy"
+                        and db_order.status == DbOrderStatus.PENDING
+                        and db_order.entry_type == "reentry"
+                    ]
+
+                    if reentry_orders_from_db:
+                        logger.info(
+                            f"Found {len(reentry_orders_from_db)} re-entry orders in database"
+                        )
+                except Exception as e:
+                    logger.warning(f"Error fetching re-entry orders from database: {e}")
+
+            # Build set of broker order IDs for quick lookup
+            broker_order_ids = set()
+            if pending_orders:
+                broker_order_ids = {
+                    order.get("nOrdNo", order.get("orderId", ""))
+                    for order in pending_orders
+                    if order.get("nOrdNo") or order.get("orderId")
+                }
+
+            # Track which re-entry orders we've already cancelled (to skip them in next loop)
+            cancelled_reentry_order_ids = set()
+
+            # Check re-entry orders from database for closed positions FIRST
+            # This must happen even if there are no broker orders, to handle cases where
+            # re-entry orders exist in DB but position was closed
+            for db_order in reentry_orders_from_db:
+                # Check if position is closed - cancel re-entry order if closed
+                if self.positions_repo:
+                    # Use get_by_symbol_any to check for closed positions
+                    position = self.positions_repo.get_by_symbol_any(
+                        self.user_id, db_order.symbol, include_closed=True
+                    )
+                    if position and position.closed_at is not None:
+                        logger.info(
+                            f"Position {db_order.symbol} is closed - cancelling re-entry order {db_order.broker_order_id}"
+                        )
+                        try:
+                            if db_order.broker_order_id:
+                                cancel_result = self.orders.cancel_order(db_order.broker_order_id)
+                                if cancel_result:
+                                    logger.info(
+                                        f"Cancelled re-entry order {db_order.broker_order_id} for closed position"
+                                    )
+                                    # Update DB order status
+                                    from src.infrastructure.db.models import (
+                                        OrderStatus as DbOrderStatus,
+                                    )
+
+                                    self.orders_repo.update(
+                                        db_order,
+                                        status=DbOrderStatus.CANCELLED,
+                                        reason="Position closed",
+                                    )
+                                    summary["cancelled"] = summary.get("cancelled", 0) + 1
+                                    cancelled_reentry_order_ids.add(db_order.broker_order_id)
+                        except Exception as e:
+                            logger.warning(
+                                f"Error cancelling re-entry order {db_order.broker_order_id}: {e}"
+                            )
+                        continue
+
+            # Check for re-entry orders not found at broker (EOD cancellation handling)
+            # This must happen even if broker returns empty, to mark stale orders as CANCELLED
+            for db_order in reentry_orders_from_db:
+                # Skip if already cancelled for closed position
+                if db_order.broker_order_id in cancelled_reentry_order_ids:
+                    continue
+
+                # Check if order is found in broker's order list
+                order_found_at_broker = (
+                    db_order.broker_order_id and db_order.broker_order_id in broker_order_ids
+                )
+
+                if order_found_at_broker:
+                    # Order found at broker - add to processing list
+                    matching_broker_order = None
+                    if pending_orders:
+                        for broker_order in pending_orders:
+                            broker_order_id = broker_order.get(
+                                "nOrdNo", broker_order.get("orderId", "")
+                            )
+                            if broker_order_id == db_order.broker_order_id:
+                                matching_broker_order = broker_order
+                                break
+                    if matching_broker_order:
+                        # Only add if not already in amo_orders (avoid duplicates)
+                        # Re-entry orders might already be in amo_orders from initial broker filter
+                        already_in_list = any(
+                            order.get("nOrdNo", order.get("orderId", ""))
+                            == db_order.broker_order_id
+                            for order in amo_orders
+                        )
+                        if not already_in_list:
+                            amo_orders.append(matching_broker_order)
+                else:
+                    # Order not found at broker - likely cancelled by broker at EOD
+                    # Order not found at broker - likely cancelled by broker at EOD
+                    # Mark PENDING orders as CANCELLED in database, but only if:
+                    # 1. Order is still PENDING (re-check to avoid race conditions)
+                    # 2. Order is old enough (placed before previous day's market close)
+                    #    to avoid marking newly placed orders as CANCELLED
+                    from src.infrastructure.db.models import (
+                        OrderStatus as DbOrderStatus,
+                    )
+
+                    if db_order.status == DbOrderStatus.PENDING and self.orders_repo:
+                        try:
+                            # Re-check order status to avoid race conditions
+                            # (e.g., UnifiedOrderMonitor might have updated it)
+                            # Fetch fresh order from DB using broker_order_id
+                            fresh_order = self.orders_repo.get_by_broker_order_id(
+                                self.user_id, db_order.broker_order_id
+                            )
+                            if not fresh_order or fresh_order.status != DbOrderStatus.PENDING:
+                                logger.debug(
+                                    f"Re-entry order {db_order.broker_order_id} status changed "
+                                    f"(now {fresh_order.status if fresh_order else 'deleted'}) - skipping cancellation"
+                                )
+                                continue
+
+                            # Check if order is old enough (placed before previous day's market close)
+                            # This prevents marking newly placed orders as CANCELLED if broker API
+                            # hasn't synced yet
+                            from src.infrastructure.db.timezone_utils import IST, ist_now
+
+                            now = ist_now()
+                            if now.tzinfo is None:
+                                now = now.replace(tzinfo=IST)
+                            elif now.tzinfo != IST:
+                                now = now.astimezone(IST)
+
+                            # Only mark as CANCELLED if order is at least 1 hour old
+                            # (gives broker API time to sync)
+                            if db_order.placed_at:
+                                placed_at = db_order.placed_at
+                                if placed_at.tzinfo is None:
+                                    placed_at = placed_at.replace(tzinfo=IST)
+                                elif placed_at.tzinfo != IST:
+                                    placed_at = placed_at.astimezone(IST)
+
+                                age_hours = (now - placed_at).total_seconds() / 3600
+                                if age_hours < 1:
+                                    logger.debug(
+                                        f"Re-entry order {db_order.broker_order_id} is too recent "
+                                        f"({age_hours:.1f} hours old) - skipping cancellation "
+                                        f"(broker API may not have synced yet)"
+                                    )
+                                    continue
+
+                            logger.info(
+                                f"Re-entry order {db_order.broker_order_id} not found at broker "
+                                f"(likely cancelled at EOD) - marking as CANCELLED in database"
+                            )
+                            self.orders_repo.update(
+                                fresh_order,
+                                status=DbOrderStatus.CANCELLED,
+                                reason="Order not found at broker (likely cancelled at EOD)",
+                            )
+                            summary["cancelled"] = summary.get("cancelled", 0) + 1
+                        except Exception as e:
+                            logger.warning(
+                                f"Error updating order status for {db_order.broker_order_id}: {e}"
+                            )
+                    else:
+                        logger.warning(
+                            f"Re-entry order {db_order.broker_order_id} not found in broker orders - "
+                            f"may have been executed or cancelled (status: {db_order.status})"
+                        )
+
             summary["total_orders"] = len(amo_orders)
 
             # 2. Process each AMO order
@@ -2887,6 +3681,111 @@ class AutoTradeEngine:
                     continue
 
                 logger.info(f"{base_symbol}: Pre-market price = Rs {premarket_price:.2f}")
+
+                # 3.5. Check if pre-market price is above EMA9-1% (cancel order if so)
+                # Get ticker from order metadata or construct from symbol
+                ticker = None
+                if self.orders_repo and self.user_id:
+                    try:
+                        db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
+                        if db_order and db_order.order_metadata:
+                            ticker = db_order.order_metadata.get(
+                                "ticker"
+                            ) or db_order.order_metadata.get("original_ticker")
+                    except Exception as e:
+                        logger.debug(f"Error fetching order metadata for {base_symbol}: {e}")
+
+                # Construct ticker if not found in metadata
+                if not ticker:
+                    ticker = f"{base_symbol}.NS"
+
+                # Calculate EMA9
+                ema9 = None
+                try:
+                    ema9 = self.indicator_service.calculate_ema9_realtime(
+                        ticker=ticker,
+                        broker_symbol=symbol,
+                        current_ltp=premarket_price,
+                    )
+                except Exception as e:
+                    logger.warning(f"{base_symbol}: Failed to calculate EMA9: {e}")
+
+                # Check if pre-market price > EMA9 - 1%
+                if ema9 and ema9 > 0:
+                    ema9_threshold = ema9 * 0.99  # EMA9 - 1%
+                    if premarket_price > ema9_threshold:
+                        logger.warning(
+                            f"{base_symbol}: Pre-market price (Rs {premarket_price:.2f}) > EMA9-1% "
+                            f"(Rs {ema9_threshold:.2f}, EMA9: Rs {ema9:.2f}) - Cancelling order"
+                        )
+                        try:
+                            cancel_result = self.orders.cancel_order(order_id)
+                            if cancel_result:
+                                logger.info(
+                                    f"✅ {base_symbol}: Order cancelled due to gap-up above EMA9-1%"
+                                )
+                                summary["cancelled_above_ema9"] += 1
+
+                                # Update database order status
+                                if self.db and self.orders_repo:
+                                    try:
+                                        db_order = self.orders_repo.get_by_broker_order_id(
+                                            self.user_id, order_id
+                                        )
+                                        if db_order:
+                                            from src.infrastructure.db.models import (
+                                                OrderStatus as DbOrderStatus,
+                                            )
+
+                                            self.orders_repo.update(
+                                                db_order,
+                                                status=DbOrderStatus.CANCELLED,
+                                                reason=f"Pre-market price (Rs {premarket_price:.2f}) > EMA9-1% (Rs {ema9_threshold:.2f})",
+                                            )
+                                            logger.info(
+                                                f"{base_symbol}: DB order record updated - cancelled due to EMA9 validation"
+                                            )
+                                    except Exception as db_err:
+                                        logger.warning(
+                                            f"{base_symbol}: Failed to update DB record: {db_err}"
+                                        )
+
+                                # Send Telegram notification
+                                if self.telegram_notifier and self.telegram_notifier.enabled:
+                                    try:
+                                        message_text = (
+                                            f"🚫 *Order Cancelled - Gap Up Above EMA9*\n\n"
+                                            f"Symbol: `{base_symbol}`\n"
+                                            f"Pre-market: Rs {premarket_price:.2f}\n"
+                                            f"EMA9: Rs {ema9:.2f}\n"
+                                            f"Threshold: Rs {ema9_threshold:.2f} (EMA9 - 1%)\n"
+                                            f"Reason: Price gap-up above entry target"
+                                        )
+                                        self.telegram_notifier.notify_system_alert(
+                                            alert_type="ORDER_CANCELLED_EMA9",
+                                            message_text=message_text,
+                                            severity="WARNING",
+                                            user_id=self.user_id,
+                                        )
+                                    except Exception as notify_err:
+                                        logger.warning(
+                                            f"Failed to send Telegram notification: {notify_err}"
+                                        )
+
+                                continue  # Skip quantity adjustment for cancelled order
+                            else:
+                                logger.error(f"{base_symbol}: Failed to cancel order above EMA9-1%")
+                                summary["modification_failed"] += 1
+                        except Exception as cancel_err:
+                            logger.error(
+                                f"{base_symbol}: Error cancelling order above EMA9-1%: {cancel_err}",
+                                exc_info=True,
+                            )
+                            summary["modification_failed"] += 1
+                elif ema9 is None:
+                    logger.warning(
+                        f"{base_symbol}: EMA9 calculation failed - proceeding with quantity adjustment"
+                    )
 
                 # 4. Recalculate quantity to keep capital constant
                 target_capital = self.strategy_config.user_capital
@@ -2982,7 +3881,8 @@ class AutoTradeEngine:
                 f"{summary['adjusted']} adjusted, "
                 f"{summary['no_adjustment_needed']} unchanged, "
                 f"{summary['price_unavailable']} price N/A, "
-                f"{summary['modification_failed']} failed"
+                f"{summary['modification_failed']} failed, "
+                f"{summary['cancelled_above_ema9']} cancelled (above EMA9-1%)"
             )
 
             return summary
@@ -2997,6 +3897,7 @@ class AutoTradeEngine:
             "attempted": 0,
             "placed": 0,
             "failed_balance": 0,
+            "skipped": 0,  # Total skipped (for backward compatibility with tests)
             "skipped_portfolio_limit": 0,
             "skipped_duplicates": 0,
             "skipped_missing_data": 0,
@@ -3046,9 +3947,7 @@ class AutoTradeEngine:
                 "Holdings API unavailable after retries - using database fallback to check for existing orders"
             )
             # Fallback: Check database for existing orders to prevent duplicates
-            if self.db and self.user_id and hasattr(self, "orders_repo"):
-                from sqlalchemy import text
-
+            if self.db and self.user_id and hasattr(self, "orders_repo") and text:
                 # Check if we have any pending/ongoing buy orders for the recommended symbols
                 symbols_to_check = [
                     self.parse_symbol_for_broker(rec.ticker) for rec in recommendations
@@ -3085,6 +3984,16 @@ class AutoTradeEngine:
                     # Proceed without holdings check - we'll rely on broker-side duplicate detection
                     # Set test_holdings to empty dict to bypass validation
                     test_holdings = {"data": []}
+                    # Cache the empty holdings to avoid redundant API calls
+                    if (
+                        self.portfolio_service
+                        and self.portfolio_service.enable_caching
+                        and self.portfolio_service._cache
+                    ):
+                        self.portfolio_service._cache.set("holdings", test_holdings)
+                        logger.debug(
+                            "Populated PortfolioService cache with empty holdings (fallback)"
+                        )
             else:
                 logger.error(
                     "Cannot fetch holdings (API returned None after retries) and no database fallback available. "
@@ -3102,6 +4011,14 @@ class AutoTradeEngine:
                         "Holdings still unavailable after re-login - aborting order placement"
                     )
                     return summary
+                # Update cache with fresh holdings after 2FA re-login
+                if (
+                    self.portfolio_service
+                    and self.portfolio_service.enable_caching
+                    and self.portfolio_service._cache
+                ):
+                    self.portfolio_service._cache.set("holdings", test_holdings)
+                    logger.debug("Updated PortfolioService cache with holdings after 2FA re-login")
 
         # Verify holdings has 'data' field (successful response structure)
         if not isinstance(test_holdings, dict) or "data" not in test_holdings:
@@ -3114,6 +4031,22 @@ class AutoTradeEngine:
             return summary
 
         logger.info("Holdings API healthy - proceeding with order placement")
+
+        # Note: Stale PENDING orders are excluded from portfolio count in PortfolioService
+        # EOD cleanup handles marking stale orders as CANCELLED/FAILED at end of day
+        # The exclusion in portfolio count prevents stale orders from blocking new orders during the day
+
+        # OPTIMIZATION: Populate PortfolioService cache with holdings from pre-flight check
+        # This prevents redundant API calls when PortfolioService methods are called later
+        # Same pattern as pending_orders cache - fetch once, reuse throughout
+        if (
+            self.portfolio_service
+            and self.portfolio_service.enable_caching
+            and self.portfolio_service._cache
+            and test_holdings is not None
+        ):
+            self.portfolio_service._cache.set("holdings", test_holdings)
+            logger.debug("Populated PortfolioService cache with holdings from pre-flight check")
 
         # OPTIMIZATION: Cache portfolio snapshot and pre-fetch indicators
         # Reduces API calls from O(n) to O(1) for portfolio checks
@@ -3255,6 +4188,17 @@ class AutoTradeEngine:
                     f"indicators (sequential)"
                 )
 
+        # OPTIMIZATION: Fetch orders once and cache for reuse throughout placement
+        # This prevents multiple API calls (5-6x) during buy order placement
+        cached_pending_orders = None
+        if self.orders:
+            try:
+                cached_pending_orders = self.orders.get_pending_orders() or []
+                logger.debug(f"Cached {len(cached_pending_orders)} pending orders for reuse")
+            except Exception as e:
+                logger.warning(f"Failed to cache pending orders: {e}, will fetch per-check")
+                cached_pending_orders = None
+
         # Log summary of what we have before proceeding
         logger.info(
             f"Starting order placement: {len(recommendations)} recommendations, "
@@ -3283,10 +4227,34 @@ class AutoTradeEngine:
 
         # Process new recommendations (retries handled separately at scheduled time)
         for rec in recommendations:
-            broker_symbol = self.parse_symbol_for_broker(rec.ticker)
+            base_symbol = self.parse_symbol_for_broker(rec.ticker)  # "SALSTEEL"
+
+            # Resolve symbol to actual broker format early (e.g., "SALSTEEL" -> "SALSTEEL-BE")
+            # Scrip master is the SINGLE SOURCE OF TRUTH for symbol resolution
+            try:
+                broker_symbol = self._resolve_broker_symbol(base_symbol)  # "SALSTEEL-BE"
+            except ValueError as e:
+                # Scrip master resolution failed - skip this recommendation
+                logger.error(f"Failed to resolve symbol {base_symbol} via scrip master: {e}")
+                summary["skipped"] += 1
+                summary["skipped_missing_data"] += 1  # Also increment specific counter
+                ticker_attempt = {
+                    "ticker": rec.ticker,
+                    "symbol": base_symbol,
+                    "verdict": rec.verdict,
+                    "status": "skipped",
+                    "reason": f"scrip_master_resolution_failed: {str(e)}",
+                    "qty": None,
+                    "execution_capital": None,
+                    "price": None,
+                    "order_id": None,
+                }
+                summary["ticker_attempts"].append(ticker_attempt)
+                continue
+
             ticker_attempt = {
                 "ticker": rec.ticker,
-                "symbol": broker_symbol,
+                "symbol": broker_symbol,  # Use resolved symbol
                 "verdict": rec.verdict,
                 "status": "pending",
                 "reason": None,
@@ -3305,14 +4273,17 @@ class AutoTradeEngine:
 
             # Use OrderValidationService for capacity check (Phase 3.1)
             # OrderValidationService delegates to PortfolioService
+            # Note: PortfolioService excludes stale PENDING orders (past next trading day market close) from count
             has_capacity, current_count, max_size = (
                 self.order_validation_service.check_portfolio_capacity(include_pending=True)
             )
             if not has_capacity:
-                logger.info(
-                    f"Portfolio limit reached ({current_count}/{max_size}); skipping further entries"
+                logger.warning(
+                    f"Portfolio limit reached ({current_count}/{max_size}); skipping further entries. "
+                    f"Note: Stale PENDING orders (past next trading day market close) are excluded from count."
                 )
                 summary["skipped_portfolio_limit"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "portfolio_limit_reached"
                 summary["ticker_attempts"].append(ticker_attempt)
@@ -3333,14 +4304,30 @@ class AutoTradeEngine:
                     "System does not track existing holdings - keeping portfolios separate."
                 )
                 summary["skipped_duplicates"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "already_in_holdings"
                 summary["ticker_attempts"].append(ticker_attempt)
+                # Send notification for skipped order
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_order_skipped(
+                            symbol=broker_symbol,
+                            reason="already_in_holdings",
+                            additional_info={"base_symbol": broker_symbol_base},
+                            user_id=self.user_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send skipped order notification: {e}")
                 continue
 
             # Use OrderValidationService for duplicate check (includes holdings + active buy orders)
+            # Pass cached orders to avoid redundant API calls
             is_duplicate, duplicate_reason = self.order_validation_service.check_duplicate_order(
-                broker_symbol, check_active_buy_order=False, check_holdings=True
+                broker_symbol,
+                check_active_buy_order=False,
+                check_holdings=True,
+                cached_pending_orders=cached_pending_orders,
             )
             if is_duplicate:
                 logger.info(
@@ -3348,16 +4335,36 @@ class AutoTradeEngine:
                     "System does not track existing holdings - keeping portfolios separate."
                 )
                 summary["skipped_duplicates"] += 1
-                ticker_attempt["status"] = "skipped"
-                ticker_attempt["reason"] = (
+                summary["skipped"] += 1  # Increment general counter
+                skip_reason = (
                     "already_in_holdings"
                     if "holdings" in duplicate_reason.lower()
                     else "duplicate_order"
                 )
+                ticker_attempt["status"] = "skipped"
+                ticker_attempt["reason"] = skip_reason
                 summary["ticker_attempts"].append(ticker_attempt)
+                # Send notification for skipped order
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_order_skipped(
+                            symbol=broker_symbol,
+                            reason=skip_reason,
+                            additional_info={
+                                "base_symbol": broker_symbol_base,
+                                "details": duplicate_reason,
+                            },
+                            user_id=self.user_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send skipped order notification: {e}")
                 continue
             # 2) Check for manual AMO orders -> link to DB and skip placing
-            manual_order_info = self._check_for_manual_orders(broker_symbol)
+            # Pass cached orders to avoid redundant API calls
+            # Note: _check_for_manual_orders checks by base symbol, but we use resolved symbol for DB
+            manual_order_info = self._check_for_manual_orders(
+                base_symbol, cached_pending_orders=cached_pending_orders
+            )
             if manual_order_info.get("has_manual_order"):
                 manual_orders = manual_order_info.get("manual_orders", [])
                 if manual_orders:
@@ -3365,6 +4372,9 @@ class AutoTradeEngine:
                     manual_order_id = manual_order.get("order_id")
                     manual_qty = manual_order.get("quantity", 0)
                     manual_price = manual_order.get("price", 0.0)
+                    # Extract actual symbol from manual order (broker format)
+                    # order_info dict uses "symbol" key (from OrderFieldExtractor.get_symbol())
+                    manual_symbol = manual_order.get("symbol") or broker_symbol
 
                     logger.info(
                         f"Manual AMO order detected for {broker_symbol}: order_id={manual_order_id}, "
@@ -3374,8 +4384,6 @@ class AutoTradeEngine:
 
                     # Create/update DB order with manual order details
                     if self.orders_repo and self.user_id:
-                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                         # Check if order already exists in DB
                         existing_order = self.orders_repo.get_by_broker_order_id(
                             self.user_id, manual_order_id
@@ -3390,14 +4398,15 @@ class AutoTradeEngine:
                                 status=DbOrderStatus.PENDING,
                             )
                             logger.info(
-                                f"Updated existing DB order {existing_order.id} for {broker_symbol} "
+                                f"Updated existing DB order {existing_order.id} for {manual_symbol} "
                                 f"with manual order details"
                             )
                         else:
                             # Create new order record for manual order
+                            # Use actual symbol from broker order (manual_symbol) or resolved symbol
                             db_order = self.orders_repo.create_amo(
                                 user_id=self.user_id,
-                                symbol=broker_symbol,
+                                symbol=manual_symbol,  # Use actual symbol from broker order
                                 side="buy",
                                 order_type="market",  # AMO orders are typically market
                                 quantity=manual_qty,
@@ -3408,11 +4417,12 @@ class AutoTradeEngine:
                             db_order.status = DbOrderStatus.PENDING
                             self.orders_repo.update(db_order)
                             logger.info(
-                                f"Created new DB order {db_order.id} for {broker_symbol} "
+                                f"Created new DB order {db_order.id} for {manual_symbol} "
                                 f"with manual order details"
                             )
 
                     summary["skipped_duplicates"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     ticker_attempt["status"] = "skipped"
                     ticker_attempt["reason"] = "manual_order_exists"
                     ticker_attempt["qty"] = manual_qty
@@ -3423,11 +4433,13 @@ class AutoTradeEngine:
             # 3) Active pending buy order check (system orders)
             # Phase 3.1: Use OrderValidationService for duplicate check (broker API + database)
             # This prevents duplicates when service runs multiple times before broker syncs
+            # Pass cached orders to avoid redundant API calls
             is_duplicate_order, duplicate_order_reason = (
                 self.order_validation_service.check_duplicate_order(
                     broker_symbol,
                     check_active_buy_order=True,
                     check_holdings=False,  # Already checked holdings above
+                    cached_pending_orders=cached_pending_orders,
                 )
             )
 
@@ -3452,8 +4464,6 @@ class AutoTradeEngine:
             existing_db_order = None
             if self.orders_repo and self.user_id:
                 try:
-                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                     existing_orders = self.orders_repo.list(self.user_id)
                     for existing_order in existing_orders:
                         order_symbol_base = (
@@ -3489,8 +4499,6 @@ class AutoTradeEngine:
             # If database has an order, we'll check if quantity needs to be updated after calculating new quantity
             # For now, skip if database has ONGOING order (already executed, cannot update)
             if has_db_order and existing_db_order:
-                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                 if existing_db_order.status == DbOrderStatus.ONGOING:
                     logger.info(
                         f"Skipping {broker_symbol}: already has active buy order in database "
@@ -3498,6 +4506,7 @@ class AutoTradeEngine:
                         "Order already executed, cannot update quantity."
                     )
                     summary["skipped_duplicates"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     ticker_attempt["status"] = "skipped"
                     ticker_attempt["reason"] = "active_order_in_db"
                     ticker_attempt["existing_order_id"] = existing_db_order.id
@@ -3506,9 +4515,14 @@ class AutoTradeEngine:
 
             # Check broker API for pending orders (only if database doesn't have order or order is not ONGOING)
             # If broker has pending order, cancel and replace
+            # OPTIMIZATION: Use cached orders if available to avoid redundant API calls
             if self.orders:
                 try:
-                    pend = self.orders.get_pending_orders() or []
+                    # Use cached orders if provided, otherwise fetch
+                    if cached_pending_orders is not None:
+                        pend = cached_pending_orders
+                    else:
+                        pend = self.orders.get_pending_orders() or []
                     has_broker_order = False
                     for o in pend:
                         txn = str(o.get("transactionType") or "").upper()
@@ -3529,6 +4543,7 @@ class AutoTradeEngine:
                             )
                             # If cancel fails, skip to prevent duplicates
                             summary["skipped_duplicates"] += 1
+                            summary["skipped"] += 1  # Increment general counter
                             ticker_attempt["status"] = "skipped"
                             ticker_attempt["reason"] = "cancel_failed"
                             summary["ticker_attempts"].append(ticker_attempt)
@@ -3548,6 +4563,7 @@ class AutoTradeEngine:
                     "Will not place duplicate order."
                 )
                 summary["skipped_duplicates"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "duplicate_order"
                 summary["ticker_attempts"].append(ticker_attempt)
@@ -3564,6 +4580,7 @@ class AutoTradeEngine:
             if not ind or any(k not in ind for k in ("close", "rsi10", "ema9", "ema200")):
                 logger.warning(f"Skipping {rec.ticker}: missing indicators")
                 summary["skipped_missing_data"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "missing_indicators"
                 summary["ticker_attempts"].append(ticker_attempt)
@@ -3573,6 +4590,7 @@ class AutoTradeEngine:
             if close <= 0:
                 logger.warning(f"Skipping {rec.ticker}: invalid close price {close}")
                 summary["skipped_invalid_qty"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "invalid_price"
                 ticker_attempt["price"] = close
@@ -3615,8 +4633,6 @@ class AutoTradeEngine:
             # If database has an existing PENDING order, check if quantity or price needs to be updated
             # due to capital change (e.g., user updated capital per trade config) or price change
             if has_db_order and existing_db_order:
-                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                 # Update quantity/price for orders that can still be modified
                 # Skip ONGOING orders (already executed, cannot update)
                 # Skip CLOSED/CANCELLED orders (already finalized)
@@ -3687,6 +4703,7 @@ class AutoTradeEngine:
                             f"Quantity and price unchanged (qty={existing_qty}, price=Rs {existing_price:.2f})."
                         )
                         summary["skipped_duplicates"] += 1
+                        summary["skipped"] += 1  # Increment general counter
                         ticker_attempt["status"] = "skipped"
                         ticker_attempt["reason"] = "active_order_in_db"
                         ticker_attempt["existing_order_id"] = existing_db_order.id
@@ -3700,6 +4717,7 @@ class AutoTradeEngine:
                         "Order already executed, cannot update quantity/price."
                     )
                     summary["skipped_duplicates"] += 1
+                    summary["skipped"] += 1  # Increment general counter
                     ticker_attempt["status"] = "skipped"
                     ticker_attempt["reason"] = "active_order_in_db"
                     ticker_attempt["existing_order_id"] = existing_db_order.id
@@ -3716,6 +4734,7 @@ class AutoTradeEngine:
             if not is_valid_volume:
                 logger.info(f"Skipping {broker_symbol}: position size too large relative to volume")
                 summary["skipped_invalid_qty"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "position_too_large_for_volume"
                 ticker_attempt["qty"] = qty
@@ -3742,7 +4761,22 @@ class AutoTradeEngine:
                     f"Order status updated in database. Will be retried at scheduled time (8:00 AM) or manually.\n\n"
                     f"_Time: {timestamp}_"
                 )
-                send_telegram(telegram_msg)
+                # Use TelegramNotifier to respect notification preferences
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_system_alert(
+                            alert_type="BALANCE_SHORTFALL",
+                            message_text=telegram_msg,
+                            severity="WARNING",
+                            user_id=self.user_id,
+                        )
+                    except Exception as notify_err:
+                        logger.warning(
+                            f"Failed to send balance shortfall notification: {notify_err}"
+                        )
+                else:
+                    # Fallback to old method if telegram_notifier not available (backward compatibility)
+                    send_telegram(telegram_msg)
 
                 # Logger message without emojis
                 logger.warning(
@@ -3770,6 +4804,7 @@ class AutoTradeEngine:
                 self._add_failed_order(failed_order_info)
                 summary["failed_balance"] += 1
                 summary["skipped_invalid_qty"] += 1
+                summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "failed"
                 ticker_attempt["reason"] = "insufficient_balance"
                 ticker_attempt["qty"] = qty
@@ -3850,6 +4885,556 @@ class AutoTradeEngine:
         return summary
 
     # ---------------------- Re-entry and exit ----------------------
+    def place_reentry_orders(self) -> dict[str, int]:
+        """
+        Check re-entry conditions and place AMO orders for re-entries.
+
+        Called at 4:05 PM (with buy orders).
+
+        Re-entry logic based on entry RSI level:
+        - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
+        - Entry at RSI < 20 → Re-entry at RSI < 10 → Reset
+        - Entry at RSI < 10 → Only Reset
+
+        Reset mechanism:
+        - When RSI > 30: Set reset_ready = True
+        - When RSI drops < 30 after reset_ready: Reset all levels
+
+        Returns:
+            Summary dict with re-entry statistics
+        """
+        summary = {
+            "attempted": 0,
+            "placed": 0,
+            "failed_balance": 0,
+            "skipped_no_position": 0,
+            "skipped_duplicates": 0,
+            "skipped_duplicate_level": 0,  # Re-entry at same level already placed today
+            "skipped_invalid_rsi": 0,
+            "skipped_missing_data": 0,
+            "skipped_invalid_qty": 0,
+        }
+
+        # Check if authenticated
+        if not self.auth or not self.auth.is_authenticated():
+            logger.warning("Session expired - attempting re-authentication...")
+            if not self.login():
+                logger.error("Re-authentication failed - cannot proceed")
+                return summary
+            logger.info("Re-authentication successful - proceeding with re-entry check")
+
+        if not self.orders or not self.portfolio:
+            logger.error("Orders or portfolio not initialized - attempting login...")
+            if not self.login():
+                logger.error("Login failed - cannot proceed")
+                return summary
+
+        # Load all open positions from database
+        if not self.positions_repo or not self.user_id:
+            logger.warning(
+                "Positions repository or user_id not available - skipping re-entry check"
+            )
+            return summary
+
+        # Manual Trade Detection Timing Fix: Reconcile positions before placing reentry orders
+        # This ensures we detect manual trades that happened during market hours
+        if hasattr(self, "sell_manager") and self.sell_manager:
+            try:
+                reconciliation_stats = self.sell_manager._reconcile_positions_with_broker_holdings()
+                if (
+                    reconciliation_stats.get("updated", 0) > 0
+                    or reconciliation_stats.get("closed", 0) > 0
+                ):
+                    logger.info(
+                        f"Reconciliation before reentry placement: "
+                        f"{reconciliation_stats.get('updated', 0)} positions updated, "
+                        f"{reconciliation_stats.get('closed', 0)} positions closed"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Reconciliation before reentry placement failed: {e}. Continuing..."
+                )
+
+        open_positions = self.positions_repo.list(self.user_id)
+        open_positions = [pos for pos in open_positions if pos.closed_at is None]
+
+        if not open_positions:
+            logger.info("No open positions for re-entry check")
+            return summary
+
+        logger.info(f"Checking re-entry conditions for {len(open_positions)} open positions...")
+
+        # Get portfolio snapshot for capacity checks
+        if self.portfolio_service:
+            if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
+                self.portfolio_service.portfolio = self.portfolio
+            if self.orders and self.portfolio_service.orders != self.orders:
+                self.portfolio_service.orders = self.orders
+
+        for position in open_positions:
+            symbol = position.symbol
+            entry_rsi = position.entry_rsi
+
+            # Default entry RSI to 29.5 if not available (assume entry at RSI < 30)
+            if entry_rsi is None:
+                entry_rsi = 29.5
+                logger.debug(f"Position {symbol} missing entry_rsi, defaulting to 29.5")
+
+            summary["attempted"] += 1
+
+            try:
+                # Construct ticker from symbol
+                ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+
+                # Get current indicators
+                ind = self.get_daily_indicators(ticker)
+                if not ind:
+                    logger.warning(f"Skipping {symbol}: missing indicators for re-entry evaluation")
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                current_rsi = ind.get("rsi10")
+                current_price = ind.get("close")
+                avg_volume = ind.get("avg_volume", 0)
+
+                if current_rsi is None or current_price is None:
+                    logger.warning(f"Skipping {symbol}: invalid indicators (RSI or price missing)")
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                # Determine next re-entry level based on entry RSI
+                # Enhanced Hybrid Approach: Returns (next_level, metadata_updates)
+                # Get cycle before to detect if reset happened
+                cycle_meta_before = self._get_position_cycle_metadata(position)
+                cycle_before = cycle_meta_before.get("current_cycle", 0)
+
+                next_level, metadata_updates = self._determine_reentry_level(
+                    entry_rsi, current_rsi, position
+                )
+
+                # Detect if reset happened (cycle was incremented)
+                is_reset = (
+                    metadata_updates.get("current_cycle") is not None
+                    and metadata_updates.get("current_cycle") > cycle_before
+                )
+
+                # Update position metadata if needed (cycle tracking, reset detection)
+                if any(v is not None for v in metadata_updates.values()):
+                    try:
+                        # Get current cycle metadata
+                        cycle_meta = self._get_position_cycle_metadata(position)
+                        current_cycle = cycle_meta.get("current_cycle", 0)
+
+                        # Apply metadata updates
+                        updated_reentries = self._set_position_cycle_metadata(
+                            position,
+                            current_cycle=metadata_updates.get("current_cycle") or current_cycle,
+                            last_rsi_above_30=metadata_updates.get("last_rsi_above_30"),
+                            last_rsi_value=metadata_updates.get("last_rsi_value"),
+                        )
+
+                        # Update position in database
+                        self.positions_repo.upsert(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            quantity=position.quantity,
+                            avg_price=position.avg_price,
+                            reentries=updated_reentries,
+                            auto_commit=True,
+                        )
+
+                        # Refresh position object to get updated metadata
+                        position = self.positions_repo.get_by_symbol(self.user_id, symbol)
+                        if not position:
+                            logger.warning(f"Position {symbol} not found after metadata update")
+                            summary["skipped_missing_data"] += 1
+                            continue
+
+                        if metadata_updates.get("current_cycle") is not None:
+                            logger.info(
+                                f"Updated cycle metadata for {symbol}: "
+                                f"current_cycle={updated_reentries['_cycle_metadata']['current_cycle']}"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to update cycle metadata for {symbol}: {e}. "
+                            f"Continuing with re-entry check..."
+                        )
+
+                if next_level is None:
+                    logger.debug(
+                        f"No re-entry opportunity for {symbol} "
+                        f"(entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})"
+                    )
+                    summary["skipped_invalid_rsi"] += 1
+                    continue
+
+                # Get current cycle for logging and order metadata
+                # Use refreshed position object if metadata was updated
+                cycle_meta = self._get_position_cycle_metadata(position)
+                current_cycle = cycle_meta.get("current_cycle", 0)
+
+                logger.info(
+                    f"Re-entry opportunity for {symbol}: entry_rsi={entry_rsi:.2f}, "
+                    f"current_rsi={current_rsi:.2f}, next_level={next_level}, "
+                    f"cycle={current_cycle}, is_reset={is_reset}"
+                )
+
+                # Check if re-entry at this level already exists in current cycle
+                # Enhanced Hybrid Approach: Checks by cycle number, allowing same level after reset
+                # Fix Issue 1: Pass allow_reset=True when reset is detected, regardless of level
+                if self.has_reentry_at_level(symbol, next_level, allow_reset=is_reset):
+                    logger.info(
+                        f"Skipping {symbol}: Re-entry at level {next_level} (RSI < {next_level}) "
+                        f"already exists in cycle {current_cycle}. "
+                        f"Next re-entry should be at a different level or after reset."
+                    )
+                    summary["skipped_duplicate_level"] = (
+                        summary.get("skipped_duplicate_level", 0) + 1
+                    )
+                    continue
+
+                # Check for duplicates (only active buy orders, NOT holdings)
+                # Reentries allow buying more of existing position
+                base_symbol = self.parse_symbol_for_broker(ticker)
+                if not base_symbol:
+                    logger.warning(f"Could not parse broker symbol for {symbol}")
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                # Resolve symbol via scrip master (single source of truth)
+                try:
+                    broker_symbol = self._resolve_broker_symbol(base_symbol)
+                except ValueError as e:
+                    logger.error(
+                        f"Failed to resolve symbol {base_symbol} via scrip master for re-entry: {e}"
+                    )
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                # Check for active buy orders only
+                # Reentries allow buying more of existing position
+                if self.order_validation_service:
+                    is_duplicate, duplicate_reason = (
+                        self.order_validation_service.check_duplicate_order(
+                            broker_symbol,
+                            check_active_buy_order=True,
+                            check_holdings=False,  # Don't check holdings for reentries
+                            allow_reentry=True,  # Allow reentries (buying more)
+                        )
+                    )
+                    if is_duplicate:
+                        logger.info(f"Skipping {symbol}: {duplicate_reason}")
+                        summary["skipped_duplicates"] += 1
+                        continue
+
+                # Calculate execution capital and quantity
+                execution_capital = self._calculate_execution_capital(
+                    ticker, current_price, avg_volume
+                )
+                qty = int(execution_capital / current_price)
+
+                if qty <= 0:
+                    logger.warning(f"Skipping {symbol}: invalid quantity ({qty})")
+                    summary["skipped_invalid_qty"] += 1
+                    continue
+
+                # Check balance and adjust quantity if needed
+                affordable_qty = self.get_affordable_qty(current_price)
+                if affordable_qty < qty:
+                    logger.warning(
+                        f"Insufficient balance for {symbol}: "
+                        f"requested={qty}, affordable={affordable_qty}"
+                    )
+                    qty = affordable_qty
+                    if qty <= 0:
+                        # Save as failed order for retry
+                        failed_order_info = {
+                            "symbol": broker_symbol,
+                            "ticker": ticker,
+                            "close": current_price,
+                            "qty": qty,
+                            "required_cash": execution_capital,
+                            "shortfall": execution_capital - (affordable_qty * current_price),
+                            "reason": "insufficient_balance",
+                            "rsi10": current_rsi,
+                            "ema9": ind.get("ema9"),
+                            "ema200": ind.get("ema200"),
+                            "execution_capital": execution_capital,
+                            "entry_type": "reentry",
+                            "entry_rsi": entry_rsi,
+                            "reentry_level": next_level,
+                        }
+                        try:
+                            self._add_failed_order(failed_order_info)
+                            summary["failed_balance"] += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to save re-entry order to failed orders: {e}")
+                        continue
+
+                # Place re-entry order (AMO-like)
+                # Enhanced Hybrid Approach: Include cycle number in order metadata
+                rec_source = "reentry"
+                cycle_meta = self._get_position_cycle_metadata(position)
+                current_cycle = cycle_meta.get("current_cycle", 0)
+
+                success, order_id = self._attempt_place_order(
+                    broker_symbol,
+                    ticker,
+                    qty,
+                    current_price,
+                    ind,
+                    recommendation_source=rec_source,
+                    entry_type="reentry",
+                    order_metadata={
+                        "placed_symbol": broker_symbol,
+                        "ticker": ticker,
+                        "rsi10": current_rsi,
+                        "ema9": ind.get("ema9"),
+                        "ema200": ind.get("ema200"),
+                        "capital": execution_capital,
+                        "entry_type": "reentry",
+                        "entry_rsi": entry_rsi,
+                        "reentry_level": next_level,
+                        "cycle": current_cycle,  # Store cycle number for tracking
+                    },
+                )
+
+                if success:
+                    summary["placed"] += 1
+                    logger.info(
+                        f"Re-entry order placed: {symbol} (order_id: {order_id}, "
+                        f"qty: {qty}, level: {next_level})"
+                    )
+                else:
+                    logger.warning(f"Failed to place re-entry order for {symbol}")
+
+            except Exception as e:
+                logger.error(f"Error checking re-entry for {symbol}: {e}", exc_info=True)
+                continue
+
+        skipped_total = (
+            summary["skipped_no_position"]
+            + summary["skipped_duplicates"]
+            + summary["skipped_invalid_rsi"]
+            + summary["skipped_missing_data"]
+            + summary["skipped_invalid_qty"]
+        )
+        logger.info(
+            f"Re-entry check complete: attempted={summary['attempted']}, "
+            f"placed={summary['placed']}, failed_balance={summary['failed_balance']}, "
+            f"skipped={skipped_total}"
+        )
+
+        return summary
+
+    def _determine_reentry_level(
+        self, entry_rsi: float, current_rsi: float, position: Any
+    ) -> tuple[int | None, dict[str, Any]]:
+        """
+        Determine next re-entry level based on entry RSI and current RSI.
+
+        Enhanced Hybrid Approach: Implements cycle tracking with reset detection on startup.
+
+        Logic:
+        - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
+        - Entry at RSI < 20 → Re-entry at RSI < 10 → Reset
+        - Entry at RSI < 10 → Only Reset
+
+        Reset mechanism:
+        - When RSI > 30: Store last_rsi_above_30 timestamp in position metadata
+        - When RSI drops < 30 after last_rsi_above_30 exists: Increment current_cycle, reset all levels
+        - On startup: Check if current RSI < 30 and last_rsi_above_30 exists → Reset detected
+
+        Args:
+            entry_rsi: RSI10 value at initial entry
+            current_rsi: Current RSI10 value
+            position: Position object (for tracking reset state)
+
+        Returns:
+            Tuple of (next_level, metadata_updates):
+            - next_level: Next re-entry level (30, 20, or 10), or None if no re-entry opportunity
+            - metadata_updates: Dict with cycle metadata updates to apply:
+              {
+                  "current_cycle": int | None,  # None = no change
+                  "last_rsi_above_30": str | None,  # ISO timestamp or None to clear
+                  "last_rsi_value": float | None,  # None = no change
+              }
+        """
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        # Get current cycle metadata
+        cycle_meta = self._get_position_cycle_metadata(position)
+        current_cycle = cycle_meta.get("current_cycle", 0)
+        last_rsi_above_30 = cycle_meta.get("last_rsi_above_30")
+        last_rsi_value = cycle_meta.get("last_rsi_value")
+
+        # Initialize metadata updates (None = no change)
+        metadata_updates = {
+            "current_cycle": None,
+            "last_rsi_above_30": None,
+            "last_rsi_value": None,
+        }
+
+        levels_taken = {"30": False, "20": False, "10": False}
+
+        # Determine initial levels_taken based on entry_rsi
+        if entry_rsi < 10:
+            # Entry at RSI < 10: All levels taken
+            levels_taken = {"30": True, "20": True, "10": True}
+        elif entry_rsi < 20:
+            # Entry at RSI < 20: 30 and 20 taken
+            levels_taken = {"30": True, "20": True, "10": False}
+        elif entry_rsi < 30:
+            # Entry at RSI < 30: Only 30 taken
+            levels_taken = {"30": True, "20": False, "10": False}
+        else:
+            # Entry at RSI >= 30: No levels taken (shouldn't happen, but handle it)
+            levels_taken = {"30": False, "20": False, "10": False}
+
+        # Fix Issue 1: Update levels_taken based on executed re-entries in current cycle
+        # Check reentries array to see which levels have been taken in the current cycle
+        if position and position.reentries:
+            reentries = position.reentries
+            if isinstance(reentries, dict):
+                # New format: extract reentries array
+                reentries = reentries.get("reentries", [])
+            if isinstance(reentries, list):
+                for reentry in reentries:
+                    if not isinstance(reentry, dict):
+                        continue
+                    # Check if this re-entry is in the current cycle
+                    reentry_cycle = reentry.get("cycle")
+                    if reentry_cycle is not None:
+                        # Only consider re-entries in the current cycle
+                        if int(reentry_cycle) == current_cycle:
+                            reentry_level = reentry.get("level")
+                            if reentry_level is not None:
+                                try:
+                                    level_int = int(reentry_level)
+                                    if level_int == 30:
+                                        levels_taken["30"] = True
+                                    elif level_int == 20:
+                                        levels_taken["20"] = True
+                                    elif level_int == 10:
+                                        levels_taken["10"] = True
+                                except (ValueError, TypeError):
+                                    pass
+                    # Backward compatibility: if cycle not stored, assume cycle 0
+                    elif current_cycle == 0:
+                        reentry_level = reentry.get("level")
+                        if reentry_level is not None:
+                            try:
+                                level_int = int(reentry_level)
+                                if level_int == 30:
+                                    levels_taken["30"] = True
+                                elif level_int == 20:
+                                    levels_taken["20"] = True
+                                elif level_int == 10:
+                                    levels_taken["10"] = True
+                            except (ValueError, TypeError):
+                                pass
+
+        # Fix: Mark intermediate levels as taken to prevent backtracking
+        # Rule: When a re-entry at level X is taken, mark all higher levels (between entry level and X) as taken
+        # This prevents backtracking: e.g., if level 10 is taken, level 20 should also be marked as taken
+        # Examples:
+        #   - If level 10 is taken → Mark levels 20 and 30 as taken (can't backtrack to 20 or 30)
+        #   - If level 20 is taken → Mark level 30 as taken (can't backtrack to 30)
+        #   - If level 30 is taken → No intermediate levels
+        if levels_taken.get("10"):
+            # If level 10 is taken, mark level 20 and 30 as taken (can't backtrack)
+            levels_taken["20"] = True
+            levels_taken["30"] = True
+            logger.debug(
+                "Level 10 is taken - marking levels 20 and 30 as taken to prevent backtracking"
+            )
+        elif levels_taken.get("20"):
+            # If level 20 is taken, mark level 30 as taken (can't backtrack)
+            levels_taken["30"] = True
+            logger.debug("Level 20 is taken - marking level 30 as taken to prevent backtracking")
+
+        # Enhanced reset detection with startup support
+        # Step 1: If RSI > 30, store last_rsi_above_30 timestamp
+        if current_rsi > 30:
+            # Store timestamp when RSI goes above 30
+            now = ist_now()
+            metadata_updates["last_rsi_above_30"] = now.isoformat()
+            metadata_updates["last_rsi_value"] = current_rsi
+            logger.debug(
+                f"RSI > 30 detected: {current_rsi:.2f}. Storing last_rsi_above_30 timestamp."
+            )
+            # Don't return yet - continue to check if we should trigger reset immediately
+
+        # Step 2: Check for reset condition (RSI < 30 AND last_rsi_above_30 exists)
+        # This works both during runtime and on startup
+        reset_detected = False
+        if current_rsi < 30 and last_rsi_above_30:
+            # Reset detected! Increment cycle and reset all levels
+            new_cycle = current_cycle + 1
+            metadata_updates["current_cycle"] = new_cycle
+            metadata_updates["last_rsi_above_30"] = None  # Clear reset flag
+            metadata_updates["last_rsi_value"] = current_rsi  # Update last RSI value
+            reset_detected = True
+
+            logger.info(
+                f"Reset detected: RSI dropped to {current_rsi:.2f} after being above 30. "
+                f"Incrementing cycle from {current_cycle} to {new_cycle}."
+            )
+
+            # Reset all levels, treat as new cycle
+            levels_taken = {"30": False, "20": False, "10": False}
+
+            # Fix Issue 2: Reset should check current RSI level and trigger appropriate level
+            # Don't always return level 30 - check what level the current RSI satisfies
+            if current_rsi < 10:
+                # RSI < 10: Trigger level 10 (highest priority)
+                logger.info(f"Reset triggers re-entry at level 10 (RSI {current_rsi:.2f} < 10)")
+                return (10, metadata_updates)
+            elif current_rsi < 20:
+                # RSI < 20: Trigger level 20
+                logger.info(f"Reset triggers re-entry at level 20 (RSI {current_rsi:.2f} < 20)")
+                return (20, metadata_updates)
+            elif current_rsi < 30:
+                # RSI < 30: Trigger level 30
+                logger.info(f"Reset triggers re-entry at level 30 (RSI {current_rsi:.2f} < 30)")
+                return (30, metadata_updates)
+            else:
+                # Shouldn't happen (we're in reset condition with RSI < 30)
+                logger.warning(
+                    f"Reset detected but RSI {current_rsi:.2f} is not < 30. This shouldn't happen."
+                )
+                return (None, metadata_updates)
+
+        # Step 3: Update last_rsi_value if RSI changed (for tracking)
+        if last_rsi_value != current_rsi:
+            metadata_updates["last_rsi_value"] = current_rsi
+
+        # Normal progression through levels
+        # Fix Issue 3: Allow skipping levels if RSI drops directly to a lower level
+        # Check levels in priority order (10 > 20 > 30) - allows skipping levels
+        next_level = None
+
+        if current_rsi < 10:
+            # RSI < 10: Check if level 10 is available
+            if not levels_taken.get("10"):
+                next_level = 10
+                logger.debug(
+                    f"RSI {current_rsi:.2f} < 10, level 10 available (allows skipping level 20)"
+                )
+        elif current_rsi < 20:
+            # RSI < 20: Check if level 20 is available
+            if not levels_taken.get("20"):
+                next_level = 20
+                logger.debug(f"RSI {current_rsi:.2f} < 20, level 20 available")
+        elif current_rsi < 30:
+            # RSI < 30: Check if level 30 is available
+            if not levels_taken.get("30"):
+                next_level = 30
+                logger.debug(f"RSI {current_rsi:.2f} < 30, level 30 available")
+
+        return (next_level, metadata_updates)
+
     def evaluate_reentries_and_exits(self) -> dict[str, int]:
         summary = {"symbols_evaluated": 0, "exits": 0, "reentries": 0}
 
@@ -3869,8 +5454,6 @@ class AutoTradeEngine:
         data = self._load_trades_history()
         trades = data.get("trades", [])
         # Group open trades by symbol
-        from collections import defaultdict
-
         open_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for t in trades:
             if t.get("status") == "open":
@@ -4008,7 +5591,25 @@ class AutoTradeEngine:
                                             f"Manual intervention may be required.\n\n"
                                             f"_Time: {timestamp}_"
                                         )
-                                        send_telegram(telegram_msg)
+                                        # Use TelegramNotifier to respect notification preferences
+                                        if (
+                                            self.telegram_notifier
+                                            and self.telegram_notifier.enabled
+                                        ):
+                                            try:
+                                                self.telegram_notifier.notify_system_alert(
+                                                    alert_type="SELL_ORDER_RETRY_FAILED",
+                                                    message_text=telegram_msg,
+                                                    severity="ERROR",
+                                                    user_id=self.user_id,
+                                                )
+                                            except Exception as notify_err:
+                                                logger.warning(
+                                                    f"Failed to send sell order retry failed notification: {notify_err}"
+                                                )
+                                        else:
+                                            # Fallback to old method if telegram_notifier not available
+                                            send_telegram(telegram_msg)
                                         logger.error(
                                             f"Sell order retry FAILED for {symbol} - Telegram alert sent"
                                         )
@@ -4031,7 +5632,22 @@ class AutoTradeEngine:
                                         f"Manual check required.\n\n"
                                         f"_Time: {timestamp}_"
                                     )
-                                    send_telegram(telegram_msg)
+                                    # Use TelegramNotifier to respect notification preferences
+                                    if self.telegram_notifier and self.telegram_notifier.enabled:
+                                        try:
+                                            self.telegram_notifier.notify_system_alert(
+                                                alert_type="SELL_ORDER_NO_HOLDINGS",
+                                                message_text=telegram_msg,
+                                                severity="ERROR",
+                                                user_id=self.user_id,
+                                            )
+                                        except Exception as notify_err:
+                                            logger.warning(
+                                                f"Failed to send no holdings notification: {notify_err}"
+                                            )
+                                    else:
+                                        # Fallback to old method if telegram_notifier not available
+                                        send_telegram(telegram_msg)
                                     logger.error(
                                         f"No holdings found for {symbol} - cannot retry sell order - Telegram alert sent"
                                     )
@@ -4048,7 +5664,22 @@ class AutoTradeEngine:
                                     f"Manual intervention required.\n\n"
                                     f"_Time: {timestamp}_"
                                 )
-                                send_telegram(telegram_msg)
+                                # Use TelegramNotifier to respect notification preferences
+                                if self.telegram_notifier and self.telegram_notifier.enabled:
+                                    try:
+                                        self.telegram_notifier.notify_system_alert(
+                                            alert_type="SELL_ORDER_HOLDINGS_FETCH_FAILED",
+                                            message_text=telegram_msg,
+                                            severity="ERROR",
+                                            user_id=self.user_id,
+                                        )
+                                    except Exception as notify_err:
+                                        logger.warning(
+                                            f"Failed to send holdings fetch failed notification: {notify_err}"
+                                        )
+                                else:
+                                    # Fallback to old method if telegram_notifier not available
+                                    send_telegram(telegram_msg)
                                 logger.error(
                                     f"Failed to fetch holdings for retry - cannot determine actual quantity for {symbol} - Telegram alert sent"
                                 )
@@ -4064,7 +5695,24 @@ class AutoTradeEngine:
                                 f"Manual intervention required.\n\n"
                                 f"_Time: {timestamp}_"
                             )
-                            send_telegram(telegram_msg)
+                            # Use TelegramNotifier to respect notification preferences
+                            if self.telegram_notifier and self.telegram_notifier.enabled:
+                                try:
+                                    self.telegram_notifier.notify_system_alert(
+                                        alert_type="SELL_ORDER_RETRY_EXCEPTION",
+                                        message_text=telegram_msg,
+                                        severity="ERROR",
+                                        user_id=self.user_id,
+                                    )
+                                except Exception as notify_err:
+                                    logger.warning(
+                                        f"Failed to send sell order retry exception notification: {notify_err}"
+                                    )
+                            else:
+                                # Fallback to old method if telegram_notifier not available
+                                from core.telegram import send_telegram
+
+                                send_telegram(telegram_msg)
                             logger.error(
                                 f"Error during sell order retry for {symbol}: {e} - Telegram alert sent"
                             )
@@ -4164,15 +5812,11 @@ class AutoTradeEngine:
                     )
                     if resp_valid:
                         # Extract order ID from response
-                        from .order_tracker import extract_order_id
-
                         reentry_order_id = extract_order_id(resp)
 
                         # Add reentry order to tracking with entry_type="reentry"
                         if reentry_order_id:
                             try:
-                                from .order_tracker import add_pending_order
-
                                 add_pending_order(
                                     order_id=reentry_order_id,
                                     symbol=place_symbol,
@@ -4308,20 +5952,79 @@ class AutoTradeEngine:
                                 logger.info(
                                     f"Trade history updated: {symbol} qty {old_qty} -> {new_total_qty}"
                                 )
-                                # Also add reentry metadata for tracking
+                                # Also add reentry metadata for tracking (backup to JSON only)
+                                # Note: Database is the source of truth. JSON is kept as backup/archival.
+                                # When reentry executes, database is updated via unified_order_monitor.
                                 if "reentries" not in e:
                                     e["reentries"] = []
-                                e["reentries"].append(
-                                    {
-                                        "qty": qty,
-                                        "level": next_level,
-                                        "rsi": rsi,
-                                        "price": price,
-                                        "time": datetime.now().isoformat(),
-                                    }
-                                )
+                                # Construct reentry data matching database structure
+                                # This structure must match what unified_order_monitor writes to DB.
+                                # Since this is a market order placed immediately, placed_at = today
+                                current_time = datetime.now()
+                                reentry_data = {
+                                    "qty": int(qty),
+                                    "level": int(next_level) if next_level is not None else None,
+                                    "rsi": float(rsi) if rsi is not None else None,
+                                    "price": float(price),
+                                    "time": current_time.isoformat(),  # Execution time (for historical tracking)
+                                    "placed_at": current_time.date().isoformat(),  # Placement date (for daily cap check)
+                                    "order_id": (
+                                        reentry_order_id if reentry_order_id else None
+                                    ),  # Track order_id if available
+                                }
+
+                                # Improvement: Validate reentry data before writing to JSON
+                                # Validate required fields
+                                if (
+                                    not isinstance(reentry_data.get("qty"), int)
+                                    or reentry_data["qty"] <= 0
+                                ):
+                                    logger.error(
+                                        f"Invalid qty in reentry data for {symbol}: {reentry_data.get('qty')}"
+                                    )
+                                    continue
+
+                                if (
+                                    not isinstance(reentry_data.get("price"), (int, float))
+                                    or reentry_data["price"] <= 0
+                                ):
+                                    logger.error(
+                                        f"Invalid price in reentry data for {symbol}: {reentry_data.get('price')}"
+                                    )
+                                    continue
+
+                                if not isinstance(reentry_data.get("time"), str):
+                                    logger.error(
+                                        f"Invalid time in reentry data for {symbol}: {reentry_data.get('time')}"
+                                    )
+                                    continue
+
+                                # Validate time format
+                                try:
+                                    datetime.fromisoformat(reentry_data["time"])
+                                except (ValueError, TypeError) as time_err:
+                                    logger.error(
+                                        f"Invalid time format in reentry data for {symbol}: "
+                                        f"{reentry_data.get('time')} - {time_err}"
+                                    )
+                                    continue
+
+                                e["reentries"].append(reentry_data)
+                        except ValueError as e:
+                            logger.error(
+                                f"Invalid data when updating trade history after reentry for {symbol}: {e}",
+                                exc_info=True,
+                            )
+                        except KeyError as e:
+                            logger.error(
+                                f"Missing required field when updating trade history after reentry for {symbol}: {e}",
+                                exc_info=True,
+                            )
                         except Exception as e:
-                            logger.error(f"Error updating trade history after reentry: {e}")
+                            logger.error(
+                                f"Unexpected error updating trade history after reentry for {symbol}: {e}",
+                                exc_info=True,
+                            )
                     else:
                         logger.error(f"Re-entry order placement failed for {symbol}")
 

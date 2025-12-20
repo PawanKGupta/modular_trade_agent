@@ -49,6 +49,8 @@ class AsyncAnalysisService:
             config: Strategy configuration (uses default if None)
         """
         self.config = config or StrategyConfig.default()
+        # Debug logging to trace config
+        logger.debug(f"AsyncAnalysisService init: ml_enabled={self.config.ml_enabled}, config type={type(self.config)}")
         self.analysis_service = analysis_service or AnalysisService(config=self.config)
         self.cache_service = cache_service or CacheService()
         self.async_data_service = async_data_service or AsyncDataService(

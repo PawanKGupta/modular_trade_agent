@@ -56,9 +56,11 @@ class TestServiceInitialization(unittest.TestCase):
         """Clean up test fixtures"""
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
-    @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine")
-    def test_service_initialization_creates_single_auth(self, mock_engine_class, mock_auth_class):
+    @patch("modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager")
+    def test_service_initialization_creates_single_auth(
+        self, mock_get_session_manager, mock_engine_class
+    ):
         """Test that service creates single auth session"""
         mock_auth = Mock(spec=KotakNeoAuth)
         mock_auth.login.return_value = True
@@ -66,7 +68,9 @@ class TestServiceInitialization(unittest.TestCase):
         mock_auth.client = Mock()
         mock_auth.get_client.return_value = mock_auth.client
 
-        mock_auth_class.return_value = mock_auth
+        mock_session_manager = Mock()
+        mock_session_manager.get_or_create_session.return_value = mock_auth
+        mock_get_session_manager.return_value = mock_session_manager
 
         mock_engine = Mock()
         mock_engine.login.return_value = True
@@ -85,8 +89,8 @@ class TestServiceInitialization(unittest.TestCase):
         )
         result = service.initialize()
 
-        # Should create auth once
-        mock_auth_class.assert_called_once()
+        # Should get auth from session manager once
+        mock_session_manager.get_or_create_session.assert_called_once()
         # Should pass auth and config to engine
         mock_engine_class.assert_called_once()
         _, kwargs = mock_engine_class.call_args
@@ -226,6 +230,19 @@ class TestBrokerAPIFailures(unittest.TestCase):
         self.engine.get_available_cash = Mock(return_value=100000)  # Less than needed (200000)
         self.engine._attempt_place_order = Mock(return_value=(False, None))
 
+        # Mock scrip master for symbol resolution
+        mock_scrip_master = Mock()
+        mock_scrip_master.symbol_map = {"TEST": "TEST-EQ"}  # Truthy value
+
+        def mock_get_instrument(symbol, exchange="NSE"):
+            # Return broker symbol with suffix
+            if symbol.upper() == "TEST":
+                return {"token": 12345, "symbol": "TEST-EQ", "exchange": exchange}
+            return {"token": 12346, "symbol": f"{symbol.upper()}-EQ", "exchange": exchange}
+
+        mock_scrip_master.get_instrument = mock_get_instrument
+        self.engine.scrip_master = mock_scrip_master
+
         recs = [
             Recommendation(
                 ticker="TEST.NS", verdict="buy", last_close=100.0, execution_capital=10000.0
@@ -262,8 +279,8 @@ class TestServiceRestart(unittest.TestCase):
         """Clean up test fixtures"""
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
-    @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
-    def test_service_restart_creates_fresh_session(self, mock_auth_class):
+    @patch("modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager")
+    def test_service_restart_creates_fresh_session(self, mock_get_session_manager):
         """Test that service restart creates fresh auth session"""
         mock_auth = Mock(spec=KotakNeoAuth)
         mock_auth.login.return_value = True
@@ -271,7 +288,9 @@ class TestServiceRestart(unittest.TestCase):
         mock_auth.client = Mock()
         mock_auth.get_client.return_value = mock_auth.client
 
-        mock_auth_class.return_value = mock_auth
+        mock_session_manager = Mock()
+        mock_session_manager.get_or_create_session.return_value = mock_auth
+        mock_get_session_manager.return_value = mock_session_manager
 
         # First service instance
         # Create a mock db_session
@@ -286,7 +305,7 @@ class TestServiceRestart(unittest.TestCase):
         )
         service1.initialize()
 
-        first_call_count = mock_auth_class.call_count
+        first_call_count = mock_session_manager.get_or_create_session.call_count
 
         # Second service instance (restart)
         service2 = TradingService(
@@ -298,9 +317,9 @@ class TestServiceRestart(unittest.TestCase):
         )
         service2.initialize()
 
-        # Should create new auth session (call count should increase)
-        self.assertGreater(mock_auth_class.call_count, first_call_count)
-        self.assertEqual(mock_auth_class.call_count, 2)
+        # Should get auth from session manager (call count should increase)
+        self.assertGreater(mock_session_manager.get_or_create_session.call_count, first_call_count)
+        self.assertEqual(mock_session_manager.get_or_create_session.call_count, 2)
 
 
 class TestLongRunningOperations(unittest.TestCase):

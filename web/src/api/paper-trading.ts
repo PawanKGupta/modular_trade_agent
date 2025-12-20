@@ -11,6 +11,15 @@ export interface PaperTradingAccount {
 	return_percentage: number;
 }
 
+export interface ReentryDetail {
+	qty: number;
+	price: number;
+	time: string;
+	level?: number;  // RSI level (30, 20, 10)
+	cycle?: number;  // Re-entry cycle number
+	rsi?: number;  // RSI value at re-entry
+}
+
 export interface PaperTradingHolding {
 	symbol: string;
 	quantity: number;
@@ -22,6 +31,10 @@ export interface PaperTradingHolding {
 	pnl_percentage: number;
 	target_price: number | null;  // Frozen EMA9 target
 	distance_to_target: number | null;  // % to reach target
+	reentry_count?: number;  // Number of re-entries
+	reentries?: ReentryDetail[] | null;  // Re-entry details array
+	entry_rsi?: number | null;  // RSI10 at initial entry
+	initial_entry_price?: number | null;  // Initial entry price (before re-entries)
 }
 
 export interface PaperTradingOrder {

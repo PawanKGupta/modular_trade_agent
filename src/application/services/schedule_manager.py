@@ -13,11 +13,12 @@ from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.service_schedule_repository import (
     ServiceScheduleRepository,
 )
+from src.infrastructure.utils.holiday_calendar import is_trading_day as is_trading_day_check
 
 # Constants
 HOURS_PER_DAY = 24
 MINUTES_PER_HOUR = 60
-POSITION_MONITOR_MINUTE = 30
+# Position monitor removed in Phase 3 (RSI Exit & Re-entry integration)
 WEEKEND_START_WEEKDAY = 5  # Saturday
 
 
@@ -91,7 +92,7 @@ class ScheduleManager:
                 return current_time
 
         elif schedule.is_hourly:
-            # Hourly task (position_monitor): runs at :30 minutes every hour
+            # Hourly task: runs at specified minutes every hour
             schedule_minute = schedule.schedule_time.minute
 
             # Calculate next execution
@@ -113,7 +114,7 @@ class ScheduleManager:
                         hour=next_hour, minute=schedule_minute, second=0, microsecond=0
                     )
 
-            # Check if within valid hours (9:30 - 15:30 for position_monitor)
+            # Check if within valid hours
             if schedule.end_time:
                 end_hour = schedule.end_time.hour
                 if next_execution.hour > end_hour:
@@ -172,10 +173,7 @@ class ScheduleManager:
             if end_time:
                 return False, "Schedule type 'once' cannot have an end time"
 
-        # Position monitor: must be at :30 minutes if hourly
-        if task_name == "position_monitor" and is_hourly:
-            if schedule_time.minute != POSITION_MONITOR_MINUTE:
-                return False, "Position monitor must be scheduled at :30 minutes when hourly"
+        # Position monitor removed in Phase 3 (RSI Exit & Re-entry integration)
 
         # Sell monitor: start time must be before end time if continuous
         if task_name == "sell_monitor" and is_continuous:
@@ -199,7 +197,6 @@ class ScheduleManager:
         valid_tasks = [
             "premarket_retry",
             "sell_monitor",
-            "position_monitor",
             "analysis",
             "buy_orders",
             "eod_cleanup",
@@ -222,12 +219,5 @@ class ScheduleManager:
         if check_date is None:
             check_date = ist_now().date()
 
-        # Check if weekday (Monday=0, Sunday=6)
-        weekday = check_date.weekday()
-        if weekday >= WEEKEND_START_WEEKDAY:  # Saturday or Sunday
-            return False
-
-        # TODO: Add holiday checking logic if needed
-        # For now, just check weekday
-
-        return True
+        # Use holiday calendar to check if trading day (includes weekend and holiday checks)
+        return is_trading_day_check(check_date)

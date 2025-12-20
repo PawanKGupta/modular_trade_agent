@@ -22,12 +22,16 @@ def buying_zone(
     ),
     status_filter: str | None = Query(
         "active",
-        description="Filter by status: 'active', 'expired', 'traded', 'rejected', or 'all'",
+        description="Filter by status: 'active', 'expired', 'traded', 'rejected', 'failed', or 'all'",
     ),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
     repo = SignalsRepository(db, user_id=user.id)
+
+    # Mark time-expired signals before querying to ensure database consistency
+    repo.mark_time_expired_signals()
+
     now = ist_now()
     today = now.date()
 

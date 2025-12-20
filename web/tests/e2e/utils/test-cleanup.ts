@@ -105,7 +105,7 @@ export async function cleanupTestUsers(page: Page, emails: string[]): Promise<vo
 /**
  * Store original config values before modification
  */
-const originalConfigs = new Map<string, any>();
+const originalConfigs = new Map<string, unknown>();
 
 /**
  * Save original trading configuration before modification
@@ -289,7 +289,7 @@ export async function cleanupAllTestData(page: Page, testUserEmails: string[] = 
 export class TestDataTracker {
 	private testUserEmails: string[] = [];
 	private modifiedConfigs: string[] = [];
-	private savedConfigs: Map<string, any> = new Map();
+	private savedConfigs: Map<string, unknown> = new Map();
 
 	/**
 	 * Track a test user email for cleanup

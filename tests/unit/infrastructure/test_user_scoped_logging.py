@@ -3,23 +3,19 @@ Unit tests for User-Scoped Logging System
 
 Tests for:
 - UserScopedLogger
-- DatabaseLogHandler
 - UserFileLogHandler
+- FileLogReader
 - Error capture
 """
 
+import json
 import logging
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from src.infrastructure.logging import (
-    DatabaseLogHandler,
+    FileLogReader,
     UserErrorFileLogHandler,
     UserFileLogHandler,
-    UserScopedLogger,
     capture_exception,
     get_user_logger,
 )
@@ -34,13 +30,13 @@ class TestUserScopedLogger:
         assert logger.user_id == 1
         assert logger.module == "test_module"
         assert logger.db == db_session
-        assert isinstance(logger.db_handler, DatabaseLogHandler)
         assert isinstance(logger.file_handler, UserFileLogHandler)
         assert isinstance(logger.error_file_handler, UserErrorFileLogHandler)
 
-    def test_logger_debug(self, db_session):
+    def test_logger_debug(self, db_session, tmp_path, monkeypatch):
         """Test debug logging"""
-        # Create user first
+        monkeypatch.chdir(tmp_path)
+
         from src.infrastructure.db.models import Users
         from src.infrastructure.db.timezone_utils import ist_now
 
@@ -51,24 +47,21 @@ class TestUserScopedLogger:
         logger = get_user_logger(user_id=user.id, db=db_session, module="test")
         logger.debug("Debug message", test_key="test_value")
 
-        # Check database log was created
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
-
-        log_repo = ServiceLogRepository(db_session)
-        logs = log_repo.list(user_id=user.id, limit=1)
+        # Check file log was created
+        reader = FileLogReader(base_dir="logs")
+        logs = reader.read_logs(user_id=user.id, level="DEBUG", limit=1)
         assert len(logs) == 1
-        assert logs[0].level == "DEBUG"
-        assert logs[0].message == "Debug message"
-        assert logs[0].user_id == user.id  # user_id is stored in the record, not context
-        assert "test_key" in logs[0].context
-        assert logs[0].context["test_key"] == "test_value"
-        # log_module may or may not be in context depending on filtering
+        assert logs[0]["level"] == "DEBUG"
+        assert "Debug message" in logs[0]["message"]
+        assert logs[0]["user_id"] == user.id
+        assert logs[0]["context"] is not None
+        assert "test_key" in logs[0]["context"]
+        assert logs[0]["context"]["test_key"] == "test_value"
 
-    def test_logger_info(self, db_session):
+    def test_logger_info(self, db_session, tmp_path, monkeypatch):
         """Test info logging"""
-        # Create user first
+        monkeypatch.chdir(tmp_path)
+
         from src.infrastructure.db.models import Users
         from src.infrastructure.db.timezone_utils import ist_now
 
@@ -79,20 +72,20 @@ class TestUserScopedLogger:
         logger = get_user_logger(user_id=user.id, db=db_session, module="test")
         logger.info("Info message", action="test_action")
 
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
-
-        log_repo = ServiceLogRepository(db_session)
-        logs = log_repo.list(user_id=user.id, limit=1)
+        # Check file log was created
+        reader = FileLogReader(base_dir="logs")
+        logs = reader.read_logs(user_id=user.id, level="INFO", limit=1)
         assert len(logs) == 1
-        assert logs[0].level == "INFO"
-        assert logs[0].message == "Info message"
-        assert "action" in logs[0].context
+        assert logs[0]["level"] == "INFO"
+        assert "Info message" in logs[0]["message"]
+        assert logs[0]["context"] is not None
+        assert "action" in logs[0]["context"]
+        assert logs[0]["context"]["action"] == "test_action"
 
-    def test_logger_warning(self, db_session):
+    def test_logger_warning(self, db_session, tmp_path, monkeypatch):
         """Test warning logging"""
-        # Create user first
+        monkeypatch.chdir(tmp_path)
+
         from src.infrastructure.db.models import Users
         from src.infrastructure.db.timezone_utils import ist_now
 
@@ -103,18 +96,17 @@ class TestUserScopedLogger:
         logger = get_user_logger(user_id=user.id, db=db_session, module="test")
         logger.warning("Warning message", warning_type="test")
 
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
-
-        log_repo = ServiceLogRepository(db_session)
-        logs = log_repo.list(user_id=user.id, level="WARNING", limit=1)
+        # Check file log was created
+        reader = FileLogReader(base_dir="logs")
+        logs = reader.read_logs(user_id=user.id, level="WARNING", limit=1)
         assert len(logs) == 1
-        assert logs[0].level == "WARNING"
+        assert logs[0]["level"] == "WARNING"
+        assert "Warning message" in logs[0]["message"]
 
-    def test_logger_error_with_exception(self, db_session):
+    def test_logger_error_with_exception(self, db_session, tmp_path, monkeypatch):
         """Test error logging with exception capture"""
-        # Create user first
+        monkeypatch.chdir(tmp_path)
+
         from src.infrastructure.db.models import Users
         from src.infrastructure.db.timezone_utils import ist_now
 
@@ -126,18 +118,17 @@ class TestUserScopedLogger:
         exception = ValueError("Test error")
         logger.error("Error message", exc_info=exception, symbol="RELIANCE")
 
-        # Check database log was created
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
-
-        log_repo = ServiceLogRepository(db_session)
-        logs = log_repo.list(user_id=user.id, level="ERROR", limit=1)
+        # Check file log was created
+        reader = FileLogReader(base_dir="logs")
+        logs = reader.read_logs(user_id=user.id, level="ERROR", limit=1)
         assert len(logs) == 1
-        assert logs[0].level == "ERROR"
-        assert "symbol" in logs[0].context
+        assert logs[0]["level"] == "ERROR"
+        assert "Error message" in logs[0]["message"]
+        assert logs[0]["context"] is not None
+        assert "symbol" in logs[0]["context"]
+        assert logs[0]["context"]["symbol"] == "RELIANCE"
 
-        # Check error log was created
+        # Check error log was created in database
         from src.infrastructure.persistence.error_log_repository import (
             ErrorLogRepository,
         )
@@ -149,9 +140,10 @@ class TestUserScopedLogger:
         assert "Test error" in errors[0].error_message
         assert errors[0].traceback is not None
 
-    def test_logger_critical(self, db_session):
+    def test_logger_critical(self, db_session, tmp_path, monkeypatch):
         """Test critical logging"""
-        # Create user first
+        monkeypatch.chdir(tmp_path)
+
         from src.infrastructure.db.models import Users
         from src.infrastructure.db.timezone_utils import ist_now
 
@@ -163,13 +155,11 @@ class TestUserScopedLogger:
         exception = RuntimeError("Critical error")
         logger.critical("Critical message", exc_info=exception)
 
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
-
-        log_repo = ServiceLogRepository(db_session)
-        logs = log_repo.list(user_id=user.id, level="CRITICAL", limit=1)
+        # Check file log was created
+        reader = FileLogReader(base_dir="logs")
+        logs = reader.read_logs(user_id=user.id, level="CRITICAL", limit=1)
         assert len(logs) == 1
+        assert "Critical message" in logs[0]["message"]
 
     def test_logger_set_module(self, db_session):
         """Test module name update"""
@@ -184,9 +174,10 @@ class TestUserScopedLogger:
         logger = get_user_logger(user_id=1, db=db_session, module="test")
         logger.close()  # Should not raise
 
-    def test_logger_context_injection(self, db_session):
+    def test_logger_context_injection(self, db_session, tmp_path, monkeypatch):
         """Test that user_id and module are automatically injected"""
-        # Create user first
+        monkeypatch.chdir(tmp_path)
+
         from src.infrastructure.db.models import Users
         from src.infrastructure.db.timezone_utils import ist_now
 
@@ -197,38 +188,34 @@ class TestUserScopedLogger:
         logger = get_user_logger(user_id=user.id, db=db_session, module="my_module")
         logger.info("Test message", custom_key="custom_value")
 
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
-
-        log_repo = ServiceLogRepository(db_session)
-        logs = log_repo.list(user_id=user.id, limit=1)
+        # Check file log was created
+        reader = FileLogReader(base_dir="logs")
+        logs = reader.read_logs(user_id=user.id, limit=1)
         assert len(logs) == 1
-        assert logs[0].user_id == user.id  # user_id is in the record, not context
-        assert logs[0].context["log_module"] == "my_module"
-        assert logs[0].context["custom_key"] == "custom_value"
+        assert logs[0]["user_id"] == user.id
+        assert "Test message" in logs[0]["message"]
+        assert logs[0]["context"] is not None
+        assert logs[0]["context"]["log_module"] == "my_module"
+        assert logs[0]["context"]["custom_key"] == "custom_value"
 
 
-class TestDatabaseLogHandler:
-    """Tests for DatabaseLogHandler"""
+class TestUserFileLogHandler:
+    """Tests for UserFileLogHandler"""
 
-    def test_handler_initialization(self, db_session):
-        """Test handler initialization"""
-        handler = DatabaseLogHandler(user_id=1, db=db_session)
-        assert handler.user_id == 1
-        assert handler.db == db_session
+    def test_handler_creates_log_directory(self, tmp_path, monkeypatch):
+        """Test handler creates log directory structure"""
+        monkeypatch.chdir(tmp_path)
 
-    def test_handler_emit_info(self, db_session):
-        """Test handler emits INFO logs"""
-        # Create user first
-        from src.infrastructure.db.models import Users
-        from src.infrastructure.db.timezone_utils import ist_now
+        handler = UserFileLogHandler(user_id=1, log_type="service")
+        log_dir = Path("logs") / "users" / "user_1"
+        assert log_dir.exists()
+        handler.close()
 
-        user = Users(email="test@example.com", password_hash="hash", created_at=ist_now())
-        db_session.add(user)
-        db_session.commit()
+    def test_handler_writes_to_jsonl_file(self, tmp_path, monkeypatch):
+        """Test handler writes logs to JSONL file"""
+        monkeypatch.chdir(tmp_path)
 
-        handler = DatabaseLogHandler(user_id=user.id, db=db_session)
+        handler = UserFileLogHandler(user_id=1, log_type="service")
         record = logging.LogRecord(
             name="test",
             level=logging.INFO,
@@ -239,128 +226,24 @@ class TestDatabaseLogHandler:
             exc_info=None,
         )
         record.log_module = "test_module"
-        record.custom_field = "custom_value"
-
-        handler.emit(record)
-
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
-
-        log_repo = ServiceLogRepository(db_session)
-        logs = log_repo.list(user_id=user.id, limit=1)
-        assert len(logs) == 1
-        assert logs[0].level == "INFO"
-        assert logs[0].message == "Test message"
-        assert logs[0].module == "test_module"
-        # Context may include additional fields like log_module, taskName
-        assert "custom_field" in logs[0].context
-        assert logs[0].context["custom_field"] == "custom_value"
-
-    def test_handler_emit_all_levels(self, db_session):
-        """Test handler emits all log levels"""
-        # Create user first
-        from src.infrastructure.db.models import Users
-        from src.infrastructure.db.timezone_utils import ist_now
-
-        user = Users(email="test@example.com", password_hash="hash", created_at=ist_now())
-        db_session.add(user)
-        db_session.commit()
-
-        handler = DatabaseLogHandler(user_id=user.id, db=db_session)
-
-        levels = [
-            (logging.DEBUG, "DEBUG"),
-            (logging.INFO, "INFO"),
-            (logging.WARNING, "WARNING"),
-            (logging.ERROR, "ERROR"),
-            (logging.CRITICAL, "CRITICAL"),
-        ]
-
-        for level, level_name in levels:
-            record = logging.LogRecord(
-                name="test",
-                level=level,
-                pathname="",
-                lineno=0,
-                msg=f"{level_name} message",
-                args=(),
-                exc_info=None,
-            )
-            record.log_module = "test"
-            handler.emit(record)
-
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
-
-        log_repo = ServiceLogRepository(db_session)
-        logs = log_repo.list(user_id=user.id, limit=10)
-        assert len(logs) == 5
-        assert {log.level for log in logs} == {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-
-    def test_handler_handles_errors_gracefully(self, db_session):
-        """Test handler doesn't break on errors"""
-        handler = DatabaseLogHandler(user_id=1, db=db_session)
-
-        # Create invalid record that would cause error
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg="Test",
-            args=(),
-            exc_info=None,
-        )
-
-        # Close db session to simulate error
-        db_session.close()
-
-        # Should not raise, should handle error gracefully
-        handler.emit(record)
-
-
-class TestUserFileLogHandler:
-    """Tests for UserFileLogHandler"""
-
-    def test_handler_creates_log_directory(self, tmp_path, monkeypatch):
-        """Test handler creates log directory structure"""
-        # Change to temp directory
-        monkeypatch.chdir(tmp_path)
-
-        handler = UserFileLogHandler(user_id=1, log_type="service")
-        log_dir = Path("logs") / "users" / "user_1"
-        assert log_dir.exists()
-        handler.close()
-
-    def test_handler_writes_to_file(self, tmp_path, monkeypatch):
-        """Test handler writes logs to file"""
-        monkeypatch.chdir(tmp_path)
-
-        handler = UserFileLogHandler(user_id=1, log_type="service")
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg="Test message",
-            args=(),
-            exc_info=None,
-        )
+        record.user_id = 1
 
         handler.emit(record)
         handler.close()
 
-        # Check file was created and contains message
+        # Check JSONL file was created and contains message
         log_dir = Path("logs") / "users" / "user_1"
-        log_files = list(log_dir.glob("service_*.log"))
+        log_files = list(log_dir.glob("service_*.jsonl"))
         assert len(log_files) == 1
 
-        content = log_files[0].read_text(encoding="utf-8")
-        assert "Test message" in content
-        # Note: User context may be in message or format, check both
-        assert "User" in content or "1" in content
+        # Read JSONL file
+        with log_files[0].open("r", encoding="utf-8") as f:
+            line = f.readline()
+            data = json.loads(line)
+            assert data["message"] == "Test message"
+            assert data["level"] == "INFO"
+            assert data["module"] == "test_module"
+            assert data["user_id"] == 1
 
     def test_error_handler_writes_only_errors(self, tmp_path, monkeypatch):
         """Test error handler only writes ERROR and CRITICAL"""
@@ -378,9 +261,8 @@ class TestUserFileLogHandler:
             args=(),
             exc_info=None,
         )
-        # Check if handler filters by level
-        if handler.level <= logging.INFO:
-            handler.emit(info_record)
+        info_record.user_id = 1
+        handler.emit(info_record)
 
         # Emit ERROR (should be written)
         error_record = logging.LogRecord(
@@ -392,17 +274,139 @@ class TestUserFileLogHandler:
             args=(),
             exc_info=None,
         )
+        error_record.user_id = 1
         handler.emit(error_record)
         handler.close()
 
         # Check error log file exists
         log_dir = Path("logs") / "users" / "user_1"
-        error_files = list(log_dir.glob("errors_*.log"))
+        error_files = list(log_dir.glob("errors_*.jsonl"))
         assert len(error_files) >= 1
 
-        content = error_files[0].read_text(encoding="utf-8")
-        assert "Error message" in content
-        # INFO may be written if handler level allows it, so just check ERROR is there
+        # Read JSONL file and verify only ERROR is present
+        with error_files[0].open("r", encoding="utf-8") as f:
+            lines = f.readlines()
+            error_found = False
+            for line in lines:
+                if line.strip():
+                    data = json.loads(line)
+                    if data["level"] == "ERROR":
+                        error_found = True
+                        assert "Error message" in data["message"]
+                    # INFO should not be in error log
+                    assert data["level"] in ("ERROR", "CRITICAL")
+            assert error_found
+
+
+class TestFileLogReader:
+    """Tests for FileLogReader"""
+
+    def test_read_logs_basic(self, tmp_path, monkeypatch):
+        """Test reading logs from file"""
+        monkeypatch.chdir(tmp_path)
+
+        handler = UserFileLogHandler(user_id=1, log_type="service")
+        for i in range(5):
+            record = logging.LogRecord(
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"Message {i}",
+                args=(),
+                exc_info=None,
+            )
+            record.log_module = "test_module"
+            record.user_id = 1
+            handler.emit(record)
+        handler.close()
+
+        reader = FileLogReader(base_dir="logs")
+        logs = reader.read_logs(user_id=1, limit=10)
+        assert len(logs) == 5
+        assert all(log["level"] == "INFO" for log in logs)
+        assert all(log["user_id"] == 1 for log in logs)
+
+    def test_read_logs_with_filters(self, tmp_path, monkeypatch):
+        """Test reading logs with filters"""
+        monkeypatch.chdir(tmp_path)
+
+        handler = UserFileLogHandler(user_id=1, log_type="service")
+        levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        for level in levels:
+            record = logging.LogRecord(
+                name="test",
+                level=getattr(logging, level),
+                pathname="",
+                lineno=0,
+                msg=f"{level} message",
+                args=(),
+                exc_info=None,
+            )
+            record.log_module = "test_module"
+            record.user_id = 1
+            handler.emit(record)
+        handler.close()
+
+        reader = FileLogReader(base_dir="logs")
+        # Filter by level
+        error_logs = reader.read_logs(user_id=1, level="ERROR", limit=10)
+        assert len(error_logs) == 1
+        assert error_logs[0]["level"] == "ERROR"
+
+        # Filter by module
+        module_logs = reader.read_logs(user_id=1, module="test_module", limit=10)
+        assert len(module_logs) == 5
+
+    def test_read_error_logs(self, tmp_path, monkeypatch):
+        """Test reading error logs"""
+        monkeypatch.chdir(tmp_path)
+
+        handler = UserErrorFileLogHandler(user_id=1)
+        for level in [logging.ERROR, logging.CRITICAL]:
+            record = logging.LogRecord(
+                name="test",
+                level=level,
+                pathname="",
+                lineno=0,
+                msg=f"{logging.getLevelName(level)} message",
+                args=(),
+                exc_info=None,
+            )
+            record.user_id = 1
+            handler.emit(record)
+        handler.close()
+
+        reader = FileLogReader(base_dir="logs")
+        error_logs = reader.read_error_logs(user_id=1, limit=10)
+        assert len(error_logs) == 2
+        assert all(log["level"] in ("ERROR", "CRITICAL") for log in error_logs)
+
+    def test_tail_logs(self, tmp_path, monkeypatch):
+        """Test tailing logs"""
+        monkeypatch.chdir(tmp_path)
+
+        handler = UserFileLogHandler(user_id=1, log_type="service")
+        for i in range(10):
+            record = logging.LogRecord(
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"Message {i}",
+                args=(),
+                exc_info=None,
+            )
+            record.log_module = "test_module"
+            record.user_id = 1
+            handler.emit(record)
+        handler.close()
+
+        reader = FileLogReader(base_dir="logs")
+        tail_logs = reader.tail_logs(user_id=1, log_type="service", tail_lines=5)
+        assert len(tail_logs) == 5
+        # Should be newest first
+        assert "Message 9" in tail_logs[0]["message"]
 
 
 class TestErrorCapture:
@@ -410,7 +414,6 @@ class TestErrorCapture:
 
     def test_capture_exception_basic(self, db_session):
         """Test basic exception capture"""
-        # Create user first
         from src.infrastructure.db.models import Users
         from src.infrastructure.db.timezone_utils import ist_now
 
@@ -421,9 +424,7 @@ class TestErrorCapture:
         exception = ValueError("Test error message")
         context = {"symbol": "RELIANCE", "action": "place_order"}
 
-        capture_exception(
-            user_id=user.id, exception=exception, context=context, db=db_session
-        )
+        capture_exception(user_id=user.id, exception=exception, context=context, db=db_session)
 
         from src.infrastructure.persistence.error_log_repository import (
             ErrorLogRepository,
@@ -440,7 +441,6 @@ class TestErrorCapture:
 
     def test_capture_exception_with_user_state(self, db_session):
         """Test exception capture includes user state"""
-        # Create user and config
         from src.infrastructure.db.models import Users, UserTradingConfig
         from src.infrastructure.db.timezone_utils import ist_now
 
@@ -479,7 +479,6 @@ class TestErrorCapture:
 
     def test_capture_exception_handles_errors_gracefully(self, db_session):
         """Test error capture doesn't break on errors"""
-        # Create user first
         from src.infrastructure.db.models import Users
         from src.infrastructure.db.timezone_utils import ist_now
 
@@ -494,10 +493,7 @@ class TestErrorCapture:
 
         # Should not raise, should handle error gracefully
         try:
-            capture_exception(
-                user_id=user.id, exception=exception, context={}, db=db_session
-            )
+            capture_exception(user_id=user.id, exception=exception, context={}, db=db_session)
         except Exception:
             # If it raises, that's also acceptable - the important thing is it doesn't break the app
             pass
-

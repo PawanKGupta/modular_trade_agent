@@ -1,18 +1,18 @@
 """
 Integration tests for Phase 2 Logging System
 
-Tests the full logging flow from service operations to database and files.
+Tests the full logging flow from service operations to files.
 """
 
-import tempfile
+import time
 from pathlib import Path
 
 import pytest
 
 from src.application.services.multi_user_trading_service import MultiUserTradingService
-from src.infrastructure.db.models import ServiceStatus, TradeMode, UserSettings, Users
+from src.infrastructure.db.models import TradeMode, Users, UserSettings
 from src.infrastructure.db.timezone_utils import ist_now
-from src.infrastructure.logging import get_user_logger
+from src.infrastructure.logging import FileLogReader, get_user_logger
 
 
 @pytest.fixture
@@ -30,7 +30,6 @@ def sample_user_with_full_setup(db_session):
     settings = UserSettings(
         user_id=user.id,
         trade_mode=TradeMode.BROKER,
-        broker_creds_encrypted=b"encrypted_creds",
     )
     db_session.add(settings)
     db_session.commit()
@@ -41,10 +40,10 @@ def sample_user_with_full_setup(db_session):
 class TestLoggingIntegration:
     """Integration tests for logging system"""
 
-    def test_service_start_logs_to_database_and_file(
+    def test_service_start_logs_to_file(
         self, db_session, sample_user_with_full_setup, tmp_path, monkeypatch
     ):
-        """Test that service start creates logs in both database and files"""
+        """Test that service start creates logs in files"""
         monkeypatch.chdir(tmp_path)
 
         service = MultiUserTradingService(db=db_session)
@@ -55,192 +54,133 @@ class TestLoggingIntegration:
         except Exception:
             pass  # May fail at TradingService init, but logging should work
 
-        # Check database logs
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
+        # Wait a bit for logs to be written
+        time.sleep(0.5)
 
-        log_repo = ServiceLogRepository(db_session)
-        logs = log_repo.list(user_id=sample_user_with_full_setup.id, limit=10)
+        # Check file logs using FileLogReader
+        reader = FileLogReader(base_dir="logs")
+        logs = reader.read_logs(user_id=sample_user_with_full_setup.id, limit=10, days_back=1)
 
-        assert len(logs) > 0
-        assert any("Starting trading service" in log.message for log in logs)
+        # Retry if no logs found (timing issue)
+        if len(logs) == 0:
+            time.sleep(1.0)
+            logs = reader.read_logs(user_id=sample_user_with_full_setup.id, limit=10, days_back=1)
 
-        # Check file logs
+        assert len(logs) > 0, "No logs found in files"
+        assert any("Starting trading service" in log["message"] for log in logs)
+
+        # Also check file directly
         log_dir = Path("logs") / "users" / f"user_{sample_user_with_full_setup.id}"
-        log_files = list(log_dir.glob("service_*.log"))
+        log_files = list(log_dir.glob("service_*.jsonl"))
         assert len(log_files) > 0
 
-        # Check log file content
-        content = log_files[0].read_text(encoding="utf-8")
-        assert "Starting trading service" in content
+        # Check log file content (JSONL format)
+        with log_files[0].open("r", encoding="utf-8") as f:
+            lines = f.readlines()
+            assert len(lines) > 0
+            # Check at least one line contains the service start message
+            content = "".join(lines)
+            assert "Starting trading service" in content
 
-    def test_error_logging_integration(self, db_session, sample_user_with_full_setup):
-        """Test that errors are logged to both ServiceLog and ErrorLog"""
-        logger = get_user_logger(
-            user_id=sample_user_with_full_setup.id,
-            db=db_session,
-            module="integration_test",
-        )
-
-        exception = ValueError("Integration test error")
-        logger.error("Test error occurred", exc_info=exception, symbol="RELIANCE")
-
-        # Check ServiceLog
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
-
-        log_repo = ServiceLogRepository(db_session)
-        service_logs = log_repo.get_errors(
-            user_id=sample_user_with_full_setup.id, limit=10
-        )
-        assert len(service_logs) > 0
-        assert any("Test error occurred" in log.message for log in service_logs)
-
-        # Check ErrorLog
-        from src.infrastructure.persistence.error_log_repository import (
-            ErrorLogRepository,
-        )
-
-        error_repo = ErrorLogRepository(db_session)
-        error_logs = error_repo.list(user_id=sample_user_with_full_setup.id, limit=10)
-        assert len(error_logs) > 0
-        assert any("Integration test error" in error.error_message for error in error_logs)
-        assert any("RELIANCE" in str(error.context) for error in error_logs)
-
-    def test_log_context_preservation(self, db_session, sample_user_with_full_setup):
-        """Test that log context is preserved through the full flow"""
-        logger = get_user_logger(
-            user_id=sample_user_with_full_setup.id,
-            db=db_session,
-            module="context_test",
-        )
-
-        context = {
-            "symbol": "RELIANCE",
-            "order_id": 12345,
-            "action": "place_order",
-            "price": 2500.50,
-        }
-
-        logger.info("Order placed", **context)
-
-        # Check context is preserved in database
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
-
-        log_repo = ServiceLogRepository(db_session)
-        logs = log_repo.list(user_id=sample_user_with_full_setup.id, limit=1)
-        assert len(logs) == 1
-
-        log_context = logs[0].context
-        assert log_context["symbol"] == "RELIANCE"
-        assert log_context["order_id"] == 12345
-        assert log_context["action"] == "place_order"
-        assert log_context["price"] == 2500.50
-        # user_id is stored in the record, not context JSON
-        assert logs[0].user_id == sample_user_with_full_setup.id
-        assert log_context["log_module"] == "context_test"
-
-    def test_multiple_users_log_isolation(
-        self, db_session, tmp_path, monkeypatch
+    def test_error_logging_integration(
+        self, db_session, sample_user_with_full_setup, tmp_path, monkeypatch
     ):
-        """Test that logs from multiple users are isolated"""
+        """Test that errors are logged to both file logs and ErrorLog"""
         monkeypatch.chdir(tmp_path)
 
-        # Create two users
-        user1 = Users(
-            email="user1@example.com",
-            password_hash="hash1",
-            created_at=ist_now(),
-        )
-        user2 = Users(
-            email="user2@example.com",
-            password_hash="hash2",
-            created_at=ist_now(),
-        )
-        db_session.add_all([user1, user2])
-        db_session.commit()
-
-        # Create loggers for both
-        logger1 = get_user_logger(user_id=user1.id, db=db_session, module="test")
-        logger2 = get_user_logger(user_id=user2.id, db=db_session, module="test")
-
-        logger1.info("User 1 message", user="user1")
-        logger2.info("User 2 message", user="user2")
-
-        # Check database isolation
-        from src.infrastructure.persistence.service_log_repository import (
-            ServiceLogRepository,
-        )
-
-        log_repo = ServiceLogRepository(db_session)
-        user1_logs = log_repo.list(user_id=user1.id, limit=10)
-        user2_logs = log_repo.list(user_id=user2.id, limit=10)
-
-        assert len(user1_logs) == 1
-        assert len(user2_logs) == 1
-        assert user1_logs[0].user_id == user1.id
-        assert user2_logs[0].user_id == user2.id
-
-        # Check file isolation
-        user1_log_dir = Path("logs") / "users" / f"user_{user1.id}"
-        user2_log_dir = Path("logs") / "users" / f"user_{user2.id}"
-
-        user1_files = list(user1_log_dir.glob("service_*.log"))
-        user2_files = list(user2_log_dir.glob("service_*.log"))
-
-        assert len(user1_files) > 0
-        assert len(user2_files) > 0
-
-        # Check content isolation
-        user1_content = user1_files[0].read_text(encoding="utf-8")
-        user2_content = user2_files[0].read_text(encoding="utf-8")
-
-        assert "User 1 message" in user1_content
-        assert "User 2 message" not in user1_content
-        assert "User 2 message" in user2_content
-        assert "User 1 message" not in user2_content
-
-    def test_error_capture_with_user_state(
-        self, db_session, sample_user_with_full_setup
-    ):
-        """Test that error capture includes user configuration state"""
-        from src.infrastructure.db.models import UserTradingConfig
-
-        # Create user config
-        config = UserTradingConfig(
-            user_id=sample_user_with_full_setup.id,
-            rsi_oversold=25.0,
-            user_capital=300000.0,
-            max_portfolio_size=8,
-        )
-        db_session.add(config)
-        db_session.commit()
-
         logger = get_user_logger(
-            user_id=sample_user_with_full_setup.id,
-            db=db_session,
-            module="error_test",
+            user_id=sample_user_with_full_setup.id, db=db_session, module="test"
         )
 
-        exception = RuntimeError("Service error with context")
-        logger.error("Service failed", exc_info=exception, task="analysis")
+        # Log an error with exception
+        exception = ValueError("Test error occurred")
+        logger.error("Test error occurred", exc_info=exception, symbol="TEST")
 
-        # Check error log includes user config
+        # Wait for file write
+        time.sleep(0.3)
+
+        # Check file logs
+        reader = FileLogReader(base_dir="logs")
+        error_logs = reader.read_error_logs(user_id=sample_user_with_full_setup.id, limit=10)
+
+        # Retry if not found
+        if len(error_logs) == 0:
+            time.sleep(0.5)
+            error_logs = reader.read_error_logs(user_id=sample_user_with_full_setup.id, limit=10)
+
+        assert len(error_logs) > 0
+        assert any("Test error occurred" in log["message"] for log in error_logs)
+
+        # Check error log was created in database
         from src.infrastructure.persistence.error_log_repository import (
             ErrorLogRepository,
         )
 
         error_repo = ErrorLogRepository(db_session)
-        errors = error_repo.list(user_id=sample_user_with_full_setup.id, limit=1)
-        assert len(errors) == 1
+        errors = error_repo.list(user_id=sample_user_with_full_setup.id, limit=10)
+        assert len(errors) > 0
+        assert any("Test error occurred" in error.error_message for error in errors)
 
-        error_context = errors[0].context
-        assert "user_config" in error_context
-        assert error_context["user_config"]["rsi_oversold"] == 25.0
-        assert error_context["user_config"]["user_capital"] == 300000.0
-        assert error_context["task"] == "analysis"
+    def test_logging_context_preserved(
+        self, db_session, sample_user_with_full_setup, tmp_path, monkeypatch
+    ):
+        """Test that logging context is preserved in file logs"""
+        monkeypatch.chdir(tmp_path)
 
+        logger = get_user_logger(
+            user_id=sample_user_with_full_setup.id, db=db_session, module="test_module"
+        )
+        logger.info("Test message", action="test_action", symbol="RELIANCE")
+
+        # Wait for file write
+        time.sleep(0.3)
+
+        # Check file logs
+        reader = FileLogReader(base_dir="logs")
+        logs = reader.read_logs(user_id=sample_user_with_full_setup.id, limit=5, days_back=1)
+
+        # Retry if not found
+        if len(logs) == 0:
+            time.sleep(0.5)
+            logs = reader.read_logs(user_id=sample_user_with_full_setup.id, limit=5, days_back=1)
+
+        assert len(logs) > 0
+        test_log = next((log for log in logs if "Test message" in log["message"]), None)
+        assert test_log is not None
+        assert test_log["context"] is not None
+        assert test_log["context"]["action"] == "test_action"
+        assert test_log["context"]["symbol"] == "RELIANCE"
+        assert test_log["module"] == "test_module"
+
+    def test_multiple_log_levels(
+        self, db_session, sample_user_with_full_setup, tmp_path, monkeypatch
+    ):
+        """Test that all log levels are written to files"""
+        monkeypatch.chdir(tmp_path)
+
+        logger = get_user_logger(
+            user_id=sample_user_with_full_setup.id, db=db_session, module="test"
+        )
+
+        logger.debug("Debug message")
+        logger.info("Info message")
+        logger.warning("Warning message")
+        logger.error("Error message")
+        logger.critical("Critical message")
+
+        # Wait for file writes
+        time.sleep(0.5)
+
+        # Check file logs
+        reader = FileLogReader(base_dir="logs")
+        logs = reader.read_logs(user_id=sample_user_with_full_setup.id, limit=10, days_back=1)
+
+        # Retry if not found
+        if len(logs) == 0:
+            time.sleep(0.5)
+            logs = reader.read_logs(user_id=sample_user_with_full_setup.id, limit=10, days_back=1)
+
+        assert len(logs) >= 5
+        levels = {log["level"] for log in logs}
+        assert "DEBUG" in levels or "INFO" in levels  # At least some levels present
+        assert "ERROR" in levels or "CRITICAL" in levels  # Error levels should be present

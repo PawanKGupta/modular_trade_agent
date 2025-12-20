@@ -27,7 +27,7 @@ export interface TaskExecution {
 	executed_at: string;
 	status: 'success' | 'failed' | 'skipped';
 	duration_seconds: number;
-	details: Record<string, any> | null;
+	details: Record<string, unknown> | null;
 }
 
 export interface TaskHistory {
@@ -40,14 +40,44 @@ export interface ServiceLog {
 	level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
 	module: string;
 	message: string;
-	context: Record<string, any> | null;
+	context: Record<string, unknown> | null;
 	timestamp: string;
+}
+
+export interface TradingDayInfo {
+	is_trading_day: boolean;
+	is_holiday: boolean;
+	holiday_name: string | null;
+	is_weekend: boolean;
 }
 
 export interface ServiceLogs {
 	logs: ServiceLog[];
 	total: number;
 	limit: number;
+}
+
+export interface PositionCreationMetrics {
+	success: number;
+	failed_missing_repos: number;
+	failed_missing_symbol: number;
+	failed_exception: number;
+	success_rate: number;
+	total_attempts: number;
+}
+
+export interface PositionWithoutSellOrder {
+	symbol: string;
+	entry_price: number;
+	quantity: number;
+	reason: string;
+	ticker: string;
+	broker_symbol: string;
+}
+
+export interface PositionsWithoutSellOrders {
+	positions: PositionWithoutSellOrder[];
+	count: number;
 }
 
 export async function startService(): Promise<ServiceStartResponse> {
@@ -84,6 +114,34 @@ export async function getServiceLogs(params?: {
 	return data;
 }
 
+export async function getPositionCreationMetrics(): Promise<PositionCreationMetrics> {
+	const { data } = await api.get<PositionCreationMetrics>('/user/service/metrics/position-creation');
+	return data;
+}
+
+export async function getPositionsWithoutSellOrders(): Promise<PositionsWithoutSellOrders> {
+	// Add timeout to prevent blocking dashboard
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+	try {
+		const { data } = await api.get<PositionsWithoutSellOrders>(
+			'/user/service/positions/without-sell-orders',
+			{ signal: controller.signal }
+		);
+		clearTimeout(timeoutId);
+		return data;
+	} catch (error) {
+		clearTimeout(timeoutId);
+		// Return empty result on timeout/error instead of throwing
+		if (error instanceof Error && error.name === 'AbortError') {
+			console.warn('Positions without sell orders query timed out');
+			return { positions: [], count: 0 };
+		}
+		throw error;
+	}
+}
+
 // Individual Service Management
 
 export interface IndividualServiceStatus {
@@ -96,7 +154,7 @@ export interface IndividualServiceStatus {
 	schedule_enabled: boolean;
 	last_execution_status: 'success' | 'failed' | 'skipped' | 'running' | null;
 	last_execution_duration: number | null;
-	last_execution_details: Record<string, any> | null;
+	last_execution_details: Record<string, unknown> | null;
 }
 
 export interface IndividualServicesStatus {
@@ -161,5 +219,10 @@ export async function stopIndividualService(
 
 export async function runTaskOnce(request: RunOnceRequest): Promise<RunOnceResponse> {
 	const { data } = await api.post<RunOnceResponse>('/user/service/individual/run-once', request);
+	return data;
+}
+
+export async function getTradingDayInfo(): Promise<TradingDayInfo> {
+	const { data } = await api.get<TradingDayInfo>('/user/service/trading-day-info');
 	return data;
 }

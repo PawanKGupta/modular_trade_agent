@@ -13,14 +13,14 @@ from unittest.mock import Mock, patch
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-import pytest
-from sqlalchemy.orm import Session
+import pytest  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
 
-from services.notification_preference_service import (
+from services.notification_preference_service import (  # noqa: E402
     NotificationEventType,
     NotificationPreferenceService,
 )
-from src.infrastructure.db.models import UserNotificationPreferences
+from src.infrastructure.db.models import UserNotificationPreferences  # noqa: E402
 
 
 class TestNotificationPreferenceService:
@@ -195,7 +195,7 @@ class TestNotificationPreferenceService:
 
         updates = {"unknown_field": "value"}
 
-        result = service.update_preferences(user_id=1, preferences_dict=updates)
+        service.update_preferences(user_id=1, preferences_dict=updates)
 
         # Should not raise, but log warning
         assert "Unknown preference field" in caplog.text
@@ -405,10 +405,12 @@ class TestNotificationPreferenceService:
         """Test that all_event_types returns all event types"""
         event_types = NotificationEventType.all_event_types()
 
-        assert (
-            len(event_types) == 17
-        )  # 10 order/retry + 3 system + 3 service + 1 legacy SERVICE_EVENT
+        # 11 order/retry (including ORDER_SKIPPED) + 3 system + 3 service + 1 legacy SERVICE_EVENT
+        assert len(event_types) == 18
         assert NotificationEventType.ORDER_PLACED in event_types
+        assert (
+            NotificationEventType.ORDER_SKIPPED in event_types
+        )  # Added for skipped order notifications
         assert NotificationEventType.SYSTEM_INFO in event_types
         assert NotificationEventType.SERVICE_STARTED in event_types
         assert NotificationEventType.SERVICE_STOPPED in event_types
@@ -426,6 +428,7 @@ class TestNotificationPreferenceService:
             NotificationEventType.ORDER_EXECUTED,
             NotificationEventType.ORDER_CANCELLED,
             NotificationEventType.ORDER_MODIFIED,
+            NotificationEventType.ORDER_SKIPPED,
             NotificationEventType.RETRY_QUEUE_ADDED,
             NotificationEventType.RETRY_QUEUE_UPDATED,
             NotificationEventType.RETRY_QUEUE_REMOVED,

@@ -101,8 +101,9 @@ class ConflictDetectionService:
             if executed_at >= cutoff_time:
                 return True
 
-        # Check individual service
-        running_individual = self._individual_task_repo.get_running_tasks(
+        # Check individual service using raw SQL to bypass session cache
+        # This ensures we see cleanup operations immediately
+        running_individual = self._individual_task_repo.get_running_tasks_raw(
             user_id=user_id, task_name=task_name
         )
         return len(running_individual) > 0

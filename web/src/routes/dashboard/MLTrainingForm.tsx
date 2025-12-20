@@ -62,7 +62,7 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 					<select
 						value={modelType}
 						onChange={(e) => setModelType(e.target.value as StartTrainingPayload['model_type'])}
-						className="bg-transparent border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm min-h-[44px] sm:min-h-0"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm min-h-[44px] sm:min-h-0 text-[var(--text)]"
 					>
 						<option value="verdict_classifier">Verdict Classifier</option>
 						<option value="price_regressor">Price Regressor</option>
@@ -74,7 +74,7 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 					<select
 						value={algorithm}
 						onChange={(e) => setAlgorithm(e.target.value as StartTrainingPayload['algorithm'])}
-						className="bg-transparent border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm min-h-[44px] sm:min-h-0"
+						className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm min-h-[44px] sm:min-h-0 text-[var(--text)]"
 					>
 						<option value="xgboost">XGBoost</option>
 						<option value="random_forest">Random Forest</option>

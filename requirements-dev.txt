@@ -7,3 +7,4 @@ mypy==1.11.2
 types-requests==2.32.0.20240914
 httpx>=0.24.0
 freezegun>=1.2.0
+psycopg2-binary==2.9.9

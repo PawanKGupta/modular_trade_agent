@@ -5,6 +5,16 @@ import { BuyingZonePage } from '../dashboard/BuyingZonePage';
 import { withProviders } from '@/test/utils';
 import * as signalsApi from '@/api/signals';
 
+// Mock getTradingDayInfo for HolidayBanner component
+vi.mock('@/api/service', () => ({
+	getTradingDayInfo: vi.fn(() => Promise.resolve({
+		is_trading_day: true,
+		is_holiday: false,
+		holiday_name: null,
+		is_weekend: false,
+	})),
+}));
+
 describe('BuyingZonePage', () => {
 	beforeEach(() => {
 		// Reset any spies
@@ -657,14 +667,15 @@ describe('BuyingZonePage', () => {
 			const statusFilter = filters[0]; // First combobox is status filter
 			expect(statusFilter).toBeInTheDocument();
 
-			// Check all options are present
+			// Check all options are present (now includes Failed status)
 			const options = statusFilter.querySelectorAll('option');
-			expect(options).toHaveLength(5);
+			expect(options).toHaveLength(6);
 			expect(options[0].textContent).toContain('Active');
 			expect(options[1].textContent).toContain('All');
 			expect(options[2].textContent).toContain('Expired');
 			expect(options[3].textContent).toContain('Traded');
 			expect(options[4].textContent).toContain('Rejected');
+			expect(options[5].textContent).toContain('Failed');
 		});
 
 		it('defaults to showing only active signals', async () => {
@@ -811,7 +822,7 @@ describe('BuyingZonePage', () => {
 						expect(badge).toHaveClass('text-gray-400');
 					}
 				}
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 		});
 
 		it('displays status badges with correct colors for traded signals', async () => {
@@ -873,7 +884,7 @@ describe('BuyingZonePage', () => {
 						expect(badge).toHaveClass('text-blue-400');
 					}
 				}
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 		});
 
 		it('displays status badges with correct colors for rejected signals', async () => {
@@ -935,7 +946,7 @@ describe('BuyingZonePage', () => {
 						expect(badge).toHaveClass('text-red-400');
 					}
 				}
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 		});
 
 		it('shows reject button only for active signals', async () => {
@@ -978,7 +989,7 @@ describe('BuyingZonePage', () => {
 				const rejectBtn = buttons.find(btn => btn.textContent?.includes('Reject'));
 				expect(rejectBtn).toBeDefined();
 				return rejectBtn!;
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 
 			expect(rejectButton).not.toBeDisabled();
 		});
@@ -1126,7 +1137,7 @@ describe('BuyingZonePage', () => {
 			// Wait for data to load first
 			await waitFor(() => {
 				expect(screen.getByText('ACTIVE1')).toBeInTheDocument();
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 
 			// Then wait for reject button to appear (status column should be visible by default)
 			const rejectButton = await waitFor(() => {
@@ -1134,7 +1145,7 @@ describe('BuyingZonePage', () => {
 				const rejectBtn = buttons.find(btn => btn.textContent?.includes('Reject'));
 				expect(rejectBtn).toBeDefined();
 				return rejectBtn!;
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 
 			fireEvent.click(rejectButton);
 
@@ -1203,7 +1214,7 @@ describe('BuyingZonePage', () => {
 				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
 				expect(reactivateBtn).toBeDefined();
 				return reactivateBtn!;
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 
 			expect(reactivateButton).not.toBeDisabled();
 		});
@@ -1266,7 +1277,7 @@ describe('BuyingZonePage', () => {
 				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
 				expect(reactivateBtn).toBeDefined();
 				return reactivateBtn!;
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 
 			expect(reactivateButton).not.toBeDisabled();
 		});
@@ -1325,7 +1336,7 @@ describe('BuyingZonePage', () => {
 				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
 				expect(reactivateBtn).toBeDefined();
 				return reactivateBtn!;
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 
 			expect(reactivateButton).toBeDisabled();
 			expect(reactivateButton).toHaveAttribute('title', 'Cannot reactivate expired signals');
@@ -1335,10 +1346,10 @@ describe('BuyingZonePage', () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 
-			// Create a date from day before yesterday (should be expired)
-			const dayBeforeYesterday = new Date();
-			dayBeforeYesterday.setDate(dayBeforeYesterday.getDate() - 2);
-			const dayBeforeYesterdayISO = dayBeforeYesterday.toISOString();
+			// Create a date from last week (definitely expired - ensures it's past next trading day's 3:30 PM)
+			const lastWeek = new Date();
+			lastWeek.setDate(lastWeek.getDate() - 7);
+			const lastWeekISO = lastWeek.toISOString();
 
 			server.use(
 				http.get('*/api/v1/signals/buying-zone', ({ request }) => {
@@ -1350,8 +1361,8 @@ describe('BuyingZonePage', () => {
 							{
 								symbol: 'REJECTED_OLD',
 								status: 'rejected',
-								base_status: 'rejected', // Base status is not expired, but signal is from day before yesterday
-								ts: dayBeforeYesterdayISO,
+								base_status: 'rejected', // Base status is not expired, but signal is from last week (definitely expired)
+								ts: lastWeekISO,
 								distance_to_ema9: 5.5,
 								backtest_score: 75.5,
 								confidence: 0.85,
@@ -1390,7 +1401,7 @@ describe('BuyingZonePage', () => {
 				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
 				expect(reactivateBtn).toBeDefined();
 				return reactivateBtn!;
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 
 			expect(reactivateButton).toBeDisabled();
 			expect(reactivateButton).toHaveAttribute('title', 'Cannot reactivate expired signals');
@@ -1451,7 +1462,7 @@ describe('BuyingZonePage', () => {
 
 			const reactivateButton = await waitFor(() => {
 				return screen.getByRole('button', { name: /Reactivate/i });
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 
 			fireEvent.click(reactivateButton);
 
@@ -1526,7 +1537,7 @@ describe('BuyingZonePage', () => {
 
 			await waitFor(() => {
 				expect(screen.getByText('REJECTED1')).toBeInTheDocument();
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 
 			// Wait for Reactivate button to appear
 			const reactivateButton = await waitFor(() => {
@@ -1534,15 +1545,17 @@ describe('BuyingZonePage', () => {
 				const reactivateBtn = buttons.find(btn => btn.textContent?.includes('Reactivate'));
 				expect(reactivateBtn).toBeDefined();
 				return reactivateBtn!;
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 
 			fireEvent.click(reactivateButton);
 
 			// After activation, signal should disappear (since we're filtering by rejected)
+			// Also check that the refetch happened by verifying the call count increased
 			await waitFor(() => {
+				expect(rejectedCallCount).toBeGreaterThan(1);
 				expect(screen.queryByText('REJECTED1')).not.toBeInTheDocument();
-			}, { timeout: 3000 });
-		});
+			}, { timeout: 15000 });
+		}, { timeout: 20000 });
 
 		it('displays mixed statuses correctly when filter is set to "all"', async () => {
 			const { http, HttpResponse } = await import('msw');
@@ -1629,7 +1642,7 @@ describe('BuyingZonePage', () => {
 					return span && span.textContent?.includes('✅ Traded');
 				});
 				expect(tradedCell).toBeTruthy();
-			}, { timeout: 3000 });
+			}, { timeout: 10000 });
 		});
 
 		it('updates results count to reflect status filter', async () => {

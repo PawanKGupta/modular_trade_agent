@@ -40,4 +40,4 @@ jobs:
         env:
           DB_URL: "sqlite:///:memory:"
         run: |
-          pytest tests/unit tests/server tests/infrastructure tests/scripts -q -n=auto
+          pytest tests/unit tests/server tests/infrastructure tests/scripts tests/integration tests/regression tests/security tests/paper_trading -q -n=auto

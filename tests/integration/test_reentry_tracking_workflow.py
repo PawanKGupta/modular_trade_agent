@@ -17,8 +17,11 @@ from sqlalchemy.orm import sessionmaker
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
-from src.infrastructure.db.models import Base
+from modules.kotak_neo_auto_trader.auto_trade_engine import (
+    AutoTradeEngine,
+    Recommendation,
+)
+from src.infrastructure.db.models import Base, OrderStatus
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 
@@ -105,8 +108,6 @@ class TestReentryTrackingWorkflow:
         engine._attempt_place_order = mock_attempt_place_order
 
         # Create a mock recommendation
-        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
-
         rec = Recommendation(
             ticker="RELIANCE.NS",
             verdict="buy",
@@ -116,7 +117,19 @@ class TestReentryTrackingWorkflow:
 
         # Mock necessary methods
         engine.scrip_master = Mock()
-        engine.scrip_master.get_instrument.return_value = None
+
+        # Mock get_instrument to return valid instrument (accepts exchange parameter)
+        def mock_get_instrument(symbol, exchange="NSE"):
+            return {
+                "token": "12345",
+                "symbol": symbol if "-" in symbol else f"{symbol}-EQ",
+                "exchange": exchange,
+            }
+
+        engine.scrip_master.get_instrument = mock_get_instrument
+        engine.scrip_master.get_trading_symbol = Mock(
+            side_effect=lambda s, e="NSE": s if "-" in s else f"{s}-EQ"
+        )
         engine.current_symbols_in_portfolio = Mock(return_value=[])
         engine.get_affordable_qty = Mock(return_value=100)
         engine.has_holding = Mock(return_value=False)
@@ -136,10 +149,11 @@ class TestReentryTrackingWorkflow:
         """Test that reentry orders are stored with entry_type='reentry'"""
         orders_repo = OrdersRepository(db_session)
 
-        # Create initial order
+        # Create initial order and mark it as CLOSED so reentry can be created
+        # (Duplicate prevention only blocks PENDING/ONGOING orders)
         initial_order = orders_repo.create_amo(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=10,
@@ -149,13 +163,16 @@ class TestReentryTrackingWorkflow:
             entry_type="initial",
             order_metadata={"rsi10": 28.5},
         )
+        # Mark initial order as CLOSED to allow reentry
+        initial_order.status = OrderStatus.CLOSED
+        db_session.commit()
 
         assert initial_order.entry_type == "initial"
 
-        # Create reentry order
+        # Create reentry order (should work now since initial is CLOSED)
         reentry_order = orders_repo.create_amo(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             side="buy",
             order_type="market",
             quantity=5,
@@ -182,7 +199,7 @@ class TestReentryTrackingWorkflow:
         # Create initial position
         position = positions_repo.upsert(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             initial_entry_price=2500.0,
@@ -198,7 +215,7 @@ class TestReentryTrackingWorkflow:
 
         position = positions_repo.upsert(
             user_id=1,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=15,  # 10 + 5
             avg_price=2480.0,  # Updated average
             reentry_count=1,
@@ -234,7 +251,7 @@ class TestReentryTrackingWorkflow:
 
         # Create trade history entry with reentry data
         trade = {
-            "symbol": "RELIANCE",
+            "symbol": "RELIANCE-EQ",  # Full symbol after migration
             "status": "open",
             "qty": 15,
             "entry_price": 2480.0,
@@ -248,7 +265,9 @@ class TestReentryTrackingWorkflow:
         engine._update_position_from_trade(trade)
 
         # Verify position was updated
-        position = engine.positions_repo.get_by_symbol(1, "RELIANCE")
+        position = engine.positions_repo.get_by_symbol(
+            1, "RELIANCE-EQ"
+        )  # Full symbol after migration
         assert position is not None
         assert position.quantity == 15
         assert position.avg_price == 2480.0

@@ -73,24 +73,45 @@ class OrderFieldExtractor:
         Returns:
             Order status lowercase, empty string if not found
         """
-        return (order.get("orderStatus") or order.get("ordSt") or order.get("status") or "").lower()
+        # Check multiple field names, including 'stat' from order_report API
+        return (
+            order.get("orderStatus")
+            or order.get("ordSt")
+            or order.get("stat")  # Add 'stat' field from order_report API
+            or order.get("status")
+            or ""
+        ).lower()
 
     @staticmethod
     def get_quantity(order: dict[str, Any]) -> int:
         """
-        Extract quantity with fallbacks.
+        Extract order quantity (not filled quantity) with fallbacks.
 
         Args:
             order: Order dict from broker API
 
         Returns:
-            Quantity as integer, 0 if not found
+            Order quantity as integer, 0 if not found
+        """
+        return int(order.get("qty") or order.get("quantity") or order.get("orderQty") or 0)
+
+    @staticmethod
+    def get_filled_quantity(order: dict[str, Any]) -> int:
+        """
+        Extract filled quantity (actual executed quantity) with fallbacks.
+
+        Args:
+            order: Order dict from broker API
+
+        Returns:
+            Filled quantity as integer, 0 if not found
         """
         return int(
-            order.get("qty")
-            or order.get("quantity")
-            or order.get("fldQty")
+            order.get("fldQty")
             or order.get("filledQty")
+            or order.get("filled_quantity")
+            or order.get("executedQty")
+            or order.get("executed_qty")
             or 0
         )
 

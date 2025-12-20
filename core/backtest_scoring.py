@@ -163,7 +163,7 @@ def calculate_wilder_rsi(prices, period=None, config=None):
 
 
 def run_simple_backtest(
-    stock_symbol: str, years_back: int = 2, dip_mode: bool = False, config=None
+    stock_symbol: str, years_back: int = 5, dip_mode: bool = False, config=None
 ) -> dict:
     """
     Run a simple backtest using configurable RSI oversold strategy.
@@ -419,7 +419,7 @@ def run_simple_backtest(
 
 
 def run_stock_backtest(
-    stock_symbol: str, years_back: int = 2, dip_mode: bool = False, config=None
+    stock_symbol: str, years_back: int = 5, dip_mode: bool = False, config=None
 ) -> dict:
     """
     Run backtest for a stock using available method (integrated or simple).
@@ -435,7 +435,7 @@ def run_stock_backtest(
 
     Args:
         stock_symbol: Stock symbol (e.g., "RELIANCE.NS")
-        years_back: Number of years to backtest (default: 2)
+        years_back: Number of years to backtest (default: 5)
         dip_mode: Enable dip-buying mode
         config: Strategy configuration
 
@@ -475,10 +475,22 @@ def run_stock_backtest(
                 stock_name=stock_symbol,
                 date_range=date_range,
                 capital_per_position=50000,  # Reduced for faster execution
+                config=config,  # Pass user's config to enable ML if configured
             )
 
             # Calculate backtest score
             backtest_score = calculate_backtest_score(backtest_results, dip_mode)
+
+            # Calculate avg_return from positions if available
+            avg_return = 0.0
+            positions = backtest_results.get("positions", [])
+            if positions:
+                # Calculate average return from position return_pct values
+                return_pcts = [
+                    p.get("return_pct", 0) for p in positions if p.get("return_pct") is not None
+                ]
+                if return_pcts:
+                    avg_return = np.mean(return_pcts)
 
             # Return summary with score
             return {
@@ -490,6 +502,13 @@ def run_stock_backtest(
                 "total_trades": backtest_results.get("executed_trades", 0),
                 "vs_buy_hold": backtest_results.get("strategy_vs_buy_hold", 0),
                 "execution_rate": backtest_results.get("trade_agent_accuracy", 0),
+                "avg_return": avg_return,  # Calculate from positions
+                "backtest_ml_verdict": backtest_results.get(
+                    "backtest_ml_verdict"
+                ),  # Best ML from backtest
+                "backtest_ml_confidence": backtest_results.get(
+                    "backtest_ml_confidence"
+                ),  # Best ML confidence
                 "full_results": backtest_results,
             }
 
@@ -505,7 +524,7 @@ def run_stock_backtest(
 
 
 def add_backtest_scores_to_results(
-    stock_results: list, years_back: int = 2, dip_mode: bool = False, config=None
+    stock_results: list, years_back: int = 5, dip_mode: bool = False, config=None
 ) -> list:
     """
     Add backtest scores to existing stock analysis results.

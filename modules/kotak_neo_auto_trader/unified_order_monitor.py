@@ -7,13 +7,18 @@ Phase 2: Unified order monitoring implementation.
 Extends SellOrderManager to handle buy order monitoring alongside sell orders.
 """
 
+from datetime import datetime
 from typing import Any
 
 from utils.logger import logger
 
 try:
-    from .order_state_manager import OrderStateManager
-    from .orders import KotakNeoOrders
+    from src.infrastructure.db.timezone_utils import IST, ist_now
+except ImportError:
+    IST = None
+    ist_now = None
+
+try:
     from .sell_engine import SellOrderManager
     from .utils.order_field_extractor import OrderFieldExtractor
     from .utils.symbol_utils import extract_base_symbol
@@ -26,7 +31,9 @@ try:
     from sqlalchemy.orm import Session
 
     from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+    from src.infrastructure.db.transaction import transaction
     from src.infrastructure.persistence.orders_repository import OrdersRepository
+    from src.infrastructure.persistence.positions_repository import PositionsRepository
 
     DB_AVAILABLE = True
 except ImportError:
@@ -54,12 +61,17 @@ class UnifiedOrderMonitor:
         Initialize unified order monitor.
 
         Phase 9: Added telegram_notifier for notifications.
+        Issue #1 Fix: db_session and user_id are required when DB_AVAILABLE is True.
 
         Args:
             sell_order_manager: Existing SellOrderManager instance
-            db_session: Optional database session for buy order tracking
-            user_id: Optional user ID for filtering orders
+            db_session: Database session for buy order tracking (required if DB_AVAILABLE)
+            user_id: User ID for filtering orders (required if DB_AVAILABLE)
             telegram_notifier: Optional TelegramNotifier for sending notifications
+
+        Raises:
+            ValueError: If DB_AVAILABLE is True but db_session or user_id is None
+            RuntimeError: If repository initialization fails
         """
         self.sell_manager = sell_order_manager
         self.orders = sell_order_manager.orders
@@ -67,20 +79,102 @@ class UnifiedOrderMonitor:
         self.user_id = user_id
         self.telegram_notifier = telegram_notifier
 
-        # Track active buy orders {order_id: {'symbol': str, 'quantity': float, 'order_id': str, ...}}
+        # Track active buy orders {order_id: {'symbol': str, 'quantity': float, ...}}
         self.active_buy_orders: dict[str, dict[str, Any]] = {}
 
-        # Initialize orders repository if DB is available
+        # Issue #1 Fix: Metrics tracking for position creation
+        self._position_creation_metrics = {
+            "success": 0,
+            "failed_missing_repos": 0,
+            "failed_missing_symbol": 0,
+            "failed_exception": 0,
+        }
+
+        # Issue #1 Fix: Validate required parameters when DB is available
+        if DB_AVAILABLE:
+            if db_session is None:
+                raise ValueError(
+                    "UnifiedOrderMonitor requires db_session when database is available. "
+                    "Position creation will fail without it."
+                )
+            if user_id is None:
+                raise ValueError(
+                    "UnifiedOrderMonitor requires user_id when database is available. "
+                    "Position creation will fail without it."
+                )
+
+        # Issue #1 Fix: Initialize repositories and raise exception on failure
         self.orders_repo = None
+        self.positions_repo = None
         if DB_AVAILABLE and db_session:
             try:
                 self.orders_repo = OrdersRepository(db_session)
                 logger.info("OrdersRepository initialized for buy order monitoring")
             except Exception as e:
-                logger.warning(f"Failed to initialize OrdersRepository: {e}")
-                self.orders_repo = None
+                error_msg = (
+                    f"CRITICAL: Failed to initialize OrdersRepository: {e}. "
+                    f"Position creation will fail. Check database connection."
+                )
+                logger.error(error_msg, exc_info=True)
+                raise RuntimeError(error_msg) from e
+
+            try:
+                self.positions_repo = PositionsRepository(db_session)
+                logger.info("PositionsRepository initialized for position tracking")
+            except Exception as e:
+                error_msg = (
+                    f"CRITICAL: Failed to initialize PositionsRepository: {e}. "
+                    f"Position creation will fail. Check database connection."
+                )
+                logger.error(error_msg, exc_info=True)
+                raise RuntimeError(error_msg) from e
+
+        # Issue #1 Fix: Final validation - raise exception if critical dependencies missing
+        if DB_AVAILABLE:
+            if not self.orders_repo or not self.positions_repo:
+                error_msg = (
+                    "CRITICAL: UnifiedOrderMonitor initialized without required repositories. "
+                    "Position creation will fail. This will prevent sell order placement. "
+                    f"orders_repo={self.orders_repo is not None}, "
+                    f"positions_repo={self.positions_repo is not None}, "
+                    f"user_id={self.user_id is not None}"
+                )
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+            if not self.user_id:
+                error_msg = (
+                    "CRITICAL: UnifiedOrderMonitor initialized without user_id. "
+                    "Position creation will fail. This will prevent sell order placement."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
         logger.info("UnifiedOrderMonitor initialized")
+
+    def get_position_creation_metrics(self) -> dict[str, int]:
+        """
+        Get position creation metrics for monitoring.
+
+        Issue #1 Fix: Returns metrics tracking position creation success/failure rates.
+
+        Returns:
+            Dict with metrics: success, failed_missing_repos,
+            failed_missing_symbol, failed_exception
+        """
+        return self._position_creation_metrics.copy()
+
+    def reset_position_creation_metrics(self) -> None:
+        """
+        Reset position creation metrics.
+
+        Issue #1 Fix: Useful for periodic metric reporting.
+        """
+        self._position_creation_metrics = {
+            "success": 0,
+            "failed_missing_repos": 0,
+            "failed_missing_symbol": 0,
+            "failed_exception": 0,
+        }
 
     def load_pending_buy_orders(self) -> int:
         """
@@ -122,8 +216,11 @@ class UnifiedOrderMonitor:
 
             return loaded_count
 
+        except ValueError as e:
+            logger.error(f"Invalid data when loading pending buy orders: {e}", exc_info=True)
+            return 0
         except Exception as e:
-            logger.error(f"Error loading pending buy orders: {e}")
+            logger.error(f"Unexpected error loading pending buy orders: {e}", exc_info=True)
             return 0
 
     def register_buy_orders_with_state_manager(self) -> int:
@@ -176,7 +273,86 @@ class UnifiedOrderMonitor:
 
         return registered_count
 
-    def check_buy_order_status(
+    def _get_filled_quantity_from_order_history(  # noqa: PLR0911
+        self, order_id: str
+    ) -> dict[str, Any] | None:
+        """
+        Get filled quantity from order_history API (Edge Case #2 fix).
+
+        Handles partial execution by extracting actual filled quantity (fldQty)
+        from order_history response.
+
+        Args:
+            order_id: Order ID to look up
+
+        Returns:
+            Dict with 'filled_qty' and 'execution_price', or None if not found
+        """
+        if not self.orders:
+            return None
+
+        try:
+            # Try specific order first (more efficient)
+            response = self.orders.get_order_history(order_id=order_id)
+
+            if not response:
+                # Fallback: fetch full history and search
+                response = self.orders.get_order_history()
+
+            if not response or "data" not in response:
+                return None
+
+            # Handle nested data structure: response["data"]["data"]
+            data_wrapper = response.get("data", {})
+            if not isinstance(data_wrapper, dict):
+                return None
+
+            orders_list = data_wrapper.get("data", [])
+            if not isinstance(orders_list, list):
+                return None
+
+            # Filter orders by order_id
+            matching_orders = [
+                order
+                for order in orders_list
+                if OrderFieldExtractor.get_order_id(order) == order_id
+            ]
+
+            if not matching_orders:
+                return None
+
+            # Find latest "complete" entry (highest updRecvTm with ordSt="complete")
+            complete_orders = [
+                order
+                for order in matching_orders
+                if OrderFieldExtractor.get_status(order) == "complete"
+            ]
+
+            if not complete_orders:
+                # Order not complete yet
+                return None
+
+            # Get latest complete entry (highest timestamp)
+            latest_complete = max(complete_orders, key=lambda o: o.get("updRecvTm", 0))
+
+            filled_qty = OrderFieldExtractor.get_filled_quantity(latest_complete)
+            avg_price_str = latest_complete.get("avgPrc", "0")
+            avg_price = float(avg_price_str) if avg_price_str and avg_price_str != "0.00" else 0.0
+
+            if filled_qty > 0:
+                return {
+                    "filled_qty": filled_qty,
+                    "execution_price": avg_price,
+                    "order_status": "complete",
+                }
+
+            return None
+
+        except Exception as e:
+            logger.warning(f"Error fetching order_history for {order_id}: {e}")
+            return None
+
+    def check_buy_order_status(  # noqa: PLR0912, PLR0915
         self, broker_orders: list[dict[str, Any]] | None = None
     ) -> dict[str, int]:
         """
@@ -186,7 +362,8 @@ class UnifiedOrderMonitor:
             broker_orders: Optional pre-fetched broker orders list
 
         Returns:
-            Dict with statistics: {'checked': int, 'executed': int, 'rejected': int, 'cancelled': int}
+            Dict with statistics: {'checked': int, 'executed': int, 'rejected': int,
+                'cancelled': int}
         """
         stats = {"checked": 0, "executed": 0, "rejected": 0, "cancelled": 0}
 
@@ -199,6 +376,20 @@ class UnifiedOrderMonitor:
             if broker_orders is None:
                 orders_response = self.orders.get_orders() if self.orders else None
                 broker_orders = orders_response.get("data", []) if orders_response else []
+
+            # Fetch holdings once for reconciliation (if needed)
+            holdings_data = None
+            if self.sell_manager and hasattr(self.sell_manager, "portfolio"):
+                try:
+                    holdings_response = self.sell_manager.portfolio.get_holdings()
+                    holdings_data = (
+                        holdings_response.get("data", [])
+                        if isinstance(holdings_response, dict)
+                        else []
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not fetch holdings for reconciliation: {e}")
+                    holdings_data = []
 
             # Check each active buy order
             order_ids_to_remove = []
@@ -231,6 +422,16 @@ class UnifiedOrderMonitor:
                     # Handle different statuses
                     if status_lower in ["executed", "filled", "complete"]:
                         stats["executed"] += 1
+                        # Edge Case #2: Use fldQty from broker_order if available
+                        # (partial execution)
+                        filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+                        if filled_qty > 0:
+                            # Override execution quantity with actual filled quantity
+                            order_info["execution_qty"] = float(filled_qty)
+                            logger.info(
+                                f"Using fldQty from order_report() for {order_id}: "
+                                f"qty={filled_qty} (handles partial execution)"
+                            )
                         self._handle_buy_order_execution(order_id, order_info, broker_order)
                         order_ids_to_remove.append(order_id)
                     elif status_lower in ["rejected", "reject"]:
@@ -243,12 +444,223 @@ class UnifiedOrderMonitor:
                         order_ids_to_remove.append(order_id)
                 else:
                     # Order not found in broker - might be executed or cancelled
-                    # Check if it's been a while since placement (could be executed)
-                    placed_at = order_info.get("placed_at")
-                    if placed_at:
-                        # If order was placed more than 1 hour ago and not found, assume executed
-                        # (This is a heuristic - in production, we'd check executed orders API)
-                        logger.debug(f"Buy order {order_id} not found in broker orders")
+                    # Use holdings() API to check if order was executed
+                    # If symbol appears in holdings, order likely executed while service was down
+                    symbol = order_info.get("symbol", "")
+                    full_symbol = symbol.upper() if symbol else ""  # symbol is already full symbol
+                    base_symbol = extract_base_symbol(symbol).upper() if symbol else ""
+
+                    if full_symbol and holdings_data is not None:
+                        try:
+                            # Look for symbol in holdings (indicates order was executed)
+                            found_in_holdings = False
+                            holding_info = None
+
+                            for holding in holdings_data:
+                                # Try multiple field names for symbol matching
+                                holding_symbol = (
+                                    holding.get("displaySymbol")
+                                    or holding.get("symbol")
+                                    or holding.get("tradingSymbol")
+                                    or ""
+                                )
+                                holding_full_symbol = holding_symbol.upper()
+
+                                if holding_full_symbol == full_symbol:  # ✅ Exact match
+                                    found_in_holdings = True
+                                    holding_info = holding
+                                    break
+
+                            if found_in_holdings and holding_info:
+                                # Order was executed - symbol is in holdings
+                                logger.info(
+                                    f"Order {order_id} not in order_report but found in holdings - "
+                                    f"order was executed while service was down. Reconciling..."
+                                )
+
+                                # Update order status in database
+                                if self.orders_repo and order_info.get("db_order_id"):
+                                    try:
+                                        db_order = self.orders_repo.get(order_info["db_order_id"])
+                                        if not db_order:
+                                            continue
+
+                                        # Edge Case #2 Fix: Use priority order for execution details
+                                        # Priority 1: Try order_report() first (same-day orders)
+                                        broker_order_from_report = None
+                                        if broker_orders:
+                                            for bo in broker_orders:
+                                                if OrderFieldExtractor.get_order_id(bo) == order_id:
+                                                    broker_order_from_report = bo
+                                                    break
+
+                                        execution_qty = None
+                                        execution_price = None
+                                        source = None
+
+                                        # Priority 1: fldQty from order_report() (if found)
+                                        if broker_order_from_report:
+                                            filled_qty = OrderFieldExtractor.get_filled_quantity(
+                                                broker_order_from_report
+                                            )
+                                            if filled_qty > 0:
+                                                execution_qty = float(filled_qty)
+                                                execution_price = OrderFieldExtractor.get_price(
+                                                    broker_order_from_report
+                                                )
+                                                source = "order_report"
+                                                logger.info(
+                                                    f"Using fldQty from order_report() for {order_id}: "  # noqa: E501
+                                                    f"qty={execution_qty}, "
+                                                    f"price={execution_price:.2f}"
+                                                )
+
+                                        # Priority 2: fldQty from order_history()
+                                        # (if not found in order_report)
+                                        if execution_qty is None:
+                                            history_data = (
+                                                self._get_filled_quantity_from_order_history(
+                                                    order_id
+                                                )
+                                            )
+                                            if (
+                                                history_data
+                                                and history_data.get("filled_qty", 0) > 0
+                                            ):
+                                                execution_qty = float(history_data["filled_qty"])
+                                                execution_price = history_data.get(
+                                                    "execution_price", 0.0
+                                                )
+                                                source = "order_history"
+                                                logger.info(
+                                                    f"Using fldQty from order_history() for {order_id}: "  # noqa: E501
+                                                    f"qty={execution_qty}, "
+                                                    f"price={execution_price:.2f}"
+                                                )
+
+                                        # Priority 3: Holdings quantity (actual broker position)
+                                        if execution_qty is None:
+                                            holdings_qty = float(
+                                                holding_info.get("quantity", 0)
+                                                or holding_info.get("qty", 0)
+                                                or 0.0
+                                            )
+                                            if holdings_qty > 0:
+                                                execution_qty = holdings_qty
+                                                execution_price = (
+                                                    float(holding_info.get("averagePrice", 0))
+                                                    or float(holding_info.get("avgPrice", 0))
+                                                    or float(holding_info.get("closingPrice", 0))
+                                                    or 0.0
+                                                )
+                                                source = "holdings"
+                                            logger.info(
+                                                f"Using holdings quantity for {order_id}: "  # noqa: E501
+                                                f"qty={execution_qty}, price={execution_price:.2f} "
+                                                f"(Note: This is total position, "
+                                                f"not just this order)"
+                                            )
+
+                                        # Priority 4: DB order quantity (last resort)
+                                        if execution_qty is None:
+                                            order_qty = (
+                                                order_info.get("quantity", 0) or db_order.quantity
+                                            )
+                                            if order_qty and float(order_qty) > 0:
+                                                execution_qty = float(order_qty)
+                                                order_price = order_info.get("price") or (
+                                                    float(db_order.price)
+                                                    if db_order.price
+                                                    else None
+                                                )
+                                                execution_price = (
+                                                    float(order_price)
+                                                    if order_price and float(order_price) > 0
+                                                    else (
+                                                        float(holding_info.get("averagePrice", 0))
+                                                        or float(holding_info.get("avgPrice", 0))
+                                                        or float(
+                                                            holding_info.get("closingPrice", 0)
+                                                        )
+                                                        or 0.0
+                                                    )
+                                                )
+                                                source = "db_order"
+                                                logger.warning(
+                                                    f"Using DB order quantity for {order_id} "
+                                                    f"(least reliable): qty={execution_qty}, "
+                                                    f"price={execution_price:.2f}. "
+                                                    f"Consider manual verification."
+                                                )
+
+                                        # Mark as executed using extracted data
+                                        if (
+                                            execution_price
+                                            and execution_price > 0
+                                            and execution_qty
+                                            and execution_qty > 0
+                                        ):
+                                            # Wrap order execution and position creation in transaction  # noqa: E501
+                                            # Both repositories share the same db_session, so one
+                                            # transaction covers both
+                                            with transaction(self.orders_repo.db):
+                                                self.orders_repo.mark_executed(
+                                                    db_order,
+                                                    execution_price=execution_price,
+                                                    execution_qty=execution_qty,
+                                                    auto_commit=False,  # Transaction handles commit
+                                                )
+                                                logger.info(
+                                                    f"Reconciled order {order_id} (source: {source}): "  # noqa: E501
+                                                    f"executed at Rs {execution_price:.2f}, "
+                                                    f"qty {execution_qty}"
+                                                )
+
+                                                # Create/update position (within same transaction)
+                                                # SQLAlchemy will use savepoints for nested
+                                                # transactions automatically
+                                                self._create_position_from_executed_order(
+                                                    order_id,
+                                                    order_info,
+                                                    execution_price,
+                                                    execution_qty,
+                                                )
+
+                                            stats["executed"] += 1
+                                            order_ids_to_remove.append(order_id)
+                                        else:
+                                            logger.warning(
+                                                f"Holdings found for {full_symbol} but missing "
+                                                f"price/qty data - cannot reconcile order "
+                                                f"{order_id}"
+                                            )
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Error reconciling order {order_id} from holdings: {e}"
+                                        )
+                            else:
+                                # Order not in holdings either - might be rejected/cancelled
+                                # or holdings API unavailable
+                                placed_at = order_info.get("placed_at")
+                                if placed_at:
+                                    logger.debug(
+                                        f"Buy order {order_id} not found in broker orders "
+                                        f"or holdings"
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                f"Error checking holdings for order {order_id}: {e}. "
+                                "Falling back to default behavior."
+                            )
+                            # Fallback to original behavior
+                            placed_at = order_info.get("placed_at")
+                            if placed_at:
+                                logger.debug(f"Buy order {order_id} not found in broker orders")
+                    else:
+                        # No portfolio access or symbol info - use original behavior
+                        placed_at = order_info.get("placed_at")
+                        if placed_at:
+                            logger.debug(f"Buy order {order_id} not found in broker orders")
 
             # Remove processed orders from tracking
             for order_id in order_ids_to_remove:
@@ -262,8 +674,14 @@ class UnifiedOrderMonitor:
                     f"{stats['cancelled']} cancelled"
                 )
 
+        except ValueError as e:
+            logger.error(f"Invalid data when checking buy order status: {e}", exc_info=True)
+        except KeyError as e:
+            logger.error(
+                f"Missing required field when checking buy order status: {e}", exc_info=True
+            )
         except Exception as e:
-            logger.error(f"Error checking buy order status: {e}")
+            logger.error(f"Unexpected error checking buy order status: {e}", exc_info=True)
 
         return stats
 
@@ -288,11 +706,19 @@ class UnifiedOrderMonitor:
             # Map broker status to our status
             if status in ["executed", "filled", "complete"]:
                 execution_price = OrderFieldExtractor.get_price(broker_order)
-                execution_qty = OrderFieldExtractor.get_quantity(broker_order)
+                # Edge Case #2: Use fldQty (filled quantity) if available,
+                # otherwise use order quantity
+                filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+                if filled_qty > 0:
+                    execution_qty = float(filled_qty)
+                else:
+                    execution_qty = (
+                        OrderFieldExtractor.get_quantity(broker_order) or db_order.quantity
+                    )
                 self.orders_repo.mark_executed(
                     db_order,
                     execution_price=execution_price,
-                    execution_qty=execution_qty or db_order.quantity,
+                    execution_qty=execution_qty,
                 )
             elif status in ["rejected", "reject"]:
                 rejection_reason = OrderFieldExtractor.get_rejection_reason(broker_order)
@@ -301,8 +727,10 @@ class UnifiedOrderMonitor:
                 cancelled_reason = OrderFieldExtractor.get_rejection_reason(broker_order)
                 self.orders_repo.mark_cancelled(db_order, cancelled_reason or "Cancelled")
 
+        except ValueError as e:
+            logger.error(f"Invalid data when updating buy order status in DB: {e}", exc_info=True)
         except Exception as e:
-            logger.error(f"Error updating buy order status in DB: {e}")
+            logger.error(f"Unexpected error updating buy order status in DB: {e}", exc_info=True)
 
     def _handle_buy_order_execution(
         self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
@@ -312,6 +740,7 @@ class UnifiedOrderMonitor:
 
         Phase 4: Integrates with OrderStateManager for unified state tracking.
         Phase 9: Sends notification for order execution.
+        Edge Case #2: Uses fldQty (filled quantity) to handle partial execution.
 
         Args:
             order_id: Order ID
@@ -320,9 +749,20 @@ class UnifiedOrderMonitor:
         """
         symbol = order_info.get("symbol", "")
         execution_price = OrderFieldExtractor.get_price(broker_order)
-        execution_qty = OrderFieldExtractor.get_quantity(broker_order) or order_info.get(
-            "quantity", 0
-        )
+
+        # Edge Case #2: Use fldQty (filled quantity) if available, otherwise use order quantity
+        # Check if execution_qty was already set from order_report (handles partial execution)
+        execution_qty = order_info.get("execution_qty")
+        if execution_qty is None:
+            # Try to get filled quantity from broker_order
+            filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+            if filled_qty > 0:
+                execution_qty = float(filled_qty)
+            else:
+                # Fallback to order quantity
+                execution_qty = OrderFieldExtractor.get_quantity(broker_order) or order_info.get(
+                    "quantity", 0
+                )
 
         logger.info(
             f"Buy order executed: {symbol} - Order ID {order_id}, "
@@ -359,6 +799,748 @@ class UnifiedOrderMonitor:
                 logger.warning(f"Failed to update OrderStateManager for executed buy order: {e}")
 
         # Update in database (already done in _update_buy_order_status)
+
+        # Create/update position with entry RSI from order metadata
+        self._create_position_from_executed_order(
+            order_id, order_info, execution_price, execution_qty
+        )
+
+    def _validate_reentry_data(self, reentry_data: dict[str, Any]) -> bool:
+        """
+        Validate reentry data structure before writing to database.
+
+        Ensures all required fields are present and have valid types/values.
+
+        Args:
+            reentry_data: Reentry data dictionary to validate
+
+        Returns:
+            True if valid, False otherwise
+        """
+        required_fields = ["qty", "price", "time"]
+        for field in required_fields:
+            if field not in reentry_data:
+                logger.error(f"Missing required field '{field}' in reentry data: {reentry_data}")
+                return False
+
+        # Validate qty
+        qty = reentry_data.get("qty")
+        if not isinstance(qty, int) or qty <= 0:
+            logger.error(f"Invalid qty in reentry data: {qty} (must be positive integer)")
+            return False
+
+        # Validate price
+        price = reentry_data.get("price")
+        if not isinstance(price, int | float) or price <= 0:
+            logger.error(f"Invalid price in reentry data: {price} (must be positive number)")
+            return False
+
+        # Validate time format
+        time_str = reentry_data.get("time")
+        if not isinstance(time_str, str):
+            logger.error(f"Invalid time type in reentry data: {type(time_str)} (must be string)")
+            return False
+
+        try:
+            datetime.fromisoformat(time_str)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid time format in reentry data: {time_str} - {e}")
+            return False
+
+        return True
+
+    def _create_position_from_executed_order(  # noqa: PLR0912, PLR0915
+        self,
+        order_id: str,
+        order_info: dict[str, Any],
+        execution_price: float,
+        execution_qty: float,
+    ) -> None:
+        """
+        Create or update position from executed buy order with entry RSI tracking.
+
+        Phase 2: Entry RSI Tracking - Extracts entry RSI from order metadata and stores in position.
+        Issue #1 Fix: Enhanced error handling, retry mechanism, and fallback symbol extraction.
+
+        Args:
+            order_id: Order ID
+            order_info: Order tracking info
+            execution_price: Execution price
+            execution_qty: Execution quantity
+        """
+        # Issue #1 Fix: Enhanced validation with structured logging and alerting
+        if not self.positions_repo or not self.user_id:
+            # Issue #1 Fix: Track metrics
+            self._position_creation_metrics["failed_missing_repos"] += 1
+            logger.error(
+                f"CRITICAL: Cannot create position for order {order_id}: "
+                f"positions_repo={self.positions_repo is not None}, "
+                f"user_id={self.user_id is not None}. "
+                f"This will prevent sell order placement. "
+                f"Execution: {execution_qty} @ Rs {execution_price:.2f}"
+            )
+            # Issue #1 Fix: Send alert if telegram notifier available
+            if self.telegram_notifier and self.telegram_notifier.enabled:
+                try:
+                    symbol_hint = order_info.get("symbol", "UNKNOWN")
+                    self.telegram_notifier.notify_system_alert(
+                        alert_type="POSITION_CREATION_FAILED",
+                        message_text=(
+                            f"Order {order_id} executed but position not created. "
+                            f"Symbol: {symbol_hint}, Qty: {execution_qty}, "
+                            f"Price: Rs {execution_price:.2f}. "
+                            f"Reason: Missing positions_repo or user_id. "
+                            f"Sell order will NOT be placed."
+                        ),
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send position creation failure alert: {e}")
+            return
+
+        if not self.orders_repo:
+            # Issue #1 Fix: Track metrics
+            self._position_creation_metrics["failed_missing_repos"] += 1
+            logger.error(
+                f"CRITICAL: Cannot create position for order {order_id}: "
+                f"orders_repo not available. "
+                f"This will prevent position creation. "
+                f"Execution: {execution_qty} @ Rs {execution_price:.2f}"
+            )
+            # Issue #1 Fix: Send alert if telegram notifier available
+            if self.telegram_notifier and self.telegram_notifier.enabled:
+                try:
+                    symbol_hint = order_info.get("symbol", "UNKNOWN")
+                    self.telegram_notifier.notify_system_alert(
+                        alert_type="POSITION_CREATION_FAILED",
+                        message_text=(
+                            f"Order {order_id} executed but position not created. "
+                            f"Symbol: {symbol_hint}, Qty: {execution_qty}, "
+                            f"Price: Rs {execution_price:.2f}. "
+                            f"Reason: Missing orders_repo. Sell order will NOT be placed."
+                        ),
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send position creation failure alert: {e}")
+            return
+
+        # BUG FIX: Initialize base_symbol early to ensure it's always defined in exception handlers
+        base_symbol = None
+        symbol = None
+
+        try:
+            # Issue #1 Fix: Enhanced symbol extraction with fallbacks
+            symbol = order_info.get("symbol", "").upper()
+
+            # Get order from database first (needed for fallback symbol extraction)
+            db_order = None
+            if order_info.get("db_order_id"):
+                try:
+                    db_order = self.orders_repo.get(order_info["db_order_id"])
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get order by db_order_id {order_info['db_order_id']}: {e}. "
+                        f"Will try broker_order_id fallback."
+                    )
+
+            if not db_order:
+                # Try to find order by broker_order_id
+                try:
+                    db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get order by broker_order_id {order_id}: {e}. "
+                        f"Will continue with symbol from order_info."
+                    )
+
+            # Issue #1 Fix: Fallback symbol extraction from db_order if not in order_info
+            if not symbol and db_order:
+                if hasattr(db_order, "symbol") and db_order.symbol:
+                    symbol = db_order.symbol.upper()
+                    logger.info(
+                        f"Symbol not found in order_info for order {order_id}, "
+                        f"using fallback from db_order: {symbol}"
+                    )
+
+            if not symbol:
+                # Issue #1 Fix: Track metrics
+                self._position_creation_metrics["failed_missing_symbol"] += 1
+                logger.error(
+                    f"CRITICAL: Cannot create position for order {order_id}: "
+                    f"symbol not found in order_info or db_order. "
+                    f"Execution: {execution_qty} @ Rs {execution_price:.2f}. "
+                    f"This will prevent sell order placement."
+                )
+                # Issue #1 Fix: Send alert if telegram notifier available
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    try:
+                        self.telegram_notifier.notify_system_alert(
+                            alert_type="POSITION_CREATION_FAILED",
+                            message_text=(
+                                f"Order {order_id} executed but position not created. "
+                                f"Qty: {execution_qty}, Price: Rs {execution_price:.2f}. "
+                                f"Reason: Symbol not found. Sell order will NOT be placed."
+                            ),
+                            severity="ERROR",
+                            user_id=self.user_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send position creation failure alert: {e}")
+                return
+
+            # Use full symbol (already has suffix from broker/order)
+            full_symbol = symbol.upper()
+
+            # Extract entry RSI from order metadata
+            entry_rsi = None
+            if db_order and db_order.order_metadata:
+                metadata = (
+                    db_order.order_metadata if isinstance(db_order.order_metadata, dict) else {}
+                )
+                # Priority: rsi_entry_level > entry_rsi > rsi10
+                if metadata.get("rsi_entry_level") is not None:
+                    entry_rsi = float(metadata["rsi_entry_level"])
+                elif metadata.get("entry_rsi") is not None:
+                    entry_rsi = float(metadata["entry_rsi"])
+                elif metadata.get("rsi10") is not None:
+                    entry_rsi = float(metadata["rsi10"])
+
+            # Default to 29.5 if no RSI data available (assume entry at RSI < 30)
+            if entry_rsi is None:
+                entry_rsi = 29.5
+                logger.debug(
+                    f"No entry RSI found in order metadata for {full_symbol}, defaulting to 29.5"
+                )
+
+            # Check if position already exists
+            # Use FOR UPDATE lock to prevent race conditions with concurrent reentry executions
+            existing_pos = self.positions_repo.get_by_symbol_for_update(self.user_id, full_symbol)
+
+            # Improvement: Check if position is closed - don't add reentry to closed positions
+            if existing_pos and existing_pos.closed_at is not None:
+                logger.warning(
+                    f"Reentry order executed for closed position {full_symbol}. "
+                    f"Position was closed at {existing_pos.closed_at}. "
+                    f"Skipping reentry update to prevent reopening closed position."
+                )
+                return
+
+            # Calculate execution time (use current time if not available)
+            if ist_now:
+                execution_time = ist_now()
+            else:
+                execution_time = datetime.now()
+            if db_order and hasattr(db_order, "filled_at") and db_order.filled_at:
+                execution_time = db_order.filled_at
+            elif db_order and hasattr(db_order, "execution_time") and db_order.execution_time:
+                execution_time = db_order.execution_time
+
+            # Create or update position
+            if existing_pos:
+                # Update existing position (add to quantity, recalculate avg price)
+                existing_qty = existing_pos.quantity
+                existing_avg_price = existing_pos.avg_price
+
+                # Calculate new average price
+                total_cost = (existing_qty * existing_avg_price) + (execution_qty * execution_price)
+                new_qty = existing_qty + execution_qty
+                new_avg_price = total_cost / new_qty if new_qty > 0 else execution_price
+
+                # Only update entry_rsi if it's not already set (preserve original entry RSI)
+                entry_rsi_to_set = None
+                if existing_pos.entry_rsi is None:
+                    entry_rsi_to_set = entry_rsi
+
+                # Reentry tracking: Detect if this is a reentry and update reentry fields
+                is_reentry = False
+                reentry_count = existing_pos.reentry_count or 0
+                # Enhanced Hybrid Approach: Handle both old format (list) and
+                # new format (dict with _cycle_metadata)
+                if existing_pos.reentries:
+                    if isinstance(existing_pos.reentries, dict):
+                        # New format: extract reentries array from wrapper structure
+                        reentries_array = list(existing_pos.reentries.get("reentries", []))
+                    elif isinstance(existing_pos.reentries, list):
+                        # Old format: reentries is directly a list
+                        reentries_array = list(existing_pos.reentries)
+                    else:
+                        reentries_array = []
+                else:
+                    reentries_array = []
+                last_reentry_price = existing_pos.last_reentry_price
+                reentry_data = None  # Initialize to None, will be set if is_reentry is True
+
+                # Check if this is a reentry: existing position OR order marked as reentry
+                if db_order and db_order.entry_type == "reentry":
+                    is_reentry = True
+                elif existing_pos:  # Position already exists, so this is likely a reentry
+                    is_reentry = True
+
+                if is_reentry:
+                    # Extract placed_at date for daily cap check (fixes issue where execution
+                    # date is used instead of placement date for daily cap)
+                    placed_at_date = None
+                    if db_order and db_order.placed_at:
+                        try:
+                            # Normalize to IST for consistent date extraction
+                            placed_at_dt = db_order.placed_at
+                            if placed_at_dt.tzinfo is None:
+                                # Naive datetime - assume IST
+                                placed_at_dt = placed_at_dt.replace(tzinfo=IST)
+                            elif placed_at_dt.tzinfo != IST:
+                                # Different timezone - convert to IST
+                                placed_at_dt = placed_at_dt.astimezone(IST)
+                            placed_at_date = placed_at_dt.date().isoformat()
+                        except Exception as e:
+                            logger.warning(
+                                f"Error extracting placed_at date for reentry {order_id}: {e}. "
+                                f"Falling back to execution date."
+                            )
+                            # Fallback to execution date
+                            placed_at_date = execution_time.date().isoformat()
+                    else:
+                        # Fallback: use execution date if placed_at not available
+                        # (backward compatibility for orders without placed_at)
+                        placed_at_date = execution_time.date().isoformat()
+
+                    # Extract reentry data from order metadata or construct from execution data
+                    # Enhanced Hybrid Approach: Include cycle number from order metadata
+                    reentry_data = None
+                    if db_order and db_order.order_metadata:
+                        metadata = (
+                            db_order.order_metadata
+                            if isinstance(db_order.order_metadata, dict)
+                            else {}
+                        )
+                        # Extract reentry fields from metadata
+                        reentry_level = (
+                            metadata.get("rsi_level")
+                            or metadata.get("level")
+                            or metadata.get("reentry_level")
+                        )
+                        reentry_rsi = metadata.get("rsi") or metadata.get("rsi10") or entry_rsi
+                        reentry_price = metadata.get("price") or execution_price
+                        reentry_cycle = metadata.get(
+                            "cycle"
+                        )  # Enhanced Hybrid Approach: Get cycle number
+
+                        # Construct reentry data matching trade history structure
+                        reentry_data = {
+                            "qty": int(execution_qty),
+                            "level": int(reentry_level) if reentry_level is not None else None,
+                            "rsi": float(reentry_rsi) if reentry_rsi is not None else None,
+                            "price": float(reentry_price),
+                            "time": execution_time.isoformat(),  # Execution time
+                            "placed_at": placed_at_date,  # Placement date (for daily cap check)
+                            "order_id": order_id,  # Track which order created this reentry
+                            "cycle": (
+                                int(reentry_cycle) if reentry_cycle is not None else None
+                            ),  # Enhanced Hybrid Approach: Store cycle number
+                        }
+                    else:
+                        # Fallback: construct minimal reentry data from execution
+                        # Try to get cycle from existing position metadata
+                        reentry_cycle = None
+                        if existing_pos and existing_pos.reentries:
+                            # Get cycle from position metadata (if available)
+                            # Enhanced Hybrid Approach: Extract cycle from _cycle_metadata structure
+                            if isinstance(existing_pos.reentries, dict):
+                                cycle_meta = existing_pos.reentries.get("_cycle_metadata", {})
+                                if isinstance(cycle_meta, dict):
+                                    reentry_cycle = cycle_meta.get("current_cycle")
+
+                        reentry_data = {
+                            "qty": int(execution_qty),
+                            "level": None,
+                            "rsi": float(entry_rsi) if entry_rsi else None,
+                            "price": float(execution_price),
+                            "time": execution_time.isoformat(),  # Execution time
+                            "placed_at": placed_at_date,  # Placement date (for daily cap check)
+                            "order_id": order_id,  # Track which order created this reentry
+                            "cycle": (
+                                int(reentry_cycle) if reentry_cycle is not None else None
+                            ),  # Enhanced Hybrid Approach: Store cycle number
+                        }
+
+                    # Improvement: Validate reentry data before writing
+                    if not self._validate_reentry_data(reentry_data):
+                        logger.error(
+                            f"Invalid reentry data for {full_symbol} (order_id: {order_id}). "
+                            f"Skipping reentry update to prevent data corruption."
+                        )
+                        # Don't update reentry fields, but still update quantity and avg_price
+                        is_reentry = False
+                        reentry_count = existing_pos.reentry_count or 0
+                        # Create a copy to avoid modifying the original list
+                        reentries_array = (
+                            list(existing_pos.reentries) if existing_pos.reentries else []
+                        )
+                        last_reentry_price = existing_pos.last_reentry_price
+                    else:
+                        # Ensure reentries_array is a list
+                        if not isinstance(reentries_array, list):
+                            reentries_array = []
+
+                        # Improvement: Check for duplicate reentry (same order_id or very
+                        # similar timestamp+qty). This prevents duplicate entries if order
+                        # is processed multiple times
+                        existing_reentry = next(
+                            (
+                                r
+                                for r in reentries_array
+                                if r.get("order_id") == order_id
+                                or (
+                                    r.get("time") == reentry_data["time"]
+                                    and r.get("qty") == reentry_data["qty"]
+                                    and abs(r.get("price", 0) - reentry_data["price"])
+                                    < 0.01  # noqa: PLR2004
+                                )
+                            ),
+                            None,
+                        )
+                        if existing_reentry:
+                            logger.warning(
+                                f"Duplicate reentry detected for {full_symbol} "
+                                f"(order_id: {order_id}). Skipping to prevent duplicate entry."
+                            )
+                            # Don't update reentry fields, but still update quantity and avg_price
+                            is_reentry = False
+                            reentry_count = existing_pos.reentry_count or 0
+                            # Create a copy to avoid modifying the original list
+                            reentries_array = (
+                                list(existing_pos.reentries) if existing_pos.reentries else []
+                            )
+                            last_reentry_price = existing_pos.last_reentry_price
+                        else:
+                            # Append new reentry (data is validated)
+                            reentries_array.append(reentry_data)
+                            reentry_count = len(reentries_array)
+                            last_reentry_price = execution_price
+
+                    logger.info(
+                        f"Reentry detected for {full_symbol}: Adding reentry #{reentry_count} "
+                        f"(qty: {execution_qty}, price: Rs {execution_price:.2f})"
+                    )
+                    # Note: Database is updated here (source of truth).
+                    # JSON backup is synced during reconciliation via _load_trades_history()
+                    # which reads from database and writes to JSON.
+
+                # Wrap position updates in a transaction for atomicity
+                # This ensures position update and integrity fix happen together or not at all
+                # If already in a transaction, SQLAlchemy will use savepoints automatically
+                with transaction(self.positions_repo.db):
+                    # Race Condition Fix #4: Re-check if position is closed just before updating
+                    # This prevents reopening a position that was closed during processing
+                    # (e.g., if sell order executed while reentry was being processed)
+                    current_position = self.positions_repo.get_by_symbol_for_update(
+                        self.user_id, full_symbol
+                    )
+                    if current_position and current_position.closed_at is not None:
+                        logger.warning(
+                            f"Reentry order execution aborted for {full_symbol}: "
+                            f"Position was closed at {current_position.closed_at} "
+                            f"while reentry was being processed. "
+                            f"Skipping update to prevent reopening closed position."
+                        )
+                        # Transaction will rollback automatically
+                        return
+
+                    # Flaw #8 Fix: Re-check for duplicate reentry just before updating
+                    # This prevents duplicate entries if two processes process the same
+                    # order concurrently. We already have the locked read from the
+                    # closed_at check above
+                    if is_reentry and current_position and reentry_data:
+                        # Get latest reentries array from the locked position
+                        # Enhanced Hybrid Approach: Handle both old and new format
+                        if current_position.reentries:
+                            if isinstance(current_position.reentries, dict):
+                                latest_reentries = current_position.reentries.get("reentries", [])
+                            elif isinstance(current_position.reentries, list):
+                                latest_reentries = current_position.reentries
+                            else:
+                                latest_reentries = []
+                        else:
+                            latest_reentries = []
+
+                        # Re-check for duplicate using latest data
+                        # Only check if reentry_data is defined (it should be if is_reentry is True)
+                        duplicate_found = None
+                        if reentry_data:
+                            duplicate_found = next(
+                                (
+                                    r
+                                    for r in latest_reentries
+                                    if r.get("order_id") == order_id
+                                    or (
+                                        r.get("time") == reentry_data["time"]
+                                        and r.get("qty") == reentry_data["qty"]
+                                        and abs(r.get("price", 0) - reentry_data["price"])
+                                        < 0.01  # noqa: PLR2004
+                                    )
+                                ),
+                                None,
+                            )
+
+                        if duplicate_found:
+                            logger.warning(
+                                f"Duplicate reentry detected for {full_symbol} "
+                                f"(order_id: {order_id}) during final check. "
+                                f"Another process may have already added this reentry. "
+                                f"Skipping entire update to prevent duplicate entry "  # noqa: E501
+                                f"and double-counting."
+                            )
+                            # If duplicate found, another process already processed this order
+                            # and updated the position (including quantity and avg_price)
+                            # Skip the entire update to avoid duplicate entry and double-counting
+                            # Transaction will rollback automatically (no changes made)
+                            return
+
+                    # Flaw #9 Fix: Try broker API call BEFORE updating database
+                    # If broker API fails, we still update position (primary operation -
+                    # order executed). This prevents losing the position update, but
+                    # creates temporary inconsistency. The sell order update will be
+                    # retried later via periodic mismatch check (Flaw #7 fix)
+                    sell_order_update_success = True
+                    if new_qty > existing_qty and self.sell_manager:
+                        try:
+                            # Check for existing sell order
+                            existing_orders = self.sell_manager.get_existing_sell_orders()
+                            if full_symbol.upper() in existing_orders:
+                                existing_order = existing_orders[full_symbol.upper()]
+                                existing_order_qty = existing_order.get("qty", 0)
+                                existing_order_price = existing_order.get("price", 0)
+                                existing_order_id = existing_order.get("order_id")
+
+                                # Update sell order if quantity doesn't match position
+                                if existing_order_id and new_qty != existing_order_qty:
+                                    if new_qty > existing_order_qty:
+                                        logger.info(
+                                            f"Reentry detected for {full_symbol}: "
+                                            f"Updating sell order quantity from {existing_order_qty} "  # noqa: E501
+                                            f"to {new_qty} (Order ID: {existing_order_id})"
+                                        )
+                                    else:
+                                        logger.info(
+                                            f"Sell order quantity mismatch for {full_symbol}: "
+                                            f"Position={new_qty}, Sell order={existing_order_qty}. "
+                                            f"Updating to match position "  # noqa: E501
+                                            f"(Order ID: {existing_order_id})"
+                                        )
+
+                                    # Flaw #9 Fix: Try broker API call BEFORE updating database
+                                    # If it fails, we'll still update position (primary operation)
+                                    # but log warning for retry later (Flaw #7 fix handles this)
+                                    sell_order_update_success = self.sell_manager.update_sell_order(
+                                        order_id=str(existing_order_id),
+                                        symbol=full_symbol,
+                                        qty=int(new_qty),
+                                        new_price=existing_order_price,
+                                    )
+
+                                    if sell_order_update_success:
+                                        logger.info(
+                                            f"Successfully updated sell order for {full_symbol}: "
+                                            f"{existing_order_qty} -> {new_qty} shares "
+                                            f"@ Rs {existing_order_price:.2f}"
+                                        )
+                                    else:
+                                        logger.warning(
+                                            f"Failed to update sell order for {full_symbol} "
+                                            f"via broker API. Position will still be updated "
+                                            f"(primary operation - order executed). "
+                                            f"Sell order will be retried later via periodic "
+                                            f"mismatch check (Flaw #7 fix)."
+                                        )
+                        except Exception as e:
+                            # Broker API call failed - log warning but continue with position update
+                            logger.warning(
+                                f"Error updating sell order after reentry for {full_symbol}: {e}. "
+                                f"Position will still be updated "  # noqa: E501
+                                f"(primary operation - order executed). "
+                                f"Sell order will be retried later via periodic mismatch check "
+                                f"(Flaw #7 fix)."
+                            )
+                            sell_order_update_success = False
+
+                    # Enhanced Hybrid Approach: Preserve cycle metadata structure when
+                    # updating reentries
+                    reentries_to_store = None
+                    if is_reentry:
+                        # Check if existing reentries has cycle metadata structure
+                        if (
+                            isinstance(existing_pos.reentries, dict)
+                            and "_cycle_metadata" in existing_pos.reentries
+                        ):
+                            # Preserve existing cycle metadata structure
+                            reentries_to_store = {
+                                "_cycle_metadata": existing_pos.reentries["_cycle_metadata"],
+                                "reentries": reentries_array,
+                            }
+                        else:
+                            # Old format or no metadata - store as list (backward compatible)
+                            # Cycle metadata will be added by _determine_reentry_level on next check
+                            reentries_to_store = reentries_array
+
+                    self.positions_repo.upsert(
+                        user_id=self.user_id,
+                        symbol=full_symbol,
+                        quantity=new_qty,
+                        avg_price=new_avg_price,
+                        opened_at=existing_pos.opened_at,  # Preserve original open time
+                        entry_rsi=entry_rsi_to_set,  # Only set if not already set
+                        reentry_count=reentry_count if is_reentry else None,
+                        reentries=reentries_to_store,
+                        last_reentry_price=last_reentry_price if is_reentry else None,
+                        auto_commit=False,  # Transaction handles commit
+                    )
+
+                    # Improvement: Verify data integrity after update
+                    # Use FOR UPDATE lock to prevent race conditions during integrity check
+                    if is_reentry:
+                        updated_position = self.positions_repo.get_by_symbol_for_update(
+                            self.user_id, full_symbol
+                        )
+                        if updated_position:
+                            actual_count = len(updated_position.reentries or [])
+                            if updated_position.reentry_count != actual_count:
+                                logger.warning(
+                                    f"Reentry count mismatch for {full_symbol}: "
+                                    f"count={updated_position.reentry_count}, "  # noqa: E501
+                                    f"array_length={actual_count}. "
+                                    f"Fixing..."
+                                )
+                                # Fix the mismatch - preserve the last_reentry_price we just set
+                                self.positions_repo.upsert(
+                                    user_id=self.user_id,
+                                    symbol=full_symbol,
+                                    reentry_count=actual_count,
+                                    # Preserve other fields including the newly set
+                                    # last_reentry_price
+                                    quantity=updated_position.quantity,
+                                    avg_price=updated_position.avg_price,
+                                    opened_at=updated_position.opened_at,
+                                    entry_rsi=updated_position.entry_rsi,
+                                    reentries=updated_position.reentries,
+                                    last_reentry_price=last_reentry_price,  # Use value we set
+                                    auto_commit=False,  # Transaction handles commit
+                                )
+                                # Refresh position after fix
+                                self.positions_repo.db.refresh(updated_position)
+
+                logger.info(
+                    f"Updated position for {full_symbol}: qty {existing_qty} -> {new_qty}, "
+                    f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}"
+                    + (f", reentry_count: {reentry_count}" if is_reentry else "")
+                )
+            else:
+                # Create new position (wrapped in transaction for consistency)
+                # If already in a transaction, SQLAlchemy will use savepoints automatically
+                with transaction(self.positions_repo.db):
+                    self.positions_repo.upsert(
+                        user_id=self.user_id,
+                        symbol=full_symbol,
+                        quantity=execution_qty,
+                        avg_price=execution_price,
+                        opened_at=execution_time,
+                        entry_rsi=entry_rsi,
+                        auto_commit=False,  # Transaction handles commit
+                    )
+                logger.info(
+                    f"Created position for {base_symbol}: qty={execution_qty}, "
+                    f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"
+                )
+
+        except ValueError as e:
+            # Issue #1 Fix: Track metrics and send alert
+            self._position_creation_metrics["failed_exception"] += 1
+            # BUG FIX: Use fallback symbol if base_symbol not set
+            symbol_hint = base_symbol or symbol or order_info.get("symbol", "UNKNOWN") or order_id
+            logger.error(
+                f"Invalid data for position update: {symbol_hint}, order_id={order_id}: {e}. "
+                f"Execution: {execution_qty} @ Rs {execution_price:.2f}. "
+                f"This will prevent sell order placement.",
+                exc_info=True,
+            )
+            # Issue #1 Fix: Send alert if telegram notifier available
+            if self.telegram_notifier and self.telegram_notifier.enabled:
+                try:
+                    self.telegram_notifier.notify_system_alert(
+                        alert_type="POSITION_CREATION_FAILED",
+                        message_text=(
+                            f"Order {order_id} executed but position not created. "
+                            f"Symbol: {symbol_hint}, Qty: {execution_qty}, "
+                            f"Price: Rs {execution_price:.2f}. "
+                            f"Reason: Invalid data - {str(e)}. "
+                            f"Sell order will NOT be placed."
+                        ),
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                except Exception as notify_err:
+                    logger.warning(f"Failed to send position creation failure alert: {notify_err}")
+        except KeyError as e:
+            # Issue #1 Fix: Track metrics and send alert
+            self._position_creation_metrics["failed_exception"] += 1
+            # BUG FIX: Use fallback symbol if base_symbol not set
+            symbol_hint = base_symbol or symbol or order_info.get("symbol", "UNKNOWN") or order_id
+            logger.error(
+                f"Missing required field in order_info for {symbol_hint}, "
+                f"order_id={order_id}: {e}. "
+                f"Execution: {execution_qty} @ Rs {execution_price:.2f}. "
+                f"This will prevent sell order placement.",
+                exc_info=True,
+            )
+            # Issue #1 Fix: Send alert if telegram notifier available
+            if self.telegram_notifier and self.telegram_notifier.enabled:
+                try:
+                    self.telegram_notifier.notify_system_alert(
+                        alert_type="POSITION_CREATION_FAILED",
+                        message_text=(
+                            f"Order {order_id} executed but position not created. "
+                            f"Symbol: {symbol_hint}, Qty: {execution_qty}, "
+                            f"Price: Rs {execution_price:.2f}. "
+                            f"Reason: Missing field - {str(e)}. "
+                            f"Sell order will NOT be placed."
+                        ),
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                except Exception as notify_err:
+                    logger.warning(f"Failed to send position creation failure alert: {notify_err}")
+        except Exception as e:
+            # Issue #1 Fix: Track metrics and send alert
+            self._position_creation_metrics["failed_exception"] += 1
+            # BUG FIX: Use fallback symbol if base_symbol not set
+            symbol_hint = base_symbol or symbol or order_info.get("symbol", "UNKNOWN") or order_id
+            logger.error(
+                f"Unexpected error updating position for {symbol_hint}, order_id={order_id}: {e}. "
+                f"Execution: {execution_qty} @ Rs {execution_price:.2f}. "
+                f"This will prevent sell order placement.",
+                exc_info=True,
+            )
+            # Issue #1 Fix: Send alert if telegram notifier available
+            if self.telegram_notifier and self.telegram_notifier.enabled:
+                try:
+                    self.telegram_notifier.notify_system_alert(
+                        alert_type="POSITION_CREATION_FAILED",
+                        message_text=(
+                            f"Order {order_id} executed but position not created. "
+                            f"Symbol: {symbol_hint}, Qty: {execution_qty}, "
+                            f"Price: Rs {execution_price:.2f}. "
+                            f"Reason: Unexpected error - {str(e)}. "
+                            f"Sell order will NOT be placed."
+                        ),
+                        severity="ERROR",
+                        user_id=self.user_id,
+                    )
+                except Exception as notify_err:
+                    logger.warning(f"Failed to send position creation failure alert: {notify_err}")
+        else:
+            # Issue #1 Fix: Track successful position creation
+            self._position_creation_metrics["success"] += 1
 
     def _handle_buy_order_rejection(
         self, order_id: str, order_info: dict[str, Any], broker_order: dict[str, Any]
@@ -474,8 +1656,10 @@ class UnifiedOrderMonitor:
         try:
             orders_response = self.orders.get_orders() if self.orders else None
             broker_orders = orders_response.get("data", []) if orders_response else []
+        except ValueError as e:
+            logger.error(f"Invalid data when fetching broker orders: {e}", exc_info=True)
         except Exception as e:
-            logger.error(f"Error fetching broker orders: {e}")
+            logger.error(f"Unexpected error fetching broker orders: {e}", exc_info=True)
 
         # Monitor buy orders (new functionality) - check for executions first
         buy_stats = self.check_buy_order_status(broker_orders=broker_orders)
@@ -499,7 +1683,9 @@ class UnifiedOrderMonitor:
 
         return combined_stats
 
-    def check_and_place_sell_orders_for_new_holdings(self) -> int:
+    def check_and_place_sell_orders_for_new_holdings(  # noqa: PLR0912, PLR0915
+        self,
+    ) -> int:
         """
         Check for newly executed buy orders (ONGOING status) that were executed today
         and place sell orders for them if they don't already have sell orders.
@@ -517,31 +1703,64 @@ class UnifiedOrderMonitor:
             return 0
 
         try:
-            from datetime import datetime, timedelta
-            from src.infrastructure.db.timezone_utils import ist_now
-
             # Get today's date
-            today = ist_now().date()
-            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=ist_now().tzinfo)
+            local_ist_now = ist_now
+            if local_ist_now is None:
+                from src.infrastructure.db.timezone_utils import (
+                    ist_now as local_ist_now,  # noqa: PLC0415
+                )
+            today = local_ist_now().date()
+            today_start = datetime.combine(today, datetime.min.time()).replace(
+                tzinfo=ist_now().tzinfo
+            )
+
+            # Helper function to normalize datetime to IST timezone-aware
+            def normalize_to_ist(dt: datetime | None) -> datetime | None:
+                """Convert datetime to IST timezone-aware if it's naive"""
+                if dt is None:
+                    return None
+                if dt.tzinfo is None:
+                    # Assume naive datetime is in IST
+                    return dt.replace(tzinfo=IST)
+                # Already timezone-aware, convert to IST if needed
+                return dt.astimezone(IST) if dt.tzinfo != IST else dt
 
             # Get all ONGOING buy orders executed today
             # We'll check orders that have execution_time >= today_start
             all_orders = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
 
             newly_executed_orders = []
+            skipped_orders = []
             for order in all_orders:
                 # Only process buy orders
                 if order.side.lower() != "buy":
                     continue
 
+                # Skip manual orders - system does not track manual buys
+                if order.orig_source and order.orig_source.lower() == "manual":
+                    skipped_orders.append(f"{order.symbol}: manual order (not tracked)")
+                    continue
+
                 # Check if order was executed today
                 # Use execution_time if available, otherwise use filled_at
                 execution_time = getattr(order, "execution_time", None) or order.filled_at
+                execution_time = normalize_to_ist(execution_time)
+
                 if execution_time:
                     if execution_time >= today_start:
                         newly_executed_orders.append(order)
-                elif order.filled_at and order.filled_at >= today_start:
-                    newly_executed_orders.append(order)
+                    else:
+                        skipped_orders.append(
+                            f"{order.symbol}: executed {execution_time} (before today)"
+                        )
+                else:
+                    skipped_orders.append(f"{order.symbol}: no execution_time or filled_at")
+
+            if skipped_orders:
+                logger.debug(
+                    f"Skipped {len(skipped_orders)} ONGOING orders (not executed today): "
+                    f"{', '.join(skipped_orders[:5])}"
+                )
 
             if not newly_executed_orders:
                 return 0
@@ -550,28 +1769,41 @@ class UnifiedOrderMonitor:
 
             # Get existing sell orders to avoid duplicates
             existing_sell_orders = self.sell_manager.get_existing_sell_orders()
-            existing_symbols = {extract_base_symbol(symbol).upper() for symbol in existing_sell_orders.keys()}
+            existing_symbols = {
+                symbol.upper() for symbol in existing_sell_orders.keys()  # Already full symbols
+            }
 
             # Get currently tracked sell orders
             active_sell_symbols = {
-                extract_base_symbol(symbol).upper() for symbol in self.sell_manager.active_sell_orders.keys()
+                symbol.upper()
+                for symbol in self.sell_manager.active_sell_orders.keys()  # Already full symbols
             }
+
+            # Optimization: Fetch orders once and reuse for has_completed_sell_order checks
+            all_orders_response = None
+            try:
+                all_orders_response = self.sell_manager.orders.get_orders()
+            except Exception as e:
+                logger.debug(f"Failed to fetch orders for place_sell_orders_for_new_positions: {e}")
 
             orders_placed = 0
 
             for db_order in newly_executed_orders:
                 try:
-                    base_symbol = extract_base_symbol(db_order.symbol).upper()
+                    full_symbol = db_order.symbol.upper()  # Already full symbol from orders table
 
                     # Skip if already has sell order
-                    if base_symbol in existing_symbols or base_symbol in active_sell_symbols:
-                        logger.debug(f"Skipping {base_symbol}: Already has sell order")
+                    if full_symbol in existing_symbols or full_symbol in active_sell_symbols:
+                        logger.info(f"Skipping {full_symbol}: Already has sell order")
                         continue
 
                     # Check if position already has a completed sell order
-                    completed_order_info = self.sell_manager.has_completed_sell_order(base_symbol)
+                    # Reuse orders data to avoid duplicate API calls
+                    completed_order_info = self.sell_manager.has_completed_sell_order(
+                        full_symbol, all_orders_response
+                    )
                     if completed_order_info:
-                        logger.debug(f"Skipping {base_symbol}: Already has completed sell order")
+                        logger.debug(f"Skipping {full_symbol}: Already has completed sell order")
                         continue
 
                     # Convert order to trade format
@@ -581,60 +1813,87 @@ class UnifiedOrderMonitor:
                         ticker = db_order.order_metadata.get("ticker")
 
                     if not ticker:
-                        # Construct ticker from symbol (e.g., "RELIANCE-EQ" -> "RELIANCE.NS")
-                        base_sym = extract_base_symbol(db_order.symbol).upper()
-                        ticker = f"{base_sym}.NS"
+                        # Use helper function to create ticker from full symbol
+                        from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                            get_ticker_from_full_symbol,
+                        )
+
+                        ticker = get_ticker_from_full_symbol(full_symbol)
 
                     # Get execution price and quantity
-                    execution_price = getattr(db_order, "execution_price", None) or db_order.avg_price or db_order.price
+                    execution_price = (
+                        getattr(db_order, "execution_price", None)
+                        or db_order.avg_price
+                        or db_order.price
+                    )
                     execution_qty = getattr(db_order, "execution_qty", None) or db_order.quantity
 
                     if not execution_price or execution_qty <= 0:
-                        logger.warning(f"Skipping {base_symbol}: Invalid execution price or quantity")
-                        continue
-
-                    # Create trade dict in format expected by place_sell_order
-                    trade = {
-                        "symbol": base_symbol,
-                        "ticker": ticker,
-                        "qty": int(execution_qty),
-                        "entry_price": execution_price,
-                        "placed_symbol": db_order.symbol,  # Keep original broker symbol
-                        "entry_time": execution_time.isoformat() if execution_time else ist_now().isoformat(),
-                    }
-
-                    # Get current EMA9 as target
-                    broker_sym = db_order.symbol
-                    ema9 = self.sell_manager.get_current_ema9(ticker, broker_symbol=broker_sym)
-                    if not ema9:
-                        logger.warning(f"Skipping {base_symbol}: Failed to calculate EMA9")
-                        continue
-
-                    # Check if price is reasonable (not too far from entry)
-                    if ema9 < execution_price * 0.95:  # More than 5% below entry
                         logger.warning(
-                            f"Skipping {base_symbol}: EMA9 (Rs {ema9:.2f}) is too low "
-                            f"(entry: Rs {execution_price:.2f})"
+                            f"Skipping {full_symbol}: Invalid execution price or quantity"
                         )
                         continue
 
+                    # Get execution time for this order (normalize to IST)
+                    order_execution_time = (
+                        getattr(db_order, "execution_time", None) or db_order.filled_at
+                    )
+                    order_execution_time = (
+                        normalize_to_ist(order_execution_time) if order_execution_time else None
+                    )
+
+                    # Create trade dict in format expected by place_sell_order
+                    trade = {
+                        "symbol": full_symbol,  # ✅ Full symbol for matching
+                        "ticker": ticker,
+                        "qty": int(execution_qty),
+                        "entry_price": execution_price,
+                        "placed_symbol": db_order.symbol,  # Keep original broker symbol (full)
+                        "entry_time": (
+                            order_execution_time.isoformat()
+                            if order_execution_time
+                            else ist_now().isoformat()
+                        ),
+                    }
+
+                    # Issue #3 Fix: Get current EMA9 with retry and fallback
+                    broker_sym = db_order.symbol
+                    ema9 = self.sell_manager._get_ema9_with_retry(
+                        ticker, broker_symbol=broker_sym, symbol=full_symbol
+                    )
+                    if not ema9:
+                        logger.error(
+                            f"Issue #3: Skipping {full_symbol}: Failed to calculate EMA9 after retries "
+                            f"and fallback. Position exists but sell order cannot be placed."
+                        )
+                        continue
+
+                    # Issue #4: EMA9 validation check removed - all positions will get sell orders
+                    # This enables RSI 50 exit mechanism to work for all positions
+                    # Note: Positions may be sold at loss if EMA9 is below entry price
+
                     # Place sell order
+                    logger.info(
+                        f"Placing sell order for {full_symbol}: qty={int(execution_qty)}, "
+                        f"entry_price={execution_price:.2f}, ema9={ema9:.2f}"
+                    )
                     order_id = self.sell_manager.place_sell_order(trade, ema9)
 
                     if order_id:
+                        logger.info(f"Successfully placed sell order for {full_symbol}: {order_id}")
                         # Track the order
                         self.sell_manager._register_order(
-                            symbol=base_symbol,
+                            symbol=full_symbol,
                             order_id=order_id,
                             target_price=ema9,
                             qty=int(execution_qty),
                             ticker=ticker,
                             placed_symbol=broker_sym,
                         )
-                        self.sell_manager.lowest_ema9[base_symbol] = ema9
+                        self.sell_manager.lowest_ema9[full_symbol] = ema9
                         orders_placed += 1
                         logger.info(
-                            f"Placed sell order for newly executed holding: {base_symbol} "
+                            f"Placed sell order for newly executed holding: {full_symbol} "
                             f"(Order ID: {order_id}, Target: Rs {ema9:.2f})"
                         )
 
@@ -646,6 +1905,9 @@ class UnifiedOrderMonitor:
 
             return orders_placed
 
+        except ValueError as e:
+            logger.error(f"Invalid data when checking for new holdings: {e}", exc_info=True)
+            return 0
         except Exception as e:
-            logger.error(f"Error checking for new holdings: {e}")
+            logger.error(f"Unexpected error checking for new holdings: {e}", exc_info=True)
             return 0

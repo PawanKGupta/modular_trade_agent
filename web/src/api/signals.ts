@@ -1,6 +1,6 @@
 import { api } from './client';
 
-export type SignalStatus = 'active' | 'expired' | 'traded' | 'rejected';
+export type SignalStatus = 'active' | 'expired' | 'traded' | 'rejected' | 'failed';
 
 export type BuyingZoneItem = {
 	id: number;
@@ -37,8 +37,8 @@ export type BuyingZoneItem = {
 	// Volume data
 	avg_vol?: number | null;
 	today_vol?: number | null;
-	volume_analysis?: Record<string, any> | null;
-	volume_pattern?: Record<string, any> | null;
+	volume_analysis?: Record<string, unknown> | null;
+	volume_pattern?: Record<string, unknown> | null;
 	volume_description?: string | null;
 	vol_ok?: boolean | null;
 	volume_ratio?: number | null;
@@ -50,10 +50,10 @@ export type BuyingZoneItem = {
 	backtest_confidence?: string | null;
 	signals?: string[] | null;
 	justification?: string[] | null;
-	timeframe_analysis?: Record<string, any> | null;
-	news_sentiment?: Record<string, any> | null;
-	candle_analysis?: Record<string, any> | null;
-	chart_quality?: Record<string, any> | null;
+	timeframe_analysis?: Record<string, unknown> | null;
+	news_sentiment?: Record<string, unknown> | null;
+	candle_analysis?: Record<string, unknown> | null;
+	chart_quality?: Record<string, unknown> | null;
 	// Additional analysis fields
 	vol_strong?: boolean | null;
 	is_above_ema200?: boolean | null;
@@ -65,21 +65,21 @@ export type BuyingZoneItem = {
 	volume_green_vs_red_ratio?: number | null;
 	support_hold_count?: number | null;
 	// Additional metadata
-	liquidity_recommendation?: Record<string, any> | null;
-	trading_params?: Record<string, any> | null;
+	liquidity_recommendation?: Record<string, unknown> | null;
+	trading_params?: Record<string, unknown> | null;
 	// Timestamp
 	ts: string;
 };
 
 export type DateFilter = 'today' | 'yesterday' | 'last_10_days' | null;
-export type StatusFilter = 'active' | 'expired' | 'traded' | 'rejected' | 'all';
+export type StatusFilter = 'active' | 'expired' | 'traded' | 'rejected' | 'failed' | 'all';
 
 export async function getBuyingZone(
 	limit = 100,
 	dateFilter: DateFilter = null,
 	statusFilter: StatusFilter = 'active'
 ): Promise<BuyingZoneItem[]> {
-	const params: Record<string, any> = { limit };
+	const params: Record<string, string | number> = { limit };
 	if (dateFilter) {
 		params.date_filter = dateFilter;
 	}

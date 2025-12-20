@@ -6,11 +6,9 @@ recalculated as a weighted average of all entries.
 """
 
 import pytest
-from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.infrastructure.db.models import Positions
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 
@@ -19,7 +17,7 @@ def db_session():
     """Create in-memory SQLite database for testing"""
     engine = create_engine("sqlite:///:memory:", echo=False)
     from src.infrastructure.db.models import Base
-    
+
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     session = Session()
@@ -45,12 +43,12 @@ class TestAveragePriceCalculationWithReentries:
         """Test that initial entry sets avg_price correctly"""
         position = positions_repo.upsert(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             initial_entry_price=2500.0,
         )
-        
+
         assert position.avg_price == 2500.0
         assert position.initial_entry_price == 2500.0
 
@@ -59,17 +57,17 @@ class TestAveragePriceCalculationWithReentries:
         # Initial entry: 10 shares @ Rs 2500
         position = positions_repo.upsert(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             initial_entry_price=2500.0,
         )
-        
+
         # Reentry: 5 shares @ Rs 2400
         # Expected avg = (10*2500 + 5*2400) / 15 = (25000 + 12000) / 15 = 2466.67
         position = positions_repo.upsert(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=15,  # 10 + 5
             avg_price=2466.67,  # Weighted average
             reentry_count=1,
@@ -78,7 +76,7 @@ class TestAveragePriceCalculationWithReentries:
             ],
             last_reentry_price=2400.0,
         )
-        
+
         assert position.quantity == 15
         assert abs(position.avg_price - 2466.67) < 0.01
         assert position.initial_entry_price == 2500.0  # Preserved
@@ -88,12 +86,12 @@ class TestAveragePriceCalculationWithReentries:
         # Initial entry: 10 shares @ Rs 2500
         position = positions_repo.upsert(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=10,
             avg_price=2500.0,
             initial_entry_price=2500.0,
         )
-        
+
         # Reentry 1: 5 shares @ Rs 2400
         # After reentry 1: 15 shares, avg = (10*2500 + 5*2400) / 15 = 2466.67
         position = positions_repo.upsert(
@@ -107,22 +105,34 @@ class TestAveragePriceCalculationWithReentries:
             ],
             last_reentry_price=2400.0,
         )
-        
+
         # Reentry 2: 3 shares @ Rs 2300
         # After reentry 2: 18 shares, avg = (10*2500 + 5*2400 + 3*2300) / 18 = 2438.89
         position = positions_repo.upsert(
             user_id=user_id,
-            symbol="RELIANCE",
+            symbol="RELIANCE-EQ",  # Full symbol after migration
             quantity=18,  # 15 + 3
             avg_price=2438.89,  # Weighted average
             reentry_count=2,
             reentries=[
-                {"qty": 5, "level": 30, "rsi": 29.5, "price": 2400.0, "time": "2024-01-01T10:00:00"},
-                {"qty": 3, "level": 20, "rsi": 19.5, "price": 2300.0, "time": "2024-01-02T10:00:00"},
+                {
+                    "qty": 5,
+                    "level": 30,
+                    "rsi": 29.5,
+                    "price": 2400.0,
+                    "time": "2024-01-01T10:00:00",
+                },
+                {
+                    "qty": 3,
+                    "level": 20,
+                    "rsi": 19.5,
+                    "price": 2300.0,
+                    "time": "2024-01-02T10:00:00",
+                },
             ],
             last_reentry_price=2300.0,
         )
-        
+
         assert position.quantity == 18
         # Expected: (10*2500 + 5*2400 + 3*2300) / 18 = 43900 / 18 = 2438.89
         expected_avg = (10 * 2500.0 + 5 * 2400.0 + 3 * 2300.0) / 18
@@ -139,7 +149,7 @@ class TestAveragePriceCalculationWithReentries:
             avg_price=100.0,
             initial_entry_price=100.0,
         )
-        
+
         # Reentry: 50 shares @ Rs 90
         # Expected: (100*100 + 50*90) / 150 = (10000 + 4500) / 150 = 96.67
         position = positions_repo.upsert(
@@ -153,7 +163,7 @@ class TestAveragePriceCalculationWithReentries:
             ],
             last_reentry_price=90.0,
         )
-        
+
         expected_avg = (100 * 100 + 50 * 90) / 150
         assert abs(position.avg_price - expected_avg) < 0.01
         assert position.avg_price == 96.67
@@ -168,7 +178,7 @@ class TestAveragePriceCalculationWithReentries:
             avg_price=100.0,
             initial_entry_price=100.0,
         )
-        
+
         # Reentry: 5 shares @ Rs 110 (averaging up)
         # Expected: (10*100 + 5*110) / 15 = (1000 + 550) / 15 = 103.33
         position = positions_repo.upsert(
@@ -182,9 +192,8 @@ class TestAveragePriceCalculationWithReentries:
             ],
             last_reentry_price=110.0,
         )
-        
+
         expected_avg = (10 * 100 + 5 * 110) / 15
         assert abs(position.avg_price - expected_avg) < 0.01
         assert position.avg_price > 100.0  # Should increase
         assert position.avg_price < 110.0  # But less than reentry price
-

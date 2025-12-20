@@ -8,10 +8,11 @@ Tests for:
 - Integration with AutoTradeEngine
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
 
-from src.infrastructure.db.models import TradeMode, UserSettings, Users, UserTradingConfig
+import pytest
+
+from src.infrastructure.db.models import TradeMode, Users, UserSettings, UserTradingConfig
 from src.infrastructure.db.timezone_utils import ist_now
 
 
@@ -75,9 +76,7 @@ class TestTradingServiceUserContext:
         assert service.logger is not None
         assert service.logger.user_id == sample_user_with_config.id
 
-    def test_trading_service_loads_user_config(
-        self, db_session, sample_user_with_config
-    ):
+    def test_trading_service_loads_user_config(self, db_session, sample_user_with_config):
         """Test TradingService loads user-specific configuration"""
         from modules.kotak_neo_auto_trader.run_trading_service import TradingService
 
@@ -124,17 +123,21 @@ class TestTradingServiceUserContext:
         assert service.strategy_config.rsi_oversold == 30.0
         assert service.strategy_config.user_capital == 500000.0
 
-    @patch("modules.kotak_neo_auto_trader.run_trading_service.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager")
     @patch("modules.kotak_neo_auto_trader.run_trading_service.AutoTradeEngine")
     def test_trading_service_passes_context_to_engine(
-        self, mock_engine_class, mock_auth_class, db_session, sample_user_with_config
+        self, mock_engine_class, mock_get_session_manager, db_session, sample_user_with_config
     ):
         """Test TradingService passes user context to AutoTradeEngine"""
         from modules.kotak_neo_auto_trader.run_trading_service import TradingService
 
         mock_auth_instance = MagicMock()
         mock_auth_instance.login.return_value = True
-        mock_auth_class.return_value = mock_auth_instance
+        mock_auth_instance.is_authenticated.return_value = True
+
+        mock_session_manager = MagicMock()
+        mock_session_manager.get_or_create_session.return_value = mock_auth_instance
+        mock_get_session_manager.return_value = mock_session_manager
 
         mock_engine_instance = MagicMock()
         mock_engine_instance.login.return_value = True
@@ -166,9 +169,7 @@ class TestAutoTradeEngineUserContext:
     """Tests for AutoTradeEngine with user context"""
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
-    def test_auto_trade_engine_initialization_with_user_context(
-        self, mock_auth_class, db_session
-    ):
+    def test_auto_trade_engine_initialization_with_user_context(self, mock_auth_class, db_session):
         """Test AutoTradeEngine initializes with user context"""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
@@ -198,9 +199,7 @@ class TestAutoTradeEngineUserContext:
         assert engine.strategy_config.user_capital == 300000.0
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
-    def test_auto_trade_engine_uses_default_config_when_none_provided(
-        self, mock_auth_class
-    ):
+    def test_auto_trade_engine_uses_default_config_when_none_provided(self, mock_auth_class):
         """Test AutoTradeEngine falls back to default config"""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
@@ -224,9 +223,7 @@ class TestAutoTradeEngineUserContext:
         assert engine.strategy_config.rsi_period == 10  # Default value
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
-    def test_auto_trade_engine_initializes_orders_repository(
-        self, mock_auth_class, db_session
-    ):
+    def test_auto_trade_engine_initializes_orders_repository(self, mock_auth_class, db_session):
         """Test AutoTradeEngine initializes OrdersRepository when db_session provided"""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
@@ -252,8 +249,8 @@ class TestAutoTradeEngineUserContext:
     def test_auto_trade_engine_falls_back_to_file_storage(self, mock_auth_class):
         """Test AutoTradeEngine uses file storage when db_session is None"""
         from config.strategy_config import StrategyConfig
-        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
         from modules.kotak_neo_auto_trader import config
+        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
         # Mock auth to avoid credential errors
         mock_auth = MagicMock()
@@ -276,9 +273,7 @@ class TestAutoTradeEngineUserContext:
 class TestConfigConversion:
     """Tests for configuration conversion in TradingService"""
 
-    def test_user_config_converted_to_strategy_config(
-        self, db_session, sample_user_with_config
-    ):
+    def test_user_config_converted_to_strategy_config(self, db_session, sample_user_with_config):
         """Test that UserTradingConfig is correctly converted to StrategyConfig"""
         from modules.kotak_neo_auto_trader.run_trading_service import TradingService
 
@@ -304,9 +299,7 @@ class TestConfigConversion:
         # Chart quality (should use user config values)
         assert config.chart_quality_enabled is True
 
-    def test_default_values_used_for_missing_fields(
-        self, db_session, sample_user_with_config
-    ):
+    def test_default_values_used_for_missing_fields(self, db_session, sample_user_with_config):
         """Test that default values are used for fields not in UserTradingConfig"""
         from modules.kotak_neo_auto_trader.run_trading_service import TradingService
 
@@ -360,9 +353,7 @@ class TestMultiUserTradingServiceIntegration:
             assert call_kwargs["strategy_config"] is not None
             assert "broker_creds" in call_kwargs
 
-    def test_multi_user_service_loads_user_config(
-        self, db_session, sample_user_with_config
-    ):
+    def test_multi_user_service_loads_user_config(self, db_session, sample_user_with_config):
         """Test MultiUserTradingService loads and converts user config"""
         from src.application.services.multi_user_trading_service import (
             MultiUserTradingService,
@@ -371,9 +362,7 @@ class TestMultiUserTradingServiceIntegration:
         service_manager = MultiUserTradingService(db=db_session)
 
         # Load config (this is what start_service does internally)
-        user_config = service_manager._config_repo.get_or_create_default(
-            sample_user_with_config.id
-        )
+        user_config = service_manager._config_repo.get_or_create_default(sample_user_with_config.id)
 
         from src.application.services.config_converter import (
             user_config_to_strategy_config,
@@ -383,4 +372,3 @@ class TestMultiUserTradingServiceIntegration:
 
         assert strategy_config.rsi_period == 14
         assert strategy_config.user_capital == 300000.0
-

@@ -205,15 +205,15 @@ http.post(API('/auth/refresh'), async () => {
 		return HttpResponse.json({ trade_mode: 'paper', broker: null, broker_status: null });
 	}),
 	http.put(API('/user/settings'), async ({ request }) => {
-		const body = (await request.json()) as any;
-		return HttpResponse.json({ trade_mode: body['trade_mode'] ?? 'paper', broker: body['broker'] ?? null, broker_status: null });
+		const body = (await request.json()) as Partial<{ trade_mode: string; broker: string | null }>;
+		return HttpResponse.json({ trade_mode: body.trade_mode ?? 'paper', broker: body.broker ?? null, broker_status: null });
 	}),
 	// broker
 	http.post(API('/user/broker/creds'), async () => {
 		return HttpResponse.json({ status: 'ok' });
 	}),
 	http.post(API('/user/broker/test'), async ({ request }) => {
-		const body = (await request.json()) as any;
+		const body = (await request.json()) as { api_key?: string; api_secret?: string; mobile_number?: string; password?: string; mpin?: string };
 		if (!body.api_key || !body.api_secret) {
 			return HttpResponse.json({ ok: false, message: 'API key and secret are required' }, { status: 400 });
 		}
@@ -255,7 +255,7 @@ http.post(API('/auth/refresh'), async () => {
 		const url = new URL(request.url);
 		const status = url.searchParams.get('status') ?? 'pending';
 		const now = new Date().toISOString();
-		const byStatus: Record<string, any[]> = {
+		const byStatus: Record<string, unknown[]> = {
 			pending: [ // Merged: AMO + PENDING_EXECUTION
 				{ id: 101, symbol: 'INFY', side: 'buy', quantity: 10, price: 1500, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
 				{ id: 250, symbol: 'SUNPHARMA', side: 'buy', quantity: 12, price: 1280, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
@@ -464,15 +464,15 @@ http.post(API('/auth/refresh'), async () => {
 		]);
 	}),
 	http.post(API('/admin/users'), async ({ request }) => {
-		const body = (await request.json()) as any;
+		const body = (await request.json()) as { email?: string; name?: string; role?: string; password?: string };
 		return HttpResponse.json({ id: Math.floor(Math.random() * 10000), email: body.email, name: body.name ?? null, role: body.role ?? 'user', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
 	}),
 	http.put(API('/admin/users/:id'), async ({ params, request }) => {
-		const body = (await request.json()) as any;
+		const body = (await request.json()) as { name?: string; role?: string; is_active?: boolean };
 		return HttpResponse.json({ id: Number(params.id), email: 'updated@example.com', name: body.name ?? null, role: body.role ?? 'user', is_active: body.is_active ?? true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
 	}),
 	http.patch(API('/admin/users/:id'), async ({ params, request }) => {
-		const body = (await request.json()) as any;
+		const body = (await request.json()) as { name?: string; role?: string; is_active?: boolean };
 		return HttpResponse.json({ id: Number(params.id), email: 'updated@example.com', name: body.name ?? null, role: body.role ?? 'user', is_active: body.is_active ?? true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
 	}),
 	http.delete(API('/admin/users/:id'), async () => {
@@ -604,7 +604,7 @@ http.post(API('/auth/refresh'), async () => {
 		});
 	}),
 	http.put(API('/user/trading-config'), async ({ request }) => {
-		const body = (await request.json()) as any;
+		const body = (await request.json()) as Record<string, unknown>;
 		// Return updated config (merge with defaults)
 		return HttpResponse.json({
 			rsi_period: body.rsi_period ?? 10,
@@ -714,17 +714,20 @@ http.post(API('/auth/refresh'), async () => {
 		return HttpResponse.json(job);
 	}),
 	http.post(API('/admin/ml/train'), async ({ request }) => {
-		const body = (await request.json()) as any;
+		const body = (await request.json()) as { model_type?: string; algorithm?: string; training_data_path?: string };
+		const modelType = typeof body.model_type === 'string' ? body.model_type : 'verdict_classifier';
+		const algorithm = typeof body.algorithm === 'string' ? body.algorithm : 'xgboost';
+		const trainingDataPath = typeof body.training_data_path === 'string' ? body.training_data_path : 'data/training/verdict_classifier.csv';
 		const newJob = {
 			id: mlJobIdCounter++,
 			started_by: 1,
 			status: 'completed',
-			model_type: body.model_type ?? 'verdict_classifier',
-			algorithm: body.algorithm ?? 'xgboost',
-			training_data_path: body.training_data_path ?? 'data/training/verdict_classifier.csv',
+			model_type: modelType,
+			algorithm: algorithm,
+			training_data_path: trainingDataPath,
 			started_at: new Date().toISOString(),
 			completed_at: new Date(Date.now() + 2000).toISOString(),
-			model_path: `models/${body.model_type ?? 'verdict_classifier'}/${body.algorithm ?? 'xgboost'}-v${mlModelIdCounter}.json`,
+			model_path: `models/${modelType}/${algorithm}-v${mlModelIdCounter}.json`,
 			accuracy: 0.81,
 			error_message: null,
 			logs: 'Mock training completed.',

@@ -1,6 +1,45 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useMemo, useEffect } from 'react';
 import { getBuyingZone, getBuyingZoneColumns, saveBuyingZoneColumns, rejectSignal, activateSignal, type BuyingZoneItem, type DateFilter, type StatusFilter } from '@/api/signals';
+import { HolidayBanner } from '@/components/HolidayBanner';
+
+/**
+ * Calculate the expiry time for a signal based on next trading day market close.
+ * Rule: Signal is valid until the end of the next trading day's market hours (3:30 PM IST).
+ *
+ * @param signalTimestamp - Signal creation timestamp
+ * @returns Expiry time (next trading day at 3:30 PM IST)
+ */
+function getSignalExpiryTime(signalTimestamp: Date): Date {
+	const signalDate = new Date(signalTimestamp);
+	signalDate.setHours(0, 0, 0, 0); // Start of signal day
+
+	// Start from day after signal creation
+	const nextDay = new Date(signalDate);
+	nextDay.setDate(nextDay.getDate() + 1);
+
+	// Skip weekends (Saturday=6, Sunday=0)
+	while (nextDay.getDay() === 0 || nextDay.getDay() === 6) {
+		nextDay.setDate(nextDay.getDate() + 1);
+	}
+
+	// Set to market close time (3:30 PM IST)
+	nextDay.setHours(15, 30, 0, 0);
+
+	return nextDay;
+}
+
+/**
+ * Check if a signal is expired based on next trading day market close time.
+ *
+ * @param signalTimestamp - Signal creation timestamp
+ * @returns True if signal is expired, False otherwise
+ */
+function isSignalExpiredByMarketClose(signalTimestamp: Date): boolean {
+	const expiryTime = getSignalExpiryTime(signalTimestamp);
+	const now = new Date();
+	return now >= expiryTime;
+}
 
 type ColumnKey =
 	| 'symbol'
@@ -49,32 +88,32 @@ interface ColumnDef {
 	key: ColumnKey;
 	label: string;
 	mandatory?: boolean;
-	formatter?: (value: any, row: BuyingZoneItem) => string;
+	formatter?: (value: unknown, row: BuyingZoneItem) => string;
 }
 
 const ALL_COLUMNS: ColumnDef[] = [
 	{ key: 'symbol', label: 'Stock Symbol', mandatory: true },
 	{ key: 'status', label: 'Status' },
 	// Technical indicators
-	{ key: 'rsi10', label: 'RSI10', formatter: (v) => (v != null ? v.toFixed(1) : '-') },
-	{ key: 'ema9', label: 'EMA9', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'ema200', label: 'EMA200', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'distance_to_ema9', label: 'Distance to EMA9', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'rsi10', label: 'RSI10', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(1) : '-') },
+	{ key: 'ema9', label: 'EMA9', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'ema200', label: 'EMA200', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'distance_to_ema9', label: 'Distance to EMA9', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	{ key: 'above_ema200', label: '> EMA200', formatter: (v, row) => {
 		const above = row.ema200 != null && row.ema9 != null ? (row.ema9 > row.ema200) : null;
 		return above == null ? '-' : above ? 'Yes' : 'No';
 	}},
 	{ key: 'clean_chart', label: 'Clean Chart', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
-	{ key: 'monthly_support_dist', label: 'Monthly Support', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'confidence', label: 'Confidence', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'monthly_support_dist', label: 'Monthly Support', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'confidence', label: 'Confidence', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	// Scoring fields
-	{ key: 'backtest_score', label: 'Backtest', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'combined_score', label: 'Combined Score', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'strength_score', label: 'Strength Score', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'priority_score', label: 'Priority Score', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'backtest_score', label: 'Backtest', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'combined_score', label: 'Combined Score', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'strength_score', label: 'Strength Score', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'priority_score', label: 'Priority Score', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	// ML fields
-	{ key: 'ml_verdict', label: 'ML Verdict', formatter: (v) => (v ?? '-') },
-	{ key: 'ml_confidence', label: 'ML Confidence', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'ml_verdict', label: 'ML Verdict', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'ml_confidence', label: 'ML Confidence', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	// Trading parameters
 	{ key: 'buy_range', label: 'Buy Range', formatter: (v) => {
 		if (!v || typeof v !== 'object') return '-';
@@ -84,36 +123,41 @@ const ALL_COLUMNS: ColumnDef[] = [
 		}
 		return '-';
 	}},
-	{ key: 'target', label: 'Target', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'stop', label: 'Stop', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'last_close', label: 'Last Close', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'target', label: 'Target', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'stop', label: 'Stop', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'last_close', label: 'Last Close', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	// Fundamental data
-	{ key: 'pe', label: 'P/E', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'pb', label: 'P/B', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'pe', label: 'P/E', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'pb', label: 'P/B', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	{ key: 'fundamental_ok', label: 'Fundamental OK', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
 	// Volume data
 	{ key: 'avg_vol', label: 'Avg Vol', formatter: (v) => (v != null ? v.toLocaleString() : '-') },
 	{ key: 'today_vol', label: 'Today Vol', formatter: (v) => (v != null ? v.toLocaleString() : '-') },
 	{ key: 'vol_ok', label: 'Vol OK', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
-	{ key: 'volume_ratio', label: 'Volume Ratio', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'volume_ratio', label: 'Volume Ratio', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	// Analysis metadata
-	{ key: 'verdict', label: 'Verdict', formatter: (v) => (v ?? '-') },
-	{ key: 'final_verdict', label: 'Final Verdict', formatter: (v) => (v ?? '-') },
-	{ key: 'rule_verdict', label: 'Rule Verdict', formatter: (v) => (v ?? '-') },
-	{ key: 'verdict_source', label: 'Verdict Source', formatter: (v) => (v ?? '-') },
-	{ key: 'backtest_confidence', label: 'Backtest Confidence', formatter: (v) => (v ?? '-') },
+	{ key: 'verdict', label: 'Verdict', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'final_verdict', label: 'Final Verdict', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'rule_verdict', label: 'Rule Verdict', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'verdict_source', label: 'Verdict Source', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'backtest_confidence', label: 'Backtest Confidence', formatter: (v) => (v != null ? String(v) : '-') },
 	// Additional analysis fields
 	{ key: 'vol_strong', label: 'Vol Strong', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
 	{ key: 'is_above_ema200', label: 'Above EMA200', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
 	// Dip buying features
-	{ key: 'dip_depth_from_20d_high_pct', label: 'Dip Depth %', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'consecutive_red_days', label: 'Red Days', formatter: (v) => (v != null ? v.toString() : '-') },
-	{ key: 'dip_speed_pct_per_day', label: 'Dip Speed %/Day', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'dip_depth_from_20d_high_pct', label: 'Dip Depth %', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'consecutive_red_days', label: 'Red Days', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'dip_speed_pct_per_day', label: 'Dip Speed %/Day', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	{ key: 'decline_rate_slowing', label: 'Decline Slowing', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
-	{ key: 'volume_green_vs_red_ratio', label: 'Vol G/R Ratio', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'support_hold_count', label: 'Support Holds', formatter: (v) => (v != null ? v.toString() : '-') },
+	{ key: 'volume_green_vs_red_ratio', label: 'Vol G/R Ratio', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'support_hold_count', label: 'Support Holds', formatter: (v) => (v != null ? String(v) : '-') },
 	// Timestamp
-	{ key: 'ts', label: 'As of', formatter: (v) => new Date(v).toLocaleString() },
+	{ key: 'ts', label: 'As of', formatter: (v) => {
+		if (typeof v === 'string' || typeof v === 'number' || v instanceof Date) {
+			return new Date(v).toLocaleString();
+		}
+		return '-';
+	} },
 ];
 
 const MIN_COLUMNS = 5;
@@ -273,7 +317,9 @@ export function BuyingZonePage() {
 	if (error) return <div className="p-2 sm:p-4 text-sm sm:text-base text-red-400">Failed to load</div>;
 
 	return (
-		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
+		<>
+			<HolidayBanner />
+			<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
 			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
 				<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Buying Zone</h1>
 				<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4 w-full sm:w-auto">
@@ -290,6 +336,7 @@ export function BuyingZonePage() {
 							<option value="expired">⏰ Expired</option>
 							<option value="traded">✅ Traded</option>
 							<option value="rejected">❌ Rejected</option>
+							<option value="failed">⚠️ Failed</option>
 						</select>
 					</div>
 
@@ -491,6 +538,10 @@ export function BuyingZonePage() {
 																			badgeClass = 'bg-red-500/20 text-red-400 border border-red-500/30';
 																			badgeText = '❌ Rejected';
 																			break;
+																		case 'failed':
+																			badgeClass = 'bg-orange-500/20 text-orange-400 border border-orange-500/30';
+																			badgeText = '⚠️ Failed';
+																			break;
 																		default:
 																			badgeClass = 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
 																			badgeText = status || '-';
@@ -512,35 +563,18 @@ export function BuyingZonePage() {
 																						Reject
 																					</button>
 																				)}
-																				{(status === 'rejected' || status === 'traded') && (() => {
-																					// Check if signal is expired based on market close time (3:30 PM IST)
-																					// Rules:
-																					// - Signals from day before yesterday (2 days ago) are expired
-																					// - Signals generated yesterday are active until today's 3:30 PM
+																				{(status === 'rejected' || status === 'traded' || status === 'failed') && (() => {
+																					// Check if signal is expired based on next trading day market close time (3:30 PM IST)
+																					// Rule: Signal expires at the end of the next trading day's market hours
+																					// - Signal from Monday → Expires Tuesday 3:30 PM
+																					// - Signal from Friday → Expires Monday 3:30 PM (skip weekend)
 																					const signalTime = new Date(row.ts);
-																					const now = new Date();
-
-																					// Market close time: 3:30 PM (15:30)
-																					const marketCloseHour = 15;
-																					const marketCloseMinute = 30;
-
-																					// Calculate yesterday's start (00:00)
-																					const yesterdayStart = new Date(now);
-																					yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-																					yesterdayStart.setHours(0, 0, 0, 0);
-
-																					// Calculate today's market close (3:30 PM)
-																					const todayMarketClose = new Date(now);
-																					todayMarketClose.setHours(marketCloseHour, marketCloseMinute, 0, 0);
 
 																					// Signal is expired if:
-																					// 1. base_status is 'expired', OR
-																					// 2. Signal was created before yesterday (day before yesterday or earlier), OR
-																					// 3. Signal was created yesterday but current time >= today's 3:30 PM
+																					// 1. base_status is 'expired' (from database), OR
+																					// 2. Current time >= signal's expiry time (next trading day 3:30 PM)
 																					const isExpiredByStatus = row.base_status === 'expired';
-																					const isExpiredByMarketClose =
-																						signalTime < yesterdayStart ||
-																						(signalTime >= yesterdayStart && now >= todayMarketClose);
+																					const isExpiredByMarketClose = isSignalExpiredByMarketClose(signalTime);
 																					const isExpired = isExpiredByStatus || isExpiredByMarketClose;
 
 																					return (
@@ -561,10 +595,11 @@ export function BuyingZonePage() {
 
 																// Regular columns
 																let displayValue: string;
+																const cellValue = row[col.key as keyof BuyingZoneItem];
 																if (col.formatter) {
-																	displayValue = col.formatter((row as any)[col.key], row);
+																	displayValue = col.formatter(cellValue, row);
 																} else {
-																	displayValue = String((row as any)[col.key] ?? '-');
+																	displayValue = String(cellValue ?? '-');
 																}
 																return (
 																	<td key={col.key} className="py-2 px-2 sm:px-3 text-[var(--text)]">
@@ -589,5 +624,6 @@ export function BuyingZonePage() {
 				</div>
 			)}
 		</div>
+		</>
 	);
 }

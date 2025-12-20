@@ -9,6 +9,7 @@ from typing import Literal
 from sqlalchemy import desc, select, text
 from sqlalchemy.orm import Session
 
+from src.infrastructure.db.dialect import is_postgresql
 from src.infrastructure.db.models import IndividualServiceTaskExecution
 from src.infrastructure.db.timezone_utils import ist_now
 
@@ -89,18 +90,39 @@ class IndividualServiceTaskExecutionRepository:
         """Get latest execution status using raw SQL to bypass session cache.
 
         Returns dict with: id, status, executed_at, duration_seconds, details
+
+        Note: executed_at is converted from UTC (storage) to IST (our timezone) for accurate age calculations.
         """
         # Use raw SQL to bypass SQLAlchemy session cache
         # This ensures we see commits from other threads immediately
-        sql = text(
+        # Convert executed_at from UTC (storage) to IST (our timezone) for accurate age calculations
+        from src.infrastructure.db.timezone_utils import IST  # noqa: PLC0415
+
+        if is_postgresql(self.db):
+            # PostgreSQL: Use AT TIME ZONE to convert from UTC to IST
+            sql = text(
+                """
+                SELECT id, status,
+                       (executed_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata' as executed_at,
+                       duration_seconds, details
+                FROM individual_service_task_execution
+                WHERE user_id = :user_id AND task_name = :task_name
+                ORDER BY executed_at DESC
+                LIMIT 1
             """
-            SELECT id, status, executed_at, duration_seconds, details
-            FROM individual_service_task_execution
-            WHERE user_id = :user_id AND task_name = :task_name
-            ORDER BY executed_at DESC
-            LIMIT 1
-        """
-        )
+            )
+        else:
+            # SQLite: Select executed_at directly (no timezone conversion in SQL)
+            sql = text(
+                """
+                SELECT id, status, executed_at, duration_seconds, details
+                FROM individual_service_task_execution
+                WHERE user_id = :user_id AND task_name = :task_name
+                ORDER BY executed_at DESC
+                LIMIT 1
+            """
+            )
+
         result = self.db.execute(sql, {"user_id": user_id, "task_name": task_name}).fetchone()
         if result:
             # Parse datetime field (SQLite may return datetime as string or object)
@@ -122,8 +144,17 @@ class IndividualServiceTaskExecutionRepository:
                         except ValueError:
                             # If all parsing fails, return as-is (will cause error but better than crashing)
                             executed_at = result[2]
-            # If it's already a datetime object, use it as-is
-            elif not isinstance(executed_at, datetime):
+
+            # Ensure executed_at is a datetime object and timezone-aware (IST)
+            if isinstance(executed_at, datetime):
+                if executed_at.tzinfo is None:
+                    # Naive datetime: For PostgreSQL, it's already in IST (from AT TIME ZONE conversion)
+                    # For SQLite, we assume it's stored in IST (since SQLite doesn't have timezone support)
+                    executed_at = executed_at.replace(tzinfo=IST)
+                elif executed_at.tzinfo != IST:
+                    # Convert to IST if it has a different timezone
+                    executed_at = executed_at.astimezone(IST)
+            else:
                 executed_at = None
 
             # Parse JSON details field (SQLite returns JSON as string)
@@ -148,7 +179,14 @@ class IndividualServiceTaskExecutionRepository:
     def get_running_tasks(
         self, user_id: int, task_name: str | None = None
     ) -> list[IndividualServiceTaskExecution]:
-        """Get currently running tasks (status='running')"""
+        """Get currently running tasks (status='running')
+
+        Note: This method uses ORM queries which may be cached. For fresh data
+        after cleanup operations, consider using get_running_tasks_raw() instead.
+        """
+        # Expire any cached IndividualServiceTaskExecution objects to ensure fresh query
+        self.db.expire_all()
+
         stmt = select(IndividualServiceTaskExecution).where(
             IndividualServiceTaskExecution.user_id == user_id,
             IndividualServiceTaskExecution.status == "running",
@@ -158,6 +196,49 @@ class IndividualServiceTaskExecutionRepository:
             stmt = stmt.where(IndividualServiceTaskExecution.task_name == task_name)
 
         return list(self.db.execute(stmt).scalars().all())
+
+    def get_running_tasks_raw(self, user_id: int, task_name: str | None = None) -> list[dict]:
+        """Get currently running tasks using raw SQL to bypass session cache.
+
+        Returns list of dicts with: id, user_id, task_name, status, executed_at
+
+        This method is useful when you need to check for running tasks immediately
+        after cleanup operations, as it bypasses SQLAlchemy session caching.
+
+        Note: executed_at is returned as-is (no timezone conversion) for compatibility.
+        For timezone-aware IST datetime, use get_latest_status_raw() instead.
+        """
+        params = {"user_id": user_id}
+
+        if task_name:
+            sql = text(
+                """
+                SELECT id, user_id, task_name, status, executed_at
+                FROM individual_service_task_execution
+                WHERE user_id = :user_id AND task_name = :task_name AND status = 'running'
+            """
+            )
+            params["task_name"] = task_name
+        else:
+            sql = text(
+                """
+                SELECT id, user_id, task_name, status, executed_at
+                FROM individual_service_task_execution
+                WHERE user_id = :user_id AND status = 'running'
+            """
+            )
+
+        results = self.db.execute(sql, params).fetchall()
+        return [
+            {
+                "id": row[0],
+                "user_id": row[1],
+                "task_name": row[2],
+                "status": row[3],
+                "executed_at": row[4],
+            }
+            for row in results
+        ]
 
     def get_recent_tasks(
         self, user_id: int, task_name: str, minutes: int = 2

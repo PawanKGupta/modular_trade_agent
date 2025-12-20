@@ -90,7 +90,7 @@ class TestOrderTrackerDBOnlyModePhase11:
 
             tracker.add_pending_order(
                 order_id="ORDER123",
-                symbol="RELIANCE",
+                symbol="RELIANCE-EQ",  # Full symbol after migration
                 ticker="RELIANCE.NS",
                 qty=10,
                 order_type="MARKET",
@@ -105,7 +105,9 @@ class TestOrderTrackerDBOnlyModePhase11:
             json_file = os.path.join(temp_data_dir, "pending_orders.json")
             assert not os.path.exists(json_file)
 
-    def test_get_pending_orders_db_only_mode(self, mock_db_session, mock_orders_repo, temp_data_dir):
+    def test_get_pending_orders_db_only_mode(
+        self, mock_db_session, mock_orders_repo, temp_data_dir
+    ):
         """Test getting pending orders in DB-only mode"""
         with patch(
             "src.infrastructure.persistence.orders_repository.OrdersRepository",
@@ -117,7 +119,7 @@ class TestOrderTrackerDBOnlyModePhase11:
             mock_db_order = Mock()
             mock_db_order.broker_order_id = "ORDER123"
             mock_db_order.order_id = None
-            mock_db_order.symbol = "RELIANCE"
+            mock_db_order.symbol = "RELIANCE-EQ"  # Full symbol after migration
             mock_db_order.quantity = 10
             mock_db_order.order_type = "market"
             mock_db_order.price = None
@@ -149,11 +151,13 @@ class TestOrderTrackerDBOnlyModePhase11:
             # Verify JSON file was NOT read
             json_file = os.path.join(temp_data_dir, "pending_orders.json")
             if os.path.exists(json_file):
-                with open(json_file, "r") as f:
+                with open(json_file) as f:
                     data = json.load(f)
                     assert len(data.get("orders", [])) == 0  # Should be empty
 
-    def test_get_pending_orders_db_only_mode_db_error(self, mock_db_session, mock_orders_repo, temp_data_dir):
+    def test_get_pending_orders_db_only_mode_db_error(
+        self, mock_db_session, mock_orders_repo, temp_data_dir
+    ):
         """Test getting pending orders in DB-only mode when DB fails"""
         with patch(
             "src.infrastructure.persistence.orders_repository.OrdersRepository",
@@ -174,7 +178,9 @@ class TestOrderTrackerDBOnlyModePhase11:
 
             assert orders == []
 
-    def test_update_order_status_db_only_mode(self, mock_db_session, mock_orders_repo, temp_data_dir):
+    def test_update_order_status_db_only_mode(
+        self, mock_db_session, mock_orders_repo, temp_data_dir
+    ):
         """Test updating order status in DB-only mode"""
         with patch(
             "src.infrastructure.persistence.orders_repository.OrdersRepository",
@@ -206,13 +212,15 @@ class TestOrderTrackerDBOnlyModePhase11:
             # Verify JSON file was NOT updated
             json_file = os.path.join(temp_data_dir, "pending_orders.json")
             if os.path.exists(json_file):
-                with open(json_file, "r") as f:
+                with open(json_file) as f:
                     data = json.load(f)
                     assert len(data.get("orders", [])) == 0  # Should be empty
 
             assert result is True
 
-    def test_update_order_status_db_only_mode_db_error(self, mock_db_session, mock_orders_repo, temp_data_dir):
+    def test_update_order_status_db_only_mode_db_error(
+        self, mock_db_session, mock_orders_repo, temp_data_dir
+    ):
         """Test updating order status in DB-only mode when DB fails"""
         with patch(
             "src.infrastructure.persistence.orders_repository.OrdersRepository",
@@ -232,7 +240,9 @@ class TestOrderTrackerDBOnlyModePhase11:
             with pytest.raises(Exception):
                 tracker.update_order_status(order_id="ORDER123", status="EXECUTED")
 
-    def test_remove_pending_order_db_only_mode(self, mock_db_session, mock_orders_repo, temp_data_dir):
+    def test_remove_pending_order_db_only_mode(
+        self, mock_db_session, mock_orders_repo, temp_data_dir
+    ):
         """Test removing pending order in DB-only mode"""
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
@@ -241,7 +251,9 @@ class TestOrderTrackerDBOnlyModePhase11:
             return_value=mock_orders_repo,
         ):
             mock_db_order = Mock()
-            mock_db_order.status = DbOrderStatus.PENDING  # Set status to PENDING so it gets cancelled
+            mock_db_order.status = (
+                DbOrderStatus.PENDING
+            )  # Set status to PENDING so it gets cancelled
             mock_orders_repo.get_by_broker_order_id.return_value = mock_db_order
 
             tracker = OrderTracker(
@@ -261,13 +273,15 @@ class TestOrderTrackerDBOnlyModePhase11:
             # Verify JSON file was NOT updated
             json_file = os.path.join(temp_data_dir, "pending_orders.json")
             if os.path.exists(json_file):
-                with open(json_file, "r") as f:
+                with open(json_file) as f:
                     data = json.load(f)
                     assert len(data.get("orders", [])) == 0  # Should be empty
 
             assert result is True
 
-    def test_remove_pending_order_db_only_mode_db_error(self, mock_db_session, mock_orders_repo, temp_data_dir):
+    def test_remove_pending_order_db_only_mode_db_error(
+        self, mock_db_session, mock_orders_repo, temp_data_dir
+    ):
         """Test removing pending order in DB-only mode when DB fails"""
         with patch(
             "src.infrastructure.persistence.orders_repository.OrdersRepository",
@@ -298,7 +312,7 @@ class TestOrderTrackerDBOnlyModePhase11:
             mock_db_order = Mock()
             mock_db_order.broker_order_id = "ORDER123"
             mock_db_order.order_id = None
-            mock_db_order.symbol = "RELIANCE"
+            mock_db_order.symbol = "RELIANCE-EQ"  # Full symbol after migration
             mock_db_order.quantity = 10
             mock_db_order.order_type = "market"
             mock_db_order.price = None
@@ -330,11 +344,13 @@ class TestOrderTrackerDBOnlyModePhase11:
             # Verify JSON file was NOT read
             json_file = os.path.join(temp_data_dir, "pending_orders.json")
             if os.path.exists(json_file):
-                with open(json_file, "r") as f:
+                with open(json_file) as f:
                     data = json.load(f)
                     assert len(data.get("orders", [])) == 0  # Should be empty
 
-    def test_get_order_by_id_db_only_mode_not_found(self, mock_db_session, mock_orders_repo, temp_data_dir):
+    def test_get_order_by_id_db_only_mode_not_found(
+        self, mock_db_session, mock_orders_repo, temp_data_dir
+    ):
         """Test getting order by ID in DB-only mode when order not found"""
         with patch(
             "src.infrastructure.persistence.orders_repository.OrdersRepository",
@@ -356,7 +372,9 @@ class TestOrderTrackerDBOnlyModePhase11:
             # Should return None (not fallback to JSON)
             assert order is None
 
-    def test_db_only_mode_disabled_by_default(self, mock_db_session, mock_orders_repo, temp_data_dir):
+    def test_db_only_mode_disabled_by_default(
+        self, mock_db_session, mock_orders_repo, temp_data_dir
+    ):
         """Test that DB-only mode is disabled by default"""
         with patch(
             "src.infrastructure.persistence.orders_repository.OrdersRepository",
@@ -384,4 +402,3 @@ class TestOrderTrackerDBOnlyModePhase11:
 
         # Should be disabled because DB is not available
         assert tracker.db_only_mode is False
-

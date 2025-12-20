@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -77,7 +78,6 @@ class PaperTradingServiceAdapter:
             "premarket_retry": False,
             "premarket_amo_adjustment": False,
             "sell_monitor_started": False,
-            "position_monitor": {},
         }
 
         # Engine-like interface for compatibility
@@ -88,6 +88,14 @@ class PaperTradingServiceAdapter:
         #                   'qty': int, 'entry_date': str, 'ticker': str}}
         self.active_sell_orders = {}
         self._sell_orders_file = Path(self.storage_path) / "active_sell_orders.json"
+
+        # RSI Exit: Cache for RSI10 values {symbol: rsi10_value}
+        # Cached at market open (previous day's RSI10), updated with real-time if available
+        self.rsi10_cache: dict[str, float] = {}
+
+        # RSI Exit: Track orders converted to market {symbol}
+        # Prevents duplicate conversion attempts
+        self.converted_to_market: set[str] = set()
 
         # Service state (for scheduler control)
         self.running = False
@@ -311,6 +319,19 @@ class PaperTradingServiceAdapter:
                 task_context["recommendations_count"] = 0
                 summary_result = {"message": "No recommendations found in CSV files"}
 
+            # Check and place re-entry orders (same as real trading)
+            # Re-entry should be checked regardless of whether there are fresh entry recommendations
+            self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
+            reentry_summary = self.engine.place_reentry_orders()
+            self.logger.info(f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders")
+            self.logger.info(
+                f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
+                f"Placed: {reentry_summary.get('placed', 0)}, "
+                f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
+                f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
+                action="run_buy_orders",
+            )
+
             self.tasks_completed["buy_orders"] = True
             self.logger.info("Buy orders placement completed", action="run_buy_orders")
 
@@ -375,6 +396,7 @@ class PaperTradingServiceAdapter:
             "price_unavailable": 0,
             "modification_failed": 0,
             "skipped_not_enabled": 0,
+            "cancelled_above_ema9": 0,
         }
 
         with execute_task(
@@ -466,6 +488,77 @@ class PaperTradingServiceAdapter:
                         action="adjust_amo_quantities_premarket",
                     )
 
+                    # Check if pre-market price is above EMA9-1% (cancel order if so)
+                    ema9 = None
+                    try:
+                        ema9 = self._calculate_ema9(price_symbol)
+                    except Exception as e:
+                        self.logger.warning(
+                            f"{order.symbol}: Failed to calculate EMA9: {e}",
+                            action="adjust_amo_quantities_premarket",
+                        )
+
+                    # Check if pre-market price > EMA9 - 1%
+                    if ema9 and ema9 > 0:
+                        ema9_threshold = ema9 * 0.99  # EMA9 - 1%
+                        if premarket_price > ema9_threshold:
+                            self.logger.warning(
+                                f"{order.symbol}: Pre-market price (Rs {premarket_price:.2f}) > EMA9-1% "
+                                f"(Rs {ema9_threshold:.2f}, EMA9: Rs {ema9:.2f}) - Cancelling order",
+                                action="adjust_amo_quantities_premarket",
+                            )
+                            try:
+                                self.broker.cancel_order(order.order_id)
+                                self.logger.info(
+                                    f"✅ {order.symbol}: Order cancelled due to gap-up above EMA9-1%",
+                                    action="adjust_amo_quantities_premarket",
+                                )
+                                summary["cancelled_above_ema9"] += 1
+
+                                # Update database order status if available
+                                if self.db:
+                                    try:
+                                        from src.infrastructure.db.models import (
+                                            OrderStatus as DbOrderStatus,
+                                        )
+                                        from src.infrastructure.persistence.orders_repository import (
+                                            OrdersRepository,
+                                        )
+
+                                        orders_repo = OrdersRepository(self.db)
+                                        db_order = orders_repo.get_by_broker_order_id(
+                                            self.user_id, order.order_id
+                                        )
+                                        if db_order:
+                                            orders_repo.update(
+                                                db_order,
+                                                status=DbOrderStatus.CANCELLED,
+                                                reason=f"Pre-market price (Rs {premarket_price:.2f}) > EMA9-1% (Rs {ema9_threshold:.2f})",
+                                            )
+                                            self.logger.info(
+                                                f"{order.symbol}: DB order record updated - cancelled due to EMA9 validation",
+                                                action="adjust_amo_quantities_premarket",
+                                            )
+                                    except Exception as db_err:
+                                        self.logger.warning(
+                                            f"{order.symbol}: Failed to update DB record: {db_err}",
+                                            action="adjust_amo_quantities_premarket",
+                                        )
+
+                                continue  # Skip quantity adjustment for cancelled order
+                            except Exception as cancel_err:
+                                self.logger.error(
+                                    f"{order.symbol}: Error cancelling order above EMA9-1%: {cancel_err}",
+                                    exc_info=True,
+                                    action="adjust_amo_quantities_premarket",
+                                )
+                                summary["modification_failed"] += 1
+                    elif ema9 is None:
+                        self.logger.warning(
+                            f"{order.symbol}: EMA9 calculation failed - proceeding with quantity adjustment",
+                            action="adjust_amo_quantities_premarket",
+                        )
+
                     # Recalculate quantity to keep capital constant
                     new_qty = max(1, floor(target_capital / premarket_price))
 
@@ -479,7 +572,7 @@ class PaperTradingServiceAdapter:
                         continue
 
                     # Calculate gap percentage
-                    original_price = order.price.amount if order.price else premarket_price
+                    original_price = float(order.price.amount) if order.price else premarket_price
                     gap_pct = ((premarket_price - original_price) / original_price) * 100
 
                     self.logger.info(
@@ -499,16 +592,25 @@ class PaperTradingServiceAdapter:
 
                         # Create new order with adjusted quantity
                         # For MARKET orders, price parameter is not needed
+                        # For LIMIT orders, update price to pre-market price
                         from modules.kotak_neo_auto_trader.domain import (
+                            Money,
                             Order,
+                        )
+
+                        # Use pre-market price for LIMIT orders, None for MARKET orders
+                        new_price = (
+                            Money(premarket_price)
+                            if order.order_type.value == "LIMIT"
+                            else (order.price if order.price else None)
                         )
 
                         new_order = Order(
                             symbol=order.symbol,
                             quantity=new_qty,
-                            order_type=order.order_type,  # Keep as MARKET
+                            order_type=order.order_type,
                             transaction_type=order.transaction_type,
-                            # price=None for MARKET orders (not used, executes at market price)
+                            price=new_price,
                             variety=order.variety,
                             exchange=order.exchange,
                             validity=order.validity,
@@ -727,86 +829,6 @@ class PaperTradingServiceAdapter:
                 f"Sell monitoring error: {e}", exc_info=True, action="run_sell_monitor"
             )
 
-    def run_position_monitor(self):
-        """9:30 AM (hourly) - Monitor positions for reentry/exit signals (paper trading)"""
-        from datetime import datetime
-
-        from src.application.services.task_execution_wrapper import execute_task
-
-        current_hour = datetime.now().hour
-
-        # Run once per hour, skip if already done this hour
-        if self.tasks_completed["position_monitor"].get(current_hour):
-            from src.application.services.task_execution_wrapper import skip_task
-
-            skip_task(
-                self.user_id,
-                self.db,
-                "position_monitor",
-                f"Already monitored this hour ({current_hour}:00)",
-                self.logger,
-            )
-            return
-
-        with execute_task(
-            self.user_id,
-            self.db,
-            "position_monitor",
-            self.logger,
-            track_execution=not self.skip_execution_tracking,
-        ) as task_context:
-            self.logger.info("", action="run_position_monitor")
-            self.logger.info("=" * 80, action="run_position_monitor")
-            self.logger.info(
-                f"TASK: POSITION MONITOR ({current_hour}:30) - PAPER TRADING",
-                action="run_position_monitor",
-            )
-            self.logger.info("=" * 80, action="run_position_monitor")
-
-            if not self.engine:
-                error_msg = "Paper trading engine not initialized. Call initialize() first."
-                self.logger.error(error_msg, action="run_position_monitor")
-                raise RuntimeError(error_msg)
-
-            # Paper trading: Monitor positions
-            summary = self.engine.monitor_positions()
-            self.logger.info(f"Position monitor summary: {summary}", action="run_position_monitor")
-            task_context["hour"] = current_hour
-            task_context["summary"] = summary
-
-            # If re-entries happened, sync sell order quantities and targets with updated holdings
-            if summary.get("reentries", 0) > 0:
-                self.logger.info(
-                    f"Re-entries detected ({summary['reentries']}), syncing sell order quantities and targets...",
-                    action="run_position_monitor",
-                )
-
-                # Calculate new EMA9 targets for symbols with re-entries (matches backtest)
-                symbol_targets = {}
-                holdings = self.broker.get_holdings() if self.broker else []
-                for holding in holdings:
-                    symbol = holding.symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
-                    if symbol in self.active_sell_orders:
-                        ticker = f"{symbol}.NS"
-                        new_target = self._calculate_ema9(ticker)
-                        if new_target:
-                            symbol_targets[symbol] = new_target
-                            self.logger.debug(
-                                f"Calculated new EMA9 target for {symbol}: Rs {new_target:.2f}",
-                                action="run_position_monitor",
-                            )
-
-                updated_count = self._sync_sell_order_quantities_with_holdings(symbol_targets)
-                if updated_count > 0:
-                    self.logger.info(
-                        f"Updated {updated_count} sell order quantities and targets after re-entry",
-                        action="run_position_monitor",
-                    )
-                    task_context["sell_orders_updated"] = updated_count
-
-            self.tasks_completed["position_monitor"][current_hour] = True
-            self.logger.info("Position monitoring completed", action="run_position_monitor")
-
     def run_eod_cleanup(self):
         """6:00 PM - End-of-day cleanup (paper trading)"""
         from src.application.services.task_execution_wrapper import execute_task
@@ -855,7 +877,6 @@ class PaperTradingServiceAdapter:
                 "premarket_retry": False,
                 "premarket_amo_adjustment": False,
                 "sell_monitor_started": False,
-                "position_monitor": {},
             }
             task_context["tasks_reset"] = True
 
@@ -888,30 +909,48 @@ class PaperTradingServiceAdapter:
 
         # Get pending sell orders from broker to avoid duplicates
         pending_orders = self.broker.get_pending_orders() if self.broker else []
-        pending_sell_symbols = {
-            o.symbol for o in pending_orders if o.is_sell_order() and o.is_active()
+        # Normalize pending order symbols for comparison (extract base symbols)
+        from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+        pending_sell_base_symbols = {
+            extract_base_symbol(o.symbol).upper()
+            for o in pending_orders
+            if o.is_sell_order() and o.is_active()
+        }
+        # Also create a map of base symbol -> full symbol for active_sell_orders lookup
+        active_sell_base_symbols = {
+            extract_base_symbol(s).upper(): s for s in self.active_sell_orders.keys()
         }
 
         for holding in holdings:
             try:
-                symbol = holding.symbol
-                ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+                symbol = holding.symbol  # Full symbol from holdings (e.g., "RELIANCE-EQ")
+                symbol_base = extract_base_symbol(symbol).upper()  # Base symbol for comparison
+                ticker = f"{symbol_base}.NS"  # Use base symbol for ticker
                 quantity = holding.quantity
 
                 # Skip if already have active sell order (in memory or broker)
-                if symbol in self.active_sell_orders or symbol in pending_sell_symbols:
+                # Compare using base symbols since active_sell_orders might have base symbols
+                if (
+                    symbol_base in active_sell_base_symbols
+                    or symbol_base in pending_sell_base_symbols
+                ):
                     self.logger.debug(
                         f"Skipping {symbol} - already has active sell order "
-                        f"(in memory: {symbol in self.active_sell_orders}, "
-                        f"in broker: {symbol in pending_sell_symbols})",
+                        f"(in memory: {symbol_base in active_sell_base_symbols}, "
+                        f"in broker: {symbol_base in pending_sell_base_symbols})",
                         action="_place_sell_orders",
                     )
                     # If it's in broker but not in memory, add it to memory for tracking
-                    if symbol in pending_sell_symbols and symbol not in self.active_sell_orders:
+                    if (
+                        symbol_base in pending_sell_base_symbols
+                        and symbol_base not in active_sell_base_symbols
+                    ):
                         # Try to find the order details from broker
                         for order in pending_orders:
+                            order_base = extract_base_symbol(order.symbol).upper()
                             if (
-                                order.symbol == symbol
+                                order_base == symbol_base
                                 and order.is_sell_order()
                                 and order.is_active()
                             ):
@@ -922,7 +961,8 @@ class PaperTradingServiceAdapter:
                                     else None
                                 )
                                 if target_price:
-                                    self.active_sell_orders[symbol] = {
+                                    # Use base symbol as key to match existing convention
+                                    self.active_sell_orders[symbol_base] = {
                                         "order_id": (
                                             order.order_id
                                             if hasattr(order, "order_id")
@@ -934,22 +974,24 @@ class PaperTradingServiceAdapter:
                                         "entry_date": datetime.now().strftime("%Y-%m-%d"),
                                     }
                                     self.logger.info(
-                                        f"Restored sell order tracking for {symbol} from broker",
+                                        f"Restored sell order tracking for {symbol_base} from broker",
                                         action="_place_sell_orders",
                                     )
                     # Check if holdings quantity has increased (re-entry happened)
                     # and update sell order quantity and target to match
-                    if symbol in self.active_sell_orders:
-                        current_order_qty = self.active_sell_orders[symbol].get("qty", 0)
+                    # Use base symbol to find the order in active_sell_orders
+                    if symbol_base in active_sell_base_symbols:
+                        order_key = active_sell_base_symbols[symbol_base]
+                        current_order_qty = self.active_sell_orders[order_key].get("qty", 0)
                         if quantity > current_order_qty:
                             self.logger.info(
-                                f"Holdings increased for {symbol} ({current_order_qty} -> {quantity}), "
+                                f"Holdings increased for {symbol_base} ({current_order_qty} -> {quantity}), "
                                 f"updating sell order quantity and target",
                                 action="_place_sell_orders",
                             )
                             # Recalculate EMA9 target (matches backtest behavior)
                             new_target = self._calculate_ema9(ticker)
-                            self._update_sell_order_quantity(symbol, quantity, new_target)
+                            self._update_sell_order_quantity(order_key, quantity, new_target)
                     continue
 
                 # Calculate EMA9 target (initial entry - will be updated on re-entry)
@@ -1007,6 +1049,9 @@ class PaperTradingServiceAdapter:
             f"Sell orders placed: {len(self.active_sell_orders)} active orders",
             action="_place_sell_orders",
         )
+
+        # Initialize RSI10 cache for all active sell orders (previous day's RSI10)
+        self._initialize_rsi10_cache_paper()
 
         # Save active sell orders to JSON for UI display
         self._save_sell_orders_to_file()
@@ -1096,10 +1141,17 @@ class PaperTradingServiceAdapter:
                     continue
 
                 # Exit Condition 2: RSI > 50 (secondary exit for failing stocks)
+                # Use cache-based RSI (previous day first, then real-time)
+                # Skip if already converted
+                if symbol in self.converted_to_market:
+                    continue
+
+                rsi10 = self._get_current_rsi10_paper(symbol, ticker)
                 RSI_EXIT_THRESHOLD = 50  # From backtest: 10% of exits, 37% win rate
-                if not pd.isna(rsi) and rsi > RSI_EXIT_THRESHOLD:
+
+                if rsi10 is not None and rsi10 > RSI_EXIT_THRESHOLD:
                     self.logger.info(
-                        f"? EXIT TRIGGERED: {symbol} - RSI {rsi:.1f} > 50 (falling knife exit)",
+                        f"? EXIT TRIGGERED: {symbol} - RSI {rsi10:.1f} > 50 (falling knife exit)",
                         action="_monitor_sell_orders",
                     )
 
@@ -1126,9 +1178,10 @@ class PaperTradingServiceAdapter:
                         # In paper trading, just remove the order and execute at market
                         self.broker.place_order(market_order)
                         symbols_to_remove.append(symbol)
+                        self.converted_to_market.add(symbol)  # Track conversion
 
                         self.logger.info(
-                            f"? RSI exit: {symbol} @ Rs {close:.2f} (RSI: {rsi:.1f})",
+                            f"? RSI exit: {symbol} @ Rs {close:.2f} (RSI: {rsi10:.1f})",
                             action="_monitor_sell_orders",
                         )
                     except Exception as e:
@@ -1156,6 +1209,157 @@ class PaperTradingServiceAdapter:
             # Update saved file after removing executed orders
             self._save_sell_orders_to_file()
 
+    def _initialize_rsi10_cache_paper(self) -> None:
+        """
+        Initialize RSI10 cache with previous day's RSI10 for all active sell orders.
+        Called at market open (when sell orders are placed).
+
+        Paper trading version - uses fetch_ohlcv_yf directly.
+        """
+        if not self.active_sell_orders:
+            return
+
+        self.logger.info(
+            f"Initializing RSI10 cache for {len(self.active_sell_orders)} positions...",
+            action="_initialize_rsi10_cache_paper",
+        )
+
+        for symbol, order_info in self.active_sell_orders.items():
+            ticker = order_info.get("ticker")
+
+            if not ticker:
+                continue
+
+            try:
+                # Get previous day's RSI10
+                previous_rsi = self._get_previous_day_rsi10_paper(ticker)
+                if previous_rsi is not None:
+                    self.rsi10_cache[symbol] = previous_rsi
+                    self.logger.debug(
+                        f"Cached previous day RSI10 for {symbol}: {previous_rsi:.2f}",
+                        action="_initialize_rsi10_cache_paper",
+                    )
+                else:
+                    self.logger.warning(
+                        f"Could not get previous day RSI10 for {symbol}, will use real-time when available",
+                        action="_initialize_rsi10_cache_paper",
+                    )
+            except Exception as e:
+                self.logger.warning(
+                    f"Error caching RSI10 for {symbol}: {e}",
+                    action="_initialize_rsi10_cache_paper",
+                )
+
+        self.logger.info(
+            f"RSI10 cache initialized for {len(self.rsi10_cache)} positions",
+            action="_initialize_rsi10_cache_paper",
+        )
+
+    def _get_previous_day_rsi10_paper(self, ticker: str) -> float | None:
+        """
+        Get previous day's RSI10 value (paper trading).
+
+        Args:
+            ticker: Stock ticker (e.g., 'RELIANCE.NS')
+
+        Returns:
+            Previous day's RSI10 value, or None if unavailable
+        """
+        try:
+            import pandas_ta as ta
+
+            from core.data_fetcher import fetch_ohlcv_yf
+
+            # Get price data (exclude current day to get previous day's data)
+            data = fetch_ohlcv_yf(ticker, days=200, interval="1d", add_current_day=False)
+
+            if data is None or data.empty or len(data) < 2:
+                return None
+
+            # Calculate RSI
+            data["rsi10"] = ta.rsi(data["close"], length=10)
+
+            if data is None or data.empty or len(data) < 2:
+                return None
+
+            # Get second-to-last row (previous day)
+            previous_day = data.iloc[-2]
+            previous_rsi = previous_day.get("rsi10", None)
+
+            if previous_rsi is not None:
+                # Check if NaN
+                if not pd.isna(previous_rsi):
+                    return float(previous_rsi)
+
+            return None
+        except Exception as e:
+            self.logger.debug(
+                f"Error getting previous day RSI10 for {ticker}: {e}",
+                action="_get_previous_day_rsi10_paper",
+            )
+            return None
+
+    def _get_current_rsi10_paper(self, symbol: str, ticker: str) -> float | None:
+        """
+        Get current RSI10 value with real-time calculation and fallback to cache (paper trading).
+
+        Priority:
+        1. Try to calculate real-time RSI10 (update cache if available)
+        2. Fallback to cached previous day's RSI10
+
+        Args:
+            symbol: Stock symbol (for cache lookup)
+            ticker: Stock ticker (e.g., 'RELIANCE.NS')
+
+        Returns:
+            Current RSI10 value, or None if unavailable
+        """
+        try:
+            import pandas_ta as ta
+
+            from core.data_fetcher import fetch_ohlcv_yf
+
+            # Try to get real-time RSI10 (include current day)
+            data = fetch_ohlcv_yf(ticker, days=200, interval="1d", add_current_day=True)
+
+            if data is not None and not data.empty:
+                # Calculate RSI
+                data["rsi10"] = ta.rsi(data["close"], length=10)
+
+                if data is not None and not data.empty:
+                    # Get latest row (current day)
+                    latest = data.iloc[-1]
+                    current_rsi = latest.get("rsi10", None)
+
+                    if current_rsi is not None and not pd.isna(current_rsi):
+                        # Update cache with real-time value
+                        self.rsi10_cache[symbol] = float(current_rsi)
+                        self.logger.debug(
+                            f"Updated RSI10 cache for {symbol} with real-time value: {current_rsi:.2f}",
+                            action="_get_current_rsi10_paper",
+                        )
+                        return float(current_rsi)
+        except Exception as e:
+            self.logger.debug(
+                f"Error calculating real-time RSI10 for {symbol}: {e}",
+                action="_get_current_rsi10_paper",
+            )
+
+        # Fallback to cached previous day's RSI10
+        cached_rsi = self.rsi10_cache.get(symbol)
+        if cached_rsi is not None:
+            self.logger.debug(
+                f"Using cached RSI10 for {symbol}: {cached_rsi:.2f}",
+                action="_get_current_rsi10_paper",
+            )
+            return cached_rsi
+
+        self.logger.debug(
+            f"RSI10 unavailable for {symbol} (no cache, real-time failed)",
+            action="_get_current_rsi10_paper",
+        )
+        return None
+
     def _load_sell_orders_from_file(self):
         """Load active sell orders from JSON file on service startup"""
         try:
@@ -1173,20 +1377,28 @@ class PaperTradingServiceAdapter:
 
             # Validate and filter out orders for symbols that no longer have holdings
             holdings = self.broker.get_holdings() if self.broker else []
-            holding_symbols = {h.symbol for h in holdings}
+            # Extract base symbols from holdings for comparison (holdings have full symbols like RELIANCE-EQ)
+            from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+            holding_base_symbols = {extract_base_symbol(h.symbol).upper() for h in holdings}
 
             # Also check pending orders from broker to avoid duplicates
             pending_orders = self.broker.get_pending_orders() if self.broker else []
-            pending_sell_symbols = {
-                o.symbol for o in pending_orders if o.is_sell_order() and o.is_active()
+            # Extract base symbols from pending orders for comparison
+            pending_sell_base_symbols = {
+                extract_base_symbol(o.symbol).upper()
+                for o in pending_orders
+                if o.is_sell_order() and o.is_active()
             }
 
             valid_orders = {}
             for symbol, order_info in loaded_orders.items():
+                # Normalize symbol from file (might be base or full symbol)
+                symbol_base = extract_base_symbol(symbol).upper()
                 # Keep order if:
                 # 1. Symbol still has holdings, OR
                 # 2. Symbol has a pending sell order in broker
-                if symbol in holding_symbols or symbol in pending_sell_symbols:
+                if symbol_base in holding_base_symbols or symbol_base in pending_sell_base_symbols:
                     valid_orders[symbol] = order_info
                 else:
                     self.logger.debug(
@@ -1236,13 +1448,19 @@ class PaperTradingServiceAdapter:
             return 0
 
         holdings = self.broker.get_holdings()
-        holdings_map = {h.symbol: h.quantity for h in holdings}
+        # Holdings have full symbols (RELIANCE-EQ), but active_sell_orders might have base symbols (RELIANCE)
+        # Normalize for comparison
+        from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+        holdings_map = {extract_base_symbol(h.symbol).upper(): h.quantity for h in holdings}
 
         updated_count = 0
         for symbol, order_info in list(self.active_sell_orders.items()):
-            if symbol in holdings_map:
+            # Normalize symbol from active_sell_orders (might be base or full)
+            symbol_base = extract_base_symbol(symbol).upper()
+            if symbol_base in holdings_map:
                 current_qty = order_info.get("qty", 0)
-                holdings_qty = holdings_map[symbol]
+                holdings_qty = holdings_map[symbol_base]
 
                 # If holdings quantity is greater than sell order quantity, update it
                 if holdings_qty > current_qty:
@@ -1463,6 +1681,10 @@ class PaperTradingEngineAdapter:
             # Query Signals table for buy/strong_buy recommendations
             signals_repo = SignalsRepository(self.db, user_id=self.user_id)
 
+            # Mark time-expired signals before loading to ensure database consistency
+            # This prevents trading on expired signals
+            signals_repo.mark_time_expired_signals()
+
             # Get latest signals (today's or most recent)
             from src.infrastructure.db.models import SignalStatus  # noqa: PLC0415
             from src.infrastructure.db.timezone_utils import ist_now
@@ -1487,8 +1709,24 @@ class PaperTradingEngineAdapter:
             active_signals = []
             for signal in signals:
                 # Get effective status (user-specific if exists, otherwise base status)
+                # IMPORTANT: EXPIRED base status cannot be overridden by user status
+                # However, TRADED/REJECTED user status takes precedence over EXPIRED base status
+                # (from our recent fix - user actions are preserved even when base expires)
                 user_status = signals_repo.get_user_signal_status(signal.id, self.user_id)
-                effective_status = user_status if user_status is not None else signal.status
+
+                # Determine effective status:
+                # 1. If user has TRADED, REJECTED, or FAILED override, use that (completed actions take precedence)
+                # 2. If base signal is EXPIRED and no user override, effective_status is EXPIRED
+                # 3. Otherwise, use user status if exists, otherwise use base signal status
+                if user_status in [SignalStatus.TRADED, SignalStatus.REJECTED, SignalStatus.FAILED]:
+                    # User has completed an action (TRADED/REJECTED/FAILED) - this takes precedence
+                    effective_status = user_status
+                elif signal.status == SignalStatus.EXPIRED:
+                    # Base signal is EXPIRED and no user action - cannot be overridden with ACTIVE
+                    effective_status = SignalStatus.EXPIRED
+                else:
+                    # Use user status if exists, otherwise use base signal status
+                    effective_status = user_status if user_status is not None else signal.status
 
                 # Only include ACTIVE signals
                 if effective_status != SignalStatus.ACTIVE:
@@ -1516,6 +1754,9 @@ class PaperTradingEngineAdapter:
                 return []
 
             # Convert Signals to Recommendation objects
+            # Use a set to track normalized symbols to prevent duplicates
+            # (e.g., "XYZ" and "XYZ.NS" should be treated as the same symbol)
+            seen_symbols = set()
             recommendations = []
             for signal in active_signals:
                 # Determine verdict (prioritize final_verdict, then verdict, then ml_verdict)
@@ -1535,6 +1776,17 @@ class PaperTradingEngineAdapter:
                 ticker = signal.symbol.upper()
                 if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
                     ticker = f"{ticker}.NS"
+
+                # Normalize ticker for deduplication (remove .NS suffix and uppercase)
+                normalized_symbol = ticker.replace(".NS", "").replace(".BO", "").upper()
+
+                # Skip if we've already seen this normalized symbol
+                if normalized_symbol in seen_symbols:
+                    self.logger.debug(
+                        f"Skipping duplicate symbol: {ticker} (normalized: {normalized_symbol})",
+                        action="load_recommendations",
+                    )
+                    continue
 
                 # Get last_close price
                 last_close = signal.last_close or 0.0
@@ -1564,6 +1816,7 @@ class PaperTradingEngineAdapter:
                     execution_capital=execution_capital,
                 )
                 recommendations.append(rec)
+                seen_symbols.add(normalized_symbol)
 
             self.logger.info(
                 f"Converted {len(recommendations)} buy/strong_buy recommendations from database",
@@ -1619,28 +1872,68 @@ class PaperTradingEngineAdapter:
         holdings = self.broker.get_holdings()
         pending_orders = self.broker.get_all_orders()
 
-        # Normalize symbols from holdings (remove .NS suffix and uppercase)
-        current_symbols = {h.symbol.replace(".NS", "").upper() for h in holdings}
+        # Normalize symbols from holdings (extract base symbol from full symbols like RELIANCE-EQ)
+        # This matches the normalization in load_latest_recommendations()
+        from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+        current_symbols = {extract_base_symbol(h.symbol).upper() for h in holdings}
 
         # Also check pending/open buy orders to prevent duplicates
         for order in pending_orders:
             if order.is_buy_order() and order.is_active():
-                normalized_symbol = order.symbol.replace(".NS", "").upper()
+                # Normalize symbol (extract base symbol from full symbols)
+                normalized_symbol = extract_base_symbol(order.symbol).upper()
                 current_symbols.add(normalized_symbol)
                 self.logger.debug(
                     f"Found pending buy order for {order.symbol} (Status: {order.status})",
                     action="place_new_entries",
                 )
 
+        # Also check database for completed/ongoing buy orders from today to prevent duplicates
+        # This catches cases where orders were placed in previous runs but aren't in broker yet
+        if self.user_id and self.db:
+            from src.infrastructure.db.timezone_utils import ist_now
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+            orders_repo = OrdersRepository(self.db)
+            today = ist_now().date()
+
+            # Get all buy orders from today (any status except CANCELLED/FAILED)
+            # This includes ONGOING and CLOSED orders which indicate a position was opened
+            from src.infrastructure.db.models import OrderStatus
+
+            today_orders = orders_repo.list(self.user_id, status=None)
+            for order in today_orders:
+                if (
+                    order.side == "buy"
+                    and order.placed_at
+                    and order.placed_at.date() == today
+                    and order.status
+                    not in [OrderStatus.CANCELLED, OrderStatus.FAILED]  # Skip cancelled/failed
+                ):
+                    # Normalize symbol (extract base symbol from full symbols)
+                    from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+                    normalized_symbol = extract_base_symbol(order.symbol).upper()
+                    current_symbols.add(normalized_symbol)
+                    self.logger.debug(
+                        f"Found today's buy order in DB for {order.symbol} "
+                        f"(Status: {order.status.value}, Placed: {order.placed_at})",
+                        action="place_new_entries",
+                    )
+
         # Check portfolio limit (from strategy config or default 6)
+        # CRITICAL FIX: Use current_symbols (includes holdings + pending orders + DB orders)
+        # instead of just holdings, to properly respect max_portfolio_size
         max_portfolio_size = (
             self.strategy_config.max_portfolio_size
             if self.strategy_config and hasattr(self.strategy_config, "max_portfolio_size")
             else 6
         )
-        if len(holdings) >= max_portfolio_size:
+        current_portfolio_count = len(current_symbols)
+        if current_portfolio_count >= max_portfolio_size:
             self.logger.warning(
-                f"Portfolio limit reached ({len(holdings)}/{max_portfolio_size})",
+                f"Portfolio limit reached ({current_portfolio_count}/{max_portfolio_size})",
                 action="place_new_entries",
             )
             summary["skipped_portfolio_limit"] = len(recommendations)
@@ -1700,8 +1993,12 @@ class PaperTradingEngineAdapter:
         for rec in recommendations:
             summary["attempted"] += 1
 
-            # Normalize ticker for comparison (remove .NS suffix and uppercase)
-            normalized_ticker = rec.ticker.replace(".NS", "").upper()
+            # Normalize ticker for comparison (remove .NS/.BO suffix and uppercase)
+            # This matches the normalization in load_latest_recommendations()
+            # Normalize ticker to base symbol (extract base from full symbols like RELIANCE-EQ.NS)
+            # First remove .NS/.BO suffix, then extract base symbol (handles -EQ, -BE suffixes)
+            ticker_without_suffix = rec.ticker.replace(".NS", "").replace(".BO", "").upper()
+            normalized_ticker = extract_base_symbol(ticker_without_suffix).upper()
 
             # Skip if already in portfolio or has pending buy order
             if normalized_ticker in current_symbols:
@@ -1862,7 +2159,9 @@ class PaperTradingEngineAdapter:
 
         return summary
 
-    def monitor_positions(self):
+    def monitor_positions(
+        self,
+    ):  # Deprecated: Position monitoring removed, re-entry now in buy order service
         """
         Monitor positions for reentry/exit signals (paper trading).
 
@@ -2143,6 +2442,747 @@ class PaperTradingEngineAdapter:
         except Exception as e:
             self.logger.warning(f"Failed to get indicators for {ticker}: {e}")
             return None
+
+    def place_reentry_orders(self) -> dict[str, int]:
+        """
+        Check re-entry conditions and place AMO orders for re-entries (paper trading).
+
+        Called at 4:05 PM (with buy orders), same as real trading.
+
+        Returns:
+            Summary dict with placement statistics
+        """
+        from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType
+
+        summary = {
+            "attempted": 0,
+            "placed": 0,
+            "failed_balance": 0,
+            "skipped_duplicates": 0,
+            "skipped_invalid_rsi": 0,
+            "skipped_missing_data": 0,
+            "skipped_invalid_qty": 0,
+            "skipped_no_position": 0,
+        }
+
+        if not self.broker:
+            self.logger.error("Paper trading broker not initialized", action="place_reentry_orders")
+            return summary
+
+        if not self.broker.is_connected():
+            self.logger.warning("Paper trading broker not connected", action="place_reentry_orders")
+            return summary
+
+        # Get open positions from database
+        try:
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+            positions_repo = PositionsRepository(self.db)
+            open_positions = positions_repo.list(self.user_id)
+            open_positions = [pos for pos in open_positions if pos.closed_at is None]
+
+            if not open_positions:
+                self.logger.info(
+                    "No open positions for re-entry check", action="place_reentry_orders"
+                )
+                return summary
+
+            self.logger.info(
+                f"Checking re-entry conditions for {len(open_positions)} open positions...",
+                action="place_reentry_orders",
+            )
+
+            # Get current holdings and pending orders for duplicate checks
+            holdings = self.broker.get_holdings()
+            pending_orders = self.broker.get_all_orders()
+            current_symbols = {
+                h.symbol.replace(".NS", "").replace(".BO", "").upper() for h in holdings
+            }
+            for order in pending_orders:
+                if order.is_buy_order() and order.is_active():
+                    normalized_symbol = order.symbol.replace(".NS", "").replace(".BO", "").upper()
+                    current_symbols.add(normalized_symbol)
+
+            for position in open_positions:
+                symbol = position.symbol
+                entry_rsi = position.entry_rsi
+
+                # Default entry RSI to 29.5 if not available (assume entry at RSI < 30)
+                if entry_rsi is None:
+                    entry_rsi = 29.5
+                    self.logger.debug(
+                        f"Position {symbol} missing entry_rsi, defaulting to 29.5",
+                        action="place_reentry_orders",
+                    )
+
+                summary["attempted"] += 1
+
+                try:
+                    # Construct ticker from symbol
+                    ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+
+                    # Get current indicators
+                    ind = self._get_daily_indicators(ticker)
+                    if not ind:
+                        self.logger.warning(
+                            f"Skipping {symbol}: missing indicators for re-entry evaluation",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_missing_data"] += 1
+                        continue
+
+                    current_rsi = ind.get("rsi10")
+                    current_price = ind.get("close")
+                    avg_volume = ind.get("avg_volume", 0)
+
+                    if current_rsi is None or current_price is None:
+                        self.logger.warning(
+                            f"Skipping {symbol}: invalid indicators (RSI or price missing)",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_missing_data"] += 1
+                        continue
+
+                    # Determine next re-entry level based on entry RSI
+                    # Enhanced Hybrid Approach: Returns tuple (next_level, metadata_updates)
+                    next_level, metadata_updates = self._determine_reentry_level(
+                        entry_rsi, current_rsi, position
+                    )
+
+                    # Update position metadata if there are updates
+                    try:
+                        if metadata_updates and any(
+                            v is not None for v in metadata_updates.values()
+                        ):
+                            # Check if a reset happened (current_cycle changed)
+                            reset_happened = metadata_updates.get("current_cycle") is not None
+                            current_cycle = (
+                                metadata_updates.get("current_cycle")
+                                if reset_happened
+                                else self._get_position_cycle_metadata(position).get(
+                                    "current_cycle", 0
+                                )
+                            )
+
+                            # Update position's reentries structure with new metadata
+                            # Ensure position has reentries attribute (may be None for new positions)
+                            if not hasattr(position, "reentries"):
+                                position.reentries = (
+                                    None  # Will be handled by _set_position_cycle_metadata
+                                )
+
+                            updated_reentries = self._set_position_cycle_metadata(
+                                position,
+                                current_cycle=metadata_updates.get("current_cycle"),
+                                last_rsi_above_30=metadata_updates.get("last_rsi_above_30"),
+                                last_rsi_value=metadata_updates.get("last_rsi_value"),
+                            )
+
+                            # Save updated metadata to database
+                            from src.infrastructure.persistence.positions_repository import (
+                                PositionsRepository,
+                            )
+
+                            positions_repo = PositionsRepository(self.db)
+                            positions_repo.upsert(
+                                user_id=self.user_id,
+                                symbol=symbol,
+                                reentries=updated_reentries,
+                                auto_commit=False,  # Commit later with order
+                            )
+
+                            # Refresh position object for consistency
+                            position = positions_repo.get_by_symbol(self.user_id, symbol)
+                            if not position:
+                                self.logger.warning(
+                                    f"Position {symbol} not found after metadata update",
+                                    action="place_reentry_orders",
+                                )
+                                summary["skipped_missing_data"] += 1
+                                continue
+                        else:
+                            # No metadata updates, get current cycle from position
+                            cycle_meta = self._get_position_cycle_metadata(position)
+                            current_cycle = cycle_meta.get("current_cycle", 0)
+                    except Exception as meta_error:
+                        self.logger.warning(
+                            f"Error updating position metadata for {symbol}: {meta_error}. "
+                            f"Continuing with default cycle=0.",
+                            action="place_reentry_orders",
+                        )
+                        current_cycle = 0  # Default to cycle 0 if metadata update fails
+
+                    if next_level is None:
+                        self.logger.debug(
+                            f"No re-entry opportunity for {symbol} "
+                            f"(entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_invalid_rsi"] += 1
+                        continue
+
+                    # Enhanced Hybrid Approach: Check if re-entry at this level already exists
+                    # Detect if a reset happened (current_cycle changed)
+                    reset_happened = metadata_updates.get("current_cycle") is not None
+                    # Normalize symbol for has_reentry_at_level (remove .NS/.BO suffix)
+                    normalized_symbol = symbol.replace(".NS", "").replace(".BO", "").upper()
+                    if self.has_reentry_at_level(
+                        normalized_symbol, next_level, allow_reset=reset_happened
+                    ):
+                        self.logger.info(
+                            f"Skipping {symbol}: re-entry at level {next_level} already exists "
+                            f"in current cycle",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_duplicates"] += 1
+                        continue
+
+                    self.logger.info(
+                        f"Re-entry opportunity for {symbol}: entry_rsi={entry_rsi:.2f}, "
+                        f"current_rsi={current_rsi:.2f}, next_level={next_level}, "
+                        f"cycle={current_cycle}",
+                        action="place_reentry_orders",
+                    )
+
+                    # Check for duplicates (holdings or active buy orders)
+                    # Normalize symbol for comparison (remove .NS/.BO suffix)
+                    normalized_symbol = symbol.replace(".NS", "").replace(".BO", "").upper()
+                    if normalized_symbol in current_symbols:
+                        self.logger.info(
+                            f"Skipping {symbol}: already in holdings or pending orders",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_duplicates"] += 1
+                        continue
+
+                    # Calculate execution capital and quantity
+                    execution_capital = self._calculate_execution_capital(current_price, avg_volume)
+                    qty = int(execution_capital / current_price)
+
+                    if qty <= 0:
+                        self.logger.warning(
+                            f"Skipping {symbol}: invalid quantity ({qty})",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_invalid_qty"] += 1
+                        continue
+
+                    # Check balance and adjust quantity if needed
+                    portfolio = self.broker.get_portfolio()
+                    if portfolio:
+                        available_cash = portfolio.get("availableCash", 0) or portfolio.get(
+                            "cash", 0
+                        )
+                        affordable_qty = (
+                            int(available_cash / current_price) if current_price > 0 else 0
+                        )
+                        if affordable_qty < qty:
+                            self.logger.warning(
+                                f"Insufficient balance for {symbol}: "
+                                f"requested={qty}, affordable={affordable_qty}",
+                                action="place_reentry_orders",
+                            )
+                            qty = affordable_qty
+                            if qty <= 0:
+                                # Save as failed order for retry (similar to real trading)
+                                summary["failed_balance"] += 1
+                                summary["skipped_invalid_qty"] += 1
+                                continue
+                    # If portfolio is None, proceed without balance check (for testing)
+
+                    # Place re-entry order (AMO-like, similar to fresh entries)
+                    from modules.kotak_neo_auto_trader.domain import Money
+
+                    reentry_order = Order(
+                        symbol=ticker,
+                        quantity=qty,
+                        order_type=OrderType.LIMIT,
+                        transaction_type=TransactionType.BUY,
+                        price=Money(current_price),  # AMO order at current price
+                    )
+
+                    # Tag as re-entry with metadata for tracking
+                    # Enhanced Hybrid Approach: Include cycle number for tracking
+                    reentry_order._metadata = {
+                        "original_ticker": ticker,
+                        "entry_type": "reentry",
+                        "rsi_level": next_level,
+                        "rsi_value": round(current_rsi, 2),
+                        "entry_rsi": entry_rsi,
+                        "reentry_level": next_level,
+                        "cycle": current_cycle,  # Store cycle number for tracking
+                        "rsi10": current_rsi,
+                        "ema9": ind.get("ema9"),
+                        "ema200": ind.get("ema200"),
+                        "capital": execution_capital,
+                    }
+
+                    order_id = self.broker.place_order(reentry_order)
+
+                    if order_id:
+                        summary["placed"] += 1
+                        self.logger.info(
+                            f"Re-entry order placed: {symbol} (order_id: {order_id}, "
+                            f"qty: {qty}, level: {next_level})",
+                            action="place_reentry_orders",
+                        )
+
+                        # Save to database (similar to fresh entries)
+                        if self.user_id and self.db:
+                            from src.infrastructure.persistence.orders_repository import (
+                                OrdersRepository,
+                            )
+
+                            orders_repo = OrdersRepository(self.db)
+                            orders_repo.create_amo(
+                                user_id=self.user_id,
+                                symbol=normalized_symbol,
+                                side="buy",
+                                order_type="limit",
+                                quantity=qty,
+                                price=current_price,
+                                broker_order_id=order_id,
+                                order_metadata=reentry_order._metadata,
+                                entry_type="reentry",
+                            )
+                            # Note: create_amo already commits, but we keep commit here for safety
+                            if not self.db.in_transaction():
+                                self.db.commit()
+                    else:
+                        self.logger.warning(
+                            f"Failed to place re-entry order for {symbol}",
+                            action="place_reentry_orders",
+                        )
+
+                except Exception as e:
+                    self.logger.error(
+                        f"Error checking re-entry for {symbol}: {e}",
+                        exc_info=True,
+                        action="place_reentry_orders",
+                    )
+                    continue
+
+            self.logger.info(
+                f"Re-entry check complete: attempted={summary['attempted']}, "
+                f"placed={summary['placed']}, failed_balance={summary['failed_balance']}, "
+                f"skipped={summary['skipped_duplicates'] + summary['skipped_invalid_rsi'] + summary['skipped_missing_data'] + summary['skipped_invalid_qty']}",
+                action="place_reentry_orders",
+            )
+
+        except Exception as e:
+            self.logger.error(
+                f"Error in place_reentry_orders: {e}",
+                exc_info=True,
+                action="place_reentry_orders",
+            )
+
+        return summary
+
+    def _get_position_cycle_metadata(self, position: Any) -> dict[str, Any]:
+        """
+        Get cycle metadata from position's reentries structure.
+
+        Enhanced Hybrid Approach: Extracts cycle tracking metadata from position.
+
+        Args:
+            position: Position object from database
+
+        Returns:
+            Dict with cycle metadata:
+            {
+                "current_cycle": int,  # Default: 0
+                "last_rsi_above_30": str | None,  # ISO timestamp or None
+                "last_rsi_value": float | None,  # Last known RSI value
+            }
+        """
+        metadata = {
+            "current_cycle": 0,
+            "last_rsi_above_30": None,
+            "last_rsi_value": None,
+        }
+
+        if not position or not hasattr(position, "reentries"):
+            return metadata
+
+        if not position.reentries:
+            return metadata
+
+        # Check if reentries is a dict with _cycle_metadata key (new format)
+        if isinstance(position.reentries, dict):
+            cycle_meta = position.reentries.get("_cycle_metadata")
+            if isinstance(cycle_meta, dict):
+                metadata["current_cycle"] = cycle_meta.get("current_cycle", 0)
+                metadata["last_rsi_above_30"] = cycle_meta.get("last_rsi_above_30")
+                metadata["last_rsi_value"] = cycle_meta.get("last_rsi_value")
+            return metadata
+
+        # If reentries is a list, metadata might be stored separately
+        # For now, we'll extract from the structure
+        # In the new format, we'll store metadata in a wrapper dict
+        return metadata
+
+    def _set_position_cycle_metadata(
+        self,
+        position: Any,
+        current_cycle: int | None = None,
+        last_rsi_above_30: str | None = None,
+        last_rsi_value: float | None = None,
+    ) -> dict:
+        """
+        Set cycle metadata in position's reentries structure.
+
+        This creates/updates a wrapper structure:
+        {
+            "_cycle_metadata": {
+                "current_cycle": int,
+                "last_rsi_above_30": str | None,
+                "last_rsi_value": float | None
+            },
+            "reentries": [...]
+        }
+
+        Args:
+            position: Position object from database
+            current_cycle: Current cycle number (None to keep existing)
+            last_rsi_above_30: ISO timestamp when RSI was last above 30 (None to keep existing)
+            last_rsi_value: Last known RSI value (None to keep existing)
+
+        Returns:
+            Updated reentries structure (dict with _cycle_metadata and reentries keys)
+        """
+        # Get existing metadata
+        existing_meta = self._get_position_cycle_metadata(position)
+
+        # Get existing reentries array
+        existing_reentries = []
+        if position.reentries:
+            if isinstance(position.reentries, dict):
+                # New format: extract reentries array
+                existing_reentries = position.reentries.get("reentries", [])
+                if not isinstance(existing_reentries, list):
+                    existing_reentries = []
+            elif isinstance(position.reentries, list):
+                # Old format: reentries is directly a list
+                existing_reentries = position.reentries
+
+        # Update metadata
+        if current_cycle is not None:
+            existing_meta["current_cycle"] = current_cycle
+        if last_rsi_above_30 is not None:
+            existing_meta["last_rsi_above_30"] = last_rsi_above_30
+        if last_rsi_value is not None:
+            existing_meta["last_rsi_value"] = last_rsi_value
+
+        # Return wrapper structure
+        return {"_cycle_metadata": existing_meta, "reentries": existing_reentries}
+
+    def has_reentry_at_level(self, base_symbol: str, level: int, allow_reset: bool = False) -> bool:
+        """
+        Check if a re-entry at the specified level already exists in the current cycle.
+
+        Enhanced Hybrid Approach: Now checks by cycle number, not just level.
+        This allows re-entries at the same level after a reset (new cycle).
+
+        Args:
+            base_symbol: Symbol to check
+            level: Re-entry level (30, 20, or 10)
+            allow_reset: If True, allow re-entry at this level even if initial entry was at this level
+
+        Returns:
+            True if re-entry at this level already exists in current cycle, False otherwise
+        """
+        try:
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+            positions_repo = PositionsRepository(self.db)
+            position = positions_repo.get_by_symbol(self.user_id, base_symbol)
+            if not position:
+                return False
+
+            # Get current cycle from metadata
+            cycle_meta = self._get_position_cycle_metadata(position)
+            current_cycle = cycle_meta.get("current_cycle", 0)
+
+            # Check if initial entry was at this level
+            # Exception: If allow_reset=True, skip this check
+            entry_rsi = position.entry_rsi
+            if entry_rsi is not None and not allow_reset:
+                # Determine which level the initial entry was at
+                if level == 30 and entry_rsi < 30:
+                    return True
+                elif level == 20 and entry_rsi < 20:
+                    return True
+                elif level == 10 and entry_rsi < 10:
+                    return True
+
+            # Check existing re-entries in current cycle
+            if not position.reentries:
+                return False
+
+            # Extract reentries array (handle both old and new format)
+            reentries = position.reentries
+            if isinstance(reentries, dict):
+                reentries = reentries.get("reentries", [])
+            if not isinstance(reentries, list):
+                return False
+
+            for reentry in reentries:
+                if not isinstance(reentry, dict):
+                    continue
+
+                reentry_level = reentry.get("level")
+                if reentry_level is None:
+                    continue
+
+                try:
+                    reentry_level_int = int(reentry_level) if reentry_level is not None else None
+                    if reentry_level_int == level:
+                        # Check cycle number (if stored)
+                        reentry_cycle = reentry.get("cycle")
+                        if reentry_cycle is not None:
+                            # Only block if it's in the same cycle
+                            if int(reentry_cycle) == current_cycle:
+                                return True
+                        # Backward compatibility: if cycle not stored, assume cycle 0
+                        elif current_cycle == 0:
+                            return True
+                except (ValueError, TypeError):
+                    continue
+
+            return False
+        except Exception as e:
+            self.logger.error(
+                f"Error checking reentry level for {base_symbol}: {e}",
+                exc_info=True,
+                action="has_reentry_at_level",
+            )
+            return False
+
+    def _determine_reentry_level(
+        self, entry_rsi: float, current_rsi: float, position: Any
+    ) -> tuple[int | None, dict[str, Any]]:
+        """
+        Determine next re-entry level based on entry RSI and current RSI (paper trading).
+
+        Enhanced Hybrid Approach: Implements cycle tracking with reset detection on startup.
+
+        Logic:
+        - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
+        - Entry at RSI < 20 → Re-entry at RSI < 10 → Reset
+        - Entry at RSI < 10 → Only Reset
+
+        Reset mechanism:
+        - When RSI > 30: Store last_rsi_above_30 timestamp in position metadata
+        - When RSI drops < 30 after last_rsi_above_30 exists: Increment current_cycle, reset all levels
+        - On startup: Check if current RSI < 30 and last_rsi_above_30 exists → Reset detected
+
+        Args:
+            entry_rsi: RSI10 value at initial entry
+            current_rsi: Current RSI10 value
+            position: Position object (for tracking reset state)
+
+        Returns:
+            Tuple of (next_level, metadata_updates):
+            - next_level: Next re-entry level (30, 20, or 10), or None if no re-entry opportunity
+            - metadata_updates: Dict with cycle metadata updates to apply:
+              {
+                  "current_cycle": int | None,  # None = no change
+                  "last_rsi_above_30": str | None,  # ISO timestamp or None to clear
+                  "last_rsi_value": float | None,  # None = no change
+              }
+        """
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        # Get current cycle metadata
+        cycle_meta = self._get_position_cycle_metadata(position)
+        current_cycle = cycle_meta.get("current_cycle", 0)
+        last_rsi_above_30 = cycle_meta.get("last_rsi_above_30")
+        last_rsi_value = cycle_meta.get("last_rsi_value")
+
+        # Initialize metadata updates (None = no change)
+        metadata_updates = {
+            "current_cycle": None,
+            "last_rsi_above_30": None,
+            "last_rsi_value": None,
+        }
+
+        levels_taken = {"30": False, "20": False, "10": False}
+
+        # Determine initial levels_taken based on entry_rsi
+        if entry_rsi < 10:
+            # Entry at RSI < 10: All levels taken
+            levels_taken = {"30": True, "20": True, "10": True}
+        elif entry_rsi < 20:
+            # Entry at RSI < 20: 30 and 20 taken
+            levels_taken = {"30": True, "20": True, "10": False}
+        elif entry_rsi < 30:
+            # Entry at RSI < 30: Only 30 taken
+            levels_taken = {"30": True, "20": False, "10": False}
+        else:
+            # Entry at RSI >= 30: No levels taken (shouldn't happen, but handle it)
+            levels_taken = {"30": False, "20": False, "10": False}
+
+        # Fix Issue 1: Update levels_taken based on executed re-entries in current cycle
+        # Check reentries array to see which levels have been taken in the current cycle
+        if position and position.reentries:
+            reentries = position.reentries
+            if isinstance(reentries, dict):
+                # New format: extract reentries array
+                reentries = reentries.get("reentries", [])
+            if isinstance(reentries, list):
+                for reentry in reentries:
+                    if not isinstance(reentry, dict):
+                        continue
+                    # Check if this re-entry is in the current cycle
+                    reentry_cycle = reentry.get("cycle")
+                    if reentry_cycle is not None:
+                        # Only consider re-entries in the current cycle
+                        if int(reentry_cycle) == current_cycle:
+                            reentry_level = reentry.get("level")
+                            if reentry_level is not None:
+                                try:
+                                    level_int = int(reentry_level)
+                                    if level_int == 30:
+                                        levels_taken["30"] = True
+                                    elif level_int == 20:
+                                        levels_taken["20"] = True
+                                    elif level_int == 10:
+                                        levels_taken["10"] = True
+                                except (ValueError, TypeError):
+                                    pass
+                    # Backward compatibility: if cycle not stored, assume cycle 0
+                    elif current_cycle == 0:
+                        reentry_level = reentry.get("level")
+                        if reentry_level is not None:
+                            try:
+                                level_int = int(reentry_level)
+                                if level_int == 30:
+                                    levels_taken["30"] = True
+                                elif level_int == 20:
+                                    levels_taken["20"] = True
+                                elif level_int == 10:
+                                    levels_taken["10"] = True
+                            except (ValueError, TypeError):
+                                pass
+
+        # Fix: Mark intermediate levels as taken to prevent backtracking
+        # Rule: When a re-entry at level X is taken, mark all higher levels
+        # (between entry level and X) as taken
+        if levels_taken.get("10"):
+            # If level 10 is taken, mark level 20 and 30 as taken (can't backtrack)
+            levels_taken["20"] = True
+            levels_taken["30"] = True
+            self.logger.debug(
+                "Level 10 is taken - marking levels 20 and 30 as taken to prevent backtracking",
+                action="_determine_reentry_level",
+            )
+        elif levels_taken.get("20"):
+            # If level 20 is taken, mark level 30 as taken (can't backtrack)
+            levels_taken["30"] = True
+            self.logger.debug(
+                "Level 20 is taken - marking level 30 as taken to prevent backtracking",
+                action="_determine_reentry_level",
+            )
+
+        # Enhanced reset detection with startup support
+        # Step 1: If RSI > 30, store last_rsi_above_30 timestamp
+        if current_rsi > 30:
+            # Store timestamp when RSI goes above 30
+            now = ist_now()
+            metadata_updates["last_rsi_above_30"] = now.isoformat()
+            metadata_updates["last_rsi_value"] = current_rsi
+            self.logger.debug(
+                f"RSI > 30 detected: {current_rsi:.2f}. Storing last_rsi_above_30 timestamp.",
+                action="_determine_reentry_level",
+            )
+            # Don't return yet - continue to check if we should trigger reset immediately
+
+        # Step 2: Check for reset condition (RSI < 30 AND last_rsi_above_30 exists)
+        # This works both during runtime and on startup
+        reset_detected = False
+        if current_rsi < 30 and last_rsi_above_30:
+            # Reset detected! Increment cycle and reset all levels
+            new_cycle = current_cycle + 1
+            metadata_updates["current_cycle"] = new_cycle
+            metadata_updates["last_rsi_above_30"] = None  # Clear reset flag
+            metadata_updates["last_rsi_value"] = current_rsi  # Update last RSI value
+            reset_detected = True
+
+            self.logger.info(
+                f"Reset detected: RSI dropped to {current_rsi:.2f} after being above 30. "
+                f"Incrementing cycle from {current_cycle} to {new_cycle}.",
+                action="_determine_reentry_level",
+            )
+
+            # Reset all levels, treat as new cycle
+            levels_taken = {"30": False, "20": False, "10": False}
+
+            # Fix Issue 2: Reset should check current RSI level and trigger appropriate level
+            # Don't always return level 30 - check what level the current RSI satisfies
+            if current_rsi < 10:
+                # RSI < 10: Trigger level 10 (highest priority)
+                self.logger.info(
+                    f"Reset triggers re-entry at level 10 (RSI {current_rsi:.2f} < 10)",
+                    action="_determine_reentry_level",
+                )
+                return (10, metadata_updates)
+            elif current_rsi < 20:
+                # RSI < 20: Trigger level 20
+                self.logger.info(
+                    f"Reset triggers re-entry at level 20 (RSI {current_rsi:.2f} < 20)",
+                    action="_determine_reentry_level",
+                )
+                return (20, metadata_updates)
+            elif current_rsi < 30:
+                # RSI < 30: Trigger level 30
+                self.logger.info(
+                    f"Reset triggers re-entry at level 30 (RSI {current_rsi:.2f} < 30)",
+                    action="_determine_reentry_level",
+                )
+                return (30, metadata_updates)
+            else:
+                # Shouldn't happen (we're in reset condition with RSI < 30)
+                self.logger.warning(
+                    f"Reset detected but RSI {current_rsi:.2f} is not < 30. This shouldn't happen.",
+                    action="_determine_reentry_level",
+                )
+                return (None, metadata_updates)
+
+        # Step 3: Update last_rsi_value if RSI changed (for tracking)
+        if last_rsi_value != current_rsi:
+            metadata_updates["last_rsi_value"] = current_rsi
+
+        # Normal progression through levels
+        # Fix Issue 3: Allow skipping levels if RSI drops directly to a lower level
+        # Check levels in priority order (10 > 20 > 30) - allows skipping levels
+        next_level = None
+
+        if current_rsi < 10:
+            # RSI < 10: Check if level 10 is available
+            if not levels_taken.get("10"):
+                next_level = 10
+                self.logger.debug(
+                    f"RSI {current_rsi:.2f} < 10, level 10 available (allows skipping level 20)",
+                    action="_determine_reentry_level",
+                )
+        elif current_rsi < 20:
+            # RSI < 20: Check if level 20 is available
+            if not levels_taken.get("20"):
+                next_level = 20
+                self.logger.debug(
+                    f"RSI {current_rsi:.2f} < 20, level 20 available",
+                    action="_determine_reentry_level",
+                )
+        elif current_rsi < 30:
+            # RSI < 30: Check if level 30 is available
+            if not levels_taken.get("30"):
+                next_level = 30
+                self.logger.debug(
+                    f"RSI {current_rsi:.2f} < 30, level 30 available",
+                    action="_determine_reentry_level",
+                )
+
+        return (next_level, metadata_updates)
 
     def _calculate_execution_capital(self, price: float, avg_volume: float) -> float:
         """

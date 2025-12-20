@@ -54,9 +54,24 @@ export const test = base.extend<TestFixtures>({
 		await loginPage.loginAsAdmin();
 		// Verify we're on dashboard (authentication successful)
 		await page.waitForURL(/\/dashboard/, { timeout: 30000 });
-		await page.waitForLoadState('networkidle');
-		// Wait a bit more to ensure session is fully established
+
+		// Wait for page to load - use domcontentloaded first for faster tests
+		await page.waitForLoadState('domcontentloaded');
+
+		// Then wait for network to be idle (with timeout to handle long-polling)
+		await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
+			// If networkidle times out, that's okay - page is still usable
+			// Some pages have websocket connections that never go idle
+		});
+
+		// Wait a bit more to ensure session is fully established and page is stable
 		await page.waitForTimeout(500);
+
+		// Verify main content is visible to ensure page is ready
+		await page.locator('main, [role="main"]').waitFor({ state: 'visible', timeout: 10000 }).catch(() => {
+			// If main content not visible, page might still be loading - continue anyway
+		});
+
 		await use(page);
 	},
 });

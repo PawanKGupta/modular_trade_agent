@@ -51,7 +51,7 @@ class DummyTask(SimpleNamespace):
 class DummyServiceLog(SimpleNamespace):
     def __init__(self, **kwargs):
         super().__init__(
-            id=kwargs.get("id", 1),
+            id=kwargs.get("id", "file:1"),
             level=kwargs.get("level", "INFO"),
             module=kwargs.get("module", "test_module"),
             message=kwargs.get("message", "Test message"),
@@ -154,28 +154,68 @@ class DummyTaskRepo:
         ]
 
 
-class DummyServiceLogRepo:
-    def __init__(self, db):
-        self.db = db
-        self.list_called = []
+class DummyFileLogReader:
+    def __init__(self):
+        self.read_logs_called = []
+        self.tail_logs_called = []
 
-    def list(self, user_id, level=None, module=None, start_time=None, limit=100):
-        self.list_called.append(
+    def read_logs(  # noqa: PLR0913
+        self,
+        user_id,
+        level=None,
+        module=None,
+        start_time=None,
+        end_time=None,
+        search=None,
+        limit=100,
+        days_back=14,
+    ):
+        self.read_logs_called.append(
             {
                 "user_id": user_id,
                 "level": level,
                 "module": module,
                 "start_time": start_time,
+                "end_time": end_time,
+                "search": search,
                 "limit": limit,
+                "days_back": days_back,
             }
         )
+        from src.infrastructure.db.timezone_utils import ist_now
+
         return [
-            DummyServiceLog(
-                id=1,
-                user_id=user_id,
-                level=level or "INFO",
-                module=module or "test_module",
-            )
+            {
+                "id": "file:1",
+                "user_id": user_id,
+                "level": level or "INFO",
+                "module": module or "test_module",
+                "message": "Test message",
+                "context": None,
+                "timestamp": ist_now(),
+            }
+        ]
+
+    def tail_logs(self, user_id, log_type="service", tail_lines=200):
+        self.tail_logs_called.append(
+            {
+                "user_id": user_id,
+                "log_type": log_type,
+                "tail_lines": tail_lines,
+            }
+        )
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        return [
+            {
+                "id": "file:1",
+                "user_id": user_id,
+                "level": "INFO",
+                "module": "test_module",
+                "message": "Test message",
+                "context": None,
+                "timestamp": ist_now(),
+            }
         ]
 
 
@@ -225,10 +265,12 @@ def task_repo(monkeypatch, mock_db):
 
 
 @pytest.fixture
-def service_log_repo(monkeypatch, mock_db):
-    repo = DummyServiceLogRepo(db=mock_db)
-    monkeypatch.setattr(service, "ServiceLogRepository", lambda db: repo)
-    return repo
+def file_log_reader(monkeypatch):
+    reader = DummyFileLogReader()
+    # Patch FileLogReader in the router module namespace where it's imported
+    # This is the key - we need to patch where it's used, not where it's defined
+    monkeypatch.setattr(service, "FileLogReader", lambda: reader)
+    return reader
 
 
 @pytest.fixture
@@ -340,7 +382,9 @@ def test_stop_service_failure(trading_service, mock_db, current_user):
 
 def test_stop_service_exception(trading_service, mock_db, current_user):
     """Test stop_service with exception"""
-    trading_service.stop_service = lambda user_id: (_ for _ in ()).throw(Exception("Stop error"))  # noqa: E501
+    trading_service.stop_service = lambda user_id: (_ for _ in ()).throw(
+        Exception("Stop error")
+    )  # noqa: E501
 
     with pytest.raises(HTTPException) as exc:
         service.stop_service(
@@ -708,10 +752,12 @@ def test_get_task_history_empty_result(task_repo, current_user, mock_db):
 
 # GET /service/logs tests
 def test_get_service_logs_no_filters(  # noqa: E501
-    service_log_repo, current_user, mock_db, monkeypatch
+    file_log_reader, current_user, mock_db, monkeypatch
 ):
     """Test get_service_logs with no filters"""
-    mock_now = datetime(2024, 1, 15, 12, 0, 0)
+    from src.infrastructure.db.timezone_utils import IST
+
+    mock_now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=IST)
     monkeypatch.setattr(service, "ist_now", lambda: mock_now)
 
     result = service.get_service_logs(
@@ -719,6 +765,7 @@ def test_get_service_logs_no_filters(  # noqa: E501
         module=None,
         hours=24,
         limit=100,
+        tail=False,  # Explicitly set tail=False
         db=mock_db,
         current=current_user,
     )
@@ -726,15 +773,16 @@ def test_get_service_logs_no_filters(  # noqa: E501
     assert len(result.logs) == 1
     assert result.total == 1
     assert result.limit == 100
-    assert len(service_log_repo.list_called) == 1
-    call_args = service_log_repo.list_called[0]
+    assert len(file_log_reader.read_logs_called) == 1
+    assert len(file_log_reader.tail_logs_called) == 0  # tail_logs should not be called
+    call_args = file_log_reader.read_logs_called[0]
     assert call_args["user_id"] == 42
     assert call_args["level"] is None
     assert call_args["module"] is None
 
 
 def test_get_service_logs_with_filters(  # noqa: E501
-    service_log_repo, current_user, mock_db, monkeypatch
+    file_log_reader, current_user, mock_db, monkeypatch
 ):
     """Test get_service_logs with all filters"""
     mock_now = datetime(2024, 1, 15, 12, 0, 0)
@@ -745,11 +793,12 @@ def test_get_service_logs_with_filters(  # noqa: E501
         module="trading_service",
         hours=48,
         limit=200,
+        tail=False,
         db=mock_db,
         current=current_user,
     )
 
-    call_args = service_log_repo.list_called[0]
+    call_args = file_log_reader.read_logs_called[0]
     assert call_args["level"] == "ERROR"
     assert call_args["module"] == "trading_service"
     assert call_args["limit"] == 200
@@ -757,18 +806,21 @@ def test_get_service_logs_with_filters(  # noqa: E501
 
 
 def test_get_service_logs_empty_result(  # noqa: E501
-    service_log_repo, current_user, mock_db, monkeypatch
+    file_log_reader, current_user, mock_db, monkeypatch
 ):
     """Test get_service_logs with empty result"""
     mock_now = datetime(2024, 1, 15, 12, 0, 0)
     monkeypatch.setattr(service, "ist_now", lambda: mock_now)
-    service_log_repo.list = lambda user_id, level=None, module=None, start_time=None, limit=100: []
+    file_log_reader.read_logs = (
+        lambda user_id, level=None, module=None, start_time=None, end_time=None, search=None, limit=100, days_back=14: []
+    )
 
     result = service.get_service_logs(
         level=None,
         module=None,
         hours=24,
         limit=100,
+        tail=False,
         db=mock_db,
         current=current_user,
     )
@@ -778,14 +830,16 @@ def test_get_service_logs_empty_result(  # noqa: E501
 
 
 def test_get_service_logs_exception(  # noqa: E501
-    service_log_repo, current_user, mock_db, monkeypatch
+    file_log_reader, current_user, mock_db, monkeypatch
 ):
     """Test get_service_logs with exception"""
     mock_now = datetime(2024, 1, 15, 12, 0, 0)
     monkeypatch.setattr(service, "ist_now", lambda: mock_now)
-    service_log_repo.list = lambda user_id, level=None, module=None, start_time=None, limit=100: (
+    file_log_reader.read_logs = lambda user_id, level=None, module=None, start_time=None, end_time=None, search=None, limit=100, days_back=14: (
         _ for _ in ()
-    ).throw(Exception("Log error"))
+    ).throw(
+        Exception("Log error")
+    )
 
     with pytest.raises(HTTPException) as exc:
         service.get_service_logs(
@@ -793,6 +847,7 @@ def test_get_service_logs_exception(  # noqa: E501
             module=None,
             hours=24,
             limit=100,
+            tail=False,
             db=mock_db,
             current=current_user,
         )

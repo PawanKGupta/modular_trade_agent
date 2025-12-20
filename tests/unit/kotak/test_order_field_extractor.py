@@ -110,15 +110,21 @@ class TestOrderFieldExtractor:
         order = {"quantity": 20}
         assert OrderFieldExtractor.get_quantity(order) == 20
 
-    def test_get_quantity_with_fldQty(self):
-        """Test extracting quantity with fldQty field"""
-        order = {"fldQty": 15}
+    def test_get_quantity_with_orderQty(self):
+        """Test extracting quantity with orderQty field"""
+        order = {"orderQty": 15}
         assert OrderFieldExtractor.get_quantity(order) == 15
 
     def test_get_quantity_fallback(self):
         """Test quantity fallback priority"""
-        order = {"qty": 10, "quantity": 20, "fldQty": 15}
+        order = {"qty": 10, "quantity": 20, "orderQty": 15}
         assert OrderFieldExtractor.get_quantity(order) == 10
+
+    def test_get_quantity_ignores_fldQty(self):
+        """Test that get_quantity() does NOT return fldQty (filled quantity)"""
+        # Edge Case #8: get_quantity() should return order quantity, not filled quantity
+        order = {"qty": 35, "fldQty": 20}  # Order qty: 35, Filled: 20
+        assert OrderFieldExtractor.get_quantity(order) == 35  # Should return order qty
 
     def test_get_quantity_zero_default(self):
         """Test quantity defaults to 0"""

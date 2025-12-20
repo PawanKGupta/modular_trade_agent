@@ -57,6 +57,16 @@ export function PaperTradingPage() {
 
 	const { account, holdings, recent_orders, order_statistics } = data;
 
+	// Debug: Log holdings with reentry data
+	if (holdings.length > 0) {
+		console.log('Holdings with reentry data:', holdings.map(h => ({
+			symbol: h.symbol,
+			reentry_count: h.reentry_count,
+			reentries: h.reentries,
+			entry_rsi: h.entry_rsi
+		})));
+	}
+
 	return (
 		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
 			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
@@ -173,6 +183,7 @@ export function PaperTradingPage() {
 									<th className="text-right p-2 whitespace-nowrap hidden md:table-cell">Market Value</th>
 									<th className="text-right p-2 whitespace-nowrap">P&L</th>
 									<th className="text-right p-2 whitespace-nowrap">P&L %</th>
+									<th className="text-right p-2 whitespace-nowrap hidden md:table-cell">Re-entries</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -250,6 +261,50 @@ export function PaperTradingPage() {
 											}`}
 										>
 											{formatPercent(h.pnl_percentage)}
+										</td>
+										<td className="p-2 text-right text-[var(--text)] hidden md:table-cell">
+											{(h.reentry_count && h.reentry_count > 0) || (h.reentries && h.reentries.length > 0) ? (
+												<div className="flex flex-col items-end gap-1">
+													{h.reentry_count && h.reentry_count > 0 && (
+														<span className="text-xs font-medium text-yellow-400">
+															{h.reentry_count} re-entry{h.reentry_count !== 1 ? 's' : ''}
+														</span>
+													)}
+													{h.entry_rsi !== null && h.entry_rsi !== undefined && (
+														<span className="text-xs text-[var(--muted)]">
+															Entry RSI: {h.entry_rsi.toFixed(1)}
+														</span>
+													)}
+													{h.reentries && h.reentries.length > 0 && (
+														<details className="text-xs">
+															<summary className="cursor-pointer text-yellow-400 hover:text-yellow-300">
+																View details
+															</summary>
+															<div className="mt-1 space-y-1 text-left max-w-xs">
+																{h.reentries.map((re, idx) => (
+																	<div key={idx} className="text-[var(--muted)] border-b border-[#1e293b]/50 pb-1 mb-1 last:border-0 last:mb-0">
+																		<div className="font-medium">
+																			Re-entry {idx + 1}: {re.qty} @ Rs {typeof re.price === 'number' ? re.price.toFixed(2) : re.price}
+																		</div>
+																		{re.level && (
+																			<div className="text-xs">
+																				Level: {re.level} {re.rsi && `(RSI: ${typeof re.rsi === 'number' ? re.rsi.toFixed(1) : re.rsi})`}
+																			</div>
+																		)}
+																		{re.time && (
+																			<div className="text-xs">
+																				{new Date(re.time).toLocaleDateString()}
+																			</div>
+																		)}
+																	</div>
+																))}
+															</div>
+														</details>
+													)}
+												</div>
+											) : (
+												<span className="text-[var(--muted)]">-</span>
+											)}
 										</td>
 									</tr>
 								))}

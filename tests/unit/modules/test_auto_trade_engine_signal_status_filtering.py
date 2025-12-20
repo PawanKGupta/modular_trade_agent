@@ -189,21 +189,21 @@ class TestAutoTradeEngineSignalStatusFiltering:
     def test_load_recommendations_per_user_status_takes_precedence(
         self, auto_trade_engine_with_db, db_session, test_user
     ):
-        """Test that per-user status takes precedence over base signal status"""
-        # Create signal with EXPIRED base status
+        """Test that per-user status takes precedence over base signal status, except for EXPIRED"""
+        # Create signal with TRADED base status (not EXPIRED - user can override TRADED/REJECTED)
         signal = Signals(
             symbol="RELIANCE",
             verdict="buy",
             final_verdict="buy",
             last_close=2500.0,
-            status=SignalStatus.EXPIRED,  # Base status is EXPIRED
+            status=SignalStatus.TRADED,  # Base status is TRADED (can be overridden)
             ts=ist_now(),
         )
         db_session.add(signal)
         db_session.commit()
         db_session.refresh(signal)
 
-        # But mark as ACTIVE for test_user (per-user status)
+        # Mark as ACTIVE for test_user (per-user status override)
         user_status = UserSignalStatus(
             user_id=test_user.id,
             signal_id=signal.id,
@@ -215,7 +215,7 @@ class TestAutoTradeEngineSignalStatusFiltering:
 
         recs = auto_trade_engine_with_db.load_latest_recommendations()
 
-        # Should include signal because per-user status (ACTIVE) takes precedence
+        # Should include signal because per-user status (ACTIVE) takes precedence over TRADED
         assert len(recs) == 1
         assert recs[0].ticker == "RELIANCE.NS"
 
@@ -286,6 +286,42 @@ class TestAutoTradeEngineSignalStatusFiltering:
         # signal4 is EXPIRED (base) - excluded
         assert len(recs) == 1
         assert recs[0].ticker == "RELIANCE.NS"
+
+    def test_load_recommendations_excludes_failed_signals(
+        self, auto_trade_engine_with_db, db_session, test_user
+    ):
+        """Test that FAILED signals (per-user) are excluded from recommendations"""
+        # Create ACTIVE signal
+        signal = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # Mark as FAILED for test_user (per-user status)
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.FAILED,
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        # Mock CSV fallback to return empty list
+        with patch.object(
+            auto_trade_engine_with_db, "load_latest_recommendations_from_csv", return_value=[]
+        ):
+            recs = auto_trade_engine_with_db.load_latest_recommendations()
+
+        # Should exclude FAILED signal
+        assert len(recs) == 0
 
     def test_load_recommendations_different_users_see_different_signals(
         self, auto_trade_engine_with_db, db_session, test_user

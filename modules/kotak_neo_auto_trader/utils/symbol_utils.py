@@ -71,3 +71,31 @@ def get_lookup_symbol(broker_symbol: str | None, base_symbol: str) -> str:
     if broker_symbol:
         return normalize_symbol(broker_symbol)
     return normalize_symbol(base_symbol)
+
+
+def get_ticker_from_full_symbol(full_symbol: str, exchange: str = "NS") -> str:
+    """
+    Convert full trading symbol to yfinance ticker format.
+
+    This extracts the base symbol and adds exchange suffix.
+    yfinance requires base symbols (e.g., "RELIANCE.NS"), not full symbols
+    (e.g., "RELIANCE-EQ.NS").
+
+    Args:
+        full_symbol: Full trading symbol (e.g., "RELIANCE-EQ", "SALSTEEL-BE")
+                    or base symbol (e.g., "RELIANCE", "SALSTEEL")
+        exchange: Exchange suffix (default: "NS" for NSE, "BO" for BSE)
+
+    Returns:
+        Ticker format (e.g., "RELIANCE.NS", "SALSTEEL.NS")
+
+    Examples:
+        >>> get_ticker_from_full_symbol("RELIANCE-EQ")
+        "RELIANCE.NS"
+        >>> get_ticker_from_full_symbol("SALSTEEL-BE")
+        "SALSTEEL.NS"
+        >>> get_ticker_from_full_symbol("TCS")  # Already base
+        "TCS.NS"
+    """
+    base_symbol = extract_base_symbol(full_symbol)
+    return f"{base_symbol}.{exchange}"

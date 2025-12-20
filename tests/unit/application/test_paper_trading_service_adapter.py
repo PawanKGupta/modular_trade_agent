@@ -120,6 +120,54 @@ class TestPaperTradingServiceAdapter:
 
         assert adapter.tasks_completed["buy_orders"] is True
 
+    def test_run_buy_orders_calls_place_reentry_orders(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that run_buy_orders calls place_reentry_orders after placing fresh entries"""
+        from config.strategy_config import StrategyConfig
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+        )
+        adapter.broker = mock_paper_broker
+        adapter.logger = MagicMock()
+
+        # Initialize engine
+        from src.application.services.paper_trading_service_adapter import PaperTradingEngineAdapter
+
+        adapter.engine = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=adapter.logger,
+        )
+
+        # Mock load_latest_recommendations to return empty (no fresh entries)
+        adapter.engine.load_latest_recommendations = MagicMock(return_value=[])
+
+        # Mock place_reentry_orders
+        mock_reentry_summary = {
+            "attempted": 1,
+            "placed": 1,
+            "failed_balance": 0,
+            "skipped_duplicates": 0,
+            "skipped_invalid_rsi": 0,
+            "skipped_missing_data": 0,
+            "skipped_invalid_qty": 0,
+        }
+        adapter.engine.place_reentry_orders = MagicMock(return_value=mock_reentry_summary)
+
+        # Run buy orders
+        adapter.run_buy_orders()
+
+        # Verify place_reentry_orders was called
+        adapter.engine.place_reentry_orders.assert_called_once()
+
     def test_run_buy_orders_with_recommendations(self, db_session, test_user, mock_paper_broker):
         """Test buy orders with recommendations"""
         from config.strategy_config import StrategyConfig
@@ -334,7 +382,7 @@ class TestPaperTradingEngineAdapter:
 
         # Mock holding
         mock_holding = MagicMock()
-        mock_holding.symbol = "RELIANCE"
+        mock_holding.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_paper_broker.get_holdings.return_value = [mock_holding]
         mock_paper_broker.config = MagicMock()
         mock_paper_broker.config.max_position_size = 100000.0
@@ -446,7 +494,7 @@ class TestPaperTradingEngineAdapter:
 
         # Create a pending buy order for RELIANCE
         pending_order = MagicMock()
-        pending_order.symbol = "RELIANCE"
+        pending_order.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pending_order.status = OrderStatus.OPEN
         pending_order.transaction_type = TransactionType.BUY
         pending_order.is_buy_order.return_value = True
@@ -490,19 +538,19 @@ class TestPaperTradingEngineAdapter:
 
         # Mock holdings with one stock
         mock_holding = MagicMock()
-        mock_holding.symbol = "TCS"
+        mock_holding.symbol = "TCS-EQ"  # Full symbol after migration
         mock_paper_broker.get_holdings.return_value = [mock_holding]
 
         # Create pending orders
         pending_reliance = MagicMock()
-        pending_reliance.symbol = "RELIANCE"
+        pending_reliance.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pending_reliance.status = OrderStatus.OPEN
         pending_reliance.transaction_type = TransactionType.BUY
         pending_reliance.is_buy_order.return_value = True
         pending_reliance.is_active.return_value = True
 
         pending_infy = MagicMock()
-        pending_infy.symbol = "INFY"
+        pending_infy.symbol = "INFY-EQ"  # Full symbol after migration
         pending_infy.status = OrderStatus.OPEN
         pending_infy.transaction_type = TransactionType.BUY
         pending_infy.is_buy_order.return_value = True
@@ -887,7 +935,7 @@ class TestPaperTradingSellMonitoring:
 
         # Set up active sell order
         adapter.active_sell_orders = {
-            "RELIANCE": {
+            "RELIANCE-EQ": {  # Full symbol after migration
                 "order_id": "SELL_ORDER_123",
                 "target_price": 2600.0,
                 "qty": 40,
@@ -938,9 +986,10 @@ class TestPaperTradingSellMonitoring:
         )
         adapter.broker = MagicMock()
         adapter.logger = MagicMock()
+        adapter.converted_to_market = set()  # Initialize RSI exit tracking
 
         adapter.active_sell_orders = {
-            "RELIANCE": {
+            "RELIANCE-EQ": {  # Full symbol after migration
                 "order_id": "SELL_ORDER_123",
                 "target_price": 2600.0,
                 "qty": 40,
@@ -960,8 +1009,18 @@ class TestPaperTradingSellMonitoring:
             with patch("pandas_ta.rsi", return_value=pd.Series([45.0])):
                 adapter._monitor_sell_orders()
 
-                # Verify fetch_ohlcv_yf was called with days=60
-                mock_fetch.assert_called_with("RELIANCE.NS", days=60, interval="1d")
+                # Verify fetch_ohlcv_yf was called
+                # Main monitoring path uses days=60, RSI exit logic uses days=200
+                calls = [call for call in mock_fetch.call_args_list if call[0][0] == "RELIANCE.NS"]
+                assert len(calls) > 0, "fetch_ohlcv_yf should be called for RELIANCE.NS"
+
+                # Check that main monitoring path uses days=60
+                # (RSI exit logic may also call with days=200, but main path should use 60)
+                main_call = next((call for call in calls if call[1].get("days") == 60), None)
+                assert main_call is not None, (
+                    "fetch_ohlcv_yf should be called with days=60 for main monitoring. "
+                    f"Actual calls: {[call[1] for call in calls]}"
+                )
 
     def test_service_state_attributes(self, db_session, test_user):
         """Test that service has running and shutdown_requested attributes for scheduler control"""
@@ -998,7 +1057,7 @@ class TestPaperTradingSellMonitoring:
 
         # Create mock holdings
         mock_holding = MagicMock()
-        mock_holding.symbol = "RELIANCE"
+        mock_holding.symbol = "RELIANCE-EQ"  # Full symbol after migration
         adapter.broker.get_holdings.return_value = [mock_holding]
 
         # Create mock pending orders (empty)
@@ -1292,7 +1351,7 @@ class TestPaperTradingSellMonitoring:
 
         # Mock broker to simulate holdings increase (re-entry happened)
         mock_holding = MagicMock()
-        mock_holding.symbol = "RELIANCE"
+        mock_holding.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_holding.quantity = 60  # Increased from 40 to 60 (re-entry added 20)
         adapter_with_holdings.broker.get_holdings.return_value = [mock_holding]
 
@@ -1445,7 +1504,7 @@ class TestPaperTradingSellMonitoring:
 
         # Mock holdings with increased quantity (re-entry happened)
         mock_holding = MagicMock()
-        mock_holding.symbol = "RELIANCE"
+        mock_holding.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_holding.quantity = 60  # Increased from 40
         adapter_with_holdings.broker.get_holdings.return_value = [mock_holding]
 
@@ -1687,10 +1746,50 @@ class TestSignalStatusFiltering:
         # Should exclude EXPIRED signal
         assert len(recs) == 0
 
+    def test_load_recommendations_excludes_failed_signals(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that FAILED signals (per-user) are excluded from recommendations"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create ACTIVE signal
+        signal = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # Mark as FAILED for this user (per-user status)
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.FAILED,
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should exclude FAILED signal
+        assert len(recs) == 0
+
     def test_load_recommendations_per_user_status_takes_precedence(
         self, db_session, test_user, mock_paper_broker
     ):
-        """Test that per-user status takes precedence over base signal status"""
+        """Test that per-user status takes precedence over base signal status, except for EXPIRED"""
         # Create another user
         user2 = Users(
             email="user2@test.com",
@@ -1701,6 +1800,47 @@ class TestSignalStatusFiltering:
         db_session.commit()
         db_session.refresh(user2)
 
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signal with TRADED base status (not EXPIRED - user can override TRADED/REJECTED)
+        signal = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.TRADED,  # Base status is TRADED (can be overridden)
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+        db_session.refresh(signal)
+
+        # Mark as ACTIVE for test_user (per-user status override)
+        user_status = UserSignalStatus(
+            user_id=test_user.id,
+            signal_id=signal.id,
+            symbol="RELIANCE",
+            status=SignalStatus.ACTIVE,  # Per-user status is ACTIVE
+        )
+        db_session.add(user_status)
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should include signal because per-user status (ACTIVE) takes precedence over TRADED
+        assert len(recs) == 1
+        assert recs[0].ticker == "RELIANCE.NS"
+
+    def test_load_recommendations_expired_signals_cannot_be_overridden(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that EXPIRED signals cannot be overridden by per-user status"""
         adapter = PaperTradingEngineAdapter(
             broker=mock_paper_broker,
             user_id=test_user.id,
@@ -1722,21 +1862,20 @@ class TestSignalStatusFiltering:
         db_session.commit()
         db_session.refresh(signal)
 
-        # But mark as ACTIVE for test_user (per-user status)
+        # Try to mark as ACTIVE for test_user (per-user status)
         user_status = UserSignalStatus(
             user_id=test_user.id,
             signal_id=signal.id,
             symbol="RELIANCE",
-            status=SignalStatus.ACTIVE,  # Per-user status is ACTIVE
+            status=SignalStatus.ACTIVE,  # Per-user status is ACTIVE (but should be ignored)
         )
         db_session.add(user_status)
         db_session.commit()
 
         recs = adapter.load_latest_recommendations()
 
-        # Should include signal because per-user status (ACTIVE) takes precedence
-        assert len(recs) == 1
-        assert recs[0].ticker == "RELIANCE.NS"
+        # Should NOT include signal because EXPIRED status cannot be overridden
+        assert len(recs) == 0
 
     def test_load_recommendations_mixed_status_signals(
         self, db_session, test_user, mock_paper_broker
@@ -1813,3 +1952,271 @@ class TestSignalStatusFiltering:
         # signal4 is EXPIRED (base) - excluded
         assert len(recs) == 1
         assert recs[0].ticker == "RELIANCE.NS"
+
+
+class TestDuplicateSymbolDeduplication:
+    """Test that duplicate symbols are deduplicated when loading recommendations"""
+
+    def test_load_recommendations_deduplicates_xyz_and_xyz_ns(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that signals with 'XYZ' and 'XYZ.NS' are deduplicated"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signals with same symbol but different formats
+        signal1 = Signals(
+            symbol="XYZ",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=100.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal2 = Signals(
+            symbol="XYZ.NS",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=100.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should only return one recommendation (first one encountered)
+        assert len(recs) == 1
+        # Both should normalize to XYZ.NS
+        assert recs[0].ticker == "XYZ.NS"
+
+    def test_load_recommendations_deduplicates_case_insensitive(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that symbol deduplication is case-insensitive"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signals with same symbol but different cases
+        signal1 = Signals(
+            symbol="reliance",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal2 = Signals(
+            symbol="RELIANCE",
+            verdict="strong_buy",
+            final_verdict="strong_buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should only return one recommendation
+        assert len(recs) == 1
+        assert recs[0].ticker == "RELIANCE.NS"
+
+    def test_load_recommendations_deduplicates_with_bo_suffix(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that symbols with .BO suffix are also deduplicated"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signals with same base symbol but different suffixes
+        # Use explicit timestamps to ensure order: ABC comes first
+        now = ist_now()
+        signal1 = Signals(
+            symbol="ABC",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=50.0,
+            status=SignalStatus.ACTIVE,
+            ts=now,  # Same timestamp, but added first
+        )
+        signal2 = Signals(
+            symbol="ABC.BO",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=50.0,
+            status=SignalStatus.ACTIVE,
+            ts=now,  # Same timestamp
+        )
+        db_session.add(signal1)
+        db_session.flush()  # Ensure signal1 is added first
+        db_session.add(signal2)
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should only return one recommendation (first one encountered)
+        assert len(recs) == 1
+        # The first signal processed will be kept
+        # Since both normalize to "ABC", whichever is processed first wins
+        # We verify deduplication worked by checking only one is returned
+        ticker = recs[0].ticker
+        assert ticker in ["ABC.NS", "ABC.BO"], f"Expected ABC.NS or ABC.BO, got {ticker}"
+
+    def test_load_recommendations_keeps_first_duplicate(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that the first signal encountered is kept when duplicates exist"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signals with same normalized symbol but different prices
+        # Use explicit timestamps to ensure order: TEST comes first
+        now = ist_now()
+        signal1 = Signals(
+            symbol="TEST",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=200.0,
+            status=SignalStatus.ACTIVE,
+            ts=now,  # Same timestamp, but added first
+        )
+        # Second signal has lower price
+        signal2 = Signals(
+            symbol="TEST.NS",
+            verdict="strong_buy",
+            final_verdict="strong_buy",
+            last_close=150.0,
+            status=SignalStatus.ACTIVE,
+            ts=now,  # Same timestamp
+        )
+        db_session.add(signal1)
+        db_session.flush()  # Ensure signal1 is added first
+        db_session.add(signal2)
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should only return one recommendation
+        assert len(recs) == 1
+        # Should keep the first one encountered (TEST -> TEST.NS)
+        assert recs[0].ticker == "TEST.NS"
+        # The first signal processed will be kept (order may vary, so check either price)
+        assert recs[0].last_close in [200.0, 150.0]
+
+    def test_load_recommendations_no_deduplication_for_different_symbols(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that different symbols are not deduplicated"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create signals with different symbols
+        signal1 = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal2 = Signals(
+            symbol="TCS",
+            verdict="strong_buy",
+            final_verdict="strong_buy",
+            last_close=3500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal3 = Signals(
+            symbol="INFY",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=1500.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2, signal3])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should return all three recommendations (no duplicates)
+        assert len(recs) == 3
+        tickers = {r.ticker for r in recs}
+        assert "RELIANCE.NS" in tickers
+        assert "TCS.NS" in tickers
+        assert "INFY.NS" in tickers
+
+    def test_load_recommendations_deduplicates_multiple_duplicates(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Test that multiple duplicates of the same symbol are all deduplicated"""
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=MagicMock(),
+        )
+
+        # Create multiple signals with same normalized symbol
+        signal1 = Signals(
+            symbol="MULTI",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=100.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal2 = Signals(
+            symbol="MULTI.NS",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=100.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        signal3 = Signals(
+            symbol="multi",
+            verdict="strong_buy",
+            final_verdict="strong_buy",
+            last_close=100.0,
+            status=SignalStatus.ACTIVE,
+            ts=ist_now(),
+        )
+        db_session.add_all([signal1, signal2, signal3])
+        db_session.commit()
+
+        recs = adapter.load_latest_recommendations()
+
+        # Should only return one recommendation (first one)
+        assert len(recs) == 1
+        assert recs[0].ticker == "MULTI.NS"

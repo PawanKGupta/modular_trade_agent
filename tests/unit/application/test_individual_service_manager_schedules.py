@@ -6,6 +6,8 @@ Tests for:
 - get_status returns services when schedules exist
 """
 
+from datetime import time
+
 import pytest
 
 from src.application.services.individual_service_manager import (
@@ -45,20 +47,19 @@ class TestIndividualServiceManagerSchedules:
         assert len(schedules) == 0
 
         # Call get_status which should trigger _ensure_default_schedules
-        status = manager.get_status(sample_user.id)
+        manager.get_status(sample_user.id)
 
         # Verify schedules were created
         schedules = schedule_repo.get_all()
-        assert (
-            len(schedules) == 6
-        )  # premarket_retry, sell_monitor, position_monitor, analysis, buy_orders, eod_cleanup
+        # premarket_retry, sell_monitor, analysis, buy_orders, eod_cleanup
+        # (position_monitor removed in Phase 3)
+        assert len(schedules) == 5
 
         # Verify specific schedules exist
         task_names = {s.task_name for s in schedules}
         expected_tasks = {
             "premarket_retry",
             "sell_monitor",
-            "position_monitor",
             "analysis",
             "buy_orders",
             "eod_cleanup",
@@ -80,14 +81,8 @@ class TestIndividualServiceManagerSchedules:
         assert sell_monitor.end_time.hour == 15
         assert sell_monitor.end_time.minute == 30
 
-        position_monitor = schedule_repo.get_by_task_name("position_monitor")
-        assert position_monitor is not None
-        assert position_monitor.is_hourly is True
-
     def test_ensure_default_schedules_does_not_duplicate(self, db_session, sample_user):
         """Test that default schedules are not duplicated if they already exist"""
-        from datetime import time
-
         schedule_repo = ServiceScheduleRepository(db_session)
 
         # Create one schedule manually
@@ -106,7 +101,7 @@ class TestIndividualServiceManagerSchedules:
         manager = IndividualServiceManager(db_session)
 
         # Call get_status which should trigger _ensure_default_schedules
-        status = manager.get_status(sample_user.id)
+        manager.get_status(sample_user.id)
 
         # Verify only one premarket_retry schedule exists
         premarket_schedules = [
@@ -116,7 +111,7 @@ class TestIndividualServiceManagerSchedules:
 
         # Verify other schedules were still created
         schedules = schedule_repo.get_all()
-        assert len(schedules) == 6  # 1 existing + 5 new
+        assert len(schedules) == 5  # 1 existing + 4 new (position_monitor removed in Phase 3)
 
     def test_get_status_returns_services_when_schedules_exist(self, db_session, sample_user):
         """Test that get_status returns service status for all scheduled tasks"""
@@ -127,10 +122,10 @@ class TestIndividualServiceManagerSchedules:
 
         # Verify status contains all scheduled tasks
         assert isinstance(status, dict)
-        assert len(status) == 6  # All 6 default schedules
+        assert len(status) == 5  # All 5 default schedules (position_monitor removed in Phase 3)
 
         # Verify each task has required fields
-        for task_name, info in status.items():
+        for _task_name, info in status.items():
             assert "is_running" in info
             assert "schedule_enabled" in info
             assert "started_at" in info
@@ -139,7 +134,7 @@ class TestIndividualServiceManagerSchedules:
             assert "process_id" in info
 
         # Verify initial state
-        for task_name, info in status.items():
+        for _task_name, info in status.items():
             assert info["is_running"] is False
             assert info["schedule_enabled"] is True
             assert info["process_id"] is None
@@ -153,9 +148,9 @@ class TestIndividualServiceManagerSchedules:
 
         # Should still return status for all default schedules
         assert isinstance(status, dict)
-        assert len(status) == 6
+        assert len(status) == 5  # position_monitor removed in Phase 3
 
         # Verify schedules were created in database
         schedule_repo = ServiceScheduleRepository(db_session)
         schedules = schedule_repo.get_all()
-        assert len(schedules) == 6
+        assert len(schedules) == 5  # position_monitor removed in Phase 3

@@ -252,20 +252,19 @@ class TestOrderStatusVerifierResultSharing:
 
 
 class TestEODCleanupOrderVerificationSkip:
-    """Test EOD Cleanup conditional verification"""
+    """Test EOD Cleanup always verifies (no skipping)"""
 
     @patch("modules.kotak_neo_auto_trader.eod_cleanup.logger")
-    def test_verify_all_pending_orders_skips_recent_check(self, mock_logger):
-        """Test that EOD cleanup skips verification if OrderStatusVerifier ran recently"""
+    def test_verify_all_pending_orders_always_verifies_recent_check(self, mock_logger):
+        """Test that EOD cleanup always verifies even if OrderStatusVerifier ran recently"""
         from modules.kotak_neo_auto_trader.eod_cleanup import EODCleanup
 
         broker_client = Mock()
         mock_verifier = Mock()
-        mock_verifier.should_skip_verification = Mock(return_value=True)
-        mock_verifier.get_last_check_time = Mock(
-            return_value=datetime.now() - timedelta(minutes=10)
-        )
-        mock_verifier.get_last_verification_counts = Mock(
+        # Mock get_last_check_time to return a recent time (within 1 minute)
+        recent_time = datetime.now() - timedelta(seconds=30)
+        mock_verifier.get_last_check_time = Mock(return_value=recent_time)
+        mock_verifier.verify_pending_orders = Mock(
             return_value={
                 "checked": 5,
                 "executed": 2,
@@ -280,24 +279,16 @@ class TestEODCleanupOrderVerificationSkip:
 
         result = cleanup._verify_all_pending_orders()
 
-        # Verify OrderStatusVerifier.should_skip_verification was called
-        mock_verifier.should_skip_verification.assert_called_once_with(
-            minutes_threshold=15
-        )
+        # Verify get_last_check_time was called to check if recent
+        mock_verifier.get_last_check_time.assert_called_once()
 
-        # Verify verify_pending_orders() was NOT called (we're using cached results)
-        # Check that verify_pending_orders was not called by checking call_count
-        verify_call_count = (
-            mock_verifier.verify_pending_orders.call_count
-            if hasattr(mock_verifier.verify_pending_orders, "call_count")
-            else 0
-        )
-        assert verify_call_count == 0
+        # Verify verify_pending_orders() WAS called (always verifies)
+        mock_verifier.verify_pending_orders.assert_called_once()
 
-        # Verify result contains skipped flag and source
-        assert result.get("skipped") is True
-        assert result.get("source") == "OrderStatusVerifier"
+        # Verify result does not contain skipped flag
+        assert result.get("skipped") is not True
         assert result["checked"] == 5
+        assert result["executed"] == 2
 
     @patch("modules.kotak_neo_auto_trader.eod_cleanup.logger")
     def test_verify_all_pending_orders_runs_old_check(self, mock_logger):
@@ -306,7 +297,9 @@ class TestEODCleanupOrderVerificationSkip:
 
         broker_client = Mock()
         mock_verifier = Mock()
-        mock_verifier.should_skip_verification = Mock(return_value=False)
+        # Mock get_last_check_time to return an old time (more than 1 minute ago)
+        old_time = datetime.now() - timedelta(minutes=20)
+        mock_verifier.get_last_check_time = Mock(return_value=old_time)
         mock_verifier.verify_pending_orders = Mock(
             return_value={
                 "checked": 3,
@@ -322,10 +315,8 @@ class TestEODCleanupOrderVerificationSkip:
 
         result = cleanup._verify_all_pending_orders()
 
-        # Verify OrderStatusVerifier.should_skip_verification was called
-        mock_verifier.should_skip_verification.assert_called_once_with(
-            minutes_threshold=15
-        )
+        # Verify get_last_check_time was called
+        mock_verifier.get_last_check_time.assert_called_once()
 
         # Verify verify_pending_orders() WAS called
         mock_verifier.verify_pending_orders.assert_called_once()
@@ -333,6 +324,40 @@ class TestEODCleanupOrderVerificationSkip:
         # Verify result does not contain skipped flag
         assert result.get("skipped") is not True
         assert result["checked"] == 3
+
+    @patch("modules.kotak_neo_auto_trader.eod_cleanup.logger")
+    def test_verify_all_pending_orders_no_last_check_time(self, mock_logger):
+        """Test that EOD cleanup verifies when OrderStatusVerifier has no last check time"""
+        from modules.kotak_neo_auto_trader.eod_cleanup import EODCleanup
+
+        broker_client = Mock()
+        mock_verifier = Mock()
+        # Mock get_last_check_time to return None (never checked)
+        mock_verifier.get_last_check_time = Mock(return_value=None)
+        mock_verifier.verify_pending_orders = Mock(
+            return_value={
+                "checked": 2,
+                "executed": 0,
+                "rejected": 0,
+                "still_pending": 2,
+            }
+        )
+
+        cleanup = EODCleanup(
+            broker_client=broker_client, order_verifier=mock_verifier
+        )
+
+        result = cleanup._verify_all_pending_orders()
+
+        # Verify get_last_check_time was called
+        mock_verifier.get_last_check_time.assert_called_once()
+
+        # Verify verify_pending_orders() WAS called
+        mock_verifier.verify_pending_orders.assert_called_once()
+
+        # Verify result does not contain skipped flag
+        assert result.get("skipped") is not True
+        assert result["checked"] == 2
 
     @patch("modules.kotak_neo_auto_trader.eod_cleanup.logger")
     def test_verify_all_pending_orders_no_verifier(self, mock_logger):

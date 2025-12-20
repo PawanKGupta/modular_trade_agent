@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 
-import core.backtest_scoring as bts  # Keep for helper functions (run_simple_backtest, calculate_wilder_rsi)
+# Keep for helper functions (run_simple_backtest, calculate_wilder_rsi)
+import core.backtest_scoring as bts
 
 # Phase 4.8: Update to use BacktestService instead of core.backtest_scoring
 from services.backtest_service import BacktestService
@@ -115,3 +116,161 @@ def test_add_backtest_scores_to_results(monkeypatch):
     # Combined score = (current_score * 0.5) + (backtest_score * 0.5)
     # = (20.0 * 0.5) + (60.0 * 0.5) = 10.0 + 30.0 = 40.0
     assert abs(item["combined_score"] - 40.0) < 1e-6
+
+
+def test_run_stock_backtest_integrated_mode_avg_return_calculation(monkeypatch):
+    """Test that avg_return is calculated from positions when using integrated backtest mode"""
+    # Force integrated mode
+    monkeypatch.setattr(bts, "BACKTEST_MODE", "integrated", raising=False)
+
+    # Mock run_integrated_backtest to return positions with return_pct
+    def fake_run_integrated_backtest(
+        stock_name,
+        date_range,
+        capital_per_position=50000,
+        skip_trade_agent_validation=False,
+        config=None,
+    ):
+        return {
+            "stock_name": "TEST.NS",
+            "total_return_pct": 15.0,
+            "win_rate": 75.0,
+            "executed_trades": 4,
+            "strategy_vs_buy_hold": 5.0,
+            "trade_agent_accuracy": 100.0,
+            "positions": [
+                {"return_pct": 8.0},  # 8% return
+                {"return_pct": 5.0},  # 5% return
+                {"return_pct": 2.0},  # 2% return
+                {"return_pct": 0.0},  # 0% return (break even)
+            ],
+        }
+
+    monkeypatch.setattr(bts, "run_integrated_backtest", fake_run_integrated_backtest)
+
+    # Mock calculate_backtest_score
+    def fake_calculate_backtest_score(backtest_results, dip_mode=False):
+        return 50.0
+
+    monkeypatch.setattr(bts, "calculate_backtest_score", fake_calculate_backtest_score)
+
+    result = bts.run_stock_backtest("TEST.NS", years_back=2)
+
+    # Verify avg_return is calculated correctly: (8 + 5 + 2 + 0) / 4 = 3.75
+    assert "avg_return" in result
+    assert abs(result["avg_return"] - 3.75) < 1e-6
+    assert result["win_rate"] == 75.0
+    assert result["total_trades"] == 4
+
+
+def test_run_stock_backtest_integrated_mode_avg_return_no_positions(monkeypatch):
+    """Test that avg_return is 0 when there are no positions"""
+    # Force integrated mode
+    monkeypatch.setattr(bts, "BACKTEST_MODE", "integrated", raising=False)
+
+    # Mock run_integrated_backtest to return no positions
+    def fake_run_integrated_backtest(
+        stock_name,
+        date_range,
+        capital_per_position=50000,
+        skip_trade_agent_validation=False,
+        config=None,
+    ):
+        return {
+            "stock_name": "TEST.NS",
+            "total_return_pct": 0.0,
+            "win_rate": 0.0,
+            "executed_trades": 0,
+            "strategy_vs_buy_hold": 0.0,
+            "trade_agent_accuracy": 100.0,
+            "positions": [],  # No positions
+        }
+
+    monkeypatch.setattr(bts, "run_integrated_backtest", fake_run_integrated_backtest)
+
+    # Mock calculate_backtest_score
+    def fake_calculate_backtest_score(backtest_results, dip_mode=False):
+        return 0.0
+
+    monkeypatch.setattr(bts, "calculate_backtest_score", fake_calculate_backtest_score)
+
+    result = bts.run_stock_backtest("TEST.NS", years_back=2)
+
+    # Verify avg_return is 0 when no positions
+    assert "avg_return" in result
+    assert result["avg_return"] == 0.0
+
+
+def test_run_stock_backtest_integrated_mode_avg_return_with_none_values(monkeypatch):
+    """Test that avg_return calculation handles None values in return_pct"""
+    # Force integrated mode
+    monkeypatch.setattr(bts, "BACKTEST_MODE", "integrated", raising=False)
+
+    # Mock run_integrated_backtest to return positions with some None return_pct
+    def fake_run_integrated_backtest(
+        stock_name,
+        date_range,
+        capital_per_position=50000,
+        skip_trade_agent_validation=False,
+        config=None,
+    ):
+        return {
+            "stock_name": "TEST.NS",
+            "total_return_pct": 10.0,
+            "win_rate": 66.7,
+            "executed_trades": 3,
+            "strategy_vs_buy_hold": 5.0,
+            "trade_agent_accuracy": 100.0,
+            "positions": [
+                {"return_pct": 5.0},  # 5% return
+                {"return_pct": None},  # None (should be skipped)
+                {"return_pct": 3.0},  # 3% return
+            ],
+        }
+
+    monkeypatch.setattr(bts, "run_integrated_backtest", fake_run_integrated_backtest)
+
+    # Mock calculate_backtest_score
+    def fake_calculate_backtest_score(backtest_results, dip_mode=False):
+        return 45.0
+
+    monkeypatch.setattr(bts, "calculate_backtest_score", fake_calculate_backtest_score)
+
+    result = bts.run_stock_backtest("TEST.NS", years_back=2)
+
+    # Verify avg_return is calculated only from non-None values: (5 + 3) / 2 = 4.0
+    assert "avg_return" in result
+    assert abs(result["avg_return"] - 4.0) < 1e-6
+
+
+def test_run_stock_backtest_simple_mode_avg_return_preserved(monkeypatch):
+    """Test that avg_return from simple backtest mode is preserved"""
+    # Force simple mode
+    monkeypatch.setattr(bts, "BACKTEST_MODE", "simple", raising=False)
+
+    # Mock run_simple_backtest to return avg_return
+    def fake_run_simple_backtest(stock_symbol, years_back=2, dip_mode=False, config=None):
+        return {
+            "symbol": "TEST.NS",
+            "backtest_score": 0,  # Will be calculated later
+            "total_return_pct": 12.0,
+            "win_rate": 80.0,
+            "total_trades": 5,
+            "vs_buy_hold": 8.0,
+            "execution_rate": 100.0,
+            "avg_return": 2.5,  # avg_return from simple backtest
+        }
+
+    monkeypatch.setattr(bts, "run_simple_backtest", fake_run_simple_backtest)
+
+    # Mock calculate_backtest_score
+    def fake_calculate_backtest_score(backtest_results, dip_mode=False):
+        return 55.0
+
+    monkeypatch.setattr(bts, "calculate_backtest_score", fake_calculate_backtest_score)
+
+    result = bts.run_stock_backtest("TEST.NS", years_back=2)
+
+    # Verify avg_return from simple backtest is preserved
+    assert "avg_return" in result
+    assert result["avg_return"] == 2.5

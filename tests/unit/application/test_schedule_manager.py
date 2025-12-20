@@ -284,18 +284,18 @@ def test_validate_schedule_analysis_flexible_time(db_session, schedule_manager):
     assert "off-trading hours" in message.lower() or "4:00 PM" in message
 
 
-def test_validate_schedule_position_monitor_hourly(db_session, schedule_manager):
-    """Test validation for position monitor hourly requirement"""
+def test_validate_schedule_position_monitor_invalid(db_session, schedule_manager):
+    """Test that position_monitor is rejected as invalid task name (removed in Phase 3)"""
     is_valid, message = schedule_manager.validate_schedule(
         task_name="position_monitor",
-        schedule_time=time(9, 15),  # Not :30 minutes
+        schedule_time=time(9, 30),
         is_hourly=True,
         is_continuous=False,
         end_time=None,
         schedule_type="daily",
     )
     assert is_valid is False
-    assert ":30" in message or "30" in message
+    assert "Invalid task name" in message or "invalid" in message.lower()
 
 
 def test_validate_schedule_sell_monitor_continuous(db_session, schedule_manager):
@@ -342,3 +342,35 @@ def test_is_trading_day_weekend(db_session, schedule_manager):
     weekday = today.weekday()
     if weekday >= 5:  # Saturday or Sunday
         assert schedule_manager.is_trading_day(today) is False
+
+
+def test_is_trading_day_holiday(db_session, schedule_manager):
+    """Test that holidays are not trading days"""
+    from datetime import date
+
+    # Test known NSE holidays for 2025
+    # Mahashivratri - Feb 26, 2025 (Wednesday)
+    assert schedule_manager.is_trading_day(date(2025, 2, 26)) is False
+
+    # Holi - Mar 14, 2025 (Friday)
+    assert schedule_manager.is_trading_day(date(2025, 3, 14)) is False
+
+    # Diwali Laxmi Pujan - Oct 21, 2025 (Tuesday)
+    assert schedule_manager.is_trading_day(date(2025, 10, 21)) is False
+
+    # Christmas - Dec 25, 2025 (Thursday)
+    assert schedule_manager.is_trading_day(date(2025, 12, 25)) is False
+
+
+def test_is_trading_day_regular_weekday_not_holiday(db_session, schedule_manager):
+    """Test that regular weekdays (not holidays) are trading days"""
+    from datetime import date
+
+    # Regular Monday (not a holiday)
+    assert schedule_manager.is_trading_day(date(2025, 12, 1)) is True
+
+    # Regular Tuesday (not a holiday)
+    assert schedule_manager.is_trading_day(date(2025, 12, 2)) is True
+
+    # Regular Wednesday (not a holiday)
+    assert schedule_manager.is_trading_day(date(2025, 12, 3)) is True

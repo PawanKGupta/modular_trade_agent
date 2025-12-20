@@ -28,10 +28,11 @@ export function NotificationPreferencesPage() {
 			setSaveMessage({ type: 'success', text: 'Notification preferences saved successfully!' });
 			setTimeout(() => setSaveMessage(null), 3000);
 		},
-		onError: (error: any) => {
+		onError: (error: unknown) => {
+			const errorDetail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
 			setSaveMessage({
 				type: 'error',
-				text: error?.response?.data?.detail || 'Failed to save notification preferences',
+				text: errorDetail || 'Failed to save notification preferences',
 			});
 			setTimeout(() => setSaveMessage(null), 5000);
 		},
@@ -47,7 +48,7 @@ export function NotificationPreferencesPage() {
 		}
 	}, [preferences]);
 
-	const handleChange = (field: keyof NotificationPreferences, value: any) => {
+	const handleChange = (field: keyof NotificationPreferences, value: unknown) => {
 		if (!localPrefs) return;
 		setLocalPrefs({ ...localPrefs, [field]: value });
 		setHasChanges(true);
@@ -65,7 +66,7 @@ export function NotificationPreferencesPage() {
 			const prefValue = preferences[typedKey];
 			if (localValue !== prefValue) {
 				// Convert null to undefined for optional fields, keep other values as-is
-				(updates as any)[typedKey] = localValue === null ? undefined : localValue;
+				(updates as Record<string, unknown>)[typedKey] = localValue === null ? undefined : localValue;
 			}
 		});
 

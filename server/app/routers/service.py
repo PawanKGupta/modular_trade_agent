@@ -12,14 +12,22 @@ from src.application.services.individual_service_manager import IndividualServic
 from src.application.services.multi_user_trading_service import MultiUserTradingService
 from src.infrastructure.db.models import Users
 from src.infrastructure.db.timezone_utils import ist_now
-from src.infrastructure.persistence.service_log_repository import ServiceLogRepository
+from src.infrastructure.logging.file_log_reader import FileLogReader
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.service_task_repository import ServiceTaskRepository
+from src.infrastructure.utils.holiday_calendar import (
+    get_holiday_name,
+    is_nse_holiday,
+    is_trading_day,
+)
 
 from ..core.deps import get_current_user, get_db
 from ..schemas.service import (
     IndividualServicesStatusResponse,
     IndividualServiceStatus,
+    PositionCreationMetricsResponse,
+    PositionsWithoutSellOrdersResponse,
+    PositionWithoutSellOrder,
     RunOnceRequest,
     RunOnceResponse,
     ServiceLogResponse,
@@ -33,6 +41,7 @@ from ..schemas.service import (
     StopIndividualServiceResponse,
     TaskExecutionResponse,
     TaskHistoryResponse,
+    TradingDayInfoResponse,
 )
 
 router = APIRouter()
@@ -305,35 +314,45 @@ def get_service_logs(  # noqa: PLR0913
     hours: int = Query(
         24, ge=1, le=168, description="Number of hours to look back (max 168 = 7 days)"
     ),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of logs to return"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of logs to return"),
+    tail: bool = Query(False, description="Return last 200 lines from latest file."),
     db: Session = Depends(get_db),
     current: Users = Depends(get_current_user),
 ):
     """Get recent service logs for current user"""
     try:
-        log_repo = ServiceLogRepository(db)
-        start_time = ist_now() - timedelta(hours=hours)
+        _ = db  # Not used for file logs
+        reader = FileLogReader()
 
-        logs = log_repo.list(
-            user_id=current.id,
-            level=level,
-            module=module,
-            start_time=start_time,
-            limit=limit,
-        )
+        if tail:
+            log_dicts = reader.tail_logs(user_id=current.id, log_type="service", tail_lines=200)
+        else:
+            start_time = ist_now() - timedelta(hours=hours)
+            days_back = min(14, (hours + 23) // 24)  # ceil hours to days, cap at 14
+
+            log_dicts = reader.read_logs(
+                user_id=current.id,
+                level=level,
+                module=module,
+                start_time=start_time,
+                limit=min(limit, 500),
+                days_back=days_back,
+            )
+
+        logs = [
+            ServiceLogResponse(
+                id=str(log_dict.get("id", "")),  # Coerce to string for file:line format
+                level=log_dict["level"],
+                module=log_dict["module"],
+                message=log_dict["message"],
+                context=log_dict.get("context"),
+                timestamp=log_dict["timestamp"],
+            )
+            for log_dict in log_dicts
+        ]
 
         return ServiceLogsResponse(
-            logs=[
-                ServiceLogResponse(
-                    id=log.id,
-                    level=log.level,
-                    module=log.module,
-                    message=log.message,
-                    context=log.context,
-                    timestamp=log.timestamp,
-                )
-                for log in logs
-            ],
+            logs=logs,
             total=len(logs),
             limit=limit,
         )
@@ -341,4 +360,131 @@ def get_service_logs(  # noqa: PLR0913
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting service logs: {str(e)}",
+        ) from e
+
+
+@router.get("/service/metrics/position-creation", response_model=PositionCreationMetricsResponse)
+def get_position_creation_metrics(
+    db: Session = Depends(get_db),
+    current: Users = Depends(get_current_user),
+    trading_service: MultiUserTradingService = Depends(get_trading_service),
+):
+    """
+    Get position creation metrics for current user's trading service.
+
+    Issue #1 Fix: Returns metrics tracking position creation success/failure rates.
+    """
+    try:
+        metrics = trading_service.get_position_creation_metrics(current.id)
+
+        if metrics is None:
+            # Service not running or unified_order_monitor not available
+            return PositionCreationMetricsResponse(
+                success=0,
+                failed_missing_repos=0,
+                failed_missing_symbol=0,
+                failed_exception=0,
+                success_rate=0.0,
+                total_attempts=0,
+            )
+
+        # Calculate totals and success rate
+        total_attempts = (
+            metrics.get("success", 0)
+            + metrics.get("failed_missing_repos", 0)
+            + metrics.get("failed_missing_symbol", 0)
+            + metrics.get("failed_exception", 0)
+        )
+
+        success_count = metrics.get("success", 0)
+        success_rate = (success_count / total_attempts * 100.0) if total_attempts > 0 else 0.0
+
+        return PositionCreationMetricsResponse(
+            success=success_count,
+            failed_missing_repos=metrics.get("failed_missing_repos", 0),
+            failed_missing_symbol=metrics.get("failed_missing_symbol", 0),
+            failed_exception=metrics.get("failed_exception", 0),
+            success_rate=round(success_rate, 2),
+            total_attempts=total_attempts,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting position creation metrics: {str(e)}",
+        ) from e
+
+
+@router.get(
+    "/service/positions/without-sell-orders",
+    response_model=PositionsWithoutSellOrdersResponse,
+)
+def get_positions_without_sell_orders(
+    db: Session = Depends(get_db),
+    current: Users = Depends(get_current_user),
+    trading_service: MultiUserTradingService = Depends(get_trading_service),
+):
+    """
+    Issue #5: Get positions without sell orders for current user.
+
+    Returns detailed list of positions that don't have sell orders,
+    including reasons why orders weren't placed.
+
+    Useful for dashboard visibility and troubleshooting.
+    """
+    try:
+        positions = trading_service.get_positions_without_sell_orders(current.id)
+
+        # Convert to response format
+        position_list = [
+            PositionWithoutSellOrder(
+                symbol=pos["symbol"],
+                entry_price=pos["entry_price"],
+                quantity=pos["quantity"],
+                reason=pos["reason"],
+                ticker=pos["ticker"],
+                broker_symbol=pos["broker_symbol"],
+            )
+            for pos in positions
+        ]
+
+        return PositionsWithoutSellOrdersResponse(
+            positions=position_list,
+            count=len(position_list),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting positions without sell orders: {str(e)}",
+        ) from e
+
+
+WEEKEND_START_DAY = 5  # Saturday=5, Sunday=6
+
+
+@router.get("/service/trading-day-info", response_model=TradingDayInfoResponse)
+def get_trading_day_info(
+    current: Users = Depends(get_current_user),  # noqa: B008, ARG001
+):
+    """
+    Get trading day information for today.
+
+    Returns whether today is a trading day, if it's a holiday, holiday name, and if it's a weekend.
+    """
+    try:
+        today = ist_now().date()
+        is_holiday = is_nse_holiday(today)
+        holiday_name = get_holiday_name(today) if is_holiday else None
+        is_weekend = today.weekday() >= WEEKEND_START_DAY
+        is_trading = is_trading_day(today)
+
+        return TradingDayInfoResponse(
+            is_trading_day=is_trading,
+            is_holiday=is_holiday,
+            holiday_name=holiday_name,
+            is_weekend=is_weekend,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting trading day info: {str(e)}",
         ) from e

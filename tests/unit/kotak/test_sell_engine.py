@@ -258,3 +258,132 @@ class TestSellEngineServiceIntegration:
         # Verify caching is enabled
         assert manager.price_service.enable_caching is True
         assert manager.indicator_service.enable_caching is True
+
+
+class TestEMA9RetryMechanismIssue3:
+    """Test Issue #3: EMA9 Calculation Failure - Retry and Fallback"""
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_ema9_with_retry_succeeds_on_first_attempt(self, mock_scrip_master, mock_auth):
+        """Test that _get_ema9_with_retry succeeds on first attempt"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # Mock successful EMA9 calculation
+        manager.get_current_ema9 = Mock(return_value=2500.0)
+
+        result = manager._get_ema9_with_retry(
+            "RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE-EQ"
+        )  # Full symbol after migration
+
+        assert result == 2500.0
+        manager.get_current_ema9.assert_called_once()
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_ema9_with_retry_succeeds_on_retry(self, mock_scrip_master, mock_auth):
+        """Test that _get_ema9_with_retry succeeds after retry"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # Mock: First attempt fails, second succeeds
+        manager.get_current_ema9 = Mock(side_effect=[None, 2500.0])
+
+        result = manager._get_ema9_with_retry(
+            "RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE-EQ"
+        )  # Full symbol after migration
+
+        assert result == 2500.0
+        assert manager.get_current_ema9.call_count == 2
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_ema9_with_retry_falls_back_to_yesterday_ema9(self, mock_scrip_master, mock_auth):
+        """Test that _get_ema9_with_retry falls back to yesterday's EMA9 when all retries fail"""
+        import pandas as pd
+
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # Mock: All attempts fail
+        manager.get_current_ema9 = Mock(return_value=None)
+
+        # Mock indicator service and price service for fallback
+        # Need at least 9 data points for EMA9 calculation
+        mock_df = pd.DataFrame(
+            {
+                "close": [2400.0 + i * 10 for i in range(20)],  # 20 data points
+                "date": pd.date_range("2024-01-01", periods=20),
+            }
+        )
+        # Ensure price_service exists and has get_price method
+        if (
+            not hasattr(manager.indicator_service, "price_service")
+            or manager.indicator_service.price_service is None
+        ):
+            manager.indicator_service.price_service = Mock()
+        manager.indicator_service.price_service.get_price = Mock(return_value=mock_df)
+
+        result = manager._get_ema9_with_retry(
+            "RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE-EQ"
+        )  # Full symbol after migration
+
+        # Should return yesterday's EMA9 (calculated from historical data)
+        assert result is not None
+        assert result > 0
+        # Verify fallback was attempted
+        manager.indicator_service.price_service.get_price.assert_called_once()
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_ema9_with_retry_returns_none_when_all_fail(self, mock_scrip_master, mock_auth):
+        """Test that _get_ema9_with_retry returns None when all attempts and fallback fail"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # Mock: All attempts fail
+        manager.get_current_ema9 = Mock(return_value=None)
+
+        # Mock: Fallback also fails (no price service or empty data)
+        manager.indicator_service.price_service = None
+
+        result = manager._get_ema9_with_retry(
+            "RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE-EQ"
+        )  # Full symbol after migration
+
+        assert result is None
+        # Should have tried max_retries + 1 times
+        assert manager.get_current_ema9.call_count == 3  # max_retries=2, so 3 attempts total
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_ema9_with_retry_handles_exceptions(self, mock_scrip_master, mock_auth):
+        """Test that _get_ema9_with_retry handles exceptions during calculation"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # Mock: First attempt raises exception, second succeeds
+        manager.get_current_ema9 = Mock(side_effect=[Exception("Network error"), 2500.0])
+
+        result = manager._get_ema9_with_retry(
+            "RELIANCE.NS", broker_symbol="RELIANCE-EQ", symbol="RELIANCE-EQ"
+        )  # Full symbol after migration
+
+        assert result == 2500.0
+        assert manager.get_current_ema9.call_count == 2

@@ -3,19 +3,18 @@ Broker Factory
 Creates appropriate broker adapter based on configuration
 """
 
-from typing import Optional, Literal
-from enum import Enum
-
+import os
 import sys
+from enum import Enum
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
-from utils.logger import logger
+from utils.logger import logger  # noqa: E402
 
-from ..domain import IBrokerGateway
-from ..config.paper_trading_config import PaperTradingConfig
-from .broker_adapters import KotakNeoBrokerAdapter, PaperTradingBrokerAdapter
+from ..config.paper_trading_config import PaperTradingConfig  # noqa: E402
+from ..domain import IBrokerGateway  # noqa: E402
+from .broker_adapters import KotakNeoBrokerAdapter, PaperTradingBrokerAdapter  # noqa: E402
 
 
 class BrokerType(Enum):
@@ -35,7 +34,7 @@ class BrokerFactory:
 
     @staticmethod
     def create_broker(
-        broker_type: str, auth_handler=None, paper_config: Optional[PaperTradingConfig] = None
+        broker_type: str, auth_handler=None, paper_config: PaperTradingConfig | None = None
     ) -> IBrokerGateway:
         """
         Create a broker adapter
@@ -74,21 +73,19 @@ class BrokerFactory:
 
         else:
             raise ValueError(
-                f"Unknown broker type: {broker_type}. " f"Supported: 'paper_trading', 'kotak_neo'"
+                f"Unknown broker type: {broker_type}. Supported: 'paper_trading', 'kotak_neo'"
             )
 
     @staticmethod
     def _create_paper_trading_broker(
-        config: Optional[PaperTradingConfig] = None,
+        config: PaperTradingConfig | None = None,
     ) -> PaperTradingBrokerAdapter:
         """Create paper trading broker"""
         if config is None:
             config = PaperTradingConfig.default()
             logger.info("? Using default paper trading configuration")
 
-        logger.info(
-            f"? Creating paper trading broker " f"(Capital: Rs {config.initial_capital:,.2f})"
-        )
+        logger.info(f"? Creating paper trading broker (Capital: Rs {config.initial_capital:,.2f})")
 
         return PaperTradingBrokerAdapter(config)
 
@@ -98,7 +95,7 @@ class BrokerFactory:
         if auth_handler is None:
             raise ValueError("auth_handler is required for Kotak Neo broker")
 
-        logger.info("? Creating Kotak Neo broker")
+        logger.debug("? Creating Kotak Neo broker")
         return KotakNeoBrokerAdapter(auth_handler)
 
     @staticmethod
@@ -117,8 +114,6 @@ class BrokerFactory:
             PAPER_TRADING_CAPITAL: Initial capital (optional)
             PAPER_TRADING_PATH: Storage path (optional)
         """
-        import os
-
         broker_type = os.getenv(env_key, "paper_trading")
 
         if broker_type == "paper_trading":

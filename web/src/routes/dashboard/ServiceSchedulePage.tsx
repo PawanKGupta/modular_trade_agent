@@ -6,6 +6,7 @@ import {
 	enableServiceSchedule,
 	disableServiceSchedule,
 	type ServiceSchedule,
+	type UpdateServiceSchedulePayload,
 } from '@/api/admin';
 import { formatTimeAgo } from '@/utils/time';
 import { useSessionStore } from '@/state/sessionStore';
@@ -24,7 +25,7 @@ export function ServiceSchedulePage() {
 	});
 
 	const updateMutation = useMutation({
-		mutationFn: ({ taskName, payload }: { taskName: string; payload: any }) =>
+		mutationFn: ({ taskName, payload }: { taskName: string; payload: UpdateServiceSchedulePayload }) =>
 			updateServiceSchedule(taskName, payload),
 		onSuccess: (response) => {
 			if (response.requires_restart) {
@@ -69,6 +70,9 @@ export function ServiceSchedulePage() {
 	};
 
 	const handleSave = (taskName: string) => {
+		if (!editForm.schedule_time) {
+			return; // Don't save if schedule_time is missing
+		}
 		updateMutation.mutate({
 			taskName,
 			payload: {
@@ -99,7 +103,6 @@ export function ServiceSchedulePage() {
 	const TASK_DISPLAY_NAMES: Record<string, string> = {
 		premarket_retry: 'Pre-market Retry',
 		sell_monitor: 'Sell Monitor',
-		position_monitor: 'Position Monitor',
 		analysis: 'Analysis',
 		buy_orders: 'Buy Orders',
 		eod_cleanup: 'End-of-Day Cleanup',

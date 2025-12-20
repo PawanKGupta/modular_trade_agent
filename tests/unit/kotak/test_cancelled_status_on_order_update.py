@@ -81,6 +81,20 @@ class TestCancelledStatusOnOrderUpdate:
             )
             engine.order_validation_service.get_available_cash = Mock(return_value=200000.0)
 
+            # Mock scrip master for symbol resolution
+            mock_scrip_master = Mock()
+            mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
+
+            def mock_get_instrument(symbol, exchange="NSE"):
+                # Return broker symbol with suffix
+                symbol_upper = symbol.upper()
+                if "-" in symbol_upper:
+                    return {"token": 12345, "symbol": symbol_upper, "exchange": exchange}
+                return {"token": 12345, "symbol": f"{symbol_upper}-EQ", "exchange": exchange}
+
+            mock_scrip_master.get_instrument = mock_get_instrument
+            engine.scrip_master = mock_scrip_master
+
             return engine
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.get_daily_indicators")
@@ -268,7 +282,7 @@ class TestCancelledStatusOnOrderUpdate:
         assert update_call[1]["status"] == DbOrderStatus.CANCELLED
 
     def test_retry_pending_order_marked_cancelled_when_params_change(self, auto_trade_engine):
-        """Test that FAILED order (formerly RETRY_PENDING) is marked as CANCELLED when parameters change"""
+        """Test FAILED order (formerly RETRY_PENDING) marked CANCELLED when params change"""
         broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
@@ -313,7 +327,7 @@ class TestCancelledStatusOnOrderUpdate:
         assert update_call[1]["status"] == DbOrderStatus.CANCELLED
 
     def test_rejected_order_marked_cancelled_when_params_change(self, auto_trade_engine):
-        """Test that FAILED order (formerly REJECTED) is marked as CANCELLED when parameters change"""
+        """Test FAILED order (formerly REJECTED) marked CANCELLED when params change"""
         broker_symbol = "RELIANCE-EQ"
         ticker = "RELIANCE.NS"
 
@@ -621,7 +635,9 @@ class TestCancelledStatusOnOrderUpdate:
         auto_trade_engine.place_new_entries([rec])
 
         # Verify cancelled_reason contains expected text
+        auto_trade_engine.orders_repo.update.assert_called_once()
         update_call = auto_trade_engine.orders_repo.update.call_args
+        assert update_call is not None, "orders_repo.update should have been called"
         cancelled_reason = update_call[1]["cancelled_reason"]
         assert "cancelled due to parameter update" in cancelled_reason.lower()
         assert "qty/price changed" in cancelled_reason.lower()

@@ -6,11 +6,15 @@ import * as serviceApi from '@/api/service';
 import { type IndividualServiceStatus } from '@/api/service';
 
 // Mock the service API
-vi.mock('@/api/service', () => ({
+vi.mock('@/api/service', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@/api/service')>();
+	return {
+		...actual,
 	startIndividualService: vi.fn(),
 	stopIndividualService: vi.fn(),
 	runTaskOnce: vi.fn(),
-}));
+	};
+});
 
 const mockService: IndividualServiceStatus = {
 	task_name: 'analysis',

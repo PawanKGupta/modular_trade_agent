@@ -93,11 +93,52 @@ src/
 │   └── value_objects/   # Value objects
 ├── application/         # Application services (use cases)
 │   └── services/        # Business logic orchestration
+│       ├── individual_service_manager.py  # Service lifecycle management
+│       ├── multi_user_trading_service.py  # Multi-user service orchestration
+│       ├── analysis_deduplication_service.py  # Prevent duplicate analysis
+│       ├── conflict_detection_service.py  # Service conflict detection
+│       └── schedule_manager.py  # Task scheduling
 └── infrastructure/      # Infrastructure adapters
     ├── db/              # Database models and repositories
     ├── persistence/     # Repository implementations
+    ├── logging/         # Logging infrastructure
+    │   ├── file_log_reader.py  # File-based log reader
+    │   ├── user_file_log_handler.py  # JSONL file logging handler
+    │   └── user_scoped_logger.py  # User-scoped logging
     └── external/        # External API adapters
 ```
+
+**Key Application Services:**
+
+#### IndividualServiceManager
+**Location:** `src/application/services/individual_service_manager.py`
+
+**Purpose:** Manages individual service execution and lifecycle for per-user services.
+
+**Key Features:**
+- Service lifecycle management (start, stop, status)
+- Task execution (analysis, premarket_retry, sell_monitor, etc.)
+- Process and thread management
+- Analysis result persistence with T2T filtering
+- Conflict detection with unified service
+- Schedule management
+
+**T2T Segment Filtering:**
+- Hard filter at signal generation stage
+- Filters out Trade-to-Trade segment stocks (-BE, -BL, -BZ)
+- Uses scrip master for robust symbol resolution
+- Prevents same-day selling issues
+
+#### MultiUserTradingService
+**Location:** `src/application/services/multi_user_trading_service.py`
+
+**Purpose:** Orchestrates unified trading service for multiple users.
+
+**Key Features:**
+- Per-user service instances
+- Service status tracking
+- Conflict detection
+- Web UI integration
 
 ### 4. Service Layer (Phase 4)
 
@@ -330,7 +371,7 @@ See [Notification Event Types](#notification-event-types) section below.
 ### Signal Generation Flow
 
 ```
-1. Scheduled Service Trigger
+1. Scheduled Service Trigger (IndividualServiceManager)
    ↓
 2. Analysis Service
    ├─→ Data Service (fetch stock data)
@@ -340,9 +381,16 @@ See [Notification Event Types](#notification-event-types) section below.
    ↓
 3. ML Service (optional - enhance verdict)
    ↓
-4. Save to Database (BuyingZone table)
+4. T2T Segment Filtering (hard filter)
+   ├─→ Check scrip master for symbol resolution
+   ├─→ Filter out -BE, -BL, -BZ stocks
+   └─→ Skip T2T stocks from persistence
    ↓
-5. Web UI displays signals
+5. Save to Database (Signals table)
+   ├─→ IndividualServiceManager._persist_analysis_results()
+   └─→ T2T filtered count tracked in summary
+   ↓
+6. Web UI displays signals
 ```
 
 ### Order Execution Flow
@@ -501,16 +549,53 @@ See [Notification Event Types](#notification-event-types) section below.
 
 ## Monitoring and Logging
 
-### Logging
+### Logging Architecture
+
+**Multi-Layer Logging System:**
+
+1. **File Logging**
 - Structured logging to files (`logs/`)
+   - User-scoped log files (`logs/user_{user_id}/`)
+   - Rotating file handlers with Docker-aware rotation
 - Log levels: DEBUG, INFO, WARNING, ERROR
-- Rotating file handlers
+
+2. **File-Based Activity Logging (JSONL)**
+   - **Location:** `src/infrastructure/logging/user_file_log_handler.py`
+   - **Architecture:** Per-user JSONL files organized by date
+   - **Features:**
+     - One JSONL file per user per day (`service_YYYYMMDD.jsonl`)
+     - Separate error log files (`errors_YYYYMMDD.jsonl`)
+     - Structured JSON format with context support
+     - Automatic file rotation by date
+     - No database contention (file-only for activity logs)
+   - **Benefits:**
+     - Eliminates SQLite lock contention
+     - Better performance for high-volume logging
+     - Easy to parse and search
+     - No database overhead for activity logs
+
+3. **Error Logging (Database)**
+   - **Location:** `src/infrastructure/logging/error_capture.py`
+   - **Architecture:** Exceptions stored in ErrorLog table
+   - **Features:**
+     - Full traceback capture
+     - User context and configuration snapshot
+     - Resolution tracking
+     - Retry mechanism for database locks
+     - Automatic error handling
+
+3. **User-Scoped Logging**
+   - **Location:** `src/infrastructure/logging/user_scoped_logger.py`
+   - Per-user log isolation
+   - Context-aware logging (user_id, module, action)
+   - Integration with database and file handlers
 
 ### Monitoring
 - Health check endpoint: `/health`
 - Service status tracking in database
 - Task execution history
-- Error tracking in logs
+- Error tracking in logs and database
+- Service lifecycle events (started, stopped, execution completed)
 
 ## Security Best Practices
 

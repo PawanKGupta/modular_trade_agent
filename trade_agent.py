@@ -318,12 +318,23 @@ async def main_async(
     enable_backtest_scoring=False,
     dip_mode=False,
     json_output_path: str | None = None,
+    user_id: int | None = None,
+    db_session=None,
 ):
     """
     Async main function using async batch analysis
 
     This version uses async/await for parallel processing, significantly
     reducing analysis time for batch operations.
+
+    Args:
+        export_csv: Export results to CSV
+        enable_multi_timeframe: Enable multi-timeframe analysis
+        enable_backtest_scoring: Enable backtest scoring
+        dip_mode: Enable dip-buying mode
+        json_output_path: Optional path to write results as JSON
+        user_id: Optional user ID to load user-specific config
+        db_session: Optional database session for loading user config
     """
     tickers = get_stocks()
 
@@ -335,6 +346,28 @@ async def main_async(
         f"Starting async analysis for {len(tickers)} stocks (Multi-timeframe: {enable_multi_timeframe}, CSV Export: {export_csv})"
     )
 
+    # Load user-specific config if user_id is provided
+    config = None
+    if user_id and db_session:
+        try:
+            from src.application.services.config_converter import (
+                user_config_to_strategy_config,
+            )
+            from src.infrastructure.persistence.user_trading_config_repository import (
+                UserTradingConfigRepository,
+            )
+
+            config_repo = UserTradingConfigRepository(db_session)
+            user_config = config_repo.get_or_create_default(user_id)
+            config = user_config_to_strategy_config(user_config, db_session=db_session)
+            logger.info(
+                f"Loaded user-specific config for user {user_id} (ml_enabled={config.ml_enabled})"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to load user config for user {user_id}: {e}, using default config"
+            )
+
     # Use async batch analysis (Phase 2)
     try:
         # Use configurable concurrency from settings
@@ -343,7 +376,7 @@ async def main_async(
         from config.settings import MAX_CONCURRENT_ANALYSES
         from services.async_analysis_service import AsyncAnalysisService
 
-        async_service = AsyncAnalysisService(max_concurrent=MAX_CONCURRENT_ANALYSES)
+        async_service = AsyncAnalysisService(max_concurrent=MAX_CONCURRENT_ANALYSES, config=config)
         results = await async_service.analyze_batch_async(
             tickers=tickers, enable_multi_timeframe=enable_multi_timeframe, export_to_csv=export_csv
         )
@@ -351,7 +384,15 @@ async def main_async(
         logger.info(f"Async analysis complete: {len(results)} results")
 
         # Process results (scoring, backtest, Telegram)
-        processed_results = _process_results(results, enable_backtest_scoring, dip_mode)
+        # Extract config from results if available
+        config = None
+        if results and len(results) > 0:
+            first_result = results[0]
+            if isinstance(first_result, dict) and "_config" in first_result:
+                config = first_result.get("_config")
+        processed_results = _process_results(
+            results, enable_backtest_scoring, dip_mode, config=config
+        )
         return _finalize_results(processed_results, json_output_path)
 
     except ImportError:
@@ -429,6 +470,8 @@ def main(
     dip_mode=False,
     use_async=True,
     json_output_path: str | None = None,
+    user_id: int | None = None,
+    db_session=None,
 ):
     """
     Main function - supports both async and sequential modes
@@ -439,6 +482,8 @@ def main(
         enable_backtest_scoring: Enable backtest scoring
         dip_mode: Enable dip-buying mode
         use_async: Use async batch analysis (Phase 2 feature, default: True)
+        user_id: Optional user ID to load user-specific config
+        db_session: Optional database session for loading user config
     """
     if use_async:
         # Use async analysis (Phase 2)
@@ -452,6 +497,8 @@ def main(
                     enable_backtest_scoring=enable_backtest_scoring,
                     dip_mode=dip_mode,
                     json_output_path=json_output_path,
+                    user_id=user_id,
+                    db_session=db_session,
                 )
             )
         except Exception as e:
@@ -474,8 +521,23 @@ def main(
         )
 
 
-def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
+def _process_results(results, enable_backtest_scoring=False, dip_mode=False, config=None):
     """Process analysis results (common for both async and sequential)"""
+
+    # ENHANCEMENT 1: Extract config FIRST (before any filtering or processing)
+    # This ensures we have config available for all subsequent operations
+    if config is None and results and len(results) > 0:
+        first_result = results[0]
+        if hasattr(first_result, "_config"):
+            config = first_result._config
+        elif isinstance(first_result, dict) and "_config" in first_result:
+            config = first_result.get("_config")
+        if config:
+            logger.debug(
+                f"Extracted config from results: ml_enabled={getattr(config, 'ml_enabled', None)}, "
+                f"ml_confidence_threshold={getattr(config, 'ml_confidence_threshold', None)}, "
+                f"ml_combine_with_rules={getattr(config, 'ml_combine_with_rules', None)}"
+            )
 
     # Calculate strength scores for all results (needed for backtest scoring)
     # Also add ML verdict predictions if ML service is available (for testing)
@@ -503,8 +565,10 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
         mode_info = " (DIP MODE)" if dip_mode else ""
         logger.info(f"Running backtest scoring analysis{mode_info}...")
         # Use BacktestService (Phase 4)
-        backtest_service = BacktestService(default_years_back=2, dip_mode=dip_mode)
-        results = backtest_service.add_backtest_scores_to_results(results)
+        # Config is already extracted above
+
+        backtest_service = BacktestService(default_years_back=5, dip_mode=dip_mode)
+        results = backtest_service.add_backtest_scores_to_results(results, config=config)
         # Re-sort by priority score for better trading decisions
         results = [r for r in results if r is not None]  # Filter out None values
         results.sort(key=lambda x: -compute_trading_priority_score(x))
@@ -573,7 +637,20 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
             ]
 
             def _flatten(row):
-                d = {k: row.get(k) for k in cols if k in row}
+                # Always include all columns, even if value is None/empty
+                # This ensures ML predictions are preserved in CSV
+                d = {}
+                for k in cols:
+                    # Get value from row, defaulting to None if not present
+                    value = row.get(k, None)
+                    # Round ml_confidence and combined_score to 2 decimal places
+                    if k in ["ml_confidence", "combined_score"] and value is not None:
+                        try:
+                            value = round(float(value), 2)
+                        except (ValueError, TypeError):
+                            pass  # Keep original value if conversion fails
+                    # Include the key even if value is None (pandas will write empty string)
+                    d[k] = value
                 # Simple stringify for complex fields
                 for k in (
                     "buy_range",
@@ -614,6 +691,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
                 return d
 
             df_final = pd.DataFrame([_flatten(r) for r in results if isinstance(r, dict)])
+
             df_final.to_csv(out_path, index=False)
             logger.info(f"Final post-scored CSV written to: {out_path}")
         except Exception as e:
@@ -625,53 +703,287 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False):
     # Include both 'buy' and 'strong_buy' candidates, but exclude failed analysis
     # Use final_verdict if backtest scoring was enabled, otherwise use original verdict
     # ALSO include ML buy/strong_buy predictions for monitoring/comparison (2025-11-12)
+
+    # Get ML confidence threshold from config if available, otherwise use default 1.0 (100%)
+    ml_confidence_threshold = 1.0
+    if config and hasattr(config, "ml_confidence_threshold"):
+        ml_confidence_threshold = config.ml_confidence_threshold
+
+    # ENHANCEMENT 2: Helper function to normalize ML confidence with logging
+    def _normalize_ml_confidence(ml_conf):
+        """Normalize ML confidence (handles both 0-1 and 0-100 formats) with logging"""
+        if ml_conf is None:
+            return 0.0
+        if isinstance(ml_conf, (int, float)):
+            # If > 1, assume it's percentage (0-100), convert to 0-1
+            normalized = ml_conf if ml_conf <= 1 else ml_conf / 100.0
+            if ml_conf > 1:
+                logger.debug(f"Normalized ML confidence: {ml_conf}% -> {normalized:.3f}")
+            return normalized
+        return 0.0
+
+    # Get ML enabled status from config (CRITICAL: Respect user's ML configuration)
+    ml_enabled = False
+    if config and hasattr(config, "ml_enabled"):
+        ml_enabled = config.ml_enabled
+
+    # Get ML combine with rules setting from config (only relevant if ML is enabled)
+    ml_combine_with_rules = False
+    if config and hasattr(config, "ml_combine_with_rules"):
+        ml_combine_with_rules = config.ml_combine_with_rules
+
+    # Log ML configuration status
+    if config:
+        logger.debug(
+            f"ML Configuration: ml_enabled={ml_enabled}, ml_confidence_threshold={ml_confidence_threshold}, "
+            f"ml_combine_with_rules={ml_combine_with_rules}"
+        )
+
+    # ENHANCEMENT 5: Backtest quality filter helper (NO minimum trades requirement)
+    def _passes_backtest_quality_filters(
+        result,
+        min_win_rate=65.0,
+        min_avg_profit=1.5,
+        min_backtest_score=45.0,
+        require_positive_return=True,
+    ):
+        """
+        Check if result passes backtest quality filters.
+        Even 1 trade with 100% win rate and profit is valuable for mean reversion.
+
+        When total_trades=0, we skip win_rate and avg_profit checks since they're not meaningful.
+        """
+        if not enable_backtest_scoring:
+            return True  # No backtest data available, skip quality filters
+
+        backtest = result.get("backtest", {})
+        if not backtest:
+            return True  # No backtest data, skip quality filters
+
+        total_trades = backtest.get("total_trades", 0)
+        # Handle None, string "0", or missing key - normalize to int 0
+        if total_trades is None:
+            total_trades = 0
+        elif isinstance(total_trades, str):
+            try:
+                total_trades = int(total_trades)
+            except (ValueError, TypeError):
+                total_trades = 0
+        elif not isinstance(total_trades, (int, float)):
+            total_trades = 0
+
+        win_rate = backtest.get("win_rate", 0)
+        avg_return = backtest.get("avg_return", 0)
+        total_return = backtest.get("total_return_pct", 0)
+        backtest_score = backtest.get("score", 0)
+
+        # When no trades were executed, we can't meaningfully evaluate win_rate or avg_profit
+        # Skip these checks but still check backtest_score and total_return if applicable
+        if total_trades == 0:
+            # Only check backtest_score when no trades (may be based on other factors)
+            if backtest_score < min_backtest_score:
+                return False
+            # If no trades but backtest_score passes, allow it (may be a valid signal that just didn't trigger in backtest period)
+            return True
+
+        # Check quality filters when trades exist (NO minimum trades requirement)
+        if win_rate < min_win_rate:
+            return False
+
+        if avg_return < min_avg_profit:
+            return False
+
+        if require_positive_return and total_return <= 0:
+            return False
+
+        if backtest_score < min_backtest_score:
+            return False
+
+        return True
+
     if enable_backtest_scoring:
-        # Apply filtering with reasonable combined score threshold
-        # Include stocks where EITHER rule OR ML predicts buy/strong_buy
-        buys = [
-            r
-            for r in results
-            if r.get("status") == "success"
-            and (
-                # Rule-based buy/strong_buy (existing logic)
-                (
-                    r.get("final_verdict") in ["buy", "strong_buy"]
-                    and r.get("combined_score", 0) >= 25
-                )
-                or
-                # ML buy/strong_buy (new logic for monitoring)
-                r.get("ml_verdict") in ["buy", "strong_buy"]
-            )
-        ]
-        strong_buys = [
-            r
-            for r in results
-            if r.get("status") == "success"
-            and (
-                # Rule-based strong_buy
-                (r.get("final_verdict") == "strong_buy" and r.get("combined_score", 0) >= 25)
-                or
-                # ML strong_buy
-                r.get("ml_verdict") == "strong_buy"
-            )
-        ]
+        # ENHANCEMENT 3 & 4: Apply filtering with all enhancements
+        # - Check ml_verdict even when combine=true if final_verdict is weak
+        # - Use minimum threshold (20) for ML-only instead of 0
+        # - Apply backtest quality filters
+
+        ml_score_min = 20  # ENHANCEMENT 4: Higher quality threshold for ML-only
+
+        buys = []
+        for r in results:
+            if r.get("status") != "success":
+                continue
+
+            # ENHANCEMENT 5: Apply backtest quality filters first
+            if not _passes_backtest_quality_filters(r):
+                continue
+
+            # Determine if final_verdict is weak
+            weak_final_verdict = r.get("final_verdict") in ["watch", "avoid"]
+
+            # Combined/Rule-based buy/strong_buy
+            if r.get("final_verdict") in ["buy", "strong_buy"] and r.get("combined_score", 0) >= 25:
+                buys.append(r)
+            # ENHANCEMENT 3: Check ml_verdict even when combine=true if final_verdict is weak
+            # BUT ONLY IF ML IS ENABLED
+            elif ml_enabled and weak_final_verdict:
+                ml_verdict = r.get("ml_verdict")
+                if ml_verdict in ["buy", "strong_buy"]:
+                    ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
+                    if (
+                        ml_conf_normalized >= ml_confidence_threshold
+                        and r.get("combined_score", 0) >= ml_score_min
+                    ):
+                        buys.append(r)
+            # ML-only buy/strong_buy (only when ml_combine_with_rules=false AND ml_enabled=true)
+            elif (
+                ml_enabled
+                and not ml_combine_with_rules
+                and r.get("ml_verdict") in ["buy", "strong_buy"]
+            ):
+                ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
+
+                if (
+                    ml_conf_normalized >= ml_confidence_threshold
+                    and r.get("combined_score", 0) >= ml_score_min
+                ):
+                    buys.append(r)
+
+        strong_buys = []
+        for r in results:
+            if r.get("status") != "success":
+                continue
+
+            # ENHANCEMENT 5: Apply backtest quality filters first
+            if not _passes_backtest_quality_filters(r):
+                continue
+
+            # Determine if final_verdict is weak
+            weak_final_verdict = r.get("final_verdict") in ["watch", "avoid"]
+
+            # Combined/Rule-based strong_buy
+            if r.get("final_verdict") == "strong_buy" and r.get("combined_score", 0) >= 25:
+                strong_buys.append(r)
+            # ENHANCEMENT 3: Check ml_verdict even when combine=true if final_verdict is weak
+            # BUT ONLY IF ML IS ENABLED
+            elif ml_enabled and weak_final_verdict and r.get("ml_verdict") == "strong_buy":
+                ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
+                if (
+                    ml_conf_normalized >= ml_confidence_threshold
+                    and r.get("combined_score", 0) >= ml_score_min
+                ):
+                    strong_buys.append(r)
+            # ML-only strong_buy (only when ml_combine_with_rules=false AND ml_enabled=true)
+            elif ml_enabled and not ml_combine_with_rules and r.get("ml_verdict") == "strong_buy":
+                ml_conf_normalized = _normalize_ml_confidence(r.get("ml_confidence"))
+                if (
+                    ml_conf_normalized >= ml_confidence_threshold
+                    and r.get("combined_score", 0) >= ml_score_min
+                ):
+                    strong_buys.append(r)
     else:
         # Include stocks where EITHER rule OR ML predicts buy/strong_buy
+        # BUT ONLY CHECK ML IF ML IS ENABLED
         buys = [
             r
             for r in results
             if r.get("status") == "success"
             and (
                 r.get("verdict") in ["buy", "strong_buy"]
-                or r.get("ml_verdict") in ["buy", "strong_buy"]
+                or (ml_enabled and r.get("ml_verdict") in ["buy", "strong_buy"])
             )
         ]
         strong_buys = [
             r
             for r in results
             if r.get("status") == "success"
-            and (r.get("verdict") == "strong_buy" or r.get("ml_verdict") == "strong_buy")
+            and (
+                r.get("verdict") == "strong_buy"
+                or (ml_enabled and r.get("ml_verdict") == "strong_buy")
+            )
         ]
+
+    # Log recommended signals with reasons
+    all_recommendations = strong_buys + [
+        r for r in buys if r.get("ticker") not in {s.get("ticker") for s in strong_buys}
+    ]
+    # Create a set of strong_buy tickers for quick lookup
+    strong_buy_tickers = {s.get("ticker") for s in strong_buys}
+
+    if all_recommendations:
+        logger.info(f"=== Recommended Signals ({len(all_recommendations)} total) ===")
+        for rec in all_recommendations:
+            ticker = rec.get("ticker", "UNKNOWN")
+
+            # Determine verdict and source
+            if enable_backtest_scoring:
+                rule_verdict = rec.get("final_verdict") or rec.get("verdict", "unknown")
+            else:
+                rule_verdict = rec.get("verdict", "unknown")
+            ml_verdict = rec.get("ml_verdict")
+
+            # Determine which list the stock is in (strong_buys or buys)
+            # This determines the displayed verdict, not just picking the stronger verdict
+            is_strong_buy = ticker in strong_buy_tickers
+
+            # Determine signal source and verdict based on actual list membership
+            if is_strong_buy:
+                # Stock is in strong_buys list
+                verdict = "strong_buy"
+                if rule_verdict == "strong_buy" and ml_verdict in ["buy", "strong_buy"]:
+                    source = "Rule+ML"
+                elif rule_verdict == "strong_buy":
+                    source = "Rule-based"
+                elif ml_verdict == "strong_buy":
+                    source = "ML-only"
+                else:
+                    source = "Rule-based"  # Fallback
+            else:
+                # Stock is in buys list (not strong_buys)
+                verdict = "buy"
+                if rule_verdict in ["buy", "strong_buy"] and ml_verdict in ["buy", "strong_buy"]:
+                    source = "Rule+ML"
+                elif rule_verdict in ["buy", "strong_buy"]:
+                    source = "Rule-based"
+                elif ml_verdict in ["buy", "strong_buy"]:
+                    source = "ML-only"
+                else:
+                    source = "Rule-based"  # Fallback
+
+            # Get justification/reasons
+            justification = rec.get("justification", [])
+            if isinstance(justification, str):
+                reasons = [justification]
+            elif isinstance(justification, list):
+                reasons = justification
+            else:
+                reasons = []
+
+            # Get key metrics
+            combined_score = rec.get("combined_score")
+            priority_score = rec.get("priority_score")
+            rsi = rec.get("rsi")
+            ml_confidence = rec.get("ml_confidence")
+
+            # Build reason string
+            reason_parts = []
+            if reasons:
+                reason_parts.append(" | ".join(reasons))
+            if combined_score is not None:
+                reason_parts.append(f"Combined Score: {combined_score:.1f}")
+            if priority_score is not None:
+                reason_parts.append(f"Priority: {priority_score:.1f}")
+            if rsi is not None:
+                reason_parts.append(f"RSI: {rsi:.1f}")
+            if ml_confidence is not None:
+                conf_pct = ml_confidence if ml_confidence > 1 else ml_confidence * 100
+                reason_parts.append(f"ML Confidence: {conf_pct:.0f}%")
+
+            reason_str = " | ".join(reason_parts) if reason_parts else "No reasons provided"
+
+            # Log the recommendation
+            logger.info(f"  {ticker}: {verdict.upper()} ({source}) - {reason_str}")
+        logger.info("=== End of Recommended Signals ===")
 
     # Send Telegram notification with final results (after backtest scoring if enabled)
     if buys:
@@ -802,6 +1114,45 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # Load user config if user_id is provided via environment variable
+    user_id = None
+    db_session = None
+    user_id_str = os.environ.get("TRADE_AGENT_USER_ID")
+    if user_id_str:
+        try:
+            user_id = int(user_id_str)
+            # Create database session for loading user config
+            from src.infrastructure.db.session import get_session
+
+            db_session = next(get_session())
+            logger.info(f"Loaded user_id={user_id} from environment, will use user-specific config")
+
+            # Debug: Check what ml_enabled value is in database
+            from src.infrastructure.persistence.user_trading_config_repository import (
+                UserTradingConfigRepository,
+            )
+
+            config_repo = UserTradingConfigRepository(db_session)
+            user_config = config_repo.get_or_create_default(user_id)
+            logger.info(
+                f"DEBUG: User config from DB - ml_enabled={user_config.ml_enabled}, ml_confidence_threshold={user_config.ml_confidence_threshold}"
+            )
+
+            # Convert to StrategyConfig and log
+            from src.application.services.config_converter import (
+                user_config_to_strategy_config,
+            )
+
+            strategy_config = user_config_to_strategy_config(user_config, db_session=db_session)
+            logger.info(
+                f"DEBUG: StrategyConfig after conversion - ml_enabled={strategy_config.ml_enabled}, ml_confidence_threshold={strategy_config.ml_confidence_threshold}"
+            )
+        except (ValueError, Exception) as e:
+            logger.warning(f"Failed to load user_id from environment: {e}, using default config")
+            import traceback
+
+            logger.error(f"Traceback: {traceback.format_exc()}")
+
     main(
         export_csv=not args.no_csv,
         enable_multi_timeframe=not args.no_mtf,
@@ -809,4 +1160,6 @@ if __name__ == "__main__":
         dip_mode=getattr(args, "dip_mode", False),
         use_async=args.use_async,
         json_output_path=args.json_output,
+        user_id=user_id,
+        db_session=db_session,
     )

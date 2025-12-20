@@ -5,10 +5,10 @@ Persists paper trading data to JSON files
 
 import json
 import shutil
-from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from pathlib import Path
 from threading import Lock
+from typing import Any
 
 
 class PaperTradeStore:
@@ -42,10 +42,10 @@ class PaperTradeStore:
         self.config_file = self.storage_path / "config.json"
 
         # In-memory cache
-        self._account: Optional[Dict[str, Any]] = None
-        self._orders: List[Dict[str, Any]] = []
-        self._holdings: Dict[str, Dict[str, Any]] = {}
-        self._transactions: List[Dict[str, Any]] = []
+        self._account: dict[str, Any] | None = None
+        self._orders: list[dict[str, Any]] = []
+        self._holdings: dict[str, dict[str, Any]] = {}
+        self._transactions: list[dict[str, Any]] = []
 
         # Initialize storage
         self._initialize_storage()
@@ -59,7 +59,7 @@ class PaperTradeStore:
 
     # ===== ACCOUNT METHODS =====
 
-    def initialize_account(self, initial_capital: float, config: Dict[str, Any] = None) -> None:
+    def initialize_account(self, initial_capital: float, config: dict[str, Any] = None) -> None:
         """
         Initialize account with starting capital
 
@@ -80,18 +80,18 @@ class PaperTradeStore:
             }
 
             if config:
-                with open(self.config_file, 'w') as f:
+                with open(self.config_file, "w") as f:
                     json.dump(config, f, indent=2)
 
             if self.auto_save:
                 self._save_account()
 
-    def get_account(self) -> Optional[Dict[str, Any]]:
+    def get_account(self) -> dict[str, Any] | None:
         """Get current account state"""
         with self._lock:
             return self._account.copy() if self._account else None
 
-    def update_account(self, updates: Dict[str, Any]) -> None:
+    def update_account(self, updates: dict[str, Any]) -> None:
         """
         Update account fields
 
@@ -110,22 +110,26 @@ class PaperTradeStore:
 
     def update_balance(self, available_cash: float, margin_used: float = 0.0) -> None:
         """Update account balance"""
-        self.update_account({
-            "available_cash": available_cash,
-            "margin_used": margin_used,
-        })
+        self.update_account(
+            {
+                "available_cash": available_cash,
+                "margin_used": margin_used,
+            }
+        )
 
     def update_pnl(self, total_pnl: float, realized_pnl: float, unrealized_pnl: float) -> None:
         """Update P&L values"""
-        self.update_account({
-            "total_pnl": total_pnl,
-            "realized_pnl": realized_pnl,
-            "unrealized_pnl": unrealized_pnl,
-        })
+        self.update_account(
+            {
+                "total_pnl": total_pnl,
+                "realized_pnl": realized_pnl,
+                "unrealized_pnl": unrealized_pnl,
+            }
+        )
 
     # ===== ORDER METHODS =====
 
-    def add_order(self, order: Dict[str, Any]) -> None:
+    def add_order(self, order: dict[str, Any]) -> None:
         """
         Add a new order
 
@@ -138,12 +142,12 @@ class PaperTradeStore:
             if self.auto_save:
                 self._save_orders()
 
-    def get_all_orders(self) -> List[Dict[str, Any]]:
+    def get_all_orders(self) -> list[dict[str, Any]]:
         """Get all orders"""
         with self._lock:
             return self._orders.copy()
 
-    def get_order_by_id(self, order_id: str) -> Optional[Dict[str, Any]]:
+    def get_order_by_id(self, order_id: str) -> dict[str, Any] | None:
         """Get order by ID"""
         with self._lock:
             for order in self._orders:
@@ -151,7 +155,7 @@ class PaperTradeStore:
                     return order.copy()
             return None
 
-    def update_order(self, order_id: str, updates: Dict[str, Any]) -> bool:
+    def update_order(self, order_id: str, updates: dict[str, Any]) -> bool:
         """
         Update an existing order
 
@@ -173,22 +177,23 @@ class PaperTradeStore:
                     return True
             return False
 
-    def get_orders_by_symbol(self, symbol: str) -> List[Dict[str, Any]]:
+    def get_orders_by_symbol(self, symbol: str) -> list[dict[str, Any]]:
         """Get all orders for a symbol"""
         with self._lock:
             return [o.copy() for o in self._orders if o.get("symbol") == symbol]
 
-    def get_pending_orders(self) -> List[Dict[str, Any]]:
+    def get_pending_orders(self) -> list[dict[str, Any]]:
         """Get all pending/open orders"""
         with self._lock:
             return [
-                o.copy() for o in self._orders
+                o.copy()
+                for o in self._orders
                 if o.get("status") in ["PENDING", "OPEN", "PARTIALLY_FILLED"]
             ]
 
     # ===== HOLDING METHODS =====
 
-    def add_or_update_holding(self, symbol: str, holding: Dict[str, Any]) -> None:
+    def add_or_update_holding(self, symbol: str, holding: dict[str, Any]) -> None:
         """
         Add or update a holding
 
@@ -203,12 +208,12 @@ class PaperTradeStore:
             if self.auto_save:
                 self._save_holdings()
 
-    def get_holding(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def get_holding(self, symbol: str) -> dict[str, Any] | None:
         """Get holding by symbol"""
         with self._lock:
             return self._holdings.get(symbol, {}).copy() if symbol in self._holdings else None
 
-    def get_all_holdings(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_holdings(self) -> dict[str, dict[str, Any]]:
         """Get all holdings"""
         with self._lock:
             return {k: v.copy() for k, v in self._holdings.items()}
@@ -234,7 +239,7 @@ class PaperTradeStore:
 
     # ===== TRANSACTION METHODS =====
 
-    def add_transaction(self, transaction: Dict[str, Any]) -> None:
+    def add_transaction(self, transaction: dict[str, Any]) -> None:
         """
         Add a transaction record
 
@@ -248,12 +253,12 @@ class PaperTradeStore:
             if self.auto_save:
                 self._save_transactions()
 
-    def get_all_transactions(self) -> List[Dict[str, Any]]:
+    def get_all_transactions(self) -> list[dict[str, Any]]:
         """Get all transactions"""
         with self._lock:
             return self._transactions.copy()
 
-    def get_transactions_by_symbol(self, symbol: str) -> List[Dict[str, Any]]:
+    def get_transactions_by_symbol(self, symbol: str) -> list[dict[str, Any]]:
         """Get transactions for a symbol"""
         with self._lock:
             return [t.copy() for t in self._transactions if t.get("symbol") == symbol]
@@ -263,22 +268,22 @@ class PaperTradeStore:
     def _save_account(self) -> None:
         """Save account to file (internal, assumes lock held)"""
         if self._account:
-            with open(self.account_file, 'w') as f:
+            with open(self.account_file, "w") as f:
                 json.dump(self._account, f, indent=2)
 
     def _save_orders(self) -> None:
         """Save orders to file (internal, assumes lock held)"""
-        with open(self.orders_file, 'w') as f:
+        with open(self.orders_file, "w") as f:
             json.dump(self._orders, f, indent=2)
 
     def _save_holdings(self) -> None:
         """Save holdings to file (internal, assumes lock held)"""
-        with open(self.holdings_file, 'w') as f:
+        with open(self.holdings_file, "w") as f:
             json.dump(self._holdings, f, indent=2)
 
     def _save_transactions(self) -> None:
         """Save transactions to file (internal, assumes lock held)"""
-        with open(self.transactions_file, 'w') as f:
+        with open(self.transactions_file, "w") as f:
             json.dump(self._transactions, f, indent=2)
 
     def save_all(self) -> None:
@@ -293,27 +298,55 @@ class PaperTradeStore:
         """Load all data from files"""
         # Load account
         if self.account_file.exists():
-            with open(self.account_file, 'r') as f:
-                self._account = json.load(f)
+            try:
+                # Check if file is empty before loading
+                if self.account_file.stat().st_size > 0:
+                    with open(self.account_file) as f:
+                        self._account = json.load(f)
+                else:
+                    self._account = None
+            except (json.JSONDecodeError, ValueError):
+                # File exists but is corrupted, treat as not initialized
+                self._account = None
+        else:
+            self._account = None
 
         # Load orders
         if self.orders_file.exists():
-            with open(self.orders_file, 'r') as f:
-                self._orders = json.load(f)
+            try:
+                if self.orders_file.stat().st_size > 0:
+                    with open(self.orders_file) as f:
+                        self._orders = json.load(f)
+                else:
+                    self._orders = []
+            except (json.JSONDecodeError, ValueError):
+                self._orders = []
         else:
             self._orders = []
 
         # Load holdings
         if self.holdings_file.exists():
-            with open(self.holdings_file, 'r') as f:
-                self._holdings = json.load(f)
+            try:
+                if self.holdings_file.stat().st_size > 0:
+                    with open(self.holdings_file) as f:
+                        self._holdings = json.load(f)
+                else:
+                    self._holdings = {}
+            except (json.JSONDecodeError, ValueError):
+                self._holdings = {}
         else:
             self._holdings = {}
 
         # Load transactions
         if self.transactions_file.exists():
-            with open(self.transactions_file, 'r') as f:
-                self._transactions = json.load(f)
+            try:
+                if self.transactions_file.stat().st_size > 0:
+                    with open(self.transactions_file) as f:
+                        self._transactions = json.load(f)
+                else:
+                    self._transactions = []
+            except (json.JSONDecodeError, ValueError):
+                self._transactions = []
         else:
             self._transactions = []
 
@@ -336,8 +369,13 @@ class PaperTradeStore:
         backup_dir.mkdir(parents=True, exist_ok=True)
 
         # Copy all files
-        for file in [self.account_file, self.orders_file, self.holdings_file,
-                     self.transactions_file, self.config_file]:
+        for file in [
+            self.account_file,
+            self.orders_file,
+            self.holdings_file,
+            self.transactions_file,
+            self.config_file,
+        ]:
             if file.exists():
                 shutil.copy2(file, backup_dir / file.name)
 
@@ -354,8 +392,13 @@ class PaperTradeStore:
             raise ValueError(f"Backup directory not found: {backup_dir}")
 
         # Copy files back
-        for file in [self.account_file, self.orders_file, self.holdings_file,
-                     self.transactions_file, self.config_file]:
+        for file in [
+            self.account_file,
+            self.orders_file,
+            self.holdings_file,
+            self.transactions_file,
+            self.config_file,
+        ]:
             backup_file = backup_dir / file.name
             if backup_file.exists():
                 shutil.copy2(backup_file, file)
@@ -375,23 +418,28 @@ class PaperTradeStore:
             self._transactions = []
 
             # Delete files
-            for file in [self.account_file, self.orders_file, self.holdings_file,
-                         self.transactions_file]:
+            for file in [
+                self.account_file,
+                self.orders_file,
+                self.holdings_file,
+                self.transactions_file,
+            ]:
                 if file.exists():
                     file.unlink()
 
     # ===== STATISTICS =====
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get storage statistics"""
         with self._lock:
             return {
                 "total_orders": len(self._orders),
-                "pending_orders": len([o for o in self._orders if o.get("status") in ["PENDING", "OPEN"]]),
+                "pending_orders": len(
+                    [o for o in self._orders if o.get("status") in ["PENDING", "OPEN"]]
+                ),
                 "completed_orders": len([o for o in self._orders if o.get("status") == "COMPLETE"]),
                 "total_holdings": len(self._holdings),
                 "total_transactions": len(self._transactions),
                 "account_initialized": self._account is not None,
                 "storage_path": str(self.storage_path),
             }
-

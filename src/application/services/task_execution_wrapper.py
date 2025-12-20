@@ -68,7 +68,10 @@ def execute_task(
                 duration_seconds=duration,
                 details=task_context,
             )
+            # task_repo.create() commits, so status update happens in new transaction
             status_repo.update_task_execution(user_id)
+            # Commit status update to ensure it's persisted
+            db_session.commit()
         logger.info(
             f"Task completed: {task_name} (duration: {duration:.2f}s)",
             action=task_name,
@@ -92,8 +95,11 @@ def execute_task(
                 duration_seconds=duration,
                 details=error_details,
             )
+            # task_repo.create() commits, so status updates happen after
             status_repo.update_task_execution(user_id)
             status_repo.increment_error(user_id, error_message=str(e))
+            # Commit status updates to ensure they're persisted before raising
+            db_session.commit()
 
         logger.error(
             f"Task failed: {task_name} (duration: {duration:.2f}s)",

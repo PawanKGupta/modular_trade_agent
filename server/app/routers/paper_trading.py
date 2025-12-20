@@ -44,6 +44,10 @@ class PaperTradingHolding(BaseModel):
     pnl_percentage: float
     target_price: float | None = None  # Frozen EMA9 target
     distance_to_target: float | None = None  # % to reach target
+    reentry_count: int = 0  # Number of re-entries for this position
+    reentries: list[dict[str, Any]] | None = None  # Re-entry details array
+    entry_rsi: float | None = None  # RSI10 at initial entry
+    initial_entry_price: float | None = None  # Initial entry price (before re-entries)
 
 
 class PaperTradingOrder(BaseModel):
@@ -163,12 +167,6 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             portfolio_value += qty * current_price
 
         total_value = account_data["available_cash"] + portfolio_value
-        return_pct = (
-            ((total_value - account_data["initial_capital"]) / account_data["initial_capital"])
-            * 100
-            if account_data["initial_capital"] > 0
-            else 0.0
-        )
 
         # Get realized P&L from stored account (from completed trades)
         realized_pnl = account_data.get("realized_pnl", 0.0)
@@ -241,7 +239,14 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             cost_basis = qty * avg_price
             market_value = qty * current_price
             pnl = market_value - cost_basis
-            pnl_pct = ((current_price - avg_price) / avg_price * 100) if avg_price > 0 else 0.0
+            # P&L percentage: if quantity is 0, return 0% (no position)
+            # Otherwise, calculate based on price change
+            if qty == 0:
+                pnl_pct = 0.0
+            elif avg_price > 0:
+                pnl_pct = (current_price - avg_price) / avg_price * 100
+            else:
+                pnl_pct = 0.0
 
             # Accumulate unrealized P&L
             unrealized_pnl_total += pnl
@@ -256,6 +261,58 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             if target_price and current_price > 0:
                 distance_to_target = (target_price - current_price) / current_price * 100
 
+            # Fetch reentry details from database positions table
+            reentry_count = 0
+            reentries_list = None
+            entry_rsi = None
+            initial_entry_price = None
+
+            try:
+                from src.infrastructure.persistence.positions_repository import (  # noqa: PLC0415
+                    PositionsRepository,
+                )
+
+                positions_repo = PositionsRepository(db)
+                # Normalize symbol: remove .NS/.BO suffix and -EQ/-BE suffix,
+                # convert to uppercase
+                normalized_symbol = symbol.upper().replace(".NS", "").replace(".BO", "")
+                # Remove broker-specific suffixes like -EQ, -BE
+                if "-" in normalized_symbol:
+                    normalized_symbol = normalized_symbol.split("-")[0]
+
+                position = positions_repo.get_by_symbol(current.id, normalized_symbol)
+                if position:
+                    reentry_count = position.reentry_count or 0
+                    entry_rsi = position.entry_rsi
+                    initial_entry_price = position.initial_entry_price
+
+                    # Parse reentries JSON field
+                    if position.reentries:
+                        if isinstance(position.reentries, dict):
+                            # New format: {"reentries": [...], "current_cycle": ...}
+                            reentries_list = position.reentries.get("reentries", [])
+                        elif isinstance(position.reentries, list):
+                            # Old format: direct array
+                            reentries_list = position.reentries
+                        else:
+                            reentries_list = []
+                    else:
+                        reentries_list = []
+
+                    logger.debug(
+                        f"Found reentry data for {symbol} "
+                        f"(normalized: {normalized_symbol}): "
+                        f"count={reentry_count}, "
+                        f"reentries={len(reentries_list) if reentries_list else 0}"
+                    )
+                else:
+                    logger.debug(
+                        f"No position found for {symbol} "
+                        f"(normalized: {normalized_symbol}) in database"
+                    )
+            except Exception as e:
+                logger.debug(f"Could not fetch reentry details for {symbol}: {e}")
+
             holdings.append(
                 PaperTradingHolding(
                     symbol=symbol,
@@ -268,11 +325,24 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                     pnl_percentage=pnl_pct,
                     target_price=target_price,
                     distance_to_target=distance_to_target,
+                    reentry_count=reentry_count,
+                    reentries=reentries_list,
+                    entry_rsi=entry_rsi,
+                    initial_entry_price=initial_entry_price,
                 )
             )
 
         # Calculate total P&L with live prices
         total_pnl = realized_pnl + unrealized_pnl_total
+
+        # Calculate return percentage based on total P&L
+        # (more accurate than total_value - initial_capital)
+        # This ensures consistency with the displayed total_pnl
+        return_pct = (
+            (total_pnl / account_data["initial_capital"]) * 100
+            if account_data["initial_capital"] > 0
+            else 0.0
+        )
 
         # Create account object with recalculated P&L
         account = PaperTradingAccount(
@@ -318,9 +388,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
 
         # Count re-entry orders (orders with entry_type="REENTRY" in metadata)
         reentry_count = sum(
-            1
-            for order in orders_data
-            if order.get("metadata", {}).get("entry_type") == "REENTRY"
+            1 for order in orders_data if order.get("metadata", {}).get("entry_type") == "REENTRY"
         )
 
         order_statistics = {
