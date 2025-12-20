@@ -162,7 +162,13 @@ For cloud automation, set in repository Settings → Secrets:
 
 For automated order execution (optional):
 
-**Credentials** - Create `modules/kotak_neo_auto_trader/kotak_neo.env`:
+**Credentials** (Recommended: Web UI):
+1. Access Web UI: `http://localhost:5173`
+2. Login with your account
+3. Go to Settings → Configure Broker Credentials
+4. Enter Kotak Neo credentials (encrypted and stored in database)
+
+**Legacy Option** (CLI scripts only) - Create `modules/kotak_neo_auto_trader/kotak_neo.env`:
 ```env
 KOTAK_CONSUMER_KEY=your_key
 KOTAK_CONSUMER_SECRET=your_secret
@@ -174,6 +180,8 @@ KOTAK_TOTP_SECRET=your_totp_secret
 KOTAK_MPIN=your_mpin
 KOTAK_ENVIRONMENT=prod
 ```
+
+**Note**: Web UI is the recommended approach. CLI scripts may still support env files for backward compatibility.
 
 **Trading Parameters** - Edit `modules/kotak_neo_auto_trader/config.py`:
 ```python
@@ -374,7 +382,7 @@ For bulk analysis, always use the batch function with CSV export:
 from core.analysis import analyze_multiple_tickers
 
 results, csv_filepath = analyze_multiple_tickers(
-    tickers, 
+    tickers,
     enable_multi_timeframe=True,
     export_to_csv=True
 )
@@ -523,7 +531,7 @@ Kotak Neo API (via orders.py)
 
 **Session/authentication errors**:
 - Delete `session_cache.json` to force fresh login
-- Verify credentials in `kotak_neo.env`
+- Verify credentials in Web UI (Settings → Broker) or `kotak_neo.env` (legacy)
 - Check TOTP_SECRET or MPIN for 2FA
 - 2FA errors on cached sessions are normal - system falls back to fresh login automatically
 
@@ -557,7 +565,7 @@ Kotak Neo API (via orders.py)
 ### Recent Documentation (2025-10-27)
 
 **Deployment Guides**:
-1. **Oracle Cloud Deployment** (`documents/deployment/oracle/ORACLE_CLOUD_DEPLOYMENT.md`)
+1. **Oracle Cloud Deployment** (`docs/deployment/cloud/oracle-cloud.md`)
    - Complete deployment guide for Oracle Cloud Free Tier (ARM Ampere A1.Flex)
    - Systemd services and timers for automated execution (4:00 PM buy, 9:15 AM sell)
    - Security hardening, backup automation, monitoring setup

@@ -74,12 +74,12 @@ echo "   Check .env file for ADMIN_EMAIL and ADMIN_PASSWORD"
 echo ""
 echo "📦 Building Docker images..."
 echo "This may take 5-10 minutes on first run..."
-cd "$DOCKER_DIR"
-docker-compose -f docker-compose.yml build
+cd "$PROJECT_ROOT"
+docker-compose -f docker/docker-compose.yml build
 
 echo ""
 echo "🚀 Starting services..."
-docker-compose -f docker-compose.yml up -d
+docker-compose -f docker/docker-compose.yml up -d
 
 echo ""
 echo "⏳ Waiting for services to start..."
@@ -87,7 +87,7 @@ sleep 5
 
 echo ""
 echo "📊 Service Status:"
-docker-compose -f docker-compose.yml ps
+docker-compose -f docker/docker-compose.yml ps
 
 echo ""
 echo "✅ Setup Complete!"
@@ -97,10 +97,10 @@ echo "  - Web Frontend: http://localhost:5173"
 echo "  - API Server:  http://localhost:8000"
 echo "  - Health Check: http://localhost:8000/health"
 echo ""
-echo "📝 Useful commands (run from docker/ folder):"
-echo "  View logs:        docker-compose -f docker-compose.yml logs -f"
-echo "  Stop services:    docker-compose -f docker-compose.yml down"
-echo "  Restart service:  docker-compose -f docker-compose.yml restart <service-name>"
-echo "  View status:      docker-compose -f docker-compose.yml ps"
+echo "📝 Useful commands (run from project root):"
+echo "  View logs:        docker-compose -f docker/docker-compose.yml logs -f"
+echo "  Stop services:    docker-compose -f docker/docker-compose.yml down"
+echo "  Restart service:  docker-compose -f docker/docker-compose.yml restart <service-name>"
+echo "  View status:      docker-compose -f docker/docker-compose.yml ps"
 echo ""
 echo "📚 For more help, see docker/README.md"

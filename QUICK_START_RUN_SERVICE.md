@@ -22,10 +22,7 @@ The unified service automatically runs these tasks on trading days (Mon-Fri):
 .venv\Scripts\python.exe modules\kotak_neo_auto_trader\run_trading_service.py
 ```
 
-Or with custom env file:
-```powershell
-.venv\Scripts\python.exe modules\kotak_neo_auto_trader\run_trading_service.py --env path\to\your\kotak_neo.env
-```
+**Note**: Credentials are loaded from database (configured via Web UI). The `--env` flag is only for legacy CLI usage.
 
 ### Option 2: Run as Windows Service (Production)
 
@@ -38,7 +35,8 @@ $svc = "TradeAgentUnified"
 # Install service
 nssm install $svc ".\.venv\Scripts\python.exe"
 nssm set $svc AppDirectory "$PWD"
-nssm set $svc AppParameters "modules\kotak_neo_auto_trader\run_trading_service.py --env modules\kotak_neo_auto_trader\kotak_neo.env"
+nssm set $svc AppParameters "modules\kotak_neo_auto_trader\run_trading_service.py"
+# Note: Credentials are loaded from database (configured via Web UI)
 nssm set $svc Start SERVICE_AUTO_START
 
 # Start service
@@ -101,10 +99,15 @@ Stop-Process -Name python -Force
 
 ## 📝 Prerequisites
 
-1. **Credentials file** must exist:
-   ```
-   modules/kotak_neo_auto_trader/kotak_neo.env
-   ```
+1. **Credentials Configuration** (Recommended: Web UI):
+   - Access Web UI: `http://localhost:5173`
+   - Login with your account
+   - Go to Settings → Configure Broker Credentials
+   - Enter Kotak Neo credentials (encrypted and stored in database)
+
+   **Legacy Option** (CLI scripts only):
+   - Create `modules/kotak_neo_auto_trader/kotak_neo.env` file
+   - Note: Web UI is the recommended approach
 
 2. **Virtual environment** activated (if running directly):
    ```powershell
@@ -118,17 +121,17 @@ Stop-Process -Name python -Force
 
 ## 🎯 Key Features
 
-✅ **Single Login**: Logs in once at startup, maintains session all day  
-✅ **Automatic Re-auth**: Handles JWT expiry automatically (with your fixes!)  
-✅ **All Tasks**: Runs all scheduled tasks automatically  
-✅ **Thread-Safe**: Handles concurrent operations safely  
-✅ **Graceful Shutdown**: Cleans up properly on exit  
+✅ **Single Login**: Logs in once at startup, maintains session all day
+✅ **Automatic Re-auth**: Handles JWT expiry automatically (with your fixes!)
+✅ **All Tasks**: Runs all scheduled tasks automatically
+✅ **Thread-Safe**: Handles concurrent operations safely
+✅ **Graceful Shutdown**: Cleans up properly on exit
 
 ## 🔧 Troubleshooting
 
 ### Service won't start?
 - Check logs: `logs\trade_agent_*.log`
-- Verify credentials file exists and is valid
+- Verify broker credentials are configured in Web UI (Settings → Broker)
 - Check virtual environment is set up correctly
 
 ### Tasks not running?
@@ -137,12 +140,13 @@ Stop-Process -Name python -Force
 - Verify internet connection
 
 ### Authentication issues?
-- Check credentials in `kotak_neo.env`
-- Verify MPIN is correct
+- Check broker credentials in Web UI (Settings → Broker)
+- Verify credentials are correct and saved
 - Check logs for authentication errors
+- For legacy CLI: Verify `kotak_neo.env` file exists and is valid
 
 ## 📚 Additional Resources
 
-- Full documentation: `documents/architecture/UNIFIED_TRADING_SERVICE.md`
-- Windows deployment: `documents/deployment/windows/WINDOWS_UNIFIED_SERVICE.md`
-- Ubuntu deployment: `documents/deployment/ubuntu/INSTALL_UBUNTU.md`
+- Full documentation: `docs/architecture/SERVICE_ARCHITECTURE.md`
+- Deployment: `docs/deployment/DEPLOYMENT.md`
+- Ubuntu deployment: `docs/deployment/UBUNTU_SERVER_DEPLOYMENT.md`
