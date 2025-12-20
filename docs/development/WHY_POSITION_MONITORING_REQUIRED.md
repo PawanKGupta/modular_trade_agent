@@ -172,7 +172,7 @@ Day 2: Price drops to ₹1,400 (RSI = 18) → Monitor detects → Buy 10 more
 Day 3: Price drops to ₹1,300 (RSI = 10) → Monitor detects → Buy 10 more
 Day 4: Price drops to ₹1,200 (RSI = 8) → Already used level 10 → No action
 Day 5: Price bounces to ₹1,350 (EMA9) → Sell executes
-Result: 
+Result:
   - Average price: (₹1,500 + ₹1,400 + ₹1,300) / 3 = ₹1,400
   - Profit: ₹1,350 - ₹1,400 = -₹50 per share (3.3% loss)
   - Much better than 10% loss!
@@ -262,12 +262,12 @@ Result:
    ```python
    # Check RSI levels
    levels = position.levels_taken  # {"30": True, "20": False, "10": False}
-   
+
    if levels["30"] and not levels["20"] and rsi < 20:
        # Re-entry opportunity at RSI < 20
        place_buy_order(symbol, qty)
        levels["20"] = True
-   
+
    if levels["20"] and not levels["10"] and rsi < 10:
        # Re-entry opportunity at RSI < 10
        place_buy_order(symbol, qty)
@@ -278,7 +278,7 @@ Result:
    ```python
    if rsi > 30:
        position.reset_ready = True
-   
+
    if rsi < 30 and position.reset_ready:
        # New cycle - reset all levels
        levels = {"30": False, "20": False, "10": False}
@@ -328,4 +328,3 @@ Position monitoring is **essential** because:
 ## Configuration
 
 Position monitoring runs **hourly** during market hours (9:30 AM - 3:30 PM) and is configured via the `task_schedules` table in the database. It can be enabled/disabled per user and the schedule can be customized.
-

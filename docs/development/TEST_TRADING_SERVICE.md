@@ -45,11 +45,11 @@ Test script that allows running trading tasks outside market hours and on holida
 
 ## Features
 
-✅ **Bypasses time checks**: Runs tasks at any time of day  
-✅ **Bypasses day checks**: Runs on weekends/holidays  
-✅ **Individual task testing**: Test specific tasks  
-✅ **All tasks testing**: Run all tasks sequentially  
-✅ **Full initialization**: Uses same initialization as production  
+✅ **Bypasses time checks**: Runs tasks at any time of day
+✅ **Bypasses day checks**: Runs on weekends/holidays
+✅ **Individual task testing**: Test specific tasks
+✅ **All tasks testing**: Run all tasks sequentially
+✅ **Full initialization**: Uses same initialization as production
 
 ## Examples
 

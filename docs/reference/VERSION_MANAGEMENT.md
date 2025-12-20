@@ -43,7 +43,7 @@ Where:
 
 ### From Source
 ```bash
-python show_version.py
+python scripts/show_version.py
 ```
 
 ### From Installed System

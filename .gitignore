@@ -113,3 +113,6 @@ models/verdict_model_features_*.txt
 # Temporary error files
 *run-once*
 *tatus*
+
+# Log files in root directory
+*.log

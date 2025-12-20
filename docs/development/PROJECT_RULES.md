@@ -1,7 +1,7 @@
 # Project Rules - Rebound — Modular Trade Agent
 
-**Version:** 1.0  
-**Last Updated:** 2025-11-07  
+**Version:** 1.0
+**Last Updated:** 2025-11-07
 **Status:** Active
 
 ---
@@ -354,10 +354,10 @@ from config.strategy_config import StrategyConfig
   ```python
   """
   Module Description
-  
+
   This module provides [purpose]. It handles [key functionality]
   and integrates with [dependencies].
-  
+
   Example:
       Basic usage example here.
   """
@@ -367,16 +367,16 @@ from config.strategy_config import StrategyConfig
   class AnalysisService:
       """
       Service for analyzing stock tickers.
-      
+
       This service orchestrates the analysis pipeline including data
       fetching, indicator calculation, signal generation, and verdict
       determination.
-      
+
       Attributes:
           config: Strategy configuration instance
           data_service: Data fetching service
           indicator_service: Technical indicator calculator
-      
+
       Example:
           >>> service = AnalysisService()
           >>> result = service.analyze_ticker("RELIANCE.NS")
@@ -387,29 +387,29 @@ from config.strategy_config import StrategyConfig
 - **Function/Method Docstrings**: Google style with Args, Returns, Raises
   ```python
   def analyze_ticker(
-      self, 
-      ticker: str, 
+      self,
+      ticker: str,
       enable_mtf: bool = True
   ) -> AnalysisResult:
       """
       Analyze a single stock ticker.
-      
+
       Performs comprehensive technical analysis including RSI calculation,
       EMA200 trend confirmation, volume analysis, and multi-timeframe
       alignment scoring.
-      
+
       Args:
           ticker: Stock ticker symbol (e.g., "RELIANCE.NS")
           enable_mtf: Enable multi-timeframe analysis (default: True)
-      
+
       Returns:
           AnalysisResult containing verdict, trading parameters, and scores
-      
+
       Raises:
           DataError: If stock data cannot be fetched
           IndicatorError: If indicator calculation fails
           AnalysisError: If analysis process fails
-      
+
       Example:
           >>> service = AnalysisService()
           >>> result = service.analyze_ticker("RELIANCE.NS")
@@ -780,5 +780,5 @@ from config.strategy_config import StrategyConfig
 
 ---
 
-**Last Review Date**: 2025-11-07  
+**Last Review Date**: 2025-11-07
 **Next Review Date**: 2026-02-07 (Quarterly)
