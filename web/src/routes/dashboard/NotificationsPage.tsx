@@ -111,11 +111,14 @@ export function NotificationsPage() {
 			{/* Filters */}
 			<div className="flex flex-col sm:flex-row gap-3 sm:gap-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex-1">
-					<label className="block text-xs sm:text-sm mb-1">Type</label>
+					<label htmlFor="type-filter" className="block text-xs sm:text-sm mb-1 text-[var(--text)]">
+						Type
+					</label>
 					<select
+						id="type-filter"
 						value={filter}
-						onChange={(e) => setFilter(e.target.value as any)}
-						className="w-full p-3 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
+						onChange={(e) => setFilter(e.target.value as 'all' | 'unread' | 'service' | 'trading' | 'system' | 'error')}
+						className="w-full p-3 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0 text-[var(--text)]"
 					>
 						<option value="all">All</option>
 						<option value="unread">Unread</option>
@@ -126,11 +129,14 @@ export function NotificationsPage() {
 					</select>
 				</div>
 				<div className="flex-1">
-					<label className="block text-xs sm:text-sm mb-1">Level</label>
+					<label htmlFor="level-filter" className="block text-xs sm:text-sm mb-1 text-[var(--text)]">
+						Level
+					</label>
 					<select
+						id="level-filter"
 						value={levelFilter}
-						onChange={(e) => setLevelFilter(e.target.value as any)}
-						className="w-full p-3 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
+						onChange={(e) => setLevelFilter(e.target.value as 'all' | 'info' | 'warning' | 'error' | 'critical')}
+						className="w-full p-3 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0 text-[var(--text)]"
 					>
 						<option value="all">All</option>
 						<option value="info">Info</option>
@@ -142,11 +148,12 @@ export function NotificationsPage() {
 			</div>
 
 			{/* Notifications List */}
-			<div className="space-y-2">
+			<div className="space-y-2 notifications-list" role="list" data-testid="notifications-list">
 				{notifications && notifications.length > 0 ? (
 					notifications.map((notification) => (
 						<div
 							key={notification.id}
+							role="listitem"
 							className={`p-3 sm:p-4 border rounded ${
 								notification.read
 									? 'border-[#1e293b] bg-[#0f1720] opacity-60'
@@ -188,7 +195,7 @@ export function NotificationsPage() {
 						</div>
 					))
 				) : (
-					<div className="p-8 text-center text-[var(--muted)] border border-[#1e293b] rounded">
+					<div className="p-8 text-center text-[var(--muted)] border border-[#1e293b] rounded" role="status" aria-live="polite">
 						No notifications found
 					</div>
 				)}

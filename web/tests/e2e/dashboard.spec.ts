@@ -23,8 +23,13 @@ test.describe('Dashboard & Navigation', () => {
 	});
 
 	test('all menu items navigate correctly', async ({ authenticatedPage }) => {
+		// Ensure we start from dashboard
+		await authenticatedPage.goto('/dashboard');
+		await authenticatedPage.waitForLoadState('networkidle');
+
 		// Scope queries to sidebar navigation to avoid matching dashboard quick action links
-		const sidebar = authenticatedPage.locator('aside nav, aside');
+		// Use aside first, then nav inside it to avoid strict mode violation
+		const sidebar = authenticatedPage.locator('aside').first();
 
 		// Test each major menu item with their category
 		const menuItems = [
@@ -44,9 +49,13 @@ test.describe('Dashboard & Navigation', () => {
 		];
 
 		for (const item of menuItems) {
+			// Ensure sidebar is visible and ready
+			await expect(sidebar).toBeVisible({ timeout: 5000 });
+
 			// Expand category if needed
 			if (item.category) {
 				const categoryButton = sidebar.getByRole('button', { name: item.category });
+				await expect(categoryButton).toBeVisible({ timeout: 5000 });
 
 				// Check if category is expanded by checking if menu items are visible
 				const menuLink = sidebar.getByRole('link', { name: item.name });
@@ -54,6 +63,7 @@ test.describe('Dashboard & Navigation', () => {
 
 				if (!isExpanded) {
 					await categoryButton.click();
+					await authenticatedPage.waitForTimeout(200); // Wait for animation
 					// Wait for menu items to appear after expanding with longer timeout
 					await menuLink.waitFor({ state: 'visible', timeout: 10000 });
 				}
@@ -61,6 +71,7 @@ test.describe('Dashboard & Navigation', () => {
 
 			// Find and click menu item (scoped to sidebar)
 			const menuLink = sidebar.getByRole('link', { name: item.name });
+			await expect(menuLink).toBeVisible({ timeout: 5000 });
 			await menuLink.click();
 
 			// Verify navigation with longer timeout for slow pages
@@ -74,16 +85,19 @@ test.describe('Dashboard & Navigation', () => {
 			});
 
 			// Navigate back to dashboard for next test - ensure we're ready
-			await authenticatedPage.goto('/dashboard', { waitUntil: 'domcontentloaded' });
-			await authenticatedPage.waitForLoadState('domcontentloaded');
-			// Wait a bit for navigation to settle
-			await authenticatedPage.waitForTimeout(300);
+			// Only navigate back if not already on dashboard
+			if (!item.url.test(authenticatedPage.url()) || item.name.source !== 'Dashboard') {
+				await authenticatedPage.goto('/dashboard', { waitUntil: 'domcontentloaded' });
+				await authenticatedPage.waitForLoadState('domcontentloaded');
+				// Wait a bit for navigation to settle and sidebar to be ready
+				await authenticatedPage.waitForTimeout(500);
+			}
 		}
 	});
 
 	test('menu categories can be expanded and collapsed', async ({ authenticatedPage }) => {
 		// Scope queries to sidebar navigation
-		const sidebar = authenticatedPage.locator('aside nav, aside');
+		const sidebar = authenticatedPage.locator('aside').first();
 
 		// Find Trading category button
 		const categoryButton = sidebar.getByRole('button', { name: /Trading/i });
@@ -113,7 +127,7 @@ test.describe('Dashboard & Navigation', () => {
 
 	test('active menu item is highlighted', async ({ authenticatedPage }) => {
 		// Scope queries to sidebar navigation
-		const sidebar = authenticatedPage.locator('aside nav, aside');
+		const sidebar = authenticatedPage.locator('aside').first();
 
 		// Expand Trading category first (it's collapsed by default)
 		const tradingButton = sidebar.getByRole('button', { name: /Trading/i });

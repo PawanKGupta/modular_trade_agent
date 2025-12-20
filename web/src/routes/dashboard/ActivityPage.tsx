@@ -24,7 +24,12 @@ export function ActivityPage() {
 					id="level"
 					className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2 sm:py-1 text-sm text-[var(--text)] min-h-[44px] sm:min-h-0"
 					value={level}
-					onChange={(e) => setLevel(e.target.value as any)}
+					onChange={(e) => {
+						const value = e.target.value;
+						if (value === 'all' || value === 'info' || value === 'warn' || value === 'error') {
+							setLevel(value);
+						}
+					}}
 				>
 					{LEVELS.map((l) => (
 						<option key={l} value={l}>

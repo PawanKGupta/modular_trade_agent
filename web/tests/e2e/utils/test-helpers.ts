@@ -64,7 +64,7 @@ export async function waitForAPIResponse(
 export async function mockAPIResponse(
 	page: Page,
 	urlPattern: string | RegExp,
-	response: { status: number; body: any },
+	response: { status: number; body: unknown },
 ): Promise<void> {
 	await page.route(urlPattern, (route) => {
 		route.fulfill({

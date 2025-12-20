@@ -19,8 +19,11 @@ Complete all pending dashboard enhancements, visual analytics, and data export c
 - Chart infrastructure setup
 
 **Phase 2: Core Charts (Week 1-2)**
+- PnL Data Population Service (prerequisite for charts)
 - P&L Trend Chart with time ranges
 - Portfolio Value Chart with historical data
+- Broker Trading History (parity with paper trading)
+- Targets Page Implementation
 
 **Phase 3: Dashboard & Export (Week 2-3)**
 - Complete Enhanced Dashboard Metrics (win rate, avg profit, best/worst trades)
@@ -110,12 +113,108 @@ This release focuses on completing all pending dashboard enhancements, visual an
 
 ---
 
+#### 1.2 PnL Data Population Service
+**Priority:** 🔴 High
+**Effort:** Medium (2-3 days)
+**Dependencies:** None (must complete before 2.1 P&L Trend Chart)
+
+**Description:**
+- Create service to populate `pnl_daily` table with calculated P&L data
+- Calculate daily P&L from positions and orders tables
+- Support both paper trading and broker trading modes
+- Enable on-demand calculation and scheduled daily updates
+
+**Current State:**
+- ✅ `pnl_daily` table exists
+- ✅ P&L API endpoints exist (`/api/v1/user/pnl/daily`, `/api/v1/user/pnl/summary`)
+- ❌ `pnl_daily` table is empty (no data populated)
+- ❌ P&L Page shows "No P&L data available"
+- ✅ Positions and orders tables have data but P&L not aggregated
+
+**Deliverables:**
+- [ ] PnL calculation service (`server/app/services/pnl_calculation_service.py`)
+- [ ] Calculate realized P&L from closed positions
+- [ ] Calculate unrealized P&L from open positions
+- [ ] Estimate fees from orders (0.1% per transaction, or use actual if available)
+- [ ] Daily P&L aggregation logic
+- [ ] On-demand calculation endpoint (for immediate updates)
+- [ ] Background job/service for daily EOD calculation (optional, can be scheduled later)
+- [ ] Support for both paper trading and broker trading modes
+- [ ] Historical data backfill capability
+- [ ] Error handling and logging
+
+**Acceptance Criteria:**
+- P&L data populates correctly in `pnl_daily` table
+- Realized P&L calculated from closed positions accurately
+- Unrealized P&L calculated from open positions with current prices
+- Fees estimated or calculated correctly
+- Works for both paper and broker trading modes
+- On-demand calculation completes within 5 seconds
+- Historical backfill works correctly
+
+**Files to Create/Modify:**
+- `server/app/services/pnl_calculation_service.py` - New PnL calculation service
+- `server/app/routers/pnl.py` - Add endpoint to trigger calculation/backfill
+- `src/infrastructure/persistence/pnl_repository.py` - May need upsert improvements
+- `src/infrastructure/persistence/positions_repository.py` - Query positions
+- `src/infrastructure/persistence/orders_repository.py` - Query orders for fees
+
+**API Requirements:**
+- `POST /api/v1/user/pnl/calculate` - Trigger on-demand P&L calculation
+- `POST /api/v1/user/pnl/backfill` - Backfill historical P&L data (optional)
+
+**Implementation Details:**
+
+1. **Realized P&L Calculation:**
+   - Query closed positions (`positions` table where `closed_at IS NOT NULL`)
+   - Calculate: `(exit_price - avg_price) * quantity` for each closed position
+   - Sum by date (using `closed_at` date)
+   - Account for fees (estimate or use actual from orders)
+
+2. **Unrealized P&L Calculation:**
+   - Query open positions (`positions` table where `closed_at IS NULL`)
+   - Get current price (from broker API or yfinance)
+   - Calculate: `(current_price - avg_price) * quantity` for each open position
+   - Sum by date (using current date)
+   - Update daily as prices change
+
+3. **Fees Calculation:**
+   - Option 1: Estimate 0.1% per transaction (buy + sell)
+   - Option 2: Use actual charges from `order_metadata` if available
+   - Sum fees by date
+
+4. **Daily Aggregation:**
+   - Group by `user_id` and `date`
+   - Store in `pnl_daily` table using `upsert` (handles duplicates)
+   - Ensure one record per user per date
+
+**Integration Points:**
+- Prerequisite for Phase 2.1 (P&L Trend Chart) - chart needs data
+- Prerequisite for Phase 2.3 (Dashboard Metrics) - metrics need P&L data
+- Prerequisite for Phase 4.1 (Performance Analytics) - analytics need P&L data
+- Can be scheduled as EOD job in future (not required for v26.1.1)
+
+**Testing Requirements:**
+- Unit tests for P&L calculation logic
+- Unit tests for realized vs unrealized P&L
+- Integration tests for calculation service
+- Test with both paper and broker trading data
+- Test historical backfill
+
+**Future Enhancements (Not in v26.1.1):**
+- Scheduled EOD job for automatic daily calculation
+- Real-time P&L updates via WebSocket
+- More accurate fee calculation from broker API
+- P&L breakdown by symbol/strategy
+
+---
+
 ### Phase 2: Core Dashboard Enhancements (High Priority)
 
 #### 2.1 P&L Trend Chart
 **Priority:** 🔴 High
 **Effort:** Medium (3-5 days)
-**Dependencies:** 1.1 (Chart Library)
+**Dependencies:** 1.1 (Chart Library), 1.2 (PnL Data Population Service)
 
 **Description:**
 - Add interactive line chart showing P&L over time
@@ -126,6 +225,7 @@ This release focuses on completing all pending dashboard enhancements, visual an
 **Current State:**
 - ✅ P&L API endpoints exist (`/api/v1/user/pnl/daily`, `/api/v1/user/pnl/summary`)
 - ✅ P&L Page exists (`web/src/routes/dashboard/PnlPage.tsx`)
+- ❌ P&L data not populated in `pnl_daily` table (blocking chart display)
 - ❌ No chart component
 - ❌ No time range selector
 
@@ -205,7 +305,7 @@ This release focuses on completing all pending dashboard enhancements, visual an
 #### 2.3 Complete Enhanced Dashboard Metrics
 **Priority:** 🟡 Medium
 **Effort:** Low (1-2 days)
-**Dependencies:** None
+**Dependencies:** 1.2 (PnL Data Population Service) - Metrics need P&L data
 
 **Description:**
 - Complete missing dashboard metrics
@@ -213,6 +313,7 @@ This release focuses on completing all pending dashboard enhancements, visual an
 - Average profit per trade
 - Best/worst trade
 - Ensure all metrics are accurate and performant
+- **Note:** Requires P&L data to be populated (from 1.2)
 
 **Current State:**
 - ✅ Basic metrics exist (Portfolio Value, Total P&L, Active Signals, Open Orders)
@@ -245,6 +346,238 @@ This release focuses on completing all pending dashboard enhancements, visual an
 - `/api/v1/user/metrics/win-rate` - Calculate win rate
 - `/api/v1/user/metrics/average-profit` - Calculate average profit per trade
 - `/api/v1/user/metrics/best-worst-trades` - Get best and worst trades
+
+---
+
+#### 2.4 Broker Trading History
+**Priority:** 🔴 High
+**Effort:** Medium (3-4 days)
+**Dependencies:** None (can be done in parallel with other Phase 2 items)
+
+**Description:**
+- Add broker trading history endpoint and UI page
+- Provide complete trade history for real broker trades (similar to paper trading history)
+- Show all transactions, closed positions with P&L, and statistics
+- Address critical edge cases: trade mode filtering, partial fills, symbol normalization, manual trades
+
+**Current State:**
+- ✅ Paper trading history exists (`/api/v1/user/paper-trading/history`)
+- ✅ Paper trading history page exists (`web/src/routes/dashboard/PaperTradingHistoryPage.tsx`)
+- ✅ Broker orders and positions stored in database (`orders` and `positions` tables)
+- ❌ No broker trade history endpoint
+- ❌ No broker trade history UI page
+
+**Deliverables:**
+- [ ] Broker trade history API endpoint (`/api/v1/user/broker/history`)
+- [ ] Trade history calculation logic (transactions, closed positions, statistics)
+- [ ] Edge case handling:
+  - Trade mode validation (ensure user is in broker mode)
+  - Partial fill handling (use `execution_qty` when available)
+  - Symbol normalization for matching
+  - Manual trade filtering/flagging
+  - FIFO matching without in-place mutation
+  - Timezone-aware timestamp handling
+- [ ] Broker trade history UI page (`web/src/routes/dashboard/BrokerTradingHistoryPage.tsx`)
+- [ ] Reuse existing `TradeHistory` schema and components where possible
+- [ ] Date range filtering support
+- [ ] Pagination for large datasets
+- [ ] Loading states and error handling
+- [ ] Mobile-responsive design
+
+**Acceptance Criteria:**
+- API endpoint returns data in same format as paper trading history
+- All transactions from `orders` table are included
+- Closed positions calculated correctly using FIFO matching
+- Statistics (win rate, P&L, etc.) are accurate
+- Only broker trades included (no paper trading data leakage)
+- Handles partial fills correctly
+- Fast response time (< 2 seconds for typical datasets)
+- Works on mobile devices
+- Error handling for edge cases
+
+**Files to Create/Modify:**
+- `server/app/routers/broker.py` - Add `/history` endpoint
+- `web/src/routes/dashboard/BrokerTradingHistoryPage.tsx` - New page component
+- `web/src/api/broker.ts` - Add `getBrokerTradingHistory()` function
+- `web/src/router.tsx` - Add broker history route
+- `web/src/routes/AppShell.tsx` - Add navigation link (if needed)
+
+**API Requirements:**
+- Endpoint: `GET /api/v1/user/broker/history`
+- Query parameters:
+  - `from_date` (optional): Filter transactions from date (ISO format)
+  - `to_date` (optional): Filter transactions to date (ISO format)
+  - `limit` (optional): Limit number of transactions (default: 1000, max: 10000)
+- Response: Same `TradeHistory` schema as paper trading
+- Validation: Ensure user is in broker mode (return 400 if not)
+
+**Implementation Details:**
+
+1. **Backend Implementation** (`server/app/routers/broker.py`):
+   - Add `get_broker_trading_history()` endpoint
+   - Query `orders` table for executed orders (status ONGOING or CLOSED with execution details)
+   - Query `positions` table for closed positions
+   - Convert orders to transactions format
+   - Match buy/sell orders using FIFO algorithm (without in-place mutation)
+   - Calculate closed positions from matched transactions
+   - Calculate statistics (win rate, total P&L, etc.)
+   - Filter by trade mode (validate user is in broker mode)
+   - Handle partial fills using `execution_qty`
+   - Normalize symbols for matching
+   - Add date range filtering
+   - Add pagination support
+
+2. **Frontend Implementation**:
+   - Create `BrokerTradingHistoryPage.tsx` similar to `PaperTradingHistoryPage.tsx`
+   - Reuse existing `TradeHistory` type and components
+   - Add date range picker
+   - Add export button (connects to Phase 3.1 CSV export)
+   - Show loading states
+   - Handle errors gracefully
+
+3. **Edge Cases to Address**:
+   - Trade mode validation: Check `user_settings.trade_mode == TradeMode.BROKER`
+   - Partial fills: Use `order.execution_qty` if available, otherwise `order.quantity`
+   - Symbol matching: Normalize symbols using `extract_base_symbol()` utility
+   - Manual trades: Option to filter or flag (add `is_manual` field to transactions)
+   - FIFO matching: Create copies for matching, don't mutate original transaction objects
+   - Charges: Use actual charges from `order_metadata` if available, otherwise estimate
+   - Exit price: Match sell orders to closed positions by timestamp proximity
+   - Timezone: Ensure all timestamps are timezone-aware
+   - Performance: Add pagination and date filtering to avoid loading all orders
+
+**Integration Points:**
+- Reuses `TradeHistory` schema from `server/app/routers/paper_trading.py`
+- Integrates with Phase 3.1 CSV export (add broker history to export list)
+- Can be used by Phase 4.1 Performance Analytics (as data source)
+- Shares UI components with paper trading history page
+
+**Testing Requirements:**
+- Unit tests for FIFO matching algorithm
+- Unit tests for statistics calculations
+- Integration tests for API endpoint
+- Edge case tests (partial fills, manual trades, symbol mismatches)
+- Performance tests (large datasets)
+- E2E tests for UI page
+
+**Dependencies:**
+- `src/infrastructure/persistence/orders_repository.py` - Query orders
+- `src/infrastructure/persistence/positions_repository.py` - Query positions
+- `src/infrastructure/persistence/settings_repository.py` - Get trade mode
+- `modules/kotak_neo_auto_trader/utils/symbol_utils.py` - Symbol normalization
+
+**Future Enhancements (Not in v26.1.1):**
+- Add `trade_mode` column to `orders` table (from UNIFIED_DB_IMPLEMENTATION_COMPLETE.md)
+- Store actual charges in `order_metadata` for accurate P&L
+- Add open positions to history (currently only closed positions)
+- Add caching for calculated history
+- Real-time updates via WebSocket
+
+---
+
+#### 2.5 Targets Page Implementation
+**Priority:** 🟡 Medium
+**Effort:** Low (1-2 days)
+**Dependencies:** None
+
+**Description:**
+- Implement Targets page to display active sell order targets
+- Show target prices (EMA9) for open positions
+- Display current price and distance to target
+- Support both paper trading and broker trading modes
+
+**Current State:**
+- ✅ Targets page exists (`web/src/routes/dashboard/TargetsPage.tsx`)
+- ❌ Targets endpoint is placeholder (returns empty list)
+- ❌ Target prices exist in system but not exposed via API
+- ✅ Paper trading: Targets stored in `active_sell_orders.json`
+- ✅ Broker trading: Targets can be derived from positions or calculated from EMA9
+
+**Deliverables:**
+- [ ] Targets API endpoint implementation (`/api/v1/user/targets`)
+- [ ] Query targets from appropriate source:
+  - Paper trading: Read from `active_sell_orders.json`
+  - Broker trading: Derive from positions or calculate EMA9 for open positions
+- [ ] Return target information:
+  - Symbol
+  - Target price (EMA9)
+  - Current price
+  - Distance to target (percentage)
+  - Entry price (from position)
+  - Quantity
+- [ ] Update Targets page UI to display data
+- [ ] Add current price fetching (broker API or yfinance)
+- [ ] Add distance to target calculation
+- [ ] Loading states and error handling
+- [ ] Mobile-responsive design
+
+**Acceptance Criteria:**
+- Targets page displays active targets correctly
+- Target prices are accurate (EMA9 values)
+- Current prices update correctly
+- Distance to target calculated accurately
+- Works for both paper and broker trading modes
+- Fast loading (< 2 seconds)
+- Mobile-responsive
+
+**Files to Create/Modify:**
+- `server/app/routers/targets.py` - Implement targets endpoint (currently placeholder)
+- `web/src/routes/dashboard/TargetsPage.tsx` - Update to display target data
+- `web/src/api/targets.ts` - Verify API client works
+- `server/app/services/targets_service.py` - New service for target calculation (optional)
+
+**API Requirements:**
+- Endpoint: `GET /api/v1/user/targets`
+- Response: List of target items with:
+  - `id`: Target ID (or position ID)
+  - `symbol`: Stock symbol
+  - `target_price`: EMA9 target price
+  - `current_price`: Current market price
+  - `entry_price`: Average entry price (from position)
+  - `quantity`: Position quantity
+  - `distance_to_target`: Percentage distance to target
+  - `note`: Optional note/description
+  - `created_at`: When target was set
+
+**Implementation Details:**
+
+1. **For Paper Trading:**
+   - Read `active_sell_orders.json` from user's paper trading directory
+   - Extract target prices from sell orders
+   - Get current prices from yfinance or stored prices
+   - Calculate distance to target
+
+2. **For Broker Trading:**
+   - Option A: Query open positions from `positions` table
+   - Calculate EMA9 for each position symbol
+   - Get current prices from broker API
+   - Calculate distance to target
+   - Option B: Query active sell orders from broker API (if available)
+   - Extract target prices from sell orders
+
+3. **Target Calculation:**
+   - Use existing EMA9 calculation logic from `sell_engine.py`
+   - Reuse `calculate_ema9()` function or similar
+   - Ensure consistency with sell order targets
+
+**Integration Points:**
+- Standalone feature providing immediate value
+- Can be enhanced in future with manual target creation
+- Supports Phase 4.1 (Performance Analytics) - target achievement metrics
+
+**Testing Requirements:**
+- Unit tests for target calculation
+- Integration tests for targets API
+- Test with both paper and broker trading modes
+- Test with empty targets (no open positions)
+- E2E tests for Targets page
+
+**Future Enhancements (Not in v26.1.1):**
+- Manual target creation/editing
+- Target alerts (notify when target reached)
+- Target history tracking
+- Multiple targets per symbol
+- Target achievement statistics
 
 ---
 
@@ -282,6 +615,7 @@ This release focuses on completing all pending dashboard enhancements, visual an
 - [ ] Export buttons on:
   - P&L page
   - Paper Trading History page
+  - Broker Trading History page
   - Orders page
   - Buying Zone (Signals) page
   - Portfolio page
@@ -357,7 +691,7 @@ This release focuses on completing all pending dashboard enhancements, visual an
 #### 4.1 Performance Analytics Page
 **Priority:** 🟡 Medium
 **Effort:** High (5-7 days)
-**Dependencies:** 1.1 (Chart Library), 2.1 (P&L Chart)
+**Dependencies:** 1.1 (Chart Library), 2.1 (P&L Chart), 1.2 (PnL Data Population Service)
 
 **Description:**
 - Comprehensive performance metrics page
@@ -366,6 +700,8 @@ This release focuses on completing all pending dashboard enhancements, visual an
 - Best/worst trades
 - Trade duration analysis
 - Strategy performance breakdown
+- Can use broker trade history as data source for analytics (from Phase 2.4)
+- **Note:** Requires P&L data to be populated (from 1.2)
 
 **Current State:**
 - ✅ Backend performance analyzer exists (`backtest/performance_analyzer.py`)
@@ -580,8 +916,11 @@ class WatchlistItem(Base):
 
 ### Milestone 1: Foundation & Charts (Week 1-2)
 - ✅ Install chart library
+- ✅ PnL Data Population Service
 - ✅ P&L Trend Chart
 - ✅ Portfolio Value Chart
+- ✅ Broker Trading History
+- ✅ Targets Page Implementation
 - **Target:** End of Week 2
 
 ### Milestone 2: Dashboard & Export (Week 2-3)
@@ -614,6 +953,11 @@ class WatchlistItem(Base):
 ### Unit Tests
 - [ ] Chart components
 - [ ] Export utilities
+- [ ] PnL calculation service logic
+- [ ] Realized vs unrealized P&L calculations
+- [ ] Target calculation and distance metrics
+- [ ] Broker trading history FIFO matching algorithm
+- [ ] Broker trading history statistics calculations
 - [ ] Analytics calculations
 - [ ] Watchlist API
 - [ ] Filter persistence logic
@@ -621,12 +965,19 @@ class WatchlistItem(Base):
 ### Integration Tests
 - [ ] Export workflows
 - [ ] Chart data rendering
+- [ ] PnL calculation service integration
+- [ ] Targets API endpoint
+- [ ] P&L data population workflow
+- [ ] Broker trading history API endpoint
 - [ ] Watchlist operations
 - [ ] Dashboard data loading
 - [ ] Analytics API endpoints
 
 ### E2E Tests
 - [ ] Complete export flow (CSV and PDF)
+- [ ] P&L page data display (after population)
+- [ ] Targets page data display
+- [ ] Broker trading history page navigation and data display
 - [ ] Watchlist creation and management
 - [ ] Chart interactions
 - [ ] Filter persistence
@@ -730,6 +1081,9 @@ If critical issues are found:
 ### API Endpoints to Create
 - Historical portfolio data endpoint
 - Metrics endpoints (win rate, average profit, best/worst trades)
+- P&L calculation endpoints (`POST /api/v1/user/pnl/calculate`, `POST /api/v1/user/pnl/backfill`)
+- Targets endpoint (`GET /api/v1/user/targets` - implement existing placeholder)
+- Broker trading history endpoint (`/api/v1/user/broker/history`)
 - Export endpoints (CSV for various data types)
 - PDF report generation endpoint
 - Analytics endpoints

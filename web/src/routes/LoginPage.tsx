@@ -20,8 +20,9 @@ export function LoginPage() {
 			await useSessionStore.getState().refresh();
 			setSession(useSessionStore.getState().user);
 			navigate('/dashboard');
-		} catch (err: any) {
-			setError(err?.response?.data?.detail ?? 'Login failed');
+		} catch (err: unknown) {
+			const errorDetail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+			setError(errorDetail ?? 'Login failed');
 		} finally {
 			setLoading(false);
 		}

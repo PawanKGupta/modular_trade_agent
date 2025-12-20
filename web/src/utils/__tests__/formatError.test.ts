@@ -63,8 +63,8 @@ describe('formatErrorMessage', () => {
 
 	it('handles empty error message', () => {
 		expect(formatErrorMessage('')).toBe('');
-		expect(formatErrorMessage(null as any)).toBe('');
-		expect(formatErrorMessage(undefined as any)).toBe('');
+		expect(formatErrorMessage(null as unknown as string)).toBe('');
+		expect(formatErrorMessage(undefined as unknown as string)).toBe('');
 	});
 
 	it('handles simple single-line error', () => {
@@ -109,8 +109,8 @@ describe('getErrorSummary', () => {
 
 	it('handles empty error', () => {
 		expect(getErrorSummary('')).toBe('');
-		expect(getErrorSummary(null as any)).toBe('');
-		expect(getErrorSummary(undefined as any)).toBe('');
+		expect(getErrorSummary(null as unknown as string)).toBe('');
+		expect(getErrorSummary(undefined as unknown as string)).toBe('');
 	});
 
 	it('handles single line error', () => {
