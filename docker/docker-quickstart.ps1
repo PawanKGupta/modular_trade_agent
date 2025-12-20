@@ -77,12 +77,12 @@ Write-Host "   Check .env file for ADMIN_EMAIL and ADMIN_PASSWORD" -ForegroundCo
 Write-Host ""
 Write-Host "Building Docker images..." -ForegroundColor Cyan
 Write-Host "This may take 5-10 minutes on first run..." -ForegroundColor Yellow
-Set-Location $DockerDir
-docker-compose -f docker-compose.yml build
+Set-Location $ProjectRoot
+docker-compose -f docker/docker-compose.yml build
 
 Write-Host ""
 Write-Host "Starting services..." -ForegroundColor Cyan
-docker-compose -f docker-compose.yml up -d
+docker-compose -f docker/docker-compose.yml up -d
 
 Write-Host ""
 Write-Host "Waiting for services to start..." -ForegroundColor Yellow
@@ -90,7 +90,7 @@ Start-Sleep -Seconds 5
 
 Write-Host ""
 Write-Host "Service Status:" -ForegroundColor Cyan
-docker-compose -f docker-compose.yml ps
+docker-compose -f docker/docker-compose.yml ps
 
 Write-Host ""
 Write-Host "Setup Complete!" -ForegroundColor Green
@@ -100,10 +100,10 @@ Write-Host "  - Web Frontend: http://localhost:5173" -ForegroundColor White
 Write-Host "  - API Server:  http://localhost:8000" -ForegroundColor White
 Write-Host "  - Health Check: http://localhost:8000/health" -ForegroundColor White
 Write-Host ""
-Write-Host "Useful commands (run from docker/ folder):" -ForegroundColor Cyan
-Write-Host "  View logs:        docker-compose -f docker-compose.yml logs -f" -ForegroundColor Gray
-Write-Host "  Stop services:    docker-compose -f docker-compose.yml down" -ForegroundColor Gray
-Write-Host "  Restart service:  docker-compose -f docker-compose.yml restart <service-name>" -ForegroundColor Gray
-Write-Host "  View status:      docker-compose -f docker-compose.yml ps" -ForegroundColor Gray
+Write-Host "Useful commands (run from project root):" -ForegroundColor Cyan
+Write-Host "  View logs:        docker-compose -f docker/docker-compose.yml logs -f" -ForegroundColor Gray
+Write-Host "  Stop services:    docker-compose -f docker/docker-compose.yml down" -ForegroundColor Gray
+Write-Host "  Restart service:  docker-compose -f docker/docker-compose.yml restart <service-name>" -ForegroundColor Gray
+Write-Host "  View status:      docker-compose -f docker/docker-compose.yml ps" -ForegroundColor Gray
 Write-Host ""
 Write-Host "For more help, see docker/README.md" -ForegroundColor Cyan

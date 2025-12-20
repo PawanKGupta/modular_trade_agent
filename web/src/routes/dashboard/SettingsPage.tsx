@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSettings, updateSettings, type Settings, saveBrokerCreds, testBrokerConnection, getBrokerStatus, getBrokerCredsInfo } from '@/api/user';
+import { getSettings, updateSettings, type Settings, saveBrokerCreds, testBrokerConnection, getBrokerStatus, getBrokerCredsInfo, type BrokerTestRequest } from '@/api/user';
 import { useState, useEffect } from 'react';
 
 export function SettingsPage() {
@@ -223,7 +223,7 @@ export function SettingsPage() {
 										}
 
 										// Use form values if entered, otherwise use stored values
-										const payload: any = {
+										const payload: BrokerTestRequest = {
 											broker: form.broker ?? 'kotak-neo',
 											api_key: apiKey || fullCredsInfo?.api_key || '',
 											api_secret: apiSecret || fullCredsInfo?.api_secret || '',
@@ -239,8 +239,9 @@ export function SettingsPage() {
 										setBrokerMsg(res.message ?? (res.ok ? 'Connection successful!' : 'Connection failed'));
 										const s = await getBrokerStatus().catch(() => null);
 										if (s) setStatus(s);
-									} catch (error: any) {
-										setBrokerMsg(error?.message || 'Test failed');
+									} catch (error: unknown) {
+										const errorMessage = error instanceof Error ? error.message : 'Test failed';
+										setBrokerMsg(errorMessage);
 									} finally {
 										setTesting(false);
 									}

@@ -27,7 +27,7 @@ export interface TaskExecution {
 	executed_at: string;
 	status: 'success' | 'failed' | 'skipped';
 	duration_seconds: number;
-	details: Record<string, any> | null;
+	details: Record<string, unknown> | null;
 }
 
 export interface TaskHistory {
@@ -40,7 +40,7 @@ export interface ServiceLog {
 	level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
 	module: string;
 	message: string;
-	context: Record<string, any> | null;
+	context: Record<string, unknown> | null;
 	timestamp: string;
 }
 
@@ -154,7 +154,7 @@ export interface IndividualServiceStatus {
 	schedule_enabled: boolean;
 	last_execution_status: 'success' | 'failed' | 'skipped' | 'running' | null;
 	last_execution_duration: number | null;
-	last_execution_details: Record<string, any> | null;
+	last_execution_details: Record<string, unknown> | null;
 }
 
 export interface IndividualServicesStatus {

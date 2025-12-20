@@ -110,7 +110,7 @@ describe('useSettings', () => {
 
 	it('handles null settings gracefully', async () => {
 		// Return null instead of undefined to avoid React Query warning
-		vi.mocked(userApi.getSettings).mockResolvedValue(null as any);
+		vi.mocked(userApi.getSettings).mockResolvedValue(null as Settings);
 
 		const { result } = renderHook(() => useSettings(), {
 			wrapper: createWrapper(),

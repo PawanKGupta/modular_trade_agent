@@ -88,32 +88,32 @@ interface ColumnDef {
 	key: ColumnKey;
 	label: string;
 	mandatory?: boolean;
-	formatter?: (value: any, row: BuyingZoneItem) => string;
+	formatter?: (value: unknown, row: BuyingZoneItem) => string;
 }
 
 const ALL_COLUMNS: ColumnDef[] = [
 	{ key: 'symbol', label: 'Stock Symbol', mandatory: true },
 	{ key: 'status', label: 'Status' },
 	// Technical indicators
-	{ key: 'rsi10', label: 'RSI10', formatter: (v) => (v != null ? v.toFixed(1) : '-') },
-	{ key: 'ema9', label: 'EMA9', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'ema200', label: 'EMA200', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'distance_to_ema9', label: 'Distance to EMA9', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'rsi10', label: 'RSI10', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(1) : '-') },
+	{ key: 'ema9', label: 'EMA9', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'ema200', label: 'EMA200', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'distance_to_ema9', label: 'Distance to EMA9', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	{ key: 'above_ema200', label: '> EMA200', formatter: (v, row) => {
 		const above = row.ema200 != null && row.ema9 != null ? (row.ema9 > row.ema200) : null;
 		return above == null ? '-' : above ? 'Yes' : 'No';
 	}},
 	{ key: 'clean_chart', label: 'Clean Chart', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
-	{ key: 'monthly_support_dist', label: 'Monthly Support', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'confidence', label: 'Confidence', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'monthly_support_dist', label: 'Monthly Support', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'confidence', label: 'Confidence', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	// Scoring fields
-	{ key: 'backtest_score', label: 'Backtest', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'combined_score', label: 'Combined Score', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'strength_score', label: 'Strength Score', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'priority_score', label: 'Priority Score', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'backtest_score', label: 'Backtest', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'combined_score', label: 'Combined Score', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'strength_score', label: 'Strength Score', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'priority_score', label: 'Priority Score', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	// ML fields
-	{ key: 'ml_verdict', label: 'ML Verdict', formatter: (v) => (v ?? '-') },
-	{ key: 'ml_confidence', label: 'ML Confidence', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'ml_verdict', label: 'ML Verdict', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'ml_confidence', label: 'ML Confidence', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	// Trading parameters
 	{ key: 'buy_range', label: 'Buy Range', formatter: (v) => {
 		if (!v || typeof v !== 'object') return '-';
@@ -123,36 +123,41 @@ const ALL_COLUMNS: ColumnDef[] = [
 		}
 		return '-';
 	}},
-	{ key: 'target', label: 'Target', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'stop', label: 'Stop', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'last_close', label: 'Last Close', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'target', label: 'Target', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'stop', label: 'Stop', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'last_close', label: 'Last Close', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	// Fundamental data
-	{ key: 'pe', label: 'P/E', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'pb', label: 'P/B', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'pe', label: 'P/E', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'pb', label: 'P/B', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	{ key: 'fundamental_ok', label: 'Fundamental OK', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
 	// Volume data
 	{ key: 'avg_vol', label: 'Avg Vol', formatter: (v) => (v != null ? v.toLocaleString() : '-') },
 	{ key: 'today_vol', label: 'Today Vol', formatter: (v) => (v != null ? v.toLocaleString() : '-') },
 	{ key: 'vol_ok', label: 'Vol OK', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
-	{ key: 'volume_ratio', label: 'Volume Ratio', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'volume_ratio', label: 'Volume Ratio', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	// Analysis metadata
-	{ key: 'verdict', label: 'Verdict', formatter: (v) => (v ?? '-') },
-	{ key: 'final_verdict', label: 'Final Verdict', formatter: (v) => (v ?? '-') },
-	{ key: 'rule_verdict', label: 'Rule Verdict', formatter: (v) => (v ?? '-') },
-	{ key: 'verdict_source', label: 'Verdict Source', formatter: (v) => (v ?? '-') },
-	{ key: 'backtest_confidence', label: 'Backtest Confidence', formatter: (v) => (v ?? '-') },
+	{ key: 'verdict', label: 'Verdict', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'final_verdict', label: 'Final Verdict', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'rule_verdict', label: 'Rule Verdict', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'verdict_source', label: 'Verdict Source', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'backtest_confidence', label: 'Backtest Confidence', formatter: (v) => (v != null ? String(v) : '-') },
 	// Additional analysis fields
 	{ key: 'vol_strong', label: 'Vol Strong', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
 	{ key: 'is_above_ema200', label: 'Above EMA200', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
 	// Dip buying features
-	{ key: 'dip_depth_from_20d_high_pct', label: 'Dip Depth %', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'consecutive_red_days', label: 'Red Days', formatter: (v) => (v != null ? v.toString() : '-') },
-	{ key: 'dip_speed_pct_per_day', label: 'Dip Speed %/Day', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
+	{ key: 'dip_depth_from_20d_high_pct', label: 'Dip Depth %', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'consecutive_red_days', label: 'Red Days', formatter: (v) => (v != null ? String(v) : '-') },
+	{ key: 'dip_speed_pct_per_day', label: 'Dip Speed %/Day', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
 	{ key: 'decline_rate_slowing', label: 'Decline Slowing', formatter: (v) => (v == null ? '-' : v ? 'Yes' : 'No') },
-	{ key: 'volume_green_vs_red_ratio', label: 'Vol G/R Ratio', formatter: (v) => (v != null ? v.toFixed(2) : '-') },
-	{ key: 'support_hold_count', label: 'Support Holds', formatter: (v) => (v != null ? v.toString() : '-') },
+	{ key: 'volume_green_vs_red_ratio', label: 'Vol G/R Ratio', formatter: (v) => (typeof v === 'number' && v != null ? v.toFixed(2) : '-') },
+	{ key: 'support_hold_count', label: 'Support Holds', formatter: (v) => (v != null ? String(v) : '-') },
 	// Timestamp
-	{ key: 'ts', label: 'As of', formatter: (v) => new Date(v).toLocaleString() },
+	{ key: 'ts', label: 'As of', formatter: (v) => {
+		if (typeof v === 'string' || typeof v === 'number' || v instanceof Date) {
+			return new Date(v).toLocaleString();
+		}
+		return '-';
+	} },
 ];
 
 const MIN_COLUMNS = 5;
@@ -590,10 +595,11 @@ export function BuyingZonePage() {
 
 																// Regular columns
 																let displayValue: string;
+																const cellValue = row[col.key as keyof BuyingZoneItem];
 																if (col.formatter) {
-																	displayValue = col.formatter((row as any)[col.key], row);
+																	displayValue = col.formatter(cellValue, row);
 																} else {
-																	displayValue = String((row as any)[col.key] ?? '-');
+																	displayValue = String(cellValue ?? '-');
 																}
 																return (
 																	<td key={col.key} className="py-2 px-2 sm:px-3 text-[var(--text)]">

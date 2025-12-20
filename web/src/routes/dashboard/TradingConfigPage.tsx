@@ -68,7 +68,7 @@ export function TradingConfigPage() {
 
 	const handleSave = () => {
 		if (!localConfig || !config) return;
-		const updates: Record<string, any> = {};
+		const updates: Record<string, unknown> = {};
 		// Only include changed fields
 		Object.keys(localConfig).forEach((key) => {
 			const typedKey = key as keyof TradingConfig;

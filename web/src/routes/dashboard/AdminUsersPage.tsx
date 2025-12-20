@@ -117,7 +117,7 @@ export function AdminUsersPage() {
 									<select
 										className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)]"
 										value={u.role}
-										onChange={(e) => updateMut.mutate({ id: u.id, payload: { role: e.target.value as any } })}
+										onChange={(e) => updateMut.mutate({ id: u.id, payload: { role: e.target.value as 'user' | 'admin' } })}
 									>
 										<option value="user">user</option>
 										<option value="admin">admin</option>

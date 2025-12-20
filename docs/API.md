@@ -4,8 +4,10 @@ Complete REST API reference for Rebound — Modular Trade Agent.
 
 ## Base URL
 
-- **Development:** `http://localhost:8000/api`
-- **Production:** `https://your-domain.com/api`
+- **Development:** `http://localhost:8000/api/v1`
+- **Production:** `https://your-domain.com/api/v1`
+
+All endpoints use the `/api/v1` prefix.
 
 ## Authentication
 
@@ -14,7 +16,7 @@ Most endpoints require authentication via JWT tokens.
 ### Getting a Token
 
 ```bash
-POST /api/auth/login
+POST /api/v1/auth/login
 Content-Type: application/json
 
 {
@@ -42,7 +44,7 @@ Authorization: Bearer <access_token>
 ### Token Refresh
 
 ```bash
-POST /api/auth/refresh
+POST /api/v1/auth/refresh
 Content-Type: application/json
 
 {
@@ -56,7 +58,7 @@ Content-Type: application/json
 
 #### Sign Up
 ```http
-POST /api/auth/signup
+POST /api/v1/auth/signup
 Content-Type: application/json
 
 {
@@ -68,7 +70,7 @@ Content-Type: application/json
 
 #### Login
 ```http
-POST /api/auth/login
+POST /api/v1/auth/login
 Content-Type: application/json
 
 {
@@ -79,13 +81,13 @@ Content-Type: application/json
 
 #### Get Current User
 ```http
-GET /api/auth/me
+GET /api/v1/auth/me
 Authorization: Bearer <token>
 ```
 
 #### Refresh Token
 ```http
-POST /api/auth/refresh
+POST /api/v1/auth/refresh
 Content-Type: application/json
 
 {
@@ -97,7 +99,7 @@ Content-Type: application/json
 
 #### Get Buying Zone
 ```http
-GET /api/signals/buying-zone?limit=100&date_filter=2025-01-01&status_filter=active
+GET /api/v1/signals/buying-zone?limit=100&date_filter=today&status_filter=active
 Authorization: Bearer <token>
 ```
 
@@ -130,7 +132,7 @@ Authorization: Bearer <token>
 
 #### Reject Signal
 ```http
-POST /api/signals/reject
+POST /api/v1/signals/reject
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -143,18 +145,18 @@ Content-Type: application/json
 
 #### Get Orders
 ```http
-GET /api/orders?limit=50&offset=0&status=open
+GET /api/v1/user/orders?limit=50&offset=0&status=open
 Authorization: Bearer <token>
 ```
 
 **Query Parameters:**
 - `limit` (optional): Number of results
 - `offset` (optional): Pagination offset
-- `status` (optional): Filter by status (`open`, `filled`, `cancelled`)
+- `status` (optional): Filter by status (`open`, `filled`, `cancelled`, `rejected`)
 
 #### Get Order by ID
 ```http
-GET /api/orders/{order_id}
+GET /api/v1/user/orders/{order_id}
 Authorization: Bearer <token>
 ```
 
@@ -162,7 +164,7 @@ Authorization: Bearer <token>
 
 #### Get Targets
 ```http
-GET /api/targets?status=active
+GET /api/v1/user/targets
 Authorization: Bearer <token>
 ```
 
@@ -173,13 +175,13 @@ Authorization: Bearer <token>
 
 #### Get P&L Summary
 ```http
-GET /api/pnl/summary
+GET /api/v1/user/pnl/summary
 Authorization: Bearer <token>
 ```
 
-#### Get P&L History
+#### Get Daily P&L
 ```http
-GET /api/pnl/history?start_date=2025-01-01&end_date=2025-01-31
+GET /api/v1/user/pnl/daily?start=2025-01-01&end=2025-01-31
 Authorization: Bearer <token>
 ```
 
@@ -187,7 +189,7 @@ Authorization: Bearer <token>
 
 #### Execute Paper Trade
 ```http
-POST /api/paper-trading/execute
+POST /api/v1/user/paper-trading/execute
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -201,13 +203,13 @@ Content-Type: application/json
 
 #### Get Paper Trading History
 ```http
-GET /api/paper-trading/history?limit=50
+GET /api/v1/user/paper-trading/history?limit=50
 Authorization: Bearer <token>
 ```
 
 #### Get Paper Trading Portfolio
 ```http
-GET /api/paper-trading/portfolio
+GET /api/v1/user/paper-trading/portfolio
 Authorization: Bearer <token>
 ```
 
@@ -215,7 +217,7 @@ Authorization: Bearer <token>
 
 #### Get Trading Config
 ```http
-GET /api/trading-config
+GET /api/v1/user/trading-config
 Authorization: Bearer <token>
 ```
 
@@ -233,7 +235,7 @@ Authorization: Bearer <token>
 
 #### Update Trading Config
 ```http
-PUT /api/trading-config
+PUT /api/v1/user/trading-config
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -248,7 +250,7 @@ Content-Type: application/json
 
 #### Get Broker Credentials
 ```http
-GET /api/broker/credentials
+GET /api/v1/user/broker/credentials
 Authorization: Bearer <token>
 ```
 
@@ -264,7 +266,7 @@ Authorization: Bearer <token>
 
 #### Update Broker Credentials
 ```http
-PUT /api/broker/credentials
+PUT /api/v1/user/broker/credentials
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -418,20 +420,48 @@ Authorization: Bearer <token>
 
 #### Get Service Status
 ```http
-GET /api/service/status
+GET /api/v1/user/service/status
 Authorization: Bearer <token>
 ```
 
 #### Get Service Tasks
 ```http
-GET /api/service/tasks?limit=50
+GET /api/v1/user/service/tasks?limit=50
 Authorization: Bearer <token>
 ```
 
-#### Run Service Task
+#### Start Unified Service
 ```http
-POST /api/service/run/{task_name}
+POST /api/v1/user/service/start
 Authorization: Bearer <token>
+```
+
+#### Stop Unified Service
+```http
+POST /api/v1/user/service/stop
+Authorization: Bearer <token>
+```
+
+#### Start Individual Service
+```http
+POST /api/v1/user/service/individual/start
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "service_name": "analysis"
+}
+```
+
+#### Stop Individual Service
+```http
+POST /api/v1/user/service/individual/stop
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "service_name": "analysis"
+}
 ```
 
 ### Admin Endpoints
@@ -440,19 +470,19 @@ Authorization: Bearer <token>
 
 #### List Users
 ```http
-GET /api/admin/users
+GET /api/v1/admin/users
 Authorization: Bearer <admin_token>
 ```
 
 #### Get ML Training Status
 ```http
-GET /api/admin/ml/training
+GET /api/v1/admin/ml/training
 Authorization: Bearer <admin_token>
 ```
 
 #### Start ML Training
 ```http
-POST /api/admin/ml/train
+POST /api/v1/admin/ml/train
 Authorization: Bearer <admin_token>
 Content-Type: application/json
 
@@ -464,7 +494,7 @@ Content-Type: application/json
 
 #### Get Logs
 ```http
-GET /api/admin/logs?level=ERROR&limit=100
+GET /api/v1/logs?level=ERROR&limit=100
 Authorization: Bearer <admin_token>
 ```
 
@@ -510,7 +540,7 @@ Endpoints that return lists support pagination:
 
 **Example:**
 ```http
-GET /api/orders?limit=20&offset=40
+GET /api/v1/user/orders?limit=20&offset=40
 ```
 
 ## Filtering

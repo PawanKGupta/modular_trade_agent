@@ -31,13 +31,15 @@ if ! command -v docker &> /dev/null; then
     exit 0
 fi
 
-# Check if Docker Compose is installed
+# Check if Docker Compose is installed (v1 standalone)
 if ! command -v docker-compose &> /dev/null; then
     echo "❌ Docker Compose is not installed!"
     echo "Installing Docker Compose..."
-    sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    # Install Docker Compose v1 standalone binary
+    sudo curl -L "https://github.com/docker/compose/releases/download/v1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
     sudo chmod +x /usr/local/bin/docker-compose
     echo "✅ Docker Compose installed"
+    echo "⚠️  If installation failed, you may need to install Docker Compose manually"
 fi
 
 # Navigate to project root
@@ -58,7 +60,9 @@ if [ ! -f .env ]; then
 
     cat > .env <<EOF
 # Database
-DB_URL=sqlite:///./data/app.db
+# Note: Docker uses PostgreSQL container (configured in docker-compose.yml)
+# The DB_URL here is for reference only - Docker overrides with PostgreSQL connection
+DB_URL=postgresql+psycopg2://trader:changeme@tradeagent-db:5432/tradeagent
 
 # Timezone
 TZ=Asia/Kolkata
@@ -79,17 +83,14 @@ else
     echo "✅ .env file exists"
 fi
 
-# Navigate to docker folder
-cd docker
-
 echo ""
 echo "📦 Building Docker images..."
 echo "This may take 10-15 minutes on first run..."
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml build
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml build
 
 echo ""
 echo "🚀 Starting services..."
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 
 echo ""
 echo "⏳ Waiting for services to start..."
@@ -97,7 +98,7 @@ sleep 10
 
 echo ""
 echo "📊 Service Status:"
-docker-compose -f docker-compose.yml ps
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 
 echo ""
 echo "✅ Deployment Complete!"
@@ -112,10 +113,10 @@ echo "  1. Configure firewall rules in Oracle Cloud Console"
 echo "  2. Access web UI and create admin account"
 echo "  3. Configure credentials via Settings page"
 echo ""
-echo "📚 Useful commands:"
-echo "  View logs:        cd docker && docker-compose -f docker-compose.yml logs -f"
-echo "  Stop services:    cd docker && docker-compose -f docker-compose.yml down"
-echo "  Restart service:  cd docker && docker-compose -f docker-compose.yml restart <service-name>"
-echo "  View status:      cd docker && docker-compose -f docker-compose.yml ps"
+echo "📚 Useful commands (run from project root):"
+echo "  View logs:        docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f"
+echo "  Stop services:    docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down"
+echo "  Restart service:  docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart <service-name>"
+echo "  View status:      docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps"
 echo ""
 echo "📖 For more help, see docker/README.md"

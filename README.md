@@ -20,14 +20,16 @@ A professional-grade **multi-user trading system** for Indian stock markets (NSE
 
 ### 📊 Core Components
 - **Signal Analysis**: Automated stock screening and signal generation
-  - **Service Layer Architecture** (Phase 4): Modular, testable services
-  - **Async Batch Processing**: 80% faster batch analysis (25min → 5min for 50 stocks)
-  - **Caching**: 70-90% reduction in API calls
+  - Service layer architecture with modular, testable services
+  - Async batch processing (80% faster than sequential)
+  - Intelligent caching (70-90% reduction in API calls)
+  - T2T segment filtering (excludes Trade-to-Trade stocks)
 - **Order Management**: Automated buy/sell order placement via Kotak Neo API
 - **Paper Trading**: Risk-free strategy testing with realistic simulation
 - **ML Training**: Automated model training and retraining
 - **Service Management**: Scheduled tasks for pre-market, monitoring, and EOD operations
 - **PnL Tracking**: Comprehensive profit/loss tracking and reporting
+- **Notifications**: Multi-channel notifications (Telegram, Email, In-App) with granular preferences
 
 ### 🔐 Security
 - **JWT Authentication**: Secure token-based auth with refresh tokens
@@ -104,25 +106,34 @@ See [docker/README.md](docker/README.md) for detailed Docker setup.
 ## 📚 Documentation
 
 ### Getting Started
-- **[Getting Started Guide](docs/GETTING_STARTED.md)** - Complete setup walkthrough
+- **[Getting Started Guide](docs/guides/GETTING_STARTED.md)** - Complete setup walkthrough
 - **[Docker Guide](docker/README.md)** - Docker deployment guide
 - **[Architecture Overview](docs/ARCHITECTURE.md)** - System architecture and design
 
 ### User Guides
-- **[User Guide](docs/USER_GUIDE.md)** - Complete guide to using the web interface
-- **[UI Guide](docs/UI_GUIDE.md)** - Complete page-by-page UI documentation
-- **[Trading Configuration](docs/TRADING_CONFIG.md)** - Detailed trading parameters guide
-- **[Features Documentation](docs/FEATURES.md)** - Complete features reference
-- **[Paper Trading](../documents/paper_trading/PAPER_TRADING_COMPLETE.md)** - Complete paper trading guide
+- **[User Guide](docs/guides/USER_GUIDE.md)** - Complete guide to using the web interface
+- **[UI Guide](docs/guides/UI_GUIDE.md)** - Complete page-by-page UI documentation
+- **[Trading Configuration](docs/guides/TRADING_CONFIG.md)** - Detailed trading parameters guide
+- **[Features Documentation](docs/guides/FEATURES.md)** - Complete features reference
+- **[Paper Trading](docs/guides/FEATURES.md#5-paper-trading)** - Paper trading features (see Features Documentation)
 
 ### Developer Guides
 - **[API Documentation](docs/API.md)** - Complete REST API reference
 - **[Architecture](docs/ARCHITECTURE.md)** - System architecture and design
-- **[Deployment Guide](docs/DEPLOYMENT.md)** - Production deployment
-- **[Migration Guide (Phase 4)](docs/MIGRATION_GUIDE_PHASE4.md)** - Migrating from `core.*` to service layer
+- **[Deployment Guide](docs/deployment/DEPLOYMENT.md)** - Production deployment
+- **[Migration Guide (Phase 4)](docs/development/MIGRATION_GUIDE_PHASE4.md)** - Migrating from `core.*` to service layer
 - **[Engineering Standards](docs/engineering-standards-and-ci.md)** - Code standards and CI
-- **[ML Integration Guide](documents/architecture/ML_COMPLETE_GUIDE.md)** - Complete ML training and integration guide
-- **[Order Management Guide](documents/ORDER_MANAGEMENT_COMPLETE.md)** - Complete order management documentation
+
+### Advanced Documentation
+- **[ML Integration Guide](docs/architecture/ML_COMPLETE_GUIDE.md)** - Complete ML training and integration guide
+- **[Order Management Guide](docs/guides/ORDER_MANAGEMENT_COMPLETE.md)** - Complete order management documentation
+- **[Service Architecture](docs/architecture/SERVICE_ARCHITECTURE.md)** - Service layer architecture details
+- **[Kotak Neo Trader Guide](docs/kotak_neo_trader/README.md)** - Broker integration and AMO executor
+- **[Individual Service Management](docs/features/INDIVIDUAL_SERVICE_MANAGEMENT_USER_GUIDE.md)** - Running individual trading tasks
+- **[Paper Trading Guide](docs/guides/PAPER_TRADING_COMPLETE.md)** - Complete paper trading system guide
+- **[Edge Cases](docs/troubleshooting/EDGE_CASES.md)** - Known edge cases and resolutions
+- **[Known Issues](docs/troubleshooting/KNOWN_ISSUES.md)** - Current known issues and workarounds
+- **[Backtesting Guide](docs/backtest/README.md)** - Backtesting framework documentation
 
 ## 🏛️ Project Structure
 
@@ -150,34 +161,44 @@ modular_trade_agent/
 │                         # Primary implementation - use instead of core.*
 ├── docker/                # Docker configuration
 ├── tests/                 # Test suite
-└── docs/                  # Documentation
+└── docs/                  # Documentation (consolidated)
+    ├── guides/            # User guides
+    ├── architecture/      # Architecture docs
+    ├── features/          # Feature docs
+    ├── deployment/        # Deployment guides
+    ├── kotak_neo_trader/  # Broker integration
+    ├── reference/         # Reference docs
+    ├── testing/           # Testing docs
+    └── internal/          # Internal/implementation docs
 ```
 
 ## 🔌 API Endpoints
 
+All API endpoints use the `/api/v1` prefix. Here are the main endpoints:
+
 ### Authentication
-- `POST /api/auth/signup` - User registration
-- `POST /api/auth/login` - User login
-- `POST /api/auth/refresh` - Refresh access token
-- `GET /api/auth/me` - Get current user
+- `POST /api/v1/auth/signup` - User registration
+- `POST /api/v1/auth/login` - User login
+- `POST /api/v1/auth/refresh` - Refresh access token
+- `GET /api/v1/auth/me` - Get current user
 
 ### Trading
-- `GET /api/signals/buying-zone` - Get buying zone signals
-- `GET /api/orders` - Get orders
-- `GET /api/targets` - Get targets
-- `GET /api/pnl` - Get P&L data
-- `POST /api/paper-trading/execute` - Execute paper trade
+- `GET /api/v1/signals/buying-zone` - Get buying zone signals
+- `GET /api/v1/user/orders` - Get orders
+- `GET /api/v1/user/targets` - Get targets
+- `GET /api/v1/user/pnl` - Get P&L data
+- `POST /api/v1/user/paper-trading/execute` - Execute paper trade
 
 ### Configuration
-- `GET /api/trading-config` - Get trading configuration
-- `PUT /api/trading-config` - Update trading configuration
-- `GET /api/broker/credentials` - Get broker credentials
-- `PUT /api/broker/credentials` - Update broker credentials
+- `GET /api/v1/user/trading-config` - Get trading configuration
+- `PUT /api/v1/user/trading-config` - Update trading configuration
+- `GET /api/v1/user/broker/credentials` - Get broker credentials
+- `PUT /api/v1/user/broker/credentials` - Update broker credentials
 
 ### Admin
-- `GET /api/admin/users` - List users (admin only)
-- `GET /api/admin/ml/training` - ML training status
-- `POST /api/admin/ml/train` - Start ML training
+- `GET /api/v1/admin/users` - List users (admin only)
+- `GET /api/v1/admin/ml/training` - ML training status
+- `POST /api/v1/admin/ml/train` - Start ML training
 
 See [docs/API.md](docs/API.md) for complete API documentation.
 
