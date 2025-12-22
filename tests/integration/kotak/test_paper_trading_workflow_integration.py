@@ -143,20 +143,21 @@ class TestCategory1HappyPathPaperTrading:
         recs = service.engine.load_latest_recommendations()
         if not recs:
             # Create recommendation manually for testing
-            from modules.kotak_neo_auto_trader.recommendation import Recommendation
+            from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
 
             rec = Recommendation(
                 ticker="RELIANCE.NS",
-                symbol="RELIANCE",
                 verdict="buy",
-                rsi=25.0,
-                ema9=2500.0,
-                close=2450.0,
+                last_close=2450.0,
             )
             recs = [rec]
 
         summary = service.engine.place_new_entries(recs)
-        assert summary.get("placed", 0) >= 1
+        # Ensure summary is a dict, not a Mock
+        assert isinstance(summary, dict), f"Expected dict, got {type(summary)}"
+        placed_count = summary.get("placed", 0)
+        assert isinstance(placed_count, int), f"Expected int, got {type(placed_count)}"
+        assert placed_count >= 1
 
         # Verify buy order in database (paper trading may create order immediately)
         all_orders = orders_repo.list(user_id)
@@ -257,16 +258,13 @@ class TestCategory1HappyPathPaperTrading:
         session.commit()
 
         # Place buy orders for all signals
-        from modules.kotak_neo_auto_trader.recommendation import Recommendation
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
 
         recommendations = [
             Recommendation(
                 ticker=f"{symbol}.NS",
-                symbol=symbol,
                 verdict="buy",
-                rsi=25.0,
-                ema9=2500.0,
-                close=2450.0,
+                last_close=2450.0,
             )
             for symbol in symbols
         ]
@@ -303,15 +301,12 @@ class TestCategory2BuyOrderEdgeCasesPaperTrading:
         service.broker.price_provider.set_mock_price("EXPENSIVE", 100000.0)
         service.broker.price_provider.set_mock_price("EXPENSIVE.NS", 100000.0)
 
-        from modules.kotak_neo_auto_trader.recommendation import Recommendation
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
 
         rec = Recommendation(
             ticker="EXPENSIVE.NS",
-            symbol="EXPENSIVE",
             verdict="buy",
-            rsi=25.0,
-            ema9=100000.0,
-            close=100000.0,
+            last_close=100000.0,
         )
 
         # Attempt to place order (should fail due to insufficient balance)
