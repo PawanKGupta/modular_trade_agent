@@ -732,6 +732,17 @@ class AutoTradeEngine:
                     # Phase 6: Create new failed order with proper status
                     # Create order first, then mark as failed
                     try:
+                        # Build order_metadata with ticker for retry logic
+                        order_metadata = {}
+                        if failed_order.get("ticker"):
+                            order_metadata["ticker"] = failed_order["ticker"]
+                        if failed_order.get("rsi10") is not None:
+                            order_metadata["rsi10"] = failed_order["rsi10"]
+                        if failed_order.get("ema9") is not None:
+                            order_metadata["ema9"] = failed_order["ema9"]
+                        if failed_order.get("ema200") is not None:
+                            order_metadata["ema200"] = failed_order["ema200"]
+
                         new_order = self.orders_repo.create_amo(
                             user_id=self.user_id,
                             symbol=symbol,
@@ -741,6 +752,7 @@ class AutoTradeEngine:
                             price=failed_order.get("close"),
                             order_id=None,
                             broker_order_id=None,
+                            order_metadata=order_metadata if order_metadata else None,
                         )
                     except Exception as create_error:
                         # Handle database schema errors (e.g., missing column)
@@ -3126,16 +3138,20 @@ class AutoTradeEngine:
 
             # Check portfolio limit using OrderValidationService (Phase 3.1)
             # Update portfolio_service with current portfolio/orders if available
-            if self.portfolio and self.portfolio_service.portfolio != self.portfolio:
-                self.portfolio_service.portfolio = self.portfolio
-            if self.orders and self.portfolio_service.orders != self.orders:
-                self.portfolio_service.orders = self.orders
+            if self.portfolio and hasattr(self.portfolio_service, "portfolio"):
+                if self.portfolio_service.portfolio != self.portfolio:
+                    self.portfolio_service.portfolio = self.portfolio
+            if self.orders and hasattr(self.portfolio_service, "orders"):
+                if self.portfolio_service.orders != self.orders:
+                    self.portfolio_service.orders = self.orders
 
             # Update OrderValidationService with portfolio/orders if available
-            if self.portfolio and self.order_validation_service.portfolio != self.portfolio:
-                self.order_validation_service.portfolio = self.portfolio
-            if self.orders and self.order_validation_service.orders != self.orders:
-                self.order_validation_service.orders = self.orders
+            if self.portfolio and hasattr(self.order_validation_service, "portfolio"):
+                if self.order_validation_service.portfolio != self.portfolio:
+                    self.order_validation_service.portfolio = self.portfolio
+            if self.orders and hasattr(self.order_validation_service, "orders"):
+                if self.order_validation_service.orders != self.orders:
+                    self.order_validation_service.orders = self.orders
 
             has_capacity, current_count, max_size = (
                 self.order_validation_service.check_portfolio_capacity(include_pending=True)
@@ -3153,15 +3169,29 @@ class AutoTradeEngine:
                     if self.strategy_config
                     else config.DEFAULT_EXCHANGE
                 )
-                if self.scrip_master and self.scrip_master.symbol_map:
-                    instrument = self.scrip_master.get_instrument(symbol, exchange=exchange)
-                    if not instrument or not instrument.get("symbol"):
+                # Validate symbol exists in scrip master (single source of truth)
+                # Only check if scrip_master is available and has symbol_map
+                # If scrip_master is not available or symbol_map is empty, skip validation
+                if (
+                    self.scrip_master
+                    and hasattr(self.scrip_master, "symbol_map")
+                    and self.scrip_master.symbol_map
+                ):
+                    try:
+                        instrument = self.scrip_master.get_instrument(symbol, exchange=exchange)
+                        if not instrument or not instrument.get("symbol"):
+                            logger.warning(
+                                f"Symbol {symbol} from DB not found in scrip master ({exchange}). "
+                                f"Skipping retry (symbol may have been delisted or changed)."
+                            )
+                            summary["skipped"] += 1
+                            continue
+                    except Exception as scrip_error:
+                        # If scrip_master check fails, log warning but continue (don't block retry)
                         logger.warning(
-                            f"Symbol {symbol} from DB not found in scrip master ({exchange}). "
-                            f"Skipping retry (symbol may have been delisted or changed)."
+                            f"Scrip master validation failed for {symbol}: {scrip_error}. "
+                            "Continuing with retry."
                         )
-                        summary["skipped"] += 1
-                        continue
 
                 # Check portfolio limit
                 if not has_capacity:
@@ -3192,8 +3222,16 @@ class AutoTradeEngine:
                     summary["skipped"] += 1
                     continue
 
-                # Get ticker from order or try to construct it
-                ticker = getattr(db_order, "ticker", None) or f"{symbol}.NS"
+                # Get ticker from order_metadata or try to construct it
+                ticker = None
+                if db_order.order_metadata:
+                    ticker = db_order.order_metadata.get("ticker")
+
+                # If not in metadata, try to construct from symbol
+                # Remove segment suffix (e.g., -EQ, -BE) before adding .NS
+                if not ticker:
+                    base_symbol = symbol.split("-")[0] if "-" in symbol else symbol
+                    ticker = f"{base_symbol}.NS"
 
                 # Get fresh indicators using IndicatorService
                 ind = self.indicator_service.get_daily_indicators_dict(
