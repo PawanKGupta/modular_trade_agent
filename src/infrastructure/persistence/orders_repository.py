@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Orders, OrderStatus, Signals, SignalStatus, TradeMode
 from src.infrastructure.db.timezone_utils import ist_now
-from src.infrastructure.persistence.signals_repository import SignalsRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
+from src.infrastructure.persistence.signals_repository import SignalsRepository
 
 # Import logger for duplicate detection logging
 try:

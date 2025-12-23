@@ -18,6 +18,7 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import (
     PaperTradingBrokerAdapter,
 )
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
+from src.infrastructure.db.models import TradeMode
 from src.infrastructure.logging import get_user_logger
 
 logger = logging.getLogger(__name__)
@@ -2169,6 +2170,7 @@ class PaperTradingEngineAdapter:
                                 broker_order_id=order_id,
                                 order_metadata=order_metadata,
                                 entry_type="fresh",
+                                trade_mode=TradeMode.PAPER,  # Phase 0.1: Explicit paper trading mode
                             )
                             # Note: create_amo already commits, but we keep commit here for safety
                             if not self.db.in_transaction():
@@ -2816,6 +2818,7 @@ class PaperTradingEngineAdapter:
                                 broker_order_id=order_id,
                                 order_metadata=reentry_order._metadata,
                                 entry_type="reentry",
+                                trade_mode=TradeMode.PAPER,  # Phase 0.1: Explicit paper trading mode
                             )
                             # Note: create_amo already commits, but we keep commit here for safety
                             if not self.db.in_transaction():

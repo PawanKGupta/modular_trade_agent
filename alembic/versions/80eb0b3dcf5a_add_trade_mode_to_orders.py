@@ -4,10 +4,11 @@ Revision ID: 80eb0b3dcf5a
 Revises: 20250117_migrate_positions_to_full_symbols
 Create Date: 2025-12-23 20:12:58.907640+00:00
 """
-from alembic import op
+
 import sqlalchemy as sa
 from sqlalchemy import inspect
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "80eb0b3dcf5a"
