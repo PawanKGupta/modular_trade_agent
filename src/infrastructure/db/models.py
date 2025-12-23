@@ -230,6 +230,52 @@ class PortfolioSnapshot(Base):
     )
 
 
+class Targets(Base):
+    """Sell order targets for positions (Phase 0.4)"""
+
+    __tablename__ = "targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    position_id: Mapped[int | None] = mapped_column(
+        ForeignKey("positions.id"), nullable=True
+    )  # Link to position
+    symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+
+    # Target information
+    target_price: Mapped[float] = mapped_column(Float, nullable=False)  # EMA9 target
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)  # Average entry price
+    current_price: Mapped[float | None] = mapped_column(Float, nullable=True)  # Current market price
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)  # Position quantity
+
+    # Distance metrics
+    distance_to_target: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )  # % distance
+    distance_to_target_absolute: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )  # Absolute distance
+
+    # Target metadata
+    target_type: Mapped[str] = mapped_column(
+        String(32), default="ema9", nullable=False
+    )  # 'ema9', 'manual', etc.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # Active target
+    trade_mode: Mapped[TradeMode] = mapped_column(SAEnum(TradeMode), nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
+    achieved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # When target was hit
+
+    __table_args__ = (
+        Index("ix_targets_user_symbol_active", "user_id", "symbol", "is_active"),
+        Index("ix_targets_position", "position_id"),
+    )
+
+
 class Fills(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True, nullable=False)
