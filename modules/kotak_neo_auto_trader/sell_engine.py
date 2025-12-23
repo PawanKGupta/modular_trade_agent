@@ -4262,7 +4262,7 @@ class SellOrderManager:
                                     exit_reason = "EMA9_TARGET"  # Default
                                     exit_rsi = None
                                     sell_order_db_id = None
-                                    
+
                                     # Try to get sell order from database to extract exit details
                                     if self.orders_repo and completed_order_id:
                                         try:
@@ -4282,7 +4282,7 @@ class SellOrderManager:
                                             logger.debug(
                                                 f"Could not get sell order for exit details: {e}"
                                             )
-                                    
+
                                     with transaction(self.positions_repo.db):
                                         self.positions_repo.mark_closed(
                                             user_id=self.user_id,
@@ -4360,7 +4360,7 @@ class SellOrderManager:
                             exit_reason = "EMA9_TARGET"  # Default
                             exit_rsi = None
                             sell_order_db_id = None
-                            
+
                             # Try to get sell order from database to extract exit details
                             if self.orders_repo and order_id:
                                 try:
@@ -4380,7 +4380,7 @@ class SellOrderManager:
                                     logger.debug(
                                         f"Could not get sell order for exit details: {e}"
                                     )
-                            
+
                             with transaction(self.positions_repo.db):
                                 self.positions_repo.mark_closed(
                                     user_id=self.user_id,

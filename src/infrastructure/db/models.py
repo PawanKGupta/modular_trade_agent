@@ -194,6 +194,42 @@ class Positions(Base):
     __table_args__ = ()
 
 
+class PortfolioSnapshot(Base):
+    """Daily portfolio value snapshots for historical tracking (Phase 0.3)"""
+
+    __tablename__ = "portfolio_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+
+    # Portfolio metrics
+    total_value: Mapped[float] = mapped_column(Float, nullable=False)  # Total portfolio value
+    invested_value: Mapped[float] = mapped_column(Float, nullable=False)  # Capital invested
+    available_cash: Mapped[float] = mapped_column(Float, nullable=False)  # Available cash
+    unrealized_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    realized_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Position counts
+    open_positions_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    closed_positions_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Return metrics
+    total_return: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)  # Total return %
+    daily_return: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)  # Daily return %
+
+    # Metadata
+    snapshot_type: Mapped[str] = mapped_column(
+        String(16), default="eod", nullable=False
+    )  # 'eod', 'intraday'
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "date", "snapshot_type", name="uq_portfolio_snapshot_user_date_type"),
+        Index("ix_portfolio_snapshot_user_date", "user_id", "date"),
+    )
+
+
 class Fills(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True, nullable=False)
