@@ -614,7 +614,7 @@ For comprehensive troubleshooting guide covering common issues, edge cases, and 
    ```bash
    sudo netstat -tlnp | grep -E ':(5173|8000)'
    # Should show 0.0.0.0:5173 and 0.0.0.0:8000
-   ```
+```
 
 ---
 
