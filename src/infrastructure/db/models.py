@@ -336,6 +336,34 @@ class PnlCalculationAudit(Base):
     )
 
 
+class PriceCache(Base):
+    """Historical price cache for symbols (Phase 0.6)"""
+
+    __tablename__ = "price_cache"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+
+    # Price data
+    open: Mapped[float | None] = mapped_column(Float, nullable=True)
+    high: Mapped[float | None] = mapped_column(Float, nullable=True)
+    low: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close: Mapped[float] = mapped_column(Float, nullable=False)
+    volume: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Metadata
+    source: Mapped[str] = mapped_column(
+        String(32), default="yfinance", nullable=False
+    )  # 'yfinance', 'broker', 'manual'
+    cached_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "date", name="uq_price_cache_symbol_date"),
+        Index("ix_price_cache_symbol_date", "symbol", "date"),
+    )
+
+
 class Signals(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
