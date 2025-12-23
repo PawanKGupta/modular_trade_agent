@@ -295,6 +295,47 @@ class PnlDaily(Base):
     __table_args__ = (UniqueConstraint("user_id", "date", name="uq_pnl_daily_user_date"),)
 
 
+class PnlCalculationAudit(Base):
+    """Audit trail for P&L calculations (Phase 0.5)"""
+
+    __tablename__ = "pnl_calculation_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+
+    # Calculation metadata
+    calculation_type: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # 'on_demand', 'scheduled', 'backfill'
+    date_range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    date_range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # Results
+    positions_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    orders_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pnl_records_created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pnl_records_updated: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Performance
+    duration_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Status
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # 'success', 'failed', 'partial'
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # Metadata
+    triggered_by: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # 'user', 'system', 'scheduled'
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (
+        Index("ix_pnl_audit_user_created", "user_id", "created_at"),
+    )
+
+
 class Signals(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
