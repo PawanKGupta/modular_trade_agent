@@ -230,6 +230,7 @@ from .routers import (
     admin,
     auth,
     broker,
+    export,
     logs,
     ml,
     notification_preferences,
@@ -663,6 +664,7 @@ app.include_router(trading_config.router, prefix="/api/v1/user", tags=["trading-
 app.include_router(service.router, prefix="/api/v1/user", tags=["service"])
 app.include_router(orders.router, prefix="/api/v1/user/orders", tags=["orders"])
 app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
+app.include_router(export.router, prefix="/api/v1/user/export", tags=["export"])
 app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])
 app.include_router(activity.router, prefix="/api/v1/user/activity", tags=["activity"])
 app.include_router(targets.router, prefix="/api/v1/user/targets", tags=["targets"])

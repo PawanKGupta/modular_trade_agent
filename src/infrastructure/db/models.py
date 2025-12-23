@@ -364,6 +364,49 @@ class PriceCache(Base):
     )
 
 
+class ExportJob(Base):
+    """Export job tracking (Phase 0.7)"""
+
+    __tablename__ = "export_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+
+    # Export metadata
+    export_type: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # 'csv', 'pdf', 'json'
+    data_type: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # 'pnl', 'trades', 'signals', 'positions', etc.
+    date_range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    date_range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # Status
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # 'pending', 'processing', 'completed', 'failed'
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 0-100
+
+    # Results
+    file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)  # bytes
+    records_exported: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Performance
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_export_jobs_user_status_created", "user_id", "status", "created_at"),
+    )
+
+
 class Signals(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
