@@ -1298,11 +1298,13 @@ class SellOrderManager:
                         )
 
                         if closed_at_time:
+                            # Phase 0.2: Manual sell - set exit_reason to MANUAL
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
                                 symbol=full_symbol,
                                 closed_at=closed_at_time,
                                 exit_price=exit_price,  # Save exit price from manual sell order
+                                exit_reason="MANUAL",  # Phase 0.2: Manual sell
                             )
                             # Close corresponding ONGOING buy orders
                             try:
@@ -1722,6 +1724,7 @@ class SellOrderManager:
                                 symbol=symbol,
                                 closed_at=ist_now(),
                                 exit_price=None,  # Manual sell, price unknown
+                                exit_reason="MANUAL",  # Phase 0.2: Manual sell
                             )
                             # Close corresponding ONGOING buy orders
                             try:
@@ -4255,12 +4258,40 @@ class SellOrderManager:
                                 # Full execution - mark position as closed
                                 # Wrap position and order updates in transaction for atomicity
                                 if transaction and ist_now:
+                                    # Phase 0.2: Get exit details from sell order
+                                    exit_reason = "EMA9_TARGET"  # Default
+                                    exit_rsi = None
+                                    sell_order_db_id = None
+                                    
+                                    # Try to get sell order from database to extract exit details
+                                    if self.orders_repo and completed_order_id:
+                                        try:
+                                            sell_order = self.orders_repo.get_by_broker_order_id(
+                                                self.user_id, completed_order_id
+                                            )
+                                            if sell_order:
+                                                sell_order_db_id = sell_order.id
+                                                if sell_order.order_metadata and isinstance(
+                                                    sell_order.order_metadata, dict
+                                                ):
+                                                    exit_reason = sell_order.order_metadata.get(
+                                                        "exit_note", "EMA9_TARGET"
+                                                    )
+                                                    exit_rsi = sell_order.order_metadata.get("exit_rsi")
+                                        except Exception as e:
+                                            logger.debug(
+                                                f"Could not get sell order for exit details: {e}"
+                                            )
+                                    
                                     with transaction(self.positions_repo.db):
                                         self.positions_repo.mark_closed(
                                             user_id=self.user_id,
                                             symbol=full_symbol,
                                             closed_at=ist_now(),
                                             exit_price=order_price,
+                                            exit_reason=exit_reason,
+                                            exit_rsi=exit_rsi,
+                                            sell_order_id=sell_order_db_id,
                                             auto_commit=False,  # Transaction handles commit
                                         )
                                         logger.info(
@@ -4325,12 +4356,40 @@ class SellOrderManager:
                         # Assume full execution if we don't have filled_qty info
                         # Wrap position and order updates in transaction for atomicity
                         if transaction and ist_now:
+                            # Phase 0.2: Get exit details from sell order
+                            exit_reason = "EMA9_TARGET"  # Default
+                            exit_rsi = None
+                            sell_order_db_id = None
+                            
+                            # Try to get sell order from database to extract exit details
+                            if self.orders_repo and order_id:
+                                try:
+                                    sell_order = self.orders_repo.get_by_broker_order_id(
+                                        self.user_id, order_id
+                                    )
+                                    if sell_order:
+                                        sell_order_db_id = sell_order.id
+                                        if sell_order.order_metadata and isinstance(
+                                            sell_order.order_metadata, dict
+                                        ):
+                                            exit_reason = sell_order.order_metadata.get(
+                                                "exit_note", "EMA9_TARGET"
+                                            )
+                                            exit_rsi = sell_order.order_metadata.get("exit_rsi")
+                                except Exception as e:
+                                    logger.debug(
+                                        f"Could not get sell order for exit details: {e}"
+                                    )
+                            
                             with transaction(self.positions_repo.db):
                                 self.positions_repo.mark_closed(
                                     user_id=self.user_id,
                                     symbol=full_symbol,
                                     closed_at=ist_now(),
                                     exit_price=current_price,
+                                    exit_reason=exit_reason,
+                                    exit_rsi=exit_rsi,
+                                    sell_order_id=sell_order_db_id,
                                     auto_commit=False,  # Transaction handles commit
                                 )
                                 logger.info(

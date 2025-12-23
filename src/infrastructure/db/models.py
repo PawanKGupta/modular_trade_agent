@@ -183,6 +183,13 @@ class Positions(Base):
     last_reentry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Entry RSI tracking (for re-entry level progression)
     entry_rsi: Mapped[float | None] = mapped_column(Float, nullable=True)  # RSI10 at entry
+    # Phase 0.2: Exit details (all nullable for backward compatibility)
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # 'EMA9_TARGET', 'RSI_EXIT', 'MANUAL', etc.
+    exit_rsi: Mapped[float | None] = mapped_column(Float, nullable=True)  # RSI10 at exit
+    realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    realized_pnl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"), nullable=True)
 
     __table_args__ = ()
 
