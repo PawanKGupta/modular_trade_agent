@@ -1,6 +1,6 @@
 # Database Migration Scripts for v26.1.1 Schema Enhancements
 
-**Date:** 2025-12-22  
+**Date:** 2025-12-22
 **Related Document:** RELEASE_PLAN_V26.1.1_DB_SCHEMA_ENHANCEMENTS.md
 
 ---
@@ -49,10 +49,10 @@ depends_on = None
 def upgrade():
     # Add trade_mode column (nullable for backward compatibility)
     op.add_column('orders', sa.Column('trade_mode', sa.String(16), nullable=True))
-    
+
     # Create index for performance
     op.create_index('ix_orders_trade_mode', 'orders', ['trade_mode'])
-    
+
     # Backfill trade_mode from user_settings
     # Note: This requires a data migration script (see below)
     # For now, column is nullable and will be populated by application code
@@ -83,7 +83,7 @@ from src.infrastructure.db.session import get_db_session
 def backfill_trade_mode():
     """Backfill trade_mode for existing orders"""
     session = next(get_db_session())
-    
+
     try:
         # Get all users with their trade_mode
         users_query = text("""
@@ -91,9 +91,9 @@ def backfill_trade_mode():
             FROM users u
             JOIN user_settings us ON u.id = us.user_id
         """)
-        
+
         users = session.execute(users_query).fetchall()
-        
+
         updated_count = 0
         for user_id, trade_mode in users:
             if trade_mode:
@@ -103,16 +103,16 @@ def backfill_trade_mode():
                     SET trade_mode = :trade_mode
                     WHERE user_id = :user_id AND trade_mode IS NULL
                 """)
-                
+
                 result = session.execute(
                     update_query,
                     {"trade_mode": trade_mode, "user_id": user_id}
                 )
                 updated_count += result.rowcount
-        
+
         session.commit()
         print(f"✅ Backfilled trade_mode for {updated_count} orders")
-        
+
     except Exception as e:
         session.rollback()
         print(f"❌ Error backfilling trade_mode: {e}")
@@ -157,17 +157,17 @@ def upgrade():
     op.add_column('positions', sa.Column('realized_pnl', sa.Float(), nullable=True))
     op.add_column('positions', sa.Column('realized_pnl_pct', sa.Float(), nullable=True))
     op.add_column('positions', sa.Column('sell_order_id', sa.Integer(), nullable=True))
-    
+
     # Add foreign key constraint for sell_order_id
     op.create_foreign_key(
         'fk_positions_sell_order_id',
         'positions', 'orders',
         ['sell_order_id'], ['id']
     )
-    
+
     # Create index for exit_reason (for analytics queries)
     op.create_index('ix_positions_exit_reason', 'positions', ['exit_reason'])
-    
+
     # Note: Backfill script needed (see below)
 
 
@@ -199,13 +199,13 @@ from src.infrastructure.db.session import get_db_session
 def backfill_exit_details():
     """Backfill exit details for existing closed positions"""
     session = next(get_db_session())
-    
+
     try:
         # Find closed positions and their corresponding sell orders
         # Match by symbol, user_id, and timestamp proximity
         backfill_query = text("""
             UPDATE positions p
-            SET 
+            SET
                 exit_price = (
                     SELECT o.execution_price
                     FROM orders o
@@ -231,8 +231,8 @@ def backfill_exit_details():
                     LIMIT 1
                 ),
                 exit_reason = (
-                    SELECT 
-                        CASE 
+                    SELECT
+                        CASE
                             WHEN o.order_metadata->>'exit_note' LIKE '%EMA9%' THEN 'EMA9_TARGET'
                             WHEN o.order_metadata->>'exit_note' LIKE '%RSI%' THEN 'RSI_EXIT'
                             WHEN o.order_metadata->>'exit_note' LIKE '%MANUAL%' THEN 'MANUAL'
@@ -263,10 +263,10 @@ def backfill_exit_details():
             WHERE p.closed_at IS NOT NULL
                 AND p.exit_price IS NULL
         """)
-        
+
         result = session.execute(backfill_query)
         updated_count = result.rowcount
-        
+
         # Calculate realized_pnl_pct
         update_pct_query = text("""
             UPDATE positions
@@ -276,12 +276,12 @@ def backfill_exit_details():
                 AND realized_pnl IS NOT NULL
                 AND realized_pnl_pct IS NULL
         """)
-        
+
         session.execute(update_pct_query)
         session.commit()
-        
+
         print(f"✅ Backfilled exit details for {updated_count} closed positions")
-        
+
     except Exception as e:
         session.rollback()
         print(f"❌ Error backfilling exit details: {e}")
@@ -340,7 +340,7 @@ def upgrade():
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('user_id', 'date', 'snapshot_type', name='uq_portfolio_snapshot_user_date_type')
     )
-    
+
     # Create indexes
     op.create_index('ix_portfolio_snapshot_user_date', 'portfolio_snapshots', ['user_id', 'date'])
     op.create_index('ix_portfolio_snapshots_user_id', 'portfolio_snapshots', ['user_id'])
@@ -371,11 +371,11 @@ from src.infrastructure.db.models import PortfolioSnapshot
 def create_initial_snapshots():
     """Create portfolio snapshots for last 30 days from existing data"""
     session = next(get_db_session())
-    
+
     try:
         # Get all users
         users = session.execute(text("SELECT id FROM users")).fetchall()
-        
+
         created_count = 0
         for (user_id,) in users:
             # Get user's initial capital (from user_trading_config or default)
@@ -385,17 +385,17 @@ def create_initial_snapshots():
                 WHERE user_id = :user_id
             """)
             capital_result = session.execute(capital_query, {"user_id": user_id}).fetchone()
-            
+
             if capital_result:
                 initial_capital = capital_result[1] if capital_result[1] else capital_result[0]
             else:
                 initial_capital = 100000.0  # Default
-            
+
             # Create snapshots for last 30 days
             today = date.today()
             for days_ago in range(30, -1, -1):
                 snapshot_date = today - timedelta(days=days_ago)
-                
+
                 # Check if snapshot already exists
                 existing = session.execute(
                     text("""
@@ -404,10 +404,10 @@ def create_initial_snapshots():
                     """),
                     {"user_id": user_id, "date": snapshot_date}
                 ).fetchone()
-                
+
                 if existing:
                     continue
-                
+
                 # Calculate portfolio value for this date
                 # (Simplified - would need actual calculation from positions/orders)
                 snapshot = PortfolioSnapshot(
@@ -424,13 +424,13 @@ def create_initial_snapshots():
                     daily_return=0.0,
                     snapshot_type='eod'
                 )
-                
+
                 session.add(snapshot)
                 created_count += 1
-        
+
         session.commit()
         print(f"✅ Created {created_count} initial portfolio snapshots")
-        
+
     except Exception as e:
         session.rollback()
         print(f"❌ Error creating snapshots: {e}")
@@ -492,7 +492,7 @@ def upgrade():
         sa.ForeignKeyConstraint(['position_id'], ['positions.id'], ),
         sa.PrimaryKeyConstraint('id')
     )
-    
+
     # Create indexes
     op.create_index('ix_targets_user_symbol_active', 'targets', ['user_id', 'symbol', 'is_active'])
     op.create_index('ix_targets_position', 'targets', ['position_id'])
@@ -550,7 +550,7 @@ def upgrade():
         sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
         sa.PrimaryKeyConstraint('id')
     )
-    
+
     # Create index
     op.create_index('ix_pnl_audit_user_created', 'pnl_calculation_audit', ['user_id', 'created_at'])
 
@@ -600,7 +600,7 @@ def upgrade():
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('symbol', 'date', name='uq_price_cache_symbol_date')
     )
-    
+
     # Create indexes
     op.create_index('ix_price_cache_symbol_date', 'price_cache', ['symbol', 'date'])
     op.create_index('ix_price_cache_symbol', 'price_cache', ['symbol'])
@@ -660,7 +660,7 @@ def upgrade():
         sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
         sa.PrimaryKeyConstraint('id')
     )
-    
+
     # Create index
     op.create_index('ix_export_jobs_user_status_created', 'export_jobs', ['user_id', 'status', 'created_at'])
 
@@ -711,7 +711,7 @@ def upgrade():
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('user_id', 'cache_key', name='uq_analytics_cache_user_key')
     )
-    
+
     # Create indexes
     op.create_index('ix_analytics_cache_user_type', 'analytics_cache', ['user_id', 'analytics_type'])
     op.create_index('ix_analytics_cache_key', 'analytics_cache', ['cache_key'])
@@ -788,4 +788,3 @@ SELECT COUNT(*) FROM portfolio_snapshots;
 ---
 
 **Last Updated:** 2025-12-22
-

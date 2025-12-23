@@ -810,7 +810,6 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         max_retries = 1  # Retry once after re-auth
         for attempt in range(max_retries + 1):
             try:
-
                 # Try multiple method names
                 for method_name in ["order_report", "get_order_report", "orderBook", "orders"]:
                     if hasattr(self._client, method_name):

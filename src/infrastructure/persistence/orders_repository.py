@@ -8,9 +8,10 @@ from typing import Any
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Orders, OrderStatus, Signals, SignalStatus
+from src.infrastructure.db.models import Orders, OrderStatus, Signals, SignalStatus, TradeMode
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.signals_repository import SignalsRepository
+from src.infrastructure.persistence.settings_repository import SettingsRepository
 
 # Import logger for duplicate detection logging
 try:
@@ -81,6 +82,9 @@ class OrdersRepository:
             optional_columns.append("execution_qty")
         if "execution_time" in orders_columns:
             optional_columns.append("execution_time")
+        # Phase 0.1: Trade mode column
+        if "trade_mode" in orders_columns:
+            optional_columns.append("trade_mode")
 
         all_columns = base_columns + optional_columns
         query = f"""
@@ -215,6 +219,7 @@ class OrdersRepository:
         entry_type: str | None = None,
         order_metadata: dict | None = None,
         reason: str | None = None,
+        trade_mode: TradeMode | None = None,
     ) -> Orders:
         # Check for existing active order to prevent duplicates
         # First check by exact symbol match (most common case - same symbol format)
@@ -240,6 +245,14 @@ class OrdersRepository:
                     )
                     return existing_order
 
+        # Phase 0.1: Get trade_mode from UserSettings if not provided
+        if trade_mode is None:
+            settings_repo = SettingsRepository(self.db)
+            user_settings = settings_repo.get_by_user_id(user_id)
+            if user_settings:
+                trade_mode = user_settings.trade_mode
+            # If still None (no settings), leave as None (legacy orders)
+
         now = ist_now()
         order = Orders(
             user_id=user_id,
@@ -256,6 +269,7 @@ class OrdersRepository:
             order_metadata=order_metadata,
             broker_order_id=broker_order_id,
             reason=reason or "Order placed - waiting for market open",
+            trade_mode=trade_mode,  # Phase 0.1: Add trade_mode
         )
         self.db.add(order)
         self.db.commit()

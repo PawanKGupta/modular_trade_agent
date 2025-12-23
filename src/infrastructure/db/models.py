@@ -151,6 +151,10 @@ class Orders(Base):
     entry_type: Mapped[str | None] = mapped_column(
         String(32), nullable=True
     )  # 'initial', 'reentry', 'manual'
+    # Phase 0.1: Trade mode (paper vs broker)
+    trade_mode: Mapped[TradeMode | None] = mapped_column(
+        SAEnum(TradeMode), nullable=True, index=True
+    )  # 'paper' | 'broker' | NULL for legacy orders
 
     __table_args__ = (
         Index("ix_orders_user_status_symbol_time", "user_id", "status", "symbol", "placed_at"),

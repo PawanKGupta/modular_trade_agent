@@ -1,7 +1,7 @@
 # Database Schema Enhancements for v26.1.1
 
-**Date:** 2025-12-22  
-**Related Release Plan:** RELEASE_PLAN_V26.1.1.md  
+**Date:** 2025-12-22
+**Related Release Plan:** RELEASE_PLAN_V26.1.1.md
 **Status:** Recommendations
 
 ---
@@ -37,32 +37,32 @@ This document identifies **8 database schema enhancements** that would significa
 ```python
 class PortfolioSnapshot(Base):
     """Daily portfolio value snapshots for historical tracking"""
-    
+
     __tablename__ = "portfolio_snapshots"
-    
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
-    
+
     # Portfolio metrics
     total_value: Mapped[float] = mapped_column(Float, nullable=False)  # Total portfolio value
     invested_value: Mapped[float] = mapped_column(Float, nullable=False)  # Capital invested
     available_cash: Mapped[float] = mapped_column(Float, nullable=False)  # Available cash
     unrealized_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     realized_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
-    
+
     # Position counts
     open_positions_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     closed_positions_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    
+
     # Return metrics
     total_return: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)  # Total return %
     daily_return: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)  # Daily return %
-    
+
     # Metadata
     snapshot_type: Mapped[str] = mapped_column(String(16), default="eod", nullable=False)  # 'eod', 'intraday'
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
-    
+
     __table_args__ = (
         UniqueConstraint("user_id", "date", "snapshot_type", name="uq_portfolio_snapshot_user_date_type"),
         Index("ix_portfolio_snapshot_user_date", "user_id", "date"),
@@ -104,7 +104,7 @@ class PortfolioSnapshot(Base):
 ```python
 # Add to Orders model:
 trade_mode: Mapped[TradeMode] = mapped_column(
-    SAEnum(TradeMode), 
+    SAEnum(TradeMode),
     nullable=True,  # NULL for legacy orders
     index=True
 )  # 'paper' | 'broker'
@@ -189,34 +189,34 @@ sell_order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"), nulla
 ```python
 class Targets(Base):
     """Sell order targets for open positions"""
-    
+
     __tablename__ = "targets"
-    
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     position_id: Mapped[int] = mapped_column(ForeignKey("positions.id"), index=True, nullable=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
-    
+
     # Target information
     target_price: Mapped[float] = mapped_column(Float, nullable=False)  # EMA9 target
     entry_price: Mapped[float] = mapped_column(Float, nullable=False)  # Average entry price
     current_price: Mapped[float | None] = mapped_column(Float, nullable=True)  # Current market price
     quantity: Mapped[float] = mapped_column(Float, nullable=False)  # Position quantity
-    
+
     # Distance metrics
     distance_to_target: Mapped[float | None] = mapped_column(Float, nullable=True)  # % distance
     distance_to_target_absolute: Mapped[float | None] = mapped_column(Float, nullable=True)  # Absolute distance
-    
+
     # Target metadata
     target_type: Mapped[str] = mapped_column(String(32), default="ema9", nullable=False)  # 'ema9', 'manual', etc.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # Active target
     trade_mode: Mapped[TradeMode] = mapped_column(SAEnum(TradeMode), nullable=False)
-    
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, onupdate=ist_now, nullable=False)
     achieved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # When target was hit
-    
+
     __table_args__ = (
         Index("ix_targets_user_symbol_active", "user_id", "symbol", "is_active"),
         Index("ix_targets_position", "position_id"),
@@ -259,34 +259,34 @@ class Targets(Base):
 ```python
 class PnlCalculationAudit(Base):
     """Audit trail for P&L calculations"""
-    
+
     __tablename__ = "pnl_calculation_audit"
-    
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
-    
+
     # Calculation metadata
     calculation_type: Mapped[str] = mapped_column(String(32), nullable=False)  # 'on_demand', 'scheduled', 'backfill'
     date_range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
     date_range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
-    
+
     # Results
     positions_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     orders_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     pnl_records_created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     pnl_records_updated: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    
+
     # Performance
     duration_seconds: Mapped[float] = mapped_column(Float, nullable=False)
-    
+
     # Status
     status: Mapped[str] = mapped_column(String(16), nullable=False)  # 'success', 'failed', 'partial'
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    
+
     # Metadata
     triggered_by: Mapped[str] = mapped_column(String(32), nullable=False)  # 'user', 'system', 'scheduled'
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
-    
+
     __table_args__ = (
         Index("ix_pnl_audit_user_created", "user_id", "created_at"),
     )
@@ -327,24 +327,24 @@ class PnlCalculationAudit(Base):
 ```python
 class PriceCache(Base):
     """Historical price cache for symbols"""
-    
+
     __tablename__ = "price_cache"
-    
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
-    
+
     # Price data
     open: Mapped[float | None] = mapped_column(Float, nullable=True)
     high: Mapped[float | None] = mapped_column(Float, nullable=True)
     low: Mapped[float | None] = mapped_column(Float, nullable=True)
     close: Mapped[float] = mapped_column(Float, nullable=False)
     volume: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    
+
     # Metadata
     source: Mapped[str] = mapped_column(String(32), default="yfinance", nullable=False)  # 'yfinance', 'broker', 'manual'
     cached_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
-    
+
     __table_args__ = (
         UniqueConstraint("symbol", "date", name="uq_price_cache_symbol_date"),
         Index("ix_price_cache_symbol_date", "symbol", "date"),
@@ -389,36 +389,36 @@ class PriceCache(Base):
 ```python
 class ExportJob(Base):
     """Export job tracking"""
-    
+
     __tablename__ = "export_jobs"
-    
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
-    
+
     # Export metadata
     export_type: Mapped[str] = mapped_column(String(32), nullable=False)  # 'csv', 'pdf'
     data_type: Mapped[str] = mapped_column(String(32), nullable=False)  # 'pnl', 'trades', 'signals', etc.
     date_range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
     date_range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
-    
+
     # Status
     status: Mapped[str] = mapped_column(String(16), nullable=False)  # 'pending', 'processing', 'completed', 'failed'
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 0-100
-    
+
     # Results
     file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)  # bytes
     records_exported: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    
+
     # Performance
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    
+
     __table_args__ = (
         Index("ix_export_jobs_user_status_created", "user_id", "status", "created_at"),
     )
@@ -459,25 +459,25 @@ class ExportJob(Base):
 ```python
 class AnalyticsCache(Base):
     """Cached analytics calculations"""
-    
+
     __tablename__ = "analytics_cache"
-    
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
-    
+
     # Cache key
     cache_key: Mapped[str] = mapped_column(String(128), index=True, nullable=False)  # e.g., 'win_rate_2024', 'sharpe_ratio_ytd'
     analytics_type: Mapped[str] = mapped_column(String(32), nullable=False)  # 'win_rate', 'sharpe_ratio', 'drawdown', etc.
     date_range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
     date_range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
-    
+
     # Cached data
     cached_data: Mapped[dict] = mapped_column(JSON, nullable=False)  # Store calculated metrics
-    
+
     # Cache metadata
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # TTL
     calculated_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
-    
+
     __table_args__ = (
         UniqueConstraint("user_id", "cache_key", name="uq_analytics_cache_user_key"),
         Index("ix_analytics_cache_user_type", "user_id", "analytics_type"),
@@ -595,4 +595,3 @@ class AnalyticsCache(Base):
 ---
 
 **Last Updated:** 2025-12-22
-

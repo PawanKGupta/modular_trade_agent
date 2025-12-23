@@ -1,7 +1,7 @@
 # Kotak Authentication & Session Reuse Analysis
 
-**Date:** 2025-12-22  
-**Status:** Analysis Complete  
+**Date:** 2025-12-22
+**Status:** Analysis Complete
 **Priority:** 🔴 High - Critical for Production Stability
 
 ---
@@ -123,7 +123,7 @@ The NeoAPI SDK client may not be thread-safe. Multiple threads calling API metho
 # In sell_engine.py
 with ThreadPoolExecutor(max_workers=10) as executor:
     # 10 threads calling API methods simultaneously
-    futures = [executor.submit(self._check_and_update_stock, symbol) 
+    futures = [executor.submit(self._check_and_update_stock, symbol)
                for symbol in symbols]
 ```
 
@@ -159,7 +159,7 @@ def place_order(self, order: Order):
     fresh_client = self.auth_handler.get_client()
     if fresh_client is not self._client:
         self._client = fresh_client  # Update cache
-    
+
     # Use cached client
     response = self._client.place_order(...)  # What if re-auth happens here?
 ```
@@ -317,7 +317,7 @@ class KotakNeoAuth:
     def __init__(self):
         self.session_created_at = None
         self.session_ttl = 3600  # 1 hour (typical JWT expiry)
-    
+
     def is_session_valid(self) -> bool:
         """Check if session is still valid (not expired)"""
         if not self.is_logged_in:
@@ -326,7 +326,7 @@ class KotakNeoAuth:
             return False
         elapsed = time.time() - self.session_created_at
         return elapsed < self.session_ttl
-    
+
     def get_client(self):
         """Get client, but check session validity first"""
         with self._client_lock:
@@ -354,11 +354,11 @@ class KotakNeoAuth:
 ```python
 class ThreadSafeClientWrapper:
     """Wrapper to make SDK client thread-safe"""
-    
+
     def __init__(self, client):
         self._client = client
         self._call_lock = threading.Lock()
-    
+
     def __getattr__(self, name):
         attr = getattr(self._client, name)
         if callable(attr):
@@ -395,7 +395,7 @@ def subscribe_websocket(self, tokens, timeout=30):
             client = self.auth.get_client()
             if not client:
                 return None
-            
+
             # Use timeout wrapper
             result = call_with_timeout(
                 lambda: client.subscribe(tokens),
@@ -519,4 +519,3 @@ def subscribe_websocket(self, tokens, timeout=30):
 ---
 
 **Last Updated:** 2025-12-22
-
