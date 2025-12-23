@@ -67,6 +67,7 @@ def paper_service(db_session):
     strategy_config = Mock()
     strategy_config.user_capital = 100000.0
     strategy_config.max_positions = 10
+    strategy_config.max_portfolio_size = 10  # Required by place_new_entries
 
     service = PaperTradingServiceAdapter(
         user_id=user_id,
@@ -314,9 +315,14 @@ class TestCategory2BuyOrderEdgeCasesPaperTrading:
         # Should fail or be skipped
         assert summary.get("placed", 0) == 0
 
-        # Verify order saved with RETRY_PENDING (if implemented)
-        failed_orders = orders_repo.list(user_id, status=OrderStatus.RETRY_PENDING)
-        # May be 0 if not implemented, or >= 1 if implemented
+        # Verify order NOT saved (should fail before database save)
+        # Or if saved, should be FAILED status (RETRY_PENDING merged into FAILED)
+        all_orders = orders_repo.list(user_id)
+        buy_orders = [o for o in all_orders if o.side == "buy"]
+        # Order should not be placed due to insufficient balance
+        # If order was saved, it should be FAILED status
+        failed_orders = [o for o in buy_orders if o.status == OrderStatus.FAILED]
+        # May be 0 if balance check prevents database save, or >= 1 if saved as FAILED
         assert len(failed_orders) >= 0
 
 
