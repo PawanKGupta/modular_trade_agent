@@ -12,6 +12,7 @@ When session expires, recreates the client ONCE and everyone uses the new one.
 """
 
 import threading
+import time
 from typing import Optional
 
 from utils.logger import logger
@@ -30,6 +31,11 @@ class SharedSessionManager:
         self._sessions: dict[int, KotakNeoAuth] = {}
         self._locks: dict[int, threading.Lock] = {}
         self._manager_lock = threading.Lock()  # Protects _sessions and _locks dicts
+
+        # Phase -1: Re-auth rate limiting to prevent OTP spam
+        # Track last re-auth time per user to enforce cooldown
+        self._REAUTH_COOLDOWN = 60  # seconds
+        self._last_reauth_time: dict[int, float] = {}
 
     def get_or_create_session(
         self, user_id: int, env_file: str, force_new: bool = False
@@ -52,14 +58,50 @@ class SharedSessionManager:
             user_lock = self._locks[user_id]
 
         with user_lock:
+            # Phase -1: Check re-auth rate limiting (prevent OTP spam)
+            if user_id in self._last_reauth_time:
+                time_since_reauth = time.time() - self._last_reauth_time[user_id]
+                if time_since_reauth < self._REAUTH_COOLDOWN:
+                    logger.warning(
+                        f"[SHARED_SESSION] Re-auth cooldown active for user {user_id}, "
+                        f"{self._REAUTH_COOLDOWN - time_since_reauth:.0f}s remaining"
+                    )
+                    # Return existing session even if client is None
+                    # (let API call handle it via @handle_reauth)
+                    if user_id in self._sessions:
+                        return self._sessions[user_id]
+
             # Check if session exists and is valid
             if not force_new and user_id in self._sessions:
                 auth = self._sessions[user_id]
-                if auth.is_authenticated() and auth.get_client():
-                    logger.info(f"[SHARED_SESSION] Reusing existing session for user {user_id}")
-                    return auth
+
+                # Phase -1: Check session health more carefully
+                if auth.is_authenticated():
+                    client = auth.get_client()
+
+                    # Only clear if BOTH are false/None AND session actually expired
+                    if not client:
+                        # Check if session is actually expired (not just client None)
+                        if hasattr(auth, "is_session_valid") and auth.is_session_valid():
+                            # Session valid but client None - don't clear, let it recover
+                            logger.warning(
+                                f"[SHARED_SESSION] Session valid but client None for user {user_id}, "
+                                "attempting recovery"
+                            )
+                            return auth  # Return existing, let API call handle via @handle_reauth
+                        else:
+                            # Session expired - clear it
+                            logger.warning(
+                                f"[SHARED_SESSION] Session expired for user {user_id}, clearing"
+                            )
+                            with self._manager_lock:
+                                self._sessions.pop(user_id, None)
+                    else:
+                        # Both authenticated and client available - reuse
+                        logger.info(f"[SHARED_SESSION] Reusing existing session for user {user_id}")
+                        return auth
                 else:
-                    # Session exists but is invalid - clear it
+                    # Not authenticated - clear
                     logger.warning(
                         f"[SHARED_SESSION] Existing session for user {user_id} is invalid, clearing"
                     )
@@ -74,6 +116,8 @@ class SharedSessionManager:
             if auth.login():
                 with self._manager_lock:
                     self._sessions[user_id] = auth
+                # Phase -1: Record re-auth time for rate limiting
+                self._last_reauth_time[user_id] = time.time()
                 logger.info(f"[SHARED_SESSION] Session created and cached for user {user_id}")
                 return auth
             else:

@@ -7,6 +7,7 @@ import os
 import socket
 import sys
 import threading
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -66,6 +67,13 @@ class KotakNeoAuth:
         self.client = None
         self.session_token = None
         self.is_logged_in = False
+
+        # Phase -1: Session validity tracking
+        # Track when session was created and its TTL (Time To Live)
+        # JWT tokens from Kotak Neo API expire after ~1 hour
+        # Use 55 minutes as safety margin to proactively re-auth before expiry
+        self.session_created_at: float | None = None
+        self.session_ttl: int = 3300  # 55 minutes (safety margin for 1-hour JWT)
 
         # Thread lock for thread-safe client access
         # Prevents race conditions when multiple threads use the same client
@@ -147,6 +155,7 @@ class KotakNeoAuth:
                     return False
 
                 self.is_logged_in = True
+                self.session_created_at = time.time()  # Phase -1: Track session creation time
                 self.logger.info("Login completed successfully!")
                 self.logger.info("Session will remain active for the entire trading day")
                 return True
@@ -188,7 +197,8 @@ class KotakNeoAuth:
 
             if not consumer_key or not consumer_secret:
                 self.logger.error(
-                    "Client initialization failed: consumer_key or consumer_secret is missing or empty"
+                    "Client initialization failed: "
+                    "consumer_key or consumer_secret is missing or empty"
                 )
                 return None
 
@@ -209,7 +219,8 @@ class KotakNeoAuth:
             if "NoneType" in error_msg or "concatenate" in error_msg.lower():
                 self.logger.error(
                     "Client initialization error: SDK received None value. "
-                    "Please check that KOTAK_CONSUMER_KEY and KOTAK_CONSUMER_SECRET are set correctly."
+                    "Please check that KOTAK_CONSUMER_KEY and "
+                    "KOTAK_CONSUMER_SECRET are set correctly."
                 )
             else:
                 self.logger.error(f"Client initialization error (TypeError): {error_msg}")
@@ -439,6 +450,10 @@ class KotakNeoAuth:
         IMPORTANT: Always creates a NEW client instance and properly cleans up old client.
         Uses lock to prevent concurrent re-authentication attempts from multiple threads.
 
+        Phase -1 CRITICAL FIX: Keep is_logged_in = True during re-auth attempt.
+        Only set False if re-auth completely fails. This prevents Web API thread
+        from clearing session while re-auth is in progress, which causes OTP spam.
+
         The issue: When JWT expires quickly (e.g., 13 seconds), the SDK's internal state
         can become corrupted. Creating a new client without cleanup can cause SDK to
         access None values internally, leading to 'NoneType' object has no attribute 'get' errors.
@@ -464,29 +479,35 @@ class KotakNeoAuth:
                             f"Old client logout failed (expected if expired): {logout_err}"
                         )
 
-                # Step 2: Reset authentication state
-                self.is_logged_in = False
-                self.session_token = None
-                self.client = None
+                # Phase -1 CRITICAL FIX: Don't set is_logged_in = False here!
+                # Keep it True during re-auth attempt to prevent Web API thread
+                # from clearing session. Only set False if re-auth completely fails
 
-                # Step 3: ALWAYS create a new client (don't reuse stale clients)
-                # This is critical: expired clients can cause SDK internal errors
+                # Step 2: Create new client (but keep is_logged_in = True)
                 self.client = self._initialize_client()
 
                 if not self.client:
+                    # Only set False if client initialization fails
+                    self.is_logged_in = False
+                    self.session_token = None
                     self.logger.error("Failed to initialize new client for re-authentication")
                     return False
 
-                # Step 4: Perform fresh login + 2FA
-                # Add retry logic for 2FA in case SDK needs time to initialize
+                # Step 3: Perform fresh login + 2FA
                 if not self._perform_login():
+                    # Only set False if login fails
+                    self.is_logged_in = False
+                    self.session_token = None
+                    self.client = None
                     return False
 
-                # Retry 2FA up to 2 times if it fails with SDK errors
+                # Step 4: Complete 2FA (with retry logic)
                 max_2fa_retries = 2
                 for attempt in range(max_2fa_retries):
                     if self._complete_2fa():
+                        # Success - keep is_logged_in = True, update timestamp
                         self.is_logged_in = True
+                        self.session_created_at = time.time()  # Phase -1: Reset session timer
                         self.logger.info("Re-authentication successful")
                         return True
 
@@ -505,6 +526,10 @@ class KotakNeoAuth:
                     else:
                         self.logger.error("2FA failed after retries")
 
+                # Re-auth failed completely - only now set False
+                self.is_logged_in = False
+                self.session_token = None
+                self.client = None
                 return False
 
             except Exception as e:
@@ -537,9 +562,32 @@ class KotakNeoAuth:
             self.logger.warning(f"Logout failed: {e}")
             return False
 
+    def is_session_valid(self) -> bool:
+        """
+        Check if session is still valid (not expired).
+
+        Phase -1: Proactively check session validity based on TTL.
+        This allows us to re-authenticate before JWT expires, preventing
+        API call failures.
+
+        Returns:
+            bool: True if session is valid, False if expired
+        """
+        if not self.is_logged_in:
+            return False
+        if self.session_created_at is None:
+            # Legacy session without timestamp tracking - assume valid
+            # This handles sessions created before Phase -1 implementation
+            return True
+        elapsed = time.time() - self.session_created_at
+        return elapsed < self.session_ttl
+
     def get_client(self):
         """
         Get the authenticated client instance (thread-safe).
+
+        Phase -1: Proactively check session validity before returning client.
+        If session is expired, trigger re-authentication automatically.
 
         Uses lock to prevent race conditions when multiple threads
         (e.g., from ThreadPoolExecutor in SellOrderManager) access
@@ -549,7 +597,12 @@ class KotakNeoAuth:
             NeoAPI client or None if not logged in
         """
         with self._client_lock:
-            if not self.is_logged_in:
+            # Phase -1: Proactively check session validity
+            if not self.is_session_valid():
+                self.logger.warning("Session expired, forcing re-login")
+                if not self.force_relogin():
+                    return None
+            elif not self.is_logged_in:
                 self.logger.error("Not logged in. Please login first.")
                 return None
             return self.client

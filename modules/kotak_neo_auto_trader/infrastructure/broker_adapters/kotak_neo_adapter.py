@@ -326,6 +326,27 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         """Check if currently connected"""
         return self._connected and self._client is not None
 
+    def _ensure_fresh_client(self):
+        """
+        Phase -1: Always get fresh client before API calls.
+
+        Ensures we always use the latest client instance, even if re-auth
+        happened in another thread. This prevents client reference staleness.
+
+        Raises:
+            ConnectionError: If not authenticated or no client available
+        """
+        if not self.auth_handler or not self.auth_handler.is_authenticated():
+            raise ConnectionError("Not authenticated")
+
+        # Always get fresh client (don't rely on cache)
+        fresh_client = self.auth_handler.get_client()
+        if not fresh_client:
+            raise ConnectionError("No authenticated client available")
+
+        self._client = fresh_client  # Update cache
+        return fresh_client
+
     # Order Management
 
     def place_order(self, order: Order) -> str:
@@ -341,23 +362,8 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
 
-        # Refresh client from auth handler before API calls to ensure latest session is used
-        # The session (sId) is embedded in the SDK client when created during login
-        # Since session is valid for ~1 hour, we reuse it but always get fresh client to ensure session is present
-        # After re-auth, auth.client becomes a NEW object, so we need to refresh to get the new session
-        # Strategy: Always refresh if client changed (re-auth) or if no client exists
-        # In production: auth.get_client() returns auth.client (same object until re-auth, then new object)
-        # In tests: Tests should configure auth_handler.get_client() to return the same mock_client
-        if self.auth_handler and self.auth_handler.is_authenticated():
-            fresh_client = self.auth_handler.get_client()
-            if fresh_client:
-                # Always refresh if: (1) no client, OR (2) client changed (re-auth happened)
-                # Same client object = no-op refresh (ensures we have latest session)
-                if self._client is None or fresh_client is not self._client:
-                    self._client = fresh_client
-                    logger.debug(
-                        "Refreshed client from auth handler for place_order to ensure session is used"
-                    )
+        # Phase -1: Always ensure fresh client before API calls
+        self._ensure_fresh_client()
 
         # Build payload from domain order
         payload = self._build_order_payload(order)
@@ -798,37 +804,12 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
 
-        # Refresh client from auth handler before API calls to ensure latest session is used
-        # The session (sId) is embedded in the SDK client when created during login
-        # Since session is valid for ~1 hour, we reuse it but always get fresh client to ensure session is present
-        # After re-auth, auth.client becomes a NEW object, so we need to refresh to get the new session
-        # Strategy: Always refresh if client changed (re-auth) or if no client exists
-        # In production: auth.get_client() returns auth.client (same object until re-auth, then new object)
-        # In tests: Tests should configure auth_handler.get_client() to return the same mock_client
-        if self.auth_handler and self.auth_handler.is_authenticated():
-            fresh_client = self.auth_handler.get_client()
-            if fresh_client:
-                # Always refresh if: (1) no client, OR (2) client changed (re-auth happened)
-                # Same client object = no-op refresh (ensures we have latest session)
-                if self._client is None or fresh_client is not self._client:
-                    self._client = fresh_client
-                    logger.debug(
-                        "Refreshed client from auth handler for get_all_orders to ensure session is used"
-                    )
+        # Phase -1: Always ensure fresh client before API calls
+        self._ensure_fresh_client()
 
         max_retries = 1  # Retry once after re-auth
         for attempt in range(max_retries + 1):
             try:
-                # Ensure client is available before making API calls
-                if not self._client:
-                    # Try to get fresh client from auth handler if available
-                    if self.auth_handler and self.auth_handler.is_authenticated():
-                        self._client = self.auth_handler.get_client()
-                    if not self._client:
-                        logger.error("No client available for get_all_orders")
-                        if attempt < max_retries:
-                            continue
-                        return []
 
                 # Try multiple method names
                 for method_name in ["order_report", "get_order_report", "orderBook", "orders"]:
@@ -1143,23 +1124,8 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
 
-        # Refresh client from auth handler before API calls to ensure latest session is used
-        # The session (sId) is embedded in the SDK client when created during login
-        # Since session is valid for ~1 hour, we reuse it but always get fresh client to ensure session is present
-        # After re-auth, auth.client becomes a NEW object, so we need to refresh to get the new session
-        # Strategy: Always refresh if client changed (re-auth) or if no client exists
-        # In production: auth.get_client() returns auth.client (same object until re-auth, then new object)
-        # In tests: Tests should configure auth_handler.get_client() to return the same mock_client
-        if self.auth_handler and self.auth_handler.is_authenticated():
-            fresh_client = self.auth_handler.get_client()
-            if fresh_client:
-                # Always refresh if: (1) no client, OR (2) client changed (re-auth happened)
-                # Same client object = no-op refresh (ensures we have latest session)
-                if self._client is None or fresh_client is not self._client:
-                    self._client = fresh_client
-                    logger.debug(
-                        "Refreshed client from auth handler for get_holdings to ensure session is used"
-                    )
+        # Phase -1: Always ensure fresh client before API calls
+        self._ensure_fresh_client()
 
         max_retries = 1  # Retry once after re-auth
         for attempt in range(max_retries + 1):
