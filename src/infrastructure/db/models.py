@@ -407,6 +407,37 @@ class ExportJob(Base):
     )
 
 
+class AnalyticsCache(Base):
+    """Cached analytics calculations (Phase 0.8)"""
+
+    __tablename__ = "analytics_cache"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+
+    # Cache key
+    cache_key: Mapped[str] = mapped_column(
+        String(128), index=True, nullable=False
+    )  # e.g., 'win_rate_2024', 'sharpe_ratio_ytd'
+    analytics_type: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # 'win_rate', 'sharpe_ratio', 'drawdown', etc.
+    date_range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    date_range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # Cached data
+    cached_data: Mapped[dict] = mapped_column(JSON, nullable=False)  # Store calculated metrics
+
+    # Cache metadata
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # TTL
+    calculated_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "cache_key", name="uq_analytics_cache_user_key"),
+        Index("ix_analytics_cache_user_type", "user_id", "analytics_type"),
+    )
+
+
 class Signals(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
