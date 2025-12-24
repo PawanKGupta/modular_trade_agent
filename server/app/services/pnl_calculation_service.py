@@ -94,7 +94,7 @@ class PnlCalculationService:
                     sell_order = self.orders_repo.get(pos.sell_order_id)
                     if sell_order:
                         sold_quantity = sell_order.quantity or 0.0
-                
+
                 # If we still don't have quantity, we can't calculate accurately
                 if sold_quantity == 0:
                     logger.warning(
@@ -103,7 +103,7 @@ class PnlCalculationService:
                         f"sell_order_id={pos.sell_order_id}. Skipping."
                     )
                     continue
-                
+
                 # Calculate: (exit_price - avg_price) * quantity_sold
                 pnl = (pos.exit_price - pos.avg_price) * sold_quantity
             else:
