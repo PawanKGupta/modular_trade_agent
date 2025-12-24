@@ -1,6 +1,6 @@
 /**
  * Chart components and utilities
- * 
+ *
  * This module exports reusable chart components and theming utilities
  * for use throughout the application.
  */
