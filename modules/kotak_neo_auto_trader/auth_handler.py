@@ -55,9 +55,17 @@ def is_auth_error(response: Any) -> bool:
     if "invalid jwt token" in message or "jwt token expired" in message:
         return True
 
-    # Phase -1: REMOVED generic "unauthorized" checks that cause false positives
-    # REMOVED: Generic "invalid credentials" checks
-    # These were causing false positives where non-auth errors triggered re-auth
+    # Check for "invalid credentials" in message/description (auth-specific error)
+    if "invalid credentials" in message or "invalid credentials" in description:
+        return True
+
+    # Check for "unauthorized" in error field (common auth error format)
+    error = str(response.get("error", "")).lower()
+    if error == "unauthorized":
+        return True
+
+    # Phase -1: REMOVED generic "unauthorized" checks in message/description that cause false positives
+    # Only check "unauthorized" in dedicated "error" field to avoid false positives
 
     return False
 

@@ -31,6 +31,7 @@ const formatDate = (dateStr: string | null | undefined): string => {
 
 export function OrdersPage() {
 	const [tab, setTab] = useState<OrderStatus>('pending');
+	const [tradeModeFilter, setTradeModeFilter] = useState<'all' | 'paper' | 'broker'>('all');
 	const queryClient = useQueryClient();
 	const { data, isLoading, isError } = useQuery({
 		queryKey: ['orders', tab],
@@ -55,7 +56,24 @@ export function OrdersPage() {
 		document.title = 'Orders';
 	}, []);
 
-	const orders: Order[] = useMemo(() => data ?? [], [data]);
+	const orders: Order[] = useMemo(() => {
+		const allOrders = data ?? [];
+		if (tradeModeFilter === 'all') {
+			return allOrders;
+		}
+		// Filter by trade_mode_display (case-insensitive)
+		return allOrders.filter((o) => {
+			if (!o.trade_mode_display) return false;
+			const display = o.trade_mode_display.toLowerCase();
+			if (tradeModeFilter === 'paper') {
+				return display === 'paper';
+			}
+			if (tradeModeFilter === 'broker') {
+				return display !== 'paper'; // Any broker name
+			}
+			return true;
+		});
+	}, [data, tradeModeFilter]);
 
 	const handleRetry = async (orderId: number) => {
 		if (confirm('Retry this order?')) {
@@ -99,6 +117,39 @@ export function OrdersPage() {
 					</button>
 				))}
 			</div>
+			<div className="flex flex-wrap gap-2 items-center">
+				<span className="text-sm text-[var(--muted)]">Filter by mode:</span>
+				<button
+					className={`px-3 py-1 rounded border text-sm ${
+						tradeModeFilter === 'all'
+							? 'bg-blue-600 text-white border-blue-600'
+							: 'bg-[var(--panel)] text-[var(--text)] border-[#1e293b] hover:bg-[#0f1720]'
+					}`}
+					onClick={() => setTradeModeFilter('all')}
+				>
+					All
+				</button>
+				<button
+					className={`px-3 py-1 rounded border text-sm ${
+						tradeModeFilter === 'paper'
+							? 'bg-purple-600 text-white border-purple-600'
+							: 'bg-[var(--panel)] text-[var(--text)] border-[#1e293b] hover:bg-[#0f1720]'
+					}`}
+					onClick={() => setTradeModeFilter('paper')}
+				>
+					Paper
+				</button>
+				<button
+					className={`px-3 py-1 rounded border text-sm ${
+						tradeModeFilter === 'broker'
+							? 'bg-green-600 text-white border-green-600'
+							: 'bg-[var(--panel)] text-[var(--text)] border-[#1e293b] hover:bg-[#0f1720]'
+					}`}
+					onClick={() => setTradeModeFilter('broker')}
+				>
+					Broker
+				</button>
+			</div>
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
 				<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 px-3 py-2 border-b border-[#1e293b]">
 					<div className="font-medium text-sm sm:text-base text-[var(--text)]">{TABS.find((t) => t.key === tab)?.label} Orders</div>
@@ -114,6 +165,7 @@ export function OrdersPage() {
 								<th className="text-left p-2 whitespace-nowrap">Qty</th>
 								<th className="text-left p-2 whitespace-nowrap">Price</th>
 								<th className="text-left p-2 whitespace-nowrap">Status</th>
+								<th className="text-left p-2 whitespace-nowrap hidden sm:table-cell">Mode</th>
 								<th className="text-left p-2 whitespace-nowrap hidden sm:table-cell">Created</th>
 								<th className="text-left p-2 whitespace-nowrap hidden md:table-cell">Entry Type</th>
 								<th className="text-left p-2 whitespace-nowrap hidden md:table-cell">Manual</th>
@@ -142,6 +194,19 @@ export function OrdersPage() {
 								<td className="p-2 text-[var(--text)]">{o.quantity}</td>
 								<td className="p-2 text-[var(--text)]">{formatPrice(o.price)}</td>
 								<td className="p-2 text-[var(--text)]">{o.status}</td>
+								<td className="p-2 text-[var(--text)] hidden sm:table-cell">
+									{o.trade_mode_display ? (
+										<span className={`px-2 py-0.5 text-xs rounded ${
+											o.trade_mode_display.toLowerCase() === 'paper'
+												? 'bg-purple-500/20 text-purple-300'
+												: 'bg-green-500/20 text-green-300'
+										}`}>
+											{o.trade_mode_display}
+										</span>
+									) : (
+										<span className="text-[var(--muted)]">-</span>
+									)}
+								</td>
 								<td className="p-2 text-[var(--text)] text-xs hidden sm:table-cell">
 									{formatDate(o.created_at)}
 								</td>

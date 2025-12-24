@@ -71,8 +71,10 @@ class PositionsRepository:
             )
             .order_by(Positions.opened_at.desc())
             .with_for_update()
+            .limit(1)
         )
-        return self.db.execute(stmt).scalar_one_or_none()
+        result = self.db.execute(stmt).first()
+        return result[0] if result else None
 
     def get_by_symbol_any(
         self, user_id: int, symbol: str, include_closed: bool = False
@@ -230,6 +232,9 @@ class PositionsRepository:
             logger.warning(f"Position not found for {symbol} (user_id: {user_id})")
             return None
 
+        # Store original quantity before setting to 0 (needed for P&L calculations)
+        original_quantity = pos.quantity
+
         pos.closed_at = closed_at or ist_now()
         pos.quantity = 0.0  # Set quantity to 0 when fully closed
 
@@ -245,23 +250,24 @@ class PositionsRepository:
 
         # Calculate realized P&L if exit_price is provided but realized_pnl is not
         if exit_price is not None and realized_pnl is None:
-            realized_pnl = (exit_price - pos.avg_price) * pos.quantity
+            realized_pnl = (exit_price - pos.avg_price) * original_quantity
             pos.realized_pnl = realized_pnl
         elif realized_pnl is not None:
             pos.realized_pnl = realized_pnl
 
         # Calculate realized P&L percentage if realized_pnl is set but percentage is not
         if pos.realized_pnl is not None and realized_pnl_pct is None:
-            cost_basis = pos.avg_price * pos.quantity
-            pos.realized_pnl_pct = (
-                (pos.realized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
-            )
+            cost_basis = pos.avg_price * original_quantity
+            pos.realized_pnl_pct = (pos.realized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
         elif realized_pnl_pct is not None:
             pos.realized_pnl_pct = realized_pnl_pct
 
         if auto_commit:
             self.db.commit()
             self.db.refresh(pos)
+        else:
+            # Even with auto_commit=False, flush to ensure changes are visible in the same session
+            self.db.flush()
         logger.info(
             f"Position marked as closed: {symbol} (closed_at: {pos.closed_at}, "
             f"exit_price: {exit_price}, exit_reason: {exit_reason})"

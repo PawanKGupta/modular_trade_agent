@@ -30,6 +30,8 @@ export interface Order {
 	// Entry type and source tracking
 	entry_type?: string | null; // 'initial', 'reentry', 'manual'
 	is_manual?: boolean; // Derived from orig_source == 'manual'
+	// Phase 0.1: Trade mode display name
+	trade_mode_display?: string | null; // 'Paper' for paper trading, broker name (e.g., 'Kotak Neo') for broker trading
 }
 
 export interface ListOrdersParams {

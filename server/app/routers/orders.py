@@ -162,10 +162,39 @@ def list_orders(  # noqa: PLR0913
                 return dt_value.isoformat()
             return str(dt_value)
 
+        # Get user settings once for broker name lookup
+        from src.infrastructure.persistence.settings_repository import SettingsRepository
+
+        settings_repo = SettingsRepository(db)
+        user_settings = settings_repo.get_by_user_id(current.id)
+        broker_name = user_settings.broker if user_settings else None
+
+        # Helper function to format broker name for display
+        def format_broker_name(broker: str | None) -> str:
+            """Format broker name for display (e.g., 'kotak-neo' -> 'Kotak Neo')"""
+            if not broker:
+                return "Broker"
+            # Convert kebab-case to Title Case
+            return broker.replace("-", " ").title()
+
         # map DB columns to API model field names
         result = []
         for o in items:
             try:
+                # Get trade_mode from order and determine display name (Phase 0.1)
+                trade_mode_display = None
+                if hasattr(o, "trade_mode") and o.trade_mode:
+                    trade_mode_value = (
+                        o.trade_mode.value if hasattr(o.trade_mode, "value") else str(o.trade_mode)
+                    )
+                    if trade_mode_value == "paper":
+                        trade_mode_display = "Paper"
+                    elif trade_mode_value == "broker":
+                        # Use broker name from settings, or fallback to "Broker"
+                        trade_mode_display = (
+                            format_broker_name(broker_name) if broker_name else "Broker"
+                        )
+
                 order_response = OrderResponse(
                     id=o.id,
                     symbol=o.symbol,
@@ -188,6 +217,8 @@ def list_orders(  # noqa: PLR0913
                     # Entry type and source tracking
                     entry_type=getattr(o, "entry_type", None),
                     is_manual=getattr(o, "orig_source", None) == "manual",
+                    # Phase 0.1: Trade mode display name
+                    trade_mode_display=trade_mode_display,
                 )
                 result.append(order_response)
             except Exception as e:

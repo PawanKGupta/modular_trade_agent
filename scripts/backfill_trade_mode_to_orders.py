@@ -28,12 +28,14 @@ def backfill_trade_mode():
     try:
         # Get all orders with NULL trade_mode
         result = db.execute(
-            text("""
+            text(
+                """
                 SELECT o.id, o.user_id, u.id as user_exists
                 FROM orders o
                 LEFT JOIN users u ON o.user_id = u.id
                 WHERE o.trade_mode IS NULL
-            """)
+            """
+            )
         ).fetchall()
 
         if not result:
@@ -51,13 +53,15 @@ def backfill_trade_mode():
                 skipped_count += 1
                 continue
 
-            # Get user's trade_mode from user_settings
+            # Get user's trade_mode from usersettings (SQLAlchemy auto-generated table name)
             settings_result = db.execute(
-                text("""
+                text(
+                    """
                     SELECT trade_mode
-                    FROM user_settings
+                    FROM usersettings
                     WHERE user_id = :user_id
-                """),
+                """
+                ),
                 {"user_id": user_id},
             ).fetchone()
 
@@ -65,7 +69,7 @@ def backfill_trade_mode():
                 # No settings found - default to PAPER for backward compatibility
                 trade_mode = TradeMode.PAPER.value
                 print(
-                    f"Order {order_id}: No user_settings found for user {user_id}, "
+                    f"Order {order_id}: No usersettings found for user {user_id}, "
                     f"defaulting to {trade_mode}"
                 )
             else:
@@ -73,11 +77,13 @@ def backfill_trade_mode():
 
             # Update order
             db.execute(
-                text("""
+                text(
+                    """
                     UPDATE orders
                     SET trade_mode = :trade_mode
                     WHERE id = :order_id
-                """),
+                """
+                ),
                 {"trade_mode": trade_mode, "order_id": order_id},
             )
             updated_count += 1
@@ -88,7 +94,7 @@ def backfill_trade_mode():
 
         # Final commit
         db.commit()
-        print(f"\nBackfill complete!")
+        print("\nBackfill complete!")
         print(f"  - Updated: {updated_count} orders")
         print(f"  - Skipped: {skipped_count} orders (invalid user_id)")
 
@@ -115,4 +121,3 @@ if __name__ == "__main__":
     print("=" * 80)
     print()
     backfill_trade_mode()
-

@@ -2324,7 +2324,9 @@ class SellOrderManager:
                         distance_to_target = None
                         distance_to_target_absolute = None
                         if current_price and target_price:
-                            distance_to_target = ((target_price - current_price) / current_price) * 100
+                            distance_to_target = (
+                                (target_price - current_price) / current_price
+                            ) * 100
                             distance_to_target_absolute = target_price - current_price
 
                         # Create or update target
@@ -2350,9 +2352,7 @@ class SellOrderManager:
                             f"(target_id={target.id}, target_price={rounded_price:.2f})"
                         )
                     except Exception as e:  # pragma: no cover - defensive logging
-                        logger.warning(
-                            f"Failed to create target record for {symbol}: {e}"
-                        )
+                        logger.warning(f"Failed to create target record for {symbol}: {e}")
 
                 return order_id_str
             else:
@@ -4368,7 +4368,9 @@ class SellOrderManager:
                                                     exit_reason = sell_order.order_metadata.get(
                                                         "exit_note", "EMA9_TARGET"
                                                     )
-                                                    exit_rsi = sell_order.order_metadata.get("exit_rsi")
+                                                    exit_rsi = sell_order.order_metadata.get(
+                                                        "exit_rsi"
+                                                    )
                                         except Exception as e:
                                             logger.debug(
                                                 f"Could not get sell order for exit details: {e}"
@@ -4486,9 +4488,7 @@ class SellOrderManager:
                                             )
                                             exit_rsi = sell_order.order_metadata.get("exit_rsi")
                                 except Exception as e:
-                                    logger.debug(
-                                        f"Could not get sell order for exit details: {e}"
-                                    )
+                                    logger.debug(f"Could not get sell order for exit details: {e}")
 
                             with transaction(self.positions_repo.db):
                                 self.positions_repo.mark_closed(
@@ -4501,28 +4501,28 @@ class SellOrderManager:
                                     sell_order_id=sell_order_db_id,
                                     auto_commit=False,  # Transaction handles commit
                                 )
-                                        logger.info(
-                                            f"Position marked as closed in database: {full_symbol} "
-                                            f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
-                                        )
+                                logger.info(
+                                    f"Position marked as closed in database: {full_symbol} "
+                                    f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
+                                )
 
-                                        # Phase 0.4: Mark target as achieved
-                                        if self.targets_repo and self.user_id:
-                                            try:
-                                                target = self.targets_repo.get_by_symbol(
-                                                    self.user_id, full_symbol, active_only=True
-                                                )
-                                                if target:
-                                                    self.targets_repo.mark_achieved(
-                                                        target.id, achieved_at=ist_now()
-                                                    )
-                                                    logger.debug(
-                                                        f"Marked target as achieved for {full_symbol}"
-                                                    )
-                                            except Exception as e:
-                                                logger.debug(
-                                                    f"Failed to mark target as achieved for {full_symbol}: {e}"
-                                                )
+                                # Phase 0.4: Mark target as achieved
+                                if self.targets_repo and self.user_id:
+                                    try:
+                                        target = self.targets_repo.get_by_symbol(
+                                            self.user_id, full_symbol, active_only=True
+                                        )
+                                        if target:
+                                            self.targets_repo.mark_achieved(
+                                                target.id, achieved_at=ist_now()
+                                            )
+                                            logger.debug(
+                                                f"Marked target as achieved for {full_symbol}"
+                                            )
+                                    except Exception as e:
+                                        logger.debug(
+                                            f"Failed to mark target as achieved for {full_symbol}: {e}"
+                                        )
 
                                 # Close corresponding ONGOING buy orders (within same transaction)
                                 # Extract base symbol for _close_buy_orders_for_symbol which uses base symbols

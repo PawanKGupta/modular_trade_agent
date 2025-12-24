@@ -328,11 +328,12 @@ def test_validate_schedule_invalid_task_name(db_session, schedule_manager):
 
 def test_is_trading_day_weekday(db_session, schedule_manager):
     """Test that weekdays are trading days"""
-    # Get a weekday (Monday = 0, Friday = 4)
-    today = ist_now().date()
-    weekday = today.weekday()
-    if weekday < 5:  # Monday-Friday
-        assert schedule_manager.is_trading_day(today) is True
+    from datetime import date
+
+    # Use a specific non-holiday weekday date (Monday, Dec 1, 2025)
+    # This ensures the test doesn't fail on holidays like Christmas (Dec 25)
+    test_date = date(2025, 12, 1)  # Monday, not a holiday
+    assert schedule_manager.is_trading_day(test_date) is True
 
 
 def test_is_trading_day_weekend(db_session, schedule_manager):

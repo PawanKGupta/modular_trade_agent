@@ -200,6 +200,17 @@ class OrdersRepository:
                 order_kwargs["updated_at"] = parse_datetime(
                     row_dict.get("updated_at") or row_dict.get("placed_at")
                 )
+            # Phase 0.1: Add trade_mode if column exists
+            if "trade_mode" in orders_columns:
+                trade_mode_str = row_dict.get("trade_mode")
+                if trade_mode_str:
+                    try:
+                        order_kwargs["trade_mode"] = TradeMode(trade_mode_str.lower())
+                    except (ValueError, AttributeError):
+                        # Fallback to default if invalid value
+                        order_kwargs["trade_mode"] = TradeMode.PAPER
+                else:
+                    order_kwargs["trade_mode"] = TradeMode.PAPER
 
             order = Orders(**order_kwargs)
             orders.append(order)
@@ -249,9 +260,11 @@ class OrdersRepository:
         if trade_mode is None:
             settings_repo = SettingsRepository(self.db)
             user_settings = settings_repo.get_by_user_id(user_id)
-            if user_settings:
+            if user_settings and user_settings.trade_mode:
                 trade_mode = user_settings.trade_mode
-            # If still None (no settings), leave as None (legacy orders)
+            else:
+                # Default to PAPER if no settings exist
+                trade_mode = TradeMode.PAPER
 
         now = ist_now()
         order = Orders(
