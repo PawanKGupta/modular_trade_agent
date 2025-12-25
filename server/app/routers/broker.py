@@ -14,17 +14,21 @@ from src.application.services.broker_credentials import (
     create_temp_env_file,
     decrypt_broker_credentials,
 )
-from src.infrastructure.db.models import TradeMode, Users
+from src.infrastructure.db.models import Orders, TradeMode, Users
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
 from ..core.crypto import decrypt_blob, encrypt_blob
 from ..core.deps import get_current_user, get_db
 from ..routers.paper_trading import (
+    ClosedPosition,
     PaperTradingAccount,
     PaperTradingHolding,
     PaperTradingPortfolio,
+    PaperTradingTransaction,
+    TradeHistory,
 )
 from ..schemas.user import BrokerCredsInfo, BrokerCredsRequest, BrokerTestResponse
+from .broker_history_impl import _fifo_match_orders
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -991,4 +995,212 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
         logger.exception(f"Error fetching broker orders for user {current.id}: {e}")
         raise HTTPException(
             status_code=500, detail=f"Failed to fetch broker orders: {str(e)}"
+        ) from e
+
+
+@router.get("/history", response_model=TradeHistory)
+def get_broker_trading_history(  # noqa: PLR0915, PLR0912
+    from_date: Annotated[str | None, Query(description="Filter from date (ISO format)")] = None,
+    to_date: Annotated[str | None, Query(description="Filter to date (ISO format)")] = None,
+    raw: Annotated[
+        bool, Query(description="Return raw transactions without FIFO matching")
+    ] = False,
+    limit: Annotated[int, Query(ge=1, le=10000, description="Limit results (max 10000)")] = 1000,
+    db: Session = Depends(get_db),  # noqa: B008
+    current: Users = Depends(get_current_user),  # noqa: B008
+) -> TradeHistory:
+    """
+    Get complete broker trading history with transactions and closed positions.
+
+    - **from_date**: Filter transactions from this date (ISO format)
+    - **to_date**: Filter transactions up to this date (ISO format)
+    - **raw**: If true, return raw transactions without FIFO matching
+    - **limit**: Maximum number of transactions to return (default: 1000, max: 10000)
+
+    Returns:
+        - All broker transactions (buys and sells)
+        - Closed positions with P&L (using FIFO matching if raw=false)
+        - Statistics (win rate, avg profit, etc.)
+    """
+    try:
+        # Get user settings
+        settings_repo = SettingsRepository(db)
+        settings = settings_repo.get_by_user_id(current.id)
+        if not settings:
+            raise HTTPException(
+                status_code=404, detail="User settings not found. Please configure your account."
+            )
+
+        # Check if broker mode
+        if settings.trade_mode != TradeMode.BROKER:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Broker history is only available in broker mode. "
+                    f"Current mode: {settings.trade_mode.value}"
+                ),
+            )
+
+        # Query orders from database
+        from sqlalchemy import and_
+
+        query = db.query(Orders).filter(
+            and_(
+                Orders.user_id == current.id,
+                Orders.trade_mode == TradeMode.BROKER,
+            )
+        )
+
+        # Apply date filters if provided
+        if from_date:
+            try:
+                from datetime import datetime
+
+                from_dt = datetime.fromisoformat(from_date)
+                query = query.filter(Orders.placed_at >= from_dt)
+            except Exception as e:
+                logger.warning(f"Invalid from_date: {e}")
+
+        if to_date:
+            try:
+                from datetime import datetime
+
+                to_dt = datetime.fromisoformat(to_date)
+                query = query.filter(Orders.placed_at <= to_dt)
+            except Exception as e:
+                logger.warning(f"Invalid to_date: {e}")
+
+        # Order by placed_at ascending (oldest first) for FIFO matching
+        orders = query.order_by(Orders.placed_at.asc()).limit(limit).all()
+
+        # Convert orders to transaction format
+        transactions = []
+        for order in orders:
+            side = "buy" if order.side.lower() == "buy" else "sell"
+            # Use order_id if available, otherwise use broker_order_id, otherwise use string representation of db id
+            order_identifier = order.order_id or order.broker_order_id or str(order.id)
+            # Use execution_price if available, fall back to avg_price, then None
+            order_price = order.execution_price or order.avg_price
+            transactions.append(
+                {
+                    "order_id": order_identifier,
+                    "symbol": order.symbol,
+                    "side": side,
+                    "quantity": float(order.quantity),
+                    "price": float(order_price) if order_price else None,
+                    "avg_price": float(order_price) if order_price else None,
+                    "execution_price": float(order_price) if order_price else None,
+                    "placed_at": order.placed_at.isoformat() if order.placed_at else None,
+                    "status": order.status.value.lower() if order.status else "unknown",
+                }
+            )
+
+        # Create PaperTradingTransaction list for response
+        transaction_list = [
+            PaperTradingTransaction(
+                order_id=t.get("order_id", ""),
+                symbol=t.get("symbol", ""),
+                transaction_type=t.get("side", "").upper(),  # BUY or SELL
+                quantity=int(t.get("quantity", 0)),
+                price=t.get("price", 0.0) or 0.0,
+                order_value=(float(t.get("quantity", 0)) * (t.get("price") or 0.0)),  # qty * price
+                charges=0.0,  # Placeholder; can be enhanced with broker charges
+                timestamp=t.get("placed_at", ""),
+            )
+            for t in transactions
+        ]
+
+        # Get closed positions: either from DB or via FIFO matching
+        closed_positions_list = []
+        if raw:
+            # Raw mode: only return transactions, no matching
+            closed_positions_list = []
+        else:
+            # Apply FIFO matching to derive closed positions
+            fifo_closed = _fifo_match_orders(transactions)
+            for cp in fifo_closed:
+                try:
+                    from datetime import datetime
+
+                    # Calculate holding days
+                    holding_days = 0
+                    if cp.get("opened_at") and cp.get("closed_at"):
+                        try:
+                            opened = datetime.fromisoformat(
+                                cp.get("opened_at", "1970-01-01T00:00:00")
+                            )
+                            closed = datetime.fromisoformat(
+                                cp.get("closed_at", "1970-01-01T00:00:00")
+                            )
+                            holding_days = (closed - opened).days
+                        except Exception:
+                            holding_days = 0
+
+                    closed_positions_list.append(
+                        ClosedPosition(
+                            symbol=cp.get("symbol", ""),
+                            quantity=int(cp.get("quantity", 0)),
+                            entry_price=(
+                                float(cp.get("avg_price", 0.0)) if cp.get("avg_price") else 0.0
+                            ),
+                            exit_price=(
+                                float(cp.get("exit_price", 0.0)) if cp.get("exit_price") else 0.0
+                            ),
+                            buy_date=cp.get("opened_at", ""),
+                            sell_date=cp.get("closed_at", ""),
+                            holding_days=holding_days,
+                            realized_pnl=(
+                                float(cp.get("realized_pnl", 0.0))
+                                if cp.get("realized_pnl")
+                                else 0.0
+                            ),
+                            pnl_percentage=(
+                                float(cp.get("realized_pnl_pct", 0.0))
+                                if cp.get("realized_pnl_pct") is not None
+                                else 0.0
+                            ),
+                            charges=0.0,  # Placeholder; can be enhanced with actual broker charges
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to convert closed position: {e}")
+                    continue
+
+        # Calculate statistics
+        total_trades = len(closed_positions_list)
+        profitable_trades = sum(1 for cp in closed_positions_list if cp.realized_pnl > 0)
+        losing_trades = sum(1 for cp in closed_positions_list if cp.realized_pnl < 0)
+        breakeven_trades = sum(1 for cp in closed_positions_list if cp.realized_pnl == 0)
+        win_rate = (profitable_trades / total_trades * 100) if total_trades > 0 else 0.0
+        total_profit = sum(cp.realized_pnl for cp in closed_positions_list if cp.realized_pnl > 0)
+        total_loss = sum(cp.realized_pnl for cp in closed_positions_list if cp.realized_pnl < 0)
+        net_pnl = total_profit + total_loss
+        avg_profit_per_trade = (total_profit / profitable_trades) if profitable_trades > 0 else 0.0
+        avg_loss_per_trade = (total_loss / losing_trades) if losing_trades > 0 else 0.0
+
+        statistics = {
+            "total_trades": total_trades,
+            "profitable_trades": profitable_trades,
+            "losing_trades": losing_trades,
+            "breakeven_trades": breakeven_trades,
+            "win_rate": float(win_rate),
+            "total_profit": float(total_profit),
+            "total_loss": float(total_loss),
+            "net_pnl": float(net_pnl),
+            "avg_profit_per_trade": float(avg_profit_per_trade),
+            "avg_loss_per_trade": float(avg_loss_per_trade),
+        }
+
+        return TradeHistory(
+            transactions=transaction_list,
+            closed_positions=closed_positions_list,
+            statistics=statistics,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching broker trading history for user {current.id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch broker trading history: {str(e)}"
         ) from e

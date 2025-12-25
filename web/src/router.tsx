@@ -9,6 +9,7 @@ import { PaperTradingPage } from './routes/dashboard/PaperTradingPage';
 import { PaperTradingHistoryPage } from './routes/dashboard/PaperTradingHistoryPage';
 import { BrokerPortfolioPage } from './routes/dashboard/BrokerPortfolioPage';
 import { BrokerOrdersPage } from './routes/dashboard/BrokerOrdersPage';
+import { BrokerTradingHistoryPage } from './routes/dashboard/BrokerTradingHistoryPage';
 import { PnlPage } from './routes/dashboard/PnlPage';
 import { TargetsPage } from './routes/dashboard/TargetsPage';
 import { ActivityPage } from './routes/dashboard/ActivityPage';
@@ -43,6 +44,7 @@ export function createAppRouter() {
 				{ path: 'paper-trading-history', element: <PaperTradingHistoryPage /> },
 				{ path: 'broker-portfolio', element: <BrokerPortfolioPage /> },
 				{ path: 'broker-orders', element: <BrokerOrdersPage /> },
+				{ path: 'broker-history', element: <BrokerTradingHistoryPage /> },
 				{ path: 'pnl', element: <PnlPage /> },
 				{ path: 'targets', element: <TargetsPage /> },
 				{ path: 'activity', element: <ActivityPage /> },

@@ -1,20 +1,20 @@
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getDailyPnl, getPnlSummary } from '@/api/pnl';
+import { getDailyPnl, getPnlSummary, type DailyPnl, type PnlSummary } from '@/api/pnl';
 
 function formatMoney(amount: number): string {
 	return `Rs ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function PnlPage() {
-	const dailyQ = useQuery({
+	const dailyQ = useQuery<DailyPnl[]>({
 		queryKey: ['pnl', 'daily'],
-		queryFn: getDailyPnl,
+		queryFn: () => getDailyPnl(),
 		refetchInterval: 30000, // Refresh every 30 seconds (less frequent than paper trading)
 	});
-	const summaryQ = useQuery({
+	const summaryQ = useQuery<PnlSummary>({
 		queryKey: ['pnl', 'summary'],
-		queryFn: getPnlSummary,
+		queryFn: () => getPnlSummary(),
 		refetchInterval: 30000, // Refresh every 30 seconds
 	});
 

@@ -11,12 +11,18 @@ export interface PnlSummary {
 	daysRed: number;
 }
 
-export async function getDailyPnl(): Promise<DailyPnl[]> {
-	const { data } = await api.get<DailyPnl[]>('/user/pnl/daily');
+export async function getDailyPnl(start?: string, end?: string): Promise<DailyPnl[]> {
+	const params: Record<string, string> = {};
+	if (start) params.start = start;
+	if (end) params.end = end;
+	const { data } = await api.get<DailyPnl[]>('/user/pnl/daily', { params });
 	return data;
 }
 
-export async function getPnlSummary(): Promise<PnlSummary> {
-	const { data } = await api.get<PnlSummary>('/user/pnl/summary');
+export async function getPnlSummary(start?: string, end?: string): Promise<PnlSummary> {
+	const params: Record<string, string> = {};
+	if (start) params.start = start;
+	if (end) params.end = end;
+	const { data } = await api.get<PnlSummary>('/user/pnl/summary', { params });
 	return data;
 }

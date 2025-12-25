@@ -62,7 +62,7 @@ export function DashboardHome() {
 
 	const pnlQ = useQuery<PnlSummary>({
 		queryKey: ['pnl-summary'],
-		queryFn: getPnlSummary,
+		queryFn: () => getPnlSummary(),
 		refetchInterval: 30000,
 	});
 
