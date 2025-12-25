@@ -11,6 +11,7 @@ import { useSettings } from '../../hooks/useSettings';
 import { HolidayBanner } from '../../components/HolidayBanner';
 import { PnlTrendChart } from '../../components/charts/PnlTrendChart';
 import { PortfolioValueChart } from '../../components/charts/PortfolioValueChart';
+import { MetricsCard } from '../../components/dashboard/MetricsCard';
 
 function formatMoney(amount: number): string {
 	return new Intl.NumberFormat('en-IN', {
@@ -562,6 +563,9 @@ export function DashboardHome() {
 						<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg overflow-hidden">
 							<PortfolioValueChart height={300} />
 						</div>
+
+						{/* Trading Metrics Card */}
+						<MetricsCard periodDays={30} />
 					</>
 				)}
 
