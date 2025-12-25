@@ -667,7 +667,7 @@ app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
 app.include_router(export.router, prefix="/api/v1/user/export", tags=["export"])
 app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])
 app.include_router(activity.router, prefix="/api/v1/user/activity", tags=["activity"])
-app.include_router(targets.router, prefix="/api/v1/user/targets", tags=["targets"])
+app.include_router(targets.router, prefix="/api/v1/user", tags=["targets"])
 app.include_router(
     paper_trading.router, prefix="/api/v1/user/paper-trading", tags=["paper-trading"]
 )
