@@ -3,6 +3,9 @@ import { api } from './client';
 export interface DailyPnl {
 	date: string; // YYYY-MM-DD
 	pnl: number;
+	realized_pnl?: number;
+	unrealized_pnl?: number;
+	fees?: number;
 }
 
 export interface PnlSummary {
@@ -11,18 +14,46 @@ export interface PnlSummary {
 	daysRed: number;
 }
 
-export async function getDailyPnl(start?: string, end?: string): Promise<DailyPnl[]> {
+function formatDate(date: Date | string): string {
+	if (typeof date === 'string') {
+		return date;
+	}
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, '0');
+	const day = String(date.getDate()).padStart(2, '0');
+	return `${year}-${month}-${day}`;
+}
+
+export async function getDailyPnl(start?: Date | string, end?: Date | string): Promise<DailyPnl[]> {
 	const params: Record<string, string> = {};
-	if (start) params.start = start;
-	if (end) params.end = end;
+	if (start) params.start = formatDate(start);
+	if (end) params.end = formatDate(end);
 	const { data } = await api.get<DailyPnl[]>('/user/pnl/daily', { params });
 	return data;
 }
 
-export async function getPnlSummary(start?: string, end?: string): Promise<PnlSummary> {
+export async function getPnlSummary(start?: Date | string, end?: Date | string): Promise<PnlSummary> {
 	const params: Record<string, string> = {};
-	if (start) params.start = start;
-	if (end) params.end = end;
+	if (start) params.start = formatDate(start);
+	if (end) params.end = formatDate(end);
 	const { data } = await api.get<PnlSummary>('/user/pnl/summary', { params });
+	return data;
+}
+
+export async function triggerPnlCalculation(targetDate?: string, tradeMode?: string): Promise<any> {
+	const params: Record<string, string> = {};
+	if (targetDate) params.target_date = targetDate;
+	if (tradeMode) params.trade_mode = tradeMode;
+	const { data } = await api.post('/user/pnl/calculate', {}, { params });
+	return data;
+}
+
+export async function backfillPnlData(startDate: string, endDate: string, tradeMode?: string): Promise<any> {
+	const params: Record<string, string> = {
+		start_date: startDate,
+		end_date: endDate,
+	};
+	if (tradeMode) params.trade_mode = tradeMode;
+	const { data } = await api.post('/user/pnl/backfill', {}, { params });
 	return data;
 }

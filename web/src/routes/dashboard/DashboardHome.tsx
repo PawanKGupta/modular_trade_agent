@@ -9,6 +9,8 @@ import { listOrders } from '../../api/orders';
 import { getNotificationCount } from '../../api/notifications';
 import { useSettings } from '../../hooks/useSettings';
 import { HolidayBanner } from '../../components/HolidayBanner';
+import { PnlTrendChart } from '../../components/charts/PnlTrendChart';
+import { PortfolioValueChart } from '../../components/charts/PortfolioValueChart';
 
 function formatMoney(amount: number): string {
 	return new Intl.NumberFormat('en-IN', {
@@ -546,6 +548,21 @@ export function DashboardHome() {
 							</div>
 						</div>
 					</div>
+				)}
+
+				{/* Charts Section */}
+				{portfolio && (
+					<>
+						{/* P&L Trend Chart */}
+						<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg overflow-hidden">
+							<PnlTrendChart height={300} />
+						</div>
+
+						{/* Portfolio Value Chart */}
+						<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg overflow-hidden">
+							<PortfolioValueChart height={300} />
+						</div>
+					</>
 				)}
 
 				{/* Quick Actions & Notifications */}

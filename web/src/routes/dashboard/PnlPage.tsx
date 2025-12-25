@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getDailyPnl, getPnlSummary, type DailyPnl, type PnlSummary } from '@/api/pnl';
+import { PnlTrendChart } from '@/components/charts/PnlTrendChart';
 
 function formatMoney(amount: number): string {
 	return `Rs ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -84,6 +85,12 @@ export function PnlPage() {
 					)}
 				</div>
 			</div>
+
+			{/* P&L Trend Chart */}
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
+				<PnlTrendChart height={400} />
+			</div>
+
 			{/* Daily P&L Section */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between px-3 py-2 border-b border-[#1e293b]">
