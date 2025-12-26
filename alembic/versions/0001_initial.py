@@ -1,3 +1,4 @@
+# ruff: noqa
 """initial schema
 
 Revision ID: 0001_initial
@@ -6,6 +7,8 @@ Create Date: 2025-11-16
 """
 
 import sqlalchemy as sa
+from sqlalchemy import inspect
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -16,13 +19,40 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = inspect(bind)
+
+    # Ensure enum types exist without raising on duplicates; avoid dropping in case tables already reference them.
+    if bind.dialect.name == "postgresql":
+        with op.get_context().autocommit_block():
+            op.execute(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid WHERE t.typname = 'userrole') THEN
+                        CREATE TYPE userrole AS ENUM ('admin', 'user');
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid WHERE t.typname = 'trademode') THEN
+                        CREATE TYPE trademode AS ENUM ('paper', 'broker');
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid WHERE t.typname = 'orderstatus') THEN
+                        CREATE TYPE orderstatus AS ENUM ('amo', 'ongoing', 'sell', 'closed');
+                    END IF;
+                END$$;
+                """
+            )
+
     op.create_table(
         "users",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("email", sa.String(length=255), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=True),
         sa.Column("password_hash", sa.String(length=255), nullable=False),
-        sa.Column("role", sa.Enum("admin", "user", name="userrole"), nullable=False),
+        sa.Column(
+            "role",
+            postgresql.ENUM("admin", "user", name="userrole", create_type=False),
+            nullable=False,
+        ),
         sa.Column("is_active", sa.Boolean(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
@@ -35,7 +65,11 @@ def upgrade() -> None:
         "usersettings",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("trade_mode", sa.Enum("paper", "broker", name="trademode"), nullable=False),
+        sa.Column(
+            "trade_mode",
+            postgresql.ENUM("paper", "broker", name="trademode", create_type=False),
+            nullable=False,
+        ),
         sa.Column("broker", sa.String(length=64), nullable=True),
         sa.Column("broker_status", sa.String(length=64), nullable=True),
         sa.Column("broker_creds_encrypted", sa.LargeBinary(), nullable=True),
@@ -60,7 +94,14 @@ def upgrade() -> None:
         sa.Column("price", sa.Float(), nullable=True),
         sa.Column(
             "status",
-            sa.Enum("amo", "ongoing", "sell", "closed", name="orderstatus"),
+            postgresql.ENUM(
+                "amo",
+                "ongoing",
+                "sell",
+                "closed",
+                name="orderstatus",
+                create_type=False,
+            ),
             nullable=False,
         ),
         sa.Column("avg_price", sa.Float(), nullable=True),

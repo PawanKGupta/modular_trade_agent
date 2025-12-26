@@ -81,16 +81,55 @@ def upgrade() -> None:
         )
 
     # Step 3: Migrate status values
-    # Note: For SQLite, status is stored as string, so we can update directly
-    # For other databases with enum types, this might need special handling
+    # Note: For PostgreSQL, we need to cast enum to text for comparison
+    # This allows updating enum values that don't exist in the new definition
+
+    # First, add new enum values to orderstatus type if on Postgres
+    if conn.dialect.name == "postgresql":
+        # Check if enum values exist before adding
+        try:
+            # Postgres requires ALTER TYPE ADD VALUE to be outside transactions
+            # Use a separate connection for this
+            with op.get_context().autocommit_block():
+                # Add 'pending' if it doesn't exist
+                result = conn.execute(
+                    sa.text(
+                        """
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_enum e
+                        JOIN pg_type t ON e.enumtypid = t.oid
+                        WHERE t.typname = 'orderstatus' AND e.enumlabel = 'pending'
+                    )
+                """
+                    )
+                )
+                if not result.scalar():
+                    op.execute(sa.text("ALTER TYPE orderstatus ADD VALUE 'pending'"))
+
+                # Add 'failed' if it doesn't exist
+                result = conn.execute(
+                    sa.text(
+                        """
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_enum e
+                        JOIN pg_type t ON e.enumtypid = t.oid
+                        WHERE t.typname = 'orderstatus' AND e.enumlabel = 'failed'
+                    )
+                """
+                    )
+                )
+                if not result.scalar():
+                    op.execute(sa.text("ALTER TYPE orderstatus ADD VALUE 'failed'"))
+        except Exception as e:
+            print(f"Warning: Could not add enum values: {e}")
 
     # AMO → PENDING
     op.execute(
         sa.text(
             """
         UPDATE orders
-        SET status = 'pending'
-        WHERE status = 'amo'
+        SET status = 'pending'::orderstatus
+        WHERE status::text = 'amo'
     """
         )
     )
@@ -100,8 +139,8 @@ def upgrade() -> None:
         sa.text(
             """
         UPDATE orders
-        SET status = 'pending'
-        WHERE status = 'pending_execution'
+        SET status = 'pending'::orderstatus
+        WHERE status::text = 'pending_execution'
     """
         )
     )
@@ -111,8 +150,8 @@ def upgrade() -> None:
         sa.text(
             """
         UPDATE orders
-        SET status = 'failed'
-        WHERE status = 'retry_pending'
+        SET status = 'failed'::orderstatus
+        WHERE status::text = 'retry_pending'
     """
         )
     )
@@ -122,8 +161,8 @@ def upgrade() -> None:
         sa.text(
             """
         UPDATE orders
-        SET status = 'failed'
-        WHERE status = 'rejected'
+        SET status = 'failed'::orderstatus
+        WHERE status::text = 'rejected'
     """
         )
     )
@@ -133,8 +172,8 @@ def upgrade() -> None:
         sa.text(
             """
         UPDATE orders
-        SET status = 'pending'
-        WHERE status = 'sell'
+        SET status = 'pending'::orderstatus
+        WHERE status::text = 'sell'
     """
         )
     )

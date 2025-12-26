@@ -1,3 +1,4 @@
+# ruff: noqa
 """add_trade_mode_to_orders
 
 Revision ID: 80eb0b3dcf5a
@@ -12,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "80eb0b3dcf5a"
-down_revision = "20250117_migrate_positions_to_full_symbols"
+down_revision = "a1b2c3d4e5f8"
 branch_labels = None
 depends_on = None
 

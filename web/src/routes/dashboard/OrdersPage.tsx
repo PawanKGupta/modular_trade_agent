@@ -4,6 +4,8 @@ import { listOrders, retryOrder, dropOrder, type Order, type OrderStatus } from 
 import { exportOrders } from '@/api/export';
 import { ExportButton } from '@/components/ExportButton';
 import { DateRangePicker, type DateRange } from '@/components/DateRangePicker';
+import { useSavedFilters } from '@/hooks/useSavedFilters';
+import { FilterPresetDropdown } from '@/components/FilterPresetDropdown';
 
 const TABS: { key: OrderStatus; label: string }[] = [
 	{ key: 'pending', label: 'Pending' }, // Merged: AMO + PENDING_EXECUTION
@@ -49,6 +51,10 @@ export function OrdersPage() {
 	const [showExportOptions, setShowExportOptions] = useState(false);
 	const [exportDateRange, setExportDateRange] = useState<DateRange>(getDefaultDateRange());
 	const queryClient = useQueryClient();
+
+	// Saved filters hook
+	const { presets, savePreset, deletePreset, loading: presetsLoading } = useSavedFilters('orders');
+
 	const { data, isLoading, isError } = useQuery({
 		queryKey: ['orders', tab],
 		queryFn: () => listOrders({ status: tab }),
@@ -79,6 +85,19 @@ export function OrdersPage() {
 			endDate: exportDateRange.endDate,
 			tradeMode: tradeMode as 'paper' | 'broker' | undefined,
 			status: tab,
+		});
+	};
+
+	// Filter preset handlers
+	const handleLoadPreset = (filters: any) => {
+		if (filters.tab) setTab(filters.tab);
+		if (filters.tradeModeFilter) setTradeModeFilter(filters.tradeModeFilter);
+	};
+
+	const handleSavePreset = async (name: string) => {
+		return await savePreset(name, {
+			tab,
+			tradeModeFilter,
 		});
 	};
 
@@ -126,14 +145,24 @@ export function OrdersPage() {
 
 	return (
 		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
-			<div className="flex items-center justify-between">
+			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
 				<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Orders</h1>
-				<button
-					onClick={() => setShowExportOptions(!showExportOptions)}
-					className="px-3 py-2 sm:py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 min-h-[44px] sm:min-h-0"
-				>
-					Export {showExportOptions ? '▲' : '▼'}
-				</button>
+				<div className="flex items-center gap-2">
+					<FilterPresetDropdown
+						presets={presets}
+						onLoadPreset={handleLoadPreset}
+						onSavePreset={handleSavePreset}
+						onDeletePreset={deletePreset}
+						currentFilters={{ tab, tradeModeFilter }}
+						loading={presetsLoading}
+					/>
+					<button
+						onClick={() => setShowExportOptions(!showExportOptions)}
+						className="px-3 py-2 sm:py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 min-h-[44px] sm:min-h-0"
+					>
+						Export {showExportOptions ? '▲' : '▼'}
+					</button>
+				</div>
 			</div>
 			{showExportOptions && (
 				<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-4">

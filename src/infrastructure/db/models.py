@@ -53,7 +53,11 @@ class Users(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[UserRole] = mapped_column(SAEnum(UserRole), default=UserRole.USER, nullable=False)
+    role: Mapped[UserRole] = mapped_column(
+        SAEnum(UserRole, values_callable=lambda x: [e.value for e in x]),
+        default=UserRole.USER,
+        nullable=False,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -74,7 +78,9 @@ class UserSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, nullable=False)
     trade_mode: Mapped[TradeMode] = mapped_column(
-        SAEnum(TradeMode), default=TradeMode.PAPER, nullable=False
+        SAEnum(TradeMode, values_callable=lambda x: [e.value for e in x]),
+        default=TradeMode.PAPER,
+        nullable=False,
     )
     broker: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 'kotak-neo' or None
     broker_status: Mapped[str | None] = mapped_column(
@@ -156,7 +162,9 @@ class Orders(Base):
     )  # 'initial', 'reentry', 'manual'
     # Phase 0.1: Trade mode (paper vs broker)
     trade_mode: Mapped[TradeMode | None] = mapped_column(
-        SAEnum(TradeMode), nullable=True, index=True
+        SAEnum(TradeMode, values_callable=lambda x: [e.value for e in x]),
+        nullable=True,
+        index=True,
     )  # 'paper' | 'broker' | NULL for legacy orders
 
     __table_args__ = (
@@ -315,7 +323,9 @@ class Targets(Base):
         String(32), default="ema9", nullable=False
     )  # 'ema9', 'manual', etc.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # Active target
-    trade_mode: Mapped[TradeMode] = mapped_column(SAEnum(TradeMode), nullable=False)
+    trade_mode: Mapped[TradeMode] = mapped_column(
+        SAEnum(TradeMode, values_callable=lambda x: [e.value for e in x]), nullable=False
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)

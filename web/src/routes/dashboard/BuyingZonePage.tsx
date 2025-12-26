@@ -5,6 +5,8 @@ import { HolidayBanner } from '@/components/HolidayBanner';
 import { exportSignals } from '@/api/export';
 import { ExportButton } from '@/components/ExportButton';
 import { DateRangePicker, type DateRange as ExportDateRange } from '@/components/DateRangePicker';
+import { useSavedFilters } from '@/hooks/useSavedFilters';
+import { FilterPresetDropdown } from '@/components/FilterPresetDropdown';
 
 /**
  * Calculate the expiry time for a signal based on next trading day market close.
@@ -187,6 +189,9 @@ export function BuyingZonePage() {
 	const [showExportOptions, setShowExportOptions] = useState(false);
 	const [exportDateRange, setExportDateRange] = useState<ExportDateRange>(getDefaultExportDateRange());
 
+	// Saved filters hook
+	const { presets, savePreset, deletePreset, loading: presetsLoading } = useSavedFilters('signals');
+
 	const { data, isLoading, error} = useQuery<BuyingZoneItem[]>({
 		queryKey: ['buying-zone', dateFilter, statusFilter],
 		queryFn: () => getBuyingZone(100, dateFilter, statusFilter),
@@ -261,6 +266,19 @@ export function BuyingZonePage() {
 			startDate: exportDateRange.startDate,
 			endDate: exportDateRange.endDate,
 			verdict: statusFilter === 'all' ? undefined : statusFilter,
+		});
+	};
+
+	// Filter preset handlers
+	const handleLoadPreset = (filters: any) => {
+		if (filters.statusFilter) setStatusFilter(filters.statusFilter);
+		if (filters.dateFilter !== undefined) setDateFilter(filters.dateFilter);
+	};
+
+	const handleSavePreset = async (name: string) => {
+		return await savePreset(name, {
+			statusFilter,
+			dateFilter,
 		});
 	};
 
@@ -347,6 +365,16 @@ export function BuyingZonePage() {
 			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
 				<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Buying Zone</h1>
 				<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4 w-full sm:w-auto">
+					{/* Filter Presets */}
+					<FilterPresetDropdown
+						presets={presets}
+						onLoadPreset={handleLoadPreset}
+						onSavePreset={handleSavePreset}
+						onDeletePreset={deletePreset}
+						currentFilters={{ statusFilter, dateFilter }}
+						loading={presetsLoading}
+					/>
+
 					<button
 						onClick={() => setShowExportOptions(!showExportOptions)}
 						className="px-3 py-2 sm:py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 min-h-[44px] sm:min-h-0"
