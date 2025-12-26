@@ -10,6 +10,14 @@ export interface DailyPnl {
 
 export interface PnlSummary {
 	totalPnl: number;
+	totalRealizedPnl: number;
+	totalUnrealizedPnl: number;
+	tradesGreen: number;
+	tradesRed: number;
+	minTradePnl: number;
+	maxTradePnl: number;
+	avgTradePnl: number;
+	// Backward-compat
 	daysGreen: number;
 	daysRed: number;
 }
@@ -24,18 +32,32 @@ function formatDate(date: Date | string): string {
 	return `${year}-${month}-${day}`;
 }
 
-export async function getDailyPnl(start?: Date | string, end?: Date | string): Promise<DailyPnl[]> {
+export async function getDailyPnl(
+	start?: Date | string,
+	end?: Date | string,
+	tradeMode?: 'paper' | 'broker',
+	includeUnrealized?: boolean,
+): Promise<DailyPnl[]> {
 	const params: Record<string, string> = {};
 	if (start) params.start = formatDate(start);
 	if (end) params.end = formatDate(end);
+	if (tradeMode) params.trade_mode = tradeMode;
+	if (includeUnrealized) params.include_unrealized = 'true';
 	const { data } = await api.get<DailyPnl[]>('/user/pnl/daily', { params });
 	return data;
 }
 
-export async function getPnlSummary(start?: Date | string, end?: Date | string): Promise<PnlSummary> {
+export async function getPnlSummary(
+	start?: Date | string,
+	end?: Date | string,
+	tradeMode?: 'paper' | 'broker',
+	includeUnrealized?: boolean,
+): Promise<PnlSummary> {
 	const params: Record<string, string> = {};
 	if (start) params.start = formatDate(start);
 	if (end) params.end = formatDate(end);
+	if (tradeMode) params.trade_mode = tradeMode;
+	if (includeUnrealized) params.include_unrealized = 'true';
 	const { data } = await api.get<PnlSummary>('/user/pnl/summary', { params });
 	return data;
 }

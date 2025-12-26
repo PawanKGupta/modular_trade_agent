@@ -26,6 +26,7 @@ from ..routers.paper_trading import (
     PaperTradingPortfolio,
     PaperTradingTransaction,
     TradeHistory,
+    _upsert_pnl_from_closed_positions,
 )
 from ..schemas.user import BrokerCredsInfo, BrokerCredsRequest, BrokerTestResponse
 from .broker_history_impl import _fifo_match_orders
@@ -1167,6 +1168,8 @@ def get_broker_trading_history(  # noqa: PLR0915, PLR0912
                     continue
 
         # Calculate statistics
+        _upsert_pnl_from_closed_positions(current.id, closed_positions_list, db)
+
         total_trades = len(closed_positions_list)
         profitable_trades = sum(1 for cp in closed_positions_list if cp.realized_pnl > 0)
         losing_trades = sum(1 for cp in closed_positions_list if cp.realized_pnl < 0)

@@ -4,12 +4,13 @@ Tests for Paper Trading API endpoints - Live Price Fetching
 
 import json
 import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 os.environ["DB_URL"] = "sqlite:///:memory:"
+
+from datetime import UTC
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -221,52 +222,69 @@ def test_trade_history_endpoint(tmp_path, monkeypatch, auth_client):
     user_resp = auth_client.get("/api/v1/auth/me")
     assert user_resp.status_code == 200
     user_id = user_resp.json()["id"]
+    # Seed database-backed orders and closed position
+    from datetime import datetime
 
-    # Create paper trading data files for the correct user
-    storage_path = tmp_path / "paper_trading" / f"user_{user_id}"
-    storage_path.mkdir(parents=True, exist_ok=True)
+    from src.infrastructure.db.session import SessionLocal
+    from src.infrastructure.persistence.orders_repository import OrdersRepository
+    from src.infrastructure.persistence.positions_repository import PositionsRepository
 
-    # Mock transactions (BUY then SELL of INFY)
-    transactions_data = [
-        {
-            "order_id": "buy_001",
-            "symbol": "INFY",
-            "transaction_type": "BUY",
-            "quantity": 100,
-            "price": 1400.0,
-            "order_value": 140000.0,
-            "charges": 200.0,
-            "timestamp": "2024-11-01T09:15:00",
-        },
-        {
-            "order_id": "sell_001",
-            "symbol": "INFY",
-            "transaction_type": "SELL",
-            "quantity": 100,
-            "price": 1500.0,
-            "order_value": 150000.0,
-            "charges": 300.0,
-            "timestamp": "2024-11-10T14:30:00",
-        },
-        {
-            "order_id": "buy_002",
-            "symbol": "TCS",
-            "transaction_type": "BUY",
-            "quantity": 50,
-            "price": 3500.0,
-            "order_value": 175000.0,
-            "charges": 250.0,
-            "timestamp": "2024-11-15T10:00:00",
-        },
-    ]
+    db = SessionLocal()
+    try:
+        orders_repo = OrdersRepository(db)
+        positions_repo = PositionsRepository(db)
 
-    (storage_path / "transactions.json").write_text(json.dumps(transactions_data))
+        # Create BUY INFY
+        buy_order = orders_repo.create_amo(
+            user_id=user_id,
+            symbol="INFY",
+            side="buy",
+            order_type="market",
+            quantity=100,
+            price=1400.0,
+            order_id="buy_001",
+        )
 
-    # Monkey patch storage path
-    original_path = Path
-    monkeypatch.setattr(
-        "server.app.routers.paper_trading.Path", lambda x: original_path(tmp_path / x)
-    )
+        # Create SELL INFY
+        sell_order = orders_repo.create_amo(
+            user_id=user_id,
+            symbol="INFY",
+            side="sell",
+            order_type="market",
+            quantity=100,
+            price=1500.0,
+            order_id="sell_001",
+        )
+
+        # Create BUY TCS
+        orders_repo.create_amo(
+            user_id=user_id,
+            symbol="TCS",
+            side="buy",
+            order_type="market",
+            quantity=50,
+            price=3500.0,
+            order_id="buy_002",
+        )
+
+        # Create and close INFY position with realized PnL = 9500.0
+        positions_repo.upsert(
+            user_id=user_id,
+            symbol="INFY",
+            quantity=100,
+            avg_price=1400.0,
+            opened_at=datetime(2024, 11, 1, 9, 15, 0, tzinfo=UTC),
+        )
+        positions_repo.mark_closed(
+            user_id=user_id,
+            symbol="INFY",
+            closed_at=datetime(2024, 11, 10, 14, 30, 0, tzinfo=UTC),
+            exit_price=1500.0,
+            realized_pnl=9500.0,
+            sell_order_id=sell_order.id,
+        )
+    finally:
+        db.close()
 
     # Call API
     response = auth_client.get("/api/v1/user/paper-trading/history")
@@ -302,12 +320,6 @@ def test_trade_history_endpoint(tmp_path, monkeypatch, auth_client):
 
 def test_trade_history_empty(auth_client, tmp_path, monkeypatch):
     """Test trade history returns empty data when no transactions exist"""
-    # Monkey patch to use tmp path
-    original_path = Path
-    monkeypatch.setattr(
-        "server.app.routers.paper_trading.Path", lambda x: original_path(tmp_path / x)
-    )
-
     response = auth_client.get("/api/v1/user/paper-trading/history")
     assert response.status_code == 200
 

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getDailyPnl, getPnlSummary, type DailyPnl, type PnlSummary } from '@/api/pnl';
 import { PnlTrendChart } from '@/components/charts/PnlTrendChart';
@@ -8,15 +8,18 @@ function formatMoney(amount: number): string {
 }
 
 export function PnlPage() {
+	const [tradeMode, setTradeMode] = useState<'paper' | 'broker' | undefined>(undefined);
+	const [includeUnrealized, setIncludeUnrealized] = useState<boolean>(false);
+
 	const dailyQ = useQuery<DailyPnl[]>({
-		queryKey: ['pnl', 'daily'],
-		queryFn: () => getDailyPnl(),
-		refetchInterval: 30000, // Refresh every 30 seconds (less frequent than paper trading)
+		queryKey: ['pnl', 'daily', tradeMode, includeUnrealized],
+		queryFn: () => getDailyPnl(undefined, undefined, tradeMode, includeUnrealized),
+		refetchInterval: 30000,
 	});
 	const summaryQ = useQuery<PnlSummary>({
-		queryKey: ['pnl', 'summary'],
-		queryFn: () => getPnlSummary(),
-		refetchInterval: 30000, // Refresh every 30 seconds
+		queryKey: ['pnl', 'summary', tradeMode, includeUnrealized],
+		queryFn: () => getPnlSummary(undefined, undefined, tradeMode, includeUnrealized),
+		refetchInterval: 30000,
 	});
 
 	useEffect(() => {
@@ -38,15 +41,37 @@ export function PnlPage() {
 						</span>
 					</div>
 				</div>
-				<button
-					onClick={() => {
-						summaryQ.refetch();
-						dailyQ.refetch();
-					}}
-					className="px-3 py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90"
-				>
-					Refresh
-				</button>
+				<div className="flex items-center gap-2">
+					<select
+						value={tradeMode ?? ''}
+						onChange={(e) => {
+							const v = e.target.value as 'paper' | 'broker' | '';
+							setTradeMode(v === '' ? undefined : v);
+						}}
+						className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)]"
+					>
+						<option value="">All</option>
+						<option value="paper">Paper</option>
+						<option value="broker">Broker</option>
+					</select>
+					<label className="flex items-center gap-1 text-sm text-[var(--text)]">
+						<input
+							type="checkbox"
+							checked={includeUnrealized}
+							onChange={(e) => setIncludeUnrealized(e.target.checked)}
+						/>
+						Include Unrealized
+					</label>
+					<button
+						onClick={() => {
+							summaryQ.refetch();
+							dailyQ.refetch();
+						}}
+						className="px-3 py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90"
+					>
+						Refresh
+					</button>
+				</div>
 			</div>
 
 			{/* Summary Section */}
@@ -70,15 +95,15 @@ export function PnlPage() {
 								</div>
 							</div>
 							<div>
-								<div className="text-sm text-[var(--muted)]">Profitable Days</div>
+								<div className="text-sm text-[var(--muted)]">Profitable Trades</div>
 								<div className="text-2xl font-semibold text-green-400">
-									{summaryQ.data.daysGreen}
+									{summaryQ.data.tradesGreen}
 								</div>
 							</div>
 							<div>
-								<div className="text-sm text-[var(--muted)]">Loss Days</div>
+								<div className="text-sm text-[var(--muted)]">Loss Trades</div>
 								<div className="text-2xl font-semibold text-red-400">
-									{summaryQ.data.daysRed}
+									{summaryQ.data.tradesRed}
 								</div>
 							</div>
 						</div>
@@ -86,9 +111,37 @@ export function PnlPage() {
 				</div>
 			</div>
 
+			{/* Detailed Metrics */}
+			{summaryQ.data && (
+				<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-4">
+					<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+						<div>
+							<div className="text-sm text-[var(--muted)]">Total Realized</div>
+							<div className="text-xl font-semibold text-[var(--text)]">{formatMoney(summaryQ.data.totalRealizedPnl)}</div>
+						</div>
+						<div>
+							<div className="text-sm text-[var(--muted)]">Total Unrealized</div>
+							<div className="text-xl font-semibold text-[var(--text)]">{formatMoney(summaryQ.data.totalUnrealizedPnl)}</div>
+						</div>
+						<div>
+							<div className="text-sm text-[var(--muted)]">Average per Trade</div>
+							<div className="text-xl font-semibold text-[var(--text)]">{formatMoney(summaryQ.data.avgTradePnl)}</div>
+						</div>
+						<div>
+							<div className="text-sm text-[var(--muted)]">Min Trade P&L</div>
+							<div className="text-xl font-semibold text-[var(--text)]">{formatMoney(summaryQ.data.minTradePnl)}</div>
+						</div>
+						<div>
+							<div className="text-sm text-[var(--muted)]">Max Trade P&L</div>
+							<div className="text-xl font-semibold text-[var(--text)]">{formatMoney(summaryQ.data.maxTradePnl)}</div>
+						</div>
+					</div>
+				</div>
+			)}
+
 			{/* P&L Trend Chart */}
-			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
-				<PnlTrendChart height={400} />
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-2 sm:p-4">
+				<PnlTrendChart height={420} tradeMode={tradeMode} includeUnrealized={includeUnrealized} />
 			</div>
 
 			{/* Daily P&L Section */}

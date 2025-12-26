@@ -155,10 +155,18 @@ export function PortfolioValueChart({ height = 360 }: PortfolioValueChartProps) 
 			{isError && <div className="text-sm text-red-400 text-center py-8">Failed to load chart data</div>}
 			{!isLoading && !isError && chartData.length > 0 && (
 				<ResponsiveChart height={height}>
-					<LineChart data={chartData} margin={{ top: 5, right: 20, left: -20, bottom: 5 }}>
+					<LineChart data={chartData} margin={{ top: 10, right: 24, left: 8, bottom: 36 }}>
 						<CartesianGrid {...chartStyles.grid} />
-						<XAxis dataKey="name" {...chartStyles.axis} />
-						<YAxis {...chartStyles.axis} />
+						<XAxis
+							dataKey="name"
+							{...chartStyles.axis}
+							tickMargin={14}
+							minTickGap={10}
+							height={32}
+							interval="preserveStartEnd"
+							tickCount={6}
+						/>
+						<YAxis {...chartStyles.axis} tickMargin={12} />
 						<Tooltip
 							{...chartStyles.tooltip}
 							formatter={(value: number | undefined) => value ? `₹${value.toLocaleString('en-IN')}` : '-'}

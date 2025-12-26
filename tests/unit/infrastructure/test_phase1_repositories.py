@@ -853,20 +853,22 @@ class TestFillsRepository:
         repo = FillsRepository(db_session)
         fill = repo.create(
             order_id=sample_order.id,
-            qty=10.0,
+            user_id=sample_order.user_id,
+            quantity=10.0,
             price=100.0,
         )
 
         assert fill.id is not None
         assert fill.order_id == sample_order.id
-        assert fill.qty == 10.0
+        assert fill.quantity == 10.0
         assert fill.price == 100.0
 
     def test_get_fill(self, db_session, sample_order):
         repo = FillsRepository(db_session)
         created = repo.create(
             order_id=sample_order.id,
-            qty=10.0,
+            user_id=sample_order.user_id,
+            quantity=10.0,
             price=100.0,
         )
         retrieved = repo.get(created.id)
@@ -878,12 +880,14 @@ class TestFillsRepository:
         repo = FillsRepository(db_session)
         repo.create(
             order_id=sample_order.id,
-            qty=5.0,
+            user_id=sample_order.user_id,
+            quantity=5.0,
             price=100.0,
         )
         repo.create(
             order_id=sample_order.id,
-            qty=5.0,
+            user_id=sample_order.user_id,
+            quantity=5.0,
             price=101.0,
         )
 
@@ -893,8 +897,18 @@ class TestFillsRepository:
     def test_bulk_create(self, db_session, sample_order):
         repo = FillsRepository(db_session)
         fills_data = [
-            {"order_id": sample_order.id, "qty": 5.0, "price": 100.0},
-            {"order_id": sample_order.id, "qty": 5.0, "price": 101.0},
+            {
+                "order_id": sample_order.id,
+                "user_id": sample_order.user_id,
+                "quantity": 5.0,
+                "price": 100.0,
+            },
+            {
+                "order_id": sample_order.id,
+                "user_id": sample_order.user_id,
+                "quantity": 5.0,
+                "price": 101.0,
+            },
         ]
         created = repo.bulk_create(fills_data)
 

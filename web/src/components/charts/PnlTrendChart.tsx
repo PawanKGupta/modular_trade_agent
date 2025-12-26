@@ -18,9 +18,11 @@ interface ChartData {
 
 interface PnlTrendChartProps {
 	height?: number;
+	tradeMode?: 'paper' | 'broker';
+	includeUnrealized?: boolean;
 }
 
-export function PnlTrendChart({ height = 360 }: PnlTrendChartProps) {
+export function PnlTrendChart({ height = 360, tradeMode, includeUnrealized }: PnlTrendChartProps) {
 	const [timeRange, setTimeRange] = useState<TimeRange>('30d');
 	const [showUnrealized, setShowUnrealized] = useState(false);
 
@@ -52,9 +54,11 @@ export function PnlTrendChart({ height = 360 }: PnlTrendChartProps) {
 
 	const { startDate, endDate } = getDatesForRange(timeRange);
 
+	const includeUnrealizedEffective = includeUnrealized ?? showUnrealized;
+
 	const { data, isLoading, isError } = useQuery({
-		queryKey: ['pnl', 'daily', timeRange],
-		queryFn: () => getDailyPnl(startDate, endDate),
+		queryKey: ['pnl', 'daily', timeRange, tradeMode, includeUnrealizedEffective],
+		queryFn: () => getDailyPnl(startDate, endDate, tradeMode, includeUnrealizedEffective),
 	});
 
 	const chartData = useMemo(() => {
@@ -114,7 +118,7 @@ export function PnlTrendChart({ height = 360 }: PnlTrendChartProps) {
 				<label className="flex items-center gap-2 text-xs text-[var(--muted)] cursor-pointer">
 					<input
 						type="checkbox"
-						checked={showUnrealized}
+						checked={includeUnrealizedEffective}
 						onChange={(e) => setShowUnrealized(e.target.checked)}
 						className="w-4 h-4"
 					/>
@@ -149,10 +153,18 @@ export function PnlTrendChart({ height = 360 }: PnlTrendChartProps) {
 			{isError && <div className="text-sm text-red-400 text-center py-8">Failed to load chart data</div>}
 			{!isLoading && !isError && chartData.length > 0 && (
 				<ResponsiveChart height={height}>
-					<LineChart data={chartData} margin={{ top: 5, right: 20, left: -20, bottom: 5 }}>
+					<LineChart data={chartData} margin={{ top: 10, right: 24, left: 8, bottom: 36 }}>
 						<CartesianGrid {...chartStyles.grid} />
-						<XAxis dataKey="name" {...chartStyles.axis} />
-						<YAxis {...chartStyles.axis} />
+						<XAxis
+							dataKey="name"
+							{...chartStyles.axis}
+							tickMargin={14}
+							minTickGap={10}
+							height={32}
+							interval="preserveStartEnd"
+							tickCount={6}
+						/>
+						<YAxis {...chartStyles.axis} tickMargin={12} />
 						<Tooltip
 							{...chartStyles.tooltip}
 							formatter={(value: number | undefined) => value ? `₹${value.toLocaleString('en-IN')}` : '-'}

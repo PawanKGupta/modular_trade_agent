@@ -483,9 +483,11 @@ class OrdersRepository:
         """Mark an order as rejected by broker
 
         Note: REJECTED status is now mapped to FAILED with reason field.
+        Stores detailed rejection reason in rejection_reason field for analysis.
         """
         order.status = OrderStatus.FAILED  # Changed from REJECTED
         order.reason = f"Broker rejected: {rejection_reason}"  # Use unified reason field
+        order.rejection_reason = rejection_reason  # Store detailed reason (Phase 1)
         order.last_status_check = ist_now()
         # Set first_failed_at if not already set (for retry logic)
         if not order.first_failed_at:
@@ -515,23 +517,74 @@ class OrdersRepository:
         order: Orders,
         execution_price: float,
         execution_qty: float | None = None,
+        charges: float = 0.0,
+        broker_fill_id: str | None = None,
         auto_commit: bool = True,
+        create_fill_record: bool = True,
     ) -> Orders:
         """Mark an order as executed with execution details
 
+        Supports partial fills: each call creates a Fill record, then aggregates
+        all fills to update order.execution_price and order.execution_qty.
+
         Args:
             order: Order to mark as executed
-            execution_price: Price at which order executed
-            execution_qty: Quantity executed (defaults to order quantity)
+            execution_price: Price at which this fill executed
+            execution_qty: Quantity executed in this fill (defaults to order quantity)
+            charges: Brokerage + taxes for this fill
+            broker_fill_id: Broker's unique fill ID for deduplication
             auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+            create_fill_record: If True, create Fill record (default); set False for legacy single-fill behavior
         """
+        fill_qty = execution_qty or order.quantity
+
+        # Create Fill record for this execution
+        if create_fill_record:
+            try:
+                from src.infrastructure.persistence.fills_repository import FillsRepository
+
+                fills_repo = FillsRepository(self.db)
+
+                # Check for duplicate fill by broker_fill_id
+                if broker_fill_id and fills_repo.get_by_broker_fill_id(broker_fill_id):
+                    logger.info(f"Duplicate fill {broker_fill_id} for order {order.id}, skipping")
+                    return order
+
+                # Create fill record
+                fills_repo.create(
+                    order_id=order.id,
+                    user_id=order.user_id,
+                    quantity=fill_qty,
+                    price=execution_price,
+                    charges=charges,
+                    broker_fill_id=broker_fill_id,
+                    auto_commit=False,  # Will commit with order update
+                )
+
+                # Aggregate all fills to get total execution stats
+                fill_summary = fills_repo.get_fill_summary(order.id)
+                order.execution_qty = fill_summary["total_qty"]
+                order.execution_price = fill_summary["avg_price"]  # Weighted average
+
+            except Exception as e:
+                # Fall back to legacy behavior if fills table doesn't exist or other error
+                logger.debug(
+                    f"Fill record creation failed for order {order.id}, using legacy behavior: {e}"
+                )
+                order.execution_price = execution_price
+                order.execution_qty = fill_qty
+        else:
+            # Legacy behavior: single fill, no Fill record
+            order.execution_price = execution_price
+            order.execution_qty = fill_qty
+
+        # Update order status and timestamps
         order.status = OrderStatus.ONGOING
-        order.execution_price = execution_price
-        order.execution_qty = execution_qty or order.quantity
         order.execution_time = ist_now()
         order.filled_at = ist_now()
         order.last_status_check = ist_now()
-        order.reason = f"Order executed at Rs {execution_price:.2f}"  # Set reason
+        order.reason = f"Order executed at Rs {order.execution_price:.2f}"
+
         return self.update(order, auto_commit=auto_commit)
 
     def update_status_check(self, order: Orders) -> Orders:

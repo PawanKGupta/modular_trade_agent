@@ -22,7 +22,7 @@ export function ChartContainer({
 }: ChartContainerProps) {
 	return (
 		<div
-			className={`bg-[var(--panel)] border border-[#1e293b] rounded-lg p-4 sm:p-6 ${className}`}
+			className={`bg-[var(--panel)] border border-[#1e293b] rounded-lg p-4 sm:p-6 overflow-hidden ${className}`}
 			style={{ minHeight: typeof height === 'number' ? `${height}px` : height }}
 		>
 			{(title || description) && (
@@ -37,10 +37,9 @@ export function ChartContainer({
 					)}
 				</div>
 			)}
-			<div className="w-full" style={{ height: typeof height === 'number' ? `${height}px` : height }}>
+			<div className="w-full overflow-hidden" style={{ height: typeof height === 'number' ? `${height}px` : height }}>
 				{children}
 			</div>
 		</div>
 	);
 }
-
