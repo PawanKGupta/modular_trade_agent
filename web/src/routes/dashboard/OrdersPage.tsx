@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listOrders, retryOrder, dropOrder, type Order, type OrderStatus } from '@/api/orders';
+import { exportOrders } from '@/api/export';
+import { ExportButton } from '@/components/ExportButton';
+import { DateRangePicker, type DateRange } from '@/components/DateRangePicker';
 
 const TABS: { key: OrderStatus; label: string }[] = [
 	{ key: 'pending', label: 'Pending' }, // Merged: AMO + PENDING_EXECUTION
@@ -29,9 +32,22 @@ const formatDate = (dateStr: string | null | undefined): string => {
 	}
 };
 
+function getDefaultDateRange(): DateRange {
+	const endDate = new Date();
+	const startDate = new Date();
+	startDate.setDate(startDate.getDate() - 30); // Last 30 days
+
+	return {
+		startDate: startDate.toISOString().split('T')[0],
+		endDate: endDate.toISOString().split('T')[0],
+	};
+}
+
 export function OrdersPage() {
 	const [tab, setTab] = useState<OrderStatus>('pending');
 	const [tradeModeFilter, setTradeModeFilter] = useState<'all' | 'paper' | 'broker'>('all');
+	const [showExportOptions, setShowExportOptions] = useState(false);
+	const [exportDateRange, setExportDateRange] = useState<DateRange>(getDefaultDateRange());
 	const queryClient = useQueryClient();
 	const { data, isLoading, isError } = useQuery({
 		queryKey: ['orders', tab],
@@ -55,6 +71,16 @@ export function OrdersPage() {
 	useEffect(() => {
 		document.title = 'Orders';
 	}, []);
+
+	const handleExport = async () => {
+		const tradeMode = tradeModeFilter === 'all' ? undefined : tradeModeFilter === 'paper' ? 'paper' : 'broker';
+		await exportOrders({
+			startDate: exportDateRange.startDate,
+			endDate: exportDateRange.endDate,
+			tradeMode: tradeMode as 'paper' | 'broker' | undefined,
+			status: tab,
+		});
+	};
 
 	const orders: Order[] = useMemo(() => {
 		const allOrders = data ?? [];
@@ -100,7 +126,27 @@ export function OrdersPage() {
 
 	return (
 		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
-			<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Orders</h1>
+			<div className="flex items-center justify-between">
+				<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Orders</h1>
+				<button
+					onClick={() => setShowExportOptions(!showExportOptions)}
+					className="px-3 py-2 sm:py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 min-h-[44px] sm:min-h-0"
+				>
+					Export {showExportOptions ? '▲' : '▼'}
+				</button>
+			</div>
+			{showExportOptions && (
+				<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-4">
+					<h3 className="text-sm font-medium text-[var(--text)] mb-3">Export Orders</h3>
+					<div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+						<DateRangePicker value={exportDateRange} onChange={setExportDateRange} />
+						<ExportButton onExport={handleExport} label="Download CSV" />
+					</div>
+					<p className="text-xs text-[var(--muted)] mt-2">
+						Export will include orders with status "{tab}" and trade mode "{tradeModeFilter}" for the selected date range.
+					</p>
+				</div>
+			)}
 			<div className="flex flex-wrap gap-2">
 				{TABS.map((t) => (
 					<button

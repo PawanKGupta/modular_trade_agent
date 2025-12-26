@@ -436,6 +436,7 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.unit)
 
 
+@pytest.hookimpl(optionalhook=True)
 def pytest_configure_node(node):
     """
     Called when a worker node is being set up for parallel execution.

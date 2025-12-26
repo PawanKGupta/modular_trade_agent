@@ -1,6 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getPaperTradingHistory } from '@/api/paper-trading';
+import { exportTradeHistory } from '@/api/export';
+import { ExportButton } from '@/components/ExportButton';
+import { DateRangePicker, type DateRange } from '@/components/DateRangePicker';
 import type { TradeHistory } from '@/api/paper-trading';
 
 function formatMoney(amount: number): string {
@@ -25,7 +28,21 @@ function formatDate(dateStr: string): string {
 	}
 }
 
+function getDefaultDateRange(): DateRange {
+	const endDate = new Date();
+	const startDate = new Date();
+	startDate.setDate(startDate.getDate() - 90); // Last 90 days
+
+	return {
+		startDate: startDate.toISOString().split('T')[0],
+		endDate: endDate.toISOString().split('T')[0],
+	};
+}
+
 export function PaperTradingHistoryPage() {
+	const [showExportOptions, setShowExportOptions] = useState(false);
+	const [exportDateRange, setExportDateRange] = useState<DateRange>(getDefaultDateRange());
+
 	const { data, isLoading, error, refetch, dataUpdatedAt } = useQuery<TradeHistory>({
 		queryKey: ['paper-trading-history'],
 		queryFn: getPaperTradingHistory,
@@ -38,6 +55,14 @@ export function PaperTradingHistoryPage() {
 
 	const lastUpdate = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : 'Never';
 
+	const handleExport = async () => {
+		await exportTradeHistory({
+			startDate: exportDateRange.startDate,
+			endDate: exportDateRange.endDate,
+			tradeMode: 'paper',
+		});
+	};
+
 	if (error) {
 		return (
 			<div className="p-2 sm:p-4">
@@ -49,20 +74,44 @@ export function PaperTradingHistoryPage() {
 	return (
 		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
 			{/* Header */}
-			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
-				<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
-					<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Trade History</h1>
-					<div className="flex items-center gap-2">
-						<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-						<span className="text-xs text-[var(--muted)]">Live • Last update: {lastUpdate}</span>
+			<div className="flex flex-col gap-3">
+				<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+					<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
+						<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Trade History</h1>
+						<div className="flex items-center gap-2">
+							<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+							<span className="text-xs text-[var(--muted)]">Live • Last update: {lastUpdate}</span>
+						</div>
+					</div>
+					<div className="flex items-center gap-2 w-full sm:w-auto">
+						<button
+							onClick={() => setShowExportOptions(!showExportOptions)}
+							className="px-3 py-2 sm:py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 flex-1 sm:flex-initial min-h-[44px] sm:min-h-0"
+						>
+							Export {showExportOptions ? '▲' : '▼'}
+						</button>
+						<button
+							onClick={() => refetch()}
+							className="px-3 py-2 sm:py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90 flex-1 sm:flex-initial min-h-[44px] sm:min-h-0"
+						>
+							Refresh
+						</button>
 					</div>
 				</div>
-				<button
-					onClick={() => refetch()}
-					className="px-3 py-2 sm:py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90 min-h-[44px] sm:min-h-0 w-full sm:w-auto"
-				>
-					Refresh
-				</button>
+
+				{/* Export Options Panel */}
+				{showExportOptions && (
+					<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-4">
+						<h3 className="text-sm font-medium text-[var(--text)] mb-3">Export Trade History</h3>
+						<div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+							<DateRangePicker value={exportDateRange} onChange={setExportDateRange} />
+							<ExportButton onExport={handleExport} label="Download CSV" />
+						</div>
+						<p className="text-xs text-[var(--muted)] mt-2">
+							Export closed trades with entry/exit prices, P&L, holding periods, and fees.
+						</p>
+					</div>
+				)}
 			</div>
 
 			{isLoading && (

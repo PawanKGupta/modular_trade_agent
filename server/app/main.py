@@ -240,6 +240,7 @@ from .routers import (
     paper_trading,
     pnl,
     portfolio,
+    reports,
     service,
     signals,
     targets,
@@ -667,6 +668,7 @@ app.include_router(service.router, prefix="/api/v1/user", tags=["service"])
 app.include_router(orders.router, prefix="/api/v1/user/orders", tags=["orders"])
 app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
 app.include_router(export.router, prefix="/api/v1/user/export", tags=["export"])
+app.include_router(reports.router, prefix="/api/v1/user/reports", tags=["reports"])
 app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])
 app.include_router(activity.router, prefix="/api/v1/user/activity", tags=["activity"])
 app.include_router(targets.router, prefix="/api/v1/user", tags=["targets"])
