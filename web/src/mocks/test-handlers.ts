@@ -260,6 +260,65 @@ http.post(API('/auth/refresh'), async () => {
 		}
 		return HttpResponse.json({ has_creds: true, api_key_masked: '****1234', api_secret_masked: '****5678' });
 	}),
+	// portfolio
+	http.get(API('/user/portfolio'), async () => {
+		return HttpResponse.json({
+			account: {
+				initial_capital: 1000000,
+				available_cash: 500000,
+				total_pnl: 50000,
+				realized_pnl: 30000,
+				unrealized_pnl: 20000,
+				portfolio_value: 550000,
+				total_value: 1050000,
+				return_percentage: 5.0,
+			},
+			holdings: [
+				{
+					symbol: 'RELIANCE.NS',
+					quantity: 10,
+					average_price: 2500,
+					current_price: 2600,
+					cost_basis: 25000,
+					market_value: 26000,
+					pnl: 1000,
+					pnl_percentage: 4.0,
+					target_price: 2700,
+					distance_to_target: 3.7,
+				},
+				{
+					symbol: 'TCS.NS',
+					quantity: 5,
+					average_price: 3500,
+					current_price: 3400,
+					cost_basis: 17500,
+					market_value: 17000,
+					pnl: -500,
+					pnl_percentage: -2.86,
+					target_price: 3600,
+					distance_to_target: 5.6,
+				},
+			],
+			recent_orders: [],
+			order_statistics: {
+				total_orders: 10,
+				buy_orders: 6,
+				sell_orders: 4,
+				completed_orders: 8,
+				pending_orders: 2,
+				cancelled_orders: 0,
+				rejected_orders: 0,
+				success_rate: 80,
+				reentry_orders: 2,
+			},
+		});
+	}),
+	http.options(API('/user/portfolio'), async () => HttpResponse.json({ ok: true })),
+	// portfolio snapshot
+	http.post(API('/user/portfolio/snapshot'), async () => {
+		return HttpResponse.json({ message: 'Portfolio snapshot created successfully' });
+	}),
+	http.options(API('/user/portfolio/snapshot'), async () => HttpResponse.json({ ok: true })),
 	// orders
 	http.get(API('/user/orders'), async ({ request }) => {
 		const url = new URL(request.url);
@@ -324,6 +383,45 @@ http.post(API('/auth/refresh'), async () => {
 			service_running: false,
 		});
 	}),
+	// service metrics
+	http.get(API('/user/service/metrics/position-creation'), async () => {
+		return HttpResponse.json({
+			success: 10,
+			failed_missing_repos: 0,
+			failed_missing_symbol: 0,
+			failed_exception: 0,
+			success_rate: 100.0,
+			total_attempts: 10,
+		});
+	}),
+	http.options(API('/user/service/metrics/position-creation'), async () => HttpResponse.json({ ok: true })),
+	// positions without sell orders
+	http.get(API('/user/service/positions-without-sell'), async () => {
+		return HttpResponse.json({
+			positions: [],
+			count: 0,
+		});
+	}),
+	http.options(API('/user/service/positions-without-sell'), async () => HttpResponse.json({ ok: true })),
+	// individual service status
+	http.get(API('/user/service/individual/status'), async () => {
+		return HttpResponse.json({
+			analysis_service: { running: true, last_check: new Date().toISOString() },
+			scheduler_service: { running: true, last_check: new Date().toISOString() },
+			broker_service: { running: false, last_check: new Date().toISOString() },
+		});
+	}),
+	http.options(API('/user/service/individual/status'), async () => HttpResponse.json({ ok: true })),
+	// trading day info
+	http.get(API('/trading-day'), async () => {
+		return HttpResponse.json({
+			is_trading_day: true,
+			is_holiday: false,
+			holiday_name: null,
+			is_weekend: false,
+		});
+	}),
+	http.options(API('/trading-day'), async () => HttpResponse.json({ ok: true })),
 	http.get(API('/user/service/tasks'), async ({ request }) => {
 		const url = new URL(request.url);
 		const taskName = url.searchParams.get('task_name');
