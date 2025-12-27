@@ -250,7 +250,7 @@ class PositionsRepository:
 
         # Calculate realized P&L if exit_price is provided but realized_pnl is not
         if exit_price is not None and realized_pnl is None:
-            realized_pnl = (exit_price - pos.avg_price) * original_quantity
+            realized_pnl = (float(exit_price) - pos.avg_price) * original_quantity
             pos.realized_pnl = realized_pnl
         elif realized_pnl is not None:
             pos.realized_pnl = realized_pnl

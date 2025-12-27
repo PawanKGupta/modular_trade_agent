@@ -5,9 +5,8 @@ Calculates portfolio metrics and creates snapshots for historical tracking.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import PortfolioSnapshot, TradeMode
@@ -57,10 +56,11 @@ class PortfolioCalculationService:
                 - total_return: Total return percentage
                 - daily_return: Daily return percentage
         """
-        # Get open positions (as of snapshot_date)
+        # Get positions and filter open (as of snapshot_date)
         # Note: For historical snapshots, we need positions that were open on that date
         # For now, we'll use current positions (can be enhanced later for true historical snapshots)
-        open_positions = self.positions_repo.list(user_id, include_closed=False)
+        all_positions = self.positions_repo.list(user_id)
+        open_positions = [p for p in all_positions if p.closed_at is None]
 
         # Filter by trade_mode if provided (requires trade_mode in positions - future enhancement)
         # For now, we'll calculate based on all positions
@@ -85,8 +85,7 @@ class PortfolioCalculationService:
                 open_positions_count += 1
 
         # Get closed positions count
-        closed_positions = self.positions_repo.list(user_id, include_closed=True)
-        closed_positions_count = sum(1 for p in closed_positions if p.closed_at is not None)
+        closed_positions_count = sum(1 for p in all_positions if p.closed_at is not None)
 
         # Get realized P&L from PnlDaily table
         pnl_data = self.pnl_repo.range(user_id, snapshot_date, snapshot_date)
@@ -172,4 +171,3 @@ class PortfolioCalculationService:
         )
 
         return snapshot
-
