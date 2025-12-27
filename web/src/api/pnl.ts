@@ -62,7 +62,7 @@ export async function getPnlSummary(
 	return data;
 }
 
-export async function triggerPnlCalculation(targetDate?: string, tradeMode?: string): Promise<any> {
+export async function triggerPnlCalculation(targetDate?: string, tradeMode?: string): Promise<unknown> {
 	const params: Record<string, string> = {};
 	if (targetDate) params.target_date = targetDate;
 	if (tradeMode) params.trade_mode = tradeMode;
@@ -70,7 +70,7 @@ export async function triggerPnlCalculation(targetDate?: string, tradeMode?: str
 	return data;
 }
 
-export async function backfillPnlData(startDate: string, endDate: string, tradeMode?: string): Promise<any> {
+export async function backfillPnlData(startDate: string, endDate: string, tradeMode?: string): Promise<unknown> {
 	const params: Record<string, string> = {
 		start_date: startDate,
 		end_date: endDate,

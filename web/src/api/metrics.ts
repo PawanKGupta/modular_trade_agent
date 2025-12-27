@@ -28,7 +28,7 @@ export async function getDashboardMetrics(
 	periodDays?: number,
 	tradeMode?: string,
 ): Promise<TradeMetrics> {
-	const params: Record<string, any> = {};
+	const params: Record<string, unknown> = {};
 	if (periodDays) params.period_days = periodDays;
 	if (tradeMode) params.trade_mode = tradeMode;
 

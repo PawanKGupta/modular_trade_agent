@@ -1,5 +1,4 @@
 import { ReactNode } from 'react';
-import { chartTheme } from './chartTheme';
 
 interface ChartContainerProps {
 	children: ReactNode;

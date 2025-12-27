@@ -9,13 +9,6 @@ import { subDays, format } from 'date-fns';
 
 type TimeRange = '7d' | '30d' | '90d' | '1y' | 'all';
 
-interface ChartData {
-	name: string;
-	value: number;
-	initialCapital: number;
-	returnPct: number;
-}
-
 interface PortfolioValueChartProps {
 	height?: number;
 }

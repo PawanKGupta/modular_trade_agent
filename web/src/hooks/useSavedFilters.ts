@@ -1,9 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
 
-interface FilterPreset {
-  [key: string]: any;
-}
+type FilterPreset = Record<string, unknown>;
 
 interface FilterPresetsResponse {
   presets: Record<string, FilterPreset>;
@@ -27,9 +25,10 @@ export function useSavedFilters(page: string) {
         `/user/filter-presets/${page}`
       );
       setPresets(response.data.presets || {});
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error loading filter presets:', err);
-      setError(err?.response?.data?.detail || 'Failed to load presets');
+      const detail = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+      setError(detail || 'Failed to load presets');
       setPresets({});
     } finally {
       setLoading(false);
@@ -52,9 +51,10 @@ export function useSavedFilters(page: string) {
         );
         setPresets(response.data.presets || {});
         return true;
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Error saving filter preset:', err);
-        setError(err?.response?.data?.detail || 'Failed to save preset');
+        const detail = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+        setError(detail || 'Failed to save preset');
         return false;
       } finally {
         setLoading(false);
@@ -73,9 +73,10 @@ export function useSavedFilters(page: string) {
         // Reload presets after deletion
         await loadPresets();
         return true;
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Error deleting filter preset:', err);
-        setError(err?.response?.data?.detail || 'Failed to delete preset');
+        const detail = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+        setError(detail || 'Failed to delete preset');
         return false;
       } finally {
         setLoading(false);

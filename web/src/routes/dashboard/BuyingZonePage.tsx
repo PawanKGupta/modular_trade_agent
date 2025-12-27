@@ -270,7 +270,8 @@ export function BuyingZonePage() {
 	};
 
 	// Filter preset handlers
-	const handleLoadPreset = (filters: any) => {
+	type SignalFiltersPreset = { statusFilter?: StatusFilter; dateFilter?: DateFilter | null };
+	const handleLoadPreset = (filters: SignalFiltersPreset) => {
 		if (filters.statusFilter) setStatusFilter(filters.statusFilter);
 		if (filters.dateFilter !== undefined) setDateFilter(filters.dateFilter);
 	};

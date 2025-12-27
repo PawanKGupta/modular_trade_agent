@@ -29,7 +29,7 @@ export async function getPortfolioHistory(
 	end?: Date | string,
 	limit?: number,
 ): Promise<PortfolioSnapshot[]> {
-	const params: Record<string, any> = {};
+	const params: Record<string, unknown> = {};
 	if (start) params.start = formatDate(start);
 	if (end) params.end = formatDate(end);
 	if (limit) params.limit = limit;
@@ -38,7 +38,7 @@ export async function getPortfolioHistory(
 	return data || [];
 }
 
-export async function createPortfolioSnapshot(snapshotDate?: string): Promise<any> {
+export async function createPortfolioSnapshot(snapshotDate?: string): Promise<unknown> {
 	const params: Record<string, string> = {};
 	if (snapshotDate) params.snapshot_date = snapshotDate;
 

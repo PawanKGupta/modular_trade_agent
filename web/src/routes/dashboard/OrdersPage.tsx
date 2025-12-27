@@ -89,7 +89,8 @@ export function OrdersPage() {
 	};
 
 	// Filter preset handlers
-	const handleLoadPreset = (filters: any) => {
+	type OrderFiltersPreset = { tab?: OrderStatus; tradeModeFilter?: 'all' | 'paper' | 'broker' };
+	const handleLoadPreset = (filters: OrderFiltersPreset) => {
 		if (filters.tab) setTab(filters.tab);
 		if (filters.tradeModeFilter) setTradeModeFilter(filters.tradeModeFilter);
 	};

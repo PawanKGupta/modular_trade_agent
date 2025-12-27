@@ -29,7 +29,7 @@ function downloadFile(blob: Blob, filename: string) {
 async function exportCsv(endpoint: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<void> {
   // Filter out undefined values
   const filteredParams = Object.entries(params)
-    .filter(([_, value]) => value !== undefined)
+    .filter(([, value]) => value !== undefined)
     .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
 
   const response = await api.get(`/user/export${endpoint}`, {

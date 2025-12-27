@@ -82,7 +82,6 @@ export function TargetsPage() {
 							</thead>
 							<tbody>
 								{activeTargets.map((t) => {
-									const distanceToTarget = t.distance_to_target || 0;
 									const distancePercent = t.current_price
 										? ((t.target_price - t.current_price) / t.current_price) * 100
 										: 0;
@@ -140,7 +139,6 @@ export function TargetsPage() {
 							</thead>
 							<tbody>
 								{achievedTargets.map((t) => {
-									const profit = (t.target_price - (t.entry_price || 0)) * (t.quantity || 1);
 									const profitPercent = t.entry_price
 										? ((t.target_price - t.entry_price) / t.entry_price) * 100
 										: 0;

@@ -11,7 +11,7 @@ export interface BrokerTransaction {
   placed_at: string | null;
   filled_at: string | null;
   closed_at: string | null;
-  order_metadata?: Record<string, any>;
+  order_metadata?: Record<string, unknown>;
 }
 
 export interface BrokerClosedPosition {

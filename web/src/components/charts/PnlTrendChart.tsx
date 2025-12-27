@@ -9,13 +9,6 @@ import { subDays, format } from 'date-fns';
 
 type TimeRange = '7d' | '30d' | '90d' | '1y' | 'all';
 
-interface ChartData {
-	name: string;
-	pnl: number;
-	unrealized?: number;
-	realized?: number;
-}
-
 interface PnlTrendChartProps {
 	height?: number;
 	tradeMode?: 'paper' | 'broker';
@@ -64,7 +57,6 @@ export function PnlTrendChart({ height = 360, tradeMode, includeUnrealized }: Pn
 	const chartData = useMemo(() => {
 		if (!data) return [];
 
-		const cumulative: Record<string, number> = {};
 		let runningTotal = 0;
 
 		return data.map((d: DailyPnl) => {

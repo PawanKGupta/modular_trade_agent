@@ -1,5 +1,5 @@
 interface TaskDetailsViewProps {
-	details: Record<string, any>;
+	details: Record<string, unknown>;
 }
 
 export function TaskDetailsView({ details }: TaskDetailsViewProps) {
@@ -20,7 +20,7 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 
 	// Automatically extract task-specific metrics (counts, placed, modified, etc.)
 	const taskMetrics: Record<string, number> = {};
-	const otherFields: Record<string, any> = {};
+	const otherFields: Record<string, unknown> = {};
 
 	Object.entries(remainingFields).forEach(([key, value]) => {
 		// Check if it's a numeric metric field (count, placed, modified, closed, etc.)

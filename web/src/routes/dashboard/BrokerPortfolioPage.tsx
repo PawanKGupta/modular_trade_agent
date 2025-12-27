@@ -5,7 +5,6 @@ import { useSettings } from '@/hooks/useSettings';
 import { formatBrokerError, calculateRetryDelay } from '@/utils/brokerApi';
 import { exportPortfolio } from '@/api/export';
 import { ExportButton } from '@/components/ExportButton';
-import { DateRangePicker, type DateRange } from '@/components/DateRangePicker';
 
 function formatMoney(amount: number): string {
 	return `Rs ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -15,21 +14,11 @@ function formatPercent(value: number): string {
 	return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 }
 
-function getDefaultDateRange(): DateRange {
-	const endDate = new Date();
-	const startDate = new Date();
-	startDate.setDate(startDate.getDate() - 30); // Last 30 days
-
-	return {
-		startDate: startDate.toISOString().split('T')[0],
-		endDate: endDate.toISOString().split('T')[0],
-	};
-}
+// Removed unused DateRangePicker and related state
 
 export function BrokerPortfolioPage() {
 	const { isBrokerMode, isBrokerConnected, broker } = useSettings();
 	const [showExportOptions, setShowExportOptions] = useState(false);
-	const [exportDateRange, setExportDateRange] = useState<DateRange>(getDefaultDateRange());
 
 	const { data, isLoading, error, refetch, dataUpdatedAt, failureCount } = useQuery<PaperTradingPortfolio>({
 		queryKey: ['portfolio', 'broker'],

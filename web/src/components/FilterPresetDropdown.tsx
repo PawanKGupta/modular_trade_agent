@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 
-interface FilterPreset {
-  [key: string]: any;
-}
+type FilterPreset = Record<string, unknown>;
 
 interface FilterPresetDropdownProps {
   presets: Record<string, FilterPreset>;
