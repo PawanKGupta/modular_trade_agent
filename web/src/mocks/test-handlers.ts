@@ -112,6 +112,16 @@ const errorLogs: ErrorLogMock[] = [
 	},
 ];
 
+// Simple in-memory filter preset store keyed by page
+const filterPresets: Record<string, Record<string, Record<string, unknown>>> = {
+	signals: {
+		'Default Signals': {
+			status_filter: 'active',
+			limit: 100,
+		},
+	},
+};
+
 const filterServiceLogs = (logs: ServiceLogMock[], url: URL) => {
 	const level = url.searchParams.get('level');
 	const module = url.searchParams.get('module');
@@ -559,6 +569,86 @@ http.post(API('/auth/refresh'), async () => {
 		const body = await request.json();
 		return HttpResponse.json({ columns: (body as { columns: string[] }).columns });
 	}),
+	// filter presets (signals/orders, etc.)
+	http.get(API('/user/filter-presets/:page'), async ({ params }) => {
+		const page = String(params.page);
+		return HttpResponse.json({ presets: filterPresets[page] ?? {} });
+	}),
+	http.post(API('/user/filter-presets'), async ({ request }) => {
+		const body = (await request.json()) as {
+			page?: string;
+			preset_name?: string;
+			filters?: Record<string, unknown>;
+		};
+		const page = body.page ?? 'signals';
+		const presetName = body.preset_name ?? 'New Preset';
+		const filters = body.filters ?? {};
+		if (!filterPresets[page]) filterPresets[page] = {};
+		filterPresets[page][presetName] = filters;
+		return HttpResponse.json({ presets: filterPresets[page] });
+	}),
+	http.delete(API('/user/filter-presets/:page/:preset_name'), async ({ params }) => {
+		const page = String(params.page);
+		const presetName = String(params.preset_name);
+		if (filterPresets[page]) {
+			delete filterPresets[page][presetName];
+		}
+		return HttpResponse.json({ presets: filterPresets[page] ?? {} });
+	}),
+	http.options(API('/user/filter-presets/:page'), async () => HttpResponse.json({ ok: true })),
+	http.options(API('/user/filter-presets/:page/:preset_name'), async () => HttpResponse.json({ ok: true })),
+	// dashboard metrics
+	http.get(API('/dashboard/metrics'), async () => {
+		return HttpResponse.json({
+			total_trades: 42,
+			profitable_trades: 30,
+			losing_trades: 12,
+			win_rate: 71.4,
+			average_profit_per_trade: 1200.5,
+			best_trade_profit: 5000,
+			worst_trade_loss: -1500,
+			total_realized_pnl: 25000,
+			best_trade_symbol: 'TCS',
+			worst_trade_symbol: 'INFY',
+			days_traded: 20,
+			avg_holding_period_days: 3.2,
+		});
+	}),
+	http.options(API('/dashboard/metrics'), async () => HttpResponse.json({ ok: true })),
+	// portfolio history
+	http.get(API('/user/portfolio/history'), async () => {
+		const today = new Date();
+		const format = (d: Date) => d.toISOString().slice(0, 10);
+		return HttpResponse.json([
+			{
+				date: format(new Date(today.getTime() - 2 * 86_400_000)),
+				total_value: 1020000,
+				invested_value: 700000,
+				available_cash: 320000,
+				unrealized_pnl: 15000,
+				realized_pnl: 8000,
+				open_positions_count: 5,
+				closed_positions_count: 12,
+				total_return: 4.8,
+				daily_return: 0.5,
+				snapshot_type: 'daily',
+			},
+			{
+				date: format(new Date(today.getTime() - 1 * 86_400_000)),
+				total_value: 1035000,
+				invested_value: 705000,
+				available_cash: 330000,
+				unrealized_pnl: 17000,
+				realized_pnl: 9000,
+				open_positions_count: 5,
+				closed_positions_count: 13,
+				total_return: 5.2,
+				daily_return: 0.7,
+				snapshot_type: 'daily',
+			},
+		]);
+	}),
+	http.options(API('/user/portfolio/history'), async () => HttpResponse.json({ ok: true })),
 	// trading config
 	http.get(API('/user/trading-config'), async () => {
 		return HttpResponse.json({
@@ -782,4 +872,29 @@ http.post(API('/auth/refresh'), async () => {
 	http.get(API('/user/notifications/count'), async () => {
 		return HttpResponse.json({ unread_count: 0 });
 	}),
+	// pnl summary
+	http.get(API('/user/pnl/summary'), async () => {
+		return HttpResponse.json({
+			totalPnl: 15000.50,
+			tradesGreen: 25,
+			tradesRed: 8,
+			totalRealizedPnl: 12000,
+			totalUnrealizedPnl: 3000.50,
+			avgTradePnl: 487.5,
+			minTradePnl: -1200.50,
+			maxTradePnl: 2500.75,
+		});
+	}),
+	http.options(API('/user/pnl/summary'), async () => HttpResponse.json({ ok: true })),
+	// daily pnl
+	http.get(API('/user/pnl/daily'), async () => {
+		const today = new Date();
+		const format = (d: Date) => d.toISOString().slice(0, 10);
+		return HttpResponse.json([
+			{ date: format(new Date(today.getTime() - 2 * 86_400_000)), pnl: 2500.75 },
+			{ date: format(new Date(today.getTime() - 1 * 86_400_000)), pnl: -1200.50 },
+			{ date: format(today), pnl: 500.0 },
+		]);
+	}),
+	http.options(API('/user/pnl/daily'), async () => HttpResponse.json({ ok: true })),
 ];
