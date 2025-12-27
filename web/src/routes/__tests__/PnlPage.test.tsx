@@ -30,8 +30,27 @@ vi.mock('@/api/pnl', () => ({
 }));
 
 describe('PnlPage', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		vi.clearAllMocks();
+		const pnlApi = await import('@/api/pnl');
+		vi.mocked(pnlApi.getPnlSummary).mockResolvedValue({
+			totalPnl: 15000.5,
+			daysGreen: 12,
+			daysRed: 5,
+			tradesGreen: 12,
+			tradesRed: 5,
+			totalRealizedPnl: 12000,
+			totalUnrealizedPnl: 3000.5,
+			avgTradePnl: 487.5,
+			minTradePnl: -1200.5,
+			maxTradePnl: 2500.75,
+		});
+		vi.mocked(pnlApi.getDailyPnl).mockResolvedValue([
+			{ date: '2025-11-26', pnl: 2500.75 },
+			{ date: '2025-11-25', pnl: -1200.5 },
+			{ date: '2025-11-24', pnl: 3000.0 },
+			{ date: '2025-11-23', pnl: -500.25 },
+		]);
 	});
 
 	it('renders page title with live indicator', async () => {
@@ -111,7 +130,7 @@ describe('PnlPage', () => {
 	it('shows empty state when no daily P&L data', async () => {
 		// Override mock for this test
 		const pnlApi = await import('@/api/pnl');
-		vi.mocked(pnlApi.getDailyPnl).mockResolvedValueOnce([]);
+		vi.mocked(pnlApi.getDailyPnl).mockResolvedValue([]);
 
 		render(withProviders(<PnlPage />));
 
