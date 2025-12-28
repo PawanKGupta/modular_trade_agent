@@ -81,8 +81,8 @@ export function DateRangePicker({ value, onChange, className = '' }: DateRangePi
     <div className={`relative inline-flex flex-col gap-2 ${className}`}>
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-2">
-          <CalendarIcon className="w-4 h-4 text-gray-500" />
-          <label htmlFor="start-date" className="text-sm text-gray-700">
+          <CalendarIcon className="w-4 h-4 text-[var(--muted)]" />
+          <label htmlFor="start-date" className="text-sm text-[var(--text)]">
             From:
           </label>
           <input
@@ -91,12 +91,12 @@ export function DateRangePicker({ value, onChange, className = '' }: DateRangePi
             value={value.startDate}
             onChange={(e) => onChange({ ...value, startDate: e.target.value })}
             max={value.endDate}
-            className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-3 py-1.5 bg-[var(--panel)] border border-[#1e293b] rounded-md text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
           />
         </div>
 
         <div className="flex items-center gap-2">
-          <label htmlFor="end-date" className="text-sm text-gray-700">
+          <label htmlFor="end-date" className="text-sm text-[var(--text)]">
             To:
           </label>
           <input
@@ -106,28 +106,28 @@ export function DateRangePicker({ value, onChange, className = '' }: DateRangePi
             onChange={(e) => onChange({ ...value, endDate: e.target.value })}
             min={value.startDate}
             max={formatDateForInput(new Date())}
-            className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-3 py-1.5 bg-[var(--panel)] border border-[#1e293b] rounded-md text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
           />
         </div>
 
         <button
           type="button"
           onClick={() => setShowPresets(!showPresets)}
-          className="px-3 py-1.5 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-md transition-colors"
+          className="px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[#0f172a] rounded-md transition-colors border border-transparent hover:border-[#1e293b]"
         >
           Presets ▾
         </button>
       </div>
 
       {showPresets && (
-        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-10 min-w-[150px]">
+        <div className="absolute top-full left-0 mt-1 bg-[var(--panel)] border border-[#1e293b] rounded-md shadow-lg z-10 min-w-[150px]">
           <div className="py-1">
             {PRESET_RANGES.map((preset) => (
               <button
                 key={preset.days}
                 type="button"
                 onClick={() => handlePresetClick(preset.days)}
-                className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 transition-colors"
+                className="w-full px-4 py-2 text-left text-sm text-[var(--text)] hover:bg-[#0f172a] transition-colors"
               >
                 {preset.label}
               </button>
@@ -135,7 +135,7 @@ export function DateRangePicker({ value, onChange, className = '' }: DateRangePi
             <button
               type="button"
               onClick={handleAllTimeClick}
-              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 transition-colors border-t border-gray-200"
+              className="w-full px-4 py-2 text-left text-sm text-[var(--text)] hover:bg-[#0f172a] transition-colors border-t border-[#1e293b]"
             >
               All Time
             </button>

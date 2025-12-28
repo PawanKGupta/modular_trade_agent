@@ -53,7 +53,18 @@ elif is_sqlite:
         connect_args={"check_same_thread": False, "timeout": 30},
     )
 else:
-    engine = create_engine(DB_URL, echo=False, future=True)
+    # PostgreSQL/Production: Optimized pool settings for multi-threaded scheduler
+    # Each active service uses 2 connections: main thread + scheduler thread
+    engine = create_engine(
+        DB_URL,
+        echo=False,
+        future=True,
+        pool_size=15,              # Max persistent connections (up from default 5)
+        max_overflow=30,           # Extra connections when pool exhausted (up from default 10)
+        pool_timeout=30,           # Wait 30s for connection before timeout
+        pool_recycle=3600,         # Recycle connections every hour (prevent stale connections)
+        pool_pre_ping=True,        # Verify connection health before use (slight overhead but safer)
+    )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 

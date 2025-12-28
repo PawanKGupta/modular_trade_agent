@@ -68,7 +68,7 @@ export function FilterPresetDropdown({
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         disabled={loading}
-        className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+        className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-[var(--text)] bg-[var(--panel)] border border-[#1e293b] rounded-md hover:bg-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] disabled:opacity-50"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -80,22 +80,22 @@ export function FilterPresetDropdown({
         </svg>
         Filter Presets
         {presetNames.length > 0 && (
-          <span className="ml-1 px-1.5 py-0.5 text-xs bg-blue-100 text-blue-800 rounded-full">
+          <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-[#0f172a] text-[var(--muted)] border border-[#1e293b]">
             {presetNames.length}
           </span>
         )}
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 z-10 mt-2 w-64 bg-white rounded-md shadow-lg ring-1 ring-black ring-opacity-5">
+        <div className="absolute left-0 z-10 mt-2 w-64 bg-[var(--panel)] rounded-md shadow-lg border border-[#1e293b]">
           <div className="py-1">
             {/* Save New Preset Section */}
-            <div className="px-4 py-2 border-b border-gray-200">
+            <div className="px-4 py-2 border-b border-[#1e293b]">
               {!isSaveMode ? (
                 <button
                   type="button"
                   onClick={() => setIsSaveMode(true)}
-                  className="w-full text-left text-sm text-blue-600 hover:text-blue-800 font-medium"
+                  className="w-full text-left text-sm text-[var(--text)] hover:opacity-90 font-medium"
                 >
                   + Save Current Filters
                 </button>
@@ -109,10 +109,10 @@ export function FilterPresetDropdown({
                       setSaveError(null);
                     }}
                     placeholder="Preset name..."
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-2 py-1 text-sm bg-[var(--panel)] text-[var(--text)] border border-[#1e293b] rounded focus:ring-1 focus:ring-[var(--accent)] focus:border-[var(--accent)]"
                     autoFocus
                   />
-                  {saveError && <p className="text-xs text-red-600">{saveError}</p>}
+                  {saveError && <p className="text-xs text-red-400">{saveError}</p>}
                   <div className="flex gap-2">
                     <button
                       type="button"
@@ -129,7 +129,7 @@ export function FilterPresetDropdown({
                         setNewPresetName('');
                         setSaveError(null);
                       }}
-                      className="flex-1 px-2 py-1 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
+                      className="flex-1 px-2 py-1 text-xs font-medium text-[var(--text)] bg-[#0f172a] rounded hover:opacity-90"
                     >
                       Cancel
                     </button>
@@ -140,7 +140,7 @@ export function FilterPresetDropdown({
 
             {/* Saved Presets List */}
             {presetNames.length === 0 ? (
-              <div className="px-4 py-3 text-sm text-gray-500 text-center">
+              <div className="px-4 py-3 text-sm text-[var(--muted)] text-center">
                 No saved presets
               </div>
             ) : (
@@ -148,14 +148,14 @@ export function FilterPresetDropdown({
                 {presetNames.map((name) => (
                   <div
                     key={name}
-                    className="flex items-center justify-between px-4 py-2 hover:bg-gray-100 cursor-pointer group"
+                    className="flex items-center justify-between px-4 py-2 hover:bg-[#0f172a] cursor-pointer group"
                     onClick={() => handleLoadPreset(name)}
                   >
-                    <span className="text-sm text-gray-700 truncate flex-1">{name}</span>
+                    <span className="text-sm text-[var(--text)] truncate flex-1">{name}</span>
                     <button
                       type="button"
                       onClick={(e) => handleDeletePreset(name, e)}
-                      className="ml-2 p-1 text-red-600 opacity-0 group-hover:opacity-100 hover:bg-red-50 rounded transition-opacity"
+                      className="ml-2 p-1 text-red-400 opacity-0 group-hover:opacity-100 hover:bg-[rgba(239,68,68,0.12)] rounded transition-opacity"
                       title="Delete preset"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

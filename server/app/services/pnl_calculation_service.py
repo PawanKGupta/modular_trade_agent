@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Orders, Positions, PnlDaily, TradeMode
@@ -187,28 +187,26 @@ class PnlCalculationService:
         Returns:
             Dictionary mapping date -> total fees
         """
-        # Query orders
-        orders = self.orders_repo.list(user_id)
+        # Query orders directly and apply optional filters
+        stmt = select(Orders).where(Orders.user_id == user_id)
+        if trade_mode:
+            stmt = stmt.where(Orders.trade_mode == trade_mode)
+        if target_date:
+            # Date-based filter to avoid timezone mismatches
+            stmt = stmt.where(func.date(Orders.placed_at) == target_date)
+
+        orders = list(self.db.execute(stmt).scalars().all())
 
         fees_by_date: dict[date, float] = defaultdict(float)
 
         for order in orders:
-            # Filter by trade mode if specified
-            if trade_mode and order.trade_mode != trade_mode:
-                continue
-
-            # Filter by date if specified
-            if target_date:
-                order_date = order.placed_at.date() if order.placed_at else None
-                if order_date != target_date:
-                    continue
-
             # Calculate fee: 0.1% of order value
             # Use avg_price if filled, otherwise use price
             order_value = (order.avg_price or order.price or 0) * (order.quantity or 0)
             fee = order_value * self.DEFAULT_FEE_RATE
-
-            order_date = order.placed_at.date() if order.placed_at else date.today()
+            order_date = (
+                order.placed_at.date() if order.placed_at else target_date or date.today()
+            )
             fees_by_date[order_date] += fee
 
         return dict(fees_by_date)

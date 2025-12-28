@@ -1320,13 +1320,31 @@ class SellOrderManager:
                         )
 
                         if closed_at_time:
-                            # Phase 0.2: Manual sell - set exit_reason to MANUAL
+                            # Phase 0.2: Determine exit_reason dynamically from sell order metadata
+                            exit_reason = "MANUAL"  # Default: user manual sell
+                            
+                            # Try to find the sell order and extract exit_reason from metadata
+                            if order_id and self.orders_repo:
+                                try:
+                                    sell_order = self.orders_repo.get_by_broker_order_id(
+                                        self.user_id, order_id
+                                    )
+                                    if sell_order and sell_order.order_metadata:
+                                        exit_reason = sell_order.order_metadata.get(
+                                            "exit_reason", "MANUAL"
+                                        )
+                                except Exception as e:
+                                    logger.debug(
+                                        f"Could not retrieve exit_reason from order {order_id}: {e}. "
+                                        f"Using default 'MANUAL'"
+                                    )
+                            
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
                                 symbol=full_symbol,
                                 closed_at=closed_at_time,
-                                exit_price=exit_price,  # Save exit price from manual sell order
-                                exit_reason="MANUAL",  # Phase 0.2: Manual sell
+                                exit_price=exit_price,
+                                exit_reason=exit_reason,
                             )
                             # Close corresponding ONGOING buy orders
                             try:
@@ -2261,6 +2279,7 @@ class SellOrderManager:
                             "full_symbol": symbol,
                             "variety": "REGULAR",
                             "source": "sell_engine_run_at_market_open",
+                            "exit_reason": "TARGET_HIT",
                         }
 
                         # Create DB order with side='sell'
