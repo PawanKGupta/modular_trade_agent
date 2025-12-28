@@ -320,10 +320,20 @@ def export_signals_csv(
         if not start_date:
             start_date = end_date - timedelta(days=30)
 
-        # Fetch signals using datetime range to avoid timezone-related mismatches
-        start_dt = datetime.combine(start_date, datetime.min.time())
-        end_dt = datetime.combine(end_date, datetime.max.time())
-        query = db.query(Signals).filter(Signals.ts >= start_dt, Signals.ts <= end_dt)
+        # Build dialect-aware date filtering to remain stable across SQLite/Postgres
+        dialect = getattr(getattr(db, "bind", None), "dialect", None)
+        dialect_name = getattr(dialect, "name", "")
+        if dialect_name == "sqlite":
+            # SQLite: use func.date equality to avoid tz issues
+            query = db.query(Signals).filter(
+                func.date(Signals.ts) >= start_date,
+                func.date(Signals.ts) <= end_date,
+            )
+        else:
+            # Other DBs: use inclusive datetime range
+            start_dt = datetime.combine(start_date, datetime.min.time())
+            end_dt = datetime.combine(end_date, datetime.max.time())
+            query = db.query(Signals).filter(Signals.ts >= start_dt, Signals.ts <= end_dt)
 
         if verdict:
             query = query.filter(Signals.verdict == verdict)
@@ -422,15 +432,25 @@ def export_orders_csv(
         if not start_date:
             start_date = end_date - timedelta(days=30)
 
-        # Fetch orders using datetime range to avoid timezone-related mismatches
-        start_dt = datetime.combine(start_date, datetime.min.time())
-        end_dt = datetime.combine(end_date, datetime.max.time())
-        query = db.query(Orders).filter(
-            Orders.user_id == current.id,
-            Orders.trade_mode == trade_mode,
-            Orders.placed_at >= start_dt,
-            Orders.placed_at <= end_dt,
-        )
+        # Build dialect-aware date filtering for orders
+        dialect = getattr(getattr(db, "bind", None), "dialect", None)
+        dialect_name = getattr(dialect, "name", "")
+        if dialect_name == "sqlite":
+            query = db.query(Orders).filter(
+                Orders.user_id == current.id,
+                Orders.trade_mode == trade_mode,
+                func.date(Orders.placed_at) >= start_date,
+                func.date(Orders.placed_at) <= end_date,
+            )
+        else:
+            start_dt = datetime.combine(start_date, datetime.min.time())
+            end_dt = datetime.combine(end_date, datetime.max.time())
+            query = db.query(Orders).filter(
+                Orders.user_id == current.id,
+                Orders.trade_mode == trade_mode,
+                Orders.placed_at >= start_dt,
+                Orders.placed_at <= end_dt,
+            )
 
         if status:
             query = query.filter(Orders.status == status)

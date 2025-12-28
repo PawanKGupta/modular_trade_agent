@@ -190,10 +190,15 @@ class PnlCalculationService:
         if trade_mode:
             stmt = stmt.where(Orders.trade_mode == trade_mode)
         if target_date:
-            # Use datetime range boundaries to avoid timezone mismatches
-            start_dt = datetime.combine(target_date, datetime.min.time())
-            end_dt = datetime.combine(target_date, datetime.max.time())
-            stmt = stmt.where(Orders.placed_at >= start_dt, Orders.placed_at <= end_dt)
+            # Dialect-aware date filtering (SQLite vs Postgres)
+            dialect = getattr(getattr(self.db, "bind", None), "dialect", None)
+            dialect_name = getattr(dialect, "name", "")
+            if dialect_name == "sqlite":
+                stmt = stmt.where(func.date(Orders.placed_at) == target_date)
+            else:
+                start_dt = datetime.combine(target_date, datetime.min.time())
+                end_dt = datetime.combine(target_date, datetime.max.time())
+                stmt = stmt.where(Orders.placed_at >= start_dt, Orders.placed_at <= end_dt)
 
         orders = list(self.db.execute(stmt).scalars().all())
 
