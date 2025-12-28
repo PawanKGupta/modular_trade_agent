@@ -1,5 +1,5 @@
 interface TaskDetailsViewProps {
-	details: Record<string, any>;
+	details: Record<string, unknown>;
 }
 
 export function TaskDetailsView({ details }: TaskDetailsViewProps) {
@@ -20,7 +20,24 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 
 	// Automatically extract task-specific metrics (counts, placed, modified, etc.)
 	const taskMetrics: Record<string, number> = {};
-	const otherFields: Record<string, any> = {};
+	const otherFields: Record<string, unknown> = {};
+
+	const toNumber = (value: unknown): number | null => (typeof value === 'number' ? value : null);
+	const toBoolean = (value: unknown): boolean | null => (typeof value === 'boolean' ? value : null);
+	const toStringVal = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+	const isRecord = (value: unknown): value is Record<string, unknown> =>
+		value !== null && typeof value === 'object' && !Array.isArray(value);
+
+	const safeTimeout = toNumber(timeout_seconds);
+	const safeMaxRetries = toNumber(max_retries);
+	const safeReturnCode = toNumber(return_code);
+	const safeSuccess = toBoolean(success);
+	const safeStdout = toStringVal(stdout_tail);
+	const safeStderr = toStringVal(stderr_tail);
+	const safeErrorType = toStringVal(error_type);
+	const safeErrorMessage = toStringVal(error_message);
+	const safeException = toStringVal(exception);
+	const analysisSummaryObj = isRecord(analysis_summary) ? analysis_summary : null;
 
 	Object.entries(remainingFields).forEach(([key, value]) => {
 		// Check if it's a numeric metric field (count, placed, modified, closed, etc.)
@@ -103,32 +120,32 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 		<div className="mt-2 p-3 sm:p-4 bg-[#0a0f16] border border-[#1e293b] rounded-lg text-xs text-[var(--text)] space-y-3 sm:space-y-4 max-w-full">
 			{/* Key Metrics - Compact Pills */}
 			<div className="flex flex-wrap gap-2">
-				{success !== undefined && (
-					<div className={`px-2 sm:px-3 py-1.5 rounded-full ${success ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'}`}>
+				{safeSuccess !== null && (
+					<div className={`px-2 sm:px-3 py-1.5 rounded-full ${safeSuccess ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'}`}>
 						<span className="text-[var(--muted)]">Status: </span>
-						<span className={`font-semibold ${success ? 'text-green-400' : 'text-red-400'}`}>
-							{success ? 'Success' : 'Failed'}
+						<span className={`font-semibold ${safeSuccess ? 'text-green-400' : 'text-red-400'}`}>
+							{safeSuccess ? 'Success' : 'Failed'}
 						</span>
 					</div>
 				)}
-				{return_code !== undefined && (
-					<div className={`px-3 py-1.5 rounded-full ${return_code === 0 ? 'bg-green-500/10 border border-green-500/30' : 'bg-yellow-500/10 border border-yellow-500/30'}`}>
+				{safeReturnCode !== null && (
+					<div className={`px-3 py-1.5 rounded-full ${safeReturnCode === 0 ? 'bg-green-500/10 border border-green-500/30' : 'bg-yellow-500/10 border border-yellow-500/30'}`}>
 						<span className="text-[var(--muted)]">Exit Code: </span>
-						<span className={`font-semibold ${return_code === 0 ? 'text-green-400' : 'text-yellow-400'}`}>
-							{return_code}
+						<span className={`font-semibold ${safeReturnCode === 0 ? 'text-green-400' : 'text-yellow-400'}`}>
+							{safeReturnCode}
 						</span>
 					</div>
 				)}
-				{timeout_seconds !== undefined && (
+				{safeTimeout !== null && (
 					<div className="px-2 sm:px-3 py-1.5 rounded-full bg-gray-500/10 border border-gray-500/30">
 						<span className="text-[var(--muted)]">Timeout: </span>
-						<span className="text-[var(--text)]">{timeout_seconds}s</span>
+						<span className="text-[var(--text)]">{safeTimeout}s</span>
 					</div>
 				)}
-				{max_retries !== undefined && (
+				{safeMaxRetries !== null && (
 					<div className="px-2 sm:px-3 py-1.5 rounded-full bg-gray-500/10 border border-gray-500/30">
 						<span className="text-[var(--muted)]">Max Retries: </span>
-						<span className="text-[var(--text)]">{max_retries}</span>
+						<span className="text-[var(--text)]">{safeMaxRetries}</span>
 					</div>
 				)}
 			</div>
@@ -173,13 +190,13 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 			)}
 
 			{/* Analysis Summary - Compact Grid */}
-			{analysis_summary && (
+			{analysisSummaryObj && (
 				<div className="bg-[#0f1720] border border-[#1e293b] rounded p-2 sm:p-3">
 					<div className="text-[var(--text)] font-semibold mb-2 flex items-center gap-2">
 						<span>📊</span> Analysis Summary
 					</div>
 					<div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-						{Object.entries(analysis_summary).map(([key, value]) => (
+						{Object.entries(analysisSummaryObj).map(([key, value]) => (
 							<div key={key} className="text-center">
 								<div className="text-base sm:text-lg font-bold text-[var(--text)]">{String(value)}</div>
 								<div className="text-[10px] text-[var(--muted)] uppercase tracking-wide">{key}</div>
@@ -190,57 +207,57 @@ export function TaskDetailsView({ details }: TaskDetailsViewProps) {
 			)}
 
 			{/* STDOUT Tail - Syntax Highlighted */}
-			{stdout_tail && (
+			{safeStdout && (
 				<div>
 					<div className="text-[var(--text)] font-semibold mb-2 flex items-center gap-2 flex-wrap">
 						<span>📝</span> Output Log
 						<span className="text-[10px] text-[var(--muted)] font-normal">(last 10 lines, 200 char limit)</span>
 					</div>
 					<div className="font-mono bg-black/50 p-2 sm:p-3 rounded border border-[#1e293b] max-h-64 overflow-y-auto text-[10px] sm:text-[11px] leading-relaxed">
-						{formatLogTail(stdout_tail)}
+						{formatLogTail(safeStdout)}
 					</div>
 				</div>
 			)}
 
 			{/* STDERR Tail */}
-			{stderr_tail && (
+			{safeStderr && (
 				<div>
 					<div className="text-red-400 font-semibold mb-2 flex items-center gap-2 flex-wrap">
 						<span>⚠️</span> Error Log
 						<span className="text-[10px] text-[var(--muted)] font-normal">(last 10 lines, 200 char limit)</span>
 					</div>
 					<div className="font-mono bg-red-900/20 border border-red-500/30 p-2 sm:p-3 rounded max-h-64 overflow-y-auto text-[10px] sm:text-[11px] leading-relaxed text-red-300">
-						{formatLogTail(stderr_tail)}
+						{formatLogTail(safeStderr)}
 					</div>
 				</div>
 			)}
 
 			{/* Error Details (error_type, error_message, exception) */}
-			{(error_type || error_message || exception) && (
+			{(safeErrorType || safeErrorMessage || safeException) && (
 				<div className="bg-red-900/10 border border-red-500/30 rounded p-2 sm:p-3">
 					<div className="text-red-400 font-semibold mb-2 flex items-center gap-2">
 						<span>❌</span> Error Details
 					</div>
 					<div className="space-y-2 text-[10px] sm:text-[11px]">
-						{error_type && (
+						{safeErrorType && (
 							<div>
 								<span className="text-[var(--muted)]">Type: </span>
-								<span className="text-red-400 font-semibold">{error_type}</span>
+								<span className="text-red-400 font-semibold">{safeErrorType}</span>
 							</div>
 						)}
-						{error_message && (
+						{safeErrorMessage && (
 							<div>
 								<div className="text-[var(--muted)] mb-1">Message:</div>
 								<div className="font-mono bg-black/30 p-2 rounded text-red-300 max-h-32 overflow-y-auto">
-									{formatLogTail(error_message)}
+									{formatLogTail(safeErrorMessage)}
 								</div>
 							</div>
 						)}
-						{exception && exception !== error_message && (
+						{safeException && safeException !== safeErrorMessage && (
 							<div>
 								<div className="text-[var(--muted)] mb-1">Exception:</div>
 								<div className="font-mono bg-black/30 p-2 rounded text-red-300 max-h-32 overflow-y-auto">
-									{formatLogTail(exception)}
+									{formatLogTail(safeException)}
 								</div>
 							</div>
 						)}

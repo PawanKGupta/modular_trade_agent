@@ -28,6 +28,10 @@ def is_auth_error(response: Any) -> bool:
     """
     Check if response indicates authentication failure (JWT expiry).
 
+    Phase -1 CRITICAL FIX: More strict auth error detection to reduce false positives.
+    Only triggers re-auth for actual JWT/auth errors, not generic 401/403 responses.
+    This prevents unnecessary re-auth cycles that cause OTP spam.
+
     Args:
         response: API response (dict, exception, or other)
 
@@ -40,38 +44,28 @@ def is_auth_error(response: Any) -> bool:
     code = str(response.get("code", "")).strip()
     message = str(response.get("message", "")).lower()
     description = str(response.get("description", "")).lower()
-    error = str(response.get("error", "")).lower()
 
-    # Check for JWT expiry error code (most specific)
+    # Phase -1: ONLY check for specific JWT error code (most reliable)
     if code == "900901":
         return True
 
-    # Check for JWT token errors in description (specific to JWT)
+    # Phase -1: ONLY check for explicit JWT token errors (not generic "unauthorized")
     if "invalid jwt token" in description or "jwt token expired" in description:
         return True
-
-    # Check for JWT token errors in message (specific to JWT)
     if "invalid jwt token" in message or "jwt token expired" in message:
         return True
 
-    # Check for credential errors in message (but only if not a success response)
-    # Avoid false positives: don't treat "unauthorized" as auth error if code indicates success
-    if code not in ("200", "success", "0", ""):
-        if "invalid credentials" in message:
-            return True
-        # Only treat "unauthorized" as auth error if code is 401, 403, or similar
-        if code in ("401", "403", "4011", "4031") and "unauthorized" in message:
-            return True
+    # Check for "invalid credentials" in message/description (auth-specific error)
+    if "invalid credentials" in message or "invalid credentials" in description:
+        return True
 
-    # Check for auth errors in error field
-    # If no code is present or code is empty, still check error field
-    if not code or code not in ("200", "success", "0"):
-        if "invalid credentials" in error:
-            return True
-        # Treat "unauthorized" as auth error if no code or if code indicates failure
-        if not code or code in ("401", "403", "4011", "4031"):
-            if "unauthorized" in error:
-                return True
+    # Check for "unauthorized" in error field (common auth error format)
+    error = str(response.get("error", "")).lower()
+    if error == "unauthorized":
+        return True
+
+    # Phase -1: REMOVED generic "unauthorized" checks in message/description that cause false positives
+    # Only check "unauthorized" in dedicated "error" field to avoid false positives
 
     return False
 

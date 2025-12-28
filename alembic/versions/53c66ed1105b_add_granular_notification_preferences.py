@@ -1,3 +1,4 @@
+# ruff: noqa
 """add_granular_notification_preferences
 
 Revision ID: 53c66ed1105b
@@ -40,35 +41,41 @@ def upgrade() -> None:
 
     # Use raw SQL for SQLite (more reliable than op.add_column())
     # Order event preferences
+    # Note: For Postgres, use true/false instead of 1/0; for SQLite we'll use 1/0 and let Postgres convert
+    # Actually, let's use IF/ELSE to handle both dialects
     columns_to_add = []
+    is_postgres = conn.dialect.name == "postgresql"
+    default_true = "TRUE" if is_postgres else "1"
+    default_false = "FALSE" if is_postgres else "0"
+
     if "notify_order_placed" not in existing_columns:
-        columns_to_add.append("notify_order_placed BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_order_placed BOOLEAN DEFAULT {default_true} NOT NULL")
     if "notify_order_rejected" not in existing_columns:
-        columns_to_add.append("notify_order_rejected BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_order_rejected BOOLEAN DEFAULT {default_true} NOT NULL")
     if "notify_order_executed" not in existing_columns:
-        columns_to_add.append("notify_order_executed BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_order_executed BOOLEAN DEFAULT {default_true} NOT NULL")
     if "notify_order_cancelled" not in existing_columns:
-        columns_to_add.append("notify_order_cancelled BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_order_cancelled BOOLEAN DEFAULT {default_true} NOT NULL")
     if "notify_order_modified" not in existing_columns:
-        columns_to_add.append("notify_order_modified BOOLEAN DEFAULT 0 NOT NULL")
+        columns_to_add.append(f"notify_order_modified BOOLEAN DEFAULT {default_false} NOT NULL")
     if "notify_retry_queue_added" not in existing_columns:
-        columns_to_add.append("notify_retry_queue_added BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_retry_queue_added BOOLEAN DEFAULT {default_true} NOT NULL")
     if "notify_retry_queue_updated" not in existing_columns:
-        columns_to_add.append("notify_retry_queue_updated BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_retry_queue_updated BOOLEAN DEFAULT {default_true} NOT NULL")
     if "notify_retry_queue_removed" not in existing_columns:
-        columns_to_add.append("notify_retry_queue_removed BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_retry_queue_removed BOOLEAN DEFAULT {default_true} NOT NULL")
     if "notify_retry_queue_retried" not in existing_columns:
-        columns_to_add.append("notify_retry_queue_retried BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_retry_queue_retried BOOLEAN DEFAULT {default_true} NOT NULL")
     if "notify_partial_fill" not in existing_columns:
-        columns_to_add.append("notify_partial_fill BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_partial_fill BOOLEAN DEFAULT {default_true} NOT NULL")
 
     # System event preferences (more granular)
     if "notify_system_errors" not in existing_columns:
-        columns_to_add.append("notify_system_errors BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_system_errors BOOLEAN DEFAULT {default_true} NOT NULL")
     if "notify_system_warnings" not in existing_columns:
-        columns_to_add.append("notify_system_warnings BOOLEAN DEFAULT 0 NOT NULL")
+        columns_to_add.append(f"notify_system_warnings BOOLEAN DEFAULT {default_false} NOT NULL")
     if "notify_system_info" not in existing_columns:
-        columns_to_add.append("notify_system_info BOOLEAN DEFAULT 0 NOT NULL")
+        columns_to_add.append(f"notify_system_info BOOLEAN DEFAULT {default_false} NOT NULL")
 
     # Execute all ALTER TABLE statements
     # Use op.execute() which handles transactions properly in Alembic context

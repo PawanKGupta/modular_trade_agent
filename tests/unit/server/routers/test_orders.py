@@ -45,13 +45,42 @@ class DummyOrder(SimpleNamespace):
 
 class DummyOrdersRepo:
     def __init__(self, db):
-        self.db = db
         self.orders_by_user = {}
         self.orders_by_id = {}
         self.list_calls = []
         self.get_calls = []
         self.update_calls = []
         self.stats = {}
+
+        # Mock db and db.bind for inspect() calls in real OrdersRepository
+        # The real OrdersRepository.list() calls inspect(self.db.bind)
+        class MockBind:
+            def get_columns(self, table_name):
+                # Return a list of column dicts that match what OrdersRepository expects
+                return [
+                    {"name": "id"},
+                    {"name": "user_id"},
+                    {"name": "symbol"},
+                    {"name": "side"},
+                    {"name": "order_type"},
+                    {"name": "quantity"},
+                    {"name": "price"},
+                    {"name": "status"},
+                    {"name": "avg_price"},
+                    {"name": "placed_at"},
+                    {"name": "filled_at"},
+                    {"name": "closed_at"},
+                    {"name": "orig_source"},
+                    {"name": "updated_at"},
+                    {"name": "broker_order_id"},
+                    {"name": "trade_mode"},
+                ]
+
+        class MockDB:
+            def __init__(self):
+                self.bind = MockBind()
+
+        self.db = MockDB() if db is None else db
 
     def list(self, user_id, status=None):
         self.list_calls.append((user_id, status))
@@ -76,6 +105,21 @@ class DummyOrdersRepo:
 def orders_repo(monkeypatch):
     repo = DummyOrdersRepo(db=None)
     monkeypatch.setattr(orders, "OrdersRepository", lambda db: repo)
+
+    # Also mock SettingsRepository to avoid db.query errors
+    # SettingsRepository is imported inside list_orders(), so we need to patch it at the source
+    from src.infrastructure.persistence import settings_repository
+
+    class DummySettingsRepo:
+        def __init__(self, db):
+            self.settings = {}
+
+        def get_by_user_id(self, user_id):
+            return self.settings.get(user_id)
+
+    # Patch SettingsRepository at the source module
+    monkeypatch.setattr(settings_repository, "SettingsRepository", lambda db: DummySettingsRepo(db))
+
     return repo
 
 

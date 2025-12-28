@@ -9,6 +9,9 @@ import { listOrders } from '../../api/orders';
 import { getNotificationCount } from '../../api/notifications';
 import { useSettings } from '../../hooks/useSettings';
 import { HolidayBanner } from '../../components/HolidayBanner';
+import { PnlTrendChart } from '../../components/charts/PnlTrendChart';
+import { PortfolioValueChart } from '../../components/charts/PortfolioValueChart';
+import { MetricsCard } from '../../components/dashboard/MetricsCard';
 
 function formatMoney(amount: number): string {
 	return new Intl.NumberFormat('en-IN', {
@@ -62,7 +65,7 @@ export function DashboardHome() {
 
 	const pnlQ = useQuery<PnlSummary>({
 		queryKey: ['pnl-summary'],
-		queryFn: getPnlSummary,
+		queryFn: () => getPnlSummary(),
 		refetchInterval: 30000,
 	});
 
@@ -546,6 +549,24 @@ export function DashboardHome() {
 							</div>
 						</div>
 					</div>
+				)}
+
+				{/* Charts Section */}
+				{portfolio && (
+					<>
+						{/* P&L Trend Chart */}
+						<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg overflow-hidden">
+							<PnlTrendChart height={300} />
+						</div>
+
+						{/* Portfolio Value Chart */}
+						<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg overflow-hidden">
+							<PortfolioValueChart height={300} />
+						</div>
+
+						{/* Trading Metrics Card */}
+						<MetricsCard periodDays={30} />
+					</>
 				)}
 
 				{/* Quick Actions & Notifications */}

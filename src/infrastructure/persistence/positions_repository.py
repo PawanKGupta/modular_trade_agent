@@ -71,8 +71,10 @@ class PositionsRepository:
             )
             .order_by(Positions.opened_at.desc())
             .with_for_update()
+            .limit(1)
         )
-        return self.db.execute(stmt).scalar_one_or_none()
+        result = self.db.execute(stmt).first()
+        return result[0] if result else None
 
     def get_by_symbol_any(
         self, user_id: int, symbol: str, include_closed: bool = False
@@ -197,18 +199,28 @@ class PositionsRepository:
         symbol: str,
         closed_at: datetime | None = None,
         exit_price: float | None = None,
+        exit_reason: str | None = None,
+        exit_rsi: float | None = None,
+        realized_pnl: float | None = None,
+        realized_pnl_pct: float | None = None,
+        sell_order_id: int | None = None,
         auto_commit: bool = True,
     ) -> Positions | None:
         """
         Mark a position as closed in the positions table.
 
-        Sets closed_at timestamp and reduces quantity to 0.
+        Sets closed_at timestamp, reduces quantity to 0, and populates exit details (Phase 0.2).
 
         Args:
             user_id: User ID
             symbol: Full trading symbol (e.g., "RELIANCE-EQ", "SALSTEEL-BE")
             closed_at: Closing timestamp (defaults to current time)
-            exit_price: Exit price (optional, for future use)
+            exit_price: Exit price (optional)
+            exit_reason: Reason for exit (e.g., 'EMA9_TARGET', 'RSI_EXIT', 'MANUAL')
+            exit_rsi: RSI10 value at exit (optional)
+            realized_pnl: Realized P&L amount (calculated if not provided and exit_price is set)
+            realized_pnl_pct: Realized P&L percentage (calculated if not provided and realized_pnl is set)
+            sell_order_id: ID of the sell order that closed this position (optional)
             auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
 
         Returns:
@@ -220,12 +232,46 @@ class PositionsRepository:
             logger.warning(f"Position not found for {symbol} (user_id: {user_id})")
             return None
 
+        # Store original quantity before setting to 0 (needed for P&L calculations)
+        original_quantity = pos.quantity
+
         pos.closed_at = closed_at or ist_now()
         pos.quantity = 0.0  # Set quantity to 0 when fully closed
+
+        # Phase 0.2: Populate exit details
+        if exit_price is not None:
+            pos.exit_price = exit_price
+        if exit_reason is not None:
+            pos.exit_reason = exit_reason
+        if exit_rsi is not None:
+            pos.exit_rsi = exit_rsi
+        if sell_order_id is not None:
+            pos.sell_order_id = sell_order_id
+
+        # Calculate realized P&L if exit_price is provided but realized_pnl is not
+        if exit_price is not None and realized_pnl is None:
+            realized_pnl = (float(exit_price) - pos.avg_price) * original_quantity
+            pos.realized_pnl = realized_pnl
+        elif realized_pnl is not None:
+            pos.realized_pnl = realized_pnl
+
+        # Calculate realized P&L percentage if realized_pnl is set but percentage is not
+        if pos.realized_pnl is not None and realized_pnl_pct is None:
+            cost_basis = pos.avg_price * original_quantity
+            pos.realized_pnl_pct = (pos.realized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+        elif realized_pnl_pct is not None:
+            pos.realized_pnl_pct = realized_pnl_pct
+
         if auto_commit:
             self.db.commit()
             self.db.refresh(pos)
-        logger.info(f"Position marked as closed: {symbol} (closed_at: {pos.closed_at})")
+        else:
+            # Even with auto_commit=False, flush to ensure changes are visible in the same session
+            self.db.flush()
+        logger.info(
+            f"Position marked as closed: {symbol} (closed_at: {pos.closed_at}, "
+            f"exit_price: {exit_price}, exit_reason: {exit_reason})"
+        )
         return pos
 
     def reduce_quantity(

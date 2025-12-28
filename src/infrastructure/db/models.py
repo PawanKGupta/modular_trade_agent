@@ -53,7 +53,11 @@ class Users(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[UserRole] = mapped_column(SAEnum(UserRole), default=UserRole.USER, nullable=False)
+    role: Mapped[UserRole] = mapped_column(
+        SAEnum(UserRole, values_callable=lambda x: [e.value for e in x]),
+        default=UserRole.USER,
+        nullable=False,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -74,7 +78,9 @@ class UserSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, nullable=False)
     trade_mode: Mapped[TradeMode] = mapped_column(
-        SAEnum(TradeMode), default=TradeMode.PAPER, nullable=False
+        SAEnum(TradeMode, values_callable=lambda x: [e.value for e in x]),
+        default=TradeMode.PAPER,
+        nullable=False,
     )
     broker: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 'kotak-neo' or None
     broker_status: Mapped[str | None] = mapped_column(
@@ -139,6 +145,9 @@ class Orders(Base):
     # Failure and retry tracking fields
     # Unified reason field (replaces failure_reason, rejection_reason, cancelled_reason)
     reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(
+        String(512), nullable=True
+    )  # Detailed broker rejection reason (Phase 1)
     first_failed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_retry_attempt: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -151,6 +160,12 @@ class Orders(Base):
     entry_type: Mapped[str | None] = mapped_column(
         String(32), nullable=True
     )  # 'initial', 'reentry', 'manual'
+    # Phase 0.1: Trade mode (paper vs broker)
+    trade_mode: Mapped[TradeMode | None] = mapped_column(
+        SAEnum(TradeMode, values_callable=lambda x: [e.value for e in x]),
+        nullable=True,
+        index=True,
+    )  # 'paper' | 'broker' | NULL for legacy orders
 
     __table_args__ = (
         Index("ix_orders_user_status_symbol_time", "user_id", "status", "symbol", "placed_at"),
@@ -179,16 +194,152 @@ class Positions(Base):
     last_reentry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Entry RSI tracking (for re-entry level progression)
     entry_rsi: Mapped[float | None] = mapped_column(Float, nullable=True)  # RSI10 at entry
+    # Phase 0.2: Exit details (all nullable for backward compatibility)
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )  # 'EMA9_TARGET', 'RSI_EXIT', 'MANUAL', etc.
+    exit_rsi: Mapped[float | None] = mapped_column(Float, nullable=True)  # RSI10 at exit
+    realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    realized_pnl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"), nullable=True)
 
     __table_args__ = ()
 
 
 class Fills(Base):
+    """
+    Order fills/executions table - tracks partial fills for orders (Phase 1)
+
+    When an order executes in multiple parts, each fill is recorded separately.
+    The order's executed_qty and execution_price are aggregated from fills.
+    """
+
+    __tablename__ = "fills"
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True, nullable=False)
-    qty: Mapped[float] = mapped_column(Float, nullable=False)
-    price: Mapped[float] = mapped_column(Float, nullable=False)
-    ts: Mapped[datetime] = mapped_column(DateTime, default=ist_now, index=True, nullable=False)
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("orders.id"), index=True, nullable=False
+    )  # Parent order
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), index=True, nullable=False
+    )  # Denormalized for queries
+
+    # Fill details
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)  # Qty filled in this execution
+    price: Mapped[float] = mapped_column(Float, nullable=False)  # Price of this fill
+    fill_value: Mapped[float] = mapped_column(Float, nullable=False)  # quantity * price
+    charges: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)  # Brokerage + taxes
+
+    # Timestamps
+    filled_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, index=True, nullable=False
+    )  # Fill timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, nullable=False
+    )  # Record creation
+
+    # Broker details
+    broker_fill_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )  # Broker's fill ID (for deduplication)
+
+    __table_args__ = (
+        Index("ix_fills_order_filled_at", "order_id", "filled_at"),
+        Index("ix_fills_user_filled_at", "user_id", "filled_at"),
+    )
+
+
+class PortfolioSnapshot(Base):
+    """Daily portfolio value snapshots for historical tracking (Phase 0.3)"""
+
+    __tablename__ = "portfolio_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+
+    # Portfolio metrics
+    total_value: Mapped[float] = mapped_column(Float, nullable=False)  # Total portfolio value
+    invested_value: Mapped[float] = mapped_column(Float, nullable=False)  # Capital invested
+    available_cash: Mapped[float] = mapped_column(Float, nullable=False)  # Available cash
+    unrealized_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    realized_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Position counts
+    open_positions_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    closed_positions_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Return metrics
+    total_return: Mapped[float] = mapped_column(
+        Float, default=0.0, nullable=False
+    )  # Total return %
+    daily_return: Mapped[float] = mapped_column(
+        Float, default=0.0, nullable=False
+    )  # Daily return %
+
+    # Metadata
+    snapshot_type: Mapped[str] = mapped_column(
+        String(16), default="eod", nullable=False
+    )  # 'eod', 'intraday'
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "date", "snapshot_type", name="uq_portfolio_snapshot_user_date_type"
+        ),
+        Index("ix_portfolio_snapshot_user_date", "user_id", "date"),
+    )
+
+
+class Targets(Base):
+    """Sell order targets for positions (Phase 0.4)"""
+
+    __tablename__ = "targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    position_id: Mapped[int | None] = mapped_column(
+        ForeignKey("positions.id"), nullable=True
+    )  # Link to position
+    symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+
+    # Target information
+    target_price: Mapped[float] = mapped_column(Float, nullable=False)  # EMA9 target
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)  # Average entry price
+    current_price: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )  # Current market price
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)  # Position quantity
+
+    # Distance metrics
+    distance_to_target: Mapped[float | None] = mapped_column(Float, nullable=True)  # % distance
+    distance_to_target_absolute: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )  # Absolute distance
+
+    # Target metadata
+    target_type: Mapped[str] = mapped_column(
+        String(32), default="ema9", nullable=False
+    )  # 'ema9', 'manual', etc.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # Active target
+    trade_mode: Mapped[TradeMode] = mapped_column(
+        SAEnum(TradeMode, values_callable=lambda x: [e.value for e in x]), nullable=False
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
+    achieved_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )  # When target was hit
+
+    __table_args__ = (
+        Index("ix_targets_user_symbol_active", "user_id", "symbol", "is_active"),
+        Index("ix_targets_position", "position_id"),
+    )
 
 
 class PnlDaily(Base):
@@ -200,6 +351,145 @@ class PnlDaily(Base):
     fees: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
     __table_args__ = (UniqueConstraint("user_id", "date", name="uq_pnl_daily_user_date"),)
+
+
+class PnlCalculationAudit(Base):
+    """Audit trail for P&L calculations (Phase 0.5)"""
+
+    __tablename__ = "pnl_calculation_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+
+    # Calculation metadata
+    calculation_type: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # 'on_demand', 'scheduled', 'backfill'
+    date_range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    date_range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # Results
+    positions_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    orders_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pnl_records_created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pnl_records_updated: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Performance
+    duration_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Status
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # 'success', 'failed', 'partial'
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # Metadata
+    triggered_by: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # 'user', 'system', 'scheduled'
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (Index("ix_pnl_audit_user_created", "user_id", "created_at"),)
+
+
+class PriceCache(Base):
+    """Historical price cache for symbols (Phase 0.6)"""
+
+    __tablename__ = "price_cache"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+
+    # Price data
+    open: Mapped[float | None] = mapped_column(Float, nullable=True)
+    high: Mapped[float | None] = mapped_column(Float, nullable=True)
+    low: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close: Mapped[float] = mapped_column(Float, nullable=False)
+    volume: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Metadata
+    source: Mapped[str] = mapped_column(
+        String(32), default="yfinance", nullable=False
+    )  # 'yfinance', 'broker', 'manual'
+    cached_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "date", name="uq_price_cache_symbol_date"),
+        Index("ix_price_cache_symbol_date", "symbol", "date"),
+    )
+
+
+class ExportJob(Base):
+    """Export job tracking (Phase 0.7)"""
+
+    __tablename__ = "export_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+
+    # Export metadata
+    export_type: Mapped[str] = mapped_column(String(32), nullable=False)  # 'csv', 'pdf', 'json'
+    data_type: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # 'pnl', 'trades', 'signals', 'positions', etc.
+    date_range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    date_range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # Status
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # 'pending', 'processing', 'completed', 'failed'
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 0-100
+
+    # Results
+    file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)  # bytes
+    records_exported: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Performance
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_export_jobs_user_status_created", "user_id", "status", "created_at"),
+    )
+
+
+class AnalyticsCache(Base):
+    """Cached analytics calculations (Phase 0.8)"""
+
+    __tablename__ = "analytics_cache"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+
+    # Cache key
+    cache_key: Mapped[str] = mapped_column(
+        String(128), index=True, nullable=False
+    )  # e.g., 'win_rate_2024', 'sharpe_ratio_ytd'
+    analytics_type: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # 'win_rate', 'sharpe_ratio', 'drawdown', etc.
+    date_range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    date_range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # Cached data
+    cached_data: Mapped[dict] = mapped_column(JSON, nullable=False)  # Store calculated metrics
+
+    # Cache metadata
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # TTL
+    calculated_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "cache_key", name="uq_analytics_cache_user_key"),
+        Index("ix_analytics_cache_user_type", "user_id", "analytics_type"),
+    )
 
 
 class Signals(Base):

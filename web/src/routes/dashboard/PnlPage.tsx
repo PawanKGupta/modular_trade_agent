@@ -1,21 +1,42 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getDailyPnl, getPnlSummary } from '@/api/pnl';
+import { getDailyPnl, getPnlSummary, type DailyPnl, type PnlSummary } from '@/api/pnl';
+import { exportPnl } from '@/api/export';
+import { exportPnlPdf } from '@/api/reports';
+import { PnlTrendChart } from '@/components/charts/PnlTrendChart';
+import { ExportButton } from '@/components/ExportButton';
+import { DateRangePicker, type DateRange } from '@/components/DateRangePicker';
 
 function formatMoney(amount: number): string {
 	return `Rs ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function getDefaultDateRange(): DateRange {
+	const endDate = new Date();
+	const startDate = new Date();
+	startDate.setDate(startDate.getDate() - 30); // Last 30 days
+
+	return {
+		startDate: startDate.toISOString().split('T')[0],
+		endDate: endDate.toISOString().split('T')[0],
+	};
+}
+
 export function PnlPage() {
-	const dailyQ = useQuery({
-		queryKey: ['pnl', 'daily'],
-		queryFn: getDailyPnl,
-		refetchInterval: 30000, // Refresh every 30 seconds (less frequent than paper trading)
+	const [tradeMode, setTradeMode] = useState<'paper' | 'broker' | undefined>(undefined);
+	const [includeUnrealized, setIncludeUnrealized] = useState<boolean>(false);
+	const [exportDateRange, setExportDateRange] = useState<DateRange>(getDefaultDateRange());
+	const [showExportOptions, setShowExportOptions] = useState(false);
+
+	const dailyQ = useQuery<DailyPnl[]>({
+		queryKey: ['pnl', 'daily', tradeMode, includeUnrealized],
+		queryFn: () => getDailyPnl(undefined, undefined, tradeMode, includeUnrealized),
+		refetchInterval: 30000,
 	});
-	const summaryQ = useQuery({
-		queryKey: ['pnl', 'summary'],
-		queryFn: getPnlSummary,
-		refetchInterval: 30000, // Refresh every 30 seconds
+	const summaryQ = useQuery<PnlSummary>({
+		queryKey: ['pnl', 'summary', tradeMode, includeUnrealized],
+		queryFn: () => getPnlSummary(undefined, undefined, tradeMode, includeUnrealized),
+		refetchInterval: 30000,
 	});
 
 	useEffect(() => {
@@ -25,27 +46,93 @@ export function PnlPage() {
 	// Format last update time
 	const lastUpdate = summaryQ.dataUpdatedAt ? new Date(summaryQ.dataUpdatedAt).toLocaleTimeString() : 'Never';
 
+	// Handle CSV export
+	const handleExport = async () => {
+		await exportPnl({
+			startDate: exportDateRange.startDate,
+			endDate: exportDateRange.endDate,
+			tradeMode: tradeMode,
+			includeUnrealized,
+		});
+	};
+
+	// Handle PDF export
+	const handleExportPdf = async () => {
+		await exportPnlPdf({
+			period: 'custom',
+			startDate: exportDateRange.startDate,
+			endDate: exportDateRange.endDate,
+			tradeMode: tradeMode,
+			includeUnrealized,
+		});
+	};
+
 	return (
 		<div className="p-4 space-y-4">
-			<div className="flex items-center justify-between">
-				<div className="flex items-center gap-3">
-					<h1 className="text-xl font-semibold text-[var(--text)]">Profit & Loss</h1>
+			<div className="flex flex-col gap-3">
+				<div className="flex items-center justify-between">
+					<div className="flex items-center gap-3">
+						<h1 className="text-xl font-semibold text-[var(--text)]">Profit & Loss</h1>
+						<div className="flex items-center gap-2">
+							<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+							<span className="text-xs text-[var(--muted)]">
+								Live • Last update: {lastUpdate}
+							</span>
+						</div>
+					</div>
 					<div className="flex items-center gap-2">
-						<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-						<span className="text-xs text-[var(--muted)]">
-							Live • Last update: {lastUpdate}
-						</span>
+						<button
+							onClick={() => setShowExportOptions(!showExportOptions)}
+							className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+						>
+							Export Options {showExportOptions ? '▲' : '▼'}
+						</button>
+						<select
+							value={tradeMode ?? ''}
+							onChange={(e) => {
+								const v = e.target.value as 'paper' | 'broker' | '';
+								setTradeMode(v === '' ? undefined : v);
+							}}
+							className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)]"
+						>
+							<option value="">All</option>
+							<option value="paper">Paper</option>
+							<option value="broker">Broker</option>
+						</select>
+						<label className="flex items-center gap-1 text-sm text-[var(--text)]">
+							<input
+								type="checkbox"
+								checked={includeUnrealized}
+								onChange={(e) => setIncludeUnrealized(e.target.checked)}
+							/>
+							Include Unrealized
+						</label>
+						<button
+							onClick={() => {
+								summaryQ.refetch();
+								dailyQ.refetch();
+							}}
+							className="px-3 py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90"
+						>
+							Refresh
+						</button>
 					</div>
 				</div>
-				<button
-					onClick={() => {
-						summaryQ.refetch();
-						dailyQ.refetch();
-					}}
-					className="px-3 py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90"
-				>
-					Refresh
-				</button>
+
+				{/* Export Options Panel */}
+				{showExportOptions && (
+					<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-4">
+						<h3 className="text-sm font-medium text-[var(--text)] mb-3">Export P&L Data</h3>
+						<div className="flex items-center gap-4">
+							<DateRangePicker value={exportDateRange} onChange={setExportDateRange} />
+							<ExportButton onExport={handleExport} label="Download CSV" />
+							<ExportButton onExport={handleExportPdf} label="Download PDF" />
+						</div>
+						<p className="text-xs text-[var(--muted)] mt-2">
+							Export will include realized/unrealized P&L, fees, and totals for the selected date range.
+						</p>
+					</div>
+				)}
 			</div>
 
 			{/* Summary Section */}
@@ -69,21 +156,55 @@ export function PnlPage() {
 								</div>
 							</div>
 							<div>
-								<div className="text-sm text-[var(--muted)]">Profitable Days</div>
+								<div className="text-sm text-[var(--muted)]">Profitable Trades</div>
 								<div className="text-2xl font-semibold text-green-400">
-									{summaryQ.data.daysGreen}
+									{summaryQ.data.tradesGreen}
 								</div>
 							</div>
 							<div>
-								<div className="text-sm text-[var(--muted)]">Loss Days</div>
+								<div className="text-sm text-[var(--muted)]">Loss Trades</div>
 								<div className="text-2xl font-semibold text-red-400">
-									{summaryQ.data.daysRed}
+									{summaryQ.data.tradesRed}
 								</div>
 							</div>
 						</div>
 					)}
 				</div>
 			</div>
+
+			{/* Detailed Metrics */}
+			{summaryQ.data && (
+				<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-4">
+					<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+						<div>
+							<div className="text-sm text-[var(--muted)]">Total Realized</div>
+							<div className="text-xl font-semibold text-[var(--text)]">{formatMoney(summaryQ.data.totalRealizedPnl)}</div>
+						</div>
+						<div>
+							<div className="text-sm text-[var(--muted)]">Total Unrealized</div>
+							<div className="text-xl font-semibold text-[var(--text)]">{formatMoney(summaryQ.data.totalUnrealizedPnl)}</div>
+						</div>
+						<div>
+							<div className="text-sm text-[var(--muted)]">Average per Trade</div>
+							<div className="text-xl font-semibold text-[var(--text)]">{formatMoney(summaryQ.data.avgTradePnl)}</div>
+						</div>
+						<div>
+							<div className="text-sm text-[var(--muted)]">Min Trade P&L</div>
+							<div className="text-xl font-semibold text-[var(--text)]">{formatMoney(summaryQ.data.minTradePnl)}</div>
+						</div>
+						<div>
+							<div className="text-sm text-[var(--muted)]">Max Trade P&L</div>
+							<div className="text-xl font-semibold text-[var(--text)]">{formatMoney(summaryQ.data.maxTradePnl)}</div>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* P&L Trend Chart */}
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-2 sm:p-4">
+				<PnlTrendChart height={420} tradeMode={tradeMode} includeUnrealized={includeUnrealized} />
+			</div>
+
 			{/* Daily P&L Section */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between px-3 py-2 border-b border-[#1e293b]">

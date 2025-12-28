@@ -144,6 +144,17 @@ class SellOrderManager:
         self.order_verifier = order_verifier  # Phase 3.2: OrderStatusVerifier for shared results
         self.strategy_config = strategy_config  # User-specific trading config (for exchange, etc.)
 
+        # Phase 0.4: Initialize targets repository if db session available
+        self.targets_repo = None
+        if self.positions_repo and hasattr(self.positions_repo, "db"):
+            try:
+                from src.infrastructure.persistence.targets_repository import TargetsRepository
+
+                self.targets_repo = TargetsRepository(self.positions_repo.db)
+                logger.debug("TargetsRepository initialized for sell order manager")
+            except Exception as e:
+                logger.debug(f"TargetsRepository not available: {e}")
+
         # Holdings cache removed - we now fetch holdings when needed and reuse data
         # from monitoring cycles instead of maintaining a separate cache
 
@@ -263,6 +274,7 @@ class SellOrderManager:
         Returns:
             True if updated, False otherwise
         """
+        result = False
         if self.state_manager:
             result = self.state_manager.update_sell_order_price(symbol, new_price)
             if result:
@@ -270,14 +282,24 @@ class SellOrderManager:
                 full_symbol = symbol.upper()
                 if full_symbol in self.active_sell_orders:
                     self.active_sell_orders[full_symbol]["target_price"] = new_price
-            return result
         else:
             # Legacy mode
             full_symbol = symbol.upper()
             if full_symbol in self.active_sell_orders:
                 self.active_sell_orders[full_symbol]["target_price"] = new_price
-                return True
-            return False
+                result = True
+
+        # Phase 0.4: Update target record in database
+        if self.targets_repo and self.user_id:
+            try:
+                target = self.targets_repo.get_by_symbol(self.user_id, symbol, active_only=True)
+                if target:
+                    self.targets_repo.update_target_price(target.id, new_price)
+                    logger.debug(f"Updated target price for {symbol} to {new_price:.2f}")
+            except Exception as e:
+                logger.debug(f"Failed to update target price for {symbol}: {e}")
+
+        return result
 
     def _remove_order(self, symbol: str, reason: str | None = None) -> bool:
         """
@@ -1298,11 +1320,13 @@ class SellOrderManager:
                         )
 
                         if closed_at_time:
+                            # Phase 0.2: Manual sell - set exit_reason to MANUAL
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
                                 symbol=full_symbol,
                                 closed_at=closed_at_time,
                                 exit_price=exit_price,  # Save exit price from manual sell order
+                                exit_reason="MANUAL",  # Phase 0.2: Manual sell
                             )
                             # Close corresponding ONGOING buy orders
                             try:
@@ -1722,6 +1746,7 @@ class SellOrderManager:
                                 symbol=symbol,
                                 closed_at=ist_now(),
                                 exit_price=None,  # Manual sell, price unknown
+                                exit_reason="MANUAL",  # Phase 0.2: Manual sell
                             )
                             # Close corresponding ONGOING buy orders
                             try:
@@ -2259,6 +2284,75 @@ class SellOrderManager:
                         logger.warning(
                             f"Failed to persist sell order {order_id_str} for {symbol} to DB: {e}"
                         )
+
+                # Phase 0.4: Create target record in database
+                if self.targets_repo and self.user_id:
+                    try:
+                        # Get position for linking
+                        position = None
+                        position_id = None
+                        entry_price = trade.get("entry_price", 0.0)
+                        if self.positions_repo:
+                            position = self.positions_repo.get_by_symbol(self.user_id, symbol)
+                            if position:
+                                position_id = position.id
+                                entry_price = position.avg_price
+
+                        # Get trade_mode from user settings
+                        trade_mode = None
+                        if self.positions_repo and hasattr(self.positions_repo, "db"):
+                            try:
+                                from src.infrastructure.persistence.settings_repository import (
+                                    SettingsRepository,
+                                )
+
+                                settings_repo = SettingsRepository(self.positions_repo.db)
+                                user_settings = settings_repo.get_by_user_id(self.user_id)
+                                if user_settings:
+                                    trade_mode = user_settings.trade_mode
+                            except Exception as e:
+                                logger.debug(f"Could not get trade_mode: {e}")
+
+                        # Default to BROKER if not found (sell_engine is for broker trading)
+                        if not trade_mode:
+                            from src.infrastructure.db.models import TradeMode
+
+                            trade_mode = TradeMode.BROKER
+
+                        # Calculate distance to target
+                        current_price = trade.get("current_price") or trade.get("close")
+                        distance_to_target = None
+                        distance_to_target_absolute = None
+                        if current_price and target_price:
+                            distance_to_target = (
+                                (target_price - current_price) / current_price
+                            ) * 100
+                            distance_to_target_absolute = target_price - current_price
+
+                        # Create or update target
+                        target_data = {
+                            "position_id": position_id,
+                            "target_price": rounded_price,  # Use rounded price
+                            "entry_price": entry_price,
+                            "current_price": current_price,
+                            "quantity": float(qty),
+                            "distance_to_target": distance_to_target,
+                            "distance_to_target_absolute": distance_to_target_absolute,
+                            "target_type": "ema9",
+                        }
+
+                        target = self.targets_repo.upsert_by_symbol(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            target_data=target_data,
+                            trade_mode=trade_mode,
+                        )
+                        logger.debug(
+                            f"Created/updated target record for {symbol} "
+                            f"(target_id={target.id}, target_price={rounded_price:.2f})"
+                        )
+                    except Exception as e:  # pragma: no cover - defensive logging
+                        logger.warning(f"Failed to create target record for {symbol}: {e}")
 
                 return order_id_str
             else:
@@ -4255,18 +4349,66 @@ class SellOrderManager:
                                 # Full execution - mark position as closed
                                 # Wrap position and order updates in transaction for atomicity
                                 if transaction and ist_now:
+                                    # Phase 0.2: Get exit details from sell order
+                                    exit_reason = "EMA9_TARGET"  # Default
+                                    exit_rsi = None
+                                    sell_order_db_id = None
+
+                                    # Try to get sell order from database to extract exit details
+                                    if self.orders_repo and completed_order_id:
+                                        try:
+                                            sell_order = self.orders_repo.get_by_broker_order_id(
+                                                self.user_id, completed_order_id
+                                            )
+                                            if sell_order:
+                                                sell_order_db_id = sell_order.id
+                                                if sell_order.order_metadata and isinstance(
+                                                    sell_order.order_metadata, dict
+                                                ):
+                                                    exit_reason = sell_order.order_metadata.get(
+                                                        "exit_note", "EMA9_TARGET"
+                                                    )
+                                                    exit_rsi = sell_order.order_metadata.get(
+                                                        "exit_rsi"
+                                                    )
+                                        except Exception as e:
+                                            logger.debug(
+                                                f"Could not get sell order for exit details: {e}"
+                                            )
+
                                     with transaction(self.positions_repo.db):
                                         self.positions_repo.mark_closed(
                                             user_id=self.user_id,
                                             symbol=full_symbol,
                                             closed_at=ist_now(),
                                             exit_price=order_price,
+                                            exit_reason=exit_reason,
+                                            exit_rsi=exit_rsi,
+                                            sell_order_id=sell_order_db_id,
                                             auto_commit=False,  # Transaction handles commit
                                         )
                                         logger.info(
                                             f"Position marked as closed in database: {full_symbol} "
                                             f"(sold {filled_qty} shares @ Rs {order_price:.2f})"
                                         )
+
+                                        # Phase 0.4: Mark target as achieved
+                                        if self.targets_repo and self.user_id:
+                                            try:
+                                                target = self.targets_repo.get_by_symbol(
+                                                    self.user_id, full_symbol, active_only=True
+                                                )
+                                                if target:
+                                                    self.targets_repo.mark_achieved(
+                                                        target.id, achieved_at=ist_now()
+                                                    )
+                                                    logger.debug(
+                                                        f"Marked target as achieved for {full_symbol}"
+                                                    )
+                                            except Exception as e:
+                                                logger.debug(
+                                                    f"Failed to mark target as achieved for {full_symbol}: {e}"
+                                                )
 
                                         # Close corresponding ONGOING buy orders (within same transaction)
                                         # Extract base symbol for _close_buy_orders_for_symbol which uses base symbols
@@ -4325,18 +4467,62 @@ class SellOrderManager:
                         # Assume full execution if we don't have filled_qty info
                         # Wrap position and order updates in transaction for atomicity
                         if transaction and ist_now:
+                            # Phase 0.2: Get exit details from sell order
+                            exit_reason = "EMA9_TARGET"  # Default
+                            exit_rsi = None
+                            sell_order_db_id = None
+
+                            # Try to get sell order from database to extract exit details
+                            if self.orders_repo and order_id:
+                                try:
+                                    sell_order = self.orders_repo.get_by_broker_order_id(
+                                        self.user_id, order_id
+                                    )
+                                    if sell_order:
+                                        sell_order_db_id = sell_order.id
+                                        if sell_order.order_metadata and isinstance(
+                                            sell_order.order_metadata, dict
+                                        ):
+                                            exit_reason = sell_order.order_metadata.get(
+                                                "exit_note", "EMA9_TARGET"
+                                            )
+                                            exit_rsi = sell_order.order_metadata.get("exit_rsi")
+                                except Exception as e:
+                                    logger.debug(f"Could not get sell order for exit details: {e}")
+
                             with transaction(self.positions_repo.db):
                                 self.positions_repo.mark_closed(
                                     user_id=self.user_id,
                                     symbol=full_symbol,
                                     closed_at=ist_now(),
                                     exit_price=current_price,
+                                    exit_reason=exit_reason,
+                                    exit_rsi=exit_rsi,
+                                    sell_order_id=sell_order_db_id,
                                     auto_commit=False,  # Transaction handles commit
                                 )
                                 logger.info(
                                     f"Position marked as closed in database: {full_symbol} "
                                     f"(sold {sold_qty} shares @ Rs {current_price:.2f})"
                                 )
+
+                                # Phase 0.4: Mark target as achieved
+                                if self.targets_repo and self.user_id:
+                                    try:
+                                        target = self.targets_repo.get_by_symbol(
+                                            self.user_id, full_symbol, active_only=True
+                                        )
+                                        if target:
+                                            self.targets_repo.mark_achieved(
+                                                target.id, achieved_at=ist_now()
+                                            )
+                                            logger.debug(
+                                                f"Marked target as achieved for {full_symbol}"
+                                            )
+                                    except Exception as e:
+                                        logger.debug(
+                                            f"Failed to mark target as achieved for {full_symbol}: {e}"
+                                        )
 
                                 # Close corresponding ONGOING buy orders (within same transaction)
                                 # Extract base symbol for _close_buy_orders_for_symbol which uses base symbols

@@ -1,3 +1,4 @@
+# ruff: noqa
 """add_entry_rsi_to_positions_and_backfill
 
 Revision ID: d1e2f3a4b5c6
@@ -37,6 +38,12 @@ def upgrade() -> None:
         # 2. Extract rsi_entry_level from order_metadata
         # 3. If not available, try rsi10 from order_metadata
         # 4. If still not available, default to 29.5 (assume entry at RSI < 30)
+
+        # Check if orders table has required columns before backfilling
+        orders_columns = [col["name"] for col in inspector.get_columns("orders")]
+        if "order_metadata" not in orders_columns:
+            print("Warning: order_metadata column does not exist yet; skipping backfill")
+            return
 
         # SQL for backfilling (works for both SQLite and PostgreSQL)
         if isinstance(conn.dialect, sqlite.dialect):

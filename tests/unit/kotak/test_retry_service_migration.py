@@ -80,6 +80,8 @@ class TestRetryServiceIndicatorServiceIntegration:
         mock_order = Mock()
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
+        # After bug fix: ticker is now extracted from order_metadata first
+        mock_order.order_metadata = {"ticker": "RELIANCE.NS"}
         mock_order.id = 1
 
         # Mock orders repository
@@ -147,6 +149,8 @@ class TestRetryServiceIndicatorServiceIntegration:
         mock_order = Mock()
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
+        # After bug fix: ticker is now extracted from order_metadata first
+        mock_order.order_metadata = {"ticker": "RELIANCE.NS"}
         mock_order.id = 1
 
         # Mock orders repository
@@ -201,6 +205,8 @@ class TestRetryServiceIndicatorServiceIntegration:
         mock_order = Mock()
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
+        # After bug fix: ticker is now extracted from order_metadata first
+        mock_order.order_metadata = {"ticker": "RELIANCE.NS"}
         mock_order.id = 1
 
         # Mock orders repository
@@ -275,6 +281,8 @@ class TestRetryServiceIndicatorServiceIntegration:
         mock_order = Mock()
         mock_order.symbol = "RELIANCE"
         mock_order.ticker = "RELIANCE.NS"
+        # After bug fix: ticker is now extracted from order_metadata first
+        mock_order.order_metadata = {"ticker": "RELIANCE.NS"}
         mock_order.id = 1
 
         # Mock orders repository

@@ -34,3 +34,7 @@ class OrderResponse(BaseModel):
     # Entry type and source tracking
     entry_type: str | None = None  # 'initial', 'reentry', 'manual'
     is_manual: bool = False  # Derived from orig_source == 'manual'
+    # Phase 0.1: Trade mode display name
+    trade_mode_display: str | None = (
+        None  # 'Paper' for paper trading, broker name (e.g., 'Kotak Neo') for broker trading
+    )

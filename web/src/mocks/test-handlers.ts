@@ -112,6 +112,16 @@ const errorLogs: ErrorLogMock[] = [
 	},
 ];
 
+// Simple in-memory filter preset store keyed by page
+const filterPresets: Record<string, Record<string, Record<string, unknown>>> = {
+	signals: {
+		'Default Signals': {
+			status_filter: 'active',
+			limit: 100,
+		},
+	},
+};
+
 const filterServiceLogs = (logs: ServiceLogMock[], url: URL) => {
 	const level = url.searchParams.get('level');
 	const module = url.searchParams.get('module');
@@ -250,6 +260,65 @@ http.post(API('/auth/refresh'), async () => {
 		}
 		return HttpResponse.json({ has_creds: true, api_key_masked: '****1234', api_secret_masked: '****5678' });
 	}),
+	// portfolio
+	http.get(API('/user/portfolio'), async () => {
+		return HttpResponse.json({
+			account: {
+				initial_capital: 1000000,
+				available_cash: 500000,
+				total_pnl: 50000,
+				realized_pnl: 30000,
+				unrealized_pnl: 20000,
+				portfolio_value: 550000,
+				total_value: 1050000,
+				return_percentage: 5.0,
+			},
+			holdings: [
+				{
+					symbol: 'RELIANCE.NS',
+					quantity: 10,
+					average_price: 2500,
+					current_price: 2600,
+					cost_basis: 25000,
+					market_value: 26000,
+					pnl: 1000,
+					pnl_percentage: 4.0,
+					target_price: 2700,
+					distance_to_target: 3.7,
+				},
+				{
+					symbol: 'TCS.NS',
+					quantity: 5,
+					average_price: 3500,
+					current_price: 3400,
+					cost_basis: 17500,
+					market_value: 17000,
+					pnl: -500,
+					pnl_percentage: -2.86,
+					target_price: 3600,
+					distance_to_target: 5.6,
+				},
+			],
+			recent_orders: [],
+			order_statistics: {
+				total_orders: 10,
+				buy_orders: 6,
+				sell_orders: 4,
+				completed_orders: 8,
+				pending_orders: 2,
+				cancelled_orders: 0,
+				rejected_orders: 0,
+				success_rate: 80,
+				reentry_orders: 2,
+			},
+		});
+	}),
+	http.options(API('/user/portfolio'), async () => HttpResponse.json({ ok: true })),
+	// portfolio snapshot
+	http.post(API('/user/portfolio/snapshot'), async () => {
+		return HttpResponse.json({ message: 'Portfolio snapshot created successfully' });
+	}),
+	http.options(API('/user/portfolio/snapshot'), async () => HttpResponse.json({ ok: true })),
 	// orders
 	http.get(API('/user/orders'), async ({ request }) => {
 		const url = new URL(request.url);
@@ -314,6 +383,45 @@ http.post(API('/auth/refresh'), async () => {
 			service_running: false,
 		});
 	}),
+	// service metrics
+	http.get(API('/user/service/metrics/position-creation'), async () => {
+		return HttpResponse.json({
+			success: 10,
+			failed_missing_repos: 0,
+			failed_missing_symbol: 0,
+			failed_exception: 0,
+			success_rate: 100.0,
+			total_attempts: 10,
+		});
+	}),
+	http.options(API('/user/service/metrics/position-creation'), async () => HttpResponse.json({ ok: true })),
+	// positions without sell orders
+	http.get(API('/user/service/positions-without-sell'), async () => {
+		return HttpResponse.json({
+			positions: [],
+			count: 0,
+		});
+	}),
+	http.options(API('/user/service/positions-without-sell'), async () => HttpResponse.json({ ok: true })),
+	// individual service status
+	http.get(API('/user/service/individual/status'), async () => {
+		return HttpResponse.json({
+			analysis_service: { running: true, last_check: new Date().toISOString() },
+			scheduler_service: { running: true, last_check: new Date().toISOString() },
+			broker_service: { running: false, last_check: new Date().toISOString() },
+		});
+	}),
+	http.options(API('/user/service/individual/status'), async () => HttpResponse.json({ ok: true })),
+	// trading day info
+	http.get(API('/trading-day'), async () => {
+		return HttpResponse.json({
+			is_trading_day: true,
+			is_holiday: false,
+			holiday_name: null,
+			is_weekend: false,
+		});
+	}),
+	http.options(API('/trading-day'), async () => HttpResponse.json({ ok: true })),
 	http.get(API('/user/service/tasks'), async ({ request }) => {
 		const url = new URL(request.url);
 		const taskName = url.searchParams.get('task_name');
@@ -559,6 +667,86 @@ http.post(API('/auth/refresh'), async () => {
 		const body = await request.json();
 		return HttpResponse.json({ columns: (body as { columns: string[] }).columns });
 	}),
+	// filter presets (signals/orders, etc.)
+	http.get(API('/user/filter-presets/:page'), async ({ params }) => {
+		const page = String(params.page);
+		return HttpResponse.json({ presets: filterPresets[page] ?? {} });
+	}),
+	http.post(API('/user/filter-presets'), async ({ request }) => {
+		const body = (await request.json()) as {
+			page?: string;
+			preset_name?: string;
+			filters?: Record<string, unknown>;
+		};
+		const page = body.page ?? 'signals';
+		const presetName = body.preset_name ?? 'New Preset';
+		const filters = body.filters ?? {};
+		if (!filterPresets[page]) filterPresets[page] = {};
+		filterPresets[page][presetName] = filters;
+		return HttpResponse.json({ presets: filterPresets[page] });
+	}),
+	http.delete(API('/user/filter-presets/:page/:preset_name'), async ({ params }) => {
+		const page = String(params.page);
+		const presetName = String(params.preset_name);
+		if (filterPresets[page]) {
+			delete filterPresets[page][presetName];
+		}
+		return HttpResponse.json({ presets: filterPresets[page] ?? {} });
+	}),
+	http.options(API('/user/filter-presets/:page'), async () => HttpResponse.json({ ok: true })),
+	http.options(API('/user/filter-presets/:page/:preset_name'), async () => HttpResponse.json({ ok: true })),
+	// dashboard metrics
+	http.get(API('/dashboard/metrics'), async () => {
+		return HttpResponse.json({
+			total_trades: 42,
+			profitable_trades: 30,
+			losing_trades: 12,
+			win_rate: 71.4,
+			average_profit_per_trade: 1200.5,
+			best_trade_profit: 5000,
+			worst_trade_loss: -1500,
+			total_realized_pnl: 25000,
+			best_trade_symbol: 'TCS',
+			worst_trade_symbol: 'INFY',
+			days_traded: 20,
+			avg_holding_period_days: 3.2,
+		});
+	}),
+	http.options(API('/dashboard/metrics'), async () => HttpResponse.json({ ok: true })),
+	// portfolio history
+	http.get(API('/user/portfolio/history'), async () => {
+		const today = new Date();
+		const format = (d: Date) => d.toISOString().slice(0, 10);
+		return HttpResponse.json([
+			{
+				date: format(new Date(today.getTime() - 2 * 86_400_000)),
+				total_value: 1020000,
+				invested_value: 700000,
+				available_cash: 320000,
+				unrealized_pnl: 15000,
+				realized_pnl: 8000,
+				open_positions_count: 5,
+				closed_positions_count: 12,
+				total_return: 4.8,
+				daily_return: 0.5,
+				snapshot_type: 'daily',
+			},
+			{
+				date: format(new Date(today.getTime() - 1 * 86_400_000)),
+				total_value: 1035000,
+				invested_value: 705000,
+				available_cash: 330000,
+				unrealized_pnl: 17000,
+				realized_pnl: 9000,
+				open_positions_count: 5,
+				closed_positions_count: 13,
+				total_return: 5.2,
+				daily_return: 0.7,
+				snapshot_type: 'daily',
+			},
+		]);
+	}),
+	http.options(API('/user/portfolio/history'), async () => HttpResponse.json({ ok: true })),
 	// trading config
 	http.get(API('/user/trading-config'), async () => {
 		return HttpResponse.json({
@@ -782,4 +970,29 @@ http.post(API('/auth/refresh'), async () => {
 	http.get(API('/user/notifications/count'), async () => {
 		return HttpResponse.json({ unread_count: 0 });
 	}),
+	// pnl summary
+	http.get(API('/user/pnl/summary'), async () => {
+		return HttpResponse.json({
+			totalPnl: 15000.50,
+			tradesGreen: 25,
+			tradesRed: 8,
+			totalRealizedPnl: 12000,
+			totalUnrealizedPnl: 3000.50,
+			avgTradePnl: 487.5,
+			minTradePnl: -1200.50,
+			maxTradePnl: 2500.75,
+		});
+	}),
+	http.options(API('/user/pnl/summary'), async () => HttpResponse.json({ ok: true })),
+	// daily pnl
+	http.get(API('/user/pnl/daily'), async () => {
+		const today = new Date();
+		const format = (d: Date) => d.toISOString().slice(0, 10);
+		return HttpResponse.json([
+			{ date: format(new Date(today.getTime() - 2 * 86_400_000)), pnl: 2500.75 },
+			{ date: format(new Date(today.getTime() - 1 * 86_400_000)), pnl: -1200.50 },
+			{ date: format(today), pnl: 500.0 },
+		]);
+	}),
+	http.options(API('/user/pnl/daily'), async () => HttpResponse.json({ ok: true })),
 ];

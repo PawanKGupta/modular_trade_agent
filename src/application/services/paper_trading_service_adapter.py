@@ -18,6 +18,7 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import (
     PaperTradingBrokerAdapter,
 )
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
+from src.infrastructure.db.models import TradeMode
 from src.infrastructure.logging import get_user_logger
 
 logger = logging.getLogger(__name__)
@@ -1925,11 +1926,12 @@ class PaperTradingEngineAdapter:
         # Check portfolio limit (from strategy config or default 6)
         # CRITICAL FIX: Use current_symbols (includes holdings + pending orders + DB orders)
         # instead of just holdings, to properly respect max_portfolio_size
-        max_portfolio_size = (
-            self.strategy_config.max_portfolio_size
-            if self.strategy_config and hasattr(self.strategy_config, "max_portfolio_size")
-            else 6
-        )
+        max_portfolio_size = 6  # Default
+        if self.strategy_config and hasattr(self.strategy_config, "max_portfolio_size"):
+            # Ensure we get an actual int, not a Mock object
+            portfolio_size_value = self.strategy_config.max_portfolio_size
+            if isinstance(portfolio_size_value, int):
+                max_portfolio_size = portfolio_size_value
         current_portfolio_count = len(current_symbols)
         if current_portfolio_count >= max_portfolio_size:
             self.logger.warning(
@@ -2048,6 +2050,33 @@ class PaperTradingEngineAdapter:
 
                 qty = max(1, floor(execution_capital / price))
 
+                # Check balance before placing order (for paper trading, check available cash)
+                # This prevents placing orders that will fail on execution
+                if self.broker and hasattr(self.broker, "store"):
+                    try:
+                        account = self.broker.store.get_account()
+                        available_cash = account.get("available_cash", 0.0) if account else 0.0
+                        order_value = price * qty
+                        # Add estimated charges (typically ~0.1% for buy orders)
+                        estimated_charges = order_value * 0.001
+                        total_required = order_value + estimated_charges
+
+                        if total_required > available_cash:
+                            self.logger.warning(
+                                f"Insufficient balance for {rec.ticker}: "
+                                f"Need Rs {total_required:,.2f}, Available Rs {available_cash:,.2f}",
+                                action="place_new_entries",
+                            )
+                            summary["failed_balance"] += 1
+                            continue
+                    except Exception as balance_error:
+                        # If balance check fails, log warning but continue (don't block order placement)
+                        self.logger.warning(
+                            f"Failed to check balance for {rec.ticker}: {balance_error}. "
+                            "Proceeding with order placement.",
+                            action="place_new_entries",
+                        )
+
                 # Double-check: ensure order value doesn't exceed max_position_size
                 order_value = price * qty
                 if order_value > max_position_size:
@@ -2111,6 +2140,51 @@ class PaperTradingEngineAdapter:
                     # Add to current_symbols to prevent duplicates within same batch
                     # This handles cases where recommendations have both "XYZ" and "XYZ.NS"
                     current_symbols.add(normalized_ticker)
+
+                    # Save to database (similar to place_reentry_orders)
+                    if self.user_id and self.db:
+                        try:
+                            from src.infrastructure.persistence.orders_repository import (
+                                OrdersRepository,
+                            )
+
+                            orders_repo = OrdersRepository(self.db)
+                            # Determine order type string
+                            order_type_str = (
+                                "market" if order.order_type.value == "MARKET" else "limit"
+                            )
+                            # Get order metadata if available
+                            order_metadata = None
+                            if hasattr(order, "metadata") and order.metadata:
+                                order_metadata = order.metadata
+                            elif hasattr(order, "_metadata") and order._metadata:
+                                order_metadata = order._metadata
+
+                            orders_repo.create_amo(
+                                user_id=self.user_id,
+                                symbol=symbol,
+                                side="buy",
+                                order_type=order_type_str,
+                                quantity=qty,
+                                price=price if order.order_type.value == "LIMIT" else None,
+                                broker_order_id=order_id,
+                                order_metadata=order_metadata,
+                                entry_type="fresh",
+                                trade_mode=TradeMode.PAPER,  # Phase 0.1: Explicit paper trading mode
+                            )
+                            # Note: create_amo already commits, but we keep commit here for safety
+                            if not self.db.in_transaction():
+                                self.db.commit()
+                            self.logger.debug(
+                                f"Saved order {order_id} to database for {symbol}",
+                                action="place_new_entries",
+                            )
+                        except Exception as db_error:
+                            # Don't fail order placement if database save fails
+                            self.logger.warning(
+                                f"Failed to save order to database for {symbol}: {db_error}",
+                                action="place_new_entries",
+                            )
 
                     # Mark signal as TRADED
                     try:
@@ -2744,6 +2818,7 @@ class PaperTradingEngineAdapter:
                                 broker_order_id=order_id,
                                 order_metadata=reentry_order._metadata,
                                 entry_type="reentry",
+                                trade_mode=TradeMode.PAPER,  # Phase 0.1: Explicit paper trading mode
                             )
                             # Note: create_amo already commits, but we keep commit here for safety
                             if not self.db.in_transaction():

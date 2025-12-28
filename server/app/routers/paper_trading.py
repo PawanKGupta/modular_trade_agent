@@ -3,7 +3,7 @@ Paper Trading API endpoints
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +13,13 @@ from sqlalchemy.orm import Session
 
 from modules.kotak_neo_auto_trader.infrastructure.persistence import PaperTradeStore
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
-from src.infrastructure.db.models import Users
+from src.infrastructure.db.models import PnlDaily, Users
+from src.infrastructure.persistence.orders_repository import OrdersRepository
+from src.infrastructure.persistence.pnl_repository import PnlRepository
+from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 from ..core.deps import get_current_user, get_db
+from ..services.pnl_calculation_service import PnlCalculationService
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +89,7 @@ class ClosedPosition(BaseModel):
     realized_pnl: float
     pnl_percentage: float
     charges: float
+    slippage: float | None = None  # Difference between expected and executed price (Phase 1)
 
 
 class TradeHistory(BaseModel):
@@ -98,6 +103,48 @@ class PaperTradingPortfolio(BaseModel):
     holdings: list[PaperTradingHolding]
     recent_orders: list[PaperTradingOrder]
     order_statistics: dict
+
+
+def _parse_iso_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+    except Exception:
+        return None
+
+
+def _upsert_pnl_from_closed_positions(
+    user_id: int, closed_positions: list[ClosedPosition], db: Session
+) -> None:
+    """Aggregate realized PnL by sell date and upsert PnlDaily records."""
+    if not closed_positions:
+        return
+
+    try:
+        pnl_repo = PnlRepository(db)
+        daily_totals: dict[date, dict[str, float]] = {}
+
+        for pos in closed_positions:
+            sell_date = _parse_iso_date(pos.sell_date)
+            if not sell_date:
+                continue
+
+            totals = daily_totals.setdefault(sell_date, {"realized": 0.0, "fees": 0.0})
+            totals["realized"] += float(pos.realized_pnl or 0.0)
+            totals["fees"] += float(pos.charges or 0.0)
+
+        for day, totals in daily_totals.items():
+            record = PnlDaily(
+                user_id=user_id,
+                date=day,
+                realized_pnl=totals["realized"],
+                unrealized_pnl=0.0,
+                fees=totals["fees"],
+            )
+            pnl_repo.upsert(record)
+    except Exception as e:
+        logger.warning(f"Skipping PnL sync from history for user {user_id}: {e}")
 
 
 @router.get("/portfolio", response_model=PaperTradingPortfolio)
@@ -429,143 +476,143 @@ def get_paper_trading_history(  # noqa: PLR0915
         - Statistics
     """
     try:
-        # Get user's paper trading storage path
-        store_path = Path("paper_trading") / f"user_{current.id}"
+        # Prefer DB-backed trade history: Orders + closed Positions
+        positions_repo = PositionsRepository(db)
+        orders_repo = OrdersRepository(db)
 
-        if not store_path.exists():
-            # Return empty history if no data exists
-            return TradeHistory(
-                transactions=[],
-                closed_positions=[],
-                statistics={
-                    "total_trades": 0,
-                    "profitable_trades": 0,
-                    "losing_trades": 0,
-                    "breakeven_trades": 0,
-                    "win_rate": 0.0,
-                    "total_profit": 0.0,
-                    "total_loss": 0.0,
-                    "net_pnl": 0.0,
-                    "avg_profit_per_trade": 0.0,
-                    "avg_loss_per_trade": 0.0,
-                    "total_transactions": 0,
-                },
-            )
+        # Build transactions from Orders
+        fee_rate = getattr(PnlCalculationService, "DEFAULT_FEE_RATE", 0.0)
+        orders = orders_repo.list(current.id)
+        transactions_db: list[PaperTradingTransaction] = []
+        for o in orders:
+            try:
+                qty = int(o.quantity or 0)
+                price = float(o.avg_price or o.price or 0.0)
+                val = qty * price
+                charges = round(val * fee_rate, 6) if fee_rate else 0.0
+                transactions_db.append(
+                    PaperTradingTransaction(
+                        order_id=str(getattr(o, "order_id", None) or o.id),
+                        symbol=o.symbol,
+                        transaction_type=("BUY" if (o.side or "").lower() == "buy" else "SELL"),
+                        quantity=qty,
+                        price=price,
+                        order_value=val,
+                        charges=charges,
+                        timestamp=(
+                            o.placed_at.isoformat() if getattr(o, "placed_at", None) else ""
+                        ),
+                    )
+                )
+            except Exception:
+                continue
 
-        # Initialize store
-        store = PaperTradeStore(storage_path=str(store_path), auto_save=False)
+        # Build closed positions from Positions (strictly from Positions table)
+        closed_positions_db: list[ClosedPosition] = []
+        from src.infrastructure.db.models import Positions as PositionsModel
 
-        # Get all transactions
-        all_transactions = store.get_all_transactions()
+        db_positions = (
+            db.query(PositionsModel)
+            .filter(
+                PositionsModel.user_id == current.id, PositionsModel.closed_at != None
+            )  # noqa: E711
+            .all()
+        )
 
-        # Convert transactions to response format
-        transactions = [
-            PaperTradingTransaction(
-                order_id=t.get("order_id", ""),
-                symbol=t.get("symbol", ""),
-                transaction_type=t.get("transaction_type", ""),
-                quantity=t.get("quantity", 0),
-                price=t.get("price", 0.0),
-                order_value=t.get("order_value", 0.0),
-                charges=t.get("charges", 0.0),
-                timestamp=t.get("timestamp", ""),
-            )
-            for t in all_transactions
-        ]
+        for pos in db_positions:
+            try:
+                entry_price = float(pos.avg_price or 0.0)
+                exit_price = float(pos.exit_price or 0.0)
+                realized = float(pos.realized_pnl or 0.0)
+                # Quantity comes from the Positions table
+                qty = int(getattr(pos, "quantity", 0) or 0)
+                # If closed positions set quantity to 0, try to recover from sell order
+                if qty == 0 and pos.sell_order_id:
+                    try:
+                        sell_order = orders_repo.get(pos.sell_order_id)
+                        if sell_order and sell_order.quantity:
+                            qty = int(sell_order.quantity)
+                    except Exception:
+                        pass
+                # As a safety fallback only if quantity is still missing, infer from realized and prices
+                if (
+                    qty == 0
+                    and exit_price
+                    and entry_price
+                    and (exit_price != entry_price)
+                    and realized
+                ):
+                    try:
+                        qty = int(round(realized / (exit_price - entry_price)))
+                    except Exception:
+                        qty = 0
 
-        # Calculate closed positions from transactions
-        # Group by symbol and match buys with sells
-        closed_positions = []
-        symbol_transactions: dict[str, dict[str, list]] = {}
+                # Approximate combined charges via fee rate
+                charges = 0.0
+                if fee_rate and qty > 0:
+                    buy_val = qty * entry_price
+                    sell_val = qty * exit_price
+                    charges = round((buy_val + sell_val) * fee_rate, 6)
 
-        # Group transactions by symbol
-        for txn in all_transactions:
-            symbol = txn.get("symbol", "")
-            if symbol not in symbol_transactions:
-                symbol_transactions[symbol] = {"buys": [], "sells": []}
-
-            if txn.get("transaction_type") == "BUY":
-                symbol_transactions[symbol]["buys"].append(txn)
-            elif txn.get("transaction_type") == "SELL":
-                symbol_transactions[symbol]["sells"].append(txn)
-
-        # Match buys with sells to create closed positions (FIFO)
-        for symbol, txns in symbol_transactions.items():
-            buys = sorted(txns["buys"], key=lambda x: x.get("timestamp", ""))
-            sells = sorted(txns["sells"], key=lambda x: x.get("timestamp", ""))
-
-            buy_queue = buys.copy()
-            sell_queue = sells.copy()
-
-            while buy_queue and sell_queue:
-                buy = buy_queue[0]
-                sell = sell_queue[0]
-
-                buy_qty_remaining = buy.get("quantity", 0)
-                sell_qty_remaining = sell.get("quantity", 0)
-
-                # Match quantities
-                matched_qty = min(buy_qty_remaining, sell_qty_remaining)
-
-                if matched_qty > 0:
-                    # Create closed position
-                    buy_price = buy.get("price", 0.0)
-                    sell_price = sell.get("price", 0.0)
-                    buy_charges = buy.get("charges", 0.0)
-                    sell_charges = sell.get("charges", 0.0)
-
-                    # Calculate P&L
-                    cost = (buy_price * matched_qty) + buy_charges
-                    revenue = (sell_price * matched_qty) - sell_charges
-                    pnl = revenue - cost
-                    pnl_pct = (pnl / cost * 100) if cost > 0 else 0.0
-
-                    # Calculate holding period
-                    buy_date_str = buy.get("timestamp", "")
-                    sell_date_str = sell.get("timestamp", "")
+                buy_date_str = pos.opened_at.isoformat() if pos.opened_at else ""
+                sell_date_str = pos.closed_at.isoformat() if pos.closed_at else ""
+                holding_days = 0
+                try:
+                    if pos.opened_at and pos.closed_at:
+                        holding_days = (pos.closed_at.date() - pos.opened_at.date()).days
+                except Exception:
                     holding_days = 0
 
+                pnl_pct = 0.0
+                try:
+                    cost = (entry_price * qty) + charges
+                    pnl_pct = (realized / cost * 100) if cost > 0 else 0.0
+                except Exception:
+                    pnl_pct = 0.0
+
+                # Calculate slippage (difference between expected and executed price)
+                slippage = None
+                if pos.sell_order_id:
                     try:
-                        buy_date = datetime.fromisoformat(buy_date_str)
-                        sell_date = datetime.fromisoformat(sell_date_str)
-                        holding_days = (sell_date - buy_date).days
-                    except (ValueError, TypeError):
-                        holding_days = 0
+                        sell_order = orders_repo.get(pos.sell_order_id)
+                        if sell_order and sell_order.price and sell_order.execution_price:
+                            slippage = abs(sell_order.execution_price - sell_order.price)
+                    except Exception:
+                        pass
 
-                    closed_positions.append(
-                        ClosedPosition(
-                            symbol=symbol,
-                            entry_price=buy_price,
-                            exit_price=sell_price,
-                            quantity=matched_qty,
-                            buy_date=buy_date_str,
-                            sell_date=sell_date_str,
-                            holding_days=holding_days,
-                            realized_pnl=pnl,
-                            pnl_percentage=pnl_pct,
-                            charges=buy_charges + sell_charges,
-                        )
+                closed_positions_db.append(
+                    ClosedPosition(
+                        symbol=pos.symbol,
+                        entry_price=entry_price,
+                        exit_price=exit_price,
+                        quantity=qty,
+                        buy_date=buy_date_str,
+                        sell_date=sell_date_str,
+                        holding_days=holding_days,
+                        realized_pnl=realized,
+                        pnl_percentage=pnl_pct,
+                        charges=charges,
+                        slippage=slippage,
                     )
+                )
+            except Exception:
+                continue
 
-                    # Update quantities
-                    buy["quantity"] = buy_qty_remaining - matched_qty
-                    sell["quantity"] = sell_qty_remaining - matched_qty
+        # Use only DB-backed trade history; no file-based fallback
+        transactions_out = transactions_db
+        closed_positions_out = closed_positions_db
 
-                # Remove fully matched transactions
-                if buy.get("quantity", 0) == 0:
-                    buy_queue.pop(0)
-                if sell.get("quantity", 0) == 0:
-                    sell_queue.pop(0)
+        # Upsert PnL from whichever source we used
+        _upsert_pnl_from_closed_positions(current.id, closed_positions_out, db)
 
-        # Calculate statistics
-        total_trades = len(closed_positions)
-        profitable_trades = sum(1 for p in closed_positions if p.realized_pnl > 0)
-        losing_trades = sum(1 for p in closed_positions if p.realized_pnl < 0)
-        breakeven_trades = sum(1 for p in closed_positions if p.realized_pnl == 0)
+        total_trades = len(closed_positions_out)
+        profitable_trades = sum(1 for p in closed_positions_out if p.realized_pnl > 0)
+        losing_trades = sum(1 for p in closed_positions_out if p.realized_pnl < 0)
+        breakeven_trades = sum(1 for p in closed_positions_out if p.realized_pnl == 0)
 
-        total_profit = sum(p.realized_pnl for p in closed_positions if p.realized_pnl > 0)
-        total_loss = sum(p.realized_pnl for p in closed_positions if p.realized_pnl < 0)
-        net_pnl = sum(p.realized_pnl for p in closed_positions)
+        total_profit = sum(p.realized_pnl for p in closed_positions_out if p.realized_pnl > 0)
+        total_loss = sum(p.realized_pnl for p in closed_positions_out if p.realized_pnl < 0)
+        net_pnl = sum(p.realized_pnl for p in closed_positions_out)
 
         win_rate = (profitable_trades / total_trades * 100) if total_trades > 0 else 0.0
         avg_profit = total_profit / profitable_trades if profitable_trades > 0 else 0.0
@@ -582,11 +629,13 @@ def get_paper_trading_history(  # noqa: PLR0915
             "net_pnl": net_pnl,
             "avg_profit_per_trade": avg_profit,
             "avg_loss_per_trade": avg_loss,
-            "total_transactions": len(all_transactions),
+            "total_transactions": len(transactions_out or []),
         }
 
         return TradeHistory(
-            transactions=transactions, closed_positions=closed_positions, statistics=statistics
+            transactions=transactions_out or [],
+            closed_positions=closed_positions_out or [],
+            statistics=statistics,
         )
 
     except Exception as e:
