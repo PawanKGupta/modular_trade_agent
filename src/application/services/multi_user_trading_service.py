@@ -119,6 +119,14 @@ class MultiUserTradingService:
             heartbeat_counter = 0  # Log heartbeat every 5 minutes
             pool_log_counter = 0  # Log pool status every 15 minutes
 
+            # Initial heartbeat on start to ensure early commit/rollback paths are exercised
+            try:
+                thread_status_repo = ServiceStatusRepository(thread_db)
+                thread_status_repo.update_heartbeat(user_id)
+                thread_db.commit()
+            except Exception:
+                thread_db.rollback()
+
             while service.running and not getattr(service, "shutdown_requested", False):
                 try:
                     now = datetime.now()

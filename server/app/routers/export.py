@@ -320,11 +320,10 @@ def export_signals_csv(
         if not start_date:
             start_date = end_date - timedelta(days=30)
 
-        # Fetch signals (date-based filter to avoid tz issues)
-        query = db.query(Signals).filter(
-            func.date(Signals.ts) >= start_date,
-            func.date(Signals.ts) <= end_date,
-        )
+        # Fetch signals using datetime range to avoid timezone-related mismatches
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        end_dt = datetime.combine(end_date, datetime.max.time())
+        query = db.query(Signals).filter(Signals.ts >= start_dt, Signals.ts <= end_dt)
 
         if verdict:
             query = query.filter(Signals.verdict == verdict)
@@ -423,12 +422,14 @@ def export_orders_csv(
         if not start_date:
             start_date = end_date - timedelta(days=30)
 
-        # Fetch orders (date-based filter to avoid tz issues)
+        # Fetch orders using datetime range to avoid timezone-related mismatches
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        end_dt = datetime.combine(end_date, datetime.max.time())
         query = db.query(Orders).filter(
             Orders.user_id == current.id,
             Orders.trade_mode == trade_mode,
-            func.date(Orders.placed_at) >= start_date,
-            func.date(Orders.placed_at) <= end_date,
+            Orders.placed_at >= start_dt,
+            Orders.placed_at <= end_dt,
         )
 
         if status:

@@ -190,8 +190,10 @@ class PnlCalculationService:
         if trade_mode:
             stmt = stmt.where(Orders.trade_mode == trade_mode)
         if target_date:
-            # Date-based filter to avoid timezone mismatches
-            stmt = stmt.where(func.date(Orders.placed_at) == target_date)
+            # Use datetime range boundaries to avoid timezone mismatches
+            start_dt = datetime.combine(target_date, datetime.min.time())
+            end_dt = datetime.combine(target_date, datetime.max.time())
+            stmt = stmt.where(Orders.placed_at >= start_dt, Orders.placed_at <= end_dt)
 
         orders = list(self.db.execute(stmt).scalars().all())
 
