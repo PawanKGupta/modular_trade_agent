@@ -97,4 +97,5 @@ jobs:
         env:
           DB_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/trading_test
         run: |
-          pytest tests/integration/test_scheduler_thread_safety_integration.py -m integration -q
+          # Override pytest.ini addopts to avoid coverage gating in this smoke job
+          pytest tests/integration/test_scheduler_thread_safety_integration.py -m integration -q -o addopts=""
