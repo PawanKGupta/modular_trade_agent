@@ -72,6 +72,19 @@ class MultiUserTradingService:
         # Actual scheduler uses thread-local instances with thread-local DB sessions
         self._schedule_manager = ScheduleManager
 
+    def get_schedule_manager(self, db_session: Session) -> ScheduleManager:
+        """Return a ScheduleManager bound to the provided session.
+
+        Callers are responsible for creating and managing the lifecycle of the
+        SQLAlchemy session passed here (e.g., thread-local SessionLocal inside
+        scheduler threads). This helper keeps the intended usage explicit and
+        avoids accidental reuse of shared state across threads.
+        """
+        if db_session is None:
+            raise ValueError("db_session is required to create a ScheduleManager")
+
+        return self._schedule_manager(db_session)
+
     def _run_paper_trading_scheduler(  # noqa: PLR0912, PLR0915
         self, service: PaperTradingServiceAdapter, user_id: int
     ):
