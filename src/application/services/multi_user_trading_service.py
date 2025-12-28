@@ -86,8 +86,8 @@ class MultiUserTradingService:
             user_id: User ID for this service
         """
         # Create a new database session for this thread
-        from src.infrastructure.db.session import SessionLocal, engine  # noqa: PLC0415
         from src.infrastructure.db.connection_monitor import log_pool_status  # noqa: PLC0415
+        from src.infrastructure.db.session import SessionLocal, engine  # noqa: PLC0415
 
         thread_db = SessionLocal()
 

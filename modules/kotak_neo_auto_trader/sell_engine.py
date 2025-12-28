@@ -1322,7 +1322,7 @@ class SellOrderManager:
                         if closed_at_time:
                             # Phase 0.2: Determine exit_reason dynamically from sell order metadata
                             exit_reason = "MANUAL"  # Default: user manual sell
-                            
+
                             # Try to find the sell order and extract exit_reason from metadata
                             if order_id and self.orders_repo:
                                 try:
@@ -1338,7 +1338,7 @@ class SellOrderManager:
                                         f"Could not retrieve exit_reason from order {order_id}: {e}. "
                                         f"Using default 'MANUAL'"
                                     )
-                            
+
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
                                 symbol=full_symbol,

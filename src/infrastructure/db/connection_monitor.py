@@ -6,7 +6,6 @@ Utilities for monitoring SQLAlchemy connection pool health and usage.
 
 from typing import Any
 
-from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import Pool
 
@@ -54,9 +53,7 @@ def get_pool_status(engine: Engine) -> dict[str, Any]:
     }
 
     # Calculate total connections
-    status["total_connections"] = (
-        status["checked_out"] + status["checked_in"] + status["overflow"]
-    )
+    status["total_connections"] = status["checked_out"] + status["checked_in"] + status["overflow"]
 
     # Add pool utilization percentage
     max_total = status["pool_size"] + status["max_overflow"]

@@ -2,7 +2,6 @@
 Tests for database connection pool monitoring functionality
 """
 
-import pytest
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.connection_monitor import (

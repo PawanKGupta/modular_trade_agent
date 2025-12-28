@@ -10,13 +10,13 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Orders, Positions, PnlDaily, TradeMode
+from src.infrastructure.db.models import Orders, PnlDaily, Positions, TradeMode
 from src.infrastructure.persistence.orders_repository import OrdersRepository
-from src.infrastructure.persistence.positions_repository import PositionsRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
+from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 try:
     from utils.logger import logger
@@ -163,9 +163,7 @@ class PnlCalculationService:
             else:
                 # Fallback: Use avg_price as current price (0 unrealized P&L)
                 # This is a placeholder until we integrate price fetching
-                logger.warning(
-                    f"Position {pos.id} has no unrealized_pnl. Using 0 as placeholder."
-                )
+                logger.warning(f"Position {pos.id} has no unrealized_pnl. Using 0 as placeholder.")
                 pnl = 0.0
 
             unrealized_by_date[calculation_date] += pnl
@@ -204,9 +202,7 @@ class PnlCalculationService:
             # Use avg_price if filled, otherwise use price
             order_value = (order.avg_price or order.price or 0) * (order.quantity or 0)
             fee = order_value * self.DEFAULT_FEE_RATE
-            order_date = (
-                order.placed_at.date() if order.placed_at else target_date or date.today()
-            )
+            order_date = order.placed_at.date() if order.placed_at else target_date or date.today()
             fees_by_date[order_date] += fee
 
         return dict(fees_by_date)
@@ -301,4 +297,3 @@ class PnlCalculationService:
                 return order
 
         return None
-

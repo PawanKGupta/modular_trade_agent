@@ -6,32 +6,30 @@ Tests actual database interactions across threads to ensure isolation and correc
 
 import threading
 import time
-from datetime import datetime, time as dt_time
-
-import pytest
-from sqlalchemy import text
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
+from datetime import time as dt_time
 from uuid import uuid4
 
-from src.application.services.multi_user_trading_service import MultiUserTradingService
+import pytest
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+
 from src.application.services.schedule_manager import ScheduleManager
 from src.infrastructure.db.models import (
     ServiceSchedule,
     ServiceStatus,
-    UserSettings,
     TradeMode,
     Users,
+    UserSettings,
 )
-from src.infrastructure.persistence.service_schedule_repository import (
-    ServiceScheduleRepository,
-)
-from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 
 # Skip these integration tests when using in-memory SQLite with StaticPool,
 # as SQLite+StaticPool shares a single connection across threads and does not
 # provide reliable transaction isolation or cross-thread behavior for these cases.
 from src.infrastructure.db.session import engine as _engine  # noqa: E402
+from src.infrastructure.persistence.service_schedule_repository import (
+    ServiceScheduleRepository,
+)
+from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 
 pytestmark = pytest.mark.skipif(
     _engine.dialect.name == "sqlite" and isinstance(_engine.pool, StaticPool),
@@ -88,6 +86,7 @@ class TestSchedulerThreadSafetyIntegration:
     def test_schedules(self, db_session: Session, test_user: int):
         """Create test schedules"""
         from src.infrastructure.db.session import SessionLocal
+
         project_db = SessionLocal()
         schedules = [
             ServiceSchedule(
@@ -116,6 +115,7 @@ class TestSchedulerThreadSafetyIntegration:
 
         # Cleanup
         from src.infrastructure.db.session import SessionLocal
+
         project_db = SessionLocal()
         try:
             for schedule in schedules:
@@ -124,7 +124,9 @@ class TestSchedulerThreadSafetyIntegration:
         finally:
             project_db.close()
 
-    def test_concurrent_schedule_queries_real_db(self, db_session: Session, test_user: int, test_schedules):
+    def test_concurrent_schedule_queries_real_db(
+        self, db_session: Session, test_user: int, test_schedules
+    ):
         """Test that concurrent schedule queries from multiple threads work correctly"""
         results = {"thread1": [], "thread2": [], "thread3": []}
         errors = []
@@ -178,6 +180,7 @@ class TestSchedulerThreadSafetyIntegration:
 
         # Create initial service status
         from src.infrastructure.db.session import SessionLocal
+
         project_db = SessionLocal()
         try:
             status = ServiceStatus(user_id=test_user, service_running=True)
@@ -225,6 +228,7 @@ class TestSchedulerThreadSafetyIntegration:
 
         # Verify final heartbeat was updated
         from src.infrastructure.db.session import SessionLocal
+
         with SessionLocal() as project_db:
             project_db.expire_all()
             final_status = project_db.query(ServiceStatus).filter_by(user_id=test_user).first()
@@ -233,6 +237,7 @@ class TestSchedulerThreadSafetyIntegration:
 
         # Cleanup
         from src.infrastructure.db.session import SessionLocal
+
         with SessionLocal() as project_db:
             status_row = project_db.query(ServiceStatus).filter_by(user_id=test_user).first()
             if status_row:
@@ -386,6 +391,7 @@ class TestSchedulerThreadSafetyIntegration:
 
         # Cleanup
         from src.infrastructure.db.session import SessionLocal
+
         with SessionLocal() as project_db:
             project_db.query(ServiceSchedule).filter(
                 ServiceSchedule.task_name.in_(task_names)
@@ -394,8 +400,8 @@ class TestSchedulerThreadSafetyIntegration:
 
     def test_session_cleanup_on_thread_exit(self, db_session: Session, test_user: int):
         """Test that sessions are properly cleaned up when threads exit"""
-        from src.infrastructure.db.session import engine
         from src.infrastructure.db.connection_monitor import get_active_connections_count
+        from src.infrastructure.db.session import engine
 
         initial_connections = get_active_connections_count(engine)
 

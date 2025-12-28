@@ -63,7 +63,7 @@ from src.infrastructure.db.connection_monitor import log_pool_status
 
 # Log pool status
 log_pool_status(engine, logger)
-# Output: 📊 DB Connection Pool Status: 12 active, 3 available, 0 overflow, 
+# Output: 📊 DB Connection Pool Status: 12 active, 3 available, 0 overflow,
 #         15/45 total (33.3% utilized)
 ```
 
@@ -195,10 +195,10 @@ pytest tests/unit/services/test_scheduler_thread_safety.py -v
 
 1. **Connection Usage**: 2× connections per service (was 1×)
    - Mitigation: Increased pool size and overflow
-   
+
 2. **Data Visibility**: Thread transactions are isolated
    - Impact: Minimal - operations commit immediately
-   
+
 3. **Memory**: Each session holds pool references
    - Mitigation: Proper cleanup in `finally` blocks
 
@@ -244,10 +244,10 @@ engine = create_engine(
 
 ## Summary
 
-✅ **Thread-safe DB access** via thread-local sessions  
-✅ **Kotak client sharing** preserved (no changes)  
-✅ **Production-ready** with enhanced monitoring  
-✅ **Tests passing** with enforced thread-safety pattern  
-✅ **Scalable** with 3× connection pool capacity  
+✅ **Thread-safe DB access** via thread-local sessions
+✅ **Kotak client sharing** preserved (no changes)
+✅ **Production-ready** with enhanced monitoring
+✅ **Tests passing** with enforced thread-safety pattern
+✅ **Scalable** with 3× connection pool capacity
 
 **Deployment Status**: ✅ Ready for production

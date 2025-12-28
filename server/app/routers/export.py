@@ -2,12 +2,12 @@
 
 import csv
 import io
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Orders, Positions, Signals, TradeMode, Users
 from src.infrastructure.persistence.export_job_repository import ExportJobRepository
@@ -269,18 +269,18 @@ def export_trades_csv(
             )
 
             writer.writerow(
-                    {
-                        "symbol": pos.symbol,
-                        "entry_date": pos.opened_at.isoformat() if pos.opened_at else "",
-                        "exit_date": pos.closed_at.isoformat() if pos.closed_at else "",
+                {
+                    "symbol": pos.symbol,
+                    "entry_date": pos.opened_at.isoformat() if pos.opened_at else "",
+                    "exit_date": pos.closed_at.isoformat() if pos.closed_at else "",
                     "quantity": pos.quantity,
                     "entry_price": f"{pos.avg_price:.2f}" if pos.avg_price else "",
                     "exit_price": f"{pos.exit_price:.2f}" if pos.exit_price else "",
                     "realized_pnl": f"{pos.realized_pnl:.2f}" if pos.realized_pnl else "0.00",
                     "pnl_percentage": f"{pnl_pct:.2f}",
-                        "fees": "0.00",
+                    "fees": "0.00",
                     "holding_days": holding_days,
-                        "trade_mode": trade_mode.value,
+                    "trade_mode": trade_mode.value,
                 }
             )
 

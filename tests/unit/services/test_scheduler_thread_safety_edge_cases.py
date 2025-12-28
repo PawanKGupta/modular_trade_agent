@@ -167,9 +167,7 @@ class TestSchedulerThreadSafetyEdgeCases:
                 mock_thread_db = MagicMock(spec=Session)
                 mock_session_local.return_value = mock_thread_db
 
-                with patch(
-                    "src.application.services.multi_user_trading_service.get_user_logger"
-                ):
+                with patch("src.application.services.multi_user_trading_service.get_user_logger"):
                     thread = threading.Thread(
                         target=self.service._run_paper_trading_scheduler,
                         args=(mock_service, 1),
@@ -209,9 +207,7 @@ class TestSchedulerThreadSafetyEdgeCases:
                 mock_repo.get_by_task_name.return_value = None
                 mock_repo_class.return_value = mock_repo
 
-                with patch(
-                    "src.application.services.multi_user_trading_service.get_user_logger"
-                ):
+                with patch("src.application.services.multi_user_trading_service.get_user_logger"):
                     thread = threading.Thread(
                         target=self.service._run_paper_trading_scheduler,
                         args=(mock_service, 1),
