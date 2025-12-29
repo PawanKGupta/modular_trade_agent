@@ -1702,6 +1702,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_ongoing_order.quantity = 267
         mock_ongoing_order.id = 999
         mock_ongoing_order.status = OrderStatus.ONGOING
+        mock_ongoing_order.side = "BUY"  # Add side attribute
         mock_ongoing_order.execution_price = None  # Missing!
         mock_ongoing_order.placed_at = datetime.now()
 
@@ -1749,6 +1750,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_ongoing_order.quantity = 100
         mock_ongoing_order.id = 888
         mock_ongoing_order.status = OrderStatus.ONGOING
+        mock_ongoing_order.side = "BUY"  # Add side attribute
         mock_ongoing_order.execution_price = 427.0  # Already has price!
         mock_ongoing_order.placed_at = datetime.now()
 
@@ -1782,6 +1784,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_ongoing_order.quantity = 100
         mock_ongoing_order.id = 777
         mock_ongoing_order.status = OrderStatus.ONGOING
+        mock_ongoing_order.side = "BUY"  # Add side attribute
         mock_ongoing_order.execution_price = None
         mock_ongoing_order.placed_at = datetime.now()
 
@@ -1821,6 +1824,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_order1.quantity = 100
         mock_order1.id = 1
         mock_order1.status = OrderStatus.ONGOING
+        mock_order1.side = "BUY"  # Add side attribute
         mock_order1.execution_price = None
         mock_order1.placed_at = datetime.now()
 
@@ -1831,6 +1835,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_order2.quantity = 50
         mock_order2.id = 2
         mock_order2.status = OrderStatus.ONGOING
+        mock_order2.side = "BUY"  # Add side attribute
         mock_order2.execution_price = None
         mock_order2.placed_at = datetime.now()
 
@@ -1893,6 +1898,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_ongoing_order.quantity = 100
         mock_ongoing_order.id = 555
         mock_ongoing_order.status = OrderStatus.ONGOING
+        mock_ongoing_order.side = "BUY"  # Add side attribute
         mock_ongoing_order.execution_price = None
         mock_ongoing_order.placed_at = datetime.now()
 
@@ -1917,6 +1923,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_ongoing_order.quantity = 100
         mock_ongoing_order.id = 444
         mock_ongoing_order.status = OrderStatus.ONGOING
+        mock_ongoing_order.side = "BUY"  # Add side attribute
         mock_ongoing_order.execution_price = None
         mock_ongoing_order.placed_at = datetime.now()
 
