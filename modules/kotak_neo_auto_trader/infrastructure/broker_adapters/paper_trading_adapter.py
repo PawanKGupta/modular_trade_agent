@@ -29,7 +29,9 @@ from ..simulation import OrderSimulator, PortfolioManager, PriceProvider
 
 
 class PaperTradingBrokerAdapter(IBrokerGateway):
-    def _sync_order_failure_to_db(self, order: Order, failure_type: str, reason: str = "", user_id: int = None) -> None:
+    def _sync_order_failure_to_db(
+        self, order: Order, failure_type: str, reason: str = "", user_id: int = None
+    ) -> None:
         """
         Sync paper trading order failure to database (for signal status update).
 

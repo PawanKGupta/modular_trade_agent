@@ -621,7 +621,9 @@ class SignalsRepository:
                 from datetime import time as dt_time
 
                 if order.placed_at:
-                    placed_time = order.placed_at.time() if hasattr(order.placed_at, "time") else None
+                    placed_time = (
+                        order.placed_at.time() if hasattr(order.placed_at, "time") else None
+                    )
                     if placed_time and placed_time < dt_time(9, 15):
                         return True
                 # If we can't determine from time, assume pending buy orders are AMO
@@ -879,13 +881,17 @@ class SignalsRepository:
         try:
             from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 
-            open_positions = self.db.execute(
-                select(Positions.symbol).where(
-                    Positions.user_id == user_id,
-                    Positions.quantity > 0,
-                    Positions.closed_at.is_(None),  # Only open positions
+            open_positions = (
+                self.db.execute(
+                    select(Positions.symbol).where(
+                        Positions.user_id == user_id,
+                        Positions.quantity > 0,
+                        Positions.closed_at.is_(None),  # Only open positions
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             # Normalize symbols (remove suffixes for matching)
             for pos_symbol in open_positions:
                 # Use extract_base_symbol for consistent normalization
@@ -945,7 +951,11 @@ class SignalsRepository:
                 signal_variants = {
                     signal_base,
                     signal.symbol.upper(),
-                    f"{signal_base}.NS" if not signal.symbol.endswith(".NS") else signal.symbol.upper(),
+                    (
+                        f"{signal_base}.NS"
+                        if not signal.symbol.endswith(".NS")
+                        else signal.symbol.upper()
+                    ),
                 }
 
             # Check if user has open position for this symbol
@@ -973,7 +983,11 @@ class SignalsRepository:
 
             # Skip if user has open position and signal is not explicitly marked
             # (we still want to show signals that user has explicitly marked as TRADED/REJECTED/FAILED)
-            if has_open_position and effective_status == SignalStatus.TRADED and user_status is None:
+            if (
+                has_open_position
+                and effective_status == SignalStatus.TRADED
+                and user_status is None
+            ):
                 # Skip signals that are only TRADED because of open position (not explicitly marked)
                 # Only skip if status_filter is "active" (don't want to show in active list)
                 if status_filter == SignalStatus.ACTIVE:
