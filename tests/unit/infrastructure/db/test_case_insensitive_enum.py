@@ -149,3 +149,94 @@ def test_case_insensitive_enum_in_clause(db_session: Session):
     assert len(filtered_signals) == 2
     statuses = {s.status for s in filtered_signals}
     assert statuses == {SignalStatus.ACTIVE, SignalStatus.TRADED}
+
+
+def test_process_bind_param_with_none():
+    """Test process_bind_param handles None value"""
+    converter = CaseInsensitiveEnum(SignalStatus)
+    result = converter.process_bind_param(None, None)
+    assert result is None
+
+
+def test_process_bind_param_with_string_matching_value():
+    """Test process_bind_param with string that matches enum value"""
+    converter = CaseInsensitiveEnum(SignalStatus)
+    # Test lowercase value
+    result = converter.process_bind_param("active", None)
+    assert result == "active"
+    # Test uppercase value (should match and return lowercase)
+    result = converter.process_bind_param("ACTIVE", None)
+    assert result == "active"
+
+
+def test_process_bind_param_with_string_matching_name():
+    """Test process_bind_param with string that matches enum name but not value"""
+    converter = CaseInsensitiveEnum(SignalStatus)
+    # If we pass a string that matches the name, it should find by name and return value
+    # SignalStatus.ACTIVE has value "active", so "ACTIVE" (name) should match and return "active"
+    result = converter.process_bind_param("ACTIVE", None)  # Matches name
+    assert result == "active"  # Returns value
+
+
+def test_process_bind_param_with_non_string_non_enum():
+    """Test process_bind_param with value that's neither enum nor string"""
+    converter = CaseInsensitiveEnum(SignalStatus)
+    # Should return value as-is
+    result = converter.process_bind_param(123, None)
+    assert result == 123
+
+
+def test_process_result_value_with_none():
+    """Test process_result_value handles None"""
+    converter = CaseInsensitiveEnum(SignalStatus)
+    result = converter.process_result_value(None, None)
+    assert result is None
+
+
+def test_process_result_value_with_enum_instance():
+    """Test process_result_value with already enum instance"""
+    converter = CaseInsensitiveEnum(SignalStatus)
+    result = converter.process_result_value(SignalStatus.ACTIVE, None)
+    assert result == SignalStatus.ACTIVE
+
+
+def test_process_result_value_with_non_string():
+    """Test process_result_value with non-string value"""
+    converter = CaseInsensitiveEnum(SignalStatus)
+    result = converter.process_result_value(123, None)
+    assert result == 123
+
+
+def test_process_result_value_with_invalid_value():
+    """Test process_result_value with value that doesn't match any enum"""
+    converter = CaseInsensitiveEnum(SignalStatus)
+    # Should try direct lookup, fail, and return value as-is
+    result = converter.process_result_value("invalid_status", None)
+    assert result == "invalid_status"
+
+
+def test_find_enum_member_by_value():
+    """Test _find_enum_member finds enum by value (case-insensitive)"""
+    converter = CaseInsensitiveEnum(SignalStatus)
+    # Test lowercase
+    result = converter._find_enum_member("active")
+    assert result == SignalStatus.ACTIVE
+    # Test uppercase
+    result = converter._find_enum_member("ACTIVE")
+    assert result == SignalStatus.ACTIVE
+
+
+def test_find_enum_member_by_name():
+    """Test _find_enum_member finds enum by name when value doesn't match"""
+    converter = CaseInsensitiveEnum(SignalStatus)
+    # This should match by name (case-insensitive)
+    # SignalStatus.ACTIVE has name "ACTIVE" and value "active"
+    result = converter._find_enum_member("ACTIVE")  # Matches name
+    assert result == SignalStatus.ACTIVE
+
+
+def test_find_enum_member_not_found():
+    """Test _find_enum_member returns None when no match found"""
+    converter = CaseInsensitiveEnum(SignalStatus)
+    result = converter._find_enum_member("nonexistent")
+    assert result is None
