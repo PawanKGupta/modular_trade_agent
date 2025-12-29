@@ -861,6 +861,8 @@ class SignalsRepository:
         Before returning, checks and updates time-expired signals to ensure
         database consistency.
 
+        Excludes signals where user has an open position (already traded).
+
         Args:
             user_id: User ID to get personalized status for
             limit: Maximum number of signals to return
@@ -871,6 +873,35 @@ class SignalsRepository:
         """
         # Mark time-expired signals before querying to ensure database consistency
         self.mark_time_expired_signals()
+
+        # Get symbols with open positions for this user (exclude from active signals)
+        open_position_symbols = set()
+        try:
+            from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+            open_positions = self.db.execute(
+                select(Positions.symbol).where(
+                    Positions.user_id == user_id,
+                    Positions.quantity > 0,
+                    Positions.closed_at.is_(None),  # Only open positions
+                )
+            ).scalars().all()
+            # Normalize symbols (remove suffixes for matching)
+            for pos_symbol in open_positions:
+                # Use extract_base_symbol for consistent normalization
+                base_symbol = extract_base_symbol(pos_symbol).upper()
+                open_position_symbols.add(base_symbol)
+                # Also add variants for comprehensive matching
+                open_position_symbols.add(pos_symbol.upper())
+                # Add NSE-style variant if not already present
+                if not pos_symbol.upper().endswith(".NS"):
+                    open_position_symbols.add(f"{base_symbol}.NS")
+                # Add EQ variant if not already present
+                if "-" not in pos_symbol.upper():
+                    open_position_symbols.add(f"{base_symbol}-EQ")
+        except Exception as e:
+            # If positions table doesn't exist or query fails, continue without exclusion
+            logger.debug(f"Failed to get open positions for exclusion: {e}")
 
         # Join signals with user_signal_status
         stmt = (
@@ -884,7 +915,7 @@ class SignalsRepository:
                 )
             )
             .order_by(Signals.ts.desc())
-            .limit(limit)
+            .limit(limit * 2)  # Get more to account for exclusions
         )
 
         results = self.db.execute(stmt).all()
@@ -892,14 +923,46 @@ class SignalsRepository:
         # Build list with effective status
         signals_with_status = []
         for signal, user_status in results:
+            # Exclude signals where user has an open position (already traded)
+            # Normalize signal symbol for comparison using extract_base_symbol for consistency
+            try:
+                from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+                signal_base = extract_base_symbol(signal.symbol).upper()
+                signal_variants = {
+                    signal_base,
+                    signal.symbol.upper(),
+                }
+                # Add NSE-style variant if not already present
+                if not signal.symbol.upper().endswith(".NS"):
+                    signal_variants.add(f"{signal_base}.NS")
+                # Add EQ variant if not already present
+                if "-" not in signal.symbol.upper():
+                    signal_variants.add(f"{signal_base}-EQ")
+            except ImportError:
+                # Fallback to simple normalization if extract_base_symbol not available
+                signal_base = signal.symbol.split("-")[0].split(".")[0].upper()
+                signal_variants = {
+                    signal_base,
+                    signal.symbol.upper(),
+                    f"{signal_base}.NS" if not signal.symbol.endswith(".NS") else signal.symbol.upper(),
+                }
+
+            # Check if user has open position for this symbol
+            has_open_position = signal_variants.intersection(open_position_symbols)
+            
             # Determine effective status:
-            # - User actions (TRADED/REJECTED/FAILED) always take precedence and are shown as effective status
+            # - User actions (TRADED/REJECTED/FAILED) always take precedence
+            # - If user has open position and no explicit status, treat as TRADED
             # - Base signal status (ACTIVE/EXPIRED) is shown separately in base_status field
-            # - This allows frontend to display: "traded, expired" or "rejected, active" etc.
             if user_status in [SignalStatus.TRADED, SignalStatus.REJECTED, SignalStatus.FAILED]:
                 # User has completed an action (TRADED/REJECTED/FAILED) - show this as effective status
                 # Base status will show separately (e.g., "traded, expired" or "rejected, active")
                 effective_status = user_status
+            elif has_open_position and user_status is None:
+                # User has open position but no explicit status - treat as TRADED
+                # This prevents showing ACTIVE signals when user already has a position
+                effective_status = SignalStatus.TRADED
             elif signal.status == SignalStatus.EXPIRED:
                 # Base signal is EXPIRED and no user action - show as EXPIRED
                 # User cannot override EXPIRED with ACTIVE (time-based expiry is final)
@@ -907,9 +970,21 @@ class SignalsRepository:
             else:
                 # Use user status if exists, otherwise use base signal status
                 effective_status = user_status if user_status else signal.status
+            
+            # Skip if user has open position and signal is not explicitly marked
+            # (we still want to show signals that user has explicitly marked as TRADED/REJECTED/FAILED)
+            if has_open_position and effective_status == SignalStatus.TRADED and user_status is None:
+                # Skip signals that are only TRADED because of open position (not explicitly marked)
+                # Only skip if status_filter is "active" (don't want to show in active list)
+                if status_filter == SignalStatus.ACTIVE:
+                    continue
 
             # Apply status filter if provided
             if status_filter is None or effective_status == status_filter:
                 signals_with_status.append((signal, effective_status))
+
+                # Stop if we've reached the limit
+                if len(signals_with_status) >= limit:
+                    break
 
         return signals_with_status
