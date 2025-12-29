@@ -358,6 +358,9 @@ class UnifiedOrderMonitor:
         """
         Check status of active buy orders from broker.
 
+        Also checks ONGOING buy orders that are missing execution prices
+        (orders that were executed but never synced properly).
+
         Args:
             broker_orders: Optional pre-fetched broker orders list
 
@@ -367,8 +370,36 @@ class UnifiedOrderMonitor:
         """
         stats = {"checked": 0, "executed": 0, "rejected": 0, "cancelled": 0}
 
-        if not self.active_buy_orders:
-            logger.debug("No active buy orders to check")
+        # Load ONGOING orders with missing execution prices (need sync with broker)
+        # These are orders that were executed but never had their execution price updated
+        orders_to_check = dict(self.active_buy_orders)  # Start with active orders
+
+        if self.orders_repo and self.user_id:
+            try:
+                # Get ONGOING buy orders with missing execution price
+                ongoing_orders = self.orders_repo.list(
+                    self.user_id, status=OrderStatus.ONGOING, side="buy"
+                )
+                for order in ongoing_orders:
+                    # Only add if missing execution price and not already in active_buy_orders
+                    order_id = order.broker_order_id or order.order_id
+                    if order_id and order_id not in orders_to_check and not order.execution_price:
+                        orders_to_check[str(order_id)] = {
+                            "symbol": order.symbol,
+                            "quantity": order.quantity,
+                            "order_id": str(order_id),
+                            "db_order_id": order.id,
+                            "status": order.status.value if order.status else "ongoing",
+                            "placed_at": order.placed_at,
+                        }
+                        logger.debug(
+                            f"Added ONGOING order {order_id} ({order.symbol}) to sync - missing execution price"
+                        )
+            except Exception as e:
+                logger.error(f"Error loading ONGOING orders for sync: {e}", exc_info=True)
+
+        if not orders_to_check:
+            logger.debug("No buy orders to check")
             return stats
 
         try:
@@ -391,10 +422,10 @@ class UnifiedOrderMonitor:
                     logger.debug(f"Could not fetch holdings for reconciliation: {e}")
                     holdings_data = []
 
-            # Check each active buy order
+            # Check each buy order (active + ongoing with missing execution price)
             order_ids_to_remove = []
 
-            for order_id, order_info in list(self.active_buy_orders.items()):
+            for order_id, order_info in list(orders_to_check.items()):
                 stats["checked"] += 1
 
                 # Find order in broker orders
