@@ -379,7 +379,8 @@ def test_reject_signal_success(signals_repo, current_user):
     assert signals_repo.mark_rejected_called[0] == ("RELIANCE.NS", "User decided to skip")
 
     # Test without reason (should default to empty string)
-    result2 = signals.reject_signal(symbol="TCS.NS", db=None, user=current_user)
+    # When calling directly (not through FastAPI), Body() doesn't resolve, so pass explicitly
+    result2 = signals.reject_signal(symbol="TCS.NS", reason="", db=None, user=current_user)
     assert result2["reason"] == ""
 
 
@@ -466,7 +467,8 @@ def test_activate_signal_success(signals_repo, current_user):
     assert signals_repo.mark_active_called[0] == ("RELIANCE.NS", "Manual reactivation")
 
     # Test without reason (should default to empty string)
-    result2 = signals.activate_signal(symbol="TCS.NS", db=None, user=current_user)
+    # When calling directly (not through FastAPI), Body() doesn't resolve, so pass explicitly
+    result2 = signals.activate_signal(symbol="TCS.NS", reason="", db=None, user=current_user)
     assert result2["reason"] == ""
 
 

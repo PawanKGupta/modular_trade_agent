@@ -479,7 +479,7 @@ def ensure_system_user(db_session):
     user = session.query(Users).filter_by(id=1).first()
     if not user:
         user = Users(
-            id=1, email="system@tradeagent.local", password_hash="system", role=UserRole.ADMIN
+            id=1, email="system@tradeagent.example.com", password_hash="system", role=UserRole.ADMIN
         )
         session.add(user)
         session.commit()

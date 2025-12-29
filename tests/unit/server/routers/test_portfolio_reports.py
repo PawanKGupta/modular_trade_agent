@@ -39,7 +39,17 @@ def mock_deps_portfolio(monkeypatch, db_session):
         role=UserRole.USER,
         is_active=True,
     )
-    db_session.add(user)
+    # Check if user already exists (from ensure_system_user)
+    existing_user = db_session.query(Users).filter_by(id=1).first()
+    if existing_user:
+        # Update existing user
+        existing_user.email = user.email
+        existing_user.name = user.name
+        existing_user.role = user.role
+        existing_user.is_active = user.is_active
+        user = existing_user
+    else:
+        db_session.add(user)
     db_session.commit()
 
     # Create default settings

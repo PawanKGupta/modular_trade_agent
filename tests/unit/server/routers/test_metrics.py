@@ -23,17 +23,27 @@ class DummyUser(SimpleNamespace):
 @pytest.fixture
 def mock_deps(monkeypatch, db_session):
     """Mock dependencies for metrics endpoints"""
-    # Create a real user in the database
-    user = Users(
-        id=1,
-        email="user@example.com",
-        name="Test User",
-        password_hash="$2b$12$dummy",
-        role=UserRole.USER,
-        is_active=True,
-    )
-    db_session.add(user)
-    db_session.commit()
+    # Use the system user created by ensure_system_user fixture (id=1)
+    # or create a new user if system user doesn't exist
+    user = db_session.query(Users).filter_by(id=1).first()
+    if not user:
+        user = Users(
+            id=1,
+            email="user@example.com",
+            name="Test User",
+            password_hash="$2b$12$dummy",
+            role=UserRole.USER,
+            is_active=True,
+        )
+        db_session.add(user)
+        db_session.commit()
+    else:
+        # Update existing user to ensure it has the right properties
+        user.email = "user@example.com"
+        user.name = "Test User"
+        user.role = UserRole.USER
+        user.is_active = True
+        db_session.commit()
 
     # Create default settings
     settings = UserSettings(

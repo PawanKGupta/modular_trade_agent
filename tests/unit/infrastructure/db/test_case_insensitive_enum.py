@@ -4,12 +4,11 @@ Tests for CaseInsensitiveEnum to ensure it doesn't introduce bugs.
 
 import pytest
 from sqlalchemy import Column, Integer, create_engine, text
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
+from src.infrastructure.db.base import Base
 from src.infrastructure.db.case_insensitive_enum import CaseInsensitiveEnum
 from src.infrastructure.db.models import SignalStatus
-
-Base = declarative_base()
 
 
 class TestSignal(Base):
@@ -23,6 +22,7 @@ class TestSignal(Base):
 def db_session():
     """Create an in-memory database for testing"""
     engine = create_engine("sqlite:///:memory:", echo=False)
+    # Use project's Base which includes all models (needed for ensure_system_user)
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
     session = SessionLocal()
