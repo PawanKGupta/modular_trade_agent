@@ -319,6 +319,97 @@ class TestOrderStateManager:
         assert state_manager.active_sell_orders["RELIANCE"]["target_price"] == 2550.0
         assert "last_updated" in state_manager.active_sell_orders["RELIANCE"]
 
+    def test_register_sell_order_ticker_update(self, state_manager):
+        """Test that ticker is updated when re-registering order that was missing ticker"""
+        # Register order without ticker (legacy order)
+        state_manager.register_sell_order(
+            symbol="MIRZAINT-EQ",
+            order_id="ORD123",
+            target_price=37.44,
+            qty=267,
+            ticker=None,
+        )
+
+        # Verify order registered without ticker
+        assert "MIRZAINT" in state_manager.active_sell_orders
+        assert state_manager.active_sell_orders["MIRZAINT"]["order_id"] == "ORD123"
+        assert state_manager.active_sell_orders["MIRZAINT"].get("ticker") is None
+
+        # Re-register same order with ticker (e.g., during ONGOING order sync)
+        result = state_manager.register_sell_order(
+            symbol="MIRZAINT-EQ",
+            order_id="ORD123",
+            target_price=37.44,
+            qty=267,
+            ticker="MIRZAINT.NS",
+        )
+
+        # Should update ticker
+        assert result is True
+        assert state_manager.active_sell_orders["MIRZAINT"]["ticker"] == "MIRZAINT.NS"
+        assert state_manager.active_sell_orders["MIRZAINT"]["target_price"] == 37.44
+        assert "last_updated" in state_manager.active_sell_orders["MIRZAINT"]
+
+    def test_register_sell_order_ticker_and_price_update(self, state_manager):
+        """Test that both ticker and price are updated when re-registering"""
+        # Register order without ticker and with initial price
+        state_manager.register_sell_order(
+            symbol="DREAMFOLKS-EQ",
+            order_id="ORD456",
+            target_price=108.00,
+            qty=2129,
+            ticker=None,
+        )
+
+        # Verify initial state
+        assert "DREAMFOLKS" in state_manager.active_sell_orders
+        assert state_manager.active_sell_orders["DREAMFOLKS"].get("ticker") is None
+        assert state_manager.active_sell_orders["DREAMFOLKS"]["target_price"] == 108.00
+
+        # Re-register with both ticker and updated price
+        result = state_manager.register_sell_order(
+            symbol="DREAMFOLKS-EQ",
+            order_id="ORD456",
+            target_price=110.50,
+            qty=2129,
+            ticker="DREAMFOLKS.NS",
+        )
+
+        # Should update both ticker and price
+        assert result is True
+        assert state_manager.active_sell_orders["DREAMFOLKS"]["ticker"] == "DREAMFOLKS.NS"
+        assert state_manager.active_sell_orders["DREAMFOLKS"]["target_price"] == 110.50
+        assert "last_updated" in state_manager.active_sell_orders["DREAMFOLKS"]
+
+    def test_register_sell_order_no_update_when_ticker_exists(self, state_manager):
+        """Test that ticker is not overwritten when already present"""
+        # Register order with ticker
+        state_manager.register_sell_order(
+            symbol="ORIENTCEM-EQ",
+            order_id="ORD789",
+            target_price=169.70,
+            qty=1096,
+            ticker="ORIENTCEM.NS",
+        )
+
+        # Verify initial state
+        assert "ORIENTCEM" in state_manager.active_sell_orders
+        assert state_manager.active_sell_orders["ORIENTCEM"]["ticker"] == "ORIENTCEM.NS"
+
+        # Re-register with same ticker and same price
+        result = state_manager.register_sell_order(
+            symbol="ORIENTCEM-EQ",
+            order_id="ORD789",
+            target_price=169.70,
+            qty=1096,
+            ticker="ORIENTCEM.NS",
+        )
+
+        # Should not create update timestamp since nothing changed
+        assert result is True
+        assert state_manager.active_sell_orders["ORIENTCEM"]["ticker"] == "ORIENTCEM.NS"
+        assert state_manager.active_sell_orders["ORIENTCEM"]["target_price"] == 169.70
+
     # Phase 3: Buy order tests
     def test_register_buy_order(self, state_manager):
         """Test registering a buy order"""
