@@ -3181,12 +3181,14 @@ class SellOrderManager:
         """
         Remove rejected/cancelled orders from active tracking.
         Also checks for circuit limit rejections and stores them for retry.
+        For cancelled orders, checks if position still exists and re-places sell order.
         """
         all_orders = self.orders.get_orders()
         if not all_orders or "data" not in all_orders:
             return
 
         rejected_symbols = []
+        cancelled_symbols_with_positions = []  # Track cancelled orders where position still exists
 
         for symbol, order_info in list(self.active_sell_orders.items()):
             order_id = order_info.get("order_id")
@@ -3197,57 +3199,123 @@ class SellOrderManager:
             broker_order = self._find_order_in_broker_orders(order_id, all_orders["data"])
             if broker_order:
                 # Check if order is rejected or cancelled
-                if OrderStatusParser.is_rejected(broker_order) or OrderStatusParser.is_cancelled(
-                    broker_order
-                ):
+                is_rejected = OrderStatusParser.is_rejected(broker_order)
+                is_cancelled = OrderStatusParser.is_cancelled(broker_order)
+
+                if is_rejected or is_cancelled:
                     status = OrderStatusParser.parse_status(broker_order)
 
-                    # Check if rejection is due to circuit limit breach
-                    rejection_reason = OrderFieldExtractor.get_rejection_reason(broker_order) or ""
-
-                    if (
-                        "circuit" in rejection_reason.lower()
-                        or "circuit limit" in rejection_reason.lower()
-                    ):
-                        # Parse circuit limits
-                        circuit_limits = self._parse_circuit_limits_from_rejection(rejection_reason)
-                        ema9_target = order_info.get("target_price", 0)
-
-                        if circuit_limits and ema9_target > circuit_limits.get("upper", 0):
-                            # EMA9 exceeds upper circuit - wait for expansion
-                            full_symbol = (
-                                symbol.upper()
-                            )  # symbol is already full symbol from active_sell_orders
-                            self.waiting_for_circuit_expansion[full_symbol] = {
-                                "upper_circuit": circuit_limits["upper"],
-                                "lower_circuit": circuit_limits["lower"],
-                                "ema9_target": ema9_target,
-                                "trade": {
-                                    "symbol": symbol,
-                                    "placed_symbol": order_info.get("placed_symbol", symbol),
-                                    "ticker": order_info.get("ticker", ""),
-                                    "qty": order_info.get("qty", 0),
-                                },
-                                "rejection_reason": rejection_reason,
-                            }
-                            logger.info(
-                                f"{full_symbol}: Order rejected due to circuit limit breach. "
-                                f"EMA9 (Rs {ema9_target:.2f}) > Upper Circuit (Rs {circuit_limits['upper']:.2f}). "
-                                f"Waiting for circuit expansion..."
+                    # For cancelled orders, check if position still exists
+                    if is_cancelled and self.positions_repo and self.user_id:
+                        try:
+                            full_symbol = symbol.upper()
+                            position = self.positions_repo.get_by_symbol(self.user_id, full_symbol)
+                            if position and position.closed_at is None:
+                                # Position still open - need to re-place sell order
+                                cancelled_symbols_with_positions.append((symbol, order_info))
+                                logger.info(
+                                    f"Order {order_id} for {symbol} was cancelled but position still exists. "
+                                    f"Will re-place sell order."
+                                )
+                                continue
+                        except Exception as e:
+                            logger.debug(
+                                f"Error checking position for cancelled order {symbol}: {e}"
                             )
-                            # Remove from active tracking but keep in waiting list
-                            self._remove_from_tracking(symbol)
-                            continue
 
-                    # Regular rejection (not circuit limit) - remove from tracking
+                    # Check if rejection is due to circuit limit breach (only for rejected, not cancelled)
+                    if is_rejected:
+                        rejection_reason = (
+                            OrderFieldExtractor.get_rejection_reason(broker_order) or ""
+                        )
+
+                        if (
+                            "circuit" in rejection_reason.lower()
+                            or "circuit limit" in rejection_reason.lower()
+                        ):
+                            # Parse circuit limits
+                            circuit_limits = self._parse_circuit_limits_from_rejection(
+                                rejection_reason
+                            )
+                            ema9_target = order_info.get("target_price", 0)
+
+                            if circuit_limits and ema9_target > circuit_limits.get("upper", 0):
+                                # EMA9 exceeds upper circuit - wait for expansion
+                                full_symbol = (
+                                    symbol.upper()
+                                )  # symbol is already full symbol from active_sell_orders
+                                self.waiting_for_circuit_expansion[full_symbol] = {
+                                    "upper_circuit": circuit_limits["upper"],
+                                    "lower_circuit": circuit_limits["lower"],
+                                    "ema9_target": ema9_target,
+                                    "trade": {
+                                        "symbol": symbol,
+                                        "placed_symbol": order_info.get("placed_symbol", symbol),
+                                        "ticker": order_info.get("ticker", ""),
+                                        "qty": order_info.get("qty", 0),
+                                    },
+                                    "rejection_reason": rejection_reason,
+                                }
+                                logger.info(
+                                    f"{full_symbol}: Order rejected due to circuit limit breach. "
+                                    f"EMA9 (Rs {ema9_target:.2f}) > Upper Circuit (Rs {circuit_limits['upper']:.2f}). "
+                                    f"Waiting for circuit expansion..."
+                                )
+                                # Remove from active tracking but keep in waiting list
+                                self._remove_from_tracking(symbol)
+                                continue
+
+                    # Regular rejection or cancellation (without open position) - remove from tracking
                     rejected_symbols.append(symbol)
                     logger.info(
                         f"Removing {symbol} from tracking: order {order_id} is {status.value}"
                     )
 
-        # Clean up rejected/cancelled orders
+        # Clean up rejected/cancelled orders (without open positions)
         for symbol in rejected_symbols:
             self._remove_from_tracking(symbol)
+
+        # Re-place sell orders for cancelled orders with open positions
+        for symbol, order_info in cancelled_symbols_with_positions:
+            try:
+                # Remove old cancelled order from tracking first
+                self._remove_from_tracking(symbol)
+
+                # Get current EMA9 for new order
+                ticker = order_info.get("ticker")
+                placed_symbol = order_info.get("placed_symbol", symbol)
+
+                if ticker:
+                    ema9 = self._get_ema9_with_retry(
+                        ticker, broker_symbol=placed_symbol, symbol=symbol
+                    )
+                    if ema9:
+                        # Re-create trade dict
+                        trade = {
+                            "symbol": symbol,
+                            "ticker": ticker,
+                            "qty": order_info.get("qty", 0),
+                            "placed_symbol": placed_symbol,
+                        }
+
+                        # Place new sell order
+                        new_order_id = self.place_sell_order(trade, ema9)
+                        if new_order_id:
+                            logger.info(
+                                f"Successfully re-placed sell order for {symbol} after cancellation: {new_order_id}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Failed to re-place sell order for {symbol} after cancellation"
+                            )
+                    else:
+                        logger.warning(
+                            f"Failed to get EMA9 for {symbol} to re-place cancelled order"
+                        )
+                else:
+                    logger.warning(f"No ticker available for {symbol} to re-place cancelled order")
+            except Exception as e:
+                logger.error(f"Error re-placing sell order for {symbol} after cancellation: {e}")
 
         if rejected_symbols:
             logger.info(f"Cleaned up {len(rejected_symbols)} invalid orders from tracking")

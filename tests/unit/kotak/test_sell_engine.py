@@ -387,3 +387,310 @@ class TestEMA9RetryMechanismIssue3:
 
         assert result == 2500.0
         assert manager.get_current_ema9.call_count == 2
+
+
+class TestRemoveRejectedOrders:
+    """Test _remove_rejected_orders handling of cancelled and rejected orders"""
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_cancelled_order_with_open_position_replaces_order(self, mock_scrip_master, mock_auth):
+        """Test that cancelled order with open position triggers re-placement"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # Setup cancelled order in active tracking
+        manager.active_sell_orders["MIRZAINT"] = {
+            "order_id": "CANCELLED123",
+            "target_price": 37.44,
+            "qty": 267,
+            "ticker": "MIRZAINT.NS",
+            "placed_symbol": "MIRZAINT-EQ",
+        }
+
+        # Mock positions repo - position exists and is open
+        mock_position = Mock()
+        mock_position.closed_at = None
+        manager.positions_repo = Mock()
+        manager.positions_repo.get_by_symbol.return_value = mock_position
+        manager.user_id = 1
+
+        # Mock broker orders - show order as cancelled
+        cancelled_order = {
+            "neoOrdNo": "CANCELLED123",
+            "orderStatus": "cancelled",
+            "transactionType": "SELL",
+            "trdSym": "MIRZAINT-EQ",
+        }
+
+        manager.orders = Mock()
+        manager.orders.get_orders.return_value = {"data": [cancelled_order]}
+
+        # Mock _remove_from_tracking and place_sell_order
+        manager._remove_from_tracking = Mock()
+        manager.place_sell_order = Mock(return_value="NEW_ORDER456")
+        manager._get_ema9_with_retry = Mock(return_value=37.50)
+
+        # Call the method
+        manager._remove_rejected_orders()
+
+        # Verify order was removed from tracking first
+        manager._remove_from_tracking.assert_called_once_with("MIRZAINT")
+
+        # Verify new order was placed
+        manager.place_sell_order.assert_called_once()
+        call_args = manager.place_sell_order.call_args
+        assert call_args[0][1] == 37.50  # new ema9
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_cancelled_order_with_closed_position_removes_from_tracking(
+        self, mock_scrip_master, mock_auth
+    ):
+        """Test that cancelled order with closed position is removed"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # Setup cancelled order
+        manager.active_sell_orders["SALSTEEL"] = {
+            "order_id": "CANCELLED789",
+            "target_price": 40.72,
+            "qty": 500,
+        }
+
+        # Mock positions repo - position is closed
+        mock_position = Mock()
+        mock_position.closed_at = "2025-12-29 14:30:00"
+        manager.positions_repo = Mock()
+        manager.positions_repo.get_by_symbol.return_value = mock_position
+        manager.user_id = 1
+
+        # Mock broker orders
+        cancelled_order = {
+            "neoOrdNo": "CANCELLED789",
+            "orderStatus": "cancelled",
+            "transactionType": "SELL",
+        }
+
+        manager.orders = Mock()
+        manager.orders.get_orders.return_value = {"data": [cancelled_order]}
+
+        # Mock _remove_from_tracking
+        manager._remove_from_tracking = Mock()
+
+        # Call the method
+        manager._remove_rejected_orders()
+
+        # Verify order was removed (not re-placed)
+        manager._remove_from_tracking.assert_called_once_with("SALSTEEL")
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_rejected_order_is_removed_from_tracking(self, mock_scrip_master, mock_auth):
+        """Test that rejected orders are removed without re-placement"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # Setup rejected order
+        manager.active_sell_orders["ORIENTCEM"] = {
+            "order_id": "REJECTED111",
+            "target_price": 169.70,
+            "qty": 1096,
+        }
+
+        # Mock positions repo
+        manager.positions_repo = Mock()
+        manager.user_id = 1
+
+        # Mock broker orders - show order as rejected
+        rejected_order = {
+            "neoOrdNo": "REJECTED111",
+            "orderStatus": "rejected",
+            "transactionType": "SELL",
+            "rejectionReason": "RMS:Margin Exceeds",
+        }
+
+        manager.orders = Mock()
+        manager.orders.get_orders.return_value = {"data": [rejected_order]}
+
+        # Mock _remove_from_tracking and place_sell_order
+        manager._remove_from_tracking = Mock()
+        manager.place_sell_order = Mock()
+
+        # Call the method
+        manager._remove_rejected_orders()
+
+        # Verify order was removed
+        manager._remove_from_tracking.assert_called_once_with("ORIENTCEM")
+
+        # Verify new order was NOT placed
+        manager.place_sell_order.assert_not_called()
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_cancelled_order_without_ticker_logs_warning(self, mock_scrip_master, mock_auth):
+        """Test that cancelled order without ticker logs warning"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # Setup cancelled order without ticker
+        manager.active_sell_orders["DREAMFOLKS"] = {
+            "order_id": "CANCELLED555",
+            "target_price": 108.25,
+            "qty": 2129,
+            "ticker": None,  # Missing ticker
+        }
+
+        # Mock positions repo - position exists
+        mock_position = Mock()
+        mock_position.closed_at = None
+        manager.positions_repo = Mock()
+        manager.positions_repo.get_by_symbol.return_value = mock_position
+        manager.user_id = 1
+
+        # Mock broker orders
+        cancelled_order = {
+            "neoOrdNo": "CANCELLED555",
+            "orderStatus": "cancelled",
+            "transactionType": "SELL",
+        }
+
+        manager.orders = Mock()
+        manager.orders.get_orders.return_value = {"data": [cancelled_order]}
+
+        # Mock _remove_from_tracking
+        manager._remove_from_tracking = Mock()
+        manager.place_sell_order = Mock()
+
+        # Call the method
+        manager._remove_rejected_orders()
+
+        # Verify order was removed
+        manager._remove_from_tracking.assert_called_once_with("DREAMFOLKS")
+
+        # Verify new order was NOT placed (no ticker)
+        manager.place_sell_order.assert_not_called()
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_cancelled_order_ema9_calculation_failure(self, mock_scrip_master, mock_auth):
+        """Test handling when EMA9 calculation fails for cancelled order"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # Setup cancelled order
+        manager.active_sell_orders["TESTSTOCK"] = {
+            "order_id": "CANCELLED999",
+            "target_price": 100.00,
+            "qty": 100,
+            "ticker": "TESTSTOCK.NS",
+        }
+
+        # Mock positions repo - position exists
+        mock_position = Mock()
+        mock_position.closed_at = None
+        manager.positions_repo = Mock()
+        manager.positions_repo.get_by_symbol.return_value = mock_position
+        manager.user_id = 1
+
+        # Mock broker orders
+        cancelled_order = {
+            "neoOrdNo": "CANCELLED999",
+            "orderStatus": "cancelled",
+            "transactionType": "SELL",
+        }
+
+        manager.orders = Mock()
+        manager.orders.get_orders.return_value = {"data": [cancelled_order]}
+
+        # Mock _remove_from_tracking
+        manager._remove_from_tracking = Mock()
+        manager.place_sell_order = Mock()
+        manager._get_ema9_with_retry = Mock(return_value=None)  # EMA9 calc fails
+
+        # Call the method
+        manager._remove_rejected_orders()
+
+        # Verify order was removed
+        manager._remove_from_tracking.assert_called_once_with("TESTSTOCK")
+
+        # Verify new order was NOT placed (no EMA9)
+        manager.place_sell_order.assert_not_called()
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_multiple_cancelled_orders_mixed_positions(self, mock_scrip_master, mock_auth):
+        """Test handling of multiple cancelled orders with mixed open/closed positions"""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        manager = SellOrderManager(auth=mock_auth_instance, history_path="test_history.json")
+
+        # Setup multiple cancelled orders
+        manager.active_sell_orders["STOCK1"] = {
+            "order_id": "CANCELLED001",
+            "target_price": 100.00,
+            "qty": 100,
+            "ticker": "STOCK1.NS",
+        }
+        manager.active_sell_orders["STOCK2"] = {
+            "order_id": "CANCELLED002",
+            "target_price": 200.00,
+            "qty": 50,
+            "ticker": "STOCK2.NS",
+        }
+
+        # Mock positions repo - STOCK1 open, STOCK2 closed
+        def get_position_side_effect(user_id, symbol):
+            if symbol == "STOCK1":
+                mock_pos = Mock()
+                mock_pos.closed_at = None
+                return mock_pos
+            elif symbol == "STOCK2":
+                mock_pos = Mock()
+                mock_pos.closed_at = "2025-12-29 14:30:00"
+                return mock_pos
+            return None
+
+        manager.positions_repo = Mock()
+        manager.positions_repo.get_by_symbol.side_effect = get_position_side_effect
+        manager.user_id = 1
+
+        # Mock broker orders
+        manager.orders = Mock()
+        manager.orders.get_orders.return_value = {
+            "data": [
+                {"neoOrdNo": "CANCELLED001", "orderStatus": "cancelled", "transactionType": "SELL"},
+                {"neoOrdNo": "CANCELLED002", "orderStatus": "cancelled", "transactionType": "SELL"},
+            ]
+        }
+
+        # Mock methods
+        manager._remove_from_tracking = Mock()
+        manager.place_sell_order = Mock(return_value="NEW_ORDER")
+        manager._get_ema9_with_retry = Mock(return_value=105.00)
+
+        # Call the method
+        manager._remove_rejected_orders()
+
+        # Verify both orders were removed from tracking
+        assert manager._remove_from_tracking.call_count == 2  # Both removed (STOCK1 and STOCK2)
+
+        # Verify new order was placed only for STOCK1 (open position)
+        manager.place_sell_order.assert_called_once()
