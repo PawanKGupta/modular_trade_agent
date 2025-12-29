@@ -1111,8 +1111,7 @@ class PaperTradingServiceAdapter:
                 rsi = data.iloc[-1]["rsi10"]
 
                 # Exit Condition 1: High >= Frozen Target (primary exit)
-                # Note: Sell order is already placed by _place_sell_orders()
-                # This just logs and removes from tracking once executed
+                # When high touches target, force execution at target price
                 if high >= target_price:
                     self.logger.info(
                         f"? EXIT CONDITION MET: {symbol} - "
@@ -1130,15 +1129,65 @@ class PaperTradingServiceAdapter:
                         f"(Est. P&L: {pnl_pct:+.2f}%)",
                         action="_monitor_sell_orders",
                     )
-                    # Note: Actual order execution happens via check_and_execute_pending_orders()
-                    # Remove from tracking if no longer in holdings
-                    holding = self.broker.get_holding(symbol)
-                    if not holding or holding.quantity == 0:
-                        symbols_to_remove.append(symbol)
-                        self.logger.info(
-                            f"Position closed for {symbol}, removing from tracking",
+
+                    # Force execute at target price since high touched it
+                    # Even if current price dropped below, we assume fill at target
+                    from modules.kotak_neo_auto_trader.domain import (
+                        Order,
+                        OrderType,
+                        TransactionType,
+                        Money,
+                    )
+
+                    target_order = Order(
+                        symbol=symbol,
+                        quantity=order_info["qty"],
+                        order_type=OrderType.MARKET,  # Use MARKET to force immediate execution
+                        transaction_type=TransactionType.SELL,
+                        price=Money(target_price),  # Will execute at this price
+                    )
+                    target_order._metadata = {
+                        "original_ticker": ticker,
+                        "exit_reason": "Target Hit",
+                    }
+
+                    try:
+                        # Cancel existing limit order if any
+                        pending_orders = self.broker.get_all_orders()
+                        for pending in pending_orders:
+                            if (
+                                pending.symbol.replace(".NS", "").replace("-EQ", "") == symbol
+                                and pending.transaction_type.value == "SELL"
+                                and pending.status.value in ["PENDING", "OPEN"]
+                            ):
+                                try:
+                                    self.broker.cancel_order(pending.order_id)
+                                except Exception:
+                                    pass  # Ignore if already executed/cancelled
+                                break
+
+                        # Place market order - will execute immediately at target price
+                        self.broker.place_order(target_order)
+
+                        # Verify position is actually closed before removing from tracking
+                        holding = self.broker.get_holding(symbol)
+                        if not holding or holding.quantity == 0:
+                            symbols_to_remove.append(symbol)
+                            self.logger.info(
+                                f"Position closed for {symbol} @ Rs {target_price:.2f}",
+                                action="_monitor_sell_orders",
+                            )
+                        else:
+                            self.logger.warning(
+                                f"Target exit placed for {symbol} but position still open - will retry",
+                                action="_monitor_sell_orders",
+                            )
+                    except Exception as e:
+                        self.logger.error(
+                            f"Failed to execute target exit for {symbol}: {e}",
                             action="_monitor_sell_orders",
                         )
+
                     continue
 
                 # Exit Condition 2: RSI > 50 (secondary exit for failing stocks)
