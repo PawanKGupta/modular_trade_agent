@@ -930,13 +930,19 @@ class PaperTradingServiceAdapter:
                 ticker = f"{symbol_base}.NS"  # Use base symbol for ticker
                 quantity = holding.quantity
 
+                # Log processing of this holding
+                self.logger.info(
+                    f"Processing holding: {symbol} (base: {symbol_base}, qty: {quantity}, ticker: {ticker})",
+                    action="_place_sell_orders",
+                )
+
                 # Skip if already have active sell order (in memory or broker)
                 # Compare using base symbols since active_sell_orders might have base symbols
                 if (
                     symbol_base in active_sell_base_symbols
                     or symbol_base in pending_sell_base_symbols
                 ):
-                    self.logger.debug(
+                    self.logger.info(
                         f"Skipping {symbol} - already has active sell order "
                         f"(in memory: {symbol_base in active_sell_base_symbols}, "
                         f"in broker: {symbol_base in pending_sell_base_symbols})",
@@ -998,6 +1004,11 @@ class PaperTradingServiceAdapter:
                 # Calculate EMA9 target (initial entry - will be updated on re-entry)
                 ema9_target = self._calculate_ema9(ticker)
 
+                self.logger.info(
+                    f"EMA9 calculation for {ticker}: {ema9_target}",
+                    action="_place_sell_orders",
+                )
+
                 if ema9_target is None or ema9_target <= 0:
                     self.logger.warning(
                         f"Could not calculate EMA9 for {symbol}, skipping",
@@ -1017,7 +1028,15 @@ class PaperTradingServiceAdapter:
                 )
                 order._metadata = {"original_ticker": ticker}
 
+                self.logger.info(
+                    f"Placing sell order: {symbol} x{quantity} @ Rs {ema9_target:.2f}",
+                    action="_place_sell_orders",
+                )
                 order_id = self.broker.place_order(order)
+                self.logger.info(
+                    f"place_order returned: {order_id}",
+                    action="_place_sell_orders",
+                )
 
                 if order_id:
                     # Track this sell order (target will be updated on re-entry)
@@ -1036,7 +1055,8 @@ class PaperTradingServiceAdapter:
                     )
                 else:
                     self.logger.warning(
-                        f"Failed to place sell order for {symbol}", action="_place_sell_orders"
+                        f"Failed to place sell order for {symbol} - broker.place_order returned None",
+                        action="_place_sell_orders",
                     )
 
             except Exception as e:
