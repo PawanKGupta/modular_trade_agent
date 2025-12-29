@@ -1153,10 +1153,10 @@ class PaperTradingServiceAdapter:
                     # Force execute at target price since high touched it
                     # Even if current price dropped below, we assume fill at target
                     from modules.kotak_neo_auto_trader.domain import (
+                        Money,
                         Order,
                         OrderType,
                         TransactionType,
-                        Money,
                     )
 
                     target_order = Order(
