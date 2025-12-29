@@ -77,6 +77,42 @@ def test_get_current_user_missing_uid(monkeypatch, stub_user):
         deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
 
 
+def test_get_current_user_no_uid_key(monkeypatch, stub_user):
+    """Test when payload doesn't have 'uid' key at all"""
+    monkeypatch.setattr(deps, "decode_token", lambda _: {"sub": "user-123"})
+    with pytest.raises(HTTPException) as exc:
+        deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_get_current_user_user_not_found(monkeypatch, stub_user):
+    """Test when user is not found in database"""
+
+    class EmptyUserRepo:
+        def get_by_id(self, user_id: int):
+            return None
+
+    monkeypatch.setattr(deps, "UserRepository", lambda db: EmptyUserRepo())
+    monkeypatch.setattr(deps, "decode_token", lambda _: {"uid": "999"})
+    with pytest.raises(HTTPException) as exc:
+        deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_get_current_user_bearer_case_insensitive(monkeypatch, stub_user):
+    """Test that bearer scheme is case-insensitive"""
+    stub_user.user.role = "user"
+
+    def fake_decode(token):
+        return {"uid": "1"}
+
+    monkeypatch.setattr(deps, "decode_token", fake_decode)
+    # Test lowercase "bearer"
+    creds = DummyCredentials("valid-token", scheme="bearer")
+    user = deps.get_current_user(credentials=creds, db=stub_user.session)
+    assert user is stub_user.user
+
+
 def test_get_current_user_inactive(monkeypatch, stub_user):
     stub_user.user.is_active = False
 
