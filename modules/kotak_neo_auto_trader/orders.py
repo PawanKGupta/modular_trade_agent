@@ -474,7 +474,8 @@ class KotakNeoOrders:
                     quantity = (
                         order.get("quantity") or order.get("qty") or order.get("filledQty") or 0
                     )
-                    price = order.get("price") or order.get("prc") or order.get("avgPrc") or 0
+                    # Use avgPrc (execution price) first, fallback to prc (limit price) only for display
+                    price = order.get("avgPrc") or order.get("price") or order.get("prc") or 0
                     status = (
                         order.get("orderStatus")
                         or order.get("ordSt")
