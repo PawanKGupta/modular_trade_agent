@@ -129,8 +129,11 @@ class OrderStateManager:
                 # Check if order already exists in active_sell_orders
                 existing_order = self.active_sell_orders.get(base_symbol)
                 if existing_order and existing_order.get("order_id") == order_id:
-                    # Order already registered - check if price needs updating
+                    # Order already registered - check if price or ticker needs updating
                     existing_price = existing_order.get("target_price", 0)
+                    existing_ticker = existing_order.get("ticker")
+
+                    needs_update = False
                     if existing_price != target_price and target_price > 0:
                         # Price changed - update it
                         logger.debug(
@@ -138,17 +141,27 @@ class OrderStateManager:
                             f"Updating price from Rs {existing_price:.2f} to Rs {target_price:.2f}"
                         )
                         self.active_sell_orders[base_symbol]["target_price"] = target_price
+                        needs_update = True
+
+                    if ticker and not existing_ticker:
+                        # Ticker was missing, now we have it - update it
+                        logger.debug(
+                            f"Order {order_id} for {base_symbol} missing ticker. "
+                            f"Adding ticker: {ticker}"
+                        )
+                        self.active_sell_orders[base_symbol]["ticker"] = ticker
+                        needs_update = True
+
+                    if needs_update:
                         self.active_sell_orders[base_symbol][
                             "last_updated"
                         ] = datetime.now().isoformat()
-                        return True  # Return True after updating price
+                        return True
                     else:
-                        # Order already registered with same or better price
-                        # Skip duplicate registration
+                        # Order already registered with same price and has ticker
                         logger.debug(
-                            f"Order {order_id} already registered for {base_symbol}. "
-                            f"Existing price: Rs {existing_price:.2f}, "
-                            f"New price: Rs {target_price:.2f}. "
+                            f"Order {order_id} already registered for {base_symbol} "
+                            f"with price Rs {existing_price:.2f} and ticker {existing_ticker}. "
                             f"Skipping duplicate registration."
                         )
                         return True  # Return True since order is already tracked
