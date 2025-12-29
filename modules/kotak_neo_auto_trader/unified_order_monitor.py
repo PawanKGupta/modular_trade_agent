@@ -378,7 +378,7 @@ class UnifiedOrderMonitor:
             try:
                 # Get ONGOING buy orders with missing execution price
                 ongoing_orders = self.orders_repo.list(
-                    self.user_id, status=OrderStatus.ONGOING, side="buy"
+                    self.user_id, status=DbOrderStatus.ONGOING, side="buy"
                 )
                 for order in ongoing_orders:
                     # Only add if missing execution price and not already in active_buy_orders

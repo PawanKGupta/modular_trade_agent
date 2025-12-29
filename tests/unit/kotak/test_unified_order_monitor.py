@@ -1637,3 +1637,307 @@ class TestUnifiedOrderMonitor:
         assert count == 1
         mock_sell_manager.place_sell_order.assert_called_once()
         assert "TCS-EQ" in mock_sell_manager.lowest_ema9
+
+
+class TestCheckBuyOrderStatusOngoingSync:
+    """Test fix for ONGOING orders with missing execution prices"""
+
+    @pytest.fixture
+    def mock_orders_repo(self):
+        """Create mock OrdersRepository with ONGOING order support"""
+        from src.infrastructure.db.models import OrderStatus
+
+        repo = Mock()
+        repo.get_pending_amo_orders = Mock(return_value=[])
+        repo.list = Mock(return_value=[])  # Will be overridden per test
+        repo.get = Mock()
+        repo.update_status_check = Mock()
+        repo.mark_executed = Mock()
+        repo.mark_rejected = Mock()
+        repo.mark_cancelled = Mock()
+        return repo
+
+    @pytest.fixture
+    def mock_sell_manager(self):
+        """Create mock SellOrderManager"""
+        sell_manager = Mock()
+        sell_manager.orders = Mock()
+        sell_manager.orders.get_orders = Mock(return_value={"data": []})
+        sell_manager.monitor_and_update = Mock(return_value={"checked": 0})
+        return sell_manager
+
+    @pytest.fixture
+    def unified_monitor(self, mock_sell_manager, mock_orders_repo):
+        """Create UnifiedOrderMonitor with mocks"""
+        with (
+            patch("modules.kotak_neo_auto_trader.unified_order_monitor.DB_AVAILABLE", True),
+            patch(
+                "modules.kotak_neo_auto_trader.unified_order_monitor.OrdersRepository",
+                return_value=mock_orders_repo,
+            ),
+        ):
+            from modules.kotak_neo_auto_trader.unified_order_monitor import (
+                UnifiedOrderMonitor,
+            )
+
+            monitor = UnifiedOrderMonitor(
+                sell_order_manager=mock_sell_manager,
+                db_session=Mock(),
+                user_id=1,
+            )
+            monitor.orders_repo = mock_orders_repo
+            return monitor
+
+    def test_check_buy_order_status_with_ongoing_missing_price(
+        self, unified_monitor, mock_orders_repo
+    ):
+        """Test that check_buy_order_status includes ONGOING orders with missing execution_price"""
+        from src.infrastructure.db.models import OrderStatus
+
+        # Create mock ONGOING order with missing execution_price
+        mock_ongoing_order = Mock()
+        mock_ongoing_order.broker_order_id = "ORDER123"
+        mock_ongoing_order.order_id = "INT123"
+        mock_ongoing_order.symbol = "MIRZAINT-EQ"
+        mock_ongoing_order.quantity = 267
+        mock_ongoing_order.id = 999
+        mock_ongoing_order.status = OrderStatus.ONGOING
+        mock_ongoing_order.execution_price = None  # Missing!
+        mock_ongoing_order.placed_at = datetime.now()
+
+        # Mock the list call to return ONGOING order
+        mock_orders_repo.list.return_value = [mock_ongoing_order]
+
+        # Broker shows order as executed with avgPrc
+        broker_orders = [
+            {
+                "neoOrdNo": "ORDER123",
+                "trdSym": "MIRZAINT-EQ",
+                "orderStatus": "complete",
+                "transactionType": "BUY",
+                "avgPrc": 37.44,
+                "qty": 267,
+                "fldQty": 267,
+            }
+        ]
+
+        stats = unified_monitor.check_buy_order_status(broker_orders=broker_orders)
+
+        # Verify order was checked and found
+        assert stats["checked"] == 1
+        assert stats["executed"] == 1
+
+        # Verify database was updated
+        assert mock_orders_repo.get.called
+        mock_orders_repo.mark_executed.assert_called_once()
+
+        # Check execution details
+        call_args = mock_orders_repo.mark_executed.call_args
+        assert call_args[1]["execution_price"] == 37.44
+        assert call_args[1]["execution_qty"] == 267
+
+    def test_check_buy_order_status_skips_orders_with_execution_price(
+        self, unified_monitor, mock_orders_repo
+    ):
+        """Test that ONGOING orders with execution_price are not added for sync"""
+        from src.infrastructure.db.models import OrderStatus
+
+        # Create mock ONGOING order that ALREADY has execution_price
+        mock_ongoing_order = Mock()
+        mock_ongoing_order.broker_order_id = "ORDER456"
+        mock_ongoing_order.symbol = "THYROCARE-EQ"
+        mock_ongoing_order.quantity = 100
+        mock_ongoing_order.id = 888
+        mock_ongoing_order.status = OrderStatus.ONGOING
+        mock_ongoing_order.execution_price = 427.0  # Already has price!
+        mock_ongoing_order.placed_at = datetime.now()
+
+        mock_orders_repo.list.return_value = [mock_ongoing_order]
+
+        broker_orders = []
+
+        stats = unified_monitor.check_buy_order_status(broker_orders=broker_orders)
+
+        # Order should be skipped (already has execution_price)
+        assert stats["checked"] == 0
+
+    def test_check_buy_order_status_deduplicates_with_active_orders(
+        self, unified_monitor, mock_orders_repo
+    ):
+        """Test that ONGOING orders not added if already in active_buy_orders"""
+        from src.infrastructure.db.models import OrderStatus
+
+        # Add order to active_buy_orders
+        unified_monitor.active_buy_orders["ORDER789"] = {
+            "symbol": "SALSTEEL-EQ",
+            "quantity": 100,
+            "order_id": "ORDER789",
+            "db_order_id": 777,
+        }
+
+        # Create mock ONGOING order with same order_id
+        mock_ongoing_order = Mock()
+        mock_ongoing_order.broker_order_id = "ORDER789"
+        mock_ongoing_order.symbol = "SALSTEEL-EQ"
+        mock_ongoing_order.quantity = 100
+        mock_ongoing_order.id = 777
+        mock_ongoing_order.status = OrderStatus.ONGOING
+        mock_ongoing_order.execution_price = None
+        mock_ongoing_order.placed_at = datetime.now()
+
+        mock_orders_repo.list.return_value = [mock_ongoing_order]
+
+        broker_orders = []
+
+        stats = unified_monitor.check_buy_order_status(broker_orders=broker_orders)
+
+        # Should only check once (not duplicated)
+        assert stats["checked"] == 1
+
+    def test_check_buy_order_status_handles_empty_ongoing_list(
+        self, unified_monitor, mock_orders_repo
+    ):
+        """Test handling when no ONGOING orders need sync"""
+        mock_orders_repo.list.return_value = []
+
+        broker_orders = []
+
+        stats = unified_monitor.check_buy_order_status(broker_orders=broker_orders)
+
+        # Should return no orders to check
+        assert stats["checked"] == 0
+
+    def test_check_buy_order_status_multiple_ongoing_orders(
+        self, unified_monitor, mock_orders_repo
+    ):
+        """Test syncing multiple ONGOING orders with missing prices"""
+        from src.infrastructure.db.models import OrderStatus
+
+        # Create multiple mock ONGOING orders
+        mock_order1 = Mock()
+        mock_order1.broker_order_id = "ORD1"
+        mock_order1.order_id = "INT1"
+        mock_order1.symbol = "STOCK1-EQ"
+        mock_order1.quantity = 100
+        mock_order1.id = 1
+        mock_order1.status = OrderStatus.ONGOING
+        mock_order1.execution_price = None
+        mock_order1.placed_at = datetime.now()
+
+        mock_order2 = Mock()
+        mock_order2.broker_order_id = "ORD2"
+        mock_order2.order_id = "INT2"
+        mock_order2.symbol = "STOCK2-EQ"
+        mock_order2.quantity = 50
+        mock_order2.id = 2
+        mock_order2.status = OrderStatus.ONGOING
+        mock_order2.execution_price = None
+        mock_order2.placed_at = datetime.now()
+
+        mock_orders_repo.list.return_value = [mock_order1, mock_order2]
+
+        broker_orders = [
+            {
+                "neoOrdNo": "ORD1",
+                "trdSym": "STOCK1-EQ",
+                "orderStatus": "complete",
+                "transactionType": "BUY",
+                "avgPrc": 100.0,
+                "qty": 100,
+                "fldQty": 100,
+            },
+            {
+                "neoOrdNo": "ORD2",
+                "trdSym": "STOCK2-EQ",
+                "orderStatus": "complete",
+                "transactionType": "BUY",
+                "avgPrc": 50.5,
+                "qty": 50,
+                "fldQty": 50,
+            },
+        ]
+
+        stats = unified_monitor.check_buy_order_status(broker_orders=broker_orders)
+
+        # Both orders should be checked and executed
+        assert stats["checked"] == 2
+        assert stats["executed"] == 2
+
+        # Verify both were marked as executed
+        assert mock_orders_repo.mark_executed.call_count == 2
+
+    def test_check_buy_order_status_handles_repository_error(
+        self, unified_monitor, mock_orders_repo
+    ):
+        """Test graceful handling of repository errors when loading ONGOING orders"""
+        # Make list() raise an error
+        mock_orders_repo.list.side_effect = Exception("Database error")
+
+        broker_orders = []
+
+        # Should not raise, should return stats
+        stats = unified_monitor.check_buy_order_status(broker_orders=broker_orders)
+
+        # Should have logged error but returned empty stats
+        assert isinstance(stats, dict)
+        assert "checked" in stats
+
+    def test_check_buy_order_status_order_not_in_broker(self, unified_monitor, mock_orders_repo):
+        """Test ONGOING order that's not in broker orders (order not found)"""
+        from src.infrastructure.db.models import OrderStatus
+
+        # Create mock ONGOING order
+        mock_ongoing_order = Mock()
+        mock_ongoing_order.broker_order_id = "MISSING_ORDER"
+        mock_ongoing_order.symbol = "NOSTOCK-EQ"
+        mock_ongoing_order.quantity = 100
+        mock_ongoing_order.id = 555
+        mock_ongoing_order.status = OrderStatus.ONGOING
+        mock_ongoing_order.execution_price = None
+        mock_ongoing_order.placed_at = datetime.now()
+
+        mock_orders_repo.list.return_value = [mock_ongoing_order]
+
+        # Empty broker orders
+        broker_orders = []
+
+        stats = unified_monitor.check_buy_order_status(broker_orders=broker_orders)
+
+        # Order should be checked but not found in broker
+        assert stats["checked"] == 1
+        assert stats["executed"] == 0
+
+    def test_check_buy_order_status_order_rejected(self, unified_monitor, mock_orders_repo):
+        """Test ONGOING order that was rejected (rejection wasn't synced)"""
+        from src.infrastructure.db.models import OrderStatus
+
+        mock_ongoing_order = Mock()
+        mock_ongoing_order.broker_order_id = "REJ_ORDER"
+        mock_ongoing_order.symbol = "REJSTOCK-EQ"
+        mock_ongoing_order.quantity = 100
+        mock_ongoing_order.id = 444
+        mock_ongoing_order.status = OrderStatus.ONGOING
+        mock_ongoing_order.execution_price = None
+        mock_ongoing_order.placed_at = datetime.now()
+
+        mock_orders_repo.list.return_value = [mock_ongoing_order]
+        mock_orders_repo.get.return_value = mock_ongoing_order
+
+        broker_orders = [
+            {
+                "neoOrdNo": "REJ_ORDER",
+                "trdSym": "REJSTOCK-EQ",
+                "orderStatus": "rejected",
+                "transactionType": "BUY",
+                "rejectionReason": "Margin Exceeds",
+            }
+        ]
+
+        stats = unified_monitor.check_buy_order_status(broker_orders=broker_orders)
+
+        # Should detect rejection
+        assert stats["checked"] == 1
+        assert stats["rejected"] == 1
+
+        # Verify mark_rejected was called
+        mock_orders_repo.mark_rejected.assert_called_once()
