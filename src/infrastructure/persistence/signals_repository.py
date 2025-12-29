@@ -531,6 +531,105 @@ class SignalsRepository:
         # Base status is something else (shouldn't happen), return False
         return False
 
+    def get_amo_signal_expiry_time(self, signal_timestamp: datetime) -> datetime:
+        """
+        Calculate the expiry time for an AMO signal based on next trading day market open.
+
+        Rule: AMO signals expire at market open on the next trading day (9:15 AM IST).
+
+        Args:
+            signal_timestamp: Signal creation timestamp (naive or timezone-aware)
+
+        Returns:
+            datetime: Expiry time (next trading day at 9:15 AM IST, timezone-aware)
+        """
+        from datetime import time as dt_time
+
+        # Ensure signal timestamp is timezone-aware (IST)
+        if signal_timestamp.tzinfo is None:
+            signal_timestamp = signal_timestamp.replace(tzinfo=IST)
+        else:
+            signal_timestamp = signal_timestamp.astimezone(IST)
+
+        # Get signal date
+        signal_date = signal_timestamp.date()
+
+        # Get next trading day (skips weekends and holidays)
+        next_trading_day = get_next_trading_day(signal_date)
+
+        # Return market open time on next trading day (9:15 AM IST, timezone-aware)
+        market_open_time = dt_time(9, 15)  # 9:15 AM
+        return datetime.combine(next_trading_day, market_open_time).replace(tzinfo=IST)
+
+    def _is_amo_signal_expired(self, signal_timestamp: datetime) -> bool:
+        """
+        Check if an AMO signal is expired based on next trading day market open time (9:15 AM IST).
+
+        Rule: AMO signals expire at market open on the next trading day.
+
+        Args:
+            signal_timestamp: Signal creation timestamp (naive or timezone-aware)
+
+        Returns:
+            True if signal is expired, False otherwise
+        """
+        # Get expiry time for this AMO signal
+        expiry_time = self.get_amo_signal_expiry_time(signal_timestamp)
+
+        # Check if current time has passed expiry time
+        now = ist_now()
+        return now >= expiry_time
+
+    def _has_amo_order(self, signal: Signals) -> bool:
+        """
+        Check if a signal has an associated AMO order.
+
+        Phase 2.2: Option B - Derive from orders (no schema change).
+        Checks if there's a pending buy order for this signal's symbol.
+
+        Args:
+            signal: Signal to check
+
+        Returns:
+            True if signal has an AMO order, False otherwise
+        """
+        from src.infrastructure.db.models import Orders, OrderStatus
+
+        # Check if there's a pending buy order for this symbol
+        # AMO orders are typically placed before market open and are pending until 9:15 AM
+        base_symbol = signal.symbol.split(".")[0].split("-")[0].upper()
+
+        # Try multiple symbol variants
+        candidates = [signal.symbol, base_symbol]
+        if not signal.symbol.endswith(".NS"):
+            candidates.append(f"{base_symbol}.NS")
+        if "-" not in signal.symbol:
+            candidates.append(f"{base_symbol}-EQ")
+
+        for candidate in candidates:
+            order = self.db.execute(
+                select(Orders).where(
+                    Orders.symbol == candidate,
+                    Orders.side == "buy",
+                    Orders.status == OrderStatus.PENDING,
+                )
+            ).scalar_one_or_none()
+
+            if order:
+                # Check if order was placed before market open (likely AMO)
+                # AMO orders are placed before 9:15 AM
+                from datetime import time as dt_time
+
+                if order.placed_at:
+                    placed_time = order.placed_at.time() if hasattr(order.placed_at, "time") else None
+                    if placed_time and placed_time < dt_time(9, 15):
+                        return True
+                # If we can't determine from time, assume pending buy orders are AMO
+                # (This is a heuristic - in practice, most pending buy orders before market open are AMO)
+                return True
+
+        return False
+
     def get_signal_expiry_time(self, signal_timestamp: datetime) -> datetime:
         """
         Calculate the expiry time for a signal based on next trading day market close.
@@ -663,25 +762,32 @@ class SignalsRepository:
             if signal.status in [
                 SignalStatus.ACTIVE,
                 SignalStatus.REJECTED,
-            ] and self._is_signal_expired_by_market_close(signal.ts):
-                prev_status = signal.status
-                signal.status = SignalStatus.EXPIRED
-                expired_count += 1
-                # Collect audit log entry for bulk insert
-                audit_logs.append(
-                    {
-                        "user_id": SYSTEM_USER_ID,
-                        "action": "update",
-                        "resource_type": "signal",
-                        "resource_id": signal.id,
-                        "changes": {
-                            "previous_status": prev_status.value,
-                            "new_status": SignalStatus.EXPIRED.value,
-                            "reason": "eod_expiry",
-                            "symbol": signal.symbol,
-                        },
-                    }
-                )
+            ]:
+                # Phase 2.2: Check if signal has AMO order - use AMO expiry logic if so
+                if self._has_amo_order(signal):
+                    is_expired = self._is_amo_signal_expired(signal.ts)
+                else:
+                    is_expired = self._is_signal_expired_by_market_close(signal.ts)
+
+                if is_expired:
+                    prev_status = signal.status
+                    signal.status = SignalStatus.EXPIRED
+                    expired_count += 1
+                    # Collect audit log entry for bulk insert
+                    audit_logs.append(
+                        {
+                            "user_id": SYSTEM_USER_ID,
+                            "action": "update",
+                            "resource_type": "signal",
+                            "resource_id": signal.id,
+                            "changes": {
+                                "previous_status": prev_status.value,
+                                "new_status": SignalStatus.EXPIRED.value,
+                                "reason": "eod_expiry",
+                                "symbol": signal.symbol,
+                            },
+                        }
+                    )
 
         # Bulk insert all audit logs at once (more efficient than individual creates)
         if audit_logs:
