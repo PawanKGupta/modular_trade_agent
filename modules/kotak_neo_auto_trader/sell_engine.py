@@ -361,6 +361,81 @@ class SellOrderManager:
 
         return self.active_sell_orders
 
+    def _normalize_order_strict(self, o: dict[str, Any]) -> dict[str, Any]:
+        """
+        Strict normalization of a Kotak order payload without price fallbacks.
+
+        Rules:
+        - Status: derive from primary fields and map to one of
+          {complete, cancelled, rejected, open, unknown}
+        - Execution price: ONLY `avgPrc` is used for completed orders.
+          No fallback to `prc`/`price`/`executedPrice`.
+        - For non-completed orders, execution price is None.
+        - Executed quantity must be > 0 for a completed order.
+        """
+        status_raw = (o.get("ordSt") or o.get("stat") or o.get("orderStatus") or "").strip().lower()
+        if "cancel" in status_raw:
+            status = "cancelled"
+        elif "reject" in status_raw:
+            status = "rejected"
+        elif status_raw == "complete" or status_raw == "executed" or status_raw == "filled":
+            status = "complete"
+        elif status_raw in ("open", "pending", "trigger pending"):
+            status = "open"
+        else:
+            status = status_raw or "unknown"
+
+        side = (o.get("trnsTp") or "").upper()  # B/S
+        order_type = o.get("prcTp")  # MKT/L
+        from .utils.order_field_extractor import OrderFieldExtractor
+
+        filled_qty = int(OrderFieldExtractor.get_filled_quantity(o))
+        cancelled_qty = int(o.get("cnlQty") or 0)
+        remaining_qty = int(o.get("unFldSz") or 0)
+        original_qty = int(OrderFieldExtractor.get_quantity(o))
+
+        # Strict execution price: only avgPrc for completed orders
+        try:
+            avg_prc = float(o.get("avgPrc") or 0)
+        except (ValueError, TypeError):
+            avg_prc = 0.0
+        execution_price = avg_prc if status == "complete" else None
+
+        # If broker reports ongoing/open but we have fills and avg price, treat as completed
+        if status != "complete" and filled_qty > 0 and avg_prc > 0:
+            status = "complete"
+            execution_price = avg_prc
+
+        # Validate completed order strictly: must have fill qty
+        # Do NOT demote completed status due to missing/zero avgPrc; keep execution_price=None
+        if status == "complete" and filled_qty <= 0:
+            status = "open" if remaining_qty > 0 else "cancelled"
+            execution_price = None
+
+        return {
+            "broker_order_id": o.get("nOrdNo")
+            or o.get("neoOrdNo")
+            or o.get("orderId")
+            or o.get("ordId")
+            or o.get("id"),
+            "exchange_order_id": o.get("exOrdId"),
+            "status": status,
+            "side": side,
+            "order_type": order_type,
+            "symbol": o.get("trdSym") or o.get("tradingSymbol") or o.get("sym"),
+            "segment": o.get("exSeg"),
+            "price": None if order_type == "MKT" else o.get("prc"),  # informational only for limit
+            "execution_price": execution_price,
+            "qty": original_qty,
+            "filled_qty": filled_qty,
+            "cancelled_qty": cancelled_qty,
+            "remaining_qty": remaining_qty,
+            "entered_at": o.get("ordEntTm") or o.get("orderEntryTime"),
+            "executed_at": o.get("exCfmTm") if status == "complete" else None,
+            "reject_reason": o.get("rejRsn") if status == "rejected" else None,
+            "raw": o,
+        }
+
     def _mark_order_executed(
         self,
         symbol: str,
@@ -991,29 +1066,17 @@ class SellOrderManager:
                 if not OrderFieldExtractor.is_sell_order(order):
                     continue
 
-                # Get order status and executed quantity
-                status = OrderFieldExtractor.get_status(order)
-                executed_qty = OrderFieldExtractor.get_filled_quantity(order)
-
-                # Only process orders that are actually executed (have filled quantity)
-                # Edge Case Fix #1: "ongoing" status might include pending orders (filled_qty = 0)
-                if status in ["executed", "filled", "complete"]:
-                    # These statuses indicate execution, but still check filled_qty > 0
-                    if executed_qty <= 0:
-                        continue
-                elif status == "ongoing":
-                    # For "ongoing" status, only process if order has been partially/fully filled
-                    if executed_qty <= 0:
-                        continue  # Order is pending, not executed yet
-                else:
-                    # Other statuses (pending, cancelled, rejected, etc.) - skip
+                # Strict normalization: process only fully executed orders with avgPrc
+                norm = self._normalize_order_strict(order)
+                if norm.get("status") != "complete":
+                    continue
+                executed_qty = int(norm.get("filled_qty") or 0)
+                if executed_qty <= 0:
                     continue
 
-                order_id = OrderFieldExtractor.get_order_id(order)
+                order_id = norm.get("broker_order_id") or OrderFieldExtractor.get_order_id(order)
                 if not order_id:
                     continue
-
-                # Normalize order ID for consistent comparison
                 order_id = str(order_id).strip()
 
                 # Skip if this is our tracked sell order
@@ -1057,70 +1120,30 @@ class SellOrderManager:
                     try:
                         # Check if there's a system buy order (orig_source != 'manual') for this symbol
                         # that was executed around the time the position was opened
-                        if DbOrderStatus:
-                            # Get all buy orders for this symbol
-                            buy_orders = self.orders_repo.list(
-                                self.user_id,
-                                status=DbOrderStatus.ONGOING,  # Only executed orders
-                            )
+                        # Get all buy orders for this symbol (no status filter)
+                        buy_orders = self.orders_repo.list(self.user_id)
 
-                            # Filter for buy orders matching this symbol
-                            for buy_order in buy_orders:
-                                if buy_order.side.lower() != "buy":
-                                    continue
+                        # Filter for buy orders matching this symbol
+                        for buy_order in buy_orders:
+                            if buy_order.side.lower() != "buy":
+                                continue
 
-                                # Compare full symbols (orders already have full symbols)
-                                if buy_order.symbol.upper() != full_symbol:
-                                    continue
+                            # Compare full symbols (orders already have full symbols)
+                            if buy_order.symbol.upper() != full_symbol:
+                                continue
 
-                                # Check if this is a system order (not manual)
-                                # System orders have orig_source != 'manual' (could be 'signal', None, etc.)
-                                if (
-                                    buy_order.orig_source
-                                    and buy_order.orig_source.lower() == "manual"
-                                ):
-                                    continue  # Skip manual orders
-
-                                # Check if order execution time matches position opened_at (within reasonable window)
-                                order_execution_time = None
-                                if (
-                                    hasattr(buy_order, "execution_time")
-                                    and buy_order.execution_time
-                                ):
-                                    order_execution_time = buy_order.execution_time
-                                elif hasattr(buy_order, "filled_at") and buy_order.filled_at:
-                                    order_execution_time = buy_order.filled_at
-
-                                if order_execution_time:
-                                    # Normalize both timestamps to IST for comparison
-                                    from src.infrastructure.db.timezone_utils import IST
-
-                                    if order_execution_time.tzinfo is None:
-                                        order_execution_time = order_execution_time.replace(
-                                            tzinfo=IST
-                                        )
-                                    else:
-                                        order_execution_time = order_execution_time.astimezone(IST)
-
-                                    position_opened_at = position_obj.opened_at
-                                    if position_opened_at.tzinfo is None:
-                                        position_opened_at = position_opened_at.replace(tzinfo=IST)
-                                    else:
-                                        position_opened_at = position_opened_at.astimezone(IST)
-
-                                    # Check if order execution is within 1 hour of position opened_at
-                                    # (allows for slight timing differences)
-                                    time_diff = abs(
-                                        (order_execution_time - position_opened_at).total_seconds()
-                                    )
-                                    if time_diff <= 3600:  # 1 hour window
-                                        is_system_position = True
-                                        logger.debug(
-                                            f"Position {full_symbol} identified as system position: "
-                                            f"buy order {buy_order.id} executed at {order_execution_time}, "
-                                            f"position opened at {position_opened_at}"
-                                        )
-                                        break
+                            # Check if this is a system order (not manual)
+                            # System orders have orig_source != 'manual' (could be 'signal', None, etc.)
+                            if (
+                                not buy_order.orig_source
+                                or buy_order.orig_source.lower() != "manual"
+                            ):
+                                # Treat as system position based on presence of matching non-manual buy
+                                is_system_position = True
+                                logger.debug(
+                                    f"Position {full_symbol} identified as system position via buy order {getattr(buy_order, 'id', 'N/A')}"
+                                )
+                                break
 
                     except Exception as e:
                         logger.debug(
@@ -1140,80 +1163,59 @@ class SellOrderManager:
                     )
                     continue
 
-                # Apply timestamp check ONLY for system positions
-                if is_system_position and position_obj.opened_at:
-                    # Get sell order execution time
+                # Conservative timestamp gating: only skip if sell time is earlier than position
+                # open time on the same calendar day (prevents truly old sells from before system buy).
+                try:
+                    from datetime import datetime
+
+                    from src.infrastructure.db.timezone_utils import IST
+
                     sell_order_time = None
+                    time_str = (
+                        OrderFieldExtractor.get_order_time(order)
+                        if isinstance(order, dict)
+                        else None
+                    )
+                    exec_time_obj = order.get("execution_time") if isinstance(order, dict) else None
+                    filled_at_obj = order.get("filled_at") if isinstance(order, dict) else None
 
-                    # Try to extract execution time from order (format varies by broker)
-                    # Check common fields for execution time
-                    if isinstance(order, dict):
-                        if order.get("execution_time"):
-                            sell_order_time = order.get("execution_time")
-                        elif order.get("filled_at"):
-                            sell_order_time = order.get("filled_at")
+                    if isinstance(exec_time_obj, datetime):
+                        sell_order_time = exec_time_obj
+                    elif isinstance(filled_at_obj, datetime):
+                        sell_order_time = filled_at_obj
+                    elif isinstance(time_str, str):
+                        try:
+                            sell_order_time = datetime.fromisoformat(
+                                time_str.replace("Z", "+00:00")
+                            )
+                        except Exception:
+                            sell_order_time = None
+
+                    if sell_order_time and position_obj.opened_at:
+                        # Normalize to IST
+                        if sell_order_time.tzinfo is None:
+                            sell_order_time = sell_order_time.replace(tzinfo=IST)
                         else:
-                            # Try OrderFieldExtractor
-                            order_time_str = OrderFieldExtractor.get_order_time(order)
-                            if order_time_str:
-                                try:
-                                    from datetime import datetime
+                            sell_order_time = sell_order_time.astimezone(IST)
 
-                                    from src.infrastructure.db.timezone_utils import IST
+                        opened_at = position_obj.opened_at
+                        if opened_at.tzinfo is None:
+                            opened_at = opened_at.replace(tzinfo=IST)
+                        else:
+                            opened_at = opened_at.astimezone(IST)
 
-                                    # Parse order time (format varies by broker)
-                                    # Try ISO format first
-                                    try:
-                                        sell_order_time = datetime.fromisoformat(
-                                            order_time_str.replace("Z", "+00:00")
-                                        )
-                                    except ValueError:
-                                        # Try other formats if needed
-                                        # For now, if parsing fails, we'll skip the check
-                                        pass
-                                except Exception:
-                                    pass
-
-                    if sell_order_time:
-                        # Normalize to IST for comparison
-                        from src.infrastructure.db.timezone_utils import IST
-
-                        if isinstance(sell_order_time, str):
-                            try:
-                                sell_order_time = datetime.fromisoformat(
-                                    sell_order_time.replace("Z", "+00:00")
-                                )
-                            except ValueError:
-                                sell_order_time = None
-
-                        if sell_order_time:
-                            if sell_order_time.tzinfo is None:
-                                sell_order_time = sell_order_time.replace(tzinfo=IST)
-                            else:
-                                sell_order_time = sell_order_time.astimezone(IST)
-
-                            # Normalize position opened_at to IST
-                            position_opened_at = position_obj.opened_at
-                            if position_opened_at.tzinfo is None:
-                                position_opened_at = position_opened_at.replace(tzinfo=IST)
-                            else:
-                                position_opened_at = position_opened_at.astimezone(IST)
-
-                            # Only process if sell order happened AFTER position was opened
-                            if sell_order_time < position_opened_at:
-                                logger.debug(
-                                    f"Skipping manual sell order {order_id} for {full_symbol}: "
-                                    f"sell executed at {sell_order_time} is BEFORE position opened at "
-                                    f"{position_opened_at}. "
-                                    f"This is likely an old manual sell order that predates the system's buy."
-                                )
-                                continue
-                    else:
-                        # If we can't determine sell order time, log but proceed (better to process than skip)
-                        logger.debug(
-                            f"Cannot determine execution time for manual sell order {order_id} "
-                            f"for {full_symbol}. Proceeding with manual sell detection to avoid false negatives."
-                        )
+                        if (
+                            sell_order_time.date() == opened_at.date()
+                            and sell_order_time < opened_at
+                        ):
+                            logger.debug(
+                                f"Skipping manual sell order {order_id} for {full_symbol}: "
+                                f"executed before position open on same day ({sell_order_time} < {opened_at})."
+                            )
+                            continue
+                except Exception:
+                    # Do not block detection on any parsing error
+                    pass
 
                 # Manual sell detected!
                 # Use the refreshed position_obj from database (not the stale symbol_to_position)
@@ -1242,27 +1244,23 @@ class SellOrderManager:
                         f"partially sold or data inconsistency. Marking position as closed."
                     )
 
-                # Extract exit price from manual sell order
-                exit_price = OrderFieldExtractor.get_price(order)
-                if not exit_price or exit_price <= 0:
-                    # Try to get execution price if available
-                    exit_price = (
-                        order.get("execution_price")
-                        or order.get("avgPrc")
-                        or order.get("prc")
-                        or None
-                    )
-                    if exit_price:
-                        try:
-                            exit_price = float(exit_price)
-                        except (ValueError, TypeError):
-                            exit_price = None
+                # Strict exit price: use only avgPrc captured via normalization
+                # Do NOT fallback to prc/price. If missing/invalid, proceed with exit_price=None.
+                exit_price = norm.get("execution_price")
+                if exit_price is not None:
+                    try:
+                        exit_price = float(exit_price)
+                    except (ValueError, TypeError):
+                        exit_price = None
+                if exit_price is not None and exit_price <= 0:
+                    # Treat non-positive avgPrc as unavailable
+                    exit_price = None
 
                 # Track manual sell order in active_sell_orders to prevent duplicate placement
                 # This ensures system doesn't place another sell order for the same symbol
                 try:
                     # Get sell order details for tracking
-                    sell_order_price = exit_price or OrderFieldExtractor.get_price(order) or 0.0
+                    sell_order_price = exit_price
                     sell_order_qty = executed_qty
                     trading_symbol_full = trading_symbol  # Keep full symbol with suffix
 
@@ -1294,26 +1292,49 @@ class SellOrderManager:
                         f"Position had {position_qty} shares. Marking position as closed."
                     )
                     try:
-                        # Get execution time from order if available
+                        # Get execution time from normalized/extracted fields
                         execution_time = None
-                        if isinstance(order, dict):
-                            # Try to get execution time from order
+                        from datetime import datetime
+
+                        from src.infrastructure.db.timezone_utils import IST
+
+                        # Prefer normalized executed_at (exCfmTm) if available
+                        if "norm" in locals() and norm.get("executed_at"):
+                            try:
+                                execution_time = datetime.fromisoformat(
+                                    str(norm["executed_at"]).replace("Z", "+00:00")
+                                )
+                            except Exception:
+                                execution_time = None
+
+                        # Fallback to broker's executionTime field if present
+                        if not execution_time and isinstance(order, dict):
+                            exec_time_str = order.get("executionTime")
+                            if exec_time_str:
+                                try:
+                                    execution_time = datetime.fromisoformat(
+                                        str(exec_time_str).replace("Z", "+00:00")
+                                    )
+                                except Exception:
+                                    execution_time = None
+
+                        # Last resort: use OrderFieldExtractor known time fields
+                        if not execution_time and isinstance(order, dict):
                             order_time_str = OrderFieldExtractor.get_order_time(order)
                             if order_time_str:
                                 try:
-                                    from datetime import datetime
-
-                                    from src.infrastructure.db.timezone_utils import IST
-
                                     execution_time = datetime.fromisoformat(
                                         order_time_str.replace("Z", "+00:00")
                                     )
-                                    if execution_time.tzinfo is None:
-                                        execution_time = execution_time.replace(tzinfo=IST)
-                                    else:
-                                        execution_time = execution_time.astimezone(IST)
                                 except Exception:
-                                    pass
+                                    execution_time = None
+
+                        # Normalize to IST if parsed
+                        if execution_time:
+                            if execution_time.tzinfo is None:
+                                execution_time = execution_time.replace(tzinfo=IST)
+                            else:
+                                execution_time = execution_time.astimezone(IST)
 
                         closed_at_time = (
                             execution_time if execution_time else (ist_now() if ist_now else None)
