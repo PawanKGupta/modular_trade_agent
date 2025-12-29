@@ -149,7 +149,7 @@ class PaperTradingServiceAdapter:
             # Initialize paper trading broker
             self.logger.info("Initializing paper trading broker...", action="initialize")
             try:
-                self.broker = PaperTradingBrokerAdapter(self.config)
+                self.broker = PaperTradingBrokerAdapter(self.config, db_session=self.db)
             except Exception as broker_init_error:
                 self.logger.error(
                     f"Failed to create paper trading broker: {broker_init_error}",
@@ -2255,16 +2255,45 @@ class PaperTradingEngineAdapter:
                                 action="place_new_entries",
                             )
 
-                    # Mark signal as TRADED
+                    # Mark signal as TRADED (try base and ticker variants to avoid suffix mismatches)
                     try:
                         from src.infrastructure.persistence.signals_repository import (
                             SignalsRepository,
                         )
 
                         signals_repo = SignalsRepository(self.db, user_id=self.user_id)
-                        if signals_repo.mark_as_traded(symbol, user_id=self.user_id):
-                            self.logger.info(
-                                f"Marked signal for {symbol} as TRADED (user {self.user_id})",
+
+                        # Try multiple symbol variants to handle stored symbols with/without suffix
+                        candidates: list[str] = []
+                        if symbol:
+                            candidates.append(symbol)
+                        ticker_upper = rec.ticker.upper()
+                        if ticker_upper not in candidates:
+                            candidates.append(ticker_upper)
+                        # Normalized base symbol (e.g., MIRZAINT from MIRZAINT.NS)
+                        normalized = extract_base_symbol(ticker_upper).upper()
+                        if normalized not in candidates:
+                            candidates.append(normalized)
+
+                        mark_success = False
+                        for candidate in candidates:
+                            try:
+                                if signals_repo.mark_as_traded(candidate, user_id=self.user_id):
+                                    self.logger.info(
+                                        f"Marked signal for {candidate} as TRADED (user {self.user_id})",
+                                        action="place_new_entries",
+                                    )
+                                    mark_success = True
+                                    break
+                            except Exception as inner_mark_error:
+                                self.logger.debug(
+                                    f"Mark-as-traded attempt failed for {candidate}: {inner_mark_error}",
+                                    action="place_new_entries",
+                                )
+
+                        if not mark_success:
+                            self.logger.warning(
+                                f"Could not mark signal as TRADED for any variant: {candidates}",
                                 action="place_new_entries",
                             )
                     except Exception as mark_error:

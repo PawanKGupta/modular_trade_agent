@@ -29,6 +29,47 @@ from ..simulation import OrderSimulator, PortfolioManager, PriceProvider
 
 
 class PaperTradingBrokerAdapter(IBrokerGateway):
+    def _sync_order_failure_to_db(self, order: Order, failure_type: str, reason: str = "") -> None:
+        """
+        Sync paper trading order failure to database (for signal status update).
+
+        This updates the database order status, which automatically triggers
+        signal FAILED status via OrdersRepository methods.
+
+        Args:
+            order: Order that failed
+            failure_type: 'rejected', 'failed', or 'cancelled'
+            reason: Reason for failure
+        """
+        if not self.db_session:
+            # No database integration available, skip sync
+            return
+
+        try:
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+            repo = OrdersRepository(self.db_session)
+            db_order = repo.get_by_broker_order_id(order.user_id, order.order_id)
+            if not db_order:
+                logger.debug(
+                    f"[PaperTrading] DB order not found for sync: {order.order_id} (may be pre-DB integration order)"
+                )
+                return
+            if failure_type == "rejected":
+                repo.mark_rejected(db_order, reason or "Paper trading rejection")
+            elif failure_type == "failed":
+                repo.mark_failed(db_order, reason or "Paper trading failure")
+            elif failure_type == "cancelled":
+                repo.mark_cancelled(db_order, reason or "Paper trading cancelled")
+            logger.debug(
+                f"[PaperTrading] Synced order failure to DB: {order.order_id} ({failure_type})"
+            )
+        except Exception as ex:
+            # Don't fail order processing if database sync fails
+            logger.warning(
+                f"[PaperTrading] Failed to sync order failure to DB: {ex}", exc_info=True
+            )
+
     """
     Paper trading adapter implementing IBrokerGateway
 
@@ -41,13 +82,19 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
     No real money involved - perfect for testing strategies!
     """
 
-    def __init__(self, config: PaperTradingConfig | None = None, storage_path: str | None = None):
+    def __init__(
+        self,
+        config: PaperTradingConfig | None = None,
+        storage_path: str | None = None,
+        db_session=None,
+    ):
         """
         Initialize paper trading adapter
 
         Args:
             config: Paper trading configuration (uses default if None)
             storage_path: Custom storage path (optional)
+            db_session: Database session for syncing order failures (optional)
         """
         # Configuration
         self.config = config or PaperTradingConfig.default()
@@ -55,6 +102,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         # Storage
         storage_path = storage_path or self.config.storage_path
         self.store = PaperTradeStore(storage_path, auto_save=self.config.auto_save)
+
+        # Database session for syncing order failures to database
+        self.db_session = db_session
 
         # Components
         self.price_provider = PriceProvider(
@@ -246,6 +296,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             if estimated_price is None:
                 order.reject(f"Price not available for {order.symbol} (tried {price_symbol})")
                 self._save_order(order)
+                self._sync_order_failure_to_db(
+                    order, "rejected", f"Price not available for {order.symbol}"
+                )
                 return
 
             estimated_value = float(estimated_price) * float(order.quantity)
@@ -259,6 +312,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 logger.warning(f"[WARN]? Order validation failed: {error}")
                 order.reject(error)
                 self._save_order(order)
+                self._sync_order_failure_to_db(order, "rejected", error)
                 return
 
         # For sell orders, validate quantity
@@ -268,6 +322,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 logger.warning(f"[WARN]? Cannot sell: {error}")
                 order.reject(error)
                 self._save_order(order)
+                self._sync_order_failure_to_db(order, "rejected", error)
                 return
 
         # Execute order
@@ -298,6 +353,8 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             else:
                 logger.warning(msg)
                 self._warned_symbols.add(order.symbol)
+            # Sync failure to DB
+            self._sync_order_failure_to_db(order, "failed", message)
 
         # Save updated order
         self._save_order(order)
@@ -400,6 +457,26 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         self.store.update_order(
             order_id, {"status": "CANCELLED", "cancelled_at": datetime.now().isoformat()}
         )
+
+        # Sync cancellation to DB using stored db_session
+        if self.db_session:
+            try:
+                from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+                repo = OrdersRepository(self.db_session)
+                # Try to get user_id from order_dict if present
+                user_id = order_dict.get("user_id")
+                db_order = None
+                if user_id:
+                    db_order = repo.get_by_broker_order_id(user_id, order_id)
+                if db_order:
+                    repo.mark_cancelled(db_order, "Paper trading cancelled")
+                    logger.debug(f"[PaperTrading] Synced order cancellation to DB: {order_id}")
+            except Exception as ex:
+                # Don't fail cancellation if database sync fails
+                logger.warning(
+                    f"[PaperTrading] Failed to sync order cancellation to DB: {ex}", exc_info=True
+                )
 
         logger.info(f"? Cancelled order: {order_id}")
         return True

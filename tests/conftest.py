@@ -455,3 +455,18 @@ def pytest_configure_node(node):
     except Exception:
         # If there's an issue, it will be caught in the actual test
         pass
+
+
+@pytest.fixture(autouse=True, scope="function")
+def ensure_system_user(db_session):
+    """
+    Ensure a reserved system user (id=1) exists for audit logging in every test DB.
+    """
+    from src.infrastructure.db.models import Users
+
+    user = db_session.query(Users).filter_by(id=1).first()
+    if not user:
+        user = Users(id=1, email="system@tradeagent.local", password_hash="system", role="system")
+        db_session.add(user)
+        db_session.commit()
+    yield

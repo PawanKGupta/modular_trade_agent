@@ -45,6 +45,39 @@ class AuditLogRepository:
         self.db.refresh(audit)
         return audit
 
+    def create_bulk(self, audit_logs: list[dict]) -> list[AuditLog]:
+        """
+        Bulk create audit log entries from a list of dicts.
+
+        Args:
+            audit_logs: List of dicts with audit log data. Each dict should contain:
+                - user_id: int
+                - action: str
+                - resource_type: str
+                - resource_id: int | None (optional)
+                - changes: dict | None (optional)
+                - ip_address: str | None (optional)
+                - user_agent: str | None (optional)
+                - timestamp: datetime (optional, defaults to now)
+
+        Returns:
+            List of created AuditLog objects
+        """
+        if not audit_logs:
+            return []
+
+        # Add timestamp if not provided
+        for log in audit_logs:
+            if "timestamp" not in log:
+                log["timestamp"] = ist_now()
+
+        audits = [AuditLog(**log) for log in audit_logs]
+        self.db.add_all(audits)
+        self.db.commit()
+        for audit in audits:
+            self.db.refresh(audit)
+        return audits
+
     def get(self, audit_id: int) -> AuditLog | None:
         """Get audit log by ID"""
         return self.db.get(AuditLog, audit_id)

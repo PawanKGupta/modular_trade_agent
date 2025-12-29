@@ -19,6 +19,14 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Insert system user (user_id=1) if not exists
+    op.execute(
+        """
+        INSERT INTO users (id, email, name, password_hash, role, is_active, created_at, updated_at)
+        SELECT 1, 'system@tradeagent.local', 'System User', '!', 'admin', TRUE, NOW(), NOW()
+        WHERE NOT EXISTS (SELECT 1 FROM users WHERE id = 1)
+        """
+    )
     bind = op.get_bind()
     inspector = inspect(bind)
 

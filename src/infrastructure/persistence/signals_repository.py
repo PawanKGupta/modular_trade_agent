@@ -5,8 +5,16 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import bindparam, func, outerjoin, select, text, update
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus
+from src.infrastructure.db.models import (
+    Orders,
+    OrderStatus,
+    Positions,
+    Signals,
+    SignalStatus,
+    UserSignalStatus,
+)
 from src.infrastructure.db.timezone_utils import IST, ist_now
+from src.infrastructure.persistence.audit_log_repository import AuditLogRepository
 from src.infrastructure.utils.holiday_calendar import get_next_trading_day
 
 # Trading day constants
@@ -196,7 +204,7 @@ class SignalsRepository:
         rowcount = result.rowcount
         return rowcount
 
-    def mark_as_traded(self, symbol: str, user_id: int | None = None) -> bool:
+    def mark_as_traded(self, symbol: str, user_id: int | None = None, reason: str = None) -> bool:
         """
         Mark a signal as TRADED for a specific user.
 
@@ -241,6 +249,7 @@ class SignalsRepository:
         if not existing and signal.status not in [SignalStatus.ACTIVE, SignalStatus.EXPIRED]:
             return False
 
+        prev_status = existing.status if existing else signal.status
         if existing:
             existing.status = SignalStatus.TRADED
             existing.marked_at = ist_now()
@@ -253,11 +262,23 @@ class SignalsRepository:
                 marked_at=ist_now(),
             )
             self.db.add(user_status)
-
         self.db.commit()
+        # Audit log
+        audit_log_repo = AuditLogRepository(self.db)
+        audit_log_repo.create(
+            user_id=user_id,
+            action="update",
+            resource_type="signal",
+            resource_id=signal.id,
+            changes={
+                "previous_status": prev_status.value,
+                "new_status": SignalStatus.TRADED.value,
+                "reason": reason or "order_placed",
+            },
+        )
         return True
 
-    def mark_as_rejected(self, symbol: str, user_id: int | None = None) -> bool:
+    def mark_as_rejected(self, symbol: str, user_id: int | None = None, reason: str = None) -> bool:
         """
         Mark a signal as REJECTED for a specific user.
 
@@ -301,6 +322,7 @@ class SignalsRepository:
             )
         ).scalar_one_or_none()
 
+        prev_status = existing.status if existing else signal.status
         if existing:
             existing.status = SignalStatus.REJECTED
             existing.marked_at = ist_now()
@@ -313,11 +335,23 @@ class SignalsRepository:
                 marked_at=ist_now(),
             )
             self.db.add(user_status)
-
         self.db.commit()
+        # Audit log
+        audit_log_repo = AuditLogRepository(self.db)
+        audit_log_repo.create(
+            user_id=user_id,
+            action="update",
+            resource_type="signal",
+            resource_id=signal.id,
+            changes={
+                "previous_status": prev_status.value,
+                "new_status": SignalStatus.REJECTED.value,
+                "reason": reason or "manual_reject",
+            },
+        )
         return True
 
-    def mark_as_failed(self, signal_id: int, user_id: int) -> bool:
+    def mark_as_failed(self, signal_id: int, user_id: int, reason: str = None) -> bool:
         """
         Mark a user-specific TRADED signal as FAILED.
 
@@ -344,13 +378,29 @@ class SignalsRepository:
         ).scalar_one_or_none()
 
         if user_status:
+            prev_status = user_status.status
             user_status.status = SignalStatus.FAILED
             user_status.marked_at = ist_now()
             self.db.commit()
+            # Audit log
+            audit_log_repo = AuditLogRepository(self.db)
+            audit_log_repo.create(
+                user_id=user_id,
+                action="update",
+                resource_type="signal",
+                resource_id=signal_id,
+                changes={
+                    "previous_status": prev_status.value,
+                    "new_status": SignalStatus.FAILED.value,
+                    "reason": reason or "order_failed",
+                },
+            )
             return True
         return False
 
-    def mark_as_active(self, symbol: str, user_id: int | None = None) -> bool:  # noqa: PLR0911
+    def mark_as_active(
+        self, symbol: str, user_id: int | None = None, reason: str = None
+    ) -> bool:  # noqa: PLR0911
         """
         Mark a signal as ACTIVE again for a specific user (reactivate).
 
@@ -426,9 +476,23 @@ class SignalsRepository:
         ).scalar_one_or_none()
 
         if existing:
+            prev_status = existing.status
             # Delete the override to revert to base signal status
             self.db.delete(existing)
             self.db.commit()
+            # Audit log
+            audit_log_repo = AuditLogRepository(self.db)
+            audit_log_repo.create(
+                user_id=user_id,
+                action="update",
+                resource_type="signal",
+                resource_id=signal.id,
+                changes={
+                    "previous_status": prev_status.value,
+                    "new_status": SignalStatus.ACTIVE.value,
+                    "reason": reason or "manual_reactivate",
+                },
+            )
             return True
 
         # No override exists, signal is already using base status
@@ -449,6 +513,19 @@ class SignalsRepository:
             )
             self.db.add(user_status)
             self.db.commit()
+            # Audit log
+            audit_log_repo = AuditLogRepository(self.db)
+            audit_log_repo.create(
+                user_id=user_id,
+                action="update",
+                resource_type="signal",
+                resource_id=signal.id,
+                changes={
+                    "previous_status": signal.status.value,
+                    "new_status": SignalStatus.ACTIVE.value,
+                    "reason": reason or "manual_reactivate",
+                },
+            )
             return True
 
         # Base status is something else (shouldn't happen), return False
@@ -537,12 +614,7 @@ class SignalsRepository:
         Returns:
             Number of signals marked as expired
         """
-        # Get all ACTIVE and REJECTED signals (both can be expired by time)
-        # Note: Using list() to materialize the query results immediately, reducing
-        # the time window for potential race conditions where a signal might be
-        # updated between query and expiry check
-        # Race condition mitigation: Materialize results before processing to minimize
-        # the window where a signal could be updated by another session
+        # Get all ACTIVE and REJECTED signals
         signals_to_check = list(
             self.db.execute(
                 select(Signals).where(
@@ -553,24 +625,70 @@ class SignalsRepository:
             .all()
         )
 
+        # Get all symbols with open positions (quantity > 0 AND closed_at IS NULL)
+        open_position_symbols = set(
+            row
+            for row in self.db.execute(
+                select(Positions.symbol).where(
+                    Positions.quantity > 0,
+                    Positions.closed_at.is_(None),  # Only open positions, not closed ones
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        # Get all symbols with pending/ongoing buy orders
+        pending_order_symbols = set(
+            row
+            for row in self.db.execute(
+                select(Orders.symbol).where(
+                    Orders.status.in_([OrderStatus.PENDING, OrderStatus.ONGOING]),
+                    Orders.side == "buy",
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        audit_log_repo = AuditLogRepository(self.db)
         expired_count = 0
+        SYSTEM_USER_ID = 1  # Must exist in users table
+        audit_logs = []  # Collect audit logs for bulk insert
 
         for signal in signals_to_check:
-            # Check if signal has passed its expiry time
-            # Note: signal.ts may be naive (from SQLite), but _is_signal_expired_by_market_close
-            # handles this correctly by assuming naive = IST
-            # Race condition mitigation: Re-check status before updating to handle
-            # cases where another session might have already updated the signal
+            # Exclude if open position or pending buy order
+            if signal.symbol in open_position_symbols or signal.symbol in pending_order_symbols:
+                continue
             if signal.status in [
                 SignalStatus.ACTIVE,
                 SignalStatus.REJECTED,
             ] and self._is_signal_expired_by_market_close(signal.ts):
+                prev_status = signal.status
                 signal.status = SignalStatus.EXPIRED
                 expired_count += 1
+                # Collect audit log entry for bulk insert
+                audit_logs.append(
+                    {
+                        "user_id": SYSTEM_USER_ID,
+                        "action": "update",
+                        "resource_type": "signal",
+                        "resource_id": signal.id,
+                        "changes": {
+                            "previous_status": prev_status.value,
+                            "new_status": SignalStatus.EXPIRED.value,
+                            "reason": "eod_expiry",
+                            "symbol": signal.symbol,
+                        },
+                    }
+                )
+
+        # Bulk insert all audit logs at once (more efficient than individual creates)
+        if audit_logs:
+            audit_log_repo.create_bulk(audit_logs)
 
         if expired_count > 0:
             self.db.commit()
-
         return expired_count
 
     def get_active_signals(self, limit: int = 100) -> list[Signals]:
