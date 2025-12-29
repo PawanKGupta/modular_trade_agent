@@ -633,6 +633,10 @@ class OrdersRepository:
 
             # Check current signal status (base status or user status)
             user_status = signals_repo.get_user_signal_status(signal.id, order.user_id)
+            
+            # If no user status override, use base signal status
+            if user_status is None:
+                user_status = signal.status
 
             # Determine if this is a late fill (signal is EXPIRED)
             is_late_fill = user_status == SignalStatus.EXPIRED
