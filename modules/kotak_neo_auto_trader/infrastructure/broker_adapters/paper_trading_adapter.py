@@ -67,7 +67,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         # State
         self._connected = False
         self._order_counter = 0
-        self._warned_symbols: set[str] = set()  # Track symbols we already warned about in this session
+        self._warned_symbols: set[str] = (
+            set()
+        )  # Track symbols we already warned about in this session
 
         # Initialize if needed
         self._initialize()
@@ -466,9 +468,18 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                     summary["executed"] += 1
                     if order.is_amo_order():
                         summary["amo_executed"] += 1
+
+                    # Get execution price safely
+                    execution_price_str = "N/A"
+                    if order.executed_price:
+                        try:
+                            execution_price_str = f"Rs {order.executed_price.amount:.2f}"
+                        except (AttributeError, TypeError):
+                            execution_price_str = f"Rs {order.executed_price}"
+
                     logger.info(
                         f"Pending {'AMO ' if order.is_amo_order() else ''}limit order executed: {order.symbol} "
-                        f"{order.transaction_type.value} @ Rs {order.execution_price.amount:.2f}"
+                        f"{order.transaction_type.value} @ {execution_price_str}"
                     )
                 else:
                     summary["still_pending"] += 1
