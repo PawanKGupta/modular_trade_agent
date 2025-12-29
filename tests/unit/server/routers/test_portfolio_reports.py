@@ -50,7 +50,7 @@ def mock_deps_portfolio(monkeypatch, db_session):
         user = existing_user
     else:
         db_session.add(user)
-    db_session.commit()
+        db_session.commit()
 
     # Create default settings
     settings = UserSettings(

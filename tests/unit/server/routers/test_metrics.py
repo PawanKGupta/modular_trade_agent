@@ -38,6 +38,8 @@ def mock_deps(monkeypatch, db_session):
         db_session.add(user)
         db_session.commit()
     else:
+        # User already exists, nothing to do
+        pass
         # Update existing user to ensure it has the right properties
         user.email = "user@example.com"
         user.name = "Test User"

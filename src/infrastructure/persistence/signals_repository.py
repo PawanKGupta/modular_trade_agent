@@ -950,7 +950,7 @@ class SignalsRepository:
 
             # Check if user has open position for this symbol
             has_open_position = signal_variants.intersection(open_position_symbols)
-            
+
             # Determine effective status:
             # - User actions (TRADED/REJECTED/FAILED) always take precedence
             # - If user has open position and no explicit status, treat as TRADED
@@ -970,7 +970,7 @@ class SignalsRepository:
             else:
                 # Use user status if exists, otherwise use base signal status
                 effective_status = user_status if user_status else signal.status
-            
+
             # Skip if user has open position and signal is not explicitly marked
             # (we still want to show signals that user has explicitly marked as TRADED/REJECTED/FAILED)
             if has_open_position and effective_status == SignalStatus.TRADED and user_status is None:

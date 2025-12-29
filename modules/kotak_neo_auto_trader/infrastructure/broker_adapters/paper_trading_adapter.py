@@ -29,7 +29,7 @@ from ..simulation import OrderSimulator, PortfolioManager, PriceProvider
 
 
 class PaperTradingBrokerAdapter(IBrokerGateway):
-    def _sync_order_failure_to_db(self, order: Order, failure_type: str, reason: str = "") -> None:
+    def _sync_order_failure_to_db(self, order: Order, failure_type: str, reason: str = "", user_id: int = None) -> None:
         """
         Sync paper trading order failure to database (for signal status update).
 
@@ -40,6 +40,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             order: Order that failed
             failure_type: 'rejected', 'failed', or 'cancelled'
             reason: Reason for failure
+            user_id: User ID for DB sync (optional)
         """
         if not self.db_session:
             # No database integration available, skip sync
@@ -49,7 +50,16 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             from src.infrastructure.persistence.orders_repository import OrdersRepository
 
             repo = OrdersRepository(self.db_session)
-            db_order = repo.get_by_broker_order_id(order.user_id, order.order_id)
+            # Try user_id argument first, then order.user_id if present
+            resolved_user_id = user_id
+            if resolved_user_id is None:
+                resolved_user_id = getattr(order, "user_id", None)
+            if resolved_user_id is None:
+                logger.warning(
+                    f"[PaperTrading] Cannot sync order failure to DB: user_id missing for order {getattr(order, 'order_id', None)}"
+                )
+                return
+            db_order = repo.get_by_broker_order_id(resolved_user_id, order.order_id)
             if not db_order:
                 logger.debug(
                     f"[PaperTrading] DB order not found for sync: {order.order_id} (may be pre-DB integration order)"
