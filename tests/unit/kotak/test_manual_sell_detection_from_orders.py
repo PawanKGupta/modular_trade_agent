@@ -713,7 +713,14 @@ class TestDetectManualSellsFromOrders:
         position.symbol = "RELIANCE"
         position.quantity = 100.0
         position.closed_at = None
-        position.opened_at = ist_now() - timedelta(hours=1)  # Position opened 1 hour ago
+        # Use a fixed time to ensure same-day comparison works
+        # Position opened at 2:00 PM today
+        from datetime import datetime
+
+        from src.infrastructure.db.timezone_utils import IST
+
+        today = datetime.now(IST).replace(hour=14, minute=0, second=0, microsecond=0)
+        position.opened_at = today  # Position opened at 2:00 PM today
 
         mock_positions_repo.list.return_value = [position]
         mock_positions_repo.get_by_symbol.return_value = position
@@ -725,8 +732,8 @@ class TestDetectManualSellsFromOrders:
         system_buy_order.execution_time = position.opened_at
         mock_orders_repo.list.return_value = [system_buy_order]
 
-        # Manual sell executed 2 hours ago (before position opened)
-        old_sell_time = ist_now() - timedelta(hours=2)
+        # Manual sell executed at 12:00 PM today (before position opened at 2:00 PM)
+        old_sell_time = today - timedelta(hours=2)  # 12:00 PM same day
 
         all_orders_response = {
             "data": [

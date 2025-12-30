@@ -1163,8 +1163,10 @@ class SellOrderManager:
                     )
                     continue
 
-                # Conservative timestamp gating: only skip if sell time is earlier than position
+                # Conservative timestamp gating: skip if sell time is earlier than position
                 # open time on the same calendar day (prevents truly old sells from before system buy).
+                # Note: We only skip on the same day to avoid false positives from historical data
+                # that might have incorrect timestamps or be from previous trading sessions.
                 try:
                     from datetime import datetime
 
@@ -1204,6 +1206,9 @@ class SellOrderManager:
                         else:
                             opened_at = opened_at.astimezone(IST)
 
+                        # Skip if same day and sell time < opened_at
+                        # This prevents false positives from old sells on the same trading day
+                        # while allowing historical data from previous days to be processed
                         if (
                             sell_order_time.date() == opened_at.date()
                             and sell_order_time < opened_at
