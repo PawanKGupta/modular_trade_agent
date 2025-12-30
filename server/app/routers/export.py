@@ -321,10 +321,13 @@ def export_signals_csv(
             start_date = end_date - timedelta(days=30)
 
         # Use func.date() for consistent date filtering across SQLite and PostgreSQL
+        # Convert dates to strings for comparison (same approach as signals_repository)
         # This extracts the date part from the timestamp, avoiding timezone comparison issues
+        start_date_str = start_date.isoformat()
+        end_date_str = end_date.isoformat()
         query = db.query(Signals).filter(
-            func.date(Signals.ts) >= start_date,
-            func.date(Signals.ts) <= end_date,
+            func.date(Signals.ts) >= start_date_str,
+            func.date(Signals.ts) <= end_date_str,
         )
 
         if verdict:
