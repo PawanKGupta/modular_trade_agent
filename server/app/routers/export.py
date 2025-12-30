@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Orders, Positions, Signals, TradeMode, Users
+from src.infrastructure.db.timezone_utils import IST
 from src.infrastructure.persistence.export_job_repository import ExportJobRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
@@ -325,14 +326,16 @@ def export_signals_csv(
         dialect_name = getattr(dialect, "name", "")
         if dialect_name == "sqlite":
             # SQLite: use func.date equality to avoid tz issues
+            # func.date() extracts date part, which works correctly with timezone-aware datetimes
             query = db.query(Signals).filter(
                 func.date(Signals.ts) >= start_date,
                 func.date(Signals.ts) <= end_date,
             )
         else:
             # Other DBs: use inclusive datetime range
-            start_dt = datetime.combine(start_date, datetime.min.time())
-            end_dt = datetime.combine(end_date, datetime.max.time())
+            # Make datetime timezone-aware (IST) to match stored timezone-aware datetimes
+            start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=IST)
+            end_dt = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=IST)
             query = db.query(Signals).filter(Signals.ts >= start_dt, Signals.ts <= end_dt)
 
         if verdict:

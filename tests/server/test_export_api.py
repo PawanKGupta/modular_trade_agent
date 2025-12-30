@@ -88,7 +88,7 @@ def test_export_orders_csv_filters_by_trade_mode_and_dates(client: TestClient, d
         price=None,
     )
     older.trade_mode = TradeMode.PAPER
-    older.created_at = datetime.utcnow() - timedelta(days=40)
+    older.placed_at = datetime.utcnow() - timedelta(days=40)
 
     recent = repo.create_amo(
         user_id=user.id,
@@ -99,7 +99,7 @@ def test_export_orders_csv_filters_by_trade_mode_and_dates(client: TestClient, d
         price=None,
     )
     recent.trade_mode = TradeMode.BROKER
-    recent.created_at = datetime.utcnow() - timedelta(days=1)
+    recent.placed_at = datetime.utcnow() - timedelta(days=1)
 
     db_session.commit()
 
@@ -160,7 +160,7 @@ def test_export_pnl_pdf_returns_pdf(client: TestClient, db_session):
 
 def test_export_signals_csv_filters_and_empty_case(client: TestClient, db_session):
     headers, _ = _signup_and_headers(client, email="signals_csv@example.com")
-    user = db_session.query(Users).filter(Users.email == "signals_csv@example.com").one()
+    db_session.query(Users).filter(Users.email == "signals_csv@example.com").one()
 
     from src.infrastructure.db.models import Signals, SignalStatus
     from src.infrastructure.db.timezone_utils import ist_now
@@ -278,7 +278,7 @@ def test_export_trades_csv_uses_closed_at_and_fields(client: TestClient, db_sess
 
 def test_export_signals_csv_handles_buy_range_dict(client: TestClient, db_session):
     headers, _ = _signup_and_headers(client, email="signals_dict@example.com")
-    user = db_session.query(Users).filter(Users.email == "signals_dict@example.com").one()
+    db_session.query(Users).filter(Users.email == "signals_dict@example.com").one()
 
     from src.infrastructure.db.models import Signals, SignalStatus
     from src.infrastructure.db.timezone_utils import ist_now

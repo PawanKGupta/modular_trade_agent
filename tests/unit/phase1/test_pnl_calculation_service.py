@@ -411,7 +411,9 @@ class TestFeeEstimation:
 
         today = date.today()
 
-        # Create buy and sell orders
+        # Create buy and sell orders with placed_at set to today for fee calculation
+        from datetime import datetime as dt
+
         buy_order = orders_repo.create_amo(
             user_id=user_id,
             symbol="RELIANCE-EQ",
@@ -421,6 +423,8 @@ class TestFeeEstimation:
             price=2500.0,
             trade_mode=TradeMode.PAPER,
         )
+        buy_order.placed_at = dt.combine(today, dt.min.time())
+
         sell_order = orders_repo.create_amo(
             user_id=user_id,
             symbol="RELIANCE-EQ",
@@ -430,6 +434,7 @@ class TestFeeEstimation:
             price=2600.0,
             trade_mode=TradeMode.PAPER,
         )
+        sell_order.placed_at = dt.combine(today, dt.min.time())
         session.commit()
 
         # Calculate daily P&L (should estimate fees)
