@@ -117,6 +117,38 @@ def create_portfolio_snapshot(
                     )
                 else:
                     raise
+            except Exception:
+                # Handle any other exceptions (e.g., file system errors, etc.)
+                # Create empty portfolio to allow snapshot creation
+                from ..schemas.portfolio import (  # noqa: PLC0415
+                    PaperTradingAccount,
+                    PaperTradingPortfolio,
+                )
+
+                portfolio = PaperTradingPortfolio(
+                    account=PaperTradingAccount(
+                        initial_capital=0.0,
+                        available_cash=0.0,
+                        total_pnl=0.0,
+                        realized_pnl=0.0,
+                        unrealized_pnl=0.0,
+                        portfolio_value=0.0,
+                        total_value=0.0,
+                        return_percentage=0.0,
+                    ),
+                    holdings=[],
+                    recent_orders=[],
+                    order_statistics={
+                        "total_orders": 0,
+                        "buy_orders": 0,
+                        "sell_orders": 0,
+                        "completed_orders": 0,
+                        "pending_orders": 0,
+                        "cancelled_orders": 0,
+                        "rejected_orders": 0,
+                        "success_rate": 0.0,
+                    },
+                )
 
         account = getattr(portfolio, "account", None)
         holdings = getattr(portfolio, "holdings", [])
