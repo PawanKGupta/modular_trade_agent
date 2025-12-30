@@ -84,8 +84,8 @@ def create_portfolio_snapshot(
             try:
                 portfolio = get_paper_trading_portfolio(db=db, current=current)
             except HTTPException as e:
-                # If paper trading account not initialized (404) or any error (500), create empty portfolio
-                # get_paper_trading_portfolio wraps all exceptions in HTTPException(500)
+                # If paper trading account not initialized (404) or any other HTTP error,
+                # create empty portfolio
                 if e.status_code in (404, 500):  # noqa: PLR2004
                     from ..schemas.portfolio import (  # noqa: PLC0415
                         PaperTradingAccount,
