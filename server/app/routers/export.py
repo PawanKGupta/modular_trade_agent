@@ -6,9 +6,11 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func
+from sqlalchemy import cast, func
 from sqlalchemy.orm import Session
+from sqlalchemy.types import Date
 
+from src.infrastructure.db.dialect import is_postgresql
 from src.infrastructure.db.models import Orders, Positions, Signals, TradeMode, Users
 from src.infrastructure.persistence.export_job_repository import ExportJobRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
@@ -321,14 +323,22 @@ def export_signals_csv(
             start_date = end_date - timedelta(days=30)
 
         # Use func.date() for consistent date filtering across SQLite and PostgreSQL
-        # Convert dates to strings for comparison (same approach as signals_repository)
+        # Use cast() to ensure proper type comparison in PostgreSQL
         # This extracts the date part from the timestamp, avoiding timezone comparison issues
-        start_date_str = start_date.isoformat()
-        end_date_str = end_date.isoformat()
-        query = db.query(Signals).filter(
-            func.date(Signals.ts) >= start_date_str,
-            func.date(Signals.ts) <= end_date_str,
-        )
+        if is_postgresql(db):
+            # PostgreSQL: Use cast() for explicit DATE type comparison
+            query = db.query(Signals).filter(
+                cast(func.date(Signals.ts), Date) >= start_date,
+                cast(func.date(Signals.ts), Date) <= end_date,
+            )
+        else:
+            # SQLite: String comparison works fine
+            start_date_str = start_date.isoformat()
+            end_date_str = end_date.isoformat()
+            query = db.query(Signals).filter(
+                func.date(Signals.ts) >= start_date_str,
+                func.date(Signals.ts) <= end_date_str,
+            )
 
         if verdict:
             query = query.filter(Signals.verdict == verdict)
