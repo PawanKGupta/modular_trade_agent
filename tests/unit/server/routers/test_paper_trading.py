@@ -113,8 +113,8 @@ def test_get_paper_trading_portfolio_no_account(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         paper_trading.get_paper_trading_portfolio(db=None, current=user)
 
-    # The HTTPException is caught and re-raised as 500 with the detail message
-    assert exc.value.status_code == 500
+    # HTTPException is re-raised as-is (404 for account not initialized)
+    assert exc.value.status_code == 404
     assert "account not initialized" in exc.value.detail
 
 
