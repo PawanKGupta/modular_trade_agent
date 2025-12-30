@@ -868,6 +868,30 @@ class PaperTradingServiceAdapter:
                         f"Failed to generate report: {e}", exc_info=e, action="run_eod_cleanup"
                     )
 
+            # EOD sync: Sync TRADED status from positions/orders
+            # This ensures all signals are correctly marked before next trading day
+            try:
+                from src.infrastructure.persistence.signals_repository import (
+                    SignalsRepository,
+                )
+
+                signals_repo = SignalsRepository(self.db, user_id=self.user_id)
+                synced_count = signals_repo.sync_traded_status_from_positions_and_orders(
+                    user_id=self.user_id
+                )
+                if synced_count > 0:
+                    self.logger.info(
+                        f"EOD sync: Marked {synced_count} signal(s) as TRADED "
+                        f"(user {self.user_id})",
+                        action="run_eod_cleanup",
+                    )
+                    task_context["synced_signals"] = synced_count
+            except Exception as e:
+                self.logger.warning(
+                    f"EOD sync failed (user {self.user_id}): {e}",
+                    action="run_eod_cleanup",
+                )
+
             # Reset flags for next day
             self.logger.info(
                 "Resetting task flags for next trading day...", action="run_eod_cleanup"

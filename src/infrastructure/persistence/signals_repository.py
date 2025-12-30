@@ -1002,3 +1002,183 @@ class SignalsRepository:
                     break
 
         return signals_with_status
+
+    def sync_traded_status_for_symbol(self, symbol: str, user_id: int | None = None) -> bool:
+        """
+        Sync TRADED status for a single symbol (event-driven).
+
+        Called immediately when:
+        - Position is created/updated
+        - Order is placed/executed
+
+        Only marks as TRADED if:
+        - Symbol has open position (quantity > 0 AND closed_at IS NULL), OR
+        - Symbol has active buy order (PENDING or ONGOING)
+
+        Returns:
+            True if signal was marked as TRADED, False otherwise
+        """
+        user_id = user_id or self.user_id
+        if not user_id:
+            return False
+
+        # Check if symbol has open position
+        has_open_position = (
+            self.db.execute(
+                select(Positions).where(
+                    Positions.user_id == user_id,
+                    Positions.symbol == symbol,
+                    Positions.quantity > 0,
+                    Positions.closed_at.is_(None),
+                )
+            ).scalar_one_or_none()
+            is not None
+        )
+
+        # Check if symbol has active buy order
+        has_active_order = (
+            self.db.execute(
+                select(Orders).where(
+                    Orders.user_id == user_id,
+                    Orders.symbol == symbol,
+                    Orders.status.in_([OrderStatus.PENDING, OrderStatus.ONGOING]),
+                    Orders.side == "buy",
+                )
+            ).scalar_one_or_none()
+            is not None
+        )
+
+        if not (has_open_position or has_active_order):
+            return False  # No position or order, don't mark as TRADED
+
+        # Find signal for this symbol (try multiple variants)
+        try:
+            from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+            base_symbol = extract_base_symbol(symbol).upper()
+        except ImportError:
+            # Fallback to simple extraction
+            base_symbol = symbol.split("-")[0].split(".")[0].upper()
+
+        candidates = [base_symbol, symbol.upper()]
+        if not symbol.upper().endswith(".NS"):
+            candidates.append(f"{base_symbol}.NS")
+        if "-" not in symbol.upper():
+            candidates.append(f"{base_symbol}-EQ")
+
+        for candidate in candidates:
+            signal = self.db.execute(
+                select(Signals)
+                .where(Signals.symbol == candidate)
+                .order_by(Signals.ts.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if signal:
+                # Check if already marked as TRADED (prevents double marking)
+                user_status = self.get_user_signal_status(signal.id, user_id)
+                if user_status == SignalStatus.TRADED:
+                    return True  # Already TRADED, no action needed
+
+                # Mark as TRADED
+                return self.mark_as_traded(
+                    candidate, user_id=user_id, reason="auto_sync_from_position_or_order"
+                )
+
+        return False  # Signal not found
+
+    def sync_traded_status_from_positions_and_orders(self, user_id: int | None = None) -> int:
+        """
+        Automatically mark signals as TRADED if symbol has:
+        - Active order (PENDING or ONGOING buy order), OR
+        - Open position in portfolio holdings
+
+        This ensures signal status reflects actual trading state.
+        Should be called:
+        - Periodically (e.g., during EOD cleanup)
+        - After position/order updates
+
+        Returns:
+            Number of signals marked as TRADED
+        """
+        user_id = user_id or self.user_id
+        if not user_id:
+            return 0
+
+        # Get all symbols with open positions for this user
+        open_position_symbols = set(
+            row
+            for row in self.db.execute(
+                select(Positions.symbol).where(
+                    Positions.user_id == user_id,
+                    Positions.quantity > 0,
+                    Positions.closed_at.is_(None),  # Only open positions
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        # Get all symbols with pending/ongoing buy orders for this user
+        active_order_symbols = set(
+            row
+            for row in self.db.execute(
+                select(Orders.symbol).where(
+                    Orders.user_id == user_id,
+                    Orders.status.in_([OrderStatus.PENDING, OrderStatus.ONGOING]),
+                    Orders.side == "buy",
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        # Combine both sets
+        symbols_to_mark = open_position_symbols.union(active_order_symbols)
+
+        if not symbols_to_mark:
+            return 0
+
+        # Find signals for these symbols and mark as TRADED
+        marked_count = 0
+        processed_signals = set()  # Track processed signal IDs to avoid duplicates
+
+        for symbol in symbols_to_mark:
+            # Normalize symbol (handle variants)
+            try:
+                from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+                base_symbol = extract_base_symbol(symbol).upper()
+            except ImportError:
+                base_symbol = symbol.split("-")[0].split(".")[0].upper()
+
+            candidates = [base_symbol, symbol.upper()]
+            if not symbol.upper().endswith(".NS"):
+                candidates.append(f"{base_symbol}.NS")
+            if "-" not in symbol.upper():
+                candidates.append(f"{base_symbol}-EQ")
+
+            # Find latest signal for this symbol
+            for candidate in candidates:
+                signal = self.db.execute(
+                    select(Signals)
+                    .where(Signals.symbol == candidate)
+                    .order_by(Signals.ts.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+
+                if signal and signal.id not in processed_signals:
+                    processed_signals.add(signal.id)
+
+                    # Check if already marked as TRADED
+                    user_status = self.get_user_signal_status(signal.id, user_id)
+                    if user_status != SignalStatus.TRADED:
+                        if self.mark_as_traded(
+                            candidate,
+                            user_id=user_id,
+                            reason="auto_sync_from_position_or_order",
+                        ):
+                            marked_count += 1
+                    break  # Found signal, no need to check other variants
+
+        return marked_count

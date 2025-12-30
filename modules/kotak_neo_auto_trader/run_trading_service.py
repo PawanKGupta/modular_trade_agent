@@ -1040,6 +1040,25 @@ class TradingService:
                 logger.warning(f"Failed to cleanup expired orders: {e}")
                 task_context["cleanup_error"] = str(e)
 
+            # EOD sync: Sync TRADED status from positions/orders
+            # This ensures all signals are correctly marked before next trading day
+            try:
+                from src.infrastructure.persistence.signals_repository import (
+                    SignalsRepository,
+                )
+
+                signals_repo = SignalsRepository(self.db, user_id=self.user_id)
+                synced_count = signals_repo.sync_traded_status_from_positions_and_orders(
+                    user_id=self.user_id
+                )
+                if synced_count > 0:
+                    logger.info(
+                        f"EOD sync: Marked {synced_count} signal(s) as TRADED (user {self.user_id})"
+                    )
+                    task_context["synced_signals"] = synced_count
+            except Exception as e:
+                logger.warning(f"EOD sync failed (user {self.user_id}): {e}")
+
             # Run EOD cleanup if available
             if hasattr(self.engine, "eod_cleanup") and self.engine.eod_cleanup:
                 self.engine.eod_cleanup.run_eod_cleanup()
