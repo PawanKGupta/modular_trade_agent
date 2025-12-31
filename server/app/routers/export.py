@@ -6,9 +6,8 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import cast, func
+from sqlalchemy import func
 from sqlalchemy.orm import Session
-from sqlalchemy.types import Date
 
 from src.infrastructure.db.dialect import is_postgresql
 from src.infrastructure.db.models import Orders, Positions, Signals, TradeMode, Users
@@ -322,23 +321,15 @@ def export_signals_csv(
         if not start_date:
             start_date = end_date - timedelta(days=30)
 
-        # Use func.date() for consistent date filtering across SQLite and PostgreSQL
-        # Use cast() to ensure proper type comparison in PostgreSQL
-        # This extracts the date part from the timestamp, avoiding timezone comparison issues
-        if is_postgresql(db):
-            # PostgreSQL: Use cast() for explicit DATE type comparison
-            query = db.query(Signals).filter(
-                cast(func.date(Signals.ts), Date) >= start_date,
-                cast(func.date(Signals.ts), Date) <= end_date,
-            )
-        else:
-            # SQLite: String comparison works fine
-            start_date_str = start_date.isoformat()
-            end_date_str = end_date.isoformat()
-            query = db.query(Signals).filter(
-                func.date(Signals.ts) >= start_date_str,
-                func.date(Signals.ts) <= end_date_str,
-            )
+        # Use func.date() with string comparison for consistent date filtering across SQLite and PostgreSQL
+        # This matches the approach used in signals_repository.by_date_range()
+        # String comparison works reliably for both databases when comparing date strings
+        start_date_str = start_date.isoformat()
+        end_date_str = end_date.isoformat()
+        query = db.query(Signals).filter(
+            func.date(Signals.ts) >= start_date_str,
+            func.date(Signals.ts) <= end_date_str,
+        )
 
         if verdict:
             query = query.filter(Signals.verdict == verdict)
