@@ -91,10 +91,10 @@ class TestTradingDayCheck:
     def test_weekend_not_trading_day(self):
         """Weekends should not be trading days"""
         # Saturday
-        assert is_trading_day(date(2026, 12, 6)) is False
+        assert is_trading_day(date(2026, 12, 5)) is False
 
         # Sunday
-        assert is_trading_day(date(2026, 12, 7)) is False
+        assert is_trading_day(date(2026, 12, 6)) is False
 
     def test_holiday_not_trading_day(self):
         """Holidays should not be trading days"""
@@ -128,10 +128,10 @@ class TestNextTradingDay:
     def test_next_trading_day_skips_weekend(self):
         """Next trading day should skip weekends"""
         # Friday -> Monday (skip Saturday, Sunday)
-        assert get_next_trading_day(date(2026, 12, 5)) == date(2026, 12, 8)
+        assert get_next_trading_day(date(2026, 12, 4)) == date(2026, 12, 7)
 
         # Thursday -> Friday (normal)
-        assert get_next_trading_day(date(2026, 12, 4)) == date(2026, 12, 5)
+        assert get_next_trading_day(date(2026, 12, 3)) == date(2026, 12, 4)
 
     def test_next_trading_day_skips_holiday(self):
         """Next trading day should skip holidays"""
@@ -163,7 +163,7 @@ class TestNextTradingDay:
     def test_next_trading_day_from_weekend(self):
         """Next trading day from weekend should be Monday"""
         # Saturday -> Monday
-        assert get_next_trading_day(date(2026, 12, 6)) == date(2026, 12, 8)
+        assert get_next_trading_day(date(2026, 12, 5)) == date(2026, 12, 7)
 
         # Sunday -> Monday
-        assert get_next_trading_day(date(2026, 12, 7)) == date(2026, 12, 8)
+        assert get_next_trading_day(date(2026, 12, 6)) == date(2026, 12, 7)

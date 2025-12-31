@@ -70,9 +70,9 @@ class TestSellOrdersHolidayChecks:
             from src.infrastructure.db.timezone_utils import IST
 
             # Saturday
-            mock_ist_now.return_value = datetime(2026, 12, 6, 10, 0, 0, tzinfo=IST)
+            mock_ist_now.return_value = datetime(2026, 12, 5, 10, 0, 0, tzinfo=IST)
             assert is_trading_day() is False
 
             # Sunday
-            mock_ist_now.return_value = datetime(2026, 12, 7, 10, 0, 0, tzinfo=IST)
+            mock_ist_now.return_value = datetime(2026, 12, 6, 10, 0, 0, tzinfo=IST)
             assert is_trading_day() is False

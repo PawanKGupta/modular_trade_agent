@@ -898,5 +898,5 @@ class TestSmartExpirationLogic:
         from datetime import date
 
         # Weekends
-        assert service.is_weekend_or_holiday(date(2026, 12, 6)) is True  # Saturday
-        assert service.is_weekend_or_holiday(date(2026, 12, 7)) is True  # Sunday
+        assert service.is_weekend_or_holiday(date(2026, 12, 5)) is True  # Saturday
+        assert service.is_weekend_or_holiday(date(2026, 12, 6)) is True  # Sunday
