@@ -9,27 +9,27 @@ Note: This list should be updated annually with the official NSE holiday calenda
 
 from datetime import date, timedelta
 
-# NSE Holidays for 2025 with names
-NSE_HOLIDAYS_2025: dict[date, str] = {
-    date(2025, 2, 26): "Mahashivratri",
-    date(2025, 3, 14): "Holi",
-    date(2025, 3, 31): "Id-Ul-Fitr (Ramadan Eid)",
-    date(2025, 4, 10): "Shri Mahavir Jayanti",
-    date(2025, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
-    date(2025, 4, 18): "Good Friday",
-    date(2025, 5, 1): "Maharashtra Day",
-    date(2025, 8, 15): "Independence Day / Parsi New Year",
-    date(2025, 8, 27): "Shri Ganesh Chaturthi",
-    date(2025, 10, 2): "Mahatma Gandhi Jayanti/Dussehra",
-    date(2025, 10, 21): "Diwali Laxmi Pujan",
-    date(2025, 10, 22): "Balipratipada",
-    date(2025, 11, 5): "Prakash Gurpurb Sri Guru Nanak Dev",
-    date(2025, 12, 13): "TEST - Holiday for Testing",  # TODO: Remove before commit
-    date(2025, 12, 25): "Christmas",
+# NSE Holidays for 2026 with names
+NSE_HOLIDAYS_2026: dict[date, str] = {
+    date(2026, 1, 26): "Republic Day",
+    date(2026, 3, 3): "Holi",
+    date(2026, 3, 26): "Shri Ram Navami",
+    date(2026, 3, 31): "Shri Mahavir Jayanti",
+    date(2026, 4, 3): "Good Friday",
+    date(2026, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
+    date(2026, 5, 1): "Maharashtra Day",
+    date(2026, 5, 28): "Bakri Id",
+    date(2026, 6, 26): "Muharram",
+    date(2026, 9, 14): "Ganesh Chaturthi",
+    date(2026, 10, 2): "Mahatma Gandhi Jayanti",
+    date(2026, 10, 20): "Dussehra",
+    date(2026, 11, 10): "Diwali-Balipratipada",
+    date(2026, 11, 24): "Prakash Gurpurb Sri Guru Nanak Dev",
+    date(2026, 12, 25): "Christmas",
 }
 
 # Combine all holiday sets (for future years, add more sets here)
-ALL_NSE_HOLIDAYS: dict[date, str] = NSE_HOLIDAYS_2025
+ALL_NSE_HOLIDAYS: dict[date, str] = NSE_HOLIDAYS_2026
 
 # Set of holiday dates for quick lookup
 ALL_NSE_HOLIDAY_DATES: set[date] = set(ALL_NSE_HOLIDAYS.keys())
@@ -72,7 +72,8 @@ def is_trading_day(check_date: date) -> bool:
         True if trading day, False otherwise
     """
     # Check if weekend (Saturday=5, Sunday=6)
-    if check_date.weekday() >= 5:
+    SATURDAY_WEEKDAY = 5
+    if check_date.weekday() >= SATURDAY_WEEKDAY:
         return False
 
     # Check if holiday

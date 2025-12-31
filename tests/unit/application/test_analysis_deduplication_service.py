@@ -847,40 +847,40 @@ class TestSmartExpirationLogic:
     def test_deduplication_window_skips_holidays(self, db_session):
         """Test that deduplication window calculation skips holidays"""
         service = AnalysisDeduplicationService(db_session)
-        from datetime import date, time
+        from datetime import date
 
-        # Test: Tuesday before holiday (Apr 9, 2025) - next day is holiday (Apr 10 - Shri Mahavir Jayanti)
-        # Window should skip holiday and go to Friday (Apr 11)
-        with freeze_time("2025-04-09 10:00:00+05:30"):  # Tuesday 10:00 AM
+        # Test: Thursday before holiday (Apr 2, 2026) - next day is holiday (Apr 3 - Good Friday)
+        # Window should skip holiday and go to Monday (Apr 6)
+        with freeze_time("2026-04-02 10:00:00+05:30"):  # Thursday 10:00 AM
             # The window is calculated internally in should_update_signals
             # We test it indirectly by checking that the service correctly identifies holidays
             # The actual window calculation is tested through integration tests
-            assert service.is_weekend_or_holiday(date(2025, 4, 10)) is True  # Holiday
-            assert service.is_weekend_or_holiday(date(2025, 4, 11)) is False  # Regular Friday
+            assert service.is_weekend_or_holiday(date(2026, 4, 3)) is True  # Holiday (Good Friday)
+            assert service.is_weekend_or_holiday(date(2026, 4, 6)) is False  # Regular Monday
 
     def test_deduplication_window_before_9am_skips_holidays(self, db_session):
         """Test that deduplication window before 9AM skips holidays when going back"""
         service = AnalysisDeduplicationService(db_session)
         from datetime import date
 
-        # Test: Wednesday 8:00 AM after holiday (Apr 10 is holiday, Apr 9 is Tuesday)
-        # Should go back to Monday (Apr 7) skipping the holiday
-        with freeze_time("2025-04-10 08:00:00+05:30"):  # Wednesday 8:00 AM (holiday)
+        # Test: Friday 8:00 AM after holiday (Apr 3 is Good Friday holiday, Apr 2 is Thursday)
+        # Should go back to Wednesday (Apr 1) skipping the holiday
+        with freeze_time("2026-04-03 08:00:00+05:30"):  # Friday 8:00 AM (holiday)
             # Verify holiday detection works
-            assert service.is_weekend_or_holiday(date(2025, 4, 10)) is True  # Holiday
-            assert service.is_weekend_or_holiday(date(2025, 4, 9)) is False  # Regular Tuesday
-            assert service.is_weekend_or_holiday(date(2025, 4, 7)) is False  # Regular Monday
+            assert service.is_weekend_or_holiday(date(2026, 4, 3)) is True  # Holiday (Good Friday)
+            assert service.is_weekend_or_holiday(date(2026, 4, 2)) is False  # Regular Thursday
+            assert service.is_weekend_or_holiday(date(2026, 4, 1)) is False  # Regular Wednesday
 
     def test_is_weekend_or_holiday_holiday(self, db_session):
         """Test that is_weekend_or_holiday returns True for holidays"""
         service = AnalysisDeduplicationService(db_session)
         from datetime import date
 
-        # Test known NSE holidays
-        assert service.is_weekend_or_holiday(date(2025, 2, 26)) is True  # Mahashivratri
-        assert service.is_weekend_or_holiday(date(2025, 3, 14)) is True  # Holi
-        assert service.is_weekend_or_holiday(date(2025, 10, 21)) is True  # Diwali Laxmi Pujan
-        assert service.is_weekend_or_holiday(date(2025, 12, 25)) is True  # Christmas
+        # Test known NSE holidays for 2026
+        assert service.is_weekend_or_holiday(date(2026, 1, 26)) is True  # Republic Day
+        assert service.is_weekend_or_holiday(date(2026, 3, 3)) is True  # Holi
+        assert service.is_weekend_or_holiday(date(2026, 11, 10)) is True  # Diwali-Balipratipada
+        assert service.is_weekend_or_holiday(date(2026, 12, 25)) is True  # Christmas
 
     def test_is_weekend_or_holiday_regular_weekday(self, db_session):
         """Test that is_weekend_or_holiday returns False for regular weekdays"""
@@ -888,9 +888,9 @@ class TestSmartExpirationLogic:
         from datetime import date
 
         # Regular weekdays (not holidays)
-        assert service.is_weekend_or_holiday(date(2025, 12, 1)) is False  # Monday
-        assert service.is_weekend_or_holiday(date(2025, 12, 2)) is False  # Tuesday
-        assert service.is_weekend_or_holiday(date(2025, 12, 3)) is False  # Wednesday
+        assert service.is_weekend_or_holiday(date(2026, 12, 1)) is False  # Monday
+        assert service.is_weekend_or_holiday(date(2026, 12, 2)) is False  # Tuesday
+        assert service.is_weekend_or_holiday(date(2026, 12, 3)) is False  # Wednesday
 
     def test_is_weekend_or_holiday_weekend(self, db_session):
         """Test that is_weekend_or_holiday returns True for weekends"""
@@ -898,5 +898,5 @@ class TestSmartExpirationLogic:
         from datetime import date
 
         # Weekends
-        assert service.is_weekend_or_holiday(date(2025, 12, 6)) is True  # Saturday
-        assert service.is_weekend_or_holiday(date(2025, 12, 7)) is True  # Sunday
+        assert service.is_weekend_or_holiday(date(2026, 12, 6)) is True  # Saturday
+        assert service.is_weekend_or_holiday(date(2026, 12, 7)) is True  # Sunday
