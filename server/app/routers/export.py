@@ -9,7 +9,6 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.dialect import is_postgresql
 from src.infrastructure.db.models import Orders, Positions, Signals, TradeMode, Users
 from src.infrastructure.persistence.export_job_repository import ExportJobRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
