@@ -6,8 +6,10 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
+
+from src.infrastructure.db.dialect import is_postgresql
 
 from src.infrastructure.db.models import Orders, Positions, Signals, TradeMode, Users
 from src.infrastructure.persistence.export_job_repository import ExportJobRepository
@@ -320,15 +322,35 @@ def export_signals_csv(
         if not start_date:
             start_date = end_date - timedelta(days=30)
 
-        # Use func.date() with string comparison for consistent date filtering across SQLite and PostgreSQL
-        # This matches the approach used in signals_repository.by_date_range()
-        # String comparison works reliably for both databases when comparing date strings
+        # Use func.date() with string comparison for consistent date filtering
+        # across SQLite and PostgreSQL
+        # For PostgreSQL, we need to convert to IST timezone before extracting date
+        # because PostgreSQL stores timezone-aware datetimes in UTC internally
         start_date_str = start_date.isoformat()
         end_date_str = end_date.isoformat()
-        query = db.query(Signals).filter(
-            func.date(Signals.ts) >= start_date_str,
-            func.date(Signals.ts) <= end_date_str,
-        )
+
+        if is_postgresql(db):
+            # PostgreSQL: Convert to IST timezone before extracting date
+            # This ensures we get the date in IST, not UTC
+            # Format: DATE((ts AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')
+            tz_expr = (
+                "DATE((signals.ts AT TIME ZONE 'UTC') "
+                "AT TIME ZONE 'Asia/Kolkata')"
+            )
+            query = db.query(Signals).filter(
+                text(f"{tz_expr} >= :start_date").bindparam(
+                    start_date=start_date_str
+                ),
+                text(f"{tz_expr} <= :end_date").bindparam(
+                    end_date=end_date_str
+                ),
+            )
+        else:
+            # SQLite: Direct date extraction (SQLite stores naive datetimes, assumed to be IST)
+            query = db.query(Signals).filter(
+                func.date(Signals.ts) >= start_date_str,
+                func.date(Signals.ts) <= end_date_str,
+            )
 
         if verdict:
             query = query.filter(Signals.verdict == verdict)
