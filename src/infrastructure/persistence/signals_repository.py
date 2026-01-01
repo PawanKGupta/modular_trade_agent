@@ -5,8 +5,16 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import bindparam, func, outerjoin, select, text, update
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus
+from src.infrastructure.db.models import (
+    Orders,
+    OrderStatus,
+    Positions,
+    Signals,
+    SignalStatus,
+    UserSignalStatus,
+)
 from src.infrastructure.db.timezone_utils import IST, ist_now
+from src.infrastructure.persistence.audit_log_repository import AuditLogRepository
 from src.infrastructure.utils.holiday_calendar import get_next_trading_day
 
 # Trading day constants
@@ -196,7 +204,7 @@ class SignalsRepository:
         rowcount = result.rowcount
         return rowcount
 
-    def mark_as_traded(self, symbol: str, user_id: int | None = None) -> bool:
+    def mark_as_traded(self, symbol: str, user_id: int | None = None, reason: str = None) -> bool:
         """
         Mark a signal as TRADED for a specific user.
 
@@ -241,6 +249,7 @@ class SignalsRepository:
         if not existing and signal.status not in [SignalStatus.ACTIVE, SignalStatus.EXPIRED]:
             return False
 
+        prev_status = existing.status if existing else signal.status
         if existing:
             existing.status = SignalStatus.TRADED
             existing.marked_at = ist_now()
@@ -253,11 +262,23 @@ class SignalsRepository:
                 marked_at=ist_now(),
             )
             self.db.add(user_status)
-
         self.db.commit()
+        # Audit log
+        audit_log_repo = AuditLogRepository(self.db)
+        audit_log_repo.create(
+            user_id=user_id,
+            action="update",
+            resource_type="signal",
+            resource_id=signal.id,
+            changes={
+                "previous_status": prev_status.value,
+                "new_status": SignalStatus.TRADED.value,
+                "reason": reason or "order_placed",
+            },
+        )
         return True
 
-    def mark_as_rejected(self, symbol: str, user_id: int | None = None) -> bool:
+    def mark_as_rejected(self, symbol: str, user_id: int | None = None, reason: str = None) -> bool:
         """
         Mark a signal as REJECTED for a specific user.
 
@@ -301,6 +322,7 @@ class SignalsRepository:
             )
         ).scalar_one_or_none()
 
+        prev_status = existing.status if existing else signal.status
         if existing:
             existing.status = SignalStatus.REJECTED
             existing.marked_at = ist_now()
@@ -313,11 +335,23 @@ class SignalsRepository:
                 marked_at=ist_now(),
             )
             self.db.add(user_status)
-
         self.db.commit()
+        # Audit log
+        audit_log_repo = AuditLogRepository(self.db)
+        audit_log_repo.create(
+            user_id=user_id,
+            action="update",
+            resource_type="signal",
+            resource_id=signal.id,
+            changes={
+                "previous_status": prev_status.value,
+                "new_status": SignalStatus.REJECTED.value,
+                "reason": reason or "manual_reject",
+            },
+        )
         return True
 
-    def mark_as_failed(self, signal_id: int, user_id: int) -> bool:
+    def mark_as_failed(self, signal_id: int, user_id: int, reason: str = None) -> bool:
         """
         Mark a user-specific TRADED signal as FAILED.
 
@@ -344,13 +378,29 @@ class SignalsRepository:
         ).scalar_one_or_none()
 
         if user_status:
+            prev_status = user_status.status
             user_status.status = SignalStatus.FAILED
             user_status.marked_at = ist_now()
             self.db.commit()
+            # Audit log
+            audit_log_repo = AuditLogRepository(self.db)
+            audit_log_repo.create(
+                user_id=user_id,
+                action="update",
+                resource_type="signal",
+                resource_id=signal_id,
+                changes={
+                    "previous_status": prev_status.value,
+                    "new_status": SignalStatus.FAILED.value,
+                    "reason": reason or "order_failed",
+                },
+            )
             return True
         return False
 
-    def mark_as_active(self, symbol: str, user_id: int | None = None) -> bool:  # noqa: PLR0911
+    def mark_as_active(
+        self, symbol: str, user_id: int | None = None, reason: str = None
+    ) -> bool:  # noqa: PLR0911
         """
         Mark a signal as ACTIVE again for a specific user (reactivate).
 
@@ -426,9 +476,23 @@ class SignalsRepository:
         ).scalar_one_or_none()
 
         if existing:
+            prev_status = existing.status
             # Delete the override to revert to base signal status
             self.db.delete(existing)
             self.db.commit()
+            # Audit log
+            audit_log_repo = AuditLogRepository(self.db)
+            audit_log_repo.create(
+                user_id=user_id,
+                action="update",
+                resource_type="signal",
+                resource_id=signal.id,
+                changes={
+                    "previous_status": prev_status.value,
+                    "new_status": SignalStatus.ACTIVE.value,
+                    "reason": reason or "manual_reactivate",
+                },
+            )
             return True
 
         # No override exists, signal is already using base status
@@ -449,9 +513,123 @@ class SignalsRepository:
             )
             self.db.add(user_status)
             self.db.commit()
+            # Audit log
+            audit_log_repo = AuditLogRepository(self.db)
+            audit_log_repo.create(
+                user_id=user_id,
+                action="update",
+                resource_type="signal",
+                resource_id=signal.id,
+                changes={
+                    "previous_status": signal.status.value,
+                    "new_status": SignalStatus.ACTIVE.value,
+                    "reason": reason or "manual_reactivate",
+                },
+            )
             return True
 
         # Base status is something else (shouldn't happen), return False
+        return False
+
+    def get_amo_signal_expiry_time(self, signal_timestamp: datetime) -> datetime:
+        """
+        Calculate the expiry time for an AMO signal based on next trading day market open.
+
+        Rule: AMO signals expire at market open on the next trading day (9:15 AM IST).
+
+        Args:
+            signal_timestamp: Signal creation timestamp (naive or timezone-aware)
+
+        Returns:
+            datetime: Expiry time (next trading day at 9:15 AM IST, timezone-aware)
+        """
+        from datetime import time as dt_time
+
+        # Ensure signal timestamp is timezone-aware (IST)
+        if signal_timestamp.tzinfo is None:
+            signal_timestamp = signal_timestamp.replace(tzinfo=IST)
+        else:
+            signal_timestamp = signal_timestamp.astimezone(IST)
+
+        # Get signal date
+        signal_date = signal_timestamp.date()
+
+        # Get next trading day (skips weekends and holidays)
+        next_trading_day = get_next_trading_day(signal_date)
+
+        # Return market open time on next trading day (9:15 AM IST, timezone-aware)
+        market_open_time = dt_time(9, 15)  # 9:15 AM
+        return datetime.combine(next_trading_day, market_open_time).replace(tzinfo=IST)
+
+    def _is_amo_signal_expired(self, signal_timestamp: datetime) -> bool:
+        """
+        Check if an AMO signal is expired based on next trading day market open time (9:15 AM IST).
+
+        Rule: AMO signals expire at market open on the next trading day.
+
+        Args:
+            signal_timestamp: Signal creation timestamp (naive or timezone-aware)
+
+        Returns:
+            True if signal is expired, False otherwise
+        """
+        # Get expiry time for this AMO signal
+        expiry_time = self.get_amo_signal_expiry_time(signal_timestamp)
+
+        # Check if current time has passed expiry time
+        now = ist_now()
+        return now >= expiry_time
+
+    def _has_amo_order(self, signal: Signals) -> bool:
+        """
+        Check if a signal has an associated AMO order.
+
+        Phase 2.2: Option B - Derive from orders (no schema change).
+        Checks if there's a pending buy order for this signal's symbol.
+
+        Args:
+            signal: Signal to check
+
+        Returns:
+            True if signal has an AMO order, False otherwise
+        """
+        from src.infrastructure.db.models import Orders, OrderStatus
+
+        # Check if there's a pending buy order for this symbol
+        # AMO orders are typically placed before market open and are pending until 9:15 AM
+        base_symbol = signal.symbol.split(".")[0].split("-")[0].upper()
+
+        # Try multiple symbol variants
+        candidates = [signal.symbol, base_symbol]
+        if not signal.symbol.endswith(".NS"):
+            candidates.append(f"{base_symbol}.NS")
+        if "-" not in signal.symbol:
+            candidates.append(f"{base_symbol}-EQ")
+
+        for candidate in candidates:
+            order = self.db.execute(
+                select(Orders).where(
+                    Orders.symbol == candidate,
+                    Orders.side == "buy",
+                    Orders.status == OrderStatus.PENDING,
+                )
+            ).scalar_one_or_none()
+
+            if order:
+                # Check if order was placed before market open (likely AMO)
+                # AMO orders are placed before 9:15 AM
+                from datetime import time as dt_time
+
+                if order.placed_at:
+                    placed_time = (
+                        order.placed_at.time() if hasattr(order.placed_at, "time") else None
+                    )
+                    if placed_time and placed_time < dt_time(9, 15):
+                        return True
+                # If we can't determine from time, assume pending buy orders are AMO
+                # (This is a heuristic - in practice, most pending buy orders before market open are AMO)
+                return True
+
         return False
 
     def get_signal_expiry_time(self, signal_timestamp: datetime) -> datetime:
@@ -537,12 +715,7 @@ class SignalsRepository:
         Returns:
             Number of signals marked as expired
         """
-        # Get all ACTIVE and REJECTED signals (both can be expired by time)
-        # Note: Using list() to materialize the query results immediately, reducing
-        # the time window for potential race conditions where a signal might be
-        # updated between query and expiry check
-        # Race condition mitigation: Materialize results before processing to minimize
-        # the window where a signal could be updated by another session
+        # Get all ACTIVE and REJECTED signals
         signals_to_check = list(
             self.db.execute(
                 select(Signals).where(
@@ -553,24 +726,77 @@ class SignalsRepository:
             .all()
         )
 
+        # Get all symbols with open positions (quantity > 0 AND closed_at IS NULL)
+        open_position_symbols = set(
+            row
+            for row in self.db.execute(
+                select(Positions.symbol).where(
+                    Positions.quantity > 0,
+                    Positions.closed_at.is_(None),  # Only open positions, not closed ones
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        # Get all symbols with pending/ongoing buy orders
+        pending_order_symbols = set(
+            row
+            for row in self.db.execute(
+                select(Orders.symbol).where(
+                    Orders.status.in_([OrderStatus.PENDING, OrderStatus.ONGOING]),
+                    Orders.side == "buy",
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        audit_log_repo = AuditLogRepository(self.db)
         expired_count = 0
+        SYSTEM_USER_ID = 1  # Must exist in users table
+        audit_logs = []  # Collect audit logs for bulk insert
 
         for signal in signals_to_check:
-            # Check if signal has passed its expiry time
-            # Note: signal.ts may be naive (from SQLite), but _is_signal_expired_by_market_close
-            # handles this correctly by assuming naive = IST
-            # Race condition mitigation: Re-check status before updating to handle
-            # cases where another session might have already updated the signal
+            # Exclude if open position or pending buy order
+            if signal.symbol in open_position_symbols or signal.symbol in pending_order_symbols:
+                continue
             if signal.status in [
                 SignalStatus.ACTIVE,
                 SignalStatus.REJECTED,
-            ] and self._is_signal_expired_by_market_close(signal.ts):
-                signal.status = SignalStatus.EXPIRED
-                expired_count += 1
+            ]:
+                # Phase 2.2: Check if signal has AMO order - use AMO expiry logic if so
+                if self._has_amo_order(signal):
+                    is_expired = self._is_amo_signal_expired(signal.ts)
+                else:
+                    is_expired = self._is_signal_expired_by_market_close(signal.ts)
+
+                if is_expired:
+                    prev_status = signal.status
+                    signal.status = SignalStatus.EXPIRED
+                    expired_count += 1
+                    # Collect audit log entry for bulk insert
+                    audit_logs.append(
+                        {
+                            "user_id": SYSTEM_USER_ID,
+                            "action": "update",
+                            "resource_type": "signal",
+                            "resource_id": signal.id,
+                            "changes": {
+                                "previous_status": prev_status.value,
+                                "new_status": SignalStatus.EXPIRED.value,
+                                "reason": "eod_expiry",
+                                "symbol": signal.symbol,
+                            },
+                        }
+                    )
+
+        # Bulk insert all audit logs at once (more efficient than individual creates)
+        if audit_logs:
+            audit_log_repo.create_bulk(audit_logs)
 
         if expired_count > 0:
             self.db.commit()
-
         return expired_count
 
     def get_active_signals(self, limit: int = 100) -> list[Signals]:
@@ -637,6 +863,8 @@ class SignalsRepository:
         Before returning, checks and updates time-expired signals to ensure
         database consistency.
 
+        Excludes signals where user has an open position (already traded).
+
         Args:
             user_id: User ID to get personalized status for
             limit: Maximum number of signals to return
@@ -647,6 +875,39 @@ class SignalsRepository:
         """
         # Mark time-expired signals before querying to ensure database consistency
         self.mark_time_expired_signals()
+
+        # Get symbols with open positions for this user (exclude from active signals)
+        open_position_symbols = set()
+        try:
+            from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+            open_positions = (
+                self.db.execute(
+                    select(Positions.symbol).where(
+                        Positions.user_id == user_id,
+                        Positions.quantity > 0,
+                        Positions.closed_at.is_(None),  # Only open positions
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            # Normalize symbols (remove suffixes for matching)
+            for pos_symbol in open_positions:
+                # Use extract_base_symbol for consistent normalization
+                base_symbol = extract_base_symbol(pos_symbol).upper()
+                open_position_symbols.add(base_symbol)
+                # Also add variants for comprehensive matching
+                open_position_symbols.add(pos_symbol.upper())
+                # Add NSE-style variant if not already present
+                if not pos_symbol.upper().endswith(".NS"):
+                    open_position_symbols.add(f"{base_symbol}.NS")
+                # Add EQ variant if not already present
+                if "-" not in pos_symbol.upper():
+                    open_position_symbols.add(f"{base_symbol}-EQ")
+        except Exception as e:
+            # If positions table doesn't exist or query fails, continue without exclusion
+            logger.debug(f"Failed to get open positions for exclusion: {e}")
 
         # Join signals with user_signal_status
         stmt = (
@@ -660,7 +921,7 @@ class SignalsRepository:
                 )
             )
             .order_by(Signals.ts.desc())
-            .limit(limit)
+            .limit(limit * 2)  # Get more to account for exclusions
         )
 
         results = self.db.execute(stmt).all()
@@ -668,14 +929,50 @@ class SignalsRepository:
         # Build list with effective status
         signals_with_status = []
         for signal, user_status in results:
+            # Exclude signals where user has an open position (already traded)
+            # Normalize signal symbol for comparison using extract_base_symbol for consistency
+            try:
+                from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+                signal_base = extract_base_symbol(signal.symbol).upper()
+                signal_variants = {
+                    signal_base,
+                    signal.symbol.upper(),
+                }
+                # Add NSE-style variant if not already present
+                if not signal.symbol.upper().endswith(".NS"):
+                    signal_variants.add(f"{signal_base}.NS")
+                # Add EQ variant if not already present
+                if "-" not in signal.symbol.upper():
+                    signal_variants.add(f"{signal_base}-EQ")
+            except ImportError:
+                # Fallback to simple normalization if extract_base_symbol not available
+                signal_base = signal.symbol.split("-")[0].split(".")[0].upper()
+                signal_variants = {
+                    signal_base,
+                    signal.symbol.upper(),
+                    (
+                        f"{signal_base}.NS"
+                        if not signal.symbol.endswith(".NS")
+                        else signal.symbol.upper()
+                    ),
+                }
+
+            # Check if user has open position for this symbol
+            has_open_position = signal_variants.intersection(open_position_symbols)
+
             # Determine effective status:
-            # - User actions (TRADED/REJECTED/FAILED) always take precedence and are shown as effective status
+            # - User actions (TRADED/REJECTED/FAILED) always take precedence
+            # - If user has open position and no explicit status, treat as TRADED
             # - Base signal status (ACTIVE/EXPIRED) is shown separately in base_status field
-            # - This allows frontend to display: "traded, expired" or "rejected, active" etc.
             if user_status in [SignalStatus.TRADED, SignalStatus.REJECTED, SignalStatus.FAILED]:
                 # User has completed an action (TRADED/REJECTED/FAILED) - show this as effective status
                 # Base status will show separately (e.g., "traded, expired" or "rejected, active")
                 effective_status = user_status
+            elif has_open_position and user_status is None:
+                # User has open position but no explicit status - treat as TRADED
+                # This prevents showing ACTIVE signals when user already has a position
+                effective_status = SignalStatus.TRADED
             elif signal.status == SignalStatus.EXPIRED:
                 # Base signal is EXPIRED and no user action - show as EXPIRED
                 # User cannot override EXPIRED with ACTIVE (time-based expiry is final)
@@ -684,8 +981,204 @@ class SignalsRepository:
                 # Use user status if exists, otherwise use base signal status
                 effective_status = user_status if user_status else signal.status
 
+            # Skip if user has open position and signal is not explicitly marked
+            # (we still want to show signals that user has explicitly marked as TRADED/REJECTED/FAILED)
+            if (
+                has_open_position
+                and effective_status == SignalStatus.TRADED
+                and user_status is None
+            ):
+                # Skip signals that are only TRADED because of open position (not explicitly marked)
+                # Only skip if status_filter is "active" (don't want to show in active list)
+                if status_filter == SignalStatus.ACTIVE:
+                    continue
+
             # Apply status filter if provided
             if status_filter is None or effective_status == status_filter:
                 signals_with_status.append((signal, effective_status))
 
+                # Stop if we've reached the limit
+                if len(signals_with_status) >= limit:
+                    break
+
         return signals_with_status
+
+    def sync_traded_status_for_symbol(self, symbol: str, user_id: int | None = None) -> bool:
+        """
+        Sync TRADED status for a single symbol (event-driven).
+
+        Called immediately when:
+        - Position is created/updated
+        - Order is placed/executed
+
+        Only marks as TRADED if:
+        - Symbol has open position (quantity > 0 AND closed_at IS NULL), OR
+        - Symbol has active buy order (PENDING or ONGOING)
+
+        Returns:
+            True if signal was marked as TRADED, False otherwise
+        """
+        user_id = user_id or self.user_id
+        if not user_id:
+            return False
+
+        # Check if symbol has open position
+        has_open_position = (
+            self.db.execute(
+                select(Positions).where(
+                    Positions.user_id == user_id,
+                    Positions.symbol == symbol,
+                    Positions.quantity > 0,
+                    Positions.closed_at.is_(None),
+                )
+            ).scalar_one_or_none()
+            is not None
+        )
+
+        # Check if symbol has active buy order
+        has_active_order = (
+            self.db.execute(
+                select(Orders).where(
+                    Orders.user_id == user_id,
+                    Orders.symbol == symbol,
+                    Orders.status.in_([OrderStatus.PENDING, OrderStatus.ONGOING]),
+                    Orders.side == "buy",
+                )
+            ).scalar_one_or_none()
+            is not None
+        )
+
+        if not (has_open_position or has_active_order):
+            return False  # No position or order, don't mark as TRADED
+
+        # Find signal for this symbol (try multiple variants)
+        try:
+            from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+            base_symbol = extract_base_symbol(symbol).upper()
+        except ImportError:
+            # Fallback to simple extraction
+            base_symbol = symbol.split("-")[0].split(".")[0].upper()
+
+        candidates = [base_symbol, symbol.upper()]
+        if not symbol.upper().endswith(".NS"):
+            candidates.append(f"{base_symbol}.NS")
+        if "-" not in symbol.upper():
+            candidates.append(f"{base_symbol}-EQ")
+
+        for candidate in candidates:
+            signal = self.db.execute(
+                select(Signals)
+                .where(Signals.symbol == candidate)
+                .order_by(Signals.ts.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if signal:
+                # Check if already marked as TRADED (prevents double marking)
+                user_status = self.get_user_signal_status(signal.id, user_id)
+                if user_status == SignalStatus.TRADED:
+                    return True  # Already TRADED, no action needed
+
+                # Mark as TRADED
+                return self.mark_as_traded(
+                    candidate, user_id=user_id, reason="auto_sync_from_position_or_order"
+                )
+
+        return False  # Signal not found
+
+    def sync_traded_status_from_positions_and_orders(self, user_id: int | None = None) -> int:
+        """
+        Automatically mark signals as TRADED if symbol has:
+        - Active order (PENDING or ONGOING buy order), OR
+        - Open position in portfolio holdings
+
+        This ensures signal status reflects actual trading state.
+        Should be called:
+        - Periodically (e.g., during EOD cleanup)
+        - After position/order updates
+
+        Returns:
+            Number of signals marked as TRADED
+        """
+        user_id = user_id or self.user_id
+        if not user_id:
+            return 0
+
+        # Get all symbols with open positions for this user
+        open_position_symbols = set(
+            row
+            for row in self.db.execute(
+                select(Positions.symbol).where(
+                    Positions.user_id == user_id,
+                    Positions.quantity > 0,
+                    Positions.closed_at.is_(None),  # Only open positions
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        # Get all symbols with pending/ongoing buy orders for this user
+        active_order_symbols = set(
+            row
+            for row in self.db.execute(
+                select(Orders.symbol).where(
+                    Orders.user_id == user_id,
+                    Orders.status.in_([OrderStatus.PENDING, OrderStatus.ONGOING]),
+                    Orders.side == "buy",
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        # Combine both sets
+        symbols_to_mark = open_position_symbols.union(active_order_symbols)
+
+        if not symbols_to_mark:
+            return 0
+
+        # Find signals for these symbols and mark as TRADED
+        marked_count = 0
+        processed_signals = set()  # Track processed signal IDs to avoid duplicates
+
+        for symbol in symbols_to_mark:
+            # Normalize symbol (handle variants)
+            try:
+                from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+                base_symbol = extract_base_symbol(symbol).upper()
+            except ImportError:
+                base_symbol = symbol.split("-")[0].split(".")[0].upper()
+
+            candidates = [base_symbol, symbol.upper()]
+            if not symbol.upper().endswith(".NS"):
+                candidates.append(f"{base_symbol}.NS")
+            if "-" not in symbol.upper():
+                candidates.append(f"{base_symbol}-EQ")
+
+            # Find latest signal for this symbol
+            for candidate in candidates:
+                signal = self.db.execute(
+                    select(Signals)
+                    .where(Signals.symbol == candidate)
+                    .order_by(Signals.ts.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+
+                if signal and signal.id not in processed_signals:
+                    processed_signals.add(signal.id)
+
+                    # Check if already marked as TRADED
+                    user_status = self.get_user_signal_status(signal.id, user_id)
+                    if user_status != SignalStatus.TRADED:
+                        if self.mark_as_traded(
+                            candidate,
+                            user_id=user_id,
+                            reason="auto_sync_from_position_or_order",
+                        ):
+                            marked_count += 1
+                    break  # Found signal, no need to check other variants
+
+        return marked_count

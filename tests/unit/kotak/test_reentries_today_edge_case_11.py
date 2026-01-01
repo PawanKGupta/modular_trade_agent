@@ -241,7 +241,7 @@ class TestReentriesTodayEdgeCase11:
     ):
         """Test that reentries_today() uses placed_at date (placement date)
         not time (execution date)"""
-        yesterday = (datetime.now().replace(day=datetime.now().day - 1)).date()
+        yesterday = (datetime.now() - timedelta(days=1)).date()
         today_iso = datetime.now().isoformat()
 
         from unittest.mock import MagicMock
@@ -269,7 +269,7 @@ class TestReentriesTodayEdgeCase11:
     def test_reentries_today_prioritizes_placed_at_over_time(self, engine, mock_positions_repo):
         """Test that reentries_today() prioritizes placed_at field over time field"""
         today = datetime.now().date()
-        yesterday_iso = (datetime.now().replace(day=datetime.now().day - 1)).isoformat()
+        yesterday_iso = (datetime.now() - timedelta(days=1)).isoformat()
 
         from unittest.mock import MagicMock
 
@@ -420,7 +420,7 @@ class TestReentriesTodayEdgeCase11:
         self, engine, mock_positions_repo
     ):
         """Test daily cap fix: AMO order placed Day 1, executed Day 2 → counts for Day 1"""
-        yesterday = (datetime.now().replace(day=datetime.now().day - 1)).date()
+        yesterday = (datetime.now() - timedelta(days=1)).date()
         today_iso = datetime.now().isoformat()
 
         from unittest.mock import MagicMock
@@ -447,7 +447,7 @@ class TestReentriesTodayEdgeCase11:
         self, engine, mock_positions_repo
     ):
         """Test that reentries_today() correctly filters by placement date"""
-        yesterday = (datetime.now().replace(day=datetime.now().day - 1)).date()
+        yesterday = (datetime.now() - timedelta(days=1)).date()
         today_iso = datetime.now().isoformat()
 
         # Mock position with multiple reentries:

@@ -6,9 +6,12 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Orders, Signals, TradeMode, Users
+from src.infrastructure.db.dialect import is_postgresql
+
+from src.infrastructure.db.models import Orders, Positions, Signals, TradeMode, Users
 from src.infrastructure.persistence.export_job_repository import ExportJobRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
@@ -223,17 +226,15 @@ def export_trades_csv(
             start_date = end_date - timedelta(days=90)
 
         # Fetch closed positions
-        positions_repo = PositionsRepository(db)
         closed_positions = (
-            db.query(positions_repo.model)
+            db.query(Positions)
             .filter(
-                positions_repo.model.user_id == current.id,
-                positions_repo.model.trade_mode == trade_mode,
-                positions_repo.model.status == "closed",
-                positions_repo.model.exit_date >= start_date,
-                positions_repo.model.exit_date <= end_date,
+                Positions.user_id == current.id,
+                Positions.closed_at.isnot(None),
+                func.date(Positions.closed_at) >= start_date,
+                func.date(Positions.closed_at) <= end_date,
             )
-            .order_by(positions_repo.model.exit_date.desc())
+            .order_by(Positions.closed_at.desc())
             .all()
         )
 
@@ -258,26 +259,30 @@ def export_trades_csv(
         writer.writeheader()
 
         for pos in closed_positions:
-            holding_days = (pos.exit_date - pos.entry_date).days if pos.exit_date else 0
+            holding_days = (
+                (pos.closed_at.date() - pos.opened_at.date()).days
+                if pos.closed_at and pos.opened_at
+                else 0
+            )
             pnl_pct = (
-                ((pos.exit_price / pos.entry_price) - 1) * 100
-                if pos.entry_price and pos.exit_price
+                ((pos.exit_price / pos.avg_price) - 1) * 100
+                if pos.avg_price and pos.exit_price
                 else 0
             )
 
             writer.writerow(
                 {
                     "symbol": pos.symbol,
-                    "entry_date": pos.entry_date.isoformat() if pos.entry_date else "",
-                    "exit_date": pos.exit_date.isoformat() if pos.exit_date else "",
+                    "entry_date": pos.opened_at.isoformat() if pos.opened_at else "",
+                    "exit_date": pos.closed_at.isoformat() if pos.closed_at else "",
                     "quantity": pos.quantity,
-                    "entry_price": f"{pos.entry_price:.2f}" if pos.entry_price else "",
+                    "entry_price": f"{pos.avg_price:.2f}" if pos.avg_price else "",
                     "exit_price": f"{pos.exit_price:.2f}" if pos.exit_price else "",
                     "realized_pnl": f"{pos.realized_pnl:.2f}" if pos.realized_pnl else "0.00",
                     "pnl_percentage": f"{pnl_pct:.2f}",
-                    "fees": f"{pos.fees:.2f}" if pos.fees else "0.00",
+                    "fees": "0.00",
                     "holding_days": holding_days,
-                    "trade_mode": pos.trade_mode.value,
+                    "trade_mode": trade_mode.value,
                 }
             )
 
@@ -317,11 +322,35 @@ def export_signals_csv(
         if not start_date:
             start_date = end_date - timedelta(days=30)
 
-        # Fetch signals
-        query = db.query(Signals).filter(
-            Signals.ts >= datetime.combine(start_date, datetime.min.time()),
-            Signals.ts <= datetime.combine(end_date, datetime.max.time()),
-        )
+        # Use func.date() with string comparison for consistent date filtering
+        # across SQLite and PostgreSQL
+        # For PostgreSQL, we need to convert to IST timezone before extracting date
+        # because PostgreSQL stores timezone-aware datetimes in UTC internally
+        start_date_str = start_date.isoformat()
+        end_date_str = end_date.isoformat()
+
+        if is_postgresql(db):
+            # PostgreSQL: Convert to IST timezone before extracting date
+            # This ensures we get the date in IST, not UTC
+            # Format: DATE((ts AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')
+            tz_expr = (
+                "DATE((signals.ts AT TIME ZONE 'UTC') "
+                "AT TIME ZONE 'Asia/Kolkata')"
+            )
+            query = db.query(Signals).filter(
+                text(f"{tz_expr} >= :start_date").bindparam(
+                    start_date=start_date_str
+                ),
+                text(f"{tz_expr} <= :end_date").bindparam(
+                    end_date=end_date_str
+                ),
+            )
+        else:
+            # SQLite: Direct date extraction (SQLite stores naive datetimes, assumed to be IST)
+            query = db.query(Signals).filter(
+                func.date(Signals.ts) >= start_date_str,
+                func.date(Signals.ts) <= end_date_str,
+            )
 
         if verdict:
             query = query.filter(Signals.verdict == verdict)
@@ -357,6 +386,13 @@ def export_signals_csv(
                 if isinstance(signal.buy_range, (list, tuple)) and len(signal.buy_range) >= 2:
                     buy_range_low = f"{signal.buy_range[0]:.2f}"
                     buy_range_high = f"{signal.buy_range[1]:.2f}"
+                elif isinstance(signal.buy_range, dict):
+                    low = signal.buy_range.get("low") or signal.buy_range.get("min")
+                    high = signal.buy_range.get("high") or signal.buy_range.get("max")
+                    if low is not None:
+                        buy_range_low = f"{float(low):.2f}"
+                    if high is not None:
+                        buy_range_high = f"{float(high):.2f}"
 
             writer.writerow(
                 {
@@ -413,13 +449,25 @@ def export_orders_csv(
         if not start_date:
             start_date = end_date - timedelta(days=30)
 
-        # Fetch orders
-        query = db.query(Orders).filter(
-            Orders.user_id == current.id,
-            Orders.trade_mode == trade_mode,
-            Orders.placed_at >= datetime.combine(start_date, datetime.min.time()),
-            Orders.placed_at <= datetime.combine(end_date, datetime.max.time()),
-        )
+        # Build dialect-aware date filtering for orders
+        dialect = getattr(getattr(db, "bind", None), "dialect", None)
+        dialect_name = getattr(dialect, "name", "")
+        if dialect_name == "sqlite":
+            query = db.query(Orders).filter(
+                Orders.user_id == current.id,
+                Orders.trade_mode == trade_mode,
+                func.date(Orders.placed_at) >= start_date,
+                func.date(Orders.placed_at) <= end_date,
+            )
+        else:
+            start_dt = datetime.combine(start_date, datetime.min.time())
+            end_dt = datetime.combine(end_date, datetime.max.time())
+            query = db.query(Orders).filter(
+                Orders.user_id == current.id,
+                Orders.trade_mode == trade_mode,
+                Orders.placed_at >= start_dt,
+                Orders.placed_at <= end_dt,
+            )
 
         if status:
             query = query.filter(Orders.status == status)

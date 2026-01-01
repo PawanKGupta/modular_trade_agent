@@ -75,13 +75,81 @@ def create_portfolio_snapshot(
         # Decide which portfolio source to use
         if settings.trade_mode == TradeMode.BROKER:
             # Import broker function locally to reuse logic
-            from ..routers.broker import get_broker_portfolio
+            from ..routers.broker import get_broker_portfolio  # noqa: PLC0415
 
             portfolio = get_broker_portfolio(db=db, current=current)
         else:
-            from ..routers.paper_trading import get_paper_trading_portfolio
+            from ..routers.paper_trading import get_paper_trading_portfolio  # noqa: PLC0415
 
-            portfolio = get_paper_trading_portfolio(db=db, current=current)
+            try:
+                portfolio = get_paper_trading_portfolio(db=db, current=current)
+            except HTTPException as e:
+                # If paper trading account not initialized (404) or any other HTTP error,
+                # create empty portfolio
+                if e.status_code in (404, 500):  # noqa: PLR2004
+                    from ..schemas.portfolio import (  # noqa: PLC0415
+                        PaperTradingAccount,
+                        PaperTradingPortfolio,
+                    )
+
+                    portfolio = PaperTradingPortfolio(
+                        account=PaperTradingAccount(
+                            initial_capital=0.0,
+                            available_cash=0.0,
+                            total_pnl=0.0,
+                            realized_pnl=0.0,
+                            unrealized_pnl=0.0,
+                            portfolio_value=0.0,
+                            total_value=0.0,
+                            return_percentage=0.0,
+                        ),
+                        holdings=[],
+                        recent_orders=[],
+                        order_statistics={
+                            "total_orders": 0,
+                            "buy_orders": 0,
+                            "sell_orders": 0,
+                            "completed_orders": 0,
+                            "pending_orders": 0,
+                            "cancelled_orders": 0,
+                            "rejected_orders": 0,
+                            "success_rate": 0.0,
+                        },
+                    )
+                else:
+                    raise
+            except Exception:
+                # Handle any other exceptions (e.g., file system errors, etc.)
+                # Create empty portfolio to allow snapshot creation
+                from ..schemas.portfolio import (  # noqa: PLC0415
+                    PaperTradingAccount,
+                    PaperTradingPortfolio,
+                )
+
+                portfolio = PaperTradingPortfolio(
+                    account=PaperTradingAccount(
+                        initial_capital=0.0,
+                        available_cash=0.0,
+                        total_pnl=0.0,
+                        realized_pnl=0.0,
+                        unrealized_pnl=0.0,
+                        portfolio_value=0.0,
+                        total_value=0.0,
+                        return_percentage=0.0,
+                    ),
+                    holdings=[],
+                    recent_orders=[],
+                    order_statistics={
+                        "total_orders": 0,
+                        "buy_orders": 0,
+                        "sell_orders": 0,
+                        "completed_orders": 0,
+                        "pending_orders": 0,
+                        "cancelled_orders": 0,
+                        "rejected_orders": 0,
+                        "success_rate": 0.0,
+                    },
+                )
 
         account = getattr(portfolio, "account", None)
         holdings = getattr(portfolio, "holdings", [])

@@ -58,55 +58,70 @@ class SharedSessionManager:
             user_lock = self._locks[user_id]
 
         with user_lock:
-            # Phase -1: Check re-auth rate limiting (prevent OTP spam)
-            if user_id in self._last_reauth_time:
-                time_since_reauth = time.time() - self._last_reauth_time[user_id]
-                if time_since_reauth < self._REAUTH_COOLDOWN:
-                    logger.warning(
-                        f"[SHARED_SESSION] Re-auth cooldown active for user {user_id}, "
-                        f"{self._REAUTH_COOLDOWN - time_since_reauth:.0f}s remaining"
-                    )
-                    # Return existing session even if client is None
-                    # (let API call handle it via @handle_reauth)
-                    if user_id in self._sessions:
-                        return self._sessions[user_id]
-
-            # Check if session exists and is valid
+            # Check if session exists and is valid FIRST
+            # Only apply cooldown if session is still valid (to prevent OTP spam)
+            # If session is expired, allow re-auth immediately
             if not force_new and user_id in self._sessions:
                 auth = self._sessions[user_id]
 
-                # Phase -1: Check session health more carefully
-                if auth.is_authenticated():
-                    client = auth.get_client()
+                # Check if session is actually expired
+                is_expired = False
+                if hasattr(auth, "is_session_valid"):
+                    is_expired = not auth.is_session_valid()
 
-                    # Only clear if BOTH are false/None AND session actually expired
-                    if not client:
-                        # Check if session is actually expired (not just client None)
-                        if hasattr(auth, "is_session_valid") and auth.is_session_valid():
-                            # Session valid but client None - don't clear, let it recover
-                            logger.warning(
-                                f"[SHARED_SESSION] Session valid but client None for user {user_id}, "
-                                "attempting recovery"
-                            )
-                            return auth  # Return existing, let API call handle via @handle_reauth
-                        else:
-                            # Session expired - clear it
-                            logger.warning(
-                                f"[SHARED_SESSION] Session expired for user {user_id}, clearing"
-                            )
-                            with self._manager_lock:
-                                self._sessions.pop(user_id, None)
-                    else:
-                        # Both authenticated and client available - reuse
-                        logger.info(f"[SHARED_SESSION] Reusing existing session for user {user_id}")
-                        return auth
-                else:
-                    # Not authenticated - clear
+                # If session is expired, clear it and allow immediate re-auth
+                if is_expired:
                     logger.warning(
-                        f"[SHARED_SESSION] Existing session for user {user_id} is invalid, clearing"
+                        f"[SHARED_SESSION] Session expired for user {user_id}, "
+                        "clearing and allowing re-auth"
                     )
                     with self._manager_lock:
                         self._sessions.pop(user_id, None)
+                    # Clear cooldown to allow immediate re-auth for expired sessions
+                    if user_id in self._last_reauth_time:
+                        del self._last_reauth_time[user_id]
+                else:
+                    # Session is still valid - check cooldown to prevent OTP spam
+                    if user_id in self._last_reauth_time:
+                        time_since_reauth = time.time() - self._last_reauth_time[user_id]
+                        if time_since_reauth < self._REAUTH_COOLDOWN:
+                            logger.warning(
+                                f"[SHARED_SESSION] Re-auth cooldown active for user {user_id}, "
+                                f"{self._REAUTH_COOLDOWN - time_since_reauth:.0f}s remaining"
+                            )
+                            # Return existing session even if client is None
+                            # (let API call handle it via @handle_reauth)
+                            return auth
+
+                    # Phase -1: Check session health more carefully
+                    if auth.is_authenticated():
+                        client = auth.get_client()
+
+                        # Only clear if BOTH are false/None AND session actually expired
+                        if not client:
+                            # Session valid but client None - don't clear, let it recover
+                            logger.warning(
+                                f"[SHARED_SESSION] Session valid but client None "
+                                f"for user {user_id}, attempting recovery"
+                            )
+                            return auth  # Return existing, let API call handle via @handle_reauth
+                        else:
+                            # Both authenticated and client available - reuse
+                            logger.info(
+                                f"[SHARED_SESSION] Reusing existing session for user {user_id}"
+                            )
+                            return auth
+                    else:
+                        # Not authenticated - clear
+                        logger.warning(
+                            f"[SHARED_SESSION] Existing session for user {user_id} "
+                            "is invalid, clearing"
+                        )
+                        with self._manager_lock:
+                            self._sessions.pop(user_id, None)
+                        # Clear cooldown when session is invalid
+                        if user_id in self._last_reauth_time:
+                            del self._last_reauth_time[user_id]
 
             # Create new session
             logger.info(f"[SHARED_SESSION] Creating new session for user {user_id}")

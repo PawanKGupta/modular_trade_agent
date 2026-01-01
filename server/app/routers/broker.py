@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _get_or_create_auth_session(user_id: int, temp_env_file: str, db: Session) -> object:
+def _get_or_create_auth_session(
+    user_id: int, temp_env_file: str, db: Session, force_new: bool = False
+) -> object:
     """
     Get or create shared authenticated broker session for a user.
 
@@ -47,6 +49,7 @@ def _get_or_create_auth_session(user_id: int, temp_env_file: str, db: Session) -
         user_id: User ID
         temp_env_file: Path to temporary env file with broker credentials
         db: Database session (unused, kept for compatibility)
+        force_new: If True, force creation of new session (clears existing)
 
     Returns:
         Authenticated KotakNeoAuth instance
@@ -56,8 +59,22 @@ def _get_or_create_auth_session(user_id: int, temp_env_file: str, db: Session) -
     )
 
     session_manager = get_shared_session_manager()
-    auth = session_manager.get_or_create_session(user_id, temp_env_file)
-    logger.info(f"[SHARED_SESSION] Broker API using shared session for user {user_id}")
+    logger.debug(f"[SHARED_SESSION] Requesting session for user {user_id} (force_new={force_new})")
+    auth = session_manager.get_or_create_session(user_id, temp_env_file, force_new=force_new)
+
+    if auth:
+        is_auth = auth.is_authenticated()
+        client = auth.get_client()
+        logger.info(
+            f"[SHARED_SESSION] Broker API session for user {user_id}: "
+            f"force_new={force_new}, is_authenticated={is_auth}, "
+            f"client={'available' if client else 'None'}"
+        )
+    else:
+        logger.error(
+            f"[SHARED_SESSION] Failed to get/create session for user {user_id} "
+            f"(force_new={force_new})"
+        )
 
     if not auth:
         raise HTTPException(
@@ -543,7 +560,58 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
             )
 
             # Get or create authenticated session (handles unified service conflicts)
+            logger.info(f"[BROKER_PORTFOLIO] Getting/creating auth session for user {current.id}")
             auth = _get_or_create_auth_session(current.id, temp_env_file, db)
+
+            # Log session state
+            is_auth = auth.is_authenticated()
+            client = auth.get_client()
+            logger.info(
+                f"[BROKER_PORTFOLIO] Session state for user {current.id}: "
+                f"is_authenticated={is_auth}, client={'available' if client else 'None'}"
+            )
+
+            # Check for stale session: is_authenticated() is True but client is None
+            # This can happen when session expires but is_authenticated() hasn't been updated yet
+            if is_auth and not client:
+                logger.warning(
+                    f"[BROKER_PORTFOLIO] Stale session detected for user {current.id}: "
+                    f"is_authenticated={is_auth} but client is None. "
+                    "Clearing cache and forcing re-authentication"
+                )
+                from modules.kotak_neo_auto_trader.shared_session_manager import (
+                    get_shared_session_manager,
+                )
+
+                session_manager = get_shared_session_manager()
+                session_manager.clear_session(current.id)
+                logger.info(
+                    f"[BROKER_PORTFOLIO] Cleared stale session for user {current.id}, "
+                    "creating new session"
+                )
+                # Force new session creation
+                auth = _get_or_create_auth_session(current.id, temp_env_file, db, force_new=True)
+                if not auth or not auth.is_authenticated():
+                    logger.error(
+                        f"[BROKER_PORTFOLIO] Re-authentication failed for user {current.id}"
+                    )
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "Broker session expired and re-authentication failed. "
+                            "Please refresh the page to reconnect."
+                        ),
+                    )
+                logger.info(
+                    f"[BROKER_PORTFOLIO] Re-authentication successful for user {current.id}"
+                )
+                # Update session state after re-auth
+                is_auth = auth.is_authenticated()
+                client = auth.get_client()
+                logger.info(
+                    f"[BROKER_PORTFOLIO] Updated session state for user {current.id}: "
+                    f"is_authenticated={is_auth}, client={'available' if client else 'None'}"
+                )
 
             # Create broker gateway
             broker = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
@@ -551,32 +619,42 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
             # Connect to broker (only if not already connected)
             # broker.connect() calls auth.login() which triggers OTP,
             # so manually set client if already authenticated
-            if not auth.is_authenticated():
+            if not is_auth:
+                logger.info(
+                    f"[BROKER_PORTFOLIO] User {current.id} not authenticated, attempting connection"
+                )
                 if not broker.connect():
+                    logger.error(
+                        f"[BROKER_PORTFOLIO] Failed to connect broker gateway for user {current.id}"
+                    )
                     raise HTTPException(
                         status_code=503,
                         detail="Failed to connect to broker gateway. Please try again later.",
                     )
+                logger.info(
+                    f"[BROKER_PORTFOLIO] Successfully connected broker gateway "
+                    f"for user {current.id}"
+                )
             else:
                 # Auth is already authenticated, manually set client to avoid re-login
                 # This prevents OTP spam while ensuring broker is properly initialized
                 # Trust the cached auth - only re-authenticate if API calls actually fail
                 logger.debug(
-                    f"Auth already authenticated for user {current.id}, "
+                    f"[BROKER_PORTFOLIO] Auth already authenticated for user {current.id}, "
                     "manually initializing broker client"
                 )
-                client = auth.get_client()
                 if client:
                     # Client is available - use it directly without calling connect()
                     broker._client = client
                     broker._connected = True
+                    logger.info(f"[BROKER_PORTFOLIO] Using existing client for user {current.id}")
                 else:
                     # Client is None - this shouldn't happen if is_authenticated() is True
-                    # But if it does, clear cache and let it re-authenticate on next request
-                    # Don't force reconnect here to avoid OTP spam
+                    # But if it does, clear cache and force re-authentication
                     logger.warning(
-                        f"Auth says authenticated but client is None for user {current.id}, "
-                        "clearing cache - will re-authenticate on next request"
+                        f"[BROKER_PORTFOLIO] Session inconsistency detected for user {current.id}: "
+                        f"is_authenticated={is_auth} but client is None. "
+                        "Clearing cache and forcing re-authentication"
                     )
                     from modules.kotak_neo_auto_trader.shared_session_manager import (
                         get_shared_session_manager,
@@ -584,16 +662,60 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
 
                     session_manager = get_shared_session_manager()
                     session_manager.clear_session(current.id)
-                    raise HTTPException(
-                        status_code=503,
-                        detail=(
-                            "Broker session expired. Please refresh the page to reconnect. "
-                            "This should not trigger frequent OTP requests."
-                        ),
+                    logger.info(
+                        f"[BROKER_PORTFOLIO] Cleared expired session for user {current.id}, "
+                        "creating new session"
+                    )
+                    # Force new session creation
+                    auth = _get_or_create_auth_session(
+                        current.id, temp_env_file, db, force_new=True
+                    )
+                    if not auth or not auth.is_authenticated():
+                        logger.error(
+                            f"[BROKER_PORTFOLIO] Re-authentication failed for user {current.id}"
+                        )
+                        raise HTTPException(
+                            status_code=503,
+                            detail=(
+                                "Broker session expired and re-authentication failed. "
+                                "Please refresh the page to reconnect."
+                            ),
+                        )
+                    logger.info(
+                        f"[BROKER_PORTFOLIO] Re-authentication successful for user {current.id}"
+                    )
+                    # Update broker with new auth
+                    broker = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
+                    if not broker.connect():
+                        logger.error(
+                            f"[BROKER_PORTFOLIO] Failed to reconnect broker gateway "
+                            f"after re-auth for user {current.id}"
+                        )
+                        raise HTTPException(
+                            status_code=503,
+                            detail="Failed to reconnect to broker gateway. Please try again later.",
+                        )
+                    logger.info(
+                        f"[BROKER_PORTFOLIO] Successfully reconnected broker gateway "
+                        f"for user {current.id}"
                     )
 
             # Get holdings from broker
-            holdings = broker.get_holdings()
+            # This will automatically handle re-authentication if session expired
+            logger.info(f"[BROKER_PORTFOLIO] Fetching holdings for user {current.id}")
+            try:
+                holdings = broker.get_holdings()
+                logger.info(
+                    f"[BROKER_PORTFOLIO] Successfully fetched {len(holdings)} holdings "
+                    f"for user {current.id}"
+                )
+            except Exception as holdings_error:
+                logger.error(
+                    f"[BROKER_PORTFOLIO] Error fetching holdings for user {current.id}: "
+                    f"{holdings_error}",
+                    exc_info=True,
+                )
+                raise
 
             # Get account limits/margins for available cash
             try:
@@ -856,7 +978,54 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
             )
 
             # Get or create authenticated session using shared session manager
+            logger.info(f"[BROKER_ORDERS] Getting/creating auth session for user {current.id}")
             auth = _get_or_create_auth_session(current.id, temp_env_file, db)
+
+            # Log session state
+            is_auth = auth.is_authenticated()
+            client = auth.get_client()
+            logger.info(
+                f"[BROKER_ORDERS] Session state for user {current.id}: "
+                f"is_authenticated={is_auth}, client={'available' if client else 'None'}"
+            )
+
+            # Check for stale session: is_authenticated() is True but client is None
+            # This can happen when session expires but is_authenticated() hasn't been updated yet
+            if is_auth and not client:
+                logger.warning(
+                    f"[BROKER_ORDERS] Stale session detected for user {current.id}: "
+                    f"is_authenticated={is_auth} but client is None. "
+                    "Clearing cache and forcing re-authentication"
+                )
+                from modules.kotak_neo_auto_trader.shared_session_manager import (
+                    get_shared_session_manager,
+                )
+
+                session_manager = get_shared_session_manager()
+                session_manager.clear_session(current.id)
+                logger.info(
+                    f"[BROKER_ORDERS] Cleared stale session for user {current.id}, "
+                    "creating new session"
+                )
+                # Force new session creation
+                auth = _get_or_create_auth_session(current.id, temp_env_file, db, force_new=True)
+                if not auth or not auth.is_authenticated():
+                    logger.error(f"[BROKER_ORDERS] Re-authentication failed for user {current.id}")
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "Broker session expired and re-authentication failed. "
+                            "Please refresh the page to reconnect."
+                        ),
+                    )
+                logger.info(f"[BROKER_ORDERS] Re-authentication successful for user {current.id}")
+                # Update session state after re-auth
+                is_auth = auth.is_authenticated()
+                client = auth.get_client()
+                logger.info(
+                    f"[BROKER_ORDERS] Updated session state for user {current.id}: "
+                    f"is_authenticated={is_auth}, client={'available' if client else 'None'}"
+                )
 
             # Create broker gateway
             broker_gateway = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
@@ -864,32 +1033,41 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
             # Connect to broker (only if not already connected)
             # broker.connect() calls auth.login() which triggers OTP,
             # so manually set client if already authenticated
-            if not auth.is_authenticated():
+            if not is_auth:
+                logger.info(
+                    f"[BROKER_ORDERS] User {current.id} not authenticated, attempting connection"
+                )
                 if not broker_gateway.connect():
+                    logger.error(
+                        f"[BROKER_ORDERS] Failed to connect broker gateway for user {current.id}"
+                    )
                     raise HTTPException(
                         status_code=503,
                         detail="Failed to connect to broker gateway. Please try again later.",
                     )
+                logger.info(
+                    f"[BROKER_ORDERS] Successfully connected broker gateway for user {current.id}"
+                )
             else:
                 # Auth is already authenticated, manually set client to avoid re-login
                 # This prevents OTP spam while ensuring broker is properly initialized
                 # Trust the cached auth - only re-authenticate if API calls actually fail
                 logger.debug(
-                    f"Auth already authenticated for user {current.id}, "
+                    f"[BROKER_ORDERS] Auth already authenticated for user {current.id}, "
                     "manually initializing broker client"
                 )
-                client = auth.get_client()
                 if client:
                     # Client is available - use it directly without calling connect()
                     broker_gateway._client = client
                     broker_gateway._connected = True
+                    logger.info(f"[BROKER_ORDERS] Using existing client for user {current.id}")
                 else:
                     # Client is None - this shouldn't happen if is_authenticated() is True
-                    # But if it does, clear cache and let it re-authenticate on next request
-                    # Don't force reconnect here to avoid OTP spam
+                    # But if it does, clear cache and force re-authentication
                     logger.warning(
-                        f"Auth says authenticated but client is None for user {current.id}, "
-                        "clearing cache - will re-authenticate on next request"
+                        f"[BROKER_ORDERS] Session inconsistency detected for user {current.id}: "
+                        f"is_authenticated={is_auth} but client is None. "
+                        "Clearing cache and forcing re-authentication"
                     )
                     from modules.kotak_neo_auto_trader.shared_session_manager import (
                         get_shared_session_manager,
@@ -897,16 +1075,59 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
 
                     session_manager = get_shared_session_manager()
                     session_manager.clear_session(current.id)
-                    raise HTTPException(
-                        status_code=503,
-                        detail=(
-                            "Broker session expired. Please refresh the page to reconnect. "
-                            "This should not trigger frequent OTP requests."
-                        ),
+                    logger.info(
+                        f"[BROKER_ORDERS] Cleared expired session for user {current.id}, "
+                        "creating new session"
+                    )
+                    # Force new session creation
+                    auth = _get_or_create_auth_session(
+                        current.id, temp_env_file, db, force_new=True
+                    )
+                    if not auth or not auth.is_authenticated():
+                        logger.error(
+                            f"[BROKER_ORDERS] Re-authentication failed for user {current.id}"
+                        )
+                        raise HTTPException(
+                            status_code=503,
+                            detail=(
+                                "Broker session expired and re-authentication failed. "
+                                "Please refresh the page to reconnect."
+                            ),
+                        )
+                    logger.info(
+                        f"[BROKER_ORDERS] Re-authentication successful for user {current.id}"
+                    )
+                    # Update broker gateway with new auth
+                    broker_gateway = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
+                    if not broker_gateway.connect():
+                        logger.error(
+                            f"[BROKER_ORDERS] Failed to reconnect broker gateway "
+                            f"after re-auth for user {current.id}"
+                        )
+                        raise HTTPException(
+                            status_code=503,
+                            detail="Failed to reconnect to broker gateway. Please try again later.",
+                        )
+                    logger.info(
+                        f"[BROKER_ORDERS] Successfully reconnected broker gateway "
+                        f"for user {current.id}"
                     )
 
             # Get orders from broker
-            broker_orders = broker_gateway.get_all_orders()
+            # This will automatically handle re-authentication if session expired
+            logger.info(f"[BROKER_ORDERS] Fetching orders for user {current.id}")
+            try:
+                broker_orders = broker_gateway.get_all_orders()
+                logger.info(
+                    f"[BROKER_ORDERS] Successfully fetched {len(broker_orders)} orders "
+                    f"for user {current.id}"
+                )
+            except Exception as orders_error:
+                logger.error(
+                    f"[BROKER_ORDERS] Error fetching orders for user {current.id}: {orders_error}",
+                    exc_info=True,
+                )
+                raise
 
             # Convert broker orders to simplified format
             orders_list = []
@@ -999,6 +1220,40 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
         ) from e
 
 
+@router.post("/session/clear")
+def clear_broker_session(
+    db: Session = Depends(get_db),  # noqa: B008
+    current: Users = Depends(get_current_user),  # noqa: B008
+) -> dict[str, str]:
+    """
+    Clear broker session for testing purposes.
+
+    This endpoint manually clears the broker session to simulate session expiration.
+    Useful for testing re-authentication logic without waiting for actual session expiry.
+    """
+    try:
+        from modules.kotak_neo_auto_trader.shared_session_manager import (
+            get_shared_session_manager,
+        )
+
+        session_manager = get_shared_session_manager()
+        session_manager.clear_session(current.id)
+        logger.info(
+            f"[BROKER_SESSION] Manually cleared session for user {current.id} (testing endpoint)"
+        )
+        return {
+            "status": "success",
+            "message": f"Broker session cleared for user {current.id}. "
+            "Next API call will trigger re-authentication.",
+        }
+    except Exception as e:
+        logger.error(f"[BROKER_SESSION] Error clearing session for user {current.id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear broker session: {str(e)}",
+        ) from e
+
+
 @router.get("/history", response_model=TradeHistory)
 def get_broker_trading_history(  # noqa: PLR0915, PLR0912
     from_date: Annotated[str | None, Query(description="Filter from date (ISO format)")] = None,
@@ -1078,7 +1333,8 @@ def get_broker_trading_history(  # noqa: PLR0915, PLR0912
         transactions = []
         for order in orders:
             side = "buy" if order.side.lower() == "buy" else "sell"
-            # Use order_id if available, otherwise use broker_order_id, otherwise use string representation of db id
+            # Use order_id if available, otherwise use broker_order_id,
+            # otherwise use string representation of db id
             order_identifier = order.order_id or order.broker_order_id or str(order.id)
             # Use execution_price if available, fall back to avg_price, then None
             order_price = order.execution_price or order.avg_price

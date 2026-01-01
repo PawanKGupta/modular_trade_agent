@@ -2649,11 +2649,35 @@ class AutoTradeEngine:
                 )
 
                 signals_repo = SignalsRepository(self.db, user_id=self.user_id)
-                # Use the base symbol (without series suffix like -EQ) for signal marking
-                # Signals table stores base symbols, so extract base from actual symbol
+                # Try multiple symbol variants to handle stored symbols with/without suffixes (.NS, -EQ)
                 base_symbol = actual_symbol.split("-")[0] if "-" in actual_symbol else actual_symbol
-                if signals_repo.mark_as_traded(base_symbol, user_id=self.user_id):
-                    logger.info(f"Marked signal for {base_symbol} as TRADED (user {self.user_id})")
+                candidates = [base_symbol]
+                upper_actual = actual_symbol.upper()
+                if upper_actual not in candidates:
+                    candidates.append(upper_actual)
+                # Add NSE-style ticker if missing
+                ticker_variant = (
+                    f"{base_symbol}.NS" if not base_symbol.endswith(".NS") else base_symbol
+                )
+                if ticker_variant not in candidates:
+                    candidates.append(ticker_variant)
+
+                marked = False
+                for candidate in candidates:
+                    try:
+                        if signals_repo.mark_as_traded(candidate, user_id=self.user_id):
+                            logger.info(
+                                f"Marked signal for {candidate} as TRADED (user {self.user_id})"
+                            )
+                            marked = True
+                            break
+                    except Exception as inner_mark_error:
+                        logger.debug(
+                            f"Mark-as-traded attempt failed for {candidate}: {inner_mark_error}"
+                        )
+
+                if not marked:
+                    logger.warning(f"Could not mark signal as TRADED for any variant: {candidates}")
             except Exception as mark_error:
                 # Don't fail order placement if marking fails
                 logger.warning(f"Failed to mark signal as traded for {actual_symbol}: {mark_error}")

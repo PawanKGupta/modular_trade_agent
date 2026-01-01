@@ -455,3 +455,32 @@ def pytest_configure_node(node):
     except Exception:
         # If there's an issue, it will be caught in the actual test
         pass
+
+
+@pytest.fixture(autouse=True, scope="function")
+def ensure_system_user(db_session):
+    """
+    Ensure a reserved system user (id=1) exists for audit logging in every test DB.
+    Handles both Session objects and tuple fixtures (session, user_id, ...).
+    """
+    from sqlalchemy.orm import Session
+
+    from src.infrastructure.db.models import UserRole, Users
+
+    # Handle tuple-returning fixtures: extract the session
+    if isinstance(db_session, tuple):
+        session = db_session[0]  # First element is always the session
+    elif isinstance(db_session, Session):
+        session = db_session
+    else:
+        # Fallback: assume it's a session-like object
+        session = db_session
+
+    user = session.query(Users).filter_by(id=1).first()
+    if not user:
+        user = Users(
+            id=1, email="system@tradeagent.example.com", password_hash="system", role=UserRole.ADMIN
+        )
+        session.add(user)
+        session.commit()
+    yield

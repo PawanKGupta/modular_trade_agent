@@ -585,12 +585,102 @@ class OrdersRepository:
         order.last_status_check = ist_now()
         order.reason = f"Order executed at Rs {order.execution_price:.2f}"
 
-        return self.update(order, auto_commit=auto_commit)
+        updated_order = self.update(order, auto_commit=auto_commit)
+
+        # Phase 2.1: Late fill detection - check if signal is EXPIRED when order fills
+        if order.side == "buy":
+            self._mark_signal_as_traded_with_late_fill_detection(order)
+
+        return updated_order
 
     def update_status_check(self, order: Orders) -> Orders:
         """Update the last status check timestamp"""
         order.last_status_check = ist_now()
         return self.update(order)
+
+    def _mark_signal_as_traded_with_late_fill_detection(self, order: Orders) -> None:
+        """
+        Helper method to mark signal as TRADED when order executes.
+        Detects late fills (when signal is EXPIRED) and marks with appropriate reason.
+
+        Only marks if:
+        - Order is a buy order
+        - Signal exists for this symbol
+
+        Args:
+            order: The order that was executed
+        """
+        if order.side != "buy":
+            return  # Only handle buy orders
+
+        try:
+            signals_repo = SignalsRepository(self.db, user_id=order.user_id)
+
+            # Extract base symbol (remove -EQ, -BE suffixes)
+            base_symbol = order.symbol.split("-")[0] if "-" in order.symbol else order.symbol
+            base_symbol = base_symbol.upper()
+
+            # Find the latest signal for this symbol
+            signal = self.db.execute(
+                select(Signals)
+                .where(Signals.symbol == base_symbol)
+                .order_by(Signals.ts.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if not signal:
+                return  # No signal found
+
+            # Check current signal status (base status or user status)
+            user_status = signals_repo.get_user_signal_status(signal.id, order.user_id)
+
+            # If no user status override, use base signal status
+            if user_status is None:
+                user_status = signal.status
+
+            # Determine if this is a late fill (signal is EXPIRED)
+            is_late_fill = user_status == SignalStatus.EXPIRED
+
+            # Mark signal as TRADED with appropriate reason
+            reason = "late_fill" if is_late_fill else "order_placed"
+
+            # Try multiple symbol variants to handle stored symbols with/without suffixes
+            candidates = [base_symbol]
+            upper_symbol = order.symbol.upper()
+            if upper_symbol not in candidates:
+                candidates.append(upper_symbol)
+            # Add NSE-style ticker if missing
+            ticker_variant = (
+                f"{base_symbol}.NS" if not base_symbol.endswith(".NS") else base_symbol
+            )
+            if ticker_variant not in candidates:
+                candidates.append(ticker_variant)
+
+            marked = False
+            for candidate in candidates:
+                try:
+                    if signals_repo.mark_as_traded(candidate, user_id=order.user_id, reason=reason):
+                        if is_late_fill:
+                            logger.info(
+                                f"Late fill detected: Order {order.id} executed for EXPIRED signal "
+                                f"{candidate} (user {order.user_id})"
+                            )
+                        marked = True
+                        break
+                except Exception as inner_mark_error:
+                    logger.debug(
+                        f"Mark-as-traded attempt failed for {candidate}: {inner_mark_error}"
+                    )
+
+            if not marked:
+                logger.debug(
+                    f"Could not mark signal as TRADED for any variant: {candidates} "
+                    f"(order {order.id})"
+                )
+
+        except Exception as e:
+            # Don't fail order update if signal marking fails
+            logger.warning(f"Failed to mark signal as TRADED for order {order.id}: {e}")
 
     def _mark_signal_as_failed(self, order: Orders) -> None:
         """

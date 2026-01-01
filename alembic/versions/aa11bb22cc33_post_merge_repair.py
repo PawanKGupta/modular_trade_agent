@@ -59,6 +59,29 @@ def upgrade():
 
     # 3) Normalize enum values to lowercase (PostgreSQL safe guards)
     if bind.dialect.name == "postgresql":
+        # First, update existing row data to lowercase (if uppercase values exist)
+        op.execute(
+            """
+            UPDATE orders SET trade_mode = LOWER(trade_mode::text)::trademode
+            WHERE trade_mode::text IN ('BROKER', 'PAPER');
+            """
+        )
+
+        op.execute(
+            """
+            UPDATE usersettings SET trade_mode = LOWER(trade_mode::text)::trademode
+            WHERE trade_mode::text IN ('BROKER', 'PAPER');
+            """
+        )
+
+        op.execute(
+            """
+            UPDATE users SET role = LOWER(role::text)::userrole
+            WHERE role::text IN ('ADMIN', 'USER');
+            """
+        )
+
+        # Then rename enum type labels if they still exist as uppercase
         # trademode -> ['paper','broker']
         op.execute(
             """

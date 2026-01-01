@@ -307,7 +307,8 @@ def test_test_broker_connection_success_updates_settings(monkeypatch):
 
     assert result.ok is True
     # Verify settings were NOT updated (test connection only, per implementation)
-    # The implementation comment says: "Test connection only - do NOT save broker mode or credentials"
+    # The implementation comment says:
+    # "Test connection only - do NOT save broker mode or credentials"
     assert len(repo.update_called) == 0
 
 
@@ -1899,3 +1900,572 @@ def test_get_broker_orders_cached_auth_authenticated_skips_login(monkeypatch):
         mock_auth.is_authenticated.assert_called()
         # Verify get_client was called to set broker client
         mock_auth.get_client.assert_called()
+
+
+# ============================================================================
+# Session Re-authentication Tests
+# ============================================================================
+
+
+def test_get_broker_portfolio_reauth_when_client_is_none(monkeypatch):
+    """
+    Test that portfolio endpoint forces re-authentication when
+    is_authenticated() returns True but get_client() returns None.
+    This simulates a stale session where the auth object exists but client is invalid.
+    """
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # First auth: is_authenticated=True but client=None (stale session)
+    # Session must be valid (not expired) for the stale session check to trigger
+    # If expired, SharedSessionManager will clear it before we get here
+    stale_auth = MagicMock()
+    stale_auth.is_authenticated.return_value = True
+    stale_auth.get_client.return_value = None  # Client is None - session is stale
+    # Mock is_session_valid to return True (session valid but client None)
+    stale_auth.is_session_valid.return_value = True
+
+    # New auth after re-authentication
+    new_auth = MagicMock()
+    new_auth.is_authenticated.return_value = True
+    new_client = MagicMock()
+    new_auth.get_client.return_value = new_client
+
+    mock_session_manager = MagicMock()
+    # First call returns stale auth, second call (with force_new) returns new auth
+    mock_session_manager.get_or_create_session.side_effect = [stale_auth, new_auth]
+
+    # Mock broker gateway
+    mock_holding = Holding(
+        symbol="RELIANCE.NS",
+        exchange=Exchange.NSE,
+        quantity=10,
+        average_price=Money(Decimal("2500.00")),
+        current_price=Money(Decimal("2600.00")),
+        last_updated=datetime.now(),
+    )
+
+    mock_broker = MagicMock()
+    mock_broker.get_holdings.return_value = [mock_holding]
+    mock_broker.get_account_limits.return_value = {
+        "available_margin": {"cash": 100000.0},
+    }
+    mock_broker.connect.return_value = True
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    # Mock yfinance
+    mock_ticker = MagicMock()
+    mock_ticker.info = {"currentPrice": 2600.0}
+
+    def mock_yf_ticker(symbol):
+        return mock_ticker
+
+    with (
+        patch(
+            "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+            return_value=mock_session_manager,
+        ),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+        patch("yfinance.Ticker", mock_yf_ticker),
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_portfolio(db=db_session, current=user)
+
+        # Should succeed after re-authentication
+        assert len(result.holdings) == 1
+
+        # Verify session was cleared and recreated
+        assert mock_session_manager.clear_session.called
+        assert mock_session_manager.clear_session.call_args[0][0] == user.id
+
+        # Verify _get_or_create_auth_session was called twice:
+        # 1. Initial call (returns stale auth)
+        # 2. With force_new=True (returns new auth)
+        assert mock_session_manager.get_or_create_session.call_count == 2
+        # Check that second call used force_new=True
+        second_call_kwargs = mock_session_manager.get_or_create_session.call_args_list[1].kwargs
+        assert second_call_kwargs.get("force_new") is True
+
+        # After re-auth, if is_auth is True and client is available,
+        # connect() is not called (client is set directly)
+        # So we don't check connect() here
+
+
+def test_get_broker_orders_reauth_when_client_is_none(monkeypatch):
+    """
+    Test that orders endpoint forces re-authentication when
+    is_authenticated() returns True but get_client() returns None.
+    This simulates a stale session where the auth object exists but client is invalid.
+    """
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # First auth: is_authenticated=True but client=None (stale session)
+    # Session must be valid (not expired) for the stale session check to trigger
+    # If expired, SharedSessionManager will clear it before we get here
+    stale_auth = MagicMock()
+    stale_auth.is_authenticated.return_value = True
+    stale_auth.get_client.return_value = None  # Client is None - session is stale
+    # Mock is_session_valid to return True (session valid but client None)
+    stale_auth.is_session_valid.return_value = True
+
+    # New auth after re-authentication
+    new_auth = MagicMock()
+    new_auth.is_authenticated.return_value = True
+    new_client = MagicMock()
+    new_auth.get_client.return_value = new_client
+
+    mock_session_manager = MagicMock()
+    # First call returns stale auth, second call (with force_new) returns new auth
+    mock_session_manager.get_or_create_session.side_effect = [stale_auth, new_auth]
+
+    # Mock broker gateway
+    mock_order = MagicMock()
+    mock_order.order_id = "ORDER123"  # Use order_id, not broker_order_id
+    mock_order.symbol = "RELIANCE-EQ"
+    mock_order.quantity = 10
+    mock_order.price = Money(Decimal("2500.00"))
+    # Mock transaction_type as an object with .value attribute
+    mock_transaction_type = MagicMock()
+    mock_transaction_type.value = "BUY"
+    mock_order.transaction_type = mock_transaction_type
+    # Mock status as an object with .value attribute
+    mock_status = MagicMock()
+    mock_status.value = "executed"
+    mock_order.status = mock_status
+    mock_order.placed_at = datetime.now()
+    mock_order.executed_at = datetime.now()
+
+    mock_broker = MagicMock()
+    mock_broker.get_all_orders.return_value = [mock_order]
+    mock_broker.connect.return_value = True
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch(
+            "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+            return_value=mock_session_manager,
+        ),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+        result = broker.get_broker_orders(db=db_session, current=user)
+
+        # Should succeed after re-authentication
+        assert len(result) == 1
+        assert result[0]["broker_order_id"] == "ORDER123"
+
+        # Verify session was cleared and recreated
+        assert mock_session_manager.clear_session.called
+        assert mock_session_manager.clear_session.call_args[0][0] == user.id
+
+        # Verify _get_or_create_auth_session was called twice:
+        # 1. Initial call (returns stale auth)
+        # 2. With force_new=True (returns new auth)
+        assert mock_session_manager.get_or_create_session.call_count == 2
+        # Check that second call used force_new=True
+        second_call_kwargs = mock_session_manager.get_or_create_session.call_args_list[1].kwargs
+        assert second_call_kwargs.get("force_new") is True
+
+        # After re-auth, if is_auth is True and client is available,
+        # connect() is not called (client is set directly)
+        # So we don't check connect() here
+
+
+def test_get_broker_portfolio_reauth_fails(monkeypatch):
+    """
+    Test that portfolio endpoint raises 503 when re-authentication fails
+    after detecting stale session (is_authenticated=True but client=None).
+    """
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Stale auth: is_authenticated=True but client=None
+    stale_auth = MagicMock()
+    stale_auth.is_authenticated.return_value = True
+    stale_auth.get_client.return_value = None
+
+    # Re-authentication fails - returns None or unauthenticated auth
+    failed_auth = MagicMock()
+    failed_auth.is_authenticated.return_value = False
+
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_or_create_session.side_effect = [stale_auth, failed_auth]
+
+    mock_broker = MagicMock()
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch(
+            "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+            return_value=mock_session_manager,
+        ),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            broker.get_broker_portfolio(db=db_session, current=user)
+
+        assert exc.value.status_code == 503
+        assert "session expired and re-authentication failed" in exc.value.detail.lower()
+
+        # Verify session was cleared
+        assert mock_session_manager.clear_session.called
+
+
+def test_get_broker_orders_reauth_fails(monkeypatch):
+    """
+    Test that orders endpoint raises 503 when re-authentication fails
+    after detecting stale session (is_authenticated=True but client=None).
+    """
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Stale auth: is_authenticated=True but client=None
+    stale_auth = MagicMock()
+    stale_auth.is_authenticated.return_value = True
+    stale_auth.get_client.return_value = None
+
+    # Re-authentication fails - returns None or unauthenticated auth
+    failed_auth = MagicMock()
+    failed_auth.is_authenticated.return_value = False
+
+    mock_session_manager = MagicMock()
+    mock_session_manager.get_or_create_session.side_effect = [stale_auth, failed_auth]
+
+    mock_broker = MagicMock()
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch(
+            "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+            return_value=mock_session_manager,
+        ),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            broker.get_broker_orders(db=db_session, current=user)
+
+        assert exc.value.status_code == 503
+        assert "session expired and re-authentication failed" in exc.value.detail.lower()
+
+        # Verify session was cleared
+        assert mock_session_manager.clear_session.called
+
+
+def test_get_or_create_auth_session_force_new(monkeypatch):
+    """
+    Test that _get_or_create_auth_session passes force_new parameter
+    to the shared session manager.
+    """
+    user_id = 42
+    temp_env_file = "/tmp/test.env"
+    db_session = MagicMock()
+
+    mock_session_manager = MagicMock()
+    mock_auth = MagicMock()
+    mock_session_manager.get_or_create_session.return_value = mock_auth
+
+    with patch(
+        "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+        return_value=mock_session_manager,
+    ):
+        # Test without force_new (default)
+        result1 = broker._get_or_create_auth_session(user_id, temp_env_file, db_session)
+        assert result1 == mock_auth
+        assert mock_session_manager.get_or_create_session.call_count == 1
+        first_call_kwargs = mock_session_manager.get_or_create_session.call_args_list[0].kwargs
+        assert first_call_kwargs.get("force_new") is False
+
+        # Test with force_new=True
+        result2 = broker._get_or_create_auth_session(
+            user_id, temp_env_file, db_session, force_new=True
+        )
+        assert result2 == mock_auth
+        assert mock_session_manager.get_or_create_session.call_count == 2
+        second_call_kwargs = mock_session_manager.get_or_create_session.call_args_list[1].kwargs
+        assert second_call_kwargs.get("force_new") is True
+
+
+def test_clear_broker_session_endpoint(monkeypatch):
+    """
+    Test the POST /api/v1/user/broker/session/clear endpoint
+    for manually clearing broker sessions during testing.
+    """
+    user = DummyUser(id=42)
+
+    mock_session_manager = MagicMock()
+
+    with patch(
+        "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+        return_value=mock_session_manager,
+    ):
+        db_session = MagicMock()
+        result = broker.clear_broker_session(db=db_session, current=user)
+
+        # Verify session was cleared
+        assert mock_session_manager.clear_session.called
+        assert mock_session_manager.clear_session.call_args[0][0] == user.id
+
+        # Verify response
+        assert result["status"] == "success"
+        assert "cleared" in result["message"].lower()
+        assert str(user.id) in result["message"]
+
+
+def test_clear_broker_session_endpoint_error_handling(monkeypatch):
+    """
+    Test that clear_broker_session endpoint handles errors gracefully.
+    """
+    user = DummyUser(id=42)
+
+    mock_session_manager = MagicMock()
+    mock_session_manager.clear_session.side_effect = Exception("Session clear failed")
+
+    with patch(
+        "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+        return_value=mock_session_manager,
+    ):
+        db_session = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            broker.clear_broker_session(db=db_session, current=user)
+
+        assert exc.value.status_code == 500
+        assert "Failed to clear broker session" in exc.value.detail
+
+
+def test_get_broker_portfolio_reauth_connect_fails(monkeypatch):
+    """
+    Test that portfolio endpoint raises 503 when re-authentication succeeds
+    but broker.connect() fails after re-authentication.
+    """
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Stale auth: is_authenticated=True but client=None
+    # Session must be valid (not expired) for the stale session check to trigger
+    stale_auth = MagicMock()
+    stale_auth.is_authenticated.return_value = True
+    stale_auth.get_client.return_value = None
+    stale_auth.is_session_valid.return_value = True  # Session valid but client None
+
+    # First re-auth succeeds but client is still None
+    # This triggers a second re-auth attempt in the else branch
+    first_reauth_auth = MagicMock()
+    first_reauth_auth.is_authenticated.return_value = True
+    first_reauth_auth.get_client.return_value = None  # Client still None after first re-auth
+
+    # Second re-auth succeeds but connect fails
+    second_reauth_auth = MagicMock()
+    second_reauth_auth.is_authenticated.return_value = True
+    second_reauth_auth.get_client.return_value = None  # Client None, will trigger connect()
+
+    mock_session_manager = MagicMock()
+    # First call returns stale auth, second call (force_new) returns first_reauth_auth,
+    # third call (force_new after client None in else branch) returns second_reauth_auth
+    mock_session_manager.get_or_create_session.side_effect = [
+        stale_auth,
+        first_reauth_auth,
+        second_reauth_auth,
+    ]
+
+    # Broker connect fails after second re-authentication
+    mock_broker = MagicMock()
+    mock_broker.connect.return_value = False
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch(
+            "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+            return_value=mock_session_manager,
+        ),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            broker.get_broker_portfolio(db=db_session, current=user)
+
+        assert exc.value.status_code == 503
+        # After second re-auth, if client is still None, it will try to connect
+        # and if connect fails, it should raise 503
+        assert "Failed to reconnect to broker gateway" in exc.value.detail
+
+        # Verify re-authentication was attempted multiple times
+        # 1. Initial call, 2. First re-auth (force_new), 3. Second re-auth (force_new)
+        assert mock_session_manager.get_or_create_session.call_count >= 3
+
+
+def test_get_broker_orders_reauth_connect_fails(monkeypatch):
+    """
+    Test that orders endpoint raises 503 when re-authentication succeeds
+    but broker.connect() fails after re-authentication.
+    """
+    user = DummyUser(id=42)
+
+    repo = DummySettingsRepo(object())
+    repo.settings.trade_mode = TradeMode.BROKER
+    repo.settings.broker_creds_encrypted = b"encrypted_creds"
+    monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+
+    def mock_decrypt(creds):
+        return {"api_key": "key", "api_secret": "secret"}
+
+    monkeypatch.setattr(broker, "decrypt_broker_credentials", mock_decrypt)
+
+    def mock_create_temp_env(creds):
+        return "/tmp/test.env"
+
+    monkeypatch.setattr(broker, "create_temp_env_file", mock_create_temp_env)
+
+    # Stale auth: is_authenticated=True but client=None
+    # Session must be valid (not expired) for the stale session check to trigger
+    stale_auth = MagicMock()
+    stale_auth.is_authenticated.return_value = True
+    stale_auth.get_client.return_value = None
+    stale_auth.is_session_valid.return_value = True  # Session valid but client None
+
+    # First re-auth succeeds but client is still None
+    # This triggers a second re-auth attempt
+    first_reauth_auth = MagicMock()
+    first_reauth_auth.is_authenticated.return_value = True
+    first_reauth_auth.get_client.return_value = None  # Client still None after first re-auth
+
+    # Second re-auth succeeds but connect fails
+    second_reauth_auth = MagicMock()
+    second_reauth_auth.is_authenticated.return_value = True
+    second_reauth_auth.get_client.return_value = None  # Client None, will trigger connect()
+
+    mock_session_manager = MagicMock()
+    # First call returns stale auth, second call (force_new) returns first_reauth_auth,
+    # third call (force_new after client None) returns second_reauth_auth
+    mock_session_manager.get_or_create_session.side_effect = [
+        stale_auth,
+        first_reauth_auth,
+        second_reauth_auth,
+    ]
+
+    # Broker connect fails after second re-authentication
+    mock_broker = MagicMock()
+    mock_broker.connect.return_value = False
+
+    def mock_broker_factory(broker_type, auth_handler):
+        return mock_broker
+
+    with (
+        patch(
+            "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+            return_value=mock_session_manager,
+        ),
+        patch(
+            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            mock_broker_factory,
+        ),
+    ):
+        db_session = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            broker.get_broker_orders(db=db_session, current=user)
+
+        assert exc.value.status_code == 503
+        # After second re-auth, if client is still None, it will try to connect
+        # and if connect fails, it should raise 503
+        assert "Failed to reconnect to broker gateway" in exc.value.detail
+
+        # Verify re-authentication was attempted multiple times
+        # 1. Initial call, 2. First re-auth (force_new), 3. Second re-auth (force_new)
+        assert mock_session_manager.get_or_create_session.call_count >= 3

@@ -10,13 +10,13 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Orders, Positions, PnlDaily, TradeMode
+from src.infrastructure.db.models import Orders, PnlDaily, Positions, TradeMode
 from src.infrastructure.persistence.orders_repository import OrdersRepository
-from src.infrastructure.persistence.positions_repository import PositionsRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
+from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 try:
     from utils.logger import logger
@@ -163,9 +163,7 @@ class PnlCalculationService:
             else:
                 # Fallback: Use avg_price as current price (0 unrealized P&L)
                 # This is a placeholder until we integrate price fetching
-                logger.warning(
-                    f"Position {pos.id} has no unrealized_pnl. Using 0 as placeholder."
-                )
+                logger.warning(f"Position {pos.id} has no unrealized_pnl. Using 0 as placeholder.")
                 pnl = 0.0
 
             unrealized_by_date[calculation_date] += pnl
@@ -187,28 +185,31 @@ class PnlCalculationService:
         Returns:
             Dictionary mapping date -> total fees
         """
-        # Query orders
-        orders = self.orders_repo.list(user_id)
+        # Query orders directly and apply optional filters
+        stmt = select(Orders).where(Orders.user_id == user_id)
+        if trade_mode:
+            stmt = stmt.where(Orders.trade_mode == trade_mode)
+        if target_date:
+            # Dialect-aware date filtering (SQLite vs Postgres)
+            dialect = getattr(getattr(self.db, "bind", None), "dialect", None)
+            dialect_name = getattr(dialect, "name", "")
+            if dialect_name == "sqlite":
+                stmt = stmt.where(func.date(Orders.placed_at) == target_date)
+            else:
+                start_dt = datetime.combine(target_date, datetime.min.time())
+                end_dt = datetime.combine(target_date, datetime.max.time())
+                stmt = stmt.where(Orders.placed_at >= start_dt, Orders.placed_at <= end_dt)
+
+        orders = list(self.db.execute(stmt).scalars().all())
 
         fees_by_date: dict[date, float] = defaultdict(float)
 
         for order in orders:
-            # Filter by trade mode if specified
-            if trade_mode and order.trade_mode != trade_mode:
-                continue
-
-            # Filter by date if specified
-            if target_date:
-                order_date = order.placed_at.date() if order.placed_at else None
-                if order_date != target_date:
-                    continue
-
             # Calculate fee: 0.1% of order value
             # Use avg_price if filled, otherwise use price
             order_value = (order.avg_price or order.price or 0) * (order.quantity or 0)
             fee = order_value * self.DEFAULT_FEE_RATE
-
-            order_date = order.placed_at.date() if order.placed_at else date.today()
+            order_date = order.placed_at.date() if order.placed_at else target_date or date.today()
             fees_by_date[order_date] += fee
 
         return dict(fees_by_date)
@@ -303,4 +304,3 @@ class PnlCalculationService:
                 return order
 
         return None
-

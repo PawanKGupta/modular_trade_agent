@@ -457,6 +457,9 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             order_statistics=order_statistics,
         )
 
+    except HTTPException:
+        # Re-raise HTTPException as-is (e.g., 404 for account not initialized)
+        raise
     except Exception as e:
         logger.exception(f"Error fetching paper trading portfolio for user {current.id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch portfolio: {str(e)}") from e

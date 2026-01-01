@@ -9,6 +9,14 @@ from sqlalchemy.orm import Session
 from src.infrastructure.db.models import Positions
 from src.infrastructure.db.timezone_utils import ist_now
 
+# Import logger for sync operations
+try:
+    from utils.logger import logger
+except ImportError:
+    import logging
+
+    logger = logging.getLogger(__name__)
+
 try:
     from utils.logger import logger
 except ImportError:
@@ -174,6 +182,26 @@ class PositionsRepository:
         if auto_commit:
             self.db.commit()
             self.db.refresh(pos)
+
+            # Event-driven sync: Mark signal as TRADED if position exists
+            # Only sync when auto_commit=True (after commit, outside transaction)
+            # Only for open positions (quantity > 0)
+            if quantity > 0:
+                try:
+                    from src.infrastructure.persistence.signals_repository import (
+                        SignalsRepository,
+                    )
+
+                    signals_repo = SignalsRepository(self.db, user_id=user_id)
+                    # Sync only this symbol (efficient, prevents double marking)
+                    signals_repo.sync_traded_status_for_symbol(symbol, user_id=user_id)
+                except Exception as e:
+                    # Graceful degradation - don't fail position creation if sync fails
+                    logger.warning(
+                        f"Signal sync failed for {symbol} (user {user_id}): {e}",
+                        exc_info=False,
+                    )
+
         return pos
 
     def count_open(self, user_id: int) -> int:

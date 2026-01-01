@@ -63,12 +63,27 @@ class MultiUserTradingService:
         self._service_status_repo = ServiceStatusRepository(db)
         self._settings_repo = SettingsRepository(db)
         self._config_repo = UserTradingConfigRepository(db)
-        self._schedule_manager = ScheduleManager(db)
         self._notification_repo = NotificationRepository(db)
         self._logger = get_user_logger(
             user_id=0, db=db, module="MultiUserTradingService"
         )  # System-level logger
         self._task_name = "unified_service"
+        # Expose ScheduleManager type for tests/introspection without creating a shared instance
+        # Actual scheduler uses thread-local instances with thread-local DB sessions
+        self._schedule_manager = ScheduleManager
+
+    def get_schedule_manager(self, db_session: Session) -> ScheduleManager:
+        """Return a ScheduleManager bound to the provided session.
+
+        Callers are responsible for creating and managing the lifecycle of the
+        SQLAlchemy session passed here (e.g., thread-local SessionLocal inside
+        scheduler threads). This helper keeps the intended usage explicit and
+        avoids accidental reuse of shared state across threads.
+        """
+        if db_session is None:
+            raise ValueError("db_session is required to create a ScheduleManager")
+
+        return self._schedule_manager(db_session)
 
     def _run_paper_trading_scheduler(  # noqa: PLR0912, PLR0915
         self, service: PaperTradingServiceAdapter, user_id: int
@@ -84,7 +99,8 @@ class MultiUserTradingService:
             user_id: User ID for this service
         """
         # Create a new database session for this thread
-        from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
+        from src.infrastructure.db.connection_monitor import log_pool_status  # noqa: PLC0415
+        from src.infrastructure.db.session import SessionLocal, engine  # noqa: PLC0415
 
         thread_db = SessionLocal()
 
@@ -101,6 +117,15 @@ class MultiUserTradingService:
             service.running = True
             last_check = None
             heartbeat_counter = 0  # Log heartbeat every 5 minutes
+            pool_log_counter = 0  # Log pool status every 15 minutes
+
+            # Initial heartbeat on start to ensure early commit/rollback paths are exercised
+            try:
+                thread_status_repo = ServiceStatusRepository(thread_db)
+                thread_status_repo.update_heartbeat(user_id)
+                thread_db.commit()
+            except Exception:
+                thread_db.rollback()
 
             while service.running and not getattr(service, "shutdown_requested", False):
                 try:
@@ -299,6 +324,12 @@ class MultiUserTradingService:
                                 f"(running for {heartbeat_counter // 60} minutes)",
                                 action="scheduler",
                             )
+
+                        # Log pool status every 15 minutes
+                        pool_log_counter += 1
+                        if pool_log_counter % 900 == 0:  # Every 15 minutes
+                            log_pool_status(engine, user_logger)
+
                     except Exception as e:
                         # Skip locked errors to avoid noisy logs / retries
                         if "database is locked" not in str(e).lower():

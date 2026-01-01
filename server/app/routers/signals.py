@@ -141,15 +141,19 @@ def buying_zone(
     ]
 
 
+from fastapi import Body
+
+
 @router.patch("/signals/{symbol}/reject")
 def reject_signal(
     symbol: str,
+    reason: str = Body(default="", embed=True),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
     """Mark a signal as REJECTED - user manually decided not to trade it"""
     repo = SignalsRepository(db, user_id=user.id)
-    success = repo.mark_as_rejected(symbol, user_id=user.id)
+    success = repo.mark_as_rejected(symbol, user_id=user.id, reason=reason)
 
     if not success:
         raise HTTPException(
@@ -161,18 +165,20 @@ def reject_signal(
         "message": f"Signal for {symbol} marked as REJECTED",
         "symbol": symbol,
         "status": "rejected",
+        "reason": reason,
     }
 
 
 @router.patch("/signals/{symbol}/activate")
 def activate_signal(
     symbol: str,
+    reason: str = Body(default="", embed=True),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
     """Mark a signal as ACTIVE again - reactivate a rejected or traded signal"""
     repo = SignalsRepository(db, user_id=user.id)
-    success = repo.mark_as_active(symbol, user_id=user.id)
+    success = repo.mark_as_active(symbol, user_id=user.id, reason=reason)
 
     if not success:
         raise HTTPException(
@@ -186,4 +192,5 @@ def activate_signal(
         "message": f"Signal for {symbol} marked as ACTIVE",
         "symbol": symbol,
         "status": "active",
+        "reason": reason,
     }

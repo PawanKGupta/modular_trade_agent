@@ -103,6 +103,14 @@ class DummySignalsRepo:
         self.mark_active_called = []
         self.mark_active_result = True
 
+    def mark_as_rejected(self, symbol, user_id=None, reason=None):
+        self.mark_rejected_called.append((symbol, reason))
+        return self.mark_rejected_result
+
+    def mark_as_active(self, symbol, user_id=None, reason=None):
+        self.mark_active_called.append((symbol, reason))
+        return self.mark_active_result
+
     def recent(self, limit=100, active_only=False):
         self.recent_called.append((limit, active_only))
         return self.recent_items
@@ -114,14 +122,6 @@ class DummySignalsRepo:
     def last_n_dates(self, n, limit=100):
         self.last_n_dates_called.append((n, limit))
         return self.last_n_dates_items
-
-    def mark_as_rejected(self, symbol, user_id=None):
-        self.mark_rejected_called.append(symbol)
-        return self.mark_rejected_result
-
-    def mark_as_active(self, symbol, user_id=None):
-        self.mark_active_called.append(symbol)
-        return self.mark_active_result
 
     def mark_time_expired_signals(self):
         """Mock method for marking time-expired signals - returns count of expired signals"""
@@ -367,13 +367,21 @@ def test_buying_zone_handles_none_fields(signals_repo, current_user):
 def test_reject_signal_success(signals_repo, current_user):
     signals_repo.mark_rejected_result = True
 
-    result = signals.reject_signal(symbol="RELIANCE.NS", db=None, user=current_user)
-
+    # Test with reason
+    result = signals.reject_signal(
+        symbol="RELIANCE.NS", reason="User decided to skip", db=None, user=current_user
+    )
     assert result["message"] == "Signal for RELIANCE.NS marked as REJECTED"
     assert result["symbol"] == "RELIANCE.NS"
     assert result["status"] == "rejected"
+    assert result["reason"] == "User decided to skip"
     assert len(signals_repo.mark_rejected_called) == 1
-    assert signals_repo.mark_rejected_called[0] == "RELIANCE.NS"
+    assert signals_repo.mark_rejected_called[0] == ("RELIANCE.NS", "User decided to skip")
+
+    # Test without reason (should default to empty string)
+    # When calling directly (not through FastAPI), Body() doesn't resolve, so pass explicitly
+    result2 = signals.reject_signal(symbol="TCS.NS", reason="", db=None, user=current_user)
+    assert result2["reason"] == ""
 
 
 def test_reject_signal_not_found(signals_repo, current_user):
@@ -447,13 +455,21 @@ def test_buying_zone_none_status_filter(signals_repo, current_user):
 def test_activate_signal_success(signals_repo, current_user):
     signals_repo.mark_active_result = True
 
-    result = signals.activate_signal(symbol="RELIANCE.NS", db=None, user=current_user)
-
+    # Test with reason
+    result = signals.activate_signal(
+        symbol="RELIANCE.NS", reason="Manual reactivation", db=None, user=current_user
+    )
     assert result["message"] == "Signal for RELIANCE.NS marked as ACTIVE"
     assert result["symbol"] == "RELIANCE.NS"
     assert result["status"] == "active"
+    assert result["reason"] == "Manual reactivation"
     assert len(signals_repo.mark_active_called) == 1
-    assert signals_repo.mark_active_called[0] == "RELIANCE.NS"
+    assert signals_repo.mark_active_called[0] == ("RELIANCE.NS", "Manual reactivation")
+
+    # Test without reason (should default to empty string)
+    # When calling directly (not through FastAPI), Body() doesn't resolve, so pass explicitly
+    result2 = signals.activate_signal(symbol="TCS.NS", reason="", db=None, user=current_user)
+    assert result2["reason"] == ""
 
 
 def test_activate_signal_not_found_or_expired(signals_repo, current_user):

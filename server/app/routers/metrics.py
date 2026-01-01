@@ -9,10 +9,12 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.infrastructure.db.connection_monitor import check_pool_health, get_pool_status
 from src.infrastructure.db.models import Orders, Positions, TradeMode, Users
+from src.infrastructure.db.session import engine
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
 from ..core.deps import get_current_user, get_db
@@ -148,9 +150,7 @@ def get_dashboard_metrics(
 
         # Calculate metrics
         win_rate = (profitable_trades / total_trades * 100) if total_trades > 0 else 0.0
-        avg_profit_per_trade = (
-            total_profit / profitable_trades if profitable_trades > 0 else 0.0
-        )
+        avg_profit_per_trade = total_profit / profitable_trades if profitable_trades > 0 else 0.0
 
         return TradeMetrics(
             total_trades=total_trades,
@@ -170,9 +170,7 @@ def get_dashboard_metrics(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to calculate metrics: {str(e)}"
-        ) from e
+        raise HTTPException(status_code=500, detail=f"Failed to calculate metrics: {str(e)}") from e
 
 
 @router.get("/dashboard/metrics/daily", response_model=dict)
@@ -255,3 +253,52 @@ def get_daily_metrics(
         raise HTTPException(
             status_code=500, detail=f"Failed to calculate daily metrics: {str(e)}"
         ) from e
+
+
+class ConnectionPoolStatus(BaseModel):
+    """Database connection pool health status"""
+
+    pool_size: int
+    checked_in: int
+    checked_out: int
+    overflow: int
+    max_overflow: int
+    total_connections: int
+    utilization_percent: float
+    is_healthy: bool
+    health_message: str
+
+
+@router.get("/system/db-pool", response_model=ConnectionPoolStatus)
+def get_db_connection_pool_status(
+    current: Users = Depends(get_current_user),  # noqa: B008
+):
+    """
+    Get database connection pool status and health metrics.
+
+    Requires authentication. Returns current pool utilization and health status.
+
+    Returns:
+        ConnectionPoolStatus with pool metrics and health status
+    """
+    try:
+        # Get pool status
+        status = get_pool_status(engine)
+
+        # Check pool health
+        is_healthy, health_message = check_pool_health(engine)
+
+        return ConnectionPoolStatus(
+            pool_size=status["pool_size"],
+            checked_in=status["checked_in"],
+            checked_out=status["checked_out"],
+            overflow=status["overflow"],
+            max_overflow=status["max_overflow"],
+            total_connections=status["total_connections"],
+            utilization_percent=status["utilization_percent"],
+            is_healthy=is_healthy,
+            health_message=health_message,
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get pool status: {str(e)}") from e

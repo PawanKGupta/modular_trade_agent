@@ -149,7 +149,7 @@ class PaperTradingServiceAdapter:
             # Initialize paper trading broker
             self.logger.info("Initializing paper trading broker...", action="initialize")
             try:
-                self.broker = PaperTradingBrokerAdapter(self.config)
+                self.broker = PaperTradingBrokerAdapter(self.config, db_session=self.db)
             except Exception as broker_init_error:
                 self.logger.error(
                     f"Failed to create paper trading broker: {broker_init_error}",
@@ -868,6 +868,30 @@ class PaperTradingServiceAdapter:
                         f"Failed to generate report: {e}", exc_info=e, action="run_eod_cleanup"
                     )
 
+            # EOD sync: Sync TRADED status from positions/orders
+            # This ensures all signals are correctly marked before next trading day
+            try:
+                from src.infrastructure.persistence.signals_repository import (
+                    SignalsRepository,
+                )
+
+                signals_repo = SignalsRepository(self.db, user_id=self.user_id)
+                synced_count = signals_repo.sync_traded_status_from_positions_and_orders(
+                    user_id=self.user_id
+                )
+                if synced_count > 0:
+                    self.logger.info(
+                        f"EOD sync: Marked {synced_count} signal(s) as TRADED "
+                        f"(user {self.user_id})",
+                        action="run_eod_cleanup",
+                    )
+                    task_context["synced_signals"] = synced_count
+            except Exception as e:
+                self.logger.warning(
+                    f"EOD sync failed (user {self.user_id}): {e}",
+                    action="run_eod_cleanup",
+                )
+
             # Reset flags for next day
             self.logger.info(
                 "Resetting task flags for next trading day...", action="run_eod_cleanup"
@@ -930,13 +954,19 @@ class PaperTradingServiceAdapter:
                 ticker = f"{symbol_base}.NS"  # Use base symbol for ticker
                 quantity = holding.quantity
 
+                # Log processing of this holding
+                self.logger.info(
+                    f"Processing holding: {symbol} (base: {symbol_base}, qty: {quantity}, ticker: {ticker})",
+                    action="_place_sell_orders",
+                )
+
                 # Skip if already have active sell order (in memory or broker)
                 # Compare using base symbols since active_sell_orders might have base symbols
                 if (
                     symbol_base in active_sell_base_symbols
                     or symbol_base in pending_sell_base_symbols
                 ):
-                    self.logger.debug(
+                    self.logger.info(
                         f"Skipping {symbol} - already has active sell order "
                         f"(in memory: {symbol_base in active_sell_base_symbols}, "
                         f"in broker: {symbol_base in pending_sell_base_symbols})",
@@ -998,6 +1028,11 @@ class PaperTradingServiceAdapter:
                 # Calculate EMA9 target (initial entry - will be updated on re-entry)
                 ema9_target = self._calculate_ema9(ticker)
 
+                self.logger.info(
+                    f"EMA9 calculation for {ticker}: {ema9_target}",
+                    action="_place_sell_orders",
+                )
+
                 if ema9_target is None or ema9_target <= 0:
                     self.logger.warning(
                         f"Could not calculate EMA9 for {symbol}, skipping",
@@ -1017,7 +1052,15 @@ class PaperTradingServiceAdapter:
                 )
                 order._metadata = {"original_ticker": ticker}
 
+                self.logger.info(
+                    f"Placing sell order: {symbol} x{quantity} @ Rs {ema9_target:.2f}",
+                    action="_place_sell_orders",
+                )
                 order_id = self.broker.place_order(order)
+                self.logger.info(
+                    f"place_order returned: {order_id}",
+                    action="_place_sell_orders",
+                )
 
                 if order_id:
                     # Track this sell order (target will be updated on re-entry)
@@ -1036,7 +1079,8 @@ class PaperTradingServiceAdapter:
                     )
                 else:
                     self.logger.warning(
-                        f"Failed to place sell order for {symbol}", action="_place_sell_orders"
+                        f"Failed to place sell order for {symbol} - broker.place_order returned None",
+                        action="_place_sell_orders",
                     )
 
             except Exception as e:
@@ -1111,8 +1155,7 @@ class PaperTradingServiceAdapter:
                 rsi = data.iloc[-1]["rsi10"]
 
                 # Exit Condition 1: High >= Frozen Target (primary exit)
-                # Note: Sell order is already placed by _place_sell_orders()
-                # This just logs and removes from tracking once executed
+                # When high touches target, force execution at target price
                 if high >= target_price:
                     self.logger.info(
                         f"? EXIT CONDITION MET: {symbol} - "
@@ -1130,15 +1173,65 @@ class PaperTradingServiceAdapter:
                         f"(Est. P&L: {pnl_pct:+.2f}%)",
                         action="_monitor_sell_orders",
                     )
-                    # Note: Actual order execution happens via check_and_execute_pending_orders()
-                    # Remove from tracking if no longer in holdings
-                    holding = self.broker.get_holding(symbol)
-                    if not holding or holding.quantity == 0:
-                        symbols_to_remove.append(symbol)
-                        self.logger.info(
-                            f"Position closed for {symbol}, removing from tracking",
+
+                    # Force execute at target price since high touched it
+                    # Even if current price dropped below, we assume fill at target
+                    from modules.kotak_neo_auto_trader.domain import (
+                        Money,
+                        Order,
+                        OrderType,
+                        TransactionType,
+                    )
+
+                    target_order = Order(
+                        symbol=symbol,
+                        quantity=order_info["qty"],
+                        order_type=OrderType.MARKET,  # Use MARKET to force immediate execution
+                        transaction_type=TransactionType.SELL,
+                        price=Money(target_price),  # Will execute at this price
+                    )
+                    target_order._metadata = {
+                        "original_ticker": ticker,
+                        "exit_reason": "Target Hit",
+                    }
+
+                    try:
+                        # Cancel existing limit order if any
+                        pending_orders = self.broker.get_all_orders()
+                        for pending in pending_orders:
+                            if (
+                                pending.symbol.replace(".NS", "").replace("-EQ", "") == symbol
+                                and pending.transaction_type.value == "SELL"
+                                and pending.status.value in ["PENDING", "OPEN"]
+                            ):
+                                try:
+                                    self.broker.cancel_order(pending.order_id)
+                                except Exception:
+                                    pass  # Ignore if already executed/cancelled
+                                break
+
+                        # Place market order - will execute immediately at target price
+                        self.broker.place_order(target_order)
+
+                        # Verify position is actually closed before removing from tracking
+                        holding = self.broker.get_holding(symbol)
+                        if not holding or holding.quantity == 0:
+                            symbols_to_remove.append(symbol)
+                            self.logger.info(
+                                f"Position closed for {symbol} @ Rs {target_price:.2f}",
+                                action="_monitor_sell_orders",
+                            )
+                        else:
+                            self.logger.warning(
+                                f"Target exit placed for {symbol} but position still open - will retry",
+                                action="_monitor_sell_orders",
+                            )
+                    except Exception as e:
+                        self.logger.error(
+                            f"Failed to execute target exit for {symbol}: {e}",
                             action="_monitor_sell_orders",
                         )
+
                     continue
 
                 # Exit Condition 2: RSI > 50 (secondary exit for failing stocks)
@@ -2186,16 +2279,45 @@ class PaperTradingEngineAdapter:
                                 action="place_new_entries",
                             )
 
-                    # Mark signal as TRADED
+                    # Mark signal as TRADED (try base and ticker variants to avoid suffix mismatches)
                     try:
                         from src.infrastructure.persistence.signals_repository import (
                             SignalsRepository,
                         )
 
                         signals_repo = SignalsRepository(self.db, user_id=self.user_id)
-                        if signals_repo.mark_as_traded(symbol, user_id=self.user_id):
-                            self.logger.info(
-                                f"Marked signal for {symbol} as TRADED (user {self.user_id})",
+
+                        # Try multiple symbol variants to handle stored symbols with/without suffix
+                        candidates: list[str] = []
+                        if symbol:
+                            candidates.append(symbol)
+                        ticker_upper = rec.ticker.upper()
+                        if ticker_upper not in candidates:
+                            candidates.append(ticker_upper)
+                        # Normalized base symbol (e.g., MIRZAINT from MIRZAINT.NS)
+                        normalized = extract_base_symbol(ticker_upper).upper()
+                        if normalized not in candidates:
+                            candidates.append(normalized)
+
+                        mark_success = False
+                        for candidate in candidates:
+                            try:
+                                if signals_repo.mark_as_traded(candidate, user_id=self.user_id):
+                                    self.logger.info(
+                                        f"Marked signal for {candidate} as TRADED (user {self.user_id})",
+                                        action="place_new_entries",
+                                    )
+                                    mark_success = True
+                                    break
+                            except Exception as inner_mark_error:
+                                self.logger.debug(
+                                    f"Mark-as-traded attempt failed for {candidate}: {inner_mark_error}",
+                                    action="place_new_entries",
+                                )
+
+                        if not mark_success:
+                            self.logger.warning(
+                                f"Could not mark signal as TRADED for any variant: {candidates}",
                                 action="place_new_entries",
                             )
                     except Exception as mark_error:

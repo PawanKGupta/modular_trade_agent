@@ -755,6 +755,162 @@ class TestPaperTradingSellMonitoring:
         # Verify check_and_execute_pending_orders was called
         assert adapter_with_holdings.broker.check_and_execute_pending_orders.called
 
+    def test_monitor_sell_orders_target_reached_market_order_placed(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """Test that MARKET order is placed when target is reached (not LIMIT)"""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        # Set up active sell order with frozen target
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_123",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+                "entry_price": 2500.0,
+            }
+        }
+
+        # Mock get_holding to return None (position closed)
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=None)
+
+        # Mock get_all_orders to return pending order
+        from modules.kotak_neo_auto_trader.domain import (
+            Order,
+            OrderStatus,
+            OrderType,
+            TransactionType,
+        )
+
+        pending_order = MagicMock()
+        pending_order.symbol = "RELIANCE"
+        pending_order.transaction_type.value = "SELL"
+        pending_order.status.value = "PENDING"
+        pending_order.order_id = "PENDING_123"
+        adapter_with_holdings.broker.get_all_orders = MagicMock(return_value=[pending_order])
+
+        # Mock OHLCV data where High >= Target
+        mock_data = pd.DataFrame(
+            {
+                "high": [2650.0],
+                "close": [2620.0],
+                "rsi10": [45.0],
+            }
+        )
+
+        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
+            with patch("pandas_ta.rsi") as mock_rsi:
+                mock_data["rsi10"] = 45.0
+                mock_rsi.return_value = pd.Series([45.0])
+
+                adapter_with_holdings._monitor_sell_orders()
+
+        # Verify MARKET order was placed (not LIMIT)
+        assert adapter_with_holdings.broker.place_order.called
+        call_args = adapter_with_holdings.broker.place_order.call_args
+        placed_order = call_args[0][0]
+        assert placed_order.order_type.name == "MARKET"
+        assert placed_order.transaction_type.name == "SELL"
+        assert placed_order.price.amount == 2600.0  # At target price
+
+    def test_monitor_sell_orders_target_reached_position_not_closed(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """Test that position remains tracked if not actually closed after order placement"""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        # Set up active sell order
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_123",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+                "entry_price": 2500.0,
+            }
+        }
+
+        # Mock get_holding to return position still open (qty > 0)
+        mock_holding = MagicMock()
+        mock_holding.quantity = 40  # Position still open
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=mock_holding)
+
+        # Mock OHLCV data where High >= Target
+        mock_data = pd.DataFrame(
+            {
+                "high": [2650.0],
+                "close": [2620.0],
+                "rsi10": [45.0],
+            }
+        )
+
+        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
+            with patch("pandas_ta.rsi") as mock_rsi:
+                mock_data["rsi10"] = 45.0
+                mock_rsi.return_value = pd.Series([45.0])
+
+                adapter_with_holdings._monitor_sell_orders()
+
+        # Order should still be tracked (position not closed)
+        assert "RELIANCE" in adapter_with_holdings.active_sell_orders
+
+    def test_monitor_sell_orders_target_reached_cancels_pending_order(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """Test that pending limit order is cancelled when target is reached"""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        # Set up active sell order
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_123",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+                "entry_price": 2500.0,
+            }
+        }
+
+        # Mock get_holding to return None
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=None)
+
+        # Mock get_all_orders to return pending order
+        pending_order = MagicMock()
+        pending_order.symbol = "RELIANCE"
+        pending_order.transaction_type.value = "SELL"
+        pending_order.status.value = "OPEN"
+        pending_order.order_id = "PENDING_ORDER_456"
+        adapter_with_holdings.broker.get_all_orders = MagicMock(return_value=[pending_order])
+
+        # Mock OHLCV data where High >= Target
+        mock_data = pd.DataFrame(
+            {
+                "high": [2650.0],
+                "close": [2620.0],
+                "rsi10": [45.0],
+            }
+        )
+
+        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
+            with patch("pandas_ta.rsi") as mock_rsi:
+                mock_data["rsi10"] = 45.0
+                mock_rsi.return_value = pd.Series([45.0])
+
+                adapter_with_holdings._monitor_sell_orders()
+
+        # Verify cancel_order was called
+        adapter_with_holdings.broker.cancel_order.assert_called_once_with("PENDING_ORDER_456")
+
     def test_monitor_sell_orders_rsi_exit(self, db_session, test_user, adapter_with_holdings):
         """Test exit condition: RSI > 50 (falling knife)"""
         from unittest.mock import patch
