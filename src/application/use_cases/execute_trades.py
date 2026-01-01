@@ -7,6 +7,7 @@ Places buy/sell orders based on analysis recommendations and records trade histo
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from math import floor
 
 from ..dto.analysis_response import BulkAnalysisResponse, AnalysisResponse
 from utils.logger import logger
@@ -51,12 +52,39 @@ class ExecuteTradesUseCase:
         broker_gateway: IBrokerGateway,
         trade_history_repo=None,
         default_quantity: int = 1,
+        user_id: Optional[int] = None,
+        db_session=None,
     ):
         self.broker = broker_gateway
         self.trade_history = trade_history_repo
         self.default_quantity = max(1, int(default_quantity))
+        self.user_id = user_id
+        self.db_session = db_session
         # Use the module's PlaceOrderUseCase to convert DTO -> domain Order
         self.place_order_uc = PlaceOrderUseCase(broker_gateway=self.broker)
+
+    def _get_execution_capital(self) -> float:
+        """
+        Get execution capital from user config or use default.
+
+        Returns:
+            Execution capital per trade (default: 1.0 if no config available, ensures minimum 1 qty)
+        """
+        if self.user_id and self.db_session:
+            try:
+                from src.infrastructure.persistence.user_trading_config_repository import (
+                    UserTradingConfigRepository,
+                )
+                config_repo = UserTradingConfigRepository(self.db_session)
+                config = config_repo.get_or_create_default(self.user_id)
+                if config and config.user_capital:
+                    return float(config.user_capital)
+            except Exception as e:
+                logger.warning(f"Failed to get user capital from config: {e}, using default")
+
+        # Fallback to 1.0 if no user config available
+        # This ensures minimum 1 qty in worst case (qty = max(1, floor(1/price)) = 1)
+        return 1.0
 
     def execute(
         self,
@@ -75,6 +103,10 @@ class ExecuteTradesUseCase:
                     summary.success = False
                     return summary
 
+            # Get execution capital from user config (fallback to 1.0)
+            default_execution_capital = self._get_execution_capital()
+            logger.info(f"Using execution capital: Rs {default_execution_capital:,.0f} per trade (from user config)")
+
             # Place BUY orders for candidates
             buy_candidates = bulk_response.get_buy_candidates(
                 min_combined_score=min_combined_score,
@@ -83,7 +115,32 @@ class ExecuteTradesUseCase:
 
             for stock in buy_candidates:
                 try:
-                    qty = self.default_quantity
+                    # Try to get execution_capital from stock recommendation first
+                    stock_execution_capital = getattr(stock, 'execution_capital', None)
+
+                    # Use stock's execution_capital if available, otherwise use user config
+                    if stock_execution_capital and stock_execution_capital > 0:
+                        capital_to_use = stock_execution_capital
+                    else:
+                        capital_to_use = default_execution_capital
+
+                    price = stock.last_close
+                    if price <= 0:
+                        logger.warning(f"Invalid price for {stock.ticker}: {price}")
+                        summary.orders_failed.append({
+                            "ticker": stock.ticker,
+                            "error": f"Invalid price: {price}"
+                        })
+                        continue
+
+                    # Calculate quantity based on execution capital and price
+                    # max(1, ...) ensures minimum 1 qty even if capital is very low
+                    qty = max(1, floor(capital_to_use / price))
+
+                    logger.debug(
+                        f"Calculated quantity for {stock.ticker}: "
+                        f"{qty} shares (capital: Rs {capital_to_use:,.0f}, price: Rs {price:.2f})"
+                    )
                     req = OrderRequest.market_buy(
                         symbol=stock.ticker,
                         quantity=qty,
