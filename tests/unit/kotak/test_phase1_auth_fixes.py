@@ -414,17 +414,29 @@ class TestReauthRateLimiting(unittest.TestCase):
             session1 = self.manager.get_or_create_session(user_id, str(self.env_path))
             self.assertIsNotNone(session1)
 
-        # Record re-auth time
-        self.manager._last_reauth_time[user_id] = time.time()
+        # Ensure session is still valid (not expired) - this is required for cooldown to apply
+        # With our fix, expired sessions bypass cooldown
+        # Set session_created_at to current time to make it valid (TTL is 3300 seconds = 55 minutes)
+        if hasattr(session1, "session_created_at"):
+            session1.session_created_at = time.time()  # Make session valid
+        # Also ensure is_logged_in is True
+        if hasattr(session1, "is_logged_in"):
+            session1.is_logged_in = True
+        # Mock is_session_valid to return True
+        with patch.object(session1, "is_session_valid", return_value=True):
+            # Record re-auth time
+            self.manager._last_reauth_time[user_id] = time.time()
 
-        # Try to re-auth immediately (should be blocked by cooldown)
-        with patch.object(KotakNeoAuth, "login") as mock_login:
-            session2 = self.manager.get_or_create_session(user_id, str(self.env_path))
+            # Try to re-auth immediately (should be blocked by cooldown)
+            with patch.object(KotakNeoAuth, "login") as mock_login:
+                session2 = self.manager.get_or_create_session(user_id, str(self.env_path))
 
-            # Should return existing session (not create new one)
-            self.assertIsNotNone(session2)
-            # Should NOT call login (cooldown active)
-            mock_login.assert_not_called()
+                # Should return existing session (not create new one)
+                self.assertIsNotNone(session2)
+                # Should be the same session object
+                self.assertIs(session1, session2)
+                # Should NOT call login (cooldown active)
+                mock_login.assert_not_called()
 
     def test_reauth_rate_limiting_allows_after_cooldown(self):
         """Test re-auth rate limiting allows re-auth after cooldown expires"""
