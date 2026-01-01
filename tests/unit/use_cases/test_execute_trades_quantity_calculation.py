@@ -47,13 +47,14 @@ class TestQuantityCalculationWithUserConfig:
         mock_config.user_capital = 50000.0  # Rs 50,000
 
         # Mock UserTradingConfigRepository (patch at source module since import is inside method)
-        # Need to patch both the class and its instantiation
+        # The import happens inside _get_execution_capital, so we patch at the source
+        mock_repo_instance = MagicMock()
+        mock_repo_instance.get_or_create_default.return_value = mock_config
+
         with patch(
-            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository"
-        ) as mock_repo_class:
-            mock_repo_instance = MagicMock()
-            mock_repo_instance.get_or_create_default.return_value = mock_config
-            mock_repo_class.return_value = mock_repo_instance
+            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository",
+            return_value=mock_repo_instance,
+        ):
 
             # Stock at Rs 100, should get qty = floor(50000/100) = 500
             r1 = make_resp("STOCK1.NS", verdict="buy", last_close=100.0)
@@ -89,12 +90,13 @@ class TestQuantityCalculationWithUserConfig:
         mock_config = MagicMock()
         mock_config.user_capital = 100000.0  # Rs 1,00,000
 
+        mock_repo_instance = MagicMock()
+        mock_repo_instance.get_or_create_default.return_value = mock_config
+
         with patch(
-            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository"
-        ) as mock_repo_class:
-            mock_repo_instance = MagicMock()
-            mock_repo_instance.get_or_create_default.return_value = mock_config
-            mock_repo_class.return_value = mock_repo_instance
+            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository",
+            return_value=mock_repo_instance,
+        ):
 
             # Stock 1: Rs 100 -> qty = floor(100000/100) = 1000
             # Stock 2: Rs 500 -> qty = floor(100000/500) = 200
@@ -141,12 +143,13 @@ class TestQuantityCalculationWithUserConfig:
         mock_config = MagicMock()
         mock_config.user_capital = 50000.0  # User config: Rs 50,000
 
+        mock_repo_instance = MagicMock()
+        mock_repo_instance.get_or_create_default.return_value = mock_config
+
         with patch(
-            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository"
-        ) as mock_repo_class:
-            mock_repo_instance = MagicMock()
-            mock_repo_instance.get_or_create_default.return_value = mock_config
-            mock_repo_class.return_value = mock_repo_instance
+            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository",
+            return_value=mock_repo_instance,
+        ):
 
             # Stock has its own execution_capital: Rs 25,000
             # Should use stock's capital (25000) instead of user config (50000)
@@ -281,12 +284,13 @@ class TestQuantityCalculationEdgeCases:
         mock_config = MagicMock()
         mock_config.user_capital = 33333.0  # Rs 33,333
 
+        mock_repo_instance = MagicMock()
+        mock_repo_instance.get_or_create_default.return_value = mock_config
+
         with patch(
-            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository"
-        ) as mock_repo_class:
-            mock_repo_instance = MagicMock()
-            mock_repo_instance.get_or_create_default.return_value = mock_config
-            mock_repo_class.return_value = mock_repo_instance
+            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository",
+            return_value=mock_repo_instance,
+        ):
 
             # Price that gives fractional result: 33333/100 = 333.33 -> should be 333
             r1 = make_resp("STOCK1.NS", verdict="buy", last_close=100.0)
@@ -358,12 +362,13 @@ class TestQuantityCalculationEdgeCases:
         mock_config = MagicMock()
         mock_config.user_capital = 50000.0
 
+        mock_repo_instance = MagicMock()
+        mock_repo_instance.get_or_create_default.return_value = mock_config
+
         with patch(
-            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository"
-        ) as mock_repo_class:
-            mock_repo_instance = MagicMock()
-            mock_repo_instance.get_or_create_default.return_value = mock_config
-            mock_repo_class.return_value = mock_repo_instance
+            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository",
+            return_value=mock_repo_instance,
+        ):
 
             # Stock with zero execution_capital should use user config
             r1 = make_resp("STOCK1.NS", verdict="buy", last_close=100.0, execution_capital=0.0)
