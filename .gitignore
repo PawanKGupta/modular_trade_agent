@@ -15,6 +15,8 @@ modules/kotak_neo_auto_trader/session_cache.json
 modules/kotak_neo_auto_trader/kotak_neo.env
 signals.csv
 /scripts/
+# But allow run_individual_service.py (required by IndividualServiceManager)
+!/scripts/run_individual_service.py
 (dev)
 debug_*.py
 demo_candle_analysis.py
