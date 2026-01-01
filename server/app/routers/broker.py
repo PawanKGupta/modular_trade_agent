@@ -571,6 +571,48 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                 f"is_authenticated={is_auth}, client={'available' if client else 'None'}"
             )
 
+            # Check for stale session: is_authenticated() is True but client is None
+            # This can happen when session expires but is_authenticated() hasn't been updated yet
+            if is_auth and not client:
+                logger.warning(
+                    f"[BROKER_PORTFOLIO] Stale session detected for user {current.id}: "
+                    f"is_authenticated={is_auth} but client is None. "
+                    "Clearing cache and forcing re-authentication"
+                )
+                from modules.kotak_neo_auto_trader.shared_session_manager import (
+                    get_shared_session_manager,
+                )
+
+                session_manager = get_shared_session_manager()
+                session_manager.clear_session(current.id)
+                logger.info(
+                    f"[BROKER_PORTFOLIO] Cleared stale session for user {current.id}, "
+                    "creating new session"
+                )
+                # Force new session creation
+                auth = _get_or_create_auth_session(current.id, temp_env_file, db, force_new=True)
+                if not auth or not auth.is_authenticated():
+                    logger.error(
+                        f"[BROKER_PORTFOLIO] Re-authentication failed for user {current.id}"
+                    )
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "Broker session expired and re-authentication failed. "
+                            "Please refresh the page to reconnect."
+                        ),
+                    )
+                logger.info(
+                    f"[BROKER_PORTFOLIO] Re-authentication successful for user {current.id}"
+                )
+                # Update session state after re-auth
+                is_auth = auth.is_authenticated()
+                client = auth.get_client()
+                logger.info(
+                    f"[BROKER_PORTFOLIO] Updated session state for user {current.id}: "
+                    f"is_authenticated={is_auth}, client={'available' if client else 'None'}"
+                )
+
             # Create broker gateway
             broker = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
 
@@ -590,7 +632,8 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                         detail="Failed to connect to broker gateway. Please try again later.",
                     )
                 logger.info(
-                    f"[BROKER_PORTFOLIO] Successfully connected broker gateway for user {current.id}"
+                    f"[BROKER_PORTFOLIO] Successfully connected broker gateway "
+                    f"for user {current.id}"
                 )
             else:
                 # Auth is already authenticated, manually set client to avoid re-login
@@ -668,7 +711,8 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
                 )
             except Exception as holdings_error:
                 logger.error(
-                    f"[BROKER_PORTFOLIO] Error fetching holdings for user {current.id}: {holdings_error}",
+                    f"[BROKER_PORTFOLIO] Error fetching holdings for user {current.id}: "
+                    f"{holdings_error}",
                     exc_info=True,
                 )
                 raise
@@ -944,6 +988,44 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
                 f"[BROKER_ORDERS] Session state for user {current.id}: "
                 f"is_authenticated={is_auth}, client={'available' if client else 'None'}"
             )
+
+            # Check for stale session: is_authenticated() is True but client is None
+            # This can happen when session expires but is_authenticated() hasn't been updated yet
+            if is_auth and not client:
+                logger.warning(
+                    f"[BROKER_ORDERS] Stale session detected for user {current.id}: "
+                    f"is_authenticated={is_auth} but client is None. "
+                    "Clearing cache and forcing re-authentication"
+                )
+                from modules.kotak_neo_auto_trader.shared_session_manager import (
+                    get_shared_session_manager,
+                )
+
+                session_manager = get_shared_session_manager()
+                session_manager.clear_session(current.id)
+                logger.info(
+                    f"[BROKER_ORDERS] Cleared stale session for user {current.id}, "
+                    "creating new session"
+                )
+                # Force new session creation
+                auth = _get_or_create_auth_session(current.id, temp_env_file, db, force_new=True)
+                if not auth or not auth.is_authenticated():
+                    logger.error(f"[BROKER_ORDERS] Re-authentication failed for user {current.id}")
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "Broker session expired and re-authentication failed. "
+                            "Please refresh the page to reconnect."
+                        ),
+                    )
+                logger.info(f"[BROKER_ORDERS] Re-authentication successful for user {current.id}")
+                # Update session state after re-auth
+                is_auth = auth.is_authenticated()
+                client = auth.get_client()
+                logger.info(
+                    f"[BROKER_ORDERS] Updated session state for user {current.id}: "
+                    f"is_authenticated={is_auth}, client={'available' if client else 'None'}"
+                )
 
             # Create broker gateway
             broker_gateway = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
@@ -1251,7 +1333,8 @@ def get_broker_trading_history(  # noqa: PLR0915, PLR0912
         transactions = []
         for order in orders:
             side = "buy" if order.side.lower() == "buy" else "sell"
-            # Use order_id if available, otherwise use broker_order_id, otherwise use string representation of db id
+            # Use order_id if available, otherwise use broker_order_id,
+            # otherwise use string representation of db id
             order_identifier = order.order_id or order.broker_order_id or str(order.id)
             # Use execution_price if available, fall back to avg_price, then None
             order_price = order.execution_price or order.avg_price
