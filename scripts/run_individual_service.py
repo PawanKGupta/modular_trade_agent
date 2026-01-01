@@ -26,7 +26,7 @@ sys.path.insert(0, str(project_root))
 from src.application.services.individual_service_manager import (  # noqa: E402
     IndividualServiceManager,
 )
-from src.infrastructure.db.session import get_db  # noqa: E402
+from src.infrastructure.db.session import get_session  # noqa: E402
 from src.infrastructure.logging import get_user_logger  # noqa: E402
 
 
@@ -153,7 +153,7 @@ def main():
     args = parser.parse_args()
 
     # Get database session
-    db = next(get_db())
+    db = next(get_session())
 
     try:
         logger = get_user_logger(user_id=args.user_id, db=db, module="IndividualService")
