@@ -17,6 +17,7 @@ from src.infrastructure.db.models import PnlDaily, Users
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
+from src.infrastructure.persistence.settings_repository import SettingsRepository
 
 from ..core.deps import get_current_user, get_db
 from ..services.pnl_calculation_service import PnlCalculationService
@@ -187,36 +188,132 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
         store = PaperTradeStore(storage_path, auto_save=False)
         reporter = PaperTradeReporter(store)
 
-        # Account information
+        # Account information (still from file - cash balance managed there)
         account_data = store.get_account()
         if not account_data:
             raise HTTPException(status_code=404, detail="Paper trading account not initialized")
 
-        # Calculate portfolio value
-        holdings_data = store.get_all_holdings()
+        # Read positions from database (single source of truth)
+        from src.infrastructure.db.models import TradeMode
+        from src.infrastructure.persistence.positions_repository import (  # noqa: PLC0415
+            PositionsRepository,
+        )
+
+        positions_repo = PositionsRepository(db)
+        orders_repo = OrdersRepository(db)
+        # Get all open positions for this user
+        all_positions = positions_repo.list(current.id)
+        # Filter for open positions only (closed_at IS NULL)
+        open_positions = [pos for pos in all_positions if pos.closed_at is None]
+
+        # Filter for paper trading positions by matching with buy orders that have trade_mode=PAPER
+        # Since Positions table doesn't have trade_mode field, we match with orders
+        paper_positions = []
+        all_orders = orders_repo.list(current.id)
+        for pos in open_positions:
+            # Find a buy order for this position to check trade_mode
+            is_paper_position = False
+            for order in all_orders:
+                if (
+                    order.symbol == pos.symbol
+                    and order.side == "buy"
+                    and order.placed_at
+                    and pos.opened_at
+                    and abs((order.placed_at - pos.opened_at).total_seconds())
+                    < 3600  # Within 1 hour
+                    and getattr(order, "trade_mode", None) == TradeMode.PAPER
+                ):
+                    is_paper_position = True
+                    break
+
+            # If no matching order found, use fallback logic to determine trade mode
+            # This handles positions created before order tracking or edge cases
+            if not is_paper_position:
+                # Check if there are any broker orders for this symbol (if yes, it's likely broker position)
+                # Note: all_orders is already filtered by current.id, so we're only checking this user's orders
+                has_broker_order = any(
+                    o.symbol == pos.symbol
+                    and o.side == "buy"
+                    and getattr(o, "trade_mode", None) == TradeMode.BROKER
+                    for o in all_orders
+                )
+                if has_broker_order:
+                    # User has broker orders for this symbol, so this position is likely broker mode
+                    # Skip it (don't add to paper_positions)
+                    is_paper_position = False
+                else:
+                    # No broker orders found for this symbol
+                    # Check user's current trade mode setting to make an educated guess
+                    # If user is in paper mode, assume paper trading (backward compatibility)
+                    # If user is in broker mode, this is ambiguous - skip it to be safe
+                    settings_repo = SettingsRepository(db)
+                    user_settings = settings_repo.get_by_user_id(current.id)
+                    if user_settings and user_settings.trade_mode == TradeMode.PAPER:
+                        # User is in paper mode, assume paper trading for backward compatibility
+                        is_paper_position = True
+                    else:
+                        # User is in broker mode or unknown - skip ambiguous position
+                        # This prevents showing broker positions in paper trading portfolio
+                        logger.debug(
+                            f"Skipping ambiguous position {pos.symbol} for user {current.id}: "
+                            f"no matching order found and user is in broker mode"
+                        )
+                        is_paper_position = False
+
+            if is_paper_position:
+                paper_positions.append(pos)
 
         # Fetch live prices using yfinance (broker-agnostic)
         import yfinance as yf  # noqa: PLC0415
 
         portfolio_value = 0.0
-        for symbol, h in holdings_data.items():
-            qty = h.get("quantity", 0)
-            ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
-            try:
-                stock = yf.Ticker(ticker)
-                live_price = stock.info.get("currentPrice") or stock.info.get("regularMarketPrice")
-                current_price = (
-                    float(live_price) if live_price else float(h.get("current_price", 0))
+        # Calculate portfolio value from database positions
+        for position in paper_positions:
+            qty = position.quantity or 0
+            if qty > 0:
+                # Construct ticker from symbol (add .NS if not present)
+                symbol = position.symbol
+                ticker = (
+                    f"{symbol}.NS"
+                    if not symbol.endswith(".NS") and not symbol.endswith(".BO")
+                    else symbol
                 )
-            except Exception:
-                # Fallback to stored price if live fetch fails
-                current_price = float(h.get("current_price", 0))
-            portfolio_value += qty * current_price
+                # Remove broker suffixes like -EQ, -BE for ticker lookup
+                if "-" in ticker:
+                    ticker = ticker.split("-")[0] + ".NS"
+                try:
+                    stock = yf.Ticker(ticker)
+                    live_price = stock.info.get("currentPrice") or stock.info.get(
+                        "regularMarketPrice"
+                    )
+                    current_price = float(live_price) if live_price else position.avg_price or 0.0
+                except Exception:
+                    # Fallback to avg_price if live fetch fails
+                    current_price = position.avg_price or 0.0
+                portfolio_value += qty * current_price
 
         total_value = account_data["available_cash"] + portfolio_value
 
         # Get realized P&L from stored account (from completed trades)
         realized_pnl = account_data.get("realized_pnl", 0.0)
+
+        # Validation: Check if account balance matches expected value based on positions
+        # This helps detect inconsistencies between file-based account and DB positions
+        expected_invested = sum(
+            pos.quantity * pos.avg_price for pos in paper_positions if pos.quantity > 0
+        )
+        initial_capital = account_data.get("initial_capital", 0.0)
+        expected_cash = initial_capital - expected_invested + realized_pnl
+        actual_cash = account_data.get("available_cash", 0.0)
+        cash_discrepancy = abs(expected_cash - actual_cash)
+
+        if cash_discrepancy > 100.0:  # More than Rs 100 discrepancy
+            logger.warning(
+                f"[PaperTrading] Account balance discrepancy detected for user {current.id}: "
+                f"expected Rs {expected_cash:.2f}, actual Rs {actual_cash:.2f}, "
+                f"difference Rs {cash_discrepancy:.2f}. "
+                f"This may indicate sync issues between file and database."
+            )
 
         # Load target prices from service adapter's active_sell_orders
         target_prices = {}
@@ -269,28 +366,44 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                 logger.debug(f"Failed to calculate EMA9 for {symbol}: {e}")
                 return None
 
-        # Holdings (calculate unrealized P&L with live prices)
+        # Holdings (calculate unrealized P&L with live prices) - from database
         holdings = []
         unrealized_pnl_total = 0.0
 
-        for symbol, holding in sorted(holdings_data.items()):
-            qty = holding.get("quantity", 0)
-            avg_price = float(holding.get("average_price", 0))
+        for position in sorted(paper_positions, key=lambda p: p.symbol):
+            symbol = position.symbol
+            qty = position.quantity or 0
+            avg_price = position.avg_price or 0.0
 
-            # Fetch live price, fallback to stored price if fetch fails
-            current_price = get_live_price(symbol)
+            # Skip positions with zero quantity
+            if qty <= 0:
+                continue
+
+            # Construct ticker for price lookup (add .NS if not present)
+            ticker = symbol
+            if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
+                # Remove broker suffixes like -EQ, -BE for ticker lookup
+                base_symbol = symbol.split("-")[0] if "-" in symbol else symbol
+                ticker = f"{base_symbol}.NS"
+            # Remove broker suffixes from existing ticker
+            elif "-" in ticker:
+                base_symbol = ticker.split("-")[0]
+                if base_symbol.endswith(".NS") or base_symbol.endswith(".BO"):
+                    ticker = base_symbol
+                else:
+                    ticker = f"{base_symbol}.NS"
+
+            # Fetch live price, fallback to avg_price if fetch fails
+            current_price = get_live_price(symbol.split("-")[0] if "-" in symbol else symbol)
             if current_price is None:
-                current_price = float(holding.get("current_price", 0))
-                logger.debug(f"Using stored price for {symbol}: {current_price}")
+                current_price = avg_price
+                logger.debug(f"Using avg_price for {symbol}: {current_price}")
 
             cost_basis = qty * avg_price
             market_value = qty * current_price
             pnl = market_value - cost_basis
-            # P&L percentage: if quantity is 0, return 0% (no position)
-            # Otherwise, calculate based on price change
-            if qty == 0:
-                pnl_pct = 0.0
-            elif avg_price > 0:
+            # P&L percentage: calculate based on price change
+            if avg_price > 0:
                 pnl_pct = (current_price - avg_price) / avg_price * 100
             else:
                 pnl_pct = 0.0
@@ -299,66 +412,37 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             unrealized_pnl_total += pnl
 
             # Get target price (frozen EMA9) if available, or calculate it
-            target_price = target_prices.get(symbol)
+            # Try both full symbol and base symbol for target price lookup
+            base_symbol_for_target = symbol.split("-")[0] if "-" in symbol else symbol
+            target_price = target_prices.get(symbol)  # Try full symbol first
+            if target_price is None:
+                target_price = target_prices.get(base_symbol_for_target)  # Try base symbol
             if target_price is None:
                 # Calculate on-the-fly if no sell order placed yet
-                target_price = calculate_ema9_target(symbol)
+                target_price = calculate_ema9_target(base_symbol_for_target)
 
             distance_to_target = None
             if target_price and current_price > 0:
                 distance_to_target = (target_price - current_price) / current_price * 100
 
-            # Fetch reentry details from database positions table
-            reentry_count = 0
+            # Get reentry details from position (already loaded from database)
+            reentry_count = position.reentry_count or 0
+            entry_rsi = position.entry_rsi
+            initial_entry_price = position.initial_entry_price
+
+            # Parse reentries JSON field
             reentries_list = None
-            entry_rsi = None
-            initial_entry_price = None
-
-            try:
-                from src.infrastructure.persistence.positions_repository import (  # noqa: PLC0415
-                    PositionsRepository,
-                )
-
-                positions_repo = PositionsRepository(db)
-                # Normalize symbol: remove .NS/.BO suffix and -EQ/-BE suffix,
-                # convert to uppercase
-                normalized_symbol = symbol.upper().replace(".NS", "").replace(".BO", "")
-                # Remove broker-specific suffixes like -EQ, -BE
-                if "-" in normalized_symbol:
-                    normalized_symbol = normalized_symbol.split("-")[0]
-
-                position = positions_repo.get_by_symbol(current.id, normalized_symbol)
-                if position:
-                    reentry_count = position.reentry_count or 0
-                    entry_rsi = position.entry_rsi
-                    initial_entry_price = position.initial_entry_price
-
-                    # Parse reentries JSON field
-                    if position.reentries:
-                        if isinstance(position.reentries, dict):
-                            # New format: {"reentries": [...], "current_cycle": ...}
-                            reentries_list = position.reentries.get("reentries", [])
-                        elif isinstance(position.reentries, list):
-                            # Old format: direct array
-                            reentries_list = position.reentries
-                        else:
-                            reentries_list = []
-                    else:
-                        reentries_list = []
-
-                    logger.debug(
-                        f"Found reentry data for {symbol} "
-                        f"(normalized: {normalized_symbol}): "
-                        f"count={reentry_count}, "
-                        f"reentries={len(reentries_list) if reentries_list else 0}"
-                    )
+            if position.reentries:
+                if isinstance(position.reentries, dict):
+                    # New format: {"reentries": [...], "current_cycle": ...}
+                    reentries_list = position.reentries.get("reentries", [])
+                elif isinstance(position.reentries, list):
+                    # Old format: direct array
+                    reentries_list = position.reentries
                 else:
-                    logger.debug(
-                        f"No position found for {symbol} "
-                        f"(normalized: {normalized_symbol}) in database"
-                    )
-            except Exception as e:
-                logger.debug(f"Could not fetch reentry details for {symbol}: {e}")
+                    reentries_list = []
+            else:
+                reentries_list = []
 
             holdings.append(
                 PaperTradingHolding(

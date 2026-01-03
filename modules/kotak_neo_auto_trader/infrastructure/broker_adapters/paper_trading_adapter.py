@@ -82,6 +82,362 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 f"[PaperTrading] Failed to sync order failure to DB: {ex}", exc_info=True
             )
 
+    def _sync_order_execution_to_db(
+        self, order: Order, execution_price: Money, trade_info: dict | None = None
+    ) -> None:
+        """
+        Sync paper trading order execution to database (orders and positions tables).
+
+        This updates:
+        - Order status to ONGOING (for buy orders) or CLOSED (for sell orders)
+        - Creates/updates position in positions table (for buy orders)
+        - Updates/closes position in positions table (for sell orders)
+
+        Args:
+            order: Order that executed
+            execution_price: Execution price
+            trade_info: Trade info dict (for sell orders, contains entry_price, realized_pnl, etc.)
+        """
+        if not self.db_session:
+            # No database integration available, skip sync
+            return
+
+        try:
+            from src.infrastructure.db.timezone_utils import ist_now
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+            orders_repo = OrdersRepository(self.db_session)
+            positions_repo = PositionsRepository(self.db_session)
+
+            # Get database order by broker_order_id
+            # Try to find order by broker_order_id
+            # First try with user_id from order metadata if available
+            user_id = getattr(order, "user_id", None)
+            if not user_id:
+                # Try to get from order metadata
+                metadata = getattr(order, "metadata", None) or getattr(order, "_metadata", None)
+                if metadata and isinstance(metadata, dict):
+                    user_id = metadata.get("user_id")
+
+            db_order = None
+            if user_id:
+                # Try with user_id first (more efficient)
+                db_order = orders_repo.get_by_broker_order_id(user_id, order.order_id)
+
+            # If not found, search without user_id filter (handles edge cases)
+            if not db_order:
+                from sqlalchemy import select
+
+                from src.infrastructure.db.models import Orders
+
+                stmt = select(Orders).where(Orders.broker_order_id == order.order_id)
+                result = self.db_session.execute(stmt).scalar_one_or_none()
+                if result:
+                    db_order = result
+
+            if not db_order:
+                logger.warning(
+                    f"[PaperTrading] DB order not found for execution sync: {order.order_id}. "
+                    f"Order executed in file but position not tracked in DB. "
+                    f"Attempting to create position from order data."
+                )
+                # Try to create position directly from order data if db_order not found
+                # This handles edge cases where order was created before DB integration
+                # Get user_id from order metadata if not already available
+                if not user_id:
+                    metadata = getattr(order, "metadata", None) or getattr(order, "_metadata", None)
+                    if metadata and isinstance(metadata, dict):
+                        user_id = metadata.get("user_id")
+
+                if order.is_buy_order() and user_id:
+                    try:
+                        from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                            normalize_symbol,
+                        )
+
+                        # Extract symbol from order
+                        symbol = normalize_symbol(order.symbol)
+                        if symbol.endswith(".NS") or symbol.endswith(".BO"):
+                            symbol = symbol[:-3]
+
+                        # Check if position already exists
+                        existing_pos = positions_repo.get_by_symbol(user_id, symbol)
+                        if existing_pos and existing_pos.closed_at is None:
+                            # Update existing position
+                            existing_qty = existing_pos.quantity
+                            existing_avg_price = existing_pos.avg_price
+                            execution_qty = float(order.quantity)
+                            execution_price_float = float(execution_price.amount)
+
+                            total_cost = (existing_qty * existing_avg_price) + (
+                                execution_qty * execution_price_float
+                            )
+                            new_qty = existing_qty + execution_qty
+                            new_avg_price = (
+                                total_cost / new_qty if new_qty > 0 else execution_price_float
+                            )
+
+                            positions_repo.upsert(
+                                user_id=user_id,
+                                symbol=symbol,
+                                quantity=new_qty,
+                                avg_price=new_avg_price,
+                                auto_commit=True,
+                            )
+                            logger.info(
+                                f"[PaperTrading] Created/updated position for {symbol} "
+                                f"from order {order.order_id} (no DB order found)"
+                            )
+                        else:
+                            # Create new position
+                            positions_repo.upsert(
+                                user_id=user_id,
+                                symbol=symbol,
+                                quantity=float(order.quantity),
+                                avg_price=float(execution_price.amount),
+                                opened_at=ist_now(),
+                                entry_rsi=29.5,  # Default RSI
+                                initial_entry_price=float(execution_price.amount),
+                                auto_commit=True,
+                            )
+                            logger.info(
+                                f"[PaperTrading] Created position for {symbol} "
+                                f"from order {order.order_id} (no DB order found)"
+                            )
+                    except Exception as create_ex:
+                        logger.warning(
+                            f"[PaperTrading] Failed to create position from order data: {create_ex}",
+                            exc_info=True,
+                        )
+                return
+
+            # Use user_id from db_order (most reliable source)
+            user_id = db_order.user_id
+
+            # Mark order as executed in database
+            execution_price_float = float(execution_price.amount)
+            execution_qty = float(order.quantity)
+
+            orders_repo.mark_executed(
+                db_order,
+                execution_price=execution_price_float,
+                execution_qty=execution_qty,
+                auto_commit=False,  # Commit after position update
+            )
+
+            # Extract symbol from database order (matches database format)
+            # Use symbol from db_order to ensure consistency with database
+            from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                normalize_symbol,
+            )
+
+            symbol = (
+                normalize_symbol(db_order.symbol)
+                if db_order.symbol
+                else normalize_symbol(order.symbol)
+            )
+
+            # Normalize symbol: remove .NS/.BO suffix if present, keep broker suffixes like -EQ
+            if symbol.endswith(".NS") or symbol.endswith(".BO"):
+                symbol = symbol[:-3]
+
+            # Extract entry RSI from order metadata
+            entry_rsi = None
+            if db_order.order_metadata:
+                metadata = (
+                    db_order.order_metadata if isinstance(db_order.order_metadata, dict) else {}
+                )
+                # Priority: rsi_entry_level > entry_rsi > rsi10
+                if metadata.get("rsi_entry_level") is not None:
+                    entry_rsi = float(metadata["rsi_entry_level"])
+                elif metadata.get("entry_rsi") is not None:
+                    entry_rsi = float(metadata["entry_rsi"])
+                elif metadata.get("rsi10") is not None:
+                    entry_rsi = float(metadata["rsi10"])
+
+            # Default to 29.5 if no RSI data available (assume entry at RSI < 30)
+            if entry_rsi is None:
+                entry_rsi = 29.5
+
+            if order.is_buy_order():
+                # BUY ORDER: Create or update position
+                existing_pos = positions_repo.get_by_symbol(user_id, symbol)
+
+                if existing_pos and existing_pos.closed_at is None:
+                    # Update existing open position (reentry)
+                    existing_qty = existing_pos.quantity
+                    existing_avg_price = existing_pos.avg_price
+
+                    # Calculate new average price
+                    total_cost = (existing_qty * existing_avg_price) + (
+                        execution_qty * execution_price_float
+                    )
+                    new_qty = existing_qty + execution_qty
+                    new_avg_price = total_cost / new_qty if new_qty > 0 else execution_price_float
+
+                    # Update reentry tracking
+                    reentry_count = (existing_pos.reentry_count or 0) + 1
+                    reentries_array = []
+                    if existing_pos.reentries:
+                        if isinstance(existing_pos.reentries, dict):
+                            reentries_array = list(existing_pos.reentries.get("reentries", []))
+                        elif isinstance(existing_pos.reentries, list):
+                            reentries_array = list(existing_pos.reentries)
+
+                    # Add new reentry entry
+                    reentry_data = {
+                        "qty": int(execution_qty),
+                        "level": None,  # Will be set if available in metadata
+                        "rsi": float(entry_rsi),
+                        "price": float(execution_price_float),
+                        "time": ist_now().isoformat(),
+                        "placed_at": (
+                            db_order.placed_at.date().isoformat()
+                            if db_order.placed_at
+                            else ist_now().date().isoformat()
+                        ),
+                        "order_id": order.order_id,
+                    }
+
+                    # Extract reentry level from metadata if available
+                    if db_order.order_metadata:
+                        metadata = (
+                            db_order.order_metadata
+                            if isinstance(db_order.order_metadata, dict)
+                            else {}
+                        )
+                        if metadata.get("rsi_level") is not None:
+                            reentry_data["level"] = int(metadata["rsi_level"])
+
+                    reentries_array.append(reentry_data)
+
+                    # Update position
+                    positions_repo.upsert(
+                        user_id=user_id,
+                        symbol=symbol,
+                        quantity=new_qty,
+                        avg_price=new_avg_price,
+                        reentry_count=reentry_count,
+                        reentries={"reentries": reentries_array},
+                        last_reentry_price=execution_price_float,
+                        auto_commit=False,  # Commit with order
+                    )
+                    logger.debug(
+                        f"[PaperTrading] Updated position for {symbol}: "
+                        f"qty {existing_qty} -> {new_qty}, "
+                        f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}, "
+                        f"reentry_count: {reentry_count}"
+                    )
+                else:
+                    # Create new position
+                    positions_repo.upsert(
+                        user_id=user_id,
+                        symbol=symbol,
+                        quantity=execution_qty,
+                        avg_price=execution_price_float,
+                        opened_at=ist_now(),
+                        entry_rsi=entry_rsi,
+                        initial_entry_price=execution_price_float,
+                        auto_commit=False,  # Commit with order
+                    )
+                    logger.debug(
+                        f"[PaperTrading] Created position for {symbol}: "
+                        f"qty={execution_qty}, price=Rs {execution_price_float:.2f}, "
+                        f"entry_rsi={entry_rsi:.2f}"
+                    )
+
+            else:
+                # SELL ORDER: Update or close position
+                existing_pos = positions_repo.get_by_symbol(user_id, symbol)
+                if not existing_pos:
+                    logger.warning(
+                        f"[PaperTrading] Sell order executed for {symbol} but no position found in DB. "
+                        f"Order {order.order_id} executed in file but position not tracked."
+                    )
+                elif existing_pos.closed_at is None:
+                    # Validate execution quantity doesn't exceed position quantity
+                    if execution_qty > existing_pos.quantity:
+                        logger.warning(
+                            f"[PaperTrading] Sell order quantity ({execution_qty}) exceeds "
+                            f"position quantity ({existing_pos.quantity}) for {symbol}. "
+                            f"Using position quantity instead."
+                        )
+                        execution_qty = existing_pos.quantity
+
+                    # Calculate remaining quantity
+                    remaining_qty = existing_pos.quantity - execution_qty
+
+                    if remaining_qty <= 0:
+                        # Close position completely
+                        exit_price = execution_price_float
+                        exit_reason = "PAPER_TRADE_SELL"
+                        realized_pnl = trade_info.get("realized_pnl", 0.0) if trade_info else None
+                        realized_pnl_pct = None
+                        if (
+                            realized_pnl is not None
+                            and existing_pos.avg_price
+                            and execution_qty > 0
+                        ):
+                            # Use execution_qty (sold quantity) instead of full position quantity
+                            cost_basis = existing_pos.avg_price * execution_qty
+                            realized_pnl_pct = (
+                                (realized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+                            )
+
+                        positions_repo.mark_closed(
+                            user_id=user_id,
+                            symbol=symbol,
+                            closed_at=ist_now(),
+                            exit_price=exit_price,
+                            exit_reason=exit_reason,
+                            realized_pnl=realized_pnl,
+                            realized_pnl_pct=realized_pnl_pct,
+                            sell_order_id=db_order.id,
+                            auto_commit=False,  # Commit with order
+                        )
+                        logger.debug(
+                            f"[PaperTrading] Closed position for {symbol}: "
+                            f"exit_price=Rs {exit_price:.2f}, realized_pnl=Rs {realized_pnl:.2f}"
+                        )
+                    else:
+                        # Partial sell - update quantity
+                        positions_repo.upsert(
+                            user_id=user_id,
+                            symbol=symbol,
+                            quantity=remaining_qty,
+                            avg_price=existing_pos.avg_price,  # Keep same avg price
+                            auto_commit=False,  # Commit with order
+                        )
+                        logger.debug(
+                            f"[PaperTrading] Updated position for {symbol}: "
+                            f"qty {existing_pos.quantity} -> {remaining_qty} (partial sell)"
+                        )
+
+            # Commit both order and position updates together
+            self.db_session.commit()
+            logger.debug(
+                f"[PaperTrading] Synced order execution to DB: {order.order_id} "
+                f"({order.transaction_type.value} {order.symbol})"
+            )
+
+        except Exception as ex:
+            # Don't fail order processing if database sync fails
+            # Note: Order execution in file already happened, so we only rollback DB transaction
+            # This is intentional - paper trading should work even if DB is unavailable
+            logger.warning(
+                f"[PaperTrading] Failed to sync order execution to DB: {ex}. "
+                f"Order {order.order_id} executed in file but not synced to database. "
+                f"This may cause position tracking inconsistencies.",
+                exc_info=True,
+            )
+            # Rollback DB transaction on error (file execution already happened, which is fine)
+            try:
+                if self.db_session.in_transaction():
+                    self.db_session.rollback()
+            except Exception as rollback_ex:
+                logger.debug(f"[PaperTrading] Rollback failed: {rollback_ex}")
+
     """
     Paper trading adapter implementing IBrokerGateway
 
@@ -349,6 +705,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
             # Record transaction with P&L info
             self._record_transaction(order, execution_price, trade_info)
+
+            # Sync successful execution to database (orders and positions tables)
+            self._sync_order_execution_to_db(order, execution_price, trade_info)
 
             logger.info(
                 f"? Order executed: {order.symbol} "
