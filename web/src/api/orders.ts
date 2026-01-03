@@ -55,3 +55,23 @@ export async function dropOrder(orderId: number): Promise<{ message: string }> {
 	const { data } = await api.delete<{ message: string }>(`/user/orders/${orderId}`);
 	return data;
 }
+
+export interface SyncOrderStatusResponse {
+	message: string;
+	sync_performed: boolean;
+	monitoring_active: boolean;
+	synced: number;
+	updated: number;
+	executed: number;
+	rejected: number;
+	cancelled: number;
+	errors: string[];
+}
+
+export async function syncOrderStatus(orderId?: number): Promise<SyncOrderStatusResponse> {
+	const url = orderId
+		? `/user/orders/sync?order_id=${orderId}`
+		: '/user/orders/sync';
+	const { data } = await api.post<SyncOrderStatusResponse>(url);
+	return data;
+}

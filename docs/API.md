@@ -160,6 +160,37 @@ GET /api/v1/user/orders/{order_id}
 Authorization: Bearer <token>
 ```
 
+#### Sync Order Status
+```http
+POST /api/v1/user/orders/sync?order_id=123
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+- `order_id` (optional): Sync specific order. If omitted, syncs all pending/ongoing orders
+
+**Response:**
+```json
+{
+  "message": "Order sync completed",
+  "sync_performed": true,
+  "monitoring_active": false,
+  "synced": 2,
+  "updated": 2,
+  "executed": 1,
+  "rejected": 1,
+  "cancelled": 0,
+  "errors": []
+}
+```
+
+**Use Cases:**
+- Order monitoring service is not running
+- Force refresh order status
+- Troubleshooting order status issues
+
+**Note:** If monitoring service (unified or sell_monitor) is active, the endpoint returns a message indicating automatic sync is available and no manual sync is performed.
+
 ### Targets
 
 #### Get Targets

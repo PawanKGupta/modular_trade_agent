@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listOrders, retryOrder, dropOrder, type Order, type OrderStatus } from '@/api/orders';
+import { listOrders, retryOrder, dropOrder, syncOrderStatus, type Order, type OrderStatus } from '@/api/orders';
 import { exportOrders } from '@/api/export';
 import { ExportButton } from '@/components/ExportButton';
 import { DateRangePicker, type DateRange } from '@/components/DateRangePicker';
@@ -71,6 +71,27 @@ export function OrdersPage() {
 		mutationFn: dropOrder,
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['orders'] });
+		},
+	});
+
+	const syncMutation = useMutation({
+		mutationFn: syncOrderStatus,
+		onSuccess: (data) => {
+			queryClient.invalidateQueries({ queryKey: ['orders'] });
+			// Show success message
+			if (data.sync_performed) {
+				// You can add a toast notification here if you have one
+				console.log(`Sync completed: ${data.synced} orders synced, ${data.updated} updated`);
+			} else if (data.monitoring_active) {
+				console.log('Monitoring service is active. Status syncs automatically.');
+			} else if (data.message.includes('Paper trading')) {
+				// Paper trading orders don't need syncing - they're executed immediately
+				console.log(data.message);
+			}
+		},
+		onError: (error) => {
+			console.error('Failed to sync orders:', error);
+			// You can add error toast notification here
 		},
 	});
 
@@ -229,8 +250,31 @@ export function OrdersPage() {
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
 				<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 px-3 py-2 border-b border-[#1e293b]">
 					<div className="font-medium text-sm sm:text-base text-[var(--text)]">{TABS.find((t) => t.key === tab)?.label} Orders</div>
-					{isLoading && <span className="text-xs sm:text-sm text-[var(--muted)]">Loading...</span>}
-					{isError && <span className="text-xs sm:text-sm text-red-400">Failed to load orders</span>}
+					<div className="flex items-center gap-2">
+						<button
+							onClick={() => syncMutation.mutate(undefined)}
+							disabled={syncMutation.isPending}
+							className="px-3 py-1.5 text-xs sm:text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded transition-colors flex items-center gap-1.5"
+							title="Sync order status from broker"
+						>
+							<svg
+								className={`w-4 h-4 ${syncMutation.isPending ? 'animate-spin' : ''}`}
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
+									d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+								/>
+							</svg>
+							{syncMutation.isPending ? 'Syncing...' : 'Refresh'}
+						</button>
+						{isLoading && <span className="text-xs sm:text-sm text-[var(--muted)]">Loading...</span>}
+						{isError && <span className="text-xs sm:text-sm text-red-400">Failed to load orders</span>}
+					</div>
 				</div>
 				<div className="overflow-x-auto -mx-2 sm:mx-0">
 					<table className="w-full text-xs sm:text-sm">
