@@ -11,12 +11,14 @@ from sqlalchemy.orm import Session
 
 from modules.kotak_neo_auto_trader import config as kotak_config
 from modules.kotak_neo_auto_trader.infrastructure.broker_factory import BrokerFactory
+from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
 from modules.kotak_neo_auto_trader.shared_session_manager import (
     get_shared_session_manager,
 )
 from modules.kotak_neo_auto_trader.utils.order_field_extractor import (
     OrderFieldExtractor,
 )
+from modules.kotak_neo_auto_trader.utils.symbol_utils import get_ticker_from_full_symbol
 from src.application.services.broker_credentials import (
     create_temp_env_file,
     decrypt_broker_credentials,
@@ -78,8 +80,6 @@ def _recalculate_order_quantity(order, user_id: int, db: Session, order_id: int)
         user_capital = trading_config.capital_per_trade if trading_config else 20000.0
 
         # Get current price from yfinance
-        from modules.kotak_neo_auto_trader.utils.symbol_utils import get_ticker_from_full_symbol
-
         ticker = getattr(order, "ticker", None) or get_ticker_from_full_symbol(order.symbol)
         stock = yf.Ticker(ticker)
         hist = stock.history(period="1d")
@@ -121,7 +121,7 @@ def _recalculate_order_quantity(order, user_id: int, db: Session, order_id: int)
 
 
 @router.get("/", response_model=list[OrderResponse])
-def list_orders(  # noqa: PLR0913
+def list_orders(  # noqa: PLR0912, PLR0913
     status: Annotated[
         Literal[
             "pending",  # Merged: AMO + PENDING_EXECUTION
@@ -423,7 +423,7 @@ def drop_order(
 
 
 @router.post("/sync", response_model=dict)
-def sync_order_status(
+def sync_order_status(  # noqa: PLR0912, PLR0915
     order_id: Annotated[
         int | None,
         Query(
@@ -554,29 +554,61 @@ def sync_order_status(
             }
 
         # Get broker session
-        broker_creds = decrypt_broker_credentials(settings.broker_creds_encrypted)
-        env_file = create_temp_env_file(broker_creds)
+        try:
+            broker_creds = decrypt_broker_credentials(settings.broker_creds_encrypted)
+        except Exception as e:
+            logger.error(f"Error decrypting broker credentials: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to decrypt broker credentials: {str(e)}",
+            ) from e
 
         try:
-            session_manager = get_shared_session_manager()
-            auth = session_manager.get_or_create_session(current.id, env_file, db)
+            env_file = create_temp_env_file(broker_creds)
+        except Exception as e:
+            logger.error(f"Error creating temp env file: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create temp env file: {str(e)}",
+            ) from e
 
-            broker = BrokerFactory.create_broker("kotak_neo", auth)
-            if not broker.connect():
+        try:
+            try:
+                session_manager = get_shared_session_manager()
+                auth = session_manager.get_or_create_session(current.id, env_file, db)
+                if not auth:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Failed to create broker session",
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error creating broker session: {e}", exc_info=True)
                 raise HTTPException(
                     status_code=503,
-                    detail="Failed to connect to broker",
-                )
-
-            # Fetch broker orders
-            orders_api = broker.orders if hasattr(broker, "orders") else None
-            if not orders_api:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Broker orders API not available",
-                )
+                    detail=f"Failed to create broker session: {str(e)}",
+                ) from e
 
             try:
+                broker = BrokerFactory.create_broker("kotak_neo", auth)
+                if not broker.connect():
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Failed to connect to broker",
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error connecting to broker: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Failed to connect to broker: {str(e)}",
+                ) from e
+
+            # Fetch broker orders using KotakNeoOrders
+            try:
+                orders_api = KotakNeoOrders(auth)
                 orders_response = orders_api.get_orders()
                 if orders_response is None:
                     logger.warning("Broker get_orders() returned None")
@@ -728,7 +760,6 @@ def sync_order_status(
                 "monitoring_active": False,
                 **stats,
             }
-
         finally:
             # Cleanup temp env file
             try:
