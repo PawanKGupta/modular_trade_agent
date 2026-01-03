@@ -43,11 +43,11 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
 
         with (
             patch(
-                "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.OrdersRepository",
+                "src.infrastructure.persistence.orders_repository.OrdersRepository",
                 return_value=self.mock_orders_repo,
             ),
             patch(
-                "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.PositionsRepository",
+                "src.infrastructure.persistence.positions_repository.PositionsRepository",
                 return_value=self.mock_positions_repo,
             ),
         ):
@@ -71,15 +71,19 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
 
         # Mock db_order not found
         self.mock_orders_repo.get_by_broker_order_id.return_value = None
-        self.mock_orders_repo.db.execute.return_value.scalar_one_or_none.return_value = None
+
+        # Mock the database query that searches for order without user_id
+        # The code does: stmt = select(Orders).where(Orders.broker_order_id == order.order_id)
+        # result = self.db_session.execute(stmt).scalar_one_or_none()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        self.adapter.db_session.execute.return_value = mock_result
 
         # Mock position doesn't exist
         self.mock_positions_repo.get_by_symbol.return_value = None
 
         # Mock ist_now
-        with patch(
-            "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.ist_now"
-        ) as mock_ist_now:
+        with patch("src.infrastructure.db.timezone_utils.ist_now") as mock_ist_now:
             mock_ist_now.return_value = datetime.now()
 
             # Call sync method
@@ -124,9 +128,7 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
         self.mock_positions_repo.get_by_symbol.return_value = existing_pos
 
         with (
-            patch(
-                "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.ist_now"
-            ) as mock_ist_now,
+            patch("src.infrastructure.db.timezone_utils.ist_now") as mock_ist_now,
             patch(
                 "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.logger"
             ) as mock_logger,
@@ -186,9 +188,7 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
             "realized_pnl": 100.0,  # (120 - 100) * 5
         }
 
-        with patch(
-            "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.ist_now"
-        ) as mock_ist_now:
+        with patch("src.infrastructure.db.timezone_utils.ist_now") as mock_ist_now:
             mock_ist_now.return_value = datetime.now()
 
             # Call sync method
@@ -228,9 +228,7 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
         self.mock_positions_repo.get_by_symbol.return_value = None
 
         with (
-            patch(
-                "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.ist_now"
-            ) as mock_ist_now,
+            patch("src.infrastructure.db.timezone_utils.ist_now") as mock_ist_now,
             patch(
                 "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.logger"
             ) as mock_logger,
@@ -275,9 +273,7 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
         # Mock position doesn't exist
         self.mock_positions_repo.get_by_symbol.return_value = None
 
-        with patch(
-            "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.ist_now"
-        ) as mock_ist_now:
+        with patch("src.infrastructure.db.timezone_utils.ist_now") as mock_ist_now:
             mock_ist_now.return_value = datetime.now()
 
             # Call sync method
@@ -321,9 +317,7 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
         self.adapter.db_session.in_transaction.return_value = True
 
         with (
-            patch(
-                "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.ist_now"
-            ) as mock_ist_now,
+            patch("src.infrastructure.db.timezone_utils.ist_now") as mock_ist_now,
             patch(
                 "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.logger"
             ) as mock_logger,
