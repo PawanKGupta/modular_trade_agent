@@ -297,6 +297,8 @@ class TestPaperTradingPortfolioEdgeCases:
         self.mock_orders_repo.list.return_value = [paper_order]
 
         # Mock target prices with base symbol (RELIANCE)
+        import json
+
         with (
             patch("pathlib.Path.exists", return_value=True),
             patch(
@@ -304,8 +306,6 @@ class TestPaperTradingPortfolioEdgeCases:
                 create=True,
             ) as mock_open,
         ):
-            import json
-
             mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(
                 {"RELIANCE": {"target_price": 110.0}}
             )
