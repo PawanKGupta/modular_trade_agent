@@ -13,6 +13,8 @@ from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.audit_log_repository import AuditLogRepository
 from src.infrastructure.persistence.signals_repository import SignalsRepository
 
+EXPIRED_SIGNAL_OFFSET = timedelta(days=14)
+
 
 @pytest.fixture
 def signals_repo(db_session):
@@ -167,7 +169,7 @@ class TestEODExpiryBulkAuditLogging:
         SYSTEM_USER_ID = 1
 
         # Create multiple expired signals
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signals = []
         for i in range(10):
             signal = Signals(symbol=f"STOCK{i}", status=SignalStatus.ACTIVE, ts=expired_time)
@@ -218,7 +220,7 @@ class TestEODExpiryBulkAuditLogging:
         SYSTEM_USER_ID = 1
 
         # Create expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="TEST", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()

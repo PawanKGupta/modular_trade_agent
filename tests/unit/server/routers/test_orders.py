@@ -1,5 +1,6 @@
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException, status
@@ -103,22 +104,59 @@ class DummyOrdersRepo:
 
 @pytest.fixture
 def orders_repo(monkeypatch):
-    repo = DummyOrdersRepo(db=None)
+    # Create a mock db session that has a bind attribute for inspect()
+    class MockBind:
+        def get_columns(self, table_name):
+            return [
+                {"name": "id"},
+                {"name": "user_id"},
+                {"name": "symbol"},
+                {"name": "side"},
+                {"name": "order_type"},
+                {"name": "quantity"},
+                {"name": "price"},
+                {"name": "status"},
+                {"name": "avg_price"},
+                {"name": "placed_at"},
+                {"name": "filled_at"},
+                {"name": "closed_at"},
+                {"name": "orig_source"},
+                {"name": "updated_at"},
+                {"name": "order_id"},
+                {"name": "broker_order_id"},
+                {"name": "metadata"},
+                {"name": "entry_type"},
+                {"name": "first_failed_at"},
+                {"name": "last_retry_attempt"},
+                {"name": "retry_count"},
+                {"name": "reason"},
+                {"name": "last_status_check"},
+                {"name": "execution_price"},
+                {"name": "execution_qty"},
+                {"name": "execution_time"},
+                {"name": "trade_mode"},
+            ]
+
+    class MockDB:
+        def __init__(self):
+            self.bind = MockBind()
+            # Add query method for SettingsRepository
+            self.query = MagicMock()
+
+    mock_db = MockDB()
+    repo = DummyOrdersRepo(db=mock_db)
     monkeypatch.setattr(orders, "OrdersRepository", lambda db: repo)
 
-    # Also mock SettingsRepository to avoid db.query errors
-    # SettingsRepository is imported inside list_orders(), so we need to patch it at the source
-    from src.infrastructure.persistence import settings_repository
-
-    class DummySettingsRepo:
-        def __init__(self, db):
-            self.settings = {}
-
-        def get_by_user_id(self, user_id):
-            return self.settings.get(user_id)
-
-    # Patch SettingsRepository at the source module
-    monkeypatch.setattr(settings_repository, "SettingsRepository", lambda db: DummySettingsRepo(db))
+    # Mock SettingsRepository to avoid db.query calls
+    # Patch where it's imported in orders.py
+    mock_settings_repo = MagicMock()
+    mock_settings = MagicMock()
+    mock_settings.broker = "kotak_neo"
+    mock_settings_repo.get_by_user_id.return_value = mock_settings
+    monkeypatch.setattr(
+        "server.app.routers.orders.SettingsRepository",
+        lambda db: mock_settings_repo,
+    )
 
     return repo
 

@@ -289,6 +289,45 @@ cd web; npx playwright install chromium; npm run test:e2e
   - Returns: updated order with incremented retry_count and all order fields including `entry_type` and `is_manual`
 - DELETE `/api/v1/user/orders/{id}` — Drop a failed order from retry queue
   - Returns: success message
+- POST `/api/v1/user/orders/sync` — Manually sync order status from broker
+  - Query params: `order_id` (optional) — Sync specific order. If omitted, syncs all pending/ongoing orders
+  - Returns: `{ message: str, sync_performed: bool, monitoring_active: bool, synced: int, updated: int, executed: int, rejected: int, cancelled: int, errors: list[str] }`
+  - **Use cases:**
+    - Order monitoring service is not running
+    - Force refresh order status
+    - Troubleshooting order status issues
+  - **Behavior:**
+    - If monitoring service (unified or sell_monitor) is active, returns message indicating automatic sync is available
+    - If monitoring is inactive, performs manual sync by fetching broker orders and updating database
+    - Requires broker mode and configured broker credentials
+  - **Response when monitoring active:**
+    ```json
+    {
+      "message": "Order monitoring service is active. Status syncs automatically every minute.",
+      "sync_performed": false,
+      "monitoring_active": true,
+      "synced": 0,
+      "updated": 0,
+      "executed": 0,
+      "rejected": 0,
+      "cancelled": 0,
+      "errors": []
+    }
+    ```
+  - **Response when sync performed:**
+    ```json
+    {
+      "message": "Order sync completed",
+      "sync_performed": true,
+      "monitoring_active": false,
+      "synced": 2,
+      "updated": 2,
+      "executed": 1,
+      "rejected": 1,
+      "cancelled": 0,
+      "errors": []
+    }
+    ```
 
 ### PnL
 - GET `/api/v1/user/pnl/daily` — Query params (optional): `start=YYYY-MM-DD`, `end=YYYY-MM-DD`
