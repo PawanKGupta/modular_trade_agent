@@ -8,9 +8,18 @@ from datetime import timedelta
 
 import pytest
 
-from src.infrastructure.db.models import Orders, OrderStatus, Positions, Signals, SignalStatus
+from src.infrastructure.db.models import (
+    Orders,
+    OrderStatus,
+    Positions,
+    Signals,
+    SignalStatus,
+    Users,
+)
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.signals_repository import SignalsRepository
+
+EXPIRED_SIGNAL_OFFSET = timedelta(days=14)
 
 
 @pytest.fixture
@@ -20,8 +29,6 @@ def signals_repo(db_session):
 
 @pytest.fixture
 def test_user(db_session):
-    from src.infrastructure.db.models import Users
-
     user = Users(email="exclusion_test@example.com", password_hash="test_hash", role="user")
     db_session.add(user)
     db_session.commit()
@@ -35,7 +42,7 @@ class TestExclusionWithOpenPositions:
     def test_signal_with_open_position_not_expired(self, signals_repo, test_user, db_session):
         """Signal with open position (closed_at IS NULL) should NOT be expired"""
         # Create an expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="RELIANCE", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
@@ -63,7 +70,7 @@ class TestExclusionWithOpenPositions:
     def test_signal_with_closed_position_is_expired(self, signals_repo, test_user, db_session):
         """Signal with closed position (closed_at IS NOT NULL) should be expired"""
         # Create an expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="TCS", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
@@ -93,7 +100,7 @@ class TestExclusionWithOpenPositions:
     ):
         """Signal with position having quantity=0 should be expired"""
         # Create an expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="INFY", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
@@ -121,7 +128,7 @@ class TestExclusionWithOpenPositions:
     def test_multiple_open_positions_same_symbol(self, signals_repo, test_user, db_session):
         """Multiple open positions for same symbol should prevent expiry"""
         # Create an expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="HDFC", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
@@ -154,7 +161,7 @@ class TestExclusionWithPendingOrders:
     def test_signal_with_pending_buy_order_not_expired(self, signals_repo, test_user, db_session):
         """Signal with pending buy order should NOT be expired"""
         # Create an expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="WIPRO", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
@@ -184,7 +191,7 @@ class TestExclusionWithPendingOrders:
     def test_signal_with_ongoing_buy_order_not_expired(self, signals_repo, test_user, db_session):
         """Signal with ongoing buy order should NOT be expired"""
         # Create an expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="ICICIBANK", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
@@ -214,7 +221,7 @@ class TestExclusionWithPendingOrders:
     def test_signal_with_sell_order_is_expired(self, signals_repo, test_user, db_session):
         """Signal with sell order (not buy) should be expired"""
         # Create an expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="SBIN", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
@@ -244,7 +251,7 @@ class TestExclusionWithPendingOrders:
     def test_signal_with_closed_order_is_expired(self, signals_repo, test_user, db_session):
         """Signal with closed buy order should be expired"""
         # Create an expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="AXISBANK", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
@@ -280,7 +287,7 @@ class TestExclusionCombined:
     ):
         """Signal with both open position and pending order should NOT be expired"""
         # Create an expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="KOTAKBANK", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
@@ -316,7 +323,7 @@ class TestExclusionCombined:
     ):
         """Signal with closed position but pending order should NOT be expired"""
         # Create an expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="HDFCBANK", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
@@ -354,7 +361,7 @@ class TestExclusionCombined:
     def test_multiple_signals_mixed_exclusion(self, signals_repo, test_user, db_session):
         """Test multiple signals with different exclusion scenarios"""
         # Create multiple expired signals
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal1 = Signals(symbol="TATASTEEL", status=SignalStatus.ACTIVE, ts=expired_time)
         signal2 = Signals(symbol="JSWSTEEL", status=SignalStatus.ACTIVE, ts=expired_time)
         signal3 = Signals(symbol="SAIL", status=SignalStatus.ACTIVE, ts=expired_time)
@@ -418,15 +425,13 @@ class TestExclusionEdgeCases:
     def test_signal_with_position_different_user(self, signals_repo, db_session):
         """Position from different user should NOT prevent expiry"""
         # Create another user
-        from src.infrastructure.db.models import Users
-
         other_user = Users(email="other@example.com", password_hash="test", role="user")
         db_session.add(other_user)
         db_session.commit()
         db_session.refresh(other_user)
 
         # Create an expired signal
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="LT", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
@@ -456,7 +461,7 @@ class TestExclusionEdgeCases:
     def test_signal_symbol_normalization(self, signals_repo, test_user, db_session):
         """Test that symbol normalization works in exclusion logic"""
         # Create an expired signal with base symbol
-        expired_time = ist_now() - timedelta(days=2)
+        expired_time = ist_now() - EXPIRED_SIGNAL_OFFSET
         signal = Signals(symbol="RELIANCE", status=SignalStatus.ACTIVE, ts=expired_time)
         db_session.add(signal)
         db_session.commit()
