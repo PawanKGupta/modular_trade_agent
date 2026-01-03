@@ -25,7 +25,7 @@ from src.application.services.broker_credentials import (
 )
 from src.application.services.conflict_detection_service import ConflictDetectionService
 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-from src.infrastructure.db.models import TradeMode, Users
+from src.infrastructure.db.models import Users
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.individual_service_status_repository import (
     IndividualServiceStatusRepository,
@@ -470,7 +470,29 @@ def sync_order_status(  # noqa: PLR0912, PLR0915
             )
 
         # Handle paper trading mode
-        if settings.trade_mode == TradeMode.PAPER:
+        # Extract trade_mode value consistently for both PAPER and BROKER checks
+        trade_mode = settings.trade_mode
+        if hasattr(trade_mode, "value"):
+            trade_mode_value = trade_mode.value
+        elif isinstance(trade_mode, str):
+            trade_mode_value = trade_mode.lower()
+        else:
+            # Fallback: convert to string and handle enum representation
+            trade_mode_str = str(trade_mode)
+            # Handle enum string representation like "<TradeMode.BROKER: 'broker'>"
+            if ":" in trade_mode_str and "'" in trade_mode_str:
+                # Extract value from "<TradeMode.BROKER: 'broker'>"
+                try:
+                    trade_mode_value = trade_mode_str.split(":")[-1].strip().strip("'\"")
+                except Exception:
+                    trade_mode_value = trade_mode_str.lower()
+            else:
+                trade_mode_value = trade_mode_str.lower()
+
+        # Normalize to lowercase for comparison
+        trade_mode_value = trade_mode_value.lower() if trade_mode_value else ""
+
+        if trade_mode_value == "paper":
             # For paper trading, orders are executed immediately (simulated)
             # No broker sync needed, but we can refresh the orders list
             repo = OrdersRepository(db)
@@ -482,7 +504,12 @@ def sync_order_status(  # noqa: PLR0912, PLR0915
                         status_code=404,
                         detail=f"Order {order_id} not found",
                     )
-                if order.trade_mode != TradeMode.PAPER:
+                order_trade_mode_value = (
+                    order.trade_mode.value
+                    if hasattr(order.trade_mode, "value")
+                    else str(order.trade_mode) if order.trade_mode else None
+                )
+                if order_trade_mode_value != "paper":
                     raise HTTPException(
                         status_code=400,
                         detail="Order is not a paper trading order",
@@ -502,12 +529,18 @@ def sync_order_status(  # noqa: PLR0912, PLR0915
             else:
                 # Sync all paper trading orders - just refresh from DB
                 all_orders = repo.list(current.id, status=None)
-                paper_orders = [
-                    o
-                    for o in all_orders
-                    if o.trade_mode == TradeMode.PAPER
-                    and o.status in [DbOrderStatus.PENDING, DbOrderStatus.ONGOING]
-                ]
+                paper_orders = []
+                for o in all_orders:
+                    o_trade_mode_value = (
+                        o.trade_mode.value
+                        if hasattr(o.trade_mode, "value")
+                        else str(o.trade_mode) if o.trade_mode else None
+                    )
+                    if o_trade_mode_value == "paper" and o.status in [
+                        DbOrderStatus.PENDING,
+                        DbOrderStatus.ONGOING,
+                    ]:
+                        paper_orders.append(o)
                 paper_msg = (
                     f"Paper trading orders are executed immediately. "
                     f"Found {len(paper_orders)} active paper orders."
@@ -524,11 +557,12 @@ def sync_order_status(  # noqa: PLR0912, PLR0915
                     "errors": [],
                 }
 
-        # Handle broker mode
-        if settings.trade_mode != TradeMode.BROKER:
+        # Handle broker mode (paper trading already handled above)
+        # trade_mode_value already extracted above
+        if trade_mode_value != "broker":
             raise HTTPException(
                 status_code=400,
-                detail="Broker mode or paper trading mode required for order sync",
+                detail="Broker mode required for order sync",
             )
 
         if not settings.broker_creds_encrypted:

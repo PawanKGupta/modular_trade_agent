@@ -9,16 +9,13 @@ Tests verify that:
 """
 
 from datetime import datetime
-from math import floor
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from src.application.use_cases.execute_trades import ExecuteTradesUseCase
-from src.application.dto.analysis_response import AnalysisResponse, BulkAnalysisResponse
 from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.mock_broker_adapter import (
     MockBrokerAdapter,
 )
+from src.application.dto.analysis_response import AnalysisResponse, BulkAnalysisResponse
+from src.application.use_cases.execute_trades import ExecuteTradesUseCase
 
 
 def make_resp(ticker, verdict="buy", combined=50.0, last_close=100.0, execution_capital=None):
@@ -46,16 +43,14 @@ class TestQuantityCalculationWithUserConfig:
         mock_config = MagicMock()
         mock_config.user_capital = 50000.0  # Rs 50,000
 
-        # Mock UserTradingConfigRepository (patch at source module since import is inside method)
-        # The import happens inside _get_execution_capital, so we patch at the source
+        # Mock UserTradingConfigRepository (patch where it's imported in execute_trades.py)
         mock_repo_instance = MagicMock()
         mock_repo_instance.get_or_create_default.return_value = mock_config
 
         with patch(
-            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository",
+            "src.application.use_cases.execute_trades.UserTradingConfigRepository",
             return_value=mock_repo_instance,
         ):
-
             # Stock at Rs 100, should get qty = floor(50000/100) = 500
             r1 = make_resp("STOCK1.NS", verdict="buy", last_close=100.0)
 
@@ -94,10 +89,9 @@ class TestQuantityCalculationWithUserConfig:
         mock_repo_instance.get_or_create_default.return_value = mock_config
 
         with patch(
-            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository",
+            "src.application.use_cases.execute_trades.UserTradingConfigRepository",
             return_value=mock_repo_instance,
         ):
-
             # Stock 1: Rs 100 -> qty = floor(100000/100) = 1000
             # Stock 2: Rs 500 -> qty = floor(100000/500) = 200
             # Stock 3: Rs 50 -> qty = floor(100000/50) = 2000
@@ -147,10 +141,9 @@ class TestQuantityCalculationWithUserConfig:
         mock_repo_instance.get_or_create_default.return_value = mock_config
 
         with patch(
-            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository",
+            "src.application.use_cases.execute_trades.UserTradingConfigRepository",
             return_value=mock_repo_instance,
         ):
-
             # Stock has its own execution_capital: Rs 25,000
             # Should use stock's capital (25000) instead of user config (50000)
             r1 = make_resp("STOCK1.NS", verdict="buy", last_close=100.0, execution_capital=25000.0)
@@ -176,7 +169,8 @@ class TestQuantityCalculationWithUserConfig:
             assert summary.success
             assert len(summary.orders_placed) == 1
             order = summary.orders_placed[0]
-            # Should use stock's capital: floor(25000/100) = 250, not user config: floor(50000/100) = 500
+            # Should use stock's capital: floor(25000/100) = 250,
+            # not user config: floor(50000/100) = 500
             assert order["quantity"] == 250
 
 
@@ -288,10 +282,9 @@ class TestQuantityCalculationEdgeCases:
         mock_repo_instance.get_or_create_default.return_value = mock_config
 
         with patch(
-            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository",
+            "src.application.use_cases.execute_trades.UserTradingConfigRepository",
             return_value=mock_repo_instance,
         ):
-
             # Price that gives fractional result: 33333/100 = 333.33 -> should be 333
             r1 = make_resp("STOCK1.NS", verdict="buy", last_close=100.0)
 
@@ -366,10 +359,9 @@ class TestQuantityCalculationEdgeCases:
         mock_repo_instance.get_or_create_default.return_value = mock_config
 
         with patch(
-            "src.infrastructure.persistence.user_trading_config_repository.UserTradingConfigRepository",
+            "src.application.use_cases.execute_trades.UserTradingConfigRepository",
             return_value=mock_repo_instance,
         ):
-
             # Stock with zero execution_capital should use user config
             r1 = make_resp("STOCK1.NS", verdict="buy", last_close=100.0, execution_capital=0.0)
             # Stock with negative execution_capital should use user config
@@ -399,4 +391,3 @@ class TestQuantityCalculationEdgeCases:
             # Both should use user config capital: floor(50000/100) = 500
             for order in summary.orders_placed:
                 assert order["quantity"] == 500
-

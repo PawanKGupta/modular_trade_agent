@@ -23,6 +23,10 @@ from modules.kotak_neo_auto_trader.order_tracker import (
     add_pending_order,
     configure_order_tracker,
 )
+from src.application.services.conflict_detection_service import ConflictDetectionService
+from src.infrastructure.persistence.individual_service_status_repository import (
+    IndividualServiceStatusRepository,
+)
 from src.infrastructure.persistence.user_trading_config_repository import (
     UserTradingConfigRepository,
 )
@@ -244,10 +248,12 @@ class ExecuteTradesUseCase:
                                 )
                             else:
                                 # No monitoring active - suggest manual sync
-                    logger.info(
-                        f"Order {order_id} placed but monitoring service is not running. "
-                        f"Use POST /api/v1/user/orders/sync to update status."
-                    )
+                                msg = (
+                                    f"Order {order_id} placed but monitoring service "
+                                    f"is not running. Use POST /api/v1/user/orders/sync "
+                                    f"to update status."
+                                )
+                                logger.info(msg)
                         except Exception as e:
                             logger.warning(f"Failed to track order {order_id}: {e}")
                             # Don't fail order placement if tracking fails

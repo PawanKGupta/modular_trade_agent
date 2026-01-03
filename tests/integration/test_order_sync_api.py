@@ -7,6 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from modules.kotak_neo_auto_trader.utils.order_field_extractor import (
+    OrderFieldExtractor,
+)
 from server.app.routers.orders import sync_order_status
 from src.infrastructure.db.models import OrderStatus, TradeMode
 
@@ -25,7 +28,7 @@ class TestOrderSyncAPI:
         self.user = DummyUser(id=self.user_id)
         self.db_session = MagicMock()
 
-        # Mock settings
+        # Mock settings - default to BROKER mode
         self.mock_settings = MagicMock()
         self.mock_settings.trade_mode = TradeMode.BROKER
         self.mock_settings.broker_creds_encrypted = b"encrypted_creds"
@@ -33,20 +36,19 @@ class TestOrderSyncAPI:
         self.mock_settings_repo = MagicMock()
         self.mock_settings_repo.get_by_user_id.return_value = self.mock_settings
         monkeypatch.setattr(
-            "src.infrastructure.persistence.settings_repository.SettingsRepository",
+            "server.app.routers.orders.SettingsRepository",
             lambda db: self.mock_settings_repo,
         )
 
         # Mock broker credentials
         monkeypatch.setattr(
-            "src.application.services.broker_credentials.decrypt_broker_credentials",
+            "server.app.routers.orders.decrypt_broker_credentials",
             lambda creds: {"key": "val"},
         )
         monkeypatch.setattr(
-            "src.application.services.broker_credentials.create_temp_env_file",
-            lambda creds: "/tmp/test.env",
+            "server.app.routers.orders.create_temp_env_file", lambda creds: "/tmp/test.env"
         )
-        # Path.unlink is called in finally block - not critical for tests
+        monkeypatch.setattr("pathlib.Path.unlink", MagicMock())
 
         # Mock shared session manager
         self.mock_auth = MagicMock()
@@ -56,25 +58,33 @@ class TestOrderSyncAPI:
         self.mock_session_manager = MagicMock()
         self.mock_session_manager.get_or_create_session.return_value = self.mock_auth
         monkeypatch.setattr(
-            "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+            "server.app.routers.orders.get_shared_session_manager",
             lambda: self.mock_session_manager,
         )
 
         # Mock broker
         self.mock_broker = MagicMock()
         self.mock_broker.connect.return_value = True
-        self.mock_orders_api = MagicMock()
-        self.mock_broker.orders = self.mock_orders_api
 
         monkeypatch.setattr(
-            "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+            "server.app.routers.orders.BrokerFactory.create_broker",
             lambda broker_type, auth_handler: self.mock_broker,
+        )
+
+        # Mock KotakNeoOrders
+        self.mock_orders_api = MagicMock()
+        self.mock_orders_api.get_orders.return_value = {"data": []}
+        monkeypatch.setattr(
+            "server.app.routers.orders.KotakNeoOrders",
+            lambda auth: self.mock_orders_api,
         )
 
         # Mock orders repository
         self.mock_orders_repo = MagicMock()
+        self.mock_orders_repo.list.return_value = []
+        self.mock_orders_repo.get.return_value = None
         monkeypatch.setattr(
-            "src.infrastructure.persistence.orders_repository.OrdersRepository",
+            "server.app.routers.orders.OrdersRepository",
             lambda db: self.mock_orders_repo,
         )
 
@@ -84,20 +94,42 @@ class TestOrderSyncAPI:
 
         # Mock ConflictDetectionService
         self.mock_conflict_service = MagicMock()
+        self.mock_conflict_service.is_unified_service_running.return_value = False
         monkeypatch.setattr(
-            "src.application.services.conflict_detection_service.ConflictDetectionService",
+            "server.app.routers.orders.ConflictDetectionService",
             lambda db: self.mock_conflict_service,
         )
 
         # Mock IndividualServiceStatusRepository
         self.mock_status_repo = MagicMock()
+        self.mock_status_repo.get_by_user_and_task.return_value = None
         monkeypatch.setattr(
-            "src.infrastructure.persistence.individual_service_status_repository.IndividualServiceStatusRepository",
+            "server.app.routers.orders.IndividualServiceStatusRepository",
             lambda db: self.mock_status_repo,
+        )
+
+        # Mock OrderFieldExtractor
+        self.mock_order_field_extractor = MagicMock()
+        self.mock_order_field_extractor.get_order_id.side_effect = lambda x: x.get("orderId")
+        self.mock_order_field_extractor.get_status.side_effect = lambda x: x.get("status")
+        self.mock_order_field_extractor.get_price.side_effect = lambda x: x.get("price", 0.0)
+        self.mock_order_field_extractor.get_rejection_reason.side_effect = lambda x: x.get(
+            "rejectionReason"
+        )
+        self.mock_order_field_extractor.get_filled_quantity.side_effect = lambda x: x.get(
+            "quantity", 0
+        )
+        self.mock_order_field_extractor.get_quantity.side_effect = lambda x: x.get("quantity", 0)
+        monkeypatch.setattr(
+            "server.app.routers.orders.OrderFieldExtractor", self.mock_order_field_extractor
         )
 
     def test_manual_sync_when_monitoring_active(self, monkeypatch):
         """Test that sync endpoint returns message when monitoring is active"""
+        # Ensure trade_mode is BROKER and credentials are set
+        self.mock_settings.trade_mode = TradeMode.BROKER
+        self.mock_settings.broker_creds_encrypted = b"encrypted_creds"
+
         # Mock monitoring as active
         self.mock_conflict_service.is_unified_service_running.return_value = True
 
@@ -111,6 +143,10 @@ class TestOrderSyncAPI:
 
     def test_manual_sync_specific_order(self, monkeypatch):
         """Test syncing a specific order"""
+        # Ensure trade_mode is BROKER and credentials are set
+        self.mock_settings.trade_mode = TradeMode.BROKER
+        self.mock_settings.broker_creds_encrypted = b"encrypted_creds"
+
         # Mock monitoring as inactive
         self.mock_conflict_service.is_unified_service_running.return_value = False
         self.mock_status_repo.get_by_user_and_task.return_value = None
@@ -122,28 +158,13 @@ class TestOrderSyncAPI:
         mock_order.broker_order_id = "BROKER123"
         mock_order.status = OrderStatus.PENDING
 
-        # Mock get() method to return the order when called with order_id=123
+        # Set up the mock repo's get method
         def mock_get(order_id):
             if order_id == 123:
                 return mock_order
             return None
 
-        # Patch OrdersRepository to return our mock
-        with patch(
-            "server.app.routers.orders.OrdersRepository",
-            return_value=MagicMock(get=MagicMock(side_effect=mock_get)),
-        ):
-            # But we need to patch it properly - let's use monkeypatch
-            pass
-
-        # Set up the mock repo's get method
         self.mock_orders_repo.get = MagicMock(side_effect=mock_get)
-
-        # Patch OrdersRepository to return our mock repo
-        monkeypatch.setattr(
-            "server.app.routers.orders.OrdersRepository",
-            lambda db: self.mock_orders_repo,
-        )
 
         # Mock broker order response
         mock_broker_order = {
@@ -154,7 +175,7 @@ class TestOrderSyncAPI:
         }
         self.mock_orders_api.get_orders.return_value = {"data": [mock_broker_order]}
 
-        # Mock OrderFieldExtractor
+        # Mock OrderFieldExtractor methods
         with (
             patch.object(OrderFieldExtractor, "get_order_id", return_value="BROKER123"),
             patch.object(OrderFieldExtractor, "get_status", return_value="EXECUTED"),
@@ -173,6 +194,10 @@ class TestOrderSyncAPI:
 
     def test_manual_sync_all_orders(self, monkeypatch):
         """Test syncing all pending/ongoing orders"""
+        # Ensure trade_mode is BROKER and credentials are set
+        self.mock_settings.trade_mode = TradeMode.BROKER
+        self.mock_settings.broker_creds_encrypted = b"encrypted_creds"
+
         # Mock monitoring as inactive
         self.mock_conflict_service.is_unified_service_running.return_value = False
         self.mock_status_repo.get_by_user_and_task.return_value = None
@@ -206,34 +231,37 @@ class TestOrderSyncAPI:
 
         self.mock_orders_repo.list = MagicMock(side_effect=mock_list)
 
-        # Ensure the repo is properly patched
-        monkeypatch.setattr(
-            "server.app.routers.orders.OrdersRepository",
-            lambda db: self.mock_orders_repo,
-        )
-
         # Mock broker orders response
-        mock_broker_order1 = {"orderId": "BROKER1", "status": "REJECTED"}
-        mock_broker_order2 = {"orderId": "BROKER2", "status": "EXECUTED", "price": 200.0}
+        mock_broker_order1 = {
+            "orderId": "BROKER1",
+            "status": "REJECTED",
+            "rejectionReason": "Insufficient funds",
+        }
+        mock_broker_order2 = {
+            "orderId": "BROKER2",
+            "status": "EXECUTED",
+            "price": 200.0,
+            "quantity": 5,
+        }
         self.mock_orders_api.get_orders.return_value = {
             "data": [mock_broker_order1, mock_broker_order2]
         }
 
-        # Mock OrderFieldExtractor
+        # Mock OrderFieldExtractor - these are called as static methods in the actual code
         def get_order_id(order):
-            return order.get("orderId")
+            return order.get("orderId") if isinstance(order, dict) else None
 
         def get_status(order):
-            return order.get("status")
+            return order.get("status") if isinstance(order, dict) else None
 
         def get_price(order):
-            return order.get("price", 0.0)
+            return order.get("price", 0.0) if isinstance(order, dict) else 0.0
 
         def get_rejection_reason(order):
-            return "Insufficient funds" if order.get("status") == "REJECTED" else None
+            return order.get("rejectionReason") if isinstance(order, dict) else None
 
         def get_filled_quantity(order):
-            return 5 if order.get("status") == "EXECUTED" else 0
+            return order.get("quantity", 0) if isinstance(order, dict) else 0
 
         with (
             patch.object(OrderFieldExtractor, "get_order_id", side_effect=get_order_id),
@@ -289,12 +317,6 @@ class TestOrderSyncAPI:
 
         self.mock_orders_repo.list = MagicMock(side_effect=mock_list)
 
-        # Ensure the repo is properly patched
-        monkeypatch.setattr(
-            "server.app.routers.orders.OrdersRepository",
-            lambda db: self.mock_orders_repo,
-        )
-
         result = sync_order_status(order_id=None, db=self.db_session, current=self.user)
 
         # Paper trading should return a message that no sync is needed
@@ -304,7 +326,8 @@ class TestOrderSyncAPI:
 
     def test_manual_sync_requires_broker_credentials(self, monkeypatch):
         """Test that sync requires broker credentials"""
-        # Mock settings without credentials
+        # Mock settings without credentials (but still in broker mode)
+        self.mock_settings.trade_mode = TradeMode.BROKER
         self.mock_settings.broker_creds_encrypted = None
 
         with pytest.raises(HTTPException) as exc_info:
@@ -315,6 +338,10 @@ class TestOrderSyncAPI:
 
     def test_manual_sync_handles_missing_order(self, monkeypatch):
         """Test that sync handles missing order gracefully"""
+        # Ensure trade_mode is BROKER and credentials are set
+        self.mock_settings.trade_mode = TradeMode.BROKER
+        self.mock_settings.broker_creds_encrypted = b"encrypted_creds"
+
         # Mock monitoring as inactive
         self.mock_conflict_service.is_unified_service_running.return_value = False
         self.mock_status_repo.get_by_user_and_task.return_value = None
@@ -330,6 +357,10 @@ class TestOrderSyncAPI:
 
     def test_manual_sync_handles_broker_connection_failure(self, monkeypatch):
         """Test that sync handles broker connection failure"""
+        # Ensure trade_mode is BROKER and credentials are set
+        self.mock_settings.trade_mode = TradeMode.BROKER
+        self.mock_settings.broker_creds_encrypted = b"encrypted_creds"
+
         # Mock monitoring as inactive
         self.mock_conflict_service.is_unified_service_running.return_value = False
         self.mock_status_repo.get_by_user_and_task.return_value = None
