@@ -3,12 +3,11 @@ Paper Trade Reporter
 Generate reports and analytics for paper trading
 """
 
-from typing import Dict, List, Any, Optional
-from datetime import datetime
 import json
-from pathlib import Path
-
 import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -29,18 +28,22 @@ class PaperTradeReporter:
     - Export to CSV/JSON
     """
 
-    def __init__(self, store: PaperTradeStore):
+    def __init__(self, store: PaperTradeStore, db_session=None, user_id: int | None = None):
         """
         Initialize reporter
 
         Args:
             store: Paper trade store
+            db_session: Optional database session for reading positions from DB
+            user_id: Optional user ID for filtering positions
         """
         self.store = store
+        self.db_session = db_session
+        self.user_id = user_id
 
     # ===== PORTFOLIO REPORTS =====
 
-    def portfolio_summary(self) -> Dict[str, Any]:
+    def portfolio_summary(self) -> dict[str, Any]:
         """
         Generate portfolio summary
 
@@ -48,18 +51,222 @@ class PaperTradeReporter:
             Dictionary with portfolio details
         """
         account = self.store.get_account()
-        holdings = self.store.get_all_holdings()
 
         if not account:
             return {"error": "Account not initialized"}
 
-        # Calculate totals
-        total_cost_basis = sum(
-            h.get("quantity", 0) * float(h.get("average_price", 0)) for h in holdings.values()
-        )
-        total_market_value = sum(
-            h.get("quantity", 0) * float(h.get("current_price", 0)) for h in holdings.values()
-        )
+        # Read positions from database only (no file fallback)
+        # Match broker trading logic: include positions + pending orders + ONGOING orders
+        positions = []
+        holdings_count = 0
+        total_cost_basis = 0.0
+        total_market_value = 0.0
+
+        if not self.db_session or not self.user_id:
+            logger.warning(
+                "Database session or user_id not available for portfolio summary. "
+                "Returning empty holdings."
+            )
+        else:
+            try:
+                from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+                from src.infrastructure.db.models import TradeMode
+                from src.infrastructure.db.timezone_utils import IST, ist_now
+                from src.infrastructure.persistence.orders_repository import (
+                    OrdersRepository,
+                )
+                from src.infrastructure.persistence.positions_repository import (
+                    PositionsRepository,
+                )
+
+                positions_repo = PositionsRepository(self.db_session)
+                orders_repo = OrdersRepository(self.db_session)
+
+                # Get all open positions for this user
+                all_positions = positions_repo.list(self.user_id)
+                all_orders = orders_repo.list(self.user_id)
+
+                # Filter for open positions only (closed_at IS NULL)
+                open_positions = [pos for pos in all_positions if pos.closed_at is None]
+
+                # Filter for paper trading positions by matching with buy orders that have trade_mode=PAPER
+                paper_positions = []
+                paper_position_symbols = set()  # Track symbols from positions
+
+                for pos in open_positions:
+                    # Find a buy order for this position to check trade_mode
+                    is_paper_position = False
+                    for order in all_orders:
+                        if (
+                            order.side == "buy"
+                            and getattr(order, "trade_mode", None) == TradeMode.PAPER
+                            and (
+                                # Match by symbol and timing
+                                (
+                                    order.symbol == pos.symbol
+                                    and order.placed_at
+                                    and pos.opened_at
+                                    and abs((order.placed_at - pos.opened_at).total_seconds())
+                                    < 3600
+                                )
+                                # Or match by symbol if timing check fails
+                                or order.symbol == pos.symbol
+                            )
+                        ):
+                            is_paper_position = True
+                            break
+
+                    # Fallback: if no matching order found, check user's current trade mode
+                    if not is_paper_position:
+                        from src.infrastructure.persistence.settings_repository import (
+                            SettingsRepository,
+                        )
+
+                        settings_repo = SettingsRepository(self.db_session)
+                        user_settings = settings_repo.get_by_user_id(self.user_id)
+                        if user_settings and user_settings.trade_mode == TradeMode.PAPER:
+                            # User is in paper mode, assume paper trading for backward compatibility
+                            is_paper_position = True
+
+                    if is_paper_position:
+                        paper_positions.append(pos)
+                        # Normalize symbol (remove -EQ, -BE, etc. suffixes) for counting
+                        symbol_base = (
+                            pos.symbol.upper()
+                            .replace("-EQ", "")
+                            .replace("-BE", "")
+                            .replace("-BL", "")
+                            .replace("-BZ", "")
+                        )
+                        paper_position_symbols.add(symbol_base)
+
+                # Also include PENDING and ONGOING buy orders (matching broker trading logic)
+                # This ensures we count orders that may not be in positions table yet
+                try:
+                    # Get stale order check logic (same as PortfolioService)
+                    try:
+                        from modules.kotak_neo_auto_trader.utils.trading_day_utils import (
+                            get_next_trading_day_close,
+                        )
+                    except ImportError:
+                        # Fallback to 24-hour check if trading_day_utils not available
+                        from datetime import timedelta
+
+                        get_next_trading_day_close = None
+
+                    now = ist_now()
+                    # Normalize to IST for consistent comparison
+                    if now.tzinfo is None:
+                        now = now.replace(tzinfo=IST)
+                    elif now.tzinfo != IST:
+                        now = now.astimezone(IST)
+
+                    for order in all_orders:
+                        # Only include paper trading buy orders
+                        if (
+                            order.side == "buy"
+                            and getattr(order, "trade_mode", None) == TradeMode.PAPER
+                            and order.status in {DbOrderStatus.ONGOING, DbOrderStatus.PENDING}
+                        ):
+                            # For PENDING orders, check if they're stale (same logic as PortfolioService)
+                            if order.status == DbOrderStatus.PENDING and order.placed_at:
+                                is_stale = False
+                                placed_at = order.placed_at
+
+                                try:
+                                    if get_next_trading_day_close:
+                                        # Use trading-day-aware logic
+                                        if placed_at.tzinfo is None:
+                                            placed_at = placed_at.replace(tzinfo=IST)
+                                        elif placed_at.tzinfo != IST:
+                                            placed_at = placed_at.astimezone(IST)
+
+                                        next_trading_day_close = get_next_trading_day_close(
+                                            placed_at
+                                        )
+                                        is_stale = now > next_trading_day_close
+                                    else:
+                                        # Fallback to 24-hour check
+                                        stale_cutoff = now - timedelta(hours=24)
+                                        if placed_at.tzinfo is None:
+                                            placed_at_ist = placed_at.replace(tzinfo=IST)
+                                        else:
+                                            placed_at_ist = (
+                                                placed_at.astimezone(IST)
+                                                if placed_at.tzinfo != IST
+                                                else placed_at
+                                            )
+                                        is_stale = placed_at_ist < stale_cutoff
+                                except Exception:
+                                    # If stale check fails, include order to be safe
+                                    is_stale = False
+
+                                if is_stale:
+                                    continue  # Skip stale PENDING orders
+
+                            # Normalize symbol (remove -EQ, -BE, etc. suffixes)
+                            symbol_base = (
+                                order.symbol.upper()
+                                .replace("-EQ", "")
+                                .replace("-BE", "")
+                                .replace("-BL", "")
+                                .replace("-BZ", "")
+                            )
+                            if symbol_base:
+                                paper_position_symbols.add(symbol_base)
+
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to include pending/ongoing orders in holdings count: {e}"
+                    )
+
+                # Holdings count is the number of unique symbols (positions + orders)
+                holdings_count = len(paper_position_symbols)
+
+                # Calculate totals from database positions only (for cost basis and market value)
+                import yfinance as yf
+
+                for pos in paper_positions:
+                    qty = pos.quantity or 0
+                    if qty > 0:
+                        avg_price = pos.avg_price or 0.0
+                        cost_basis = qty * avg_price
+                        total_cost_basis += cost_basis
+
+                        # Fetch current price
+                        symbol = pos.symbol
+                        ticker = (
+                            f"{symbol}.NS"
+                            if not symbol.endswith(".NS") and not symbol.endswith(".BO")
+                            else symbol
+                        )
+                        # Remove broker suffixes like -EQ, -BE for ticker lookup
+                        if "-" in ticker:
+                            ticker = ticker.split("-")[0] + ".NS"
+
+                        try:
+                            stock = yf.Ticker(ticker)
+                            live_price = stock.info.get("currentPrice") or stock.info.get(
+                                "regularMarketPrice"
+                            )
+                            current_price = float(live_price) if live_price else avg_price
+                        except Exception:
+                            # Fallback to avg_price if live fetch fails
+                            current_price = avg_price
+
+                        market_value = qty * current_price
+                        total_market_value += market_value
+
+            except Exception as e:
+                logger.error(
+                    f"Failed to read positions from database: {e}. "
+                    "Returning empty holdings (no file fallback).",
+                    exc_info=True,
+                )
+                # Return empty holdings - no fallback to file
+                holdings_count = 0
+                total_cost_basis = 0.0
+                total_market_value = 0.0
 
         total_pnl = float(account.get("total_pnl", 0.0))
         initial_capital = float(account["initial_capital"])
@@ -76,12 +283,12 @@ class PaperTradeReporter:
             "return_percentage": (
                 (total_pnl / initial_capital) * 100 if initial_capital > 0 else 0.0
             ),
-            "holdings_count": len(holdings),
+            "holdings_count": holdings_count,
             "created_at": account.get("created_at"),
             "last_updated": account.get("last_updated"),
         }
 
-    def holdings_report(self) -> List[Dict[str, Any]]:
+    def holdings_report(self) -> list[dict[str, Any]]:
         """
         Generate holdings report
 
@@ -123,8 +330,8 @@ class PaperTradeReporter:
     # ===== ORDER REPORTS =====
 
     def order_history(
-        self, limit: Optional[int] = None, symbol: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, limit: int | None = None, symbol: str | None = None
+    ) -> list[dict[str, Any]]:
         """
         Generate order history report
 
@@ -148,7 +355,7 @@ class PaperTradeReporter:
 
         return orders
 
-    def order_statistics(self) -> Dict[str, Any]:
+    def order_statistics(self) -> dict[str, Any]:
         """
         Generate order statistics
 
@@ -184,8 +391,8 @@ class PaperTradeReporter:
     # ===== TRANSACTION REPORTS =====
 
     def transaction_history(
-        self, limit: Optional[int] = None, symbol: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, limit: int | None = None, symbol: str | None = None
+    ) -> list[dict[str, Any]]:
         """
         Generate transaction history
 
@@ -211,7 +418,7 @@ class PaperTradeReporter:
 
     # ===== PERFORMANCE METRICS =====
 
-    def performance_metrics(self) -> Dict[str, Any]:
+    def performance_metrics(self) -> dict[str, Any]:
         """
         Calculate performance metrics
 

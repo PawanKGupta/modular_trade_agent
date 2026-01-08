@@ -202,8 +202,10 @@ class PaperTradingServiceAdapter:
             except Exception as e:
                 self.logger.warning(f"Failed to execute pending orders: {e}", action="initialize")
 
-            # Initialize reporter
-            self.reporter = PaperTradeReporter(self.broker.store)
+            # Initialize reporter with database session for reading positions from DB
+            self.reporter = PaperTradeReporter(
+                self.broker.store, db_session=self.db, user_id=self.user_id
+            )
 
             # Create a mock engine object that uses paper trading broker
             # This allows AutoTradeEngine methods to work with paper trading
