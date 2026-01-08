@@ -2785,6 +2785,8 @@ class PaperTradingEngineAdapter:
                             positions_repo.upsert(
                                 user_id=self.user_id,
                                 symbol=symbol,
+                                quantity=position.quantity,  # Preserve existing quantity
+                                avg_price=position.avg_price,  # Preserve existing avg_price
                                 reentries=updated_reentries,
                                 auto_commit=False,  # Commit later with order
                             )
