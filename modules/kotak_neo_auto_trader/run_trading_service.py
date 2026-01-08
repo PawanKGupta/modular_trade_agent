@@ -19,6 +19,8 @@ import argparse
 import signal
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime
 from datetime import time as dt_time
 from pathlib import Path
@@ -128,6 +130,9 @@ class TradingService:
 
         self._schedule_manager = ScheduleManager(db_session)
         self.shutdown_requested = False
+
+        # Thread pool executor for async task execution (prevents blocking scheduler loop)
+        self.task_executor: ThreadPoolExecutor | None = None
 
         # Task execution flags (reset daily)
         self.tasks_completed = {
@@ -1080,6 +1085,73 @@ class TradingService:
             task_context["tasks_reset"] = True
             logger.info("Service ready for next trading day")
 
+    def _execute_task_async(self, task_func, task_name: str, timeout_seconds: int = 300):
+        """
+        Execute a task asynchronously with timeout to prevent blocking the scheduler loop.
+
+        IMPORTANT: If a task times out, it may continue running in the background.
+        The scheduler loop will not be blocked, but the task won't be marked as completed.
+        This allows the task to be retried on the next scheduled time.
+
+        Args:
+            task_func: The task function to execute
+            task_name: Name of the task for logging
+            timeout_seconds: Maximum time to wait for task completion (default: 5 minutes)
+
+        Returns:
+            True if task completed successfully, False if timed out or failed
+        """
+        if not self.task_executor:
+            # Initialize executor on first use (max_workers=1 ensures tasks run sequentially)
+            self.task_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="TradingTask")
+
+        try:
+            self.logger.info(
+                f"Starting async execution of {task_name} (timeout: {timeout_seconds}s)",
+                action="scheduler",
+            )
+            future = self.task_executor.submit(task_func)
+
+            try:
+                future.result(timeout=timeout_seconds)
+                self.logger.info(f"Task {task_name} completed successfully", action="scheduler")
+                return True
+            except FutureTimeoutError:
+                # Task timed out - it may still be running in background
+                # Note: future.cancel() only works if task hasn't started, so we can't stop it now
+                self.logger.error(
+                    f"Task {task_name} timed out after {timeout_seconds} seconds. "
+                    f"Task may continue running in background. Scheduler loop continues.",
+                    action="scheduler",
+                )
+                # Try to cancel (will only work if task hasn't started executing)
+                cancelled = future.cancel()
+                if cancelled:
+                    self.logger.info(
+                        f"Task {task_name} was cancelled before execution", action="scheduler"
+                    )
+                else:
+                    self.logger.warning(
+                        f"Task {task_name} could not be cancelled (already executing). "
+                        f"It will continue in background but won't block scheduler.",
+                        action="scheduler",
+                    )
+                # Don't mark task as completed - allow retry on next scheduled time
+                return False
+            except Exception as e:
+                self.logger.error(
+                    f"Task {task_name} failed with error: {e}", exc_info=True, action="scheduler"
+                )
+                # Don't mark task as completed on failure - allow retry
+                return False
+        except Exception as e:
+            self.logger.error(
+                f"Failed to submit task {task_name} to executor: {e}",
+                exc_info=True,
+                action="scheduler",
+            )
+            return False
+
     def run_scheduler(self):
         """Main scheduler loop - runs all tasks at their designated times"""
         logger.info("")
@@ -1113,8 +1185,9 @@ class TradingService:
                 current_time = now.time()
                 current_minute = now.minute
 
-                # Log first few loops to confirm it's running
-                if loop_count <= 3:
+                # Log scheduler activity more frequently for better visibility
+                # Log first 10 iterations, then every 10 iterations
+                if loop_count <= 10 or loop_count % 10 == 0:
                     self.logger.info(
                         f"Scheduler loop iteration #{loop_count} at {now.strftime('%H:%M:%S')}",
                         action="scheduler",
@@ -1131,7 +1204,7 @@ class TradingService:
                     if self.is_trading_day():
                         logger.debug("  -> Trading day detected - checking tasks...")
 
-                        # Pre-market retry (uses DB schedule)
+                        # Pre-market retry (uses DB schedule) - 5 minute timeout
                         premarket_schedule = self._schedule_manager.get_schedule("premarket_retry")
                         if premarket_schedule and premarket_schedule.enabled:
                             premarket_time = premarket_schedule.schedule_time
@@ -1139,13 +1212,21 @@ class TradingService:
                                 "premarket_retry",
                                 dt_time(premarket_time.hour, premarket_time.minute),
                             ):
-                                self.run_premarket_retry()
+                                self._execute_task_async(
+                                    self.run_premarket_retry,
+                                    "premarket_retry",
+                                    timeout_seconds=300,  # 5 minutes
+                                )
 
-                        # Pre-market AMO quantity adjustment (hardcoded 9:05 AM - 5 mins after premarket retry)
+                        # Pre-market AMO quantity adjustment (hardcoded 9:05 AM - 5 mins after premarket retry) - 2 minute timeout
                         if self.should_run_task("premarket_amo_adjustment", dt_time(9, 5)):
-                            self.run_premarket_amo_adjustment()
+                            self._execute_task_async(
+                                self.run_premarket_amo_adjustment,
+                                "premarket_amo_adjustment",
+                                timeout_seconds=120,  # 2 minutes
+                            )
 
-                        # Sell monitoring (continuous, uses DB schedule)
+                        # Sell monitoring (continuous, uses DB schedule) - 60 second timeout
                         sell_schedule = self._schedule_manager.get_schedule("sell_monitor")
                         if sell_schedule and sell_schedule.enabled and sell_schedule.is_continuous:
                             start_time = sell_schedule.schedule_time
@@ -1153,34 +1234,50 @@ class TradingService:
                             if current_time >= dt_time(
                                 start_time.hour, start_time.minute
                             ) and current_time <= dt_time(end_time.hour, end_time.minute):
-                                self.run_sell_monitor()
+                                self._execute_task_async(
+                                    self.run_sell_monitor,
+                                    "sell_monitor",
+                                    timeout_seconds=60,  # 1 minute (should be quick)
+                                )
 
-                        # Analysis (uses DB schedule)
+                        # Analysis (uses DB schedule) - 30 minute timeout
                         analysis_schedule = self._schedule_manager.get_schedule("analysis")
                         if analysis_schedule and analysis_schedule.enabled:
                             analysis_time = analysis_schedule.schedule_time
                             if self.should_run_task(
                                 "analysis", dt_time(analysis_time.hour, analysis_time.minute)
                             ):
-                                self.run_analysis()
+                                self._execute_task_async(
+                                    self.run_analysis,
+                                    "analysis",
+                                    timeout_seconds=1800,  # 30 minutes
+                                )
 
-                        # Buy orders (uses DB schedule)
+                        # Buy orders (uses DB schedule) - 10 minute timeout
                         buy_schedule = self._schedule_manager.get_schedule("buy_orders")
                         if buy_schedule and buy_schedule.enabled:
                             buy_time = buy_schedule.schedule_time
                             if self.should_run_task(
                                 "buy_orders", dt_time(buy_time.hour, buy_time.minute)
                             ):
-                                self.run_buy_orders()
+                                self._execute_task_async(
+                                    self.run_buy_orders,
+                                    "buy_orders",
+                                    timeout_seconds=600,  # 10 minutes
+                                )
 
-                        # EOD cleanup (uses DB schedule)
+                        # EOD cleanup (uses DB schedule) - 5 minute timeout
                         eod_schedule = self._schedule_manager.get_schedule("eod_cleanup")
                         if eod_schedule and eod_schedule.enabled:
                             eod_time = eod_schedule.schedule_time
                             if self.should_run_task(
                                 "eod_cleanup", dt_time(eod_time.hour, eod_time.minute)
                             ):
-                                self.run_eod_cleanup()
+                                self._execute_task_async(
+                                    self.run_eod_cleanup,
+                                    "eod_cleanup",
+                                    timeout_seconds=300,  # 5 minutes
+                                )
 
                 # Update heartbeat every minute using thread-local session
                 try:
@@ -1193,11 +1290,12 @@ class TradingService:
                     status_repo.update_heartbeat(self.user_id)
                     self.db.commit()
 
-                    # Log heartbeat every 5 minutes
+                    # Log heartbeat more frequently for better visibility
                     heartbeat_counter += 1
-                    if heartbeat_counter == 1 or heartbeat_counter % 300 == 0:
+                    # Log every 10 iterations (5 minutes) instead of every 300 iterations
+                    if heartbeat_counter == 1 or heartbeat_counter % 10 == 0:
                         self.logger.info(
-                            f"💓 Scheduler heartbeat (running for {heartbeat_counter // 60} minutes)",
+                            f"💓 Scheduler heartbeat (running for {heartbeat_counter // 2} minutes, iteration #{loop_count})",
                             action="scheduler",
                         )
                 except Exception as e:
@@ -1237,6 +1335,14 @@ class TradingService:
                     logger.info("Price cache stopped")
                 except Exception as e:
                     logger.warning(f"Error stopping price cache: {e}")
+
+            # Shutdown task executor
+            if self.task_executor:
+                try:
+                    self.task_executor.shutdown(wait=False, cancel_futures=True)
+                    logger.info("Task executor shut down")
+                except Exception as e:
+                    logger.warning(f"Error shutting down task executor: {e}")
 
             # Logout from session
             if self.auth:
