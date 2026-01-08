@@ -121,11 +121,16 @@ class PaperTradingServiceAdapter:
             self.logger.info("=" * 80, action="initialize")
 
             # Create paper trading configuration
-            # For paper trading, max_position_size should match paper_trading_initial_capital
-            # This allows the full capital to be used for a single position if needed
-            max_position_size = self.initial_capital  # Use paper trading capital
+            # CRITICAL: max_position_size should use strategy_config.user_capital (capital per trade)
+            # NOT initial_capital (starting balance). This ensures each trade uses the configured capital.
+            max_position_size = (
+                self.strategy_config.user_capital
+                if self.strategy_config and hasattr(self.strategy_config, "user_capital")
+                else self.initial_capital  # Fallback to initial_capital if strategy_config not available
+            )
             self.logger.info(
                 f"Paper Trading Config - Initial Capital: Rs {self.initial_capital:,.2f}, "
+                f"Capital Per Trade: Rs {max_position_size:,.2f}, "
                 f"Max Position Size: Rs {max_position_size:,.2f}",
                 action="initialize",
             )
@@ -2287,6 +2292,15 @@ class PaperTradingEngineAdapter:
                         if self.strategy_config and hasattr(self.strategy_config, "user_capital")
                         else 200000.0
                     )
+                    self.logger.debug(
+                        f"Using strategy_config.user_capital for {rec.ticker}: Rs {execution_capital:,.0f}",
+                        action="place_new_entries",
+                    )
+                else:
+                    self.logger.debug(
+                        f"Using execution_capital from recommendation for {rec.ticker}: Rs {execution_capital:,.0f}",
+                        action="place_new_entries",
+                    )
 
                 price = rec.last_close
                 if price <= 0:
@@ -2295,19 +2309,35 @@ class PaperTradingEngineAdapter:
                     )
                     continue
 
-                # Get max position size from broker config (which is set from
-                # strategy_config.user_capital).
+                # Get max position size from broker config (which should be set from
+                # strategy_config.user_capital during initialization).
                 # This ensures we use the user's configured capital per trade
                 max_position_size = (
                     self.broker.config.max_position_size if self.broker.config else 50000.0
                 )
 
+                strategy_user_capital = (
+                    self.strategy_config.user_capital
+                    if self.strategy_config and hasattr(self.strategy_config, "user_capital")
+                    else None
+                )
+                user_capital_str = (
+                    f"Rs {strategy_user_capital:,.0f}" if strategy_user_capital else "N/A"
+                )
+                self.logger.debug(
+                    f"{rec.ticker}: execution_capital=Rs {execution_capital:,.0f}, "
+                    f"max_position_size=Rs {max_position_size:,.0f}, "
+                    f"strategy_config.user_capital={user_capital_str}",
+                    action="place_new_entries",
+                )
+
                 # Limit execution_capital to max_position_size
                 if execution_capital > max_position_size:
-                    self.logger.info(
+                    self.logger.warning(
                         f"Limiting execution_capital for {rec.ticker} from "
                         f"Rs {execution_capital:,.0f} to Rs {max_position_size:,.0f} "
-                        f"(max position size from config)",
+                        f"(max position size from config). "
+                        f"This may indicate max_position_size was incorrectly set during initialization.",
                         action="place_new_entries",
                     )
                     execution_capital = max_position_size
