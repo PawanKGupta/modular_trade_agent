@@ -1965,6 +1965,7 @@ class PaperTradingEngineAdapter:
                 return summary
 
         # Get current holdings and pending orders to check for duplicates
+        # For paper trading, use database positions as source of truth (matching PaperTradeReporter logic)
         holdings = self.broker.get_holdings()
         pending_orders = self.broker.get_all_orders()
 
@@ -1972,6 +1973,7 @@ class PaperTradingEngineAdapter:
         # This matches the normalization in load_latest_recommendations()
         from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 
+        # Start with holdings from broker (for duplicate checking)
         current_symbols = {extract_base_symbol(h.symbol).upper() for h in holdings}
 
         # Also check pending/open buy orders to prevent duplicates
@@ -1985,6 +1987,80 @@ class PaperTradingEngineAdapter:
                     action="place_new_entries",
                 )
 
+        # CRITICAL: For portfolio limit calculation, use database positions as source of truth
+        # This matches PaperTradeReporter logic and ensures consistency
+        # Rebuild current_symbols from database positions + orders (not just broker holdings)
+        if self.user_id and self.db:
+            from src.infrastructure.db.models import TradeMode
+            from src.infrastructure.persistence.positions_repository import (
+                PositionsRepository,
+            )
+
+            positions_repo = PositionsRepository(self.db)
+            # Get all open positions for this user (closed_at IS NULL)
+            all_positions = positions_repo.list(self.user_id)
+            open_positions = [pos for pos in all_positions if pos.closed_at is None]
+
+            # Filter for paper trading positions by matching with buy orders that have trade_mode=PAPER
+            # This matches the logic in PaperTradeReporter
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+            orders_repo_for_positions = OrdersRepository(self.db)
+            all_orders_for_positions = orders_repo_for_positions.list(self.user_id)
+
+            # Rebuild current_symbols from database positions (paper trading only)
+            current_symbols = set()
+            for pos in open_positions:
+                # Find a buy order for this position to check trade_mode
+                is_paper_position = False
+                for order in all_orders_for_positions:
+                    if (
+                        order.side == "buy"
+                        and getattr(order, "trade_mode", None) == TradeMode.PAPER
+                        and (
+                            # Match by symbol and timing
+                            (
+                                order.symbol == pos.symbol
+                                and order.placed_at
+                                and pos.opened_at
+                                and abs((order.placed_at - pos.opened_at).total_seconds())
+                                < 3600
+                            )
+                            # Or match by symbol if timing check fails
+                            or order.symbol == pos.symbol
+                        )
+                    ):
+                        is_paper_position = True
+                        break
+
+                # Fallback: if no matching order found, check user's current trade mode
+                if not is_paper_position:
+                    from src.infrastructure.persistence.settings_repository import (
+                        SettingsRepository,
+                    )
+
+                    settings_repo = SettingsRepository(self.db)
+                    user_settings = settings_repo.get_by_user_id(self.user_id)
+                    if user_settings and user_settings.trade_mode == TradeMode.PAPER:
+                        # User is in paper mode, assume paper trading for backward compatibility
+                        is_paper_position = True
+
+                if is_paper_position:
+                    # Normalize symbol (remove -EQ, -BE, etc. suffixes) for counting
+                    symbol_base = (
+                        pos.symbol.upper()
+                        .replace("-EQ", "")
+                        .replace("-BE", "")
+                        .replace("-BL", "")
+                        .replace("-BZ", "")
+                    )
+                    if symbol_base:
+                        current_symbols.add(symbol_base)
+                        self.logger.debug(
+                            f"Found open position in DB for {pos.symbol}",
+                            action="place_new_entries",
+                        )
+
         # Also check database for ONGOING and PENDING buy orders to prevent duplicates
         # This catches cases where orders were placed in previous runs but aren't in broker yet
         # CRITICAL: Match broker trading logic - only include ONGOING and non-stale PENDING orders
@@ -1994,7 +2070,7 @@ class PaperTradingEngineAdapter:
             from src.infrastructure.persistence.orders_repository import OrdersRepository
 
             orders_repo = OrdersRepository(self.db)
-            from src.infrastructure.db.models import OrderStatus
+            from src.infrastructure.db.models import OrderStatus, TradeMode
 
             # Get all buy orders from database with ONGOING or PENDING status
             # EXCLUDE stale PENDING orders using same logic as broker trading and EOD cleanup
@@ -2015,10 +2091,15 @@ class PaperTradingEngineAdapter:
                 now = now.astimezone(IST)
 
             for order in db_orders:
-                if order.side == "buy" and order.status in {
-                    OrderStatus.ONGOING,  # Executed orders (may not be in holdings yet)
-                    OrderStatus.PENDING,  # Pending orders
-                }:
+                # Only include paper trading buy orders (matching PaperTradeReporter logic)
+                if (
+                    order.side == "buy"
+                    and getattr(order, "trade_mode", None) == TradeMode.PAPER
+                    and order.status in {
+                        OrderStatus.ONGOING,  # Executed orders (may not be in holdings yet)
+                        OrderStatus.PENDING,  # Pending orders
+                    }
+                ):
                     # For PENDING orders, check if they're stale using same logic as broker trading
                     # Stale PENDING orders should not count towards portfolio limit
                     # as they likely failed or were cancelled but status wasn't updated
@@ -2103,8 +2184,8 @@ class PaperTradingEngineAdapter:
                     )
 
         # Check portfolio limit (from strategy config or default 6)
-        # CRITICAL FIX: Use current_symbols (includes holdings + pending orders + DB orders)
-        # instead of just holdings, to properly respect max_portfolio_size
+        # CRITICAL FIX: Use current_symbols from database positions + orders (paper trading source of truth)
+        # This matches PaperTradeReporter logic and ensures consistency
         max_portfolio_size = 6  # Default
         if self.strategy_config and hasattr(self.strategy_config, "max_portfolio_size"):
             # Ensure we get an actual int, not a Mock object
@@ -2112,6 +2193,11 @@ class PaperTradingEngineAdapter:
             if isinstance(portfolio_size_value, int):
                 max_portfolio_size = portfolio_size_value
         current_portfolio_count = len(current_symbols)
+        self.logger.info(
+            f"Portfolio count calculation: {current_portfolio_count} positions "
+            f"(symbols: {sorted(current_symbols)})",
+            action="place_new_entries",
+        )
         if current_portfolio_count >= max_portfolio_size:
             self.logger.warning(
                 f"Portfolio limit reached ({current_portfolio_count}/{max_portfolio_size}); skipping further entries. "
