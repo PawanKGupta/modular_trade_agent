@@ -1985,35 +1985,119 @@ class PaperTradingEngineAdapter:
                     action="place_new_entries",
                 )
 
-        # Also check database for completed/ongoing buy orders from today to prevent duplicates
+        # Also check database for ONGOING and PENDING buy orders to prevent duplicates
         # This catches cases where orders were placed in previous runs but aren't in broker yet
+        # CRITICAL: Match broker trading logic - only include ONGOING and non-stale PENDING orders
+        # Exclude stale PENDING orders (past next trading day market close) to prevent them from blocking new orders
         if self.user_id and self.db:
-            from src.infrastructure.db.timezone_utils import ist_now
+            from src.infrastructure.db.timezone_utils import IST, ist_now
             from src.infrastructure.persistence.orders_repository import OrdersRepository
 
             orders_repo = OrdersRepository(self.db)
-            today = ist_now().date()
-
-            # Get all buy orders from today (any status except CANCELLED/FAILED)
-            # This includes ONGOING and CLOSED orders which indicate a position was opened
             from src.infrastructure.db.models import OrderStatus
 
-            today_orders = orders_repo.list(self.user_id, status=None)
-            for order in today_orders:
-                if (
-                    order.side == "buy"
-                    and order.placed_at
-                    and order.placed_at.date() == today
-                    and order.status
-                    not in [OrderStatus.CANCELLED, OrderStatus.FAILED]  # Skip cancelled/failed
-                ):
+            # Get all buy orders from database with ONGOING or PENDING status
+            # EXCLUDE stale PENDING orders using same logic as broker trading and EOD cleanup
+            try:
+                from modules.kotak_neo_auto_trader.utils.trading_day_utils import (
+                    get_next_trading_day_close,
+                )
+            except ImportError:
+                # Fallback to 24-hour check if trading_day_utils not available
+                get_next_trading_day_close = None
+
+            db_orders = orders_repo.list(self.user_id, status=None)
+            now = ist_now()
+            # Normalize to IST for consistent comparison
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=IST)
+            elif now.tzinfo != IST:
+                now = now.astimezone(IST)
+
+            for order in db_orders:
+                if order.side == "buy" and order.status in {
+                    OrderStatus.ONGOING,  # Executed orders (may not be in holdings yet)
+                    OrderStatus.PENDING,  # Pending orders
+                }:
+                    # For PENDING orders, check if they're stale using same logic as broker trading
+                    # Stale PENDING orders should not count towards portfolio limit
+                    # as they likely failed or were cancelled but status wasn't updated
+                    if order.status == OrderStatus.PENDING and order.placed_at:
+                        is_stale = False
+                        placed_at = order.placed_at
+
+                        try:
+                            if get_next_trading_day_close:
+                                # Use trading-day-aware logic (same as broker trading and EOD cleanup)
+                                # Calculate next trading day market close from when order was placed
+                                # Normalize placed_at to IST for comparison
+                                if placed_at.tzinfo is None:
+                                    placed_at = placed_at.replace(tzinfo=IST)
+                                elif placed_at.tzinfo != IST:
+                                    placed_at = placed_at.astimezone(IST)
+
+                                next_trading_day_close = get_next_trading_day_close(placed_at)
+
+                                # If current time is after next trading day market close, order is stale
+                                is_stale = now > next_trading_day_close
+
+                                if is_stale:
+                                    age_hours = (now - placed_at).total_seconds() / 3600
+                                    self.logger.debug(
+                                        f"Excluding stale PENDING order from portfolio count: "
+                                        f"{order.symbol} (placed_at: {placed_at.strftime('%Y-%m-%d %H:%M')}, "
+                                        f"next trading day close: {next_trading_day_close.strftime('%Y-%m-%d %H:%M')}, "
+                                        f"age: {age_hours:.1f}h)",
+                                        action="place_new_entries",
+                                    )
+                            else:
+                                # Fallback to 24-hour check if trading_day_utils not available
+                                from datetime import timedelta
+
+                                stale_cutoff = now - timedelta(hours=24)
+                                if placed_at.tzinfo is None:
+                                    placed_at_naive = placed_at.replace(tzinfo=None)
+                                    cutoff_naive = (
+                                        stale_cutoff.replace(tzinfo=None)
+                                        if stale_cutoff.tzinfo
+                                        else stale_cutoff
+                                    )
+                                    is_stale = placed_at_naive < cutoff_naive
+                                else:
+                                    placed_at_ist = (
+                                        placed_at.astimezone(IST)
+                                        if placed_at.tzinfo != IST
+                                        else placed_at
+                                    )
+                                    is_stale = placed_at_ist < stale_cutoff
+
+                                if is_stale:
+                                    age_hours = (now - placed_at_ist).total_seconds() / 3600
+                                    self.logger.debug(
+                                        f"Excluding stale PENDING order from portfolio count (fallback): "
+                                        f"{order.symbol} (placed_at: {placed_at_ist}, age: {age_hours:.1f}h)",
+                                        action="place_new_entries",
+                                    )
+                        except Exception as e:
+                            # If stale check fails (e.g., holiday calendar issue), log and include order
+                            # This is safer than excluding valid orders due to a bug
+                            self.logger.warning(
+                                f"Failed to check if PENDING order is stale for {order.symbol}: {e}. "
+                                f"Including order in portfolio count to be safe.",
+                                action="place_new_entries",
+                            )
+                            # is_stale remains False, so order will be included
+
+                        if is_stale:
+                            continue  # Skip stale PENDING orders
+
                     # Normalize symbol (extract base symbol from full symbols)
                     from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 
                     normalized_symbol = extract_base_symbol(order.symbol).upper()
                     current_symbols.add(normalized_symbol)
                     self.logger.debug(
-                        f"Found today's buy order in DB for {order.symbol} "
+                        f"Found buy order in DB for {order.symbol} "
                         f"(Status: {order.status.value}, Placed: {order.placed_at})",
                         action="place_new_entries",
                     )
@@ -2030,7 +2114,8 @@ class PaperTradingEngineAdapter:
         current_portfolio_count = len(current_symbols)
         if current_portfolio_count >= max_portfolio_size:
             self.logger.warning(
-                f"Portfolio limit reached ({current_portfolio_count}/{max_portfolio_size})",
+                f"Portfolio limit reached ({current_portfolio_count}/{max_portfolio_size}); skipping further entries. "
+                f"Note: Stale PENDING orders (past next trading day market close) are excluded from count.",
                 action="place_new_entries",
             )
             summary["skipped_portfolio_limit"] = len(recommendations)
