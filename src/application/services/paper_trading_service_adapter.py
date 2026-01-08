@@ -123,17 +123,56 @@ class PaperTradingServiceAdapter:
             # Create paper trading configuration
             # CRITICAL: max_position_size should use strategy_config.user_capital (capital per trade)
             # NOT initial_capital (starting balance). This ensures each trade uses the configured capital.
-            max_position_size = (
+
+            # Validate strategy_config is available
+            if not self.strategy_config:
+                self.logger.error(
+                    "⚠️ strategy_config is None! Cannot set max_position_size correctly. "
+                    "Falling back to initial_capital.",
+                    action="initialize",
+                )
+            elif not hasattr(self.strategy_config, "user_capital"):
+                self.logger.error(
+                    "⚠️ strategy_config.user_capital not found! Cannot set max_position_size correctly. "
+                    f"strategy_config attributes: {dir(self.strategy_config)}. "
+                    "Falling back to initial_capital.",
+                    action="initialize",
+                )
+
+            strategy_user_capital = (
                 self.strategy_config.user_capital
                 if self.strategy_config and hasattr(self.strategy_config, "user_capital")
+                else None
+            )
+
+            max_position_size = (
+                strategy_user_capital
+                if strategy_user_capital is not None
                 else self.initial_capital  # Fallback to initial_capital if strategy_config not available
+            )
+
+            user_capital_display = (
+                f"Rs {strategy_user_capital:,.2f}" if strategy_user_capital else "N/A"
             )
             self.logger.info(
                 f"Paper Trading Config - Initial Capital: Rs {self.initial_capital:,.2f}, "
-                f"Capital Per Trade: Rs {max_position_size:,.2f}, "
+                f"Capital Per Trade (user_capital): {user_capital_display}, "
                 f"Max Position Size: Rs {max_position_size:,.2f}",
                 action="initialize",
             )
+
+            if strategy_user_capital is None:
+                self.logger.warning(
+                    "⚠️ Using initial_capital for max_position_size because strategy_config.user_capital is not available. "
+                    "This may cause incorrect capital per trade limits.",
+                    action="initialize",
+                )
+            elif max_position_size != strategy_user_capital:
+                self.logger.warning(
+                    f"⚠️ max_position_size ({max_position_size:,.2f}) != strategy_config.user_capital ({strategy_user_capital:,.2f}). "
+                    "This may cause incorrect capital per trade limits.",
+                    action="initialize",
+                )
 
             self.logger.info(
                 f"Creating paper trading config (Capital: Rs {self.initial_capital:,.2f}, "
@@ -2283,22 +2322,26 @@ class PaperTradingEngineAdapter:
                 continue
 
             try:
-                # Calculate quantity based on execution capital or use strategy config
-                execution_capital = getattr(rec, "execution_capital", None)
-                if not execution_capital or execution_capital <= 0:
-                    # Use user_capital from strategy config (default: 200000.0)
-                    execution_capital = (
-                        self.strategy_config.user_capital
-                        if self.strategy_config and hasattr(self.strategy_config, "user_capital")
-                        else 200000.0
-                    )
-                    self.logger.debug(
-                        f"Using strategy_config.user_capital for {rec.ticker}: Rs {execution_capital:,.0f}",
+                # CRITICAL: Always use strategy_config.user_capital (current user config)
+                # Ignore execution_capital from recommendations as it may be stale (calculated with old user_capital)
+                # This ensures consistency with user's current capital per trade setting
+                execution_capital = (
+                    self.strategy_config.user_capital
+                    if self.strategy_config and hasattr(self.strategy_config, "user_capital")
+                    else 200000.0
+                )
+
+                # Log if recommendation had different execution_capital (for debugging)
+                rec_execution_capital = getattr(rec, "execution_capital", None)
+                if rec_execution_capital and rec_execution_capital > 0 and rec_execution_capital != execution_capital:
+                    self.logger.info(
+                        f"Ignoring stale execution_capital from recommendation for {rec.ticker}: "
+                        f"Rs {rec_execution_capital:,.0f} (using current user_capital: Rs {execution_capital:,.0f})",
                         action="place_new_entries",
                     )
                 else:
                     self.logger.debug(
-                        f"Using execution_capital from recommendation for {rec.ticker}: Rs {execution_capital:,.0f}",
+                        f"Using strategy_config.user_capital for {rec.ticker}: Rs {execution_capital:,.0f}",
                         action="place_new_entries",
                     )
 
@@ -2324,8 +2367,11 @@ class PaperTradingEngineAdapter:
                 user_capital_str = (
                     f"Rs {strategy_user_capital:,.0f}" if strategy_user_capital else "N/A"
                 )
-                self.logger.debug(
-                    f"{rec.ticker}: execution_capital=Rs {execution_capital:,.0f}, "
+
+                # INFO level logging for validation (not DEBUG) - shows actual values being used
+                self.logger.info(
+                    f"{rec.ticker}: Capital calculation - "
+                    f"execution_capital=Rs {execution_capital:,.0f}, "
                     f"max_position_size=Rs {max_position_size:,.0f}, "
                     f"strategy_config.user_capital={user_capital_str}",
                     action="place_new_entries",
@@ -2334,10 +2380,11 @@ class PaperTradingEngineAdapter:
                 # Limit execution_capital to max_position_size
                 if execution_capital > max_position_size:
                     self.logger.warning(
-                        f"Limiting execution_capital for {rec.ticker} from "
+                        f"⚠️ LIMITING execution_capital for {rec.ticker} from "
                         f"Rs {execution_capital:,.0f} to Rs {max_position_size:,.0f} "
                         f"(max position size from config). "
-                        f"This may indicate max_position_size was incorrectly set during initialization.",
+                        f"This indicates max_position_size was incorrectly set during initialization. "
+                        f"Expected: Rs {strategy_user_capital:,.0f if strategy_user_capital else 'N/A'}",
                         action="place_new_entries",
                     )
                     execution_capital = max_position_size
