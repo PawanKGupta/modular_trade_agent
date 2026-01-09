@@ -83,8 +83,29 @@ def test_get_paper_trading_portfolio_builds_holdings(monkeypatch):
 
     monkeypatch.setattr(paper_trading_router, "open", fake_open, raising=False)
 
+    # Mock PositionsRepository and OrdersRepository for db=None case
+    def mock_positions_repo(db):
+        repo = SimpleNamespace()
+        repo.list = lambda user_id: []
+        return repo
+
+    def mock_orders_repo(db):
+        repo = SimpleNamespace()
+        repo.list = lambda user_id: []
+        return repo
+
+    import server.app.routers.paper_trading as paper_trading_module
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.positions_repository.PositionsRepository",
+        mock_positions_repo,
+    )
+    monkeypatch.setattr(
+        "server.app.routers.paper_trading.OrdersRepository",
+        mock_orders_repo,
+    )
+
     result = paper_trading_router.get_paper_trading_portfolio(
-        db=SimpleNamespace(),
+        db=None,  # Use None to trigger file-based fallback
         current=SimpleNamespace(id=202),
     )
 

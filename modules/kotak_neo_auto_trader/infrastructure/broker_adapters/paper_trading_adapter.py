@@ -52,12 +52,42 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             from src.infrastructure.persistence.orders_repository import OrdersRepository
 
             repo = OrdersRepository(self.db_session)
-            
+
             # ALWAYS use adapter's user_id (source of truth)
             # Since user_id is mandatory in adapter, all orders belong to this user
             user_id = self.user_id
-            
-            db_order = repo.get_by_broker_order_id(user_id, order.order_id)
+
+            # Handle potential duplicate broker_order_id (similar to _sync_order_execution_to_db)
+            try:
+                db_order = repo.get_by_broker_order_id(user_id, order.order_id)
+            except Exception as e:
+                # MultipleResultsFound - handle gracefully
+                if "Multiple" in str(type(e).__name__) or "Multiple" in str(e):
+                    logger.error(
+                        f"[PaperTrading] Multiple orders found with broker_order_id={order.order_id} "
+                        f"for user_id={user_id}. This indicates a data integrity issue. "
+                        f"Using first match and logging error."
+                    )
+                    # Fallback: Get all matching orders and use the first one
+                    from sqlalchemy import select
+
+                    from src.infrastructure.db.models import Orders
+
+                    stmt = select(Orders).where(
+                        Orders.user_id == user_id,
+                        Orders.broker_order_id == order.order_id,
+                    )
+                    matching_orders = self.db_session.execute(stmt).scalars().all()
+                    if matching_orders:
+                        db_order = matching_orders[0]
+                        logger.warning(
+                            f"[PaperTrading] Using first order (id={db_order.id}) from {len(matching_orders)} duplicates"
+                        )
+                    else:
+                        db_order = None
+                else:
+                    raise
+
             if not db_order:
                 logger.debug(
                     f"[PaperTrading] DB order not found for sync: {order.order_id} "
@@ -112,7 +142,35 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             user_id = self.user_id
 
             # Get database order by broker_order_id (with user_id filter for safety)
-            db_order = orders_repo.get_by_broker_order_id(user_id, order.order_id)
+            # Handle potential duplicate broker_order_id gracefully
+            db_order = None
+            try:
+                db_order = orders_repo.get_by_broker_order_id(user_id, order.order_id)
+            except Exception as e:
+                # MultipleResultsFound - handle gracefully
+                if "Multiple" in str(type(e).__name__) or "Multiple" in str(e):
+                    logger.error(
+                        f"[PaperTrading] Multiple orders found with broker_order_id={order.order_id} "
+                        f"for user_id={user_id}. This indicates a data integrity issue. "
+                        f"Using first match and logging error."
+                    )
+                    # Fallback: Get all matching orders and use the first one
+                    from sqlalchemy import select
+
+                    from src.infrastructure.db.models import Orders
+
+                    stmt = select(Orders).where(
+                        Orders.user_id == user_id,
+                        Orders.broker_order_id == order.order_id,
+                    )
+                    matching_orders = self.db_session.execute(stmt).scalars().all()
+                    if matching_orders:
+                        db_order = matching_orders[0]
+                        logger.warning(
+                            f"[PaperTrading] Using first order (id={db_order.id}) from {len(matching_orders)} duplicates"
+                        )
+                else:
+                    raise
 
             # If not found, try direct query (still with user_id filter)
             if not db_order:
@@ -123,7 +181,23 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 stmt = select(Orders).where(
                     Orders.user_id == user_id, Orders.broker_order_id == order.order_id
                 )
-                db_order = self.db_session.execute(stmt).scalar_one_or_none()
+                try:
+                    db_order = self.db_session.execute(stmt).scalar_one_or_none()
+                except Exception as e:
+                    # Handle MultipleResultsFound in fallback query too
+                    if "Multiple" in str(type(e).__name__) or "Multiple" in str(e):
+                        logger.error(
+                            f"[PaperTrading] Multiple orders found in fallback query with broker_order_id={order.order_id} "
+                            f"for user_id={user_id}. Using first match."
+                        )
+                        matching_orders = self.db_session.execute(stmt).scalars().all()
+                        if matching_orders:
+                            db_order = matching_orders[0]
+                            logger.warning(
+                                f"[PaperTrading] Using first order (id={db_order.id}) from {len(matching_orders)} duplicates in fallback"
+                            )
+                    else:
+                        raise
 
             if not db_order:
                 logger.warning(
@@ -375,10 +449,19 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                             and execution_qty > 0
                         ):
                             # Use execution_qty (sold quantity) instead of full position quantity
-                            cost_basis = existing_pos.avg_price * execution_qty
-                            realized_pnl_pct = (
-                                (realized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+                            # Convert to float to avoid type mismatch (Decimal vs float)
+                            realized_pnl_float = (
+                                float(realized_pnl) if realized_pnl is not None else 0.0
                             )
+                            cost_basis = float(existing_pos.avg_price) * float(execution_qty)
+                            realized_pnl_pct = (
+                                (realized_pnl_float / cost_basis * 100) if cost_basis > 0 else 0.0
+                            )
+
+                        # Convert realized_pnl to float if it's a Decimal or other type
+                        realized_pnl_float = (
+                            float(realized_pnl) if realized_pnl is not None else None
+                        )
 
                         positions_repo.mark_closed(
                             user_id=user_id,
@@ -386,14 +469,17 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                             closed_at=ist_now(),
                             exit_price=exit_price,
                             exit_reason=exit_reason,
-                            realized_pnl=realized_pnl,
+                            realized_pnl=realized_pnl_float,
                             realized_pnl_pct=realized_pnl_pct,
                             sell_order_id=db_order.id,
                             auto_commit=False,  # Commit with order
                         )
+                        realized_pnl_display = (
+                            float(realized_pnl) if realized_pnl is not None else 0.0
+                        )
                         logger.debug(
                             f"[PaperTrading] Closed position for {symbol}: "
-                            f"exit_price=Rs {exit_price:.2f}, realized_pnl=Rs {realized_pnl:.2f}"
+                            f"exit_price=Rs {exit_price:.2f}, realized_pnl=Rs {realized_pnl_display:.2f}"
                         )
                     else:
                         # Partial sell - update quantity
@@ -718,17 +804,33 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             )
         else:
             # Order execution failed or pending
-            msg = (
-                f"[WARN]? Order execution failed for {order.symbol}: {message}. "
-                f"Order remains in {order.status.value} status."
+            # "Price below limit" and "Price above limit" are NOT failures - they're expected
+            # for limit orders that haven't reached their target price yet
+            is_price_limit_message = (
+                "price below limit" in message.lower() or "price above limit" in message.lower()
             )
-            if order.symbol in self._warned_symbols:
-                logger.info(msg)  # Downgrade repeat warnings to INFO to reduce log noise
+
+            if is_price_limit_message:
+                # This is expected behavior for limit orders - don't mark as failed
+                # Order should remain PENDING/ONGOING and will be checked again
+                logger.debug(
+                    f"Limit order {order.symbol} not yet executable: {message}. "
+                    f"Order remains in {order.status.value} status and will be checked again."
+                )
+                # Don't sync to DB as failure - order is still valid and pending
             else:
-                logger.warning(msg)
-                self._warned_symbols.add(order.symbol)
-            # Sync failure to DB
-            self._sync_order_failure_to_db(order, "failed", message)
+                # Actual failure (rejection, insufficient funds, etc.)
+                msg = (
+                    f"[WARN]? Order execution failed for {order.symbol}: {message}. "
+                    f"Order remains in {order.status.value} status."
+                )
+                if order.symbol in self._warned_symbols:
+                    logger.info(msg)  # Downgrade repeat warnings to INFO to reduce log noise
+                else:
+                    logger.warning(msg)
+                    self._warned_symbols.add(order.symbol)
+                # Sync actual failure to DB
+                self._sync_order_failure_to_db(order, "failed", message)
 
         # Save updated order
         self._save_order(order)
@@ -1038,9 +1140,52 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         Format: PT{timestamp}U{user_id}{counter:04d}
         Example: PT20260109U10001 (for user_id=1, counter=1 on 2026-01-09)
+
+        The counter is checked against the database to ensure uniqueness even after service restarts.
         """
-        self._order_counter += 1
         timestamp = datetime.now().strftime("%Y%m%d")
+
+        # Check database for highest counter value for today to prevent duplicates after restart
+        if self.db_session and self.user_id:
+            try:
+                from sqlalchemy import select
+
+                from src.infrastructure.db.models import Orders
+
+                # Get all orders for today with this user_id
+                today_prefix = f"PT{timestamp}U{self.user_id}"
+                stmt = select(Orders.broker_order_id).where(
+                    Orders.broker_order_id.like(f"{today_prefix}%"),
+                    Orders.user_id == self.user_id,
+                )
+                existing_orders = self.db_session.execute(stmt).scalars().all()
+
+                if existing_orders:
+                    # Extract counter from each order ID and find max
+                    # Format: PT20260109U1{counter:04d}
+                    max_counter = 0
+                    prefix_len = len(today_prefix)
+                    for order_id in existing_orders:
+                        if order_id and len(order_id) > prefix_len:
+                            try:
+                                counter_str = order_id[prefix_len : prefix_len + 4]
+                                counter = int(counter_str)
+                                max_counter = max(max_counter, counter)
+                            except (ValueError, IndexError):
+                                # Skip invalid order IDs
+                                continue
+
+                    if max_counter > 0:
+                        # Start from max + 1
+                        self._order_counter = max(self._order_counter, max_counter + 1)
+            except Exception as e:
+                # If database check fails, log warning and continue with current counter
+                logger.warning(
+                    f"[PaperTrading] Failed to check database for order ID counter: {e}. "
+                    f"Using current counter value."
+                )
+
+        self._order_counter += 1
         # Include user_id in order ID to ensure uniqueness across users
         return f"PT{timestamp}U{self.user_id}{self._order_counter:04d}"
 

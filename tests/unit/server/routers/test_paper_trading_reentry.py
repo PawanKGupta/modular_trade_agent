@@ -69,9 +69,14 @@ class DummyPositionsRepository:
     def __init__(self, db):
         self.db = db
         self.positions = {}
+        self.positions_list = []  # For list() method
 
     def get_by_symbol(self, user_id, symbol):
         return self.positions.get((user_id, symbol.upper()))
+
+    def list(self, user_id):
+        """Return all positions for user_id"""
+        return self.positions_list
 
 
 def test_get_paper_trading_portfolio_with_reentry_data(monkeypatch):
@@ -136,6 +141,7 @@ def test_get_paper_trading_portfolio_with_reentry_data(monkeypatch):
 
     positions_repo = DummyPositionsRepository(None)
     positions_repo.positions[(42, "RELIANCE")] = mock_position
+    positions_repo.positions_list = [mock_position]  # For list() method
 
     def mock_positions_repo_init(db):
         return positions_repo
@@ -224,6 +230,7 @@ def test_get_paper_trading_portfolio_with_reentry_data_old_format(monkeypatch):
 
     positions_repo = DummyPositionsRepository(None)
     positions_repo.positions[(42, "RELIANCE")] = mock_position
+    positions_repo.positions_list = [mock_position]  # For list() method
 
     def mock_positions_repo_init(db):
         return positions_repo
@@ -470,6 +477,7 @@ def test_get_paper_trading_portfolio_reentry_data_invalid_format(monkeypatch):
 
     positions_repo = DummyPositionsRepository(None)
     positions_repo.positions[(42, "RELIANCE")] = mock_position
+    positions_repo.positions_list = [mock_position]  # For list() method
 
     def mock_positions_repo_init(db):
         return positions_repo

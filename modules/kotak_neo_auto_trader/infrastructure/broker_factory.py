@@ -115,9 +115,7 @@ class BrokerFactory:
         return KotakNeoBrokerAdapter(auth_handler)
 
     @staticmethod
-    def create_from_env(
-        user_id: int | None = None, env_key: str = "BROKER_TYPE"
-    ) -> IBrokerGateway:
+    def create_from_env(user_id: int | None = None, env_key: str = "BROKER_TYPE") -> IBrokerGateway:
         """
         Create broker from environment variable
 
@@ -144,7 +142,9 @@ class BrokerFactory:
 
             config = PaperTradingConfig(initial_capital=initial_capital, storage_path=storage_path)
 
-            return BrokerFactory.create_broker("paper_trading", paper_config=config, user_id=user_id)
+            return BrokerFactory.create_broker(
+                "paper_trading", paper_config=config, user_id=user_id
+            )
 
         else:
             # For real broker, need to initialize auth_handler

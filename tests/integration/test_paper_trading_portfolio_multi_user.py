@@ -95,6 +95,7 @@ class TestPaperTradingPortfolioMultiUser:
             user_id=user1.id,
             symbol="RELIANCE-EQ",
             side="buy",
+            order_type="MARKET",
             quantity=10.0,
             price=100.0,
             status=OrderStatus.CLOSED,
@@ -113,6 +114,7 @@ class TestPaperTradingPortfolioMultiUser:
             user_id=user2.id,
             symbol="RELIANCE-EQ",
             side="buy",
+            order_type="MARKET",
             quantity=20.0,
             price=100.0,
             status=OrderStatus.CLOSED,
@@ -136,7 +138,8 @@ class TestPaperTradingPortfolioMultiUser:
     ):
         """Test that User 1 only sees their paper position, not User 2's broker position"""
         # Mock PaperTradeStore
-        mock_store = pytest.Mock()
+        from unittest.mock import MagicMock
+        mock_store = MagicMock()
         mock_store.get_account.return_value = {
             "initial_capital": 100000.0,
             "available_cash": 90000.0,
@@ -200,7 +203,8 @@ class TestPaperTradingPortfolioMultiUser:
     ):
         """Test that User 2's broker position doesn't appear in paper portfolio"""
         # Mock PaperTradeStore
-        mock_store = pytest.Mock()
+        from unittest.mock import MagicMock
+        mock_store = MagicMock()
         mock_store.get_account.return_value = {
             "initial_capital": 100000.0,
             "available_cash": 80000.0,

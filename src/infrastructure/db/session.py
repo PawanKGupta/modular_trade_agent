@@ -63,7 +63,7 @@ else:
         max_overflow=30,  # Extra connections when pool exhausted (up from default 10)
         pool_timeout=30,  # Wait 30s for connection before timeout
         pool_recycle=3600,  # Recycle connections every hour (prevent stale connections)
-        pool_pre_ping=True,  # Verify connection health before use (slight overhead but safer)
+        pool_pre_ping=False,  # Disabled: psycopg2 raises "set_session cannot be used inside a transaction" during ping
     )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 

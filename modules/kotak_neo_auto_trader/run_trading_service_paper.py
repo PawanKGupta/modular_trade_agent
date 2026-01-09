@@ -13,22 +13,22 @@ This allows you to test your strategy with all the same workflows:
 All orders go to paper trading system instead of real broker.
 """
 
+import argparse
+import signal
 import sys
 import time
-import signal
-import argparse
+from datetime import datetime
+from datetime import time as dt_time
 from pathlib import Path
-from datetime import datetime, time as dt_time
-from typing import Optional
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from utils.logger import logger
-from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTradingBrokerAdapter
 from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
+from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTradingBrokerAdapter
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
+from utils.logger import logger
 
 # Import holiday calendar for trading day checks
 try:
@@ -64,9 +64,9 @@ class PaperTradingService:
         self.storage_path = storage_path
 
         # Paper trading components
-        self.config: Optional[PaperTradingConfig] = None
-        self.broker: Optional[PaperTradingBrokerAdapter] = None
-        self.reporter: Optional[PaperTradeReporter] = None
+        self.config: PaperTradingConfig | None = None
+        self.broker: PaperTradingBrokerAdapter | None = None
+        self.reporter: PaperTradeReporter | None = None
 
         # Service state
         self.running = False

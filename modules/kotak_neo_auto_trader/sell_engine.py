@@ -2004,11 +2004,12 @@ class SellOrderManager:
                     if closed_at.tzinfo is None:
                         # Naive datetime: assume it's in IST (database convention)
                         from src.infrastructure.db.timezone_utils import IST
+
                         closed_at = closed_at.replace(tzinfo=IST)
                     elif closed_at.tzinfo != now.tzinfo:
                         # Different timezone: convert to IST
                         closed_at = closed_at.astimezone(now.tzinfo)
-                    
+
                     closed_age = (now - closed_at).total_seconds() / 60
                     if closed_age < 5:  # Closed within last 5 minutes
                         recently_closed[pos.symbol.upper()] = closed_age
