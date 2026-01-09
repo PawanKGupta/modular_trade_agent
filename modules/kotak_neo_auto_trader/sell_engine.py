@@ -1701,9 +1701,20 @@ class SellOrderManager:
                 logger.debug("Invalid holdings response for reconciliation")
                 return stats
 
+            # Check if API call failed (empty dict or missing "data" key indicates API error)
+            # Valid response should have "data" key even if it's an empty list (means no holdings)
+            # Empty dict {} without "data" key indicates API failure, not "all positions sold"
+            if not holdings_response or "data" not in holdings_response:
+                logger.warning(
+                    "Holdings API returned empty/invalid response (missing 'data' key). "
+                    "Skipping reconciliation to avoid incorrectly closing positions. "
+                    "This may indicate an API error or connection issue."
+                )
+                return stats
+
             holdings_data = holdings_response.get("data", [])
-            # Note: Empty holdings_data is valid - means all positions were sold
-            # We still need to check positions to detect manual full sells
+            # Note: Empty holdings_data list is valid - means all positions were sold
+            # But empty dict response indicates API failure and should be skipped
 
             # Create broker holdings map: {symbol or base_symbol: quantity}
             broker_holdings_map = {}
