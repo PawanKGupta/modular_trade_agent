@@ -876,6 +876,190 @@ class PaperTradingServiceAdapter:
                 f"Sell monitoring error: {e}", exc_info=True, action="run_sell_monitor"
             )
 
+    def _cleanup_stale_pending_orders(self) -> int:
+        """
+        Cancel stale PENDING buy orders that are past the next trading day market close.
+
+        Returns:
+            Number of stale orders cancelled
+        """
+        if not self.user_id or not self.db:
+            return 0
+
+        try:
+            from src.infrastructure.db.timezone_utils import IST, ist_now
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
+            from src.infrastructure.db.models import OrderStatus, TradeMode
+
+            orders_repo = OrdersRepository(self.db)
+            now = ist_now()
+            # Normalize to IST for consistent comparison
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=IST)
+            elif now.tzinfo != IST:
+                now = now.astimezone(IST)
+
+            # Get all PENDING buy orders for paper trading
+            all_orders = orders_repo.list(self.user_id, status=None)
+            pending_orders = [
+                o
+                for o in all_orders
+                if o.side == "buy"
+                and o.status == OrderStatus.PENDING
+                and getattr(o, "trade_mode", None) == TradeMode.PAPER
+            ]
+
+            if not pending_orders:
+                return 0
+
+            # Check which orders are stale
+            try:
+                from modules.kotak_neo_auto_trader.utils.trading_day_utils import (
+                    get_next_trading_day_close,
+                )
+            except ImportError:
+                get_next_trading_day_close = None
+
+            cancelled_count = 0
+            for order in pending_orders:
+                if not order.placed_at:
+                    continue
+
+                is_stale = False
+                placed_at = order.placed_at
+
+                try:
+                    if get_next_trading_day_close:
+                        # Use trading-day-aware logic
+                        if placed_at.tzinfo is None:
+                            placed_at = placed_at.replace(tzinfo=IST)
+                        elif placed_at.tzinfo != IST:
+                            placed_at = placed_at.astimezone(IST)
+
+                        next_trading_day_close = get_next_trading_day_close(placed_at)
+                        is_stale = now > next_trading_day_close
+                    else:
+                        # Fallback to 24-hour check
+                        from datetime import timedelta
+
+                        stale_cutoff = now - timedelta(hours=24)
+                        if placed_at.tzinfo is None:
+                            placed_at_ist = placed_at.replace(tzinfo=IST)
+                        elif placed_at.tzinfo != IST:
+                            placed_at_ist = placed_at.astimezone(IST)
+                        else:
+                            placed_at_ist = placed_at
+                        is_stale = placed_at_ist < stale_cutoff
+
+                    if is_stale:
+                        # Calculate age for logging
+                        # Ensure placed_at is timezone-aware for age calculation
+                        if placed_at.tzinfo is None:
+                            placed_at_for_age = placed_at.replace(tzinfo=IST)
+                        elif placed_at.tzinfo != IST:
+                            placed_at_for_age = placed_at.astimezone(IST)
+                        else:
+                            placed_at_for_age = placed_at
+                        age_hours = (now - placed_at_for_age).total_seconds() / 3600
+
+                        orders_repo.mark_cancelled(
+                            order,
+                            cancelled_reason=f"Stale order - past next trading day market close (age: {age_hours:.1f}h)",
+                        )
+                        self.logger.info(
+                            f"Cancelled stale PENDING buy order: {order.symbol} "
+                            f"(Order ID: {order.broker_order_id}, age: {age_hours:.1f}h)",
+                            action="_cleanup_stale_pending_orders",
+                        )
+                        cancelled_count += 1
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to check/cancel stale order {order.symbol} (ID: {order.id}): {e}",
+                        exc_info=True,
+                        action="_cleanup_stale_pending_orders",
+                    )
+
+            return cancelled_count
+        except Exception as e:
+            self.logger.error(
+                f"Error during stale order cleanup: {e}",
+                exc_info=True,
+                action="_cleanup_stale_pending_orders",
+            )
+            return 0
+
+    def _sync_order_status_with_positions(self) -> int:
+        """
+        Sync order status with position status.
+        If a position is closed, mark corresponding ONGOING buy order as CLOSED.
+
+        Returns:
+            Number of orders synced
+        """
+        if not self.user_id or not self.db:
+            return 0
+
+        try:
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+            from src.infrastructure.db.models import OrderStatus, TradeMode
+
+            orders_repo = OrdersRepository(self.db)
+            positions_repo = PositionsRepository(self.db)
+
+            # Get all ONGOING buy orders for paper trading
+            all_orders = orders_repo.list(self.user_id, status=None)
+            ongoing_orders = [
+                o
+                for o in all_orders
+                if o.side == "buy"
+                and o.status == OrderStatus.ONGOING
+                and getattr(o, "trade_mode", None) == TradeMode.PAPER
+            ]
+
+            if not ongoing_orders:
+                return 0
+
+            synced_count = 0
+            for order in ongoing_orders:
+                try:
+                    # Check if there's a position for this order (including closed positions)
+                    # Use get_by_symbol_any to check both open and closed positions
+                    position = positions_repo.get_by_symbol_any(
+                        self.user_id, order.symbol, include_closed=True
+                    )
+
+                    # If position exists and is closed, mark order as CLOSED
+                    if position and position.closed_at:
+                        # Update order status to CLOSED
+                        order.status = OrderStatus.CLOSED
+                        if not order.closed_at:
+                            from src.infrastructure.db.timezone_utils import ist_now
+
+                            order.closed_at = ist_now()
+                        orders_repo.update(order)
+                        self.logger.info(
+                            f"Synced order status: {order.symbol} (Order ID: {order.broker_order_id}) "
+                            f"marked as CLOSED (position closed at {position.closed_at})",
+                            action="_sync_order_status_with_positions",
+                        )
+                        synced_count += 1
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to sync order {order.symbol} (ID: {order.id}) with position: {e}",
+                        exc_info=True,
+                        action="_sync_order_status_with_positions",
+                    )
+
+            return synced_count
+        except Exception as e:
+            self.logger.error(
+                f"Error during order-position sync: {e}",
+                exc_info=True,
+                action="_sync_order_status_with_positions",
+            )
+            return 0
+
     def run_eod_cleanup(self):
         """6:00 PM - End-of-day cleanup (paper trading)"""
         from src.application.services.task_execution_wrapper import execute_task
@@ -935,6 +1119,39 @@ class PaperTradingServiceAdapter:
             except Exception as e:
                 self.logger.warning(
                     f"EOD sync failed (user {self.user_id}): {e}",
+                    action="run_eod_cleanup",
+                )
+
+            # Cleanup stale PENDING buy orders
+            try:
+                stale_cancelled = self._cleanup_stale_pending_orders()
+                if stale_cancelled > 0:
+                    self.logger.info(
+                        f"Cancelled {stale_cancelled} stale PENDING buy order(s)",
+                        action="run_eod_cleanup",
+                    )
+                    task_context["stale_orders_cancelled"] = stale_cancelled
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to cleanup stale orders: {e}",
+                    exc_info=True,
+                    action="run_eod_cleanup",
+                )
+
+            # Sync order status with position status
+            # If position is closed, mark corresponding buy order as CLOSED
+            try:
+                synced_orders = self._sync_order_status_with_positions()
+                if synced_orders > 0:
+                    self.logger.info(
+                        f"Synced {synced_orders} order status(es) with closed positions",
+                        action="run_eod_cleanup",
+                    )
+                    task_context["orders_synced"] = synced_orders
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to sync order status with positions: {e}",
+                    exc_info=True,
                     action="run_eod_cleanup",
                 )
 
