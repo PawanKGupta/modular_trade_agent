@@ -1688,8 +1688,18 @@ class SellOrderManager:
                 if self.portfolio:
                     try:
                         holdings_response = self.portfolio.get_holdings()
+                        # If API call failed (returned None), skip reconciliation
+                        if holdings_response is None:
+                            logger.warning(
+                                "Holdings API returned None (API error). "
+                                "Skipping reconciliation to avoid incorrectly closing positions."
+                            )
+                            return stats
                     except Exception as e:
-                        logger.debug(f"Failed to fetch holdings for reconciliation: {e}")
+                        logger.warning(
+                            f"Failed to fetch holdings for reconciliation: {e}. "
+                            "Skipping reconciliation to avoid incorrect position closures."
+                        )
                         return stats
                 else:
                     logger.debug(
