@@ -110,24 +110,15 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             orders_repo = OrdersRepository(self.db_session)
             positions_repo = PositionsRepository(self.db_session)
 
-            # Get database order by broker_order_id
-            # CRITICAL: Always use user_id to avoid MultipleResultsFound error
-            # Try to get user_id from order metadata first
-            user_id = getattr(order, "user_id", None)
-            if not user_id:
-                # Try to get from order metadata
-                metadata = getattr(order, "metadata", None) or getattr(order, "_metadata", None)
-                if metadata and isinstance(metadata, dict):
-                    user_id = metadata.get("user_id")
+            # ALWAYS use adapter's user_id (source of truth)
+            # Since user_id is mandatory in adapter, all orders belong to this user
+            user_id = self.user_id
 
-            db_order = None
-            if user_id:
-                # Try with user_id first (more efficient and safe)
-                db_order = orders_repo.get_by_broker_order_id(user_id, order.order_id)
+            # Get database order by broker_order_id (with user_id filter for safety)
+            db_order = orders_repo.get_by_broker_order_id(user_id, order.order_id)
 
-            # If not found and user_id is available, try one more time with direct query
-            # (handles edge cases where get_by_broker_order_id might have issues)
-            if not db_order and user_id:
+            # If not found, try direct query (still with user_id filter)
+            if not db_order:
                 from sqlalchemy import select
 
                 from src.infrastructure.db.models import Orders
@@ -135,68 +126,18 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 stmt = select(Orders).where(
                     Orders.user_id == user_id, Orders.broker_order_id == order.order_id
                 )
-                result = self.db_session.execute(stmt).scalar_one_or_none()
-                if result:
-                    db_order = result
-
-            # CRITICAL FIX: If user_id is not available, try to find order and extract user_id from it
-            # Use first() instead of scalar_one_or_none() to avoid MultipleResultsFound error
-            # Then use that user_id for subsequent operations
-            if not db_order and not user_id:
-                from sqlalchemy import select
-
-                from src.infrastructure.db.models import Orders
-
-                logger.warning(
-                    f"[PaperTrading] user_id not available for order {order.order_id}. "
-                    f"Searching database to find order and extract user_id. "
-                    f"This may return incorrect order if multiple users have same broker_order_id."
-                )
-                stmt = select(Orders).where(Orders.broker_order_id == order.order_id)
-                results = list(self.db_session.execute(stmt).scalars().all())
-
-                if len(results) > 1:
-                    # Extract user_ids from all results for logging
-                    user_ids_found = [o.user_id for o in results if hasattr(o, 'user_id')]
-
-                    logger.error(
-                        f"[PaperTrading] ⚠️ MULTIPLE ORDERS FOUND for broker_order_id={order.order_id}! "
-                        f"Found {len(results)} orders for user_ids: {user_ids_found}. "
-                        f"This indicates duplicate broker_order_ids across users. "
-                        f"Using first order (user_id={user_ids_found[0] if user_ids_found else 'unknown'}). "
-                        f"This may cause incorrect position tracking!"
-                    )
-
-                if results:
-                    # Get first order from results
-                    found_order = results[0]
-                    user_id = found_order.user_id
-                    db_order = found_order
-                    logger.info(
-                        f"[PaperTrading] Found order {order.order_id} for user_id={user_id}. "
-                        f"Using this user_id for sync."
-                    )
-                else:
-                    logger.warning(
-                        f"[PaperTrading] Order {order.order_id} not found in database. "
-                        f"Cannot sync execution without user_id."
-                    )
+                db_order = self.db_session.execute(stmt).scalar_one_or_none()
 
             if not db_order:
                 logger.warning(
                     f"[PaperTrading] DB order not found for execution sync: {order.order_id}. "
-                    f"Order executed in file but position not tracked in DB. "
-                    f"Attempting to create position from order data."
+                    f"Order executed in file but not tracked in DB. "
+                    f"Using adapter's user_id ({user_id}) for position tracking."
                 )
                 # Try to create position directly from order data if db_order not found
                 # This handles edge cases where order was created before DB integration
-                # Get user_id from order metadata if not already available
-                if not user_id:
-                    metadata = getattr(order, "metadata", None) or getattr(order, "_metadata", None)
-                    if metadata and isinstance(metadata, dict):
-                        user_id = metadata.get("user_id")
-
-                if order.is_buy_order() and user_id:
+                # Always use adapter's user_id (already set above)
+                if order.is_buy_order():
                     try:
                         from modules.kotak_neo_auto_trader.utils.symbol_utils import (
                             normalize_symbol,
@@ -258,8 +199,19 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                         )
                 return
 
-            # Use user_id from db_order (most reliable source)
-            user_id = db_order.user_id
+            # VALIDATION: Ensure db_order.user_id matches adapter's user_id
+            # This prevents positions from being created with wrong user_id
+            if db_order.user_id != self.user_id:
+                logger.error(
+                    f"[PaperTrading] ⚠️ USER_ID MISMATCH for order {order.order_id}! "
+                    f"DB order has user_id={db_order.user_id}, but adapter user_id={self.user_id}. "
+                    f"Using adapter's user_id ({self.user_id}) to prevent incorrect position tracking."
+                )
+                # Use adapter's user_id as source of truth
+                user_id = self.user_id
+            else:
+                # user_id already set to self.user_id above, no change needed
+                pass
 
             # Mark order as executed in database
             execution_price_float = float(execution_price.amount)
