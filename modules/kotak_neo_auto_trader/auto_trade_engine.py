@@ -952,6 +952,15 @@ class AutoTradeEngine:
             recs = []
             for _, row in df_buy.iterrows():
                 ticker = str(row.get("ticker", "")).strip().upper()
+
+                # Exclude ETFs (Exchange Traded Funds) - they behave differently from stocks
+                # and may not be suitable for mean reversion strategies
+                if "ETF" in ticker:
+                    logger.debug(
+                        f"Skipping {ticker}: ETF excluded from trading (mean reversion strategy)"
+                    )
+                    continue
+
                 last_close = float(row.get("last_close", 0) or 0)
                 # Phase 11: Load execution_capital from CSV if available
                 execution_capital = row.get("execution_capital")
@@ -969,16 +978,16 @@ class AutoTradeEngine:
                         priority_score = float(priority_score) if priority_score != "" else None
                     except (ValueError, TypeError):
                         priority_score = None
-                else:
-                    # Fallback to combined_score if priority_score not available
-                    combined_score = row.get("combined_score")
-                    if combined_score is not None:
-                        try:
-                            priority_score = float(combined_score) if combined_score != "" else None
-                        except (ValueError, TypeError):
-                            priority_score = None
                     else:
-                        priority_score = None
+                        # Fallback to combined_score if priority_score not available
+                        combined_score = row.get("combined_score")
+                        if combined_score is not None:
+                            try:
+                                priority_score = float(combined_score) if combined_score != "" else None
+                            except (ValueError, TypeError):
+                                priority_score = None
+                        else:
+                            priority_score = None
 
                 # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
                 # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
@@ -1022,6 +1031,15 @@ class AutoTradeEngine:
             recs = []
             for _, row in df_buy.iterrows():
                 ticker = str(row.get("ticker", "")).strip().upper()
+
+                # Exclude ETFs (Exchange Traded Funds) - they behave differently from stocks
+                # and may not be suitable for mean reversion strategies
+                if "ETF" in ticker:
+                    logger.debug(
+                        f"Skipping {ticker}: ETF excluded from trading (mean reversion strategy)"
+                    )
+                    continue
+
                 last_close = float(row.get("last_close", 0) or 0)
                 # Phase 11: Load execution_capital from CSV if available
                 execution_capital = row.get("execution_capital")
@@ -1202,6 +1220,15 @@ class AutoTradeEngine:
 
                             # Convert symbol to ticker format (add .NS if not present)
                             ticker = signal.symbol.upper()
+
+                            # Exclude ETFs (Exchange Traded Funds) - they behave differently from stocks
+                            # and may not be suitable for mean reversion strategies
+                            if "ETF" in ticker:
+                                logger.debug(
+                                    f"Skipping {ticker}: ETF excluded from trading (mean reversion strategy)"
+                                )
+                                continue
+
                             if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
                                 ticker = f"{ticker}.NS"
 
