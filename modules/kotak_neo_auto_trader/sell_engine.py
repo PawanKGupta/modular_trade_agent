@@ -1949,6 +1949,159 @@ class SellOrderManager:
             logger.debug(f"Error checking recent executed orders for {symbol}: {e}")
             return False
 
+    def _cancel_orphaned_sell_orders(self) -> dict[str, int]:
+        """
+        Cancel sell orders that have no corresponding open positions.
+
+        Safety checks:
+        - Only cancels PENDING orders (not ONGOING/executing orders)
+        - Skips orders for positions closed within last 5 minutes (race condition protection)
+        - Only cancels system-created orders (not manual orders)
+        - Handles broker API failures gracefully
+
+        Returns:
+            Dict with stats: {'checked': int, 'cancelled': int, 'skipped': int, 'errors': int}
+        """
+        if not self.orders_repo or not self.positions_repo or not self.user_id:
+            logger.debug(
+                "Repositories or user_id not available, skipping orphaned sell order cleanup"
+            )
+            return {"checked": 0, "cancelled": 0, "skipped": 0, "errors": 0}
+
+        stats = {"checked": 0, "cancelled": 0, "skipped": 0, "errors": 0}
+
+        try:
+            from datetime import timedelta
+
+            if not ist_now:
+                return stats
+
+            now = ist_now()
+
+            # Get all PENDING sell orders (not ONGOING - those might be executing)
+            sell_orders = self.orders_repo.list(self.user_id)
+            sell_orders = [
+                o
+                for o in sell_orders
+                if o.side.lower() == "sell"
+                and o.status == DbOrderStatus.PENDING  # Only PENDING, not ONGOING
+            ]
+
+            if not sell_orders:
+                logger.debug("No pending sell orders found for orphaned order cleanup")
+                return stats
+
+            # Get all positions (open and recently closed)
+            all_positions = self.positions_repo.list(self.user_id)
+            open_position_symbols = {
+                pos.symbol.upper() for pos in all_positions if pos.closed_at is None
+            }
+
+            # Track recently closed positions (within last 5 minutes) for race condition protection
+            recently_closed = {}
+            for pos in all_positions:
+                if pos.closed_at:
+                    closed_age = (now - pos.closed_at).total_seconds() / 60
+                    if closed_age < 5:  # Closed within last 5 minutes
+                        recently_closed[pos.symbol.upper()] = closed_age
+
+            logger.info(
+                f"Checking {len(sell_orders)} pending sell orders against "
+                f"{len(open_position_symbols)} open positions..."
+            )
+
+            cancelled_orders = []
+
+            for order in sell_orders:
+                stats["checked"] += 1
+                order_symbol = order.symbol.upper()
+                base_symbol = extract_base_symbol(order_symbol).upper()
+
+                # Safety check 1: Skip manual orders
+                if order.order_metadata and isinstance(order.order_metadata, dict):
+                    source = order.order_metadata.get("source", "")
+                    if "manual" in source.lower():
+                        logger.debug(f"Skipping {order_symbol}: Manual sell order")
+                        stats["skipped"] += 1
+                        continue
+
+                # Safety check 2: Check if position exists (open or recently closed)
+                has_open_position = (
+                    order_symbol in open_position_symbols
+                    or base_symbol in open_position_symbols
+                )
+
+                # Check if position was recently closed (race condition protection)
+                recently_closed_age = recently_closed.get(order_symbol) or recently_closed.get(
+                    base_symbol
+                )
+
+                if has_open_position:
+                    # Position exists - order is valid
+                    continue
+                elif recently_closed_age is not None:
+                    # Position was closed recently - might be race condition
+                    logger.debug(
+                        f"Skipping {order_symbol}: Position closed {recently_closed_age:.1f} minutes ago. "
+                        f"Order may still be valid. Will check on next cycle."
+                    )
+                    stats["skipped"] += 1
+                    continue
+                else:
+                    # Orphaned sell order - no corresponding position
+                    logger.warning(
+                        f"Found orphaned sell order: {order_symbol} "
+                        f"(Order ID: {order.broker_order_id}, DB ID: {order.id}). "
+                        f"No open position found. Cancelling..."
+                    )
+
+                    try:
+                        # Cancel via broker API if broker_order_id exists
+                        if order.broker_order_id and self.orders:
+                            try:
+                                cancel_result = self.orders.cancel_order(order.broker_order_id)
+                                if cancel_result:
+                                    logger.info(
+                                        f"Cancelled orphaned sell order {order.broker_order_id} for {order_symbol}"
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Failed to cancel orphaned sell order {order.broker_order_id} "
+                                        f"via broker API. Will still mark as cancelled in DB."
+                                    )
+                            except Exception as cancel_error:
+                                logger.warning(
+                                    f"Error cancelling orphaned sell order {order.broker_order_id} "
+                                    f"via broker API: {cancel_error}. Will still mark as cancelled in DB."
+                                )
+
+                        # Update database order status (even if broker cancellation failed)
+                        self.orders_repo.cancel(
+                            order,
+                            reason="Orphaned sell order: No corresponding open position found",
+                        )
+
+                        stats["cancelled"] += 1
+                        cancelled_orders.append(order_symbol)
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error cancelling orphaned sell order {order.id} for {order_symbol}: {e}"
+                        )
+                        stats["errors"] += 1
+
+            if stats["cancelled"] > 0:
+                logger.info(
+                    f"Orphaned sell order cleanup complete: {stats['checked']} checked, "
+                    f"{stats['cancelled']} cancelled, {stats['skipped']} skipped, "
+                    f"{stats['errors']} errors. Cancelled symbols: {', '.join(cancelled_orders)}"
+                )
+
+        except Exception as e:
+            logger.error(f"Error during orphaned sell order cleanup: {e}", exc_info=True)
+
+        return stats
+
     def _reconcile_single_symbol(
         self, symbol: str, holdings_response: dict[str, Any] | None = None
     ) -> bool:
@@ -3537,6 +3690,14 @@ class SellOrderManager:
                 f"Reconciliation detected {reconciliation_stats['updated']} manual partial sells "
                 f"and {reconciliation_stats['closed']} manual full sells. "
                 f"Positions table updated accordingly."
+            )
+
+        # Cleanup orphaned sell orders (no corresponding open positions)
+        orphaned_stats = self._cancel_orphaned_sell_orders()
+        if orphaned_stats["cancelled"] > 0:
+            logger.info(
+                f"Cleaned up {orphaned_stats['cancelled']} orphaned sell orders "
+                f"({orphaned_stats['skipped']} skipped due to safety checks)"
             )
 
         open_positions = self.get_open_positions()

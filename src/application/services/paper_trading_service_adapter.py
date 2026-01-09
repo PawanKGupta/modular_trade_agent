@@ -970,6 +970,15 @@ class PaperTradingServiceAdapter:
 
         from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType
 
+        # Cleanup orphaned sell orders before placing new ones
+        orphaned_stats = self._cancel_orphaned_sell_orders()
+        if orphaned_stats["cancelled"] > 0:
+            self.logger.info(
+                f"Cleaned up {orphaned_stats['cancelled']} orphaned paper sell orders "
+                f"({orphaned_stats['skipped']} skipped due to safety checks)",
+                action="_place_sell_orders",
+            )
+
         holdings = self.broker.get_holdings()
 
         if not holdings:
@@ -1148,6 +1157,200 @@ class PaperTradingServiceAdapter:
 
         # Save active sell orders to JSON for UI display
         self._save_sell_orders_to_file()
+
+    def _cancel_orphaned_sell_orders(self) -> dict[str, int]:
+        """
+        Cancel sell orders that have no corresponding open positions (paper trading).
+
+        Safety checks:
+        - Only cancels PENDING orders (not ONGOING/executing orders)
+        - Skips orders for positions closed within last 5 minutes (race condition protection)
+        - Only cancels system-created orders (not manual orders)
+        - Handles broker API failures gracefully
+
+        Returns:
+            Dict with stats: {'checked': int, 'cancelled': int, 'skipped': int, 'errors': int}
+        """
+        if not self.db or not self.user_id:
+            self.logger.debug(
+                "Database or user_id not available, skipping orphaned sell order cleanup",
+                action="_cancel_orphaned_sell_orders",
+            )
+            return {"checked": 0, "cancelled": 0, "skipped": 0, "errors": 0}
+
+        stats = {"checked": 0, "cancelled": 0, "skipped": 0, "errors": 0}
+
+        try:
+            from datetime import timedelta
+
+            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+            from src.infrastructure.db.timezone_utils import ist_now
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+            from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+            if not ist_now:
+                return stats
+
+            now = ist_now()
+            orders_repo = OrdersRepository(self.db)
+            positions_repo = PositionsRepository(self.db)
+
+            # Get all PENDING sell orders for paper trading
+            sell_orders = orders_repo.list(self.user_id)
+            sell_orders = [
+                o
+                for o in sell_orders
+                if o.side.lower() == "sell"
+                and o.status == DbOrderStatus.PENDING  # Only PENDING, not ONGOING
+                and hasattr(o, "trade_mode")
+                and o.trade_mode
+                and o.trade_mode.value == "paper"  # Only paper trading orders
+            ]
+
+            if not sell_orders:
+                self.logger.debug(
+                    "No pending paper sell orders found for orphaned order cleanup",
+                    action="_cancel_orphaned_sell_orders",
+                )
+                return stats
+
+            # Get all positions (open and recently closed)
+            all_positions = positions_repo.list(self.user_id)
+            open_position_symbols = {
+                pos.symbol.upper() for pos in all_positions if pos.closed_at is None
+            }
+
+            # Track recently closed positions (within last 5 minutes) for race condition protection
+            recently_closed = {}
+            for pos in all_positions:
+                if pos.closed_at:
+                    closed_age = (now - pos.closed_at).total_seconds() / 60
+                    if closed_age < 5:  # Closed within last 5 minutes
+                        recently_closed[pos.symbol.upper()] = closed_age
+
+            self.logger.info(
+                f"Checking {len(sell_orders)} pending paper sell orders against "
+                f"{len(open_position_symbols)} open positions...",
+                action="_cancel_orphaned_sell_orders",
+            )
+
+            cancelled_orders = []
+
+            for order in sell_orders:
+                stats["checked"] += 1
+                order_symbol = order.symbol.upper()
+                base_symbol = extract_base_symbol(order_symbol).upper()
+
+                # Safety check 1: Skip manual orders
+                if order.order_metadata and isinstance(order.order_metadata, dict):
+                    source = order.order_metadata.get("source", "")
+                    if "manual" in source.lower():
+                        self.logger.debug(
+                            f"Skipping {order_symbol}: Manual sell order",
+                            action="_cancel_orphaned_sell_orders",
+                        )
+                        stats["skipped"] += 1
+                        continue
+
+                # Safety check 2: Check if position exists (open or recently closed)
+                has_open_position = (
+                    order_symbol in open_position_symbols
+                    or base_symbol in open_position_symbols
+                )
+
+                # Check if position was recently closed (race condition protection)
+                recently_closed_age = recently_closed.get(order_symbol) or recently_closed.get(
+                    base_symbol
+                )
+
+                if has_open_position:
+                    # Position exists - order is valid
+                    continue
+                elif recently_closed_age is not None:
+                    # Position was closed recently - might be race condition
+                    self.logger.debug(
+                        f"Skipping {order_symbol}: Position closed {recently_closed_age:.1f} minutes ago. "
+                        f"Order may still be valid. Will check on next cycle.",
+                        action="_cancel_orphaned_sell_orders",
+                    )
+                    stats["skipped"] += 1
+                    continue
+                else:
+                    # Orphaned sell order - no corresponding position
+                    self.logger.warning(
+                        f"Found orphaned paper sell order: {order_symbol} "
+                        f"(Order ID: {order.broker_order_id}, DB ID: {order.id}). "
+                        f"No open position found. Cancelling...",
+                        action="_cancel_orphaned_sell_orders",
+                    )
+
+                    try:
+                        # Cancel via paper trading broker if possible
+                        if order.broker_order_id and self.broker:
+                            try:
+                                # Paper trading broker might have cancel_order method
+                                if hasattr(self.broker, "cancel_order"):
+                                    cancel_result = self.broker.cancel_order(order.broker_order_id)
+                                    if cancel_result:
+                                        self.logger.info(
+                                            f"Cancelled orphaned paper sell order {order.broker_order_id} for {order_symbol}",
+                                            action="_cancel_orphaned_sell_orders",
+                                        )
+                                    else:
+                                        self.logger.warning(
+                                            f"Failed to cancel orphaned paper sell order {order.broker_order_id} "
+                                            f"via broker API. Will still mark as cancelled in DB.",
+                                            action="_cancel_orphaned_sell_orders",
+                                        )
+                            except Exception as cancel_error:
+                                self.logger.warning(
+                                    f"Error cancelling orphaned paper sell order {order.broker_order_id} "
+                                    f"via broker API: {cancel_error}. Will still mark as cancelled in DB.",
+                                    action="_cancel_orphaned_sell_orders",
+                                )
+
+                        # Update database order status (even if broker cancellation failed)
+                        orders_repo.cancel(
+                            order,
+                            reason="Orphaned sell order: No corresponding open position found (paper trading)",
+                        )
+
+                        # Remove from active_sell_orders tracking
+                        if order_symbol in self.active_sell_orders:
+                            del self.active_sell_orders[order_symbol]
+                        if base_symbol in self.active_sell_orders:
+                            del self.active_sell_orders[base_symbol]
+
+                        stats["cancelled"] += 1
+                        cancelled_orders.append(order_symbol)
+
+                    except Exception as e:
+                        self.logger.error(
+                            f"Error cancelling orphaned paper sell order {order.id} for {order_symbol}: {e}",
+                            exc_info=True,
+                            action="_cancel_orphaned_sell_orders",
+                        )
+                        stats["errors"] += 1
+
+            if stats["cancelled"] > 0:
+                self.logger.info(
+                    f"Paper trading orphaned sell order cleanup complete: {stats['checked']} checked, "
+                    f"{stats['cancelled']} cancelled, {stats['skipped']} skipped, "
+                    f"{stats['errors']} errors. Cancelled symbols: {', '.join(cancelled_orders)}",
+                    action="_cancel_orphaned_sell_orders",
+                )
+                # Save updated active_sell_orders
+                self._save_sell_orders_to_file()
+
+        except Exception as e:
+            self.logger.error(
+                f"Error during paper trading orphaned sell order cleanup: {e}",
+                exc_info=True,
+                action="_cancel_orphaned_sell_orders",
+            )
+
+        return stats
 
     def _monitor_sell_orders(self):
         """
@@ -2069,8 +2272,7 @@ class PaperTradingEngineAdapter:
                                 order.symbol == pos.symbol
                                 and order.placed_at
                                 and pos.opened_at
-                                and abs((order.placed_at - pos.opened_at).total_seconds())
-                                < 3600
+                                and abs((order.placed_at - pos.opened_at).total_seconds()) < 3600
                             )
                             # Or match by symbol if timing check fails
                             or order.symbol == pos.symbol
@@ -2141,7 +2343,8 @@ class PaperTradingEngineAdapter:
                 if (
                     order.side == "buy"
                     and getattr(order, "trade_mode", None) == TradeMode.PAPER
-                    and order.status in {
+                    and order.status
+                    in {
                         OrderStatus.ONGOING,  # Executed orders (may not be in holdings yet)
                         OrderStatus.PENDING,  # Pending orders
                     }
@@ -2335,7 +2538,11 @@ class PaperTradingEngineAdapter:
 
                 # Log if recommendation had different execution_capital (for debugging)
                 rec_execution_capital = getattr(rec, "execution_capital", None)
-                if rec_execution_capital and rec_execution_capital > 0 and rec_execution_capital != execution_capital:
+                if (
+                    rec_execution_capital
+                    and rec_execution_capital > 0
+                    and rec_execution_capital != execution_capital
+                ):
                     self.logger.info(
                         f"Ignoring stale execution_capital from recommendation for {rec.ticker}: "
                         f"Rs {rec_execution_capital:,.0f} (using current user_capital: Rs {execution_capital:,.0f})",
