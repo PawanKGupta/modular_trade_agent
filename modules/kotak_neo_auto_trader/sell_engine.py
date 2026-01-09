@@ -1971,8 +1971,6 @@ class SellOrderManager:
         stats = {"checked": 0, "cancelled": 0, "skipped": 0, "errors": 0}
 
         try:
-            from datetime import timedelta
-
             if not ist_now:
                 return stats
 
@@ -2001,7 +1999,17 @@ class SellOrderManager:
             recently_closed = {}
             for pos in all_positions:
                 if pos.closed_at:
-                    closed_age = (now - pos.closed_at).total_seconds() / 60
+                    # Handle timezone mismatch: ensure both datetimes are timezone-aware
+                    closed_at = pos.closed_at
+                    if closed_at.tzinfo is None:
+                        # Naive datetime: assume it's in IST (database convention)
+                        from src.infrastructure.db.timezone_utils import IST
+                        closed_at = closed_at.replace(tzinfo=IST)
+                    elif closed_at.tzinfo != now.tzinfo:
+                        # Different timezone: convert to IST
+                        closed_at = closed_at.astimezone(now.tzinfo)
+                    
+                    closed_age = (now - closed_at).total_seconds() / 60
                     if closed_age < 5:  # Closed within last 5 minutes
                         recently_closed[pos.symbol.upper()] = closed_age
 
@@ -2027,8 +2035,7 @@ class SellOrderManager:
 
                 # Safety check 2: Check if position exists (open or recently closed)
                 has_open_position = (
-                    order_symbol in open_position_symbols
-                    or base_symbol in open_position_symbols
+                    order_symbol in open_position_symbols or base_symbol in open_position_symbols
                 )
 
                 # Check if position was recently closed (race condition protection)
