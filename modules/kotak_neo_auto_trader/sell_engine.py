@@ -3225,11 +3225,17 @@ class SellOrderManager:
 
         This ensures database consistency with actual broker holdings.
         """
-        if not self.orders_repo or not self.positions_repo or not self.user_id or not self.portfolio:
+        if (
+            not self.orders_repo
+            or not self.positions_repo
+            or not self.user_id
+            or not self.portfolio
+        ):
             return
 
         try:
             from sqlalchemy import select
+
             from src.infrastructure.db.models import Orders, Positions
 
             # Find all cancelled sell orders that were executed (have execution_time)

@@ -105,11 +105,12 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 # Check if order was executed (has execution_time) before being cancelled
                 if db_order.side == "sell" and db_order.execution_time is not None:
                     # Check if a position was closed by this order
+                    from sqlalchemy import select
+
+                    from src.infrastructure.db.models import Positions
                     from src.infrastructure.persistence.positions_repository import (
                         PositionsRepository,
                     )
-                    from sqlalchemy import select
-                    from src.infrastructure.db.models import Positions
 
                     positions_repo = PositionsRepository(self.db_session)
 
