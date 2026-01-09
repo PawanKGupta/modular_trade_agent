@@ -3214,6 +3214,133 @@ class SellOrderManager:
 
         return closed_count
 
+    def _reopen_positions_for_cancelled_sell_orders(self) -> None:
+        """
+        Reopen positions that were closed by sell orders that were later cancelled.
+
+        This handles the case where:
+        1. A sell order executes and closes a position
+        2. The sell order is then cancelled (e.g., by broker or manual intervention)
+        3. The stock is still in holdings (position should be reopened)
+
+        This ensures database consistency with actual broker holdings.
+        """
+        if not self.orders_repo or not self.positions_repo or not self.user_id or not self.portfolio:
+            return
+
+        try:
+            from sqlalchemy import select
+            from src.infrastructure.db.models import Orders, Positions
+
+            # Find all cancelled sell orders that were executed (have execution_time)
+            stmt = select(Orders).where(
+                Orders.user_id == self.user_id,
+                Orders.side == "sell",
+                Orders.status == DbOrderStatus.CANCELLED,
+                Orders.execution_time.isnot(None),  # Only orders that executed before cancellation
+            )
+            cancelled_executed_sell_orders = self.orders_repo.db.execute(stmt).scalars().all()
+
+            if not cancelled_executed_sell_orders:
+                return
+
+            # Get broker holdings to check if stocks are still there
+            holdings_response = self._get_holdings()
+            if not holdings_response or "data" not in holdings_response:
+                logger.debug("Could not fetch holdings to check for position reopening")
+                return
+
+            holdings_data = holdings_response.get("data", [])
+            holdings_dict = {}
+            for holding in holdings_data:
+                # Use same field mapping as portfolio.py for consistency
+                symbol = (
+                    holding.get("tradingSymbol")
+                    or holding.get("symbol")
+                    or holding.get("instrumentName")
+                    or holding.get("securitySymbol")
+                    or holding.get("securityname")
+                    or ""
+                ).upper()
+                qty = int(
+                    holding.get("quantity")
+                    or holding.get("qty")
+                    or holding.get("netQuantity")
+                    or holding.get("holdingsQuantity")
+                    or 0
+                )
+                if symbol and qty > 0:
+                    holdings_dict[symbol] = qty
+
+            reopened_count = 0
+
+            for order in cancelled_executed_sell_orders:
+                try:
+                    # Find position that was closed by this order
+                    stmt = select(Positions).where(
+                        Positions.user_id == self.user_id,
+                        Positions.sell_order_id == order.id,
+                        Positions.closed_at.isnot(None),  # Only closed positions
+                    )
+                    closed_position = self.positions_repo.db.execute(stmt).scalar_one_or_none()
+
+                    if not closed_position:
+                        continue
+
+                    # Check if stock is still in holdings
+                    symbol_key = closed_position.symbol.upper()
+                    # Try both full symbol and base symbol
+                    holding_qty = holdings_dict.get(symbol_key)
+                    if holding_qty is None:
+                        # Try base symbol (remove -EQ suffix)
+                        base_symbol = extract_base_symbol(symbol_key).upper()
+                        holding_qty = holdings_dict.get(base_symbol)
+
+                    if holding_qty and holding_qty > 0:
+                        # Stock is still in holdings - reopen the position
+                        logger.warning(
+                            f"Reopening position {closed_position.symbol} because sell order "
+                            f"{order.broker_order_id} was cancelled but stock is still in holdings "
+                            f"(qty: {holding_qty})"
+                        )
+
+                        # Reopen position: clear closed_at and restore quantity
+                        closed_position.closed_at = None
+                        closed_position.quantity = float(holding_qty)
+                        # Clear exit details since position is reopened
+                        closed_position.exit_price = None
+                        closed_position.exit_reason = None
+                        closed_position.exit_rsi = None
+                        closed_position.realized_pnl = None
+                        closed_position.realized_pnl_pct = None
+                        closed_position.sell_order_id = None
+
+                        self.positions_repo.db.commit()
+                        reopened_count += 1
+                        logger.info(
+                            f"Reopened position {closed_position.symbol} with quantity {holding_qty}"
+                        )
+                    else:
+                        logger.debug(
+                            f"Position {closed_position.symbol} was closed by cancelled order "
+                            f"{order.broker_order_id}, but stock is not in holdings - position remains closed"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Error checking/reopening position for cancelled sell order "
+                        f"{order.broker_order_id}: {e}",
+                        exc_info=True,
+                    )
+
+            if reopened_count > 0:
+                logger.info(f"Reopened {reopened_count} position(s) for cancelled sell orders")
+
+        except Exception as e:
+            logger.error(
+                f"Error in _reopen_positions_for_cancelled_sell_orders: {e}",
+                exc_info=True,
+            )
+
     def _update_trade_history_for_manual_sell(
         self, symbol: str, sell_info: dict[str, Any], remaining_qty: int
     ):
@@ -3440,6 +3567,11 @@ class SellOrderManager:
         # Clean up rejected/cancelled orders (without open positions)
         for symbol in rejected_symbols:
             self._remove_from_tracking(symbol)
+
+        # Check for cancelled sell orders that closed positions but stock is still in holdings
+        # This handles the case where a sell order executed, closed the position, but then was cancelled
+        if self.positions_repo and self.user_id and self.portfolio:
+            self._reopen_positions_for_cancelled_sell_orders()
 
         # Re-place sell orders for cancelled orders with open positions
         for symbol, order_info in cancelled_symbols_with_positions:

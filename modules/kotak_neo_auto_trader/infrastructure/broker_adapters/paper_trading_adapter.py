@@ -100,6 +100,79 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 repo.mark_failed(db_order, reason or "Paper trading failure")
             elif failure_type == "cancelled":
                 repo.mark_cancelled(db_order, reason or "Paper trading cancelled")
+
+                # If this is a sell order that closed a position, check if we need to reopen it
+                # Check if order was executed (has execution_time) before being cancelled
+                if db_order.side == "sell" and db_order.execution_time is not None:
+                    # Check if a position was closed by this order
+                    from src.infrastructure.persistence.positions_repository import (
+                        PositionsRepository,
+                    )
+                    from sqlalchemy import select
+                    from src.infrastructure.db.models import Positions
+
+                    positions_repo = PositionsRepository(self.db_session)
+
+                    # Find position that was closed by this order
+                    stmt = select(Positions).where(
+                        Positions.user_id == user_id,
+                        Positions.sell_order_id == db_order.id,
+                        Positions.closed_at.isnot(None),  # Only check closed positions
+                    )
+                    closed_position = self.db_session.execute(stmt).scalar_one_or_none()
+
+                    if closed_position:
+                        # Check if stock is still in holdings (broker's portfolio)
+                        try:
+                            # Normalize symbol for broker lookup
+                            from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                                normalize_symbol,
+                            )
+
+                            broker_symbol = normalize_symbol(closed_position.symbol)
+                            # Remove -EQ suffix if present for broker lookup
+                            if broker_symbol.endswith("-EQ"):
+                                broker_symbol = broker_symbol[:-3]
+
+                            holding = self.get_holding(broker_symbol)
+
+                            if holding and holding.quantity > 0:
+                                # Stock is still in holdings - reopen the position
+                                logger.warning(
+                                    f"[PaperTrading] Reopening position {closed_position.symbol} "
+                                    f"because sell order {order.order_id} was cancelled but stock "
+                                    f"is still in holdings (qty: {holding.quantity})"
+                                )
+
+                                # Reopen position: clear closed_at and restore quantity
+                                closed_position.closed_at = None
+                                closed_position.quantity = float(holding.quantity)
+                                # Clear exit details since position is reopened
+                                closed_position.exit_price = None
+                                closed_position.exit_reason = None
+                                closed_position.exit_rsi = None
+                                closed_position.realized_pnl = None
+                                closed_position.realized_pnl_pct = None
+                                closed_position.sell_order_id = None
+
+                                self.db_session.commit()
+                                logger.info(
+                                    f"[PaperTrading] Reopened position {closed_position.symbol} "
+                                    f"with quantity {holding.quantity}"
+                                )
+                            else:
+                                logger.debug(
+                                    f"[PaperTrading] Position {closed_position.symbol} was closed "
+                                    f"by cancelled order {order.order_id}, but stock is not in "
+                                    f"holdings - position remains closed"
+                                )
+                        except Exception as reopen_ex:
+                            logger.warning(
+                                f"[PaperTrading] Failed to check/reopen position for cancelled "
+                                f"sell order {order.order_id}: {reopen_ex}",
+                                exc_info=True,
+                            )
+
             logger.debug(
                 f"[PaperTrading] Synced order failure to DB: {order.order_id} ({failure_type})"
             )
