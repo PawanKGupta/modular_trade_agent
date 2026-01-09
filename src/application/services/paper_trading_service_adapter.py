@@ -87,8 +87,8 @@ class PaperTradingServiceAdapter:
         # Sell order tracking - Frozen EMA9 strategy (matches backtest)
         # Format: {symbol: {'order_id': str, 'target_price': float,
         #                   'qty': int, 'entry_date': str, 'ticker': str}}
+        # Note: Sell orders are tracked in database and in-memory cache only (file-based tracking deprecated)
         self.active_sell_orders = {}
-        self._sell_orders_file = Path(self.storage_path) / "active_sell_orders.json"
 
         # RSI Exit: Cache for RSI10 values {symbol: rsi10_value}
         # Cached at market open (previous day's RSI10), updated with real-time if available
@@ -224,8 +224,8 @@ class PaperTradingServiceAdapter:
 
             self.logger.info("? Paper trading broker connected", action="initialize")
 
-            # Load existing sell orders from file to avoid duplicates on restart
-            self._load_sell_orders_from_file()
+            # Load existing sell orders from database to avoid duplicates on restart
+            self._load_sell_orders_from_db()
 
             # Execute any pending MARKET orders from previous sessions
             try:
@@ -1049,18 +1049,71 @@ class PaperTradingServiceAdapter:
                                     else None
                                 )
                                 if target_price:
+                                    order_id = (
+                                        order.order_id
+                                        if hasattr(order, "order_id")
+                                        else "unknown"
+                                    )
                                     # Use base symbol as key to match existing convention
                                     self.active_sell_orders[symbol_base] = {
-                                        "order_id": (
-                                            order.order_id
-                                            if hasattr(order, "order_id")
-                                            else "unknown"
-                                        ),
+                                        "order_id": order_id,
                                         "target_price": target_price,
                                         "qty": quantity,
                                         "ticker": ticker,
                                         "entry_date": datetime.now().strftime("%Y-%m-%d"),
                                     }
+
+                                    # Ensure order is saved to database if not already present
+                                    if order_id and order_id != "unknown":
+                                        try:
+                                            from src.infrastructure.persistence.orders_repository import (
+                                                OrdersRepository,
+                                            )
+                                            from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                                                extract_base_symbol,
+                                            )
+
+                                            orders_repo = OrdersRepository(self.db)
+                                            db_order = orders_repo.get_by_broker_order_id(
+                                                self.user_id, order_id
+                                            )
+
+                                            if not db_order:
+                                                # Order exists in broker but not in database - save it
+                                                base_symbol = extract_base_symbol(symbol).upper()
+                                                order_metadata = {
+                                                    "ticker": ticker,
+                                                    "base_symbol": base_symbol,
+                                                    "full_symbol": symbol,
+                                                    "source": "sell_engine_run_at_market_open",
+                                                    "exit_reason": "TARGET_HIT",
+                                                    "restored_from_broker": True,
+                                                }
+
+                                                orders_repo.create_amo(
+                                                    user_id=self.user_id,
+                                                    symbol=symbol,
+                                                    side="sell",
+                                                    order_type="limit",
+                                                    quantity=float(quantity),
+                                                    price=float(target_price),
+                                                    broker_order_id=order_id,
+                                                    entry_type="exit",
+                                                    order_metadata=order_metadata,
+                                                    reason="Sell order restored from broker pending orders",
+                                                    trade_mode="paper",
+                                                )
+                                                self.logger.debug(
+                                                    f"Saved restored sell order to DB for {symbol} "
+                                                    f"(user_id={self.user_id}, broker_order_id={order_id})",
+                                                    action="_place_sell_orders",
+                                                )
+                                        except Exception as db_error:
+                                            self.logger.warning(
+                                                f"Failed to save restored sell order {order_id} for {symbol} to DB: {db_error}",
+                                                action="_place_sell_orders",
+                                            )
+
                                     self.logger.info(
                                         f"Restored sell order tracking for {symbol_base} from broker",
                                         action="_place_sell_orders",
@@ -1129,6 +1182,49 @@ class PaperTradingServiceAdapter:
                         "entry_date": datetime.now().strftime("%Y-%m-%d"),
                     }
 
+                    # Persist sell order to database
+                    try:
+                        from src.infrastructure.persistence.orders_repository import (
+                            OrdersRepository,
+                        )
+                        from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                            extract_base_symbol,
+                        )
+
+                        orders_repo = OrdersRepository(self.db)
+                        base_symbol = extract_base_symbol(symbol).upper()
+                        order_metadata = {
+                            "ticker": ticker,
+                            "base_symbol": base_symbol,
+                            "full_symbol": symbol,
+                            "source": "sell_engine_run_at_market_open",
+                            "exit_reason": "TARGET_HIT",
+                        }
+
+                        orders_repo.create_amo(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            side="sell",
+                            order_type="limit",
+                            quantity=float(quantity),
+                            price=float(ema9_target),
+                            broker_order_id=order_id,
+                            entry_type="exit",
+                            order_metadata=order_metadata,
+                            reason="Sell order placed by PaperTradingServiceAdapter at market open",
+                            trade_mode="paper",
+                        )
+                        self.logger.debug(
+                            f"Persisted sell order to DB for {symbol} "
+                            f"(user_id={self.user_id}, broker_order_id={order_id})",
+                            action="_place_sell_orders",
+                        )
+                    except Exception as db_error:
+                        self.logger.warning(
+                            f"Failed to persist sell order {order_id} for {symbol} to DB: {db_error}",
+                            action="_place_sell_orders",
+                        )
+
                     self.logger.info(
                         f"? Placed SELL order: {symbol} x{quantity} @ Rs {ema9_target:.2f} "
                         f"(EMA9 target) | Order ID: {order_id}",
@@ -1155,12 +1251,11 @@ class PaperTradingServiceAdapter:
         # Initialize RSI10 cache for all active sell orders (previous day's RSI10)
         self._initialize_rsi10_cache_paper()
 
-        # Save active sell orders to JSON for UI display
-        self._save_sell_orders_to_file()
-
     def _cancel_orphaned_sell_orders(self) -> dict[str, int]:
         """
         Cancel sell orders that have no corresponding open positions (paper trading).
+
+        Checks database and in-memory cache for orphaned orders (file-based tracking is deprecated).
 
         Safety checks:
         - Only cancels PENDING orders (not ONGOING/executing orders)
@@ -1194,25 +1289,6 @@ class PaperTradingServiceAdapter:
             orders_repo = OrdersRepository(self.db)
             positions_repo = PositionsRepository(self.db)
 
-            # Get all PENDING sell orders for paper trading
-            sell_orders = orders_repo.list(self.user_id)
-            sell_orders = [
-                o
-                for o in sell_orders
-                if o.side.lower() == "sell"
-                and o.status == DbOrderStatus.PENDING  # Only PENDING, not ONGOING
-                and hasattr(o, "trade_mode")
-                and o.trade_mode
-                and o.trade_mode.value == "paper"  # Only paper trading orders
-            ]
-
-            if not sell_orders:
-                self.logger.debug(
-                    "No pending paper sell orders found for orphaned order cleanup",
-                    action="_cancel_orphaned_sell_orders",
-                )
-                return stats
-
             # Get all positions (open and recently closed)
             all_positions = positions_repo.list(self.user_id)
             open_position_symbols = {
@@ -1232,27 +1308,74 @@ class PaperTradingServiceAdapter:
                     elif closed_at.tzinfo != now.tzinfo:
                         # Different timezone: convert to IST
                         closed_at = closed_at.astimezone(now.tzinfo)
-                    
+
                     closed_age = (now - closed_at).total_seconds() / 60
                     if closed_age < 5:  # Closed within last 5 minutes
                         recently_closed[pos.symbol.upper()] = closed_age
 
+            # Collect sell orders from database and in-memory cache
+            all_sell_orders = {}  # {broker_order_id or symbol: order_info}
+
+            # 1. Get sell orders from database
+            db_sell_orders = orders_repo.list(self.user_id)
+            db_sell_orders = [
+                o
+                for o in db_sell_orders
+                if o.side.lower() == "sell"
+                and o.status == DbOrderStatus.PENDING  # Only PENDING, not ONGOING
+                and hasattr(o, "trade_mode")
+                and o.trade_mode
+                and o.trade_mode.value == "paper"  # Only paper trading orders
+            ]
+
+            for db_order in db_sell_orders:
+                key = db_order.broker_order_id or db_order.symbol.upper()
+                all_sell_orders[key] = {
+                    "source": "database",
+                    "db_order": db_order,
+                    "symbol": db_order.symbol.upper(),
+                    "broker_order_id": db_order.broker_order_id,
+                }
+
+            # 2. Get sell orders from in-memory cache (self.active_sell_orders)
+            for symbol, order_info in self.active_sell_orders.items():
+                order_id = order_info.get("order_id")
+                key = order_id or symbol.upper()
+
+                # Skip if already in database
+                if key not in all_sell_orders:
+                    all_sell_orders[key] = {
+                        "source": "memory",
+                        "db_order": None,
+                        "symbol": symbol.upper(),
+                        "broker_order_id": order_id,
+                        "order_info": order_info,
+                    }
+
+            if not all_sell_orders:
+                self.logger.debug(
+                    "No sell orders found in database or memory",
+                    action="_cancel_orphaned_sell_orders",
+                )
+                return stats
+
             self.logger.info(
-                f"Checking {len(sell_orders)} pending paper sell orders against "
+                f"Checking {len(all_sell_orders)} sell orders (from DB/memory) against "
                 f"{len(open_position_symbols)} open positions...",
                 action="_cancel_orphaned_sell_orders",
             )
 
             cancelled_orders = []
 
-            for order in sell_orders:
+            for key, order_info in all_sell_orders.items():
                 stats["checked"] += 1
-                order_symbol = order.symbol.upper()
+                order_symbol = order_info["symbol"]
                 base_symbol = extract_base_symbol(order_symbol).upper()
 
                 # Safety check 1: Skip manual orders
-                if order.order_metadata and isinstance(order.order_metadata, dict):
-                    source = order.order_metadata.get("source", "")
+                db_order = order_info.get("db_order")
+                if db_order and db_order.order_metadata and isinstance(db_order.order_metadata, dict):
+                    source = db_order.order_metadata.get("source", "")
                     if "manual" in source.lower():
                         self.logger.debug(
                             f"Skipping {order_symbol}: Manual sell order",
@@ -1285,77 +1408,100 @@ class PaperTradingServiceAdapter:
                     continue
                 else:
                     # Orphaned sell order - no corresponding position
+                    broker_order_id = order_info.get("broker_order_id") or "unknown"
+                    source = order_info.get("source", "unknown")
+
                     self.logger.warning(
                         f"Found orphaned paper sell order: {order_symbol} "
-                        f"(Order ID: {order.broker_order_id}, DB ID: {order.id}). "
+                        f"(Order ID: {broker_order_id}, Source: {source}). "
                         f"No open position found. Cancelling...",
                         action="_cancel_orphaned_sell_orders",
                     )
 
                     try:
                         # Cancel via paper trading broker if possible
-                        if order.broker_order_id and self.broker:
+                        if broker_order_id and broker_order_id != "unknown" and self.broker:
                             try:
                                 # Paper trading broker might have cancel_order method
                                 if hasattr(self.broker, "cancel_order"):
-                                    cancel_result = self.broker.cancel_order(order.broker_order_id)
+                                    cancel_result = self.broker.cancel_order(broker_order_id)
                                     if cancel_result:
                                         self.logger.info(
-                                            f"Cancelled orphaned paper sell order {order.broker_order_id} for {order_symbol}",
+                                            f"Cancelled orphaned sell order {broker_order_id} for {order_symbol}",
                                             action="_cancel_orphaned_sell_orders",
                                         )
+                                        stats["cancelled"] += 1
                                     else:
                                         self.logger.warning(
-                                            f"Failed to cancel orphaned paper sell order {order.broker_order_id} "
-                                            f"via broker API. Will still mark as cancelled in DB.",
+                                            f"Failed to cancel order {broker_order_id} via broker",
                                             action="_cancel_orphaned_sell_orders",
                                         )
+                                        stats["errors"] += 1
                             except Exception as cancel_error:
                                 self.logger.warning(
-                                    f"Error cancelling orphaned paper sell order {order.broker_order_id} "
-                                    f"via broker API: {cancel_error}. Will still mark as cancelled in DB.",
+                                    f"Error cancelling order {broker_order_id} via broker: {cancel_error}",
+                                    action="_cancel_orphaned_sell_orders",
+                                )
+                                stats["errors"] += 1
+
+                        # Update database if order exists there
+                        if db_order:
+                            try:
+                                orders_repo.cancel(
+                                    db_order,
+                                    reason=f"Orphaned order cleanup: no position for {order_symbol}",
+                                )
+                                self.logger.info(
+                                    f"Updated database order {db_order.id} to CANCELLED",
+                                    action="_cancel_orphaned_sell_orders",
+                                )
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"Failed to update database for order {db_order.id}: {e}",
                                     action="_cancel_orphaned_sell_orders",
                                 )
 
-                        # Update database order status (even if broker cancellation failed)
-                        orders_repo.cancel(
-                            order,
-                            reason="Orphaned sell order: No corresponding open position found (paper trading)",
-                        )
-
-                        # Remove from active_sell_orders tracking
+                        # Remove from in-memory cache
                         if order_symbol in self.active_sell_orders:
                             del self.active_sell_orders[order_symbol]
                         if base_symbol in self.active_sell_orders:
                             del self.active_sell_orders[base_symbol]
+                        self.logger.debug(
+                            f"Removed {order_symbol} from active_sell_orders cache",
+                            action="_cancel_orphaned_sell_orders",
+                        )
 
-                        stats["cancelled"] += 1
                         cancelled_orders.append(order_symbol)
 
                     except Exception as e:
-                        self.logger.error(
-                            f"Error cancelling orphaned paper sell order {order.id} for {order_symbol}: {e}",
-                            exc_info=True,
-                            action="_cancel_orphaned_sell_orders",
-                        )
                         stats["errors"] += 1
+                        self.logger.error(
+                            f"Error processing orphaned sell order {order_symbol}: {e}",
+                            action="_cancel_orphaned_sell_orders",
+                            exc_info=True,
+                        )
 
-            if stats["cancelled"] > 0:
+            if cancelled_orders:
                 self.logger.info(
-                    f"Paper trading orphaned sell order cleanup complete: {stats['checked']} checked, "
-                    f"{stats['cancelled']} cancelled, {stats['skipped']} skipped, "
-                    f"{stats['errors']} errors. Cancelled symbols: {', '.join(cancelled_orders)}",
+                    f"Cancelled {len(cancelled_orders)} orphaned paper sell orders: {', '.join(cancelled_orders)}",
                     action="_cancel_orphaned_sell_orders",
                 )
-                # Save updated active_sell_orders
-                self._save_sell_orders_to_file()
+
+            if stats["cancelled"] > 0 or stats["errors"] > 0:
+                self.logger.info(
+                    f"Orphaned sell order cleanup: {stats['checked']} checked, "
+                    f"{stats['cancelled']} cancelled, {stats['skipped']} skipped, "
+                    f"{stats['errors']} errors",
+                    action="_cancel_orphaned_sell_orders",
+                )
 
         except Exception as e:
             self.logger.error(
-                f"Error during paper trading orphaned sell order cleanup: {e}",
-                exc_info=True,
+                f"Error during orphaned sell order cleanup: {e}",
                 action="_cancel_orphaned_sell_orders",
+                exc_info=True,
             )
+            stats["errors"] += 1
 
         return stats
 
@@ -1558,8 +1704,6 @@ class PaperTradingServiceAdapter:
                 f"Active orders: {len(self.active_sell_orders)}",
                 action="_monitor_sell_orders",
             )
-            # Update saved file after removing executed orders
-            self._save_sell_orders_to_file()
 
     def _initialize_rsi10_cache_paper(self) -> None:
         """
@@ -1712,31 +1856,40 @@ class PaperTradingServiceAdapter:
         )
         return None
 
-    def _load_sell_orders_from_file(self):
-        """Load active sell orders from JSON file on service startup"""
+    def _load_sell_orders_from_db(self):
+        """Load active sell orders from database on service startup"""
+        if not self.db or not self.user_id:
+            self.logger.debug(
+                "Database or user_id not available, skipping sell order load from database",
+                action="_load_sell_orders_from_db",
+            )
+            return
+
         try:
-            import json
+            from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
 
-            if not self._sell_orders_file.exists():
-                self.logger.debug(
-                    f"No existing sell orders file found at {self._sell_orders_file}",
-                    action="_load_sell_orders_from_file",
-                )
-                return
+            orders_repo = OrdersRepository(self.db)
 
-            with open(self._sell_orders_file) as f:
-                loaded_orders = json.load(f)
+            # Get all active sell orders (PENDING or ONGOING) for paper trading
+            db_sell_orders = orders_repo.list(self.user_id)
+            active_sell_orders = [
+                o
+                for o in db_sell_orders
+                if o.side.lower() == "sell"
+                and o.status in [DbOrderStatus.PENDING, DbOrderStatus.ONGOING]
+                and hasattr(o, "trade_mode")
+                and o.trade_mode
+                and o.trade_mode.value == "paper"
+            ]
 
             # Validate and filter out orders for symbols that no longer have holdings
             holdings = self.broker.get_holdings() if self.broker else []
-            # Extract base symbols from holdings for comparison (holdings have full symbols like RELIANCE-EQ)
-            from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
-
             holding_base_symbols = {extract_base_symbol(h.symbol).upper() for h in holdings}
 
             # Also check pending orders from broker to avoid duplicates
             pending_orders = self.broker.get_pending_orders() if self.broker else []
-            # Extract base symbols from pending orders for comparison
             pending_sell_base_symbols = {
                 extract_base_symbol(o.symbol).upper()
                 for o in pending_orders
@@ -1744,37 +1897,47 @@ class PaperTradingServiceAdapter:
             }
 
             valid_orders = {}
-            for symbol, order_info in loaded_orders.items():
-                # Normalize symbol from file (might be base or full symbol)
+            for db_order in active_sell_orders:
+                symbol = db_order.symbol
                 symbol_base = extract_base_symbol(symbol).upper()
+
                 # Keep order if:
                 # 1. Symbol still has holdings, OR
                 # 2. Symbol has a pending sell order in broker
                 if symbol_base in holding_base_symbols or symbol_base in pending_sell_base_symbols:
-                    valid_orders[symbol] = order_info
+                    # Convert database order to in-memory format
+                    order_metadata = db_order.order_metadata or {}
+                    valid_orders[symbol_base] = {
+                        "order_id": db_order.broker_order_id,
+                        "target_price": float(db_order.price) if db_order.price else 0.0,
+                        "qty": int(db_order.quantity),
+                        "ticker": order_metadata.get("ticker") or f"{symbol_base}.NS",
+                        "entry_date": db_order.placed_at.strftime("%Y-%m-%d"),
+                    }
                 else:
                     self.logger.debug(
                         f"Removed stale sell order for {symbol} (no holdings or pending order)",
-                        action="_load_sell_orders_from_file",
+                        action="_load_sell_orders_from_db",
                     )
 
             self.active_sell_orders = valid_orders
 
             if valid_orders:
                 self.logger.info(
-                    f"Loaded {len(valid_orders)} active sell orders from file",
-                    action="_load_sell_orders_from_file",
+                    f"Loaded {len(valid_orders)} active sell orders from database",
+                    action="_load_sell_orders_from_db",
                 )
             else:
                 self.logger.debug(
-                    "No valid sell orders found in file",
-                    action="_load_sell_orders_from_file",
+                    "No valid sell orders found in database",
+                    action="_load_sell_orders_from_db",
                 )
 
         except Exception as e:
             self.logger.warning(
-                f"Failed to load sell orders from file: {e}",
-                action="_load_sell_orders_from_file",
+                f"Failed to load sell orders from database: {e}",
+                action="_load_sell_orders_from_db",
+                exc_info=True,
             )
             # On error, start with empty dict (safe default)
             self.active_sell_orders = {}
@@ -1879,14 +2042,40 @@ class PaperTradingServiceAdapter:
                     )
                     new_target = old_target  # Fallback to old target
 
-            # Cancel old sell order if it exists
+            # Cancel old sell order if it exists (both broker and database)
             if order_id and order_id != "unknown":
                 try:
+                    # Cancel in broker
                     self.broker.cancel_order(order_id)
                     self.logger.debug(
                         f"Cancelled old sell order {order_id} for {symbol}",
                         action="_update_sell_order_quantity",
                     )
+
+                    # Cancel in database
+                    try:
+                        from src.infrastructure.persistence.orders_repository import (
+                            OrdersRepository,
+                        )
+
+                        orders_repo = OrdersRepository(self.db)
+                        db_order = orders_repo.get_by_broker_order_id(
+                            self.user_id, order_id
+                        )
+                        if db_order:
+                            orders_repo.cancel(
+                                db_order,
+                                reason=f"Order updated: quantity changed from {old_qty} to {new_quantity}, target updated from {old_target:.2f} to {new_target:.2f}",
+                            )
+                            self.logger.debug(
+                                f"Cancelled old sell order {order_id} in database",
+                                action="_update_sell_order_quantity",
+                            )
+                    except Exception as db_error:
+                        self.logger.warning(
+                            f"Failed to cancel old order {order_id} in database: {db_error}",
+                            action="_update_sell_order_quantity",
+                        )
                 except Exception as e:
                     self.logger.warning(
                         f"Failed to cancel old order {order_id}: {e}",
@@ -1916,6 +2105,51 @@ class PaperTradingServiceAdapter:
                     "entry_date": order_info.get("entry_date", datetime.now().strftime("%Y-%m-%d")),
                 }
 
+                # Persist new sell order to database
+                try:
+                    from src.infrastructure.persistence.orders_repository import (
+                        OrdersRepository,
+                    )
+                    from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                        extract_base_symbol,
+                    )
+
+                    orders_repo = OrdersRepository(self.db)
+                    base_symbol = extract_base_symbol(symbol).upper()
+                    order_metadata = {
+                        "ticker": ticker,
+                        "base_symbol": base_symbol,
+                        "full_symbol": symbol,
+                        "source": "sell_engine_run_at_market_open",
+                        "exit_reason": "TARGET_HIT",
+                        "updated_from_order_id": order_id,  # Track that this replaced an old order
+                        "update_reason": "quantity_and_target_updated",
+                    }
+
+                    orders_repo.create_amo(
+                        user_id=self.user_id,
+                        symbol=symbol,
+                        side="sell",
+                        order_type="limit",
+                        quantity=float(new_quantity),
+                        price=float(new_target),
+                        broker_order_id=new_order_id,
+                        entry_type="exit",
+                        order_metadata=order_metadata,
+                        reason=f"Sell order updated: quantity {old_qty}->{new_quantity}, target {old_target:.2f}->{new_target:.2f}",
+                        trade_mode="paper",
+                    )
+                    self.logger.debug(
+                        f"Persisted updated sell order to DB for {symbol} "
+                        f"(user_id={self.user_id}, broker_order_id={new_order_id})",
+                        action="_update_sell_order_quantity",
+                    )
+                except Exception as db_error:
+                    self.logger.warning(
+                        f"Failed to persist updated sell order {new_order_id} for {symbol} to DB: {db_error}",
+                        action="_update_sell_order_quantity",
+                    )
+
                 target_change = f"{old_target:.2f} -> {new_target:.2f}"
                 self.logger.info(
                     f"? Updated sell order for {symbol}: {old_qty} -> {new_quantity} shares "
@@ -1923,8 +2157,6 @@ class PaperTradingServiceAdapter:
                     action="_update_sell_order_quantity",
                 )
 
-                # Save updated state
-                self._save_sell_orders_to_file()
                 return True
             else:
                 self.logger.warning(
@@ -1941,21 +2173,6 @@ class PaperTradingServiceAdapter:
             )
             return False
 
-    def _save_sell_orders_to_file(self):
-        """Save active sell orders to JSON file for UI display"""
-        try:
-            import json
-
-            self._sell_orders_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._sell_orders_file, "w") as f:
-                json.dump(self.active_sell_orders, f, indent=2)
-
-            self.logger.debug(
-                f"Saved {len(self.active_sell_orders)} sell orders to {self._sell_orders_file}",
-                action="_save_sell_orders_to_file",
-            )
-        except Exception as e:
-            self.logger.warning(f"Failed to save sell orders to file: {e}")
 
     def _calculate_ema9(self, ticker: str) -> float | None:
         """
