@@ -46,15 +46,20 @@ class PaperTradingService:
     """
 
     def __init__(
-        self, initial_capital: float = 100000.0, storage_path: str = "paper_trading/unified_service"
+        self,
+        user_id: int,
+        initial_capital: float = 100000.0,
+        storage_path: str = "paper_trading/unified_service",
     ):
         """
         Initialize paper trading service
 
         Args:
+            user_id: User ID for generating user-specific order IDs (required)
             initial_capital: Starting virtual capital
             storage_path: Where to store paper trading data
         """
+        self.user_id = user_id
         self.initial_capital = initial_capital
         self.storage_path = storage_path
 
@@ -110,7 +115,7 @@ class PaperTradingService:
 
             # Initialize paper trading broker
             logger.info("Initializing paper trading broker...")
-            self.broker = PaperTradingBrokerAdapter(self.config)
+            self.broker = PaperTradingBrokerAdapter(user_id=self.user_id, config=self.config)
 
             if not self.broker.connect():
                 logger.error("Failed to connect to paper trading system")
@@ -334,6 +339,12 @@ def main():
         description="Paper Trading Service - Test your strategy without real money"
     )
     parser.add_argument(
+        "--user-id",
+        type=int,
+        required=True,
+        help="User ID for generating user-specific order IDs (required)",
+    )
+    parser.add_argument(
         "--capital", type=float, default=100000.0, help="Initial virtual capital (default: 100000)"
     )
     parser.add_argument(
@@ -345,7 +356,9 @@ def main():
     args = parser.parse_args()
 
     # Create and run service
-    service = PaperTradingService(initial_capital=args.capital, storage_path=args.storage)
+    service = PaperTradingService(
+        user_id=args.user_id, initial_capital=args.capital, storage_path=args.storage
+    )
     service.run()
 
 

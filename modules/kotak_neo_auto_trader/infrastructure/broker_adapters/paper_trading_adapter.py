@@ -111,8 +111,8 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             positions_repo = PositionsRepository(self.db_session)
 
             # Get database order by broker_order_id
-            # Try to find order by broker_order_id
-            # First try with user_id from order metadata if available
+            # CRITICAL: Always use user_id to avoid MultipleResultsFound error
+            # Try to get user_id from order metadata first
             user_id = getattr(order, "user_id", None)
             if not user_id:
                 # Try to get from order metadata
@@ -122,19 +122,65 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
             db_order = None
             if user_id:
-                # Try with user_id first (more efficient)
+                # Try with user_id first (more efficient and safe)
                 db_order = orders_repo.get_by_broker_order_id(user_id, order.order_id)
 
-            # If not found, search without user_id filter (handles edge cases)
-            if not db_order:
+            # If not found and user_id is available, try one more time with direct query
+            # (handles edge cases where get_by_broker_order_id might have issues)
+            if not db_order and user_id:
                 from sqlalchemy import select
 
                 from src.infrastructure.db.models import Orders
 
-                stmt = select(Orders).where(Orders.broker_order_id == order.order_id)
+                stmt = select(Orders).where(
+                    Orders.user_id == user_id, Orders.broker_order_id == order.order_id
+                )
                 result = self.db_session.execute(stmt).scalar_one_or_none()
                 if result:
                     db_order = result
+
+            # CRITICAL FIX: If user_id is not available, try to find order and extract user_id from it
+            # Use first() instead of scalar_one_or_none() to avoid MultipleResultsFound error
+            # Then use that user_id for subsequent operations
+            if not db_order and not user_id:
+                from sqlalchemy import select
+
+                from src.infrastructure.db.models import Orders
+
+                logger.warning(
+                    f"[PaperTrading] user_id not available for order {order.order_id}. "
+                    f"Searching database to find order and extract user_id. "
+                    f"This may return incorrect order if multiple users have same broker_order_id."
+                )
+                stmt = select(Orders).where(Orders.broker_order_id == order.order_id)
+                results = list(self.db_session.execute(stmt).scalars().all())
+
+                if len(results) > 1:
+                    # Extract user_ids from all results for logging
+                    user_ids_found = [o.user_id for o in results if hasattr(o, 'user_id')]
+
+                    logger.error(
+                        f"[PaperTrading] ⚠️ MULTIPLE ORDERS FOUND for broker_order_id={order.order_id}! "
+                        f"Found {len(results)} orders for user_ids: {user_ids_found}. "
+                        f"This indicates duplicate broker_order_ids across users. "
+                        f"Using first order (user_id={user_ids_found[0] if user_ids_found else 'unknown'}). "
+                        f"This may cause incorrect position tracking!"
+                    )
+
+                if results:
+                    # Get first order from results
+                    found_order = results[0]
+                    user_id = found_order.user_id
+                    db_order = found_order
+                    logger.info(
+                        f"[PaperTrading] Found order {order.order_id} for user_id={user_id}. "
+                        f"Using this user_id for sync."
+                    )
+                else:
+                    logger.warning(
+                        f"[PaperTrading] Order {order.order_id} not found in database. "
+                        f"Cannot sync execution without user_id."
+                    )
 
             if not db_order:
                 logger.warning(
@@ -452,6 +498,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
     def __init__(
         self,
+        user_id: int,
         config: PaperTradingConfig | None = None,
         storage_path: str | None = None,
         db_session=None,
@@ -460,10 +507,14 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         Initialize paper trading adapter
 
         Args:
+            user_id: User ID for generating user-specific order IDs (required)
             config: Paper trading configuration (uses default if None)
             storage_path: Custom storage path (optional)
             db_session: Database session for syncing order failures (optional)
         """
+        if user_id is None:
+            raise ValueError("user_id is required for PaperTradingBrokerAdapter")
+
         # Configuration
         self.config = config or PaperTradingConfig.default()
 
@@ -473,6 +524,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         # Database session for syncing order failures to database
         self.db_session = db_session
+
+        # User ID for generating unique order IDs (required)
+        self.user_id = user_id
 
         # Components
         self.price_provider = PriceProvider(
@@ -1030,10 +1084,16 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
     # ===== HELPER METHODS =====
 
     def _generate_order_id(self) -> str:
-        """Generate unique order ID"""
+        """
+        Generate unique order ID with user_id to prevent collisions across users.
+
+        Format: PT{timestamp}U{user_id}{counter:04d}
+        Example: PT20260109U10001 (for user_id=1, counter=1 on 2026-01-09)
+        """
         self._order_counter += 1
         timestamp = datetime.now().strftime("%Y%m%d")
-        return f"PT{timestamp}{self._order_counter:04d}"
+        # Include user_id in order ID to ensure uniqueness across users
+        return f"PT{timestamp}U{self.user_id}{self._order_counter:04d}"
 
     def _save_order(self, order: Order) -> None:
         """Save order to storage"""

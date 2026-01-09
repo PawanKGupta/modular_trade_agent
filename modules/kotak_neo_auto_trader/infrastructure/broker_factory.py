@@ -34,7 +34,10 @@ class BrokerFactory:
 
     @staticmethod
     def create_broker(
-        broker_type: str, auth_handler=None, paper_config: PaperTradingConfig | None = None
+        broker_type: str,
+        auth_handler=None,
+        paper_config: PaperTradingConfig | None = None,
+        user_id: int | None = None,
     ) -> IBrokerGateway:
         """
         Create a broker adapter
@@ -43,6 +46,7 @@ class BrokerFactory:
             broker_type: Type of broker ("kotak_neo" or "paper_trading")
             auth_handler: Authentication handler (for Kotak Neo)
             paper_config: Configuration (for paper trading)
+            user_id: User ID (required for paper trading, ignored for Kotak Neo)
 
         Returns:
             Broker adapter implementing IBrokerGateway
@@ -54,7 +58,8 @@ class BrokerFactory:
             # Paper trading
             broker = BrokerFactory.create_broker(
                 "paper_trading",
-                paper_config=PaperTradingConfig(initial_capital=100000.0)
+                paper_config=PaperTradingConfig(initial_capital=100000.0),
+                user_id=1
             )
 
             # Real trading
@@ -66,7 +71,9 @@ class BrokerFactory:
         broker_type = broker_type.lower()
 
         if broker_type == "paper_trading":
-            return BrokerFactory._create_paper_trading_broker(paper_config)
+            if user_id is None:
+                raise ValueError("user_id is required for paper trading broker")
+            return BrokerFactory._create_paper_trading_broker(paper_config, user_id=user_id)
 
         elif broker_type == "kotak_neo":
             return BrokerFactory._create_kotak_neo_broker(auth_handler)
@@ -78,16 +85,25 @@ class BrokerFactory:
 
     @staticmethod
     def _create_paper_trading_broker(
-        config: PaperTradingConfig | None = None,
+        config: PaperTradingConfig | None = None, user_id: int | None = None
     ) -> PaperTradingBrokerAdapter:
-        """Create paper trading broker"""
+        """
+        Create paper trading broker
+
+        Args:
+            config: Paper trading configuration (optional)
+            user_id: User ID for generating user-specific order IDs (required)
+        """
+        if user_id is None:
+            raise ValueError("user_id is required for paper trading broker")
+
         if config is None:
             config = PaperTradingConfig.default()
             logger.info("? Using default paper trading configuration")
 
         logger.info(f"? Creating paper trading broker (Capital: Rs {config.initial_capital:,.2f})")
 
-        return PaperTradingBrokerAdapter(config)
+        return PaperTradingBrokerAdapter(user_id=user_id, config=config)
 
     @staticmethod
     def _create_kotak_neo_broker(auth_handler) -> KotakNeoBrokerAdapter:
@@ -99,11 +115,14 @@ class BrokerFactory:
         return KotakNeoBrokerAdapter(auth_handler)
 
     @staticmethod
-    def create_from_env(env_key: str = "BROKER_TYPE") -> IBrokerGateway:
+    def create_from_env(
+        user_id: int | None = None, env_key: str = "BROKER_TYPE"
+    ) -> IBrokerGateway:
         """
         Create broker from environment variable
 
         Args:
+            user_id: User ID (required for paper trading, ignored for Kotak Neo)
             env_key: Environment variable name (default: BROKER_TYPE)
 
         Returns:
@@ -117,13 +136,15 @@ class BrokerFactory:
         broker_type = os.getenv(env_key, "paper_trading")
 
         if broker_type == "paper_trading":
+            if user_id is None:
+                raise ValueError("user_id is required for paper trading broker")
             # Load config from environment
             initial_capital = float(os.getenv("PAPER_TRADING_CAPITAL", "100000.0"))
             storage_path = os.getenv("PAPER_TRADING_PATH", "paper_trading/data")
 
             config = PaperTradingConfig(initial_capital=initial_capital, storage_path=storage_path)
 
-            return BrokerFactory.create_broker("paper_trading", paper_config=config)
+            return BrokerFactory.create_broker("paper_trading", paper_config=config, user_id=user_id)
 
         else:
             # For real broker, need to initialize auth_handler
@@ -133,11 +154,14 @@ class BrokerFactory:
             )
 
 
-def create_paper_broker(initial_capital: float = 100000.0, **kwargs) -> PaperTradingBrokerAdapter:
+def create_paper_broker(
+    user_id: int, initial_capital: float = 100000.0, **kwargs
+) -> PaperTradingBrokerAdapter:
     """
     Convenience function to create paper trading broker
 
     Args:
+        user_id: User ID for generating user-specific order IDs (required)
         initial_capital: Starting capital
         **kwargs: Additional config parameters
 
@@ -146,13 +170,14 @@ def create_paper_broker(initial_capital: float = 100000.0, **kwargs) -> PaperTra
 
     Example:
         broker = create_paper_broker(
+            user_id=1,
             initial_capital=50000.0,
             enable_slippage=True,
             enable_fees=True
         )
     """
     config = PaperTradingConfig(initial_capital=initial_capital, **kwargs)
-    return PaperTradingBrokerAdapter(config)
+    return PaperTradingBrokerAdapter(user_id=user_id, config=config)
 
 
 def create_live_broker(auth_handler) -> KotakNeoBrokerAdapter:
