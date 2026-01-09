@@ -4022,7 +4022,7 @@ class AutoTradeEngine:
                     WHERE user_id = :user_id
                     AND symbol = :symbol
                     AND side = 'buy'
-                    AND status IN ('amo', 'ongoing')
+                    AND status IN ('pending', 'ongoing')
                 """
                 )
                 for symbol in symbols_to_check:
