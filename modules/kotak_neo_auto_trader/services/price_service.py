@@ -148,7 +148,8 @@ class PriceService:
         """
         Get historical OHLCV data for a ticker.
 
-        This method wraps fetch_ohlcv_yf() with caching support.
+        This method uses the shared OHLCV cache (shared across all users) for maximum efficiency.
+        Falls back to direct fetch_ohlcv_yf() if caching is disabled.
         Maintains exact same behavior as direct fetch_ohlcv_yf() calls.
 
         Args:
@@ -167,38 +168,26 @@ class PriceService:
             >>> df = service.get_price('RELIANCE.NS', days=30)
             >>> print(df.head())
         """
-        # Create cache key
-        cache_key = f"{ticker}_{days}_{interval}_{end_date}_{add_current_day}"
-
-        # Phase 4.2: Use adaptive TTL if caching enabled
+        # Use shared cache if enabled (shared across all users - paper + broker)
         if self.enable_caching:
-            adaptive_ttl = self.get_adaptive_ttl(data_type="historical")
-        else:
-            adaptive_ttl = self.historical_cache_ttl
+            from core.data_fetcher import get_cached_ohlcv
+            return get_cached_ohlcv(
+                ticker=ticker,
+                days=days,
+                interval=interval,
+                add_current_day=add_current_day,
+                end_date=end_date,
+            )
 
-        # Check cache first (with adaptive TTL)
-        if self._cache:
-            cached_data = self._cache.get_historical(cache_key, ttl_seconds=adaptive_ttl)
-            if cached_data is not None:
-                logger.debug(f"Cache hit (adaptive TTL: {adaptive_ttl}s) for {ticker}")
-                return cached_data.copy()
-
-        # Fetch from yfinance (same as original fetch_ohlcv_yf call)
+        # Fallback to direct fetch if caching is disabled
         try:
-            df = fetch_ohlcv_yf(
+            return fetch_ohlcv_yf(
                 ticker=ticker,
                 days=days,
                 interval=interval,
                 end_date=end_date,
                 add_current_day=add_current_day,
             )
-
-            # Cache the result
-            if self._cache and df is not None:
-                self._cache.set_historical(cache_key, df)
-
-            return df
-
         except Exception as e:
             logger.error(f"Failed to fetch historical price data for {ticker}: {e}")
             return None

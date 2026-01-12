@@ -13,6 +13,14 @@ from config.settings import (
     API_RATE_LIMIT_DELAY
 )
 
+# Shared OHLCV cache across ALL users (paper + broker trading) - market data is public
+# Format: {cache_key: (DataFrame, cached_time)}
+_shared_ohlcv_cache: dict[str, tuple[pd.DataFrame, datetime]] = {}
+_ohlcv_cache_lock = threading.Lock()
+_ohlcv_cache_ttl_market_hours = 15  # Cache for 15 seconds during market hours (fresh data for exit conditions)
+_ohlcv_cache_ttl_after_hours = 60  # Cache for 60 seconds after market hours (historical data)
+_ohlcv_cache_max_size = 100  # Maximum number of cached entries
+
 # Thread lock for yfinance to prevent concurrent data fetching issues
 _yfinance_lock = threading.Lock()
 
@@ -275,6 +283,112 @@ def fetch_ohlcv_yf(ticker, days=365, interval='1d', end_date=None, add_current_d
         error_msg = f"Unexpected error fetching data for {ticker}: {type(e).__name__}: {e}"
         logger.error(error_msg)
         raise Exception(error_msg) from e
+
+
+def get_cached_ohlcv(
+    ticker: str,
+    days: int = 60,
+    interval: str = "1d",
+    add_current_day: bool = True,
+    end_date: str | None = None,
+) -> pd.DataFrame | None:
+    """
+    Get OHLCV data from shared cache or fetch if not available.
+
+    This cache is shared across ALL users (paper + broker trading) since market data is public.
+    Reduces redundant API calls when multiple users monitor the same symbol.
+
+    Args:
+        ticker: Stock ticker symbol (e.g., 'RELIANCE.NS')
+        days: Number of days of data to fetch
+        interval: Data interval ('1d', '1wk', etc.) - defaults to '1d'
+        add_current_day: Whether to include current day data - defaults to True
+        end_date: End date for data (None = today) - defaults to None
+
+    Returns:
+        DataFrame with OHLCV data, or None if fetch fails
+    """
+    from core.volume_analysis import is_market_hours
+    from src.infrastructure.db.timezone_utils import ist_now
+
+    # Use IST for consistency with codebase (all trading operations use IST)
+    now = ist_now()
+
+    # Determine TTL based on market hours and data type
+    # During market hours: shorter TTL for current day data (fresh prices for exit conditions)
+    # After market hours: longer TTL (historical data doesn't change)
+    # For current day data during market hours: 15 seconds (ensures fresh data for exit checks)
+    # For historical data or after hours: 60 seconds (acceptable for non-real-time data)
+    if add_current_day and is_market_hours():
+        ttl_seconds = _ohlcv_cache_ttl_market_hours  # 15 seconds during market hours
+    else:
+        ttl_seconds = _ohlcv_cache_ttl_after_hours  # 60 seconds after hours or for historical data
+
+    # Include all parameters in cache key to avoid collisions
+    # Format: ticker_days_interval_add_current_day_end_date
+    end_date_str = end_date or "today"
+    cache_key = f"{ticker}_{days}_{interval}_{add_current_day}_{end_date_str}"
+
+    with _ohlcv_cache_lock:
+        # Check cache
+        if cache_key in _shared_ohlcv_cache:
+            cached_data, cached_time = _shared_ohlcv_cache[cache_key]
+            age = (now - cached_time).total_seconds()
+
+            if age < ttl_seconds:
+                # Cache hit - return cached data (copy to avoid mutations)
+                logger.debug(
+                    f"OHLCV cache hit for {ticker} (key: {cache_key[:50]}, age: {age:.1f}s, "
+                    f"TTL: {ttl_seconds}s, market_hours: {is_market_hours()})"
+                )
+                return cached_data.copy()
+            else:
+                # Cache expired - remove it
+                logger.debug(
+                    f"OHLCV cache expired for {ticker} (key: {cache_key[:50]}, age: {age:.1f}s, "
+                    f"TTL: {ttl_seconds}s, market_hours: {is_market_hours()})"
+                )
+                del _shared_ohlcv_cache[cache_key]
+
+        # Cache miss or expired - fetch new data
+        try:
+            logger.debug(
+                f"Fetching OHLCV data for {ticker} (days={days}, interval={interval}, "
+                f"add_current_day={add_current_day}, end_date={end_date})"
+            )
+            data = fetch_ohlcv_yf(
+                ticker,
+                days=days,
+                interval=interval,
+                add_current_day=add_current_day,
+                end_date=end_date,
+            )
+            if data is not None and not data.empty:
+                # Update cache
+                _shared_ohlcv_cache[cache_key] = (data.copy(), now)
+                logger.debug(
+                    f"Cached OHLCV data for {ticker} (key: {cache_key[:50]}, "
+                    f"cache size: {len(_shared_ohlcv_cache)})"
+                )
+
+                # Cleanup old entries if cache is too large
+                if len(_shared_ohlcv_cache) > _ohlcv_cache_max_size:
+                    # Remove oldest entries (by cached_time)
+                    sorted_entries = sorted(
+                        _shared_ohlcv_cache.items(),
+                        key=lambda x: x[1][1],  # Sort by cached_time
+                    )
+                    # Remove oldest entries to bring cache back to max_size
+                    to_remove = len(sorted_entries) - _ohlcv_cache_max_size + 10
+                    for key, _ in sorted_entries[:to_remove]:
+                        del _shared_ohlcv_cache[key]
+                    logger.debug(f"Cleaned up {to_remove} old cache entries")
+
+                return data
+        except Exception as e:
+            logger.debug(f"Failed to fetch OHLCV for {ticker}: {e}")
+
+    return None
 
 
 def fetch_multi_timeframe_data(ticker, days=800, end_date=None, add_current_day=True, config=None):
