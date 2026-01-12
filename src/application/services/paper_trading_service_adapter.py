@@ -8,7 +8,6 @@ Uses PaperTradingBrokerAdapter instead of real broker authentication.
 from __future__ import annotations
 
 import logging
-import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +23,7 @@ from src.infrastructure.db.models import TradeMode
 from src.infrastructure.logging import get_user_logger
 
 logger = logging.getLogger(__name__)
+
 
 def _get_cached_ohlcv(
     ticker: str,
@@ -865,8 +865,11 @@ class PaperTradingServiceAdapter:
                 from src.infrastructure.persistence.individual_service_task_execution_repository import (
                     IndividualServiceTaskExecutionRepository,
                 )
+
                 execution_repo = IndividualServiceTaskExecutionRepository(self.db)
-                running_executions = execution_repo.get_running_tasks_raw(self.user_id, "sell_monitor")
+                running_executions = execution_repo.get_running_tasks_raw(
+                    self.user_id, "sell_monitor"
+                )
 
                 # If there's already a running execution, skip this cycle
                 if running_executions:
@@ -945,9 +948,9 @@ class PaperTradingServiceAdapter:
             return 0
 
         try:
+            from src.infrastructure.db.models import OrderStatus, TradeMode
             from src.infrastructure.db.timezone_utils import IST, ist_now
             from src.infrastructure.persistence.orders_repository import OrdersRepository
-            from src.infrastructure.db.models import OrderStatus, TradeMode
 
             orders_repo = OrdersRepository(self.db)
             now = ist_now()
@@ -1058,9 +1061,9 @@ class PaperTradingServiceAdapter:
             return 0
 
         try:
+            from src.infrastructure.db.models import OrderStatus, TradeMode
             from src.infrastructure.persistence.orders_repository import OrdersRepository
             from src.infrastructure.persistence.positions_repository import PositionsRepository
-            from src.infrastructure.db.models import OrderStatus, TradeMode
 
             orders_repo = OrdersRepository(self.db)
             positions_repo = PositionsRepository(self.db)
@@ -2003,9 +2006,11 @@ class PaperTradingServiceAdapter:
         if not active_db_orders:
             return
 
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         import pandas as pd
         import pandas_ta as ta
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 
         # OPTIMIZATION 1: Use shared OHLCV cache (across all users, market data is public)
@@ -2329,9 +2334,7 @@ class PaperTradingServiceAdapter:
 
             # Get price data (exclude current day to get previous day's data)
             # Use shared cache to reduce API calls
-            data = _get_cached_ohlcv(
-                ticker, days=200, interval="1d", add_current_day=False
-            )
+            data = _get_cached_ohlcv(ticker, days=200, interval="1d", add_current_day=False)
 
             if data is None or data.empty or len(data) < 2:
                 return None
@@ -3576,7 +3579,6 @@ class PaperTradingEngineAdapter:
         Returns:
             Summary dict with monitoring statistics
         """
-        from datetime import datetime
         from math import floor
 
         summary = {"checked": 0, "reentries": 0, "skipped": 0}
