@@ -680,21 +680,63 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             self._restore_state()
 
     def _restore_state(self) -> None:
-        """Restore portfolio from storage"""
-        holdings = self.store.get_all_holdings()
+        """Restore portfolio from database (source of truth)"""
+        # Load holdings from database positions table instead of files
+        if self.db_session and self.user_id:
+            try:
+                from src.infrastructure.persistence.positions_repository import PositionsRepository
 
-        for symbol, holding_data in holdings.items():
-            holding = Holding(
-                symbol=symbol,
-                exchange=Exchange[holding_data.get("exchange", "NSE")],
-                quantity=holding_data["quantity"],
-                average_price=Money(holding_data["average_price"]),
-                current_price=Money(holding_data["current_price"]),
-                last_updated=datetime.fromisoformat(holding_data["last_updated"]),
-            )
-            self.portfolio._holdings[symbol] = holding
+                positions_repo = PositionsRepository(self.db_session)
+                open_positions = positions_repo.list(self.user_id)
+                open_positions = [pos for pos in open_positions if pos.closed_at is None]
 
-        logger.info(f"?? Restored {len(holdings)} holdings")
+                # Clear existing holdings and reload from database
+                self.portfolio._holdings.clear()
+
+                for pos in open_positions:
+                    # Normalize symbol (remove -EQ suffix for PortfolioManager)
+                    symbol = pos.symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+
+                    holding = Holding(
+                        symbol=symbol,
+                        exchange=Exchange.NSE,  # Default, could be extracted from symbol if needed
+                        quantity=int(pos.quantity),
+                        average_price=Money(pos.avg_price),
+                        current_price=Money(pos.avg_price),  # Will be updated by price_provider
+                        last_updated=pos.opened_at or datetime.now(),
+                    )
+                    self.portfolio._holdings[symbol] = holding
+
+                logger.info(f"✅ Restored {len(self.portfolio._holdings)} holdings from database for user {self.user_id}")
+            except Exception as e:
+                logger.error(f"Failed to restore holdings from database: {e}", exc_info=True)
+                # Fallback to file-based (for backward compatibility during migration)
+                holdings = self.store.get_all_holdings()
+                for symbol, holding_data in holdings.items():
+                    holding = Holding(
+                        symbol=symbol,
+                        exchange=Exchange[holding_data.get("exchange", "NSE")],
+                        quantity=holding_data["quantity"],
+                        average_price=Money(holding_data["average_price"]),
+                        current_price=Money(holding_data["current_price"]),
+                        last_updated=datetime.fromisoformat(holding_data["last_updated"]),
+                    )
+                    self.portfolio._holdings[symbol] = holding
+                logger.warning(f"⚠️ Fallback: Restored {len(holdings)} holdings from files")
+        else:
+            # No database - fallback to file-based (legacy mode)
+            holdings = self.store.get_all_holdings()
+            for symbol, holding_data in holdings.items():
+                holding = Holding(
+                    symbol=symbol,
+                    exchange=Exchange[holding_data.get("exchange", "NSE")],
+                    quantity=holding_data["quantity"],
+                    average_price=Money(holding_data["average_price"]),
+                    current_price=Money(holding_data["current_price"]),
+                    last_updated=datetime.fromisoformat(holding_data["last_updated"]),
+                )
+                self.portfolio._holdings[symbol] = holding
+            logger.info(f"?? Restored {len(holdings)} holdings from files (no database)")
 
     # ===== CONNECTION MANAGEMENT =====
 
@@ -846,9 +888,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 self._sync_order_failure_to_db(order, "rejected", error)
                 return
 
-        # For sell orders, validate quantity
+        # For sell orders, validate quantity from database (source of truth)
         if order.is_sell_order():
-            can_sell, error = self.portfolio.can_sell(order.symbol, order.quantity)
+            can_sell, error = self._can_sell_from_database(order.symbol, order.quantity)
             if not can_sell:
                 logger.warning(f"[WARN]? Cannot sell: {error}")
                 order.reject(error)
@@ -1124,33 +1166,219 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
     # ===== PORTFOLIO MANAGEMENT =====
 
+    def _can_sell_from_database(self, symbol: str, quantity: int) -> tuple[bool, str]:
+        """
+        Check if sell order is valid using database positions (source of truth).
+
+        Args:
+            symbol: Stock symbol (may have -EQ suffix)
+            quantity: Quantity to sell
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        if not self.db_session or not self.user_id:
+            # Fallback to PortfolioManager if database not available
+            return self.portfolio.can_sell(symbol, quantity)
+
+        try:
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+            from sqlalchemy import select
+            from src.infrastructure.db.models import Positions
+
+            positions_repo = PositionsRepository(self.db_session)
+
+            # Try exact symbol match first
+            position = positions_repo.get_by_symbol(self.user_id, symbol)
+
+            # If not found, try with -EQ suffix (database stores with suffix)
+            if not position and not symbol.endswith("-EQ"):
+                position = positions_repo.get_by_symbol(self.user_id, f"{symbol}-EQ")
+
+            # If still not found, try without suffix (in case database has base symbol)
+            if not position:
+                base_symbol = symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+                if base_symbol != symbol:
+                    position = positions_repo.get_by_symbol(self.user_id, base_symbol)
+
+            # If still not found, try fuzzy match using LIKE (for edge cases)
+            if not position:
+                base_symbol = symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+                stmt = (
+                    select(Positions)
+                    .where(
+                        Positions.user_id == self.user_id,
+                        Positions.symbol.like(f"{base_symbol}%"),
+                        Positions.closed_at.is_(None),
+                    )
+                    .order_by(Positions.opened_at.desc())
+                    .limit(1)
+                )
+                result = self.db_session.execute(stmt).first()
+                position = result[0] if result else None
+
+            if not position or position.closed_at is not None:
+                return False, f"No holding found for {symbol}"
+
+            if position.quantity < quantity:
+                return False, (
+                    f"Insufficient quantity: Have {position.quantity}, trying to sell {quantity}"
+                )
+
+            return True, ""
+        except Exception as e:
+            logger.warning(f"Error checking database for sell validation: {e}, falling back to PortfolioManager")
+            # Fallback to PortfolioManager
+            return self.portfolio.can_sell(symbol, quantity)
+
+    def _get_holdings_from_database(self) -> list[Holding]:
+        """
+        Get all holdings from database positions table (source of truth).
+
+        Returns:
+            List of Holding objects
+        """
+        if not self.db_session or not self.user_id:
+            # Fallback to PortfolioManager if database not available
+            return self.portfolio.get_all_holdings()
+
+        try:
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+            positions_repo = PositionsRepository(self.db_session)
+            open_positions = positions_repo.list(self.user_id)
+            open_positions = [pos for pos in open_positions if pos.closed_at is None]
+
+            holdings = []
+            for pos in open_positions:
+                # Normalize symbol (remove -EQ suffix for Holding object)
+                symbol = pos.symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+
+                holding = Holding(
+                    symbol=symbol,
+                    exchange=Exchange.NSE,  # Default, could be extracted from symbol if needed
+                    quantity=int(pos.quantity),
+                    average_price=Money(pos.avg_price),
+                    current_price=Money(pos.avg_price),  # Will be updated by price_provider
+                    last_updated=pos.opened_at or datetime.now(),
+                )
+                holdings.append(holding)
+
+            return holdings
+        except Exception as e:
+            logger.warning(f"Error loading holdings from database: {e}, falling back to PortfolioManager")
+            # Fallback to PortfolioManager
+            return self.portfolio.get_all_holdings()
+
+    def _get_holding_from_database(self, symbol: str) -> Holding | None:
+        """
+        Get holding for symbol from database positions table (source of truth).
+
+        Args:
+            symbol: Stock symbol (may have -EQ suffix)
+
+        Returns:
+            Holding object or None
+        """
+        if not self.db_session or not self.user_id:
+            # Fallback to PortfolioManager if database not available
+            return self.portfolio.get_holding(symbol)
+
+        try:
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+            from sqlalchemy import select
+            from src.infrastructure.db.models import Positions
+
+            positions_repo = PositionsRepository(self.db_session)
+
+            # Try exact symbol match first
+            position = positions_repo.get_by_symbol(self.user_id, symbol)
+
+            # If not found, try with -EQ suffix (database stores with suffix)
+            if not position and not symbol.endswith("-EQ"):
+                position = positions_repo.get_by_symbol(self.user_id, f"{symbol}-EQ")
+
+            # If still not found, try without suffix (in case database has base symbol)
+            if not position:
+                base_symbol = symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+                if base_symbol != symbol:
+                    position = positions_repo.get_by_symbol(self.user_id, base_symbol)
+
+            # If still not found, try fuzzy match using LIKE (for edge cases)
+            if not position:
+                base_symbol = symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+                stmt = (
+                    select(Positions)
+                    .where(
+                        Positions.user_id == self.user_id,
+                        Positions.symbol.like(f"{base_symbol}%"),
+                        Positions.closed_at.is_(None),
+                    )
+                    .order_by(Positions.opened_at.desc())
+                    .limit(1)
+                )
+                result = self.db_session.execute(stmt).first()
+                position = result[0] if result else None
+
+            if not position or position.closed_at is not None:
+                return None
+
+            # Normalize symbol (remove -EQ suffix for Holding object)
+            holding_symbol = position.symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+
+            holding = Holding(
+                symbol=holding_symbol,
+                exchange=Exchange.NSE,  # Default
+                quantity=int(position.quantity),
+                average_price=Money(position.avg_price),
+                current_price=Money(position.avg_price),  # Will be updated by price_provider
+                last_updated=position.opened_at or datetime.now(),
+            )
+
+            return holding
+        except Exception as e:
+            logger.warning(f"Error loading holding from database for {symbol}: {e}, falling back to PortfolioManager")
+            # Fallback to PortfolioManager
+            return self.portfolio.get_holding(symbol)
+
     def get_holdings(self) -> list[Holding]:
-        """Get all holdings"""
+        """Get all holdings from database (source of truth)"""
         if not self.is_connected():
             raise ConnectionError("Not connected")
 
-        # Update current prices
-        holdings = self.portfolio.get_all_holdings()
-        symbols = [h.symbol for h in holdings]
+        # Load holdings from database positions table
+        holdings = self._get_holdings_from_database()
 
+        # Update current prices
+        symbols = [h.symbol for h in holdings]
         if symbols:
             prices = self.price_provider.get_prices(symbols)
-            self.portfolio.update_prices(prices)
+            # Update prices in holdings
+            for holding in holdings:
+                if holding.symbol in prices:
+                    holding.current_price = Money(prices[holding.symbol])
+                    holding.last_updated = datetime.now()
 
         return holdings
 
     def get_holding(self, symbol: str) -> Holding | None:
-        """Get holding for symbol"""
+        """Get holding for symbol from database (source of truth)"""
         if not self.is_connected():
             raise ConnectionError("Not connected")
 
-        holding = self.portfolio.get_holding(symbol)
+        # Load from database first
+        holding = self._get_holding_from_database(symbol)
+
+        # Fallback to PortfolioManager if database not available
+        if not holding:
+            holding = self.portfolio.get_holding(symbol)
 
         if holding:
             # Update current price
             price = self.price_provider.get_price(symbol)
             if price:
-                self.portfolio.update_price(symbol, Money(price))
+                holding.current_price = Money(price)
+                holding.last_updated = datetime.now()
 
         return holding
 
