@@ -1725,7 +1725,7 @@ class PaperTradingServiceAdapter:
                     if closed_age < 5:  # Closed within last 5 minutes
                         recently_closed[pos.symbol.upper()] = closed_age
 
-            # Collect sell orders from database and in-memory cache
+            # Collect sell orders from database (single source of truth)
             all_sell_orders = {}  # {broker_order_id or symbol: order_info}
 
             # 1. Get sell orders from database
@@ -1790,7 +1790,7 @@ class PaperTradingServiceAdapter:
                     "broker_order_id": db_order.broker_order_id,
                 }
 
-            # Note: Memory cache removed - all orders are now tracked in database only
+            # Note: Memory cache removed - all orders are tracked in database only
 
             if not all_sell_orders:
                 self.logger.debug(
@@ -1800,7 +1800,7 @@ class PaperTradingServiceAdapter:
                 return stats
 
             self.logger.info(
-                f"Checking {len(all_sell_orders)} sell orders (from DB/memory) against "
+                f"Checking {len(all_sell_orders)} sell orders (from DB) against "
                 f"{len(open_position_symbols)} open positions...",
                 action="_cancel_orphaned_sell_orders",
             )
@@ -1865,11 +1865,6 @@ class PaperTradingServiceAdapter:
                     ):
                         should_skip = True
                         skip_reason = f"Already in {db_order.status.value} status in database"
-                    elif source == "memory" and broker_order_id and broker_order_id != "unknown":
-                        # For memory orders, check broker status before trying to cancel
-                        # We'll let the broker cancel attempt fail gracefully if already cancelled
-                        pass  # Don't skip, let broker handle it
-
                     if should_skip:
                         self.logger.debug(
                             f"Skipping {order_symbol} (Order ID: {broker_order_id}): {skip_reason}",

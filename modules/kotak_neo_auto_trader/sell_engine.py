@@ -2105,9 +2105,9 @@ class SellOrderManager:
                                 )
 
                         # Update database order status (even if broker cancellation failed)
-                        self.orders_repo.cancel(
+                        self.orders_repo.mark_cancelled(
                             order,
-                            reason="Orphaned sell order: No corresponding open position found",
+                            cancelled_reason="Orphaned sell order: No corresponding open position found",
                         )
 
                         stats["cancelled"] += 1

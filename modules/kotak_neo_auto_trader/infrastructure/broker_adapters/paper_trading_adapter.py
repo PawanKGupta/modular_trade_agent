@@ -718,33 +718,19 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 )
             except Exception as e:
                 logger.error(f"Failed to restore holdings from database: {e}", exc_info=True)
-                # Fallback to file-based (for backward compatibility during migration)
-                holdings = self.store.get_all_holdings()
-                for symbol, holding_data in holdings.items():
-                    holding = Holding(
-                        symbol=symbol,
-                        exchange=Exchange[holding_data.get("exchange", "NSE")],
-                        quantity=holding_data["quantity"],
-                        average_price=Money(holding_data["average_price"]),
-                        current_price=Money(holding_data["current_price"]),
-                        last_updated=datetime.fromisoformat(holding_data["last_updated"]),
-                    )
-                    self.portfolio._holdings[symbol] = holding
-                logger.warning(f"⚠️ Fallback: Restored {len(holdings)} holdings from files")
-        else:
-            # No database - fallback to file-based (legacy mode)
-            holdings = self.store.get_all_holdings()
-            for symbol, holding_data in holdings.items():
-                holding = Holding(
-                    symbol=symbol,
-                    exchange=Exchange[holding_data.get("exchange", "NSE")],
-                    quantity=holding_data["quantity"],
-                    average_price=Money(holding_data["average_price"]),
-                    current_price=Money(holding_data["current_price"]),
-                    last_updated=datetime.fromisoformat(holding_data["last_updated"]),
+                # Do not fall back to file-based holdings. Database is the single source of truth.
+                self.portfolio._holdings.clear()
+                logger.error(
+                    "[PaperTrading] Holdings restore failed; not falling back to files. "
+                    "Holdings will remain empty until DB is available."
                 )
-                self.portfolio._holdings[symbol] = holding
-            logger.info(f"?? Restored {len(holdings)} holdings from files (no database)")
+        else:
+            # Database is required; do not fall back to file-based holdings.
+            self.portfolio._holdings.clear()
+            logger.error(
+                "[PaperTrading] Database session/user_id missing; cannot restore holdings. "
+                "Not falling back to files."
+            )
 
     # ===== CONNECTION MANAGEMENT =====
 
@@ -810,6 +796,53 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         try:
             # Mark as placed
             order.place(order_id)
+
+            # Persist MARKET orders to DB *before* they may execute immediately.
+            # This prevents execution sync warnings like:
+            # "DB order not found for execution sync ... Order executed in file but not tracked in DB"
+            if (
+                self.db_session
+                and self.user_id
+                and (not order.is_amo_order())
+                and order.order_type == OrderType.MARKET
+            ):
+                try:
+                    from src.infrastructure.db.models import TradeMode
+                    from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+                    repo = OrdersRepository(self.db_session)
+
+                    # Safety: avoid duplicates (e.g., if another layer already created it)
+                    existing = repo.get_by_broker_order_id(self.user_id, order_id)
+                    if not existing:
+                        # Extract metadata if present
+                        order_metadata = None
+                        if hasattr(order, "metadata") and isinstance(order.metadata, dict):
+                            order_metadata = order.metadata
+                        elif hasattr(order, "_metadata") and isinstance(order._metadata, dict):
+                            order_metadata = order._metadata
+
+                        repo.create_amo(
+                            user_id=self.user_id,
+                            symbol=order.symbol,
+                            side=order.transaction_type.value.lower(),
+                            order_type=order.order_type.value.lower(),
+                            quantity=float(order.quantity),
+                            price=float(order.price.amount) if order.price else None,
+                            order_id=order_id,
+                            broker_order_id=order_id,
+                            entry_type=(order_metadata or {}).get("entry_type"),
+                            order_metadata=order_metadata,
+                            reason="Market order placed",
+                            trade_mode=TradeMode.PAPER,
+                        )
+                except Exception as db_ex:
+                    # Don't block trading if DB insert fails, but log loudly
+                    logger.warning(
+                        f"[PaperTrading] Failed to create DB order for MARKET {order.symbol} "
+                        f"(order_id={order_id}): {db_ex}",
+                        exc_info=True,
+                    )
 
             # Save order
             self._save_order(order)

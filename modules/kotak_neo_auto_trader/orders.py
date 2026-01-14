@@ -424,7 +424,19 @@ class KotakNeoOrders:
             for name in method_names:
                 try:
                     if hasattr(client, name):
-                        return getattr(client, name)()
+                        # Wrap SDK call with timeout to prevent indefinite hangs
+                        from modules.kotak_neo_auto_trader.utils.timeout_utils import (
+                            call_with_timeout_and_fallback,
+                        )
+
+                        result = call_with_timeout_and_fallback(
+                            func=lambda: getattr(client, name)(),
+                            timeout=30.0,  # 30 second timeout
+                            timeout_error_message=f"get_orders() via {name} timed out",
+                            fallback_value=None,
+                        )
+                        if result is not None:
+                            return result
                 except Exception:
                     continue
             return None

@@ -19,11 +19,14 @@ import argparse
 import signal
 import sys
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime
 from datetime import time as dt_time
 from pathlib import Path
+
+from sqlalchemy import text
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -95,6 +98,16 @@ class TradingService:
         self.db = db_session  # Initial session (for setup only)
         self.broker_creds = broker_creds
         self.skip_execution_tracking = skip_execution_tracking
+        # Track async task futures to prevent re-queuing long-running tasks.
+        # This is critical for continuous tasks like sell_monitor: if one run exceeds timeout,
+        # it may continue running in background; without this guard we would queue duplicates
+        # that then "time out before execution" behind the single-worker executor.
+        self._task_futures: dict[str, object] = {}
+        self._task_futures_lock = threading.Lock()
+        # Per-user single-instance scheduler lock (Postgres advisory lock).
+        # Prevents multiple scheduler loops for the same user across processes/containers.
+        self._scheduler_lock_acquired: bool = False
+        self._scheduler_lock_key: int | None = None
 
         # Load user-specific configuration if not provided
         if strategy_config is None:
@@ -1085,6 +1098,102 @@ class TradingService:
             task_context["tasks_reset"] = True
             logger.info("Service ready for next trading day")
 
+    def _is_task_running(self, task_name: str) -> bool:
+        """
+        Check if a task is currently running/queued in THIS TradingService instance.
+
+        Important: Unified TradingService task execution is not recorded to DB until completion
+        (see execute_task / ServiceTaskRepository). So DB-based "running" checks won't work here.
+        We must guard using in-memory futures to avoid executor queue buildup.
+
+        Args:
+            task_name: Name of the task to check
+
+        Returns:
+            True if task is running, False otherwise
+        """
+        with self._task_futures_lock:
+            fut = self._task_futures.get(task_name)
+            if fut is None:
+                return False
+            # concurrent.futures.Future API
+            try:
+                return not fut.done()
+            except Exception:
+                # If future object is unexpected, fail open (assume not running)
+                return False
+
+    def _try_acquire_scheduler_lock(self) -> bool:
+        """
+        Ensure only ONE unified TradingService scheduler loop runs per user.
+
+        Why this is needed:
+        - You can end up with multiple unified service instances for the same user (e.g., restart/race)
+        - With max_workers=1, a long-running task causes subsequent submissions to queue
+        - Those queued tasks then "time out" and are "cancelled before execution" repeatedly
+          (exactly what you saw for sell_monitor and analysis).
+
+        Implementation:
+        - PostgreSQL: pg_try_advisory_lock(bigint)
+        - Non-Postgres: best-effort (assume acquired)
+        """
+        if not self.db or not self.user_id:
+            return True
+
+        try:
+            bind = getattr(self.db, "bind", None)
+            dialect_name = getattr(getattr(bind, "dialect", None), "name", "")
+
+            # Deterministic 64-bit key: (namespace << 32) | user_id
+            # Namespace "USD1" = Unified Service Daemon v1
+            namespace = 0x55534431
+            key = (namespace << 32) | (int(self.user_id) & 0xFFFFFFFF)
+            self._scheduler_lock_key = key
+
+            if dialect_name != "postgresql":
+                self._scheduler_lock_acquired = True
+                return True
+
+            acquired = bool(
+                self.db.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": key}).scalar()
+            )
+            self._scheduler_lock_acquired = acquired
+            if acquired:
+                self.logger.info(
+                    "Acquired scheduler lock (single-instance enforced)",
+                    action="scheduler",
+                )
+            else:
+                self.logger.warning(
+                    "Another scheduler instance is already running for this user; "
+                    "exiting this instance",
+                    action="scheduler",
+                )
+            return acquired
+        except Exception as e:
+            # Fail open (don't block startup if DB is weird), but log loudly.
+            self.logger.warning(
+                f"Failed to acquire scheduler lock (continuing without lock): {e}",
+                action="scheduler",
+            )
+            self._scheduler_lock_acquired = True
+            return True
+
+    def _release_scheduler_lock(self) -> None:
+        """Release Postgres advisory lock if held (best-effort)."""
+        if not self.db or not self._scheduler_lock_acquired or self._scheduler_lock_key is None:
+            return
+        try:
+            bind = getattr(self.db, "bind", None)
+            dialect_name = getattr(getattr(bind, "dialect", None), "name", "")
+            if dialect_name == "postgresql":
+                self.db.execute(
+                    text("SELECT pg_advisory_unlock(:k)"), {"k": self._scheduler_lock_key}
+                )
+                self.db.commit()
+        except Exception:
+            pass
+
     def _execute_task_async(self, task_func, task_name: str, timeout_seconds: int = 300):
         """
         Execute a task asynchronously with timeout to prevent blocking the scheduler loop.
@@ -1106,11 +1215,35 @@ class TradingService:
             self.task_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="TradingTask")
 
         try:
+            # Guard: don't queue if previous run is still running/queued in this service instance.
+            if self._is_task_running(task_name):
+                self.logger.debug(
+                    f"Not queuing {task_name}: previous run still running/queued",
+                    action="scheduler",
+                )
+                return False
+
             self.logger.info(
                 f"Starting async execution of {task_name} (timeout: {timeout_seconds}s)",
                 action="scheduler",
             )
             future = self.task_executor.submit(task_func)
+            # Track future so subsequent scheduler ticks won't queue duplicates.
+            with self._task_futures_lock:
+                self._task_futures[task_name] = future
+
+            def _clear_future(_fut):
+                # Callback runs when the future completes (in worker thread).
+                with self._task_futures_lock:
+                    cur = self._task_futures.get(task_name)
+                    if cur is _fut:
+                        self._task_futures.pop(task_name, None)
+
+            try:
+                future.add_done_callback(_clear_future)
+            except Exception:
+                # Non-fatal; worst case we'll clear on next submit attempt when fut.done() is True
+                pass
 
             try:
                 future.result(timeout=timeout_seconds)
@@ -1178,31 +1311,35 @@ class TradingService:
         loop_count = 0
         heartbeat_counter = 0  # Track heartbeat updates
 
-        while not self.shutdown_requested:
-            loop_count += 1
-            try:
-                now = datetime.now()
-                current_time = now.time()
-                current_minute = now.minute
+        if not self._try_acquire_scheduler_lock():
+            return
 
-                # Log scheduler activity more frequently for better visibility
-                # Log first 10 iterations, then every 10 iterations
-                if loop_count <= 10 or loop_count % 10 == 0:
-                    self.logger.info(
-                        f"Scheduler loop iteration #{loop_count} at {now.strftime('%H:%M:%S')}",
-                        action="scheduler",
-                    )
+        try:
+            while not self.shutdown_requested:
+                loop_count += 1
+                try:
+                    now = datetime.now()
+                    current_time = now.time()
+                    current_minute = now.minute
 
-                # Run tasks only once per minute (on trading days only)
-                if current_minute != last_minute:
-                    last_minute = current_minute
-                    logger.debug(
-                        f"Scheduler check at {current_time.strftime('%H:%M:%S')} (loop #{loop_count})"
-                    )
+                    # Log scheduler activity more frequently for better visibility
+                    # Log first 10 iterations, then every 10 iterations
+                    if loop_count <= 10 or loop_count % 10 == 0:
+                        self.logger.info(
+                            f"Scheduler loop iteration #{loop_count} at {now.strftime('%H:%M:%S')}",
+                            action="scheduler",
+                        )
 
-                    # Only run tasks on trading days (Mon-Fri)
-                    if self.is_trading_day():
-                        logger.debug("  -> Trading day detected - checking tasks...")
+                    # Run tasks only once per minute (on trading days only)
+                    if current_minute != last_minute:
+                        last_minute = current_minute
+                        logger.debug(
+                            f"Scheduler check at {current_time.strftime('%H:%M:%S')} (loop #{loop_count})"
+                        )
+
+                        # Only run tasks on trading days (Mon-Fri)
+                        if self.is_trading_day():
+                            logger.debug("  -> Trading day detected - checking tasks...")
 
                         # Pre-market retry (uses DB schedule) - 5 minute timeout
                         premarket_schedule = self._schedule_manager.get_schedule("premarket_retry")
@@ -1234,11 +1371,18 @@ class TradingService:
                             if current_time >= dt_time(
                                 start_time.hour, start_time.minute
                             ) and current_time <= dt_time(end_time.hour, end_time.minute):
-                                self._execute_task_async(
-                                    self.run_sell_monitor,
-                                    "sell_monitor",
-                                    timeout_seconds=60,  # 1 minute (should be quick)
-                                )
+                                # Check if sell_monitor is already running before queuing
+                                if self._is_task_running("sell_monitor"):
+                                    self.logger.debug(
+                                        "Skipping sell_monitor - previous execution still running",
+                                        action="scheduler",
+                                    )
+                                else:
+                                    self._execute_task_async(
+                                        self.run_sell_monitor,
+                                        "sell_monitor",
+                                        timeout_seconds=60,  # 1 minute (should be quick)
+                                    )
 
                         # Analysis (uses DB schedule) - 30 minute timeout
                         analysis_schedule = self._schedule_manager.get_schedule("analysis")
@@ -1279,46 +1423,48 @@ class TradingService:
                                     timeout_seconds=300,  # 5 minutes
                                 )
 
-                # Update heartbeat every minute using thread-local session
-                try:
-                    from src.infrastructure.persistence.service_status_repository import (
-                        ServiceStatusRepository,
-                    )
-
-                    # Use ServiceStatusRepository with thread-local session
-                    status_repo = ServiceStatusRepository(self.db)
-                    status_repo.update_heartbeat(self.user_id)
-                    self.db.commit()
-
-                    # Log heartbeat more frequently for better visibility
-                    heartbeat_counter += 1
-                    # Log every 10 iterations (5 minutes) instead of every 300 iterations
-                    if heartbeat_counter == 1 or heartbeat_counter % 10 == 0:
-                        self.logger.info(
-                            f"💓 Scheduler heartbeat (running for {heartbeat_counter // 2} minutes, iteration #{loop_count})",
-                            action="scheduler",
+                    # Update heartbeat every minute using thread-local session
+                    try:
+                        from src.infrastructure.persistence.service_status_repository import (
+                            ServiceStatusRepository,
                         )
+
+                        # Use ServiceStatusRepository with thread-local session
+                        status_repo = ServiceStatusRepository(self.db)
+                        status_repo.update_heartbeat(self.user_id)
+                        self.db.commit()
+
+                        # Log heartbeat more frequently for better visibility
+                        heartbeat_counter += 1
+                        # Log every 10 iterations (5 minutes) instead of every 300 iterations
+                        if heartbeat_counter == 1 or heartbeat_counter % 10 == 0:
+                            self.logger.info(
+                                f"💓 Scheduler heartbeat (running for {heartbeat_counter // 2} minutes, iteration #{loop_count})",
+                                action="scheduler",
+                            )
+                    except Exception as e:
+                        self.logger.warning(f"Failed to update heartbeat: {e}", action="scheduler")
+                        self.db.rollback()
+
+                    # Sleep for 30 seconds between checks
+                    time.sleep(30)
+
+                except KeyboardInterrupt:
+                    logger.info("Keyboard interrupt received")
+                    self.shutdown_requested = True
+                    break
+
                 except Exception as e:
-                    self.logger.warning(f"Failed to update heartbeat: {e}", action="scheduler")
-                    self.db.rollback()
+                    logger.error(f"Scheduler error: {e}")
+                    import traceback
 
-                # Sleep for 30 seconds between checks
-                time.sleep(30)
-
-            except KeyboardInterrupt:
-                logger.info("Keyboard interrupt received")
-                self.shutdown_requested = True
-                break
-
-            except Exception as e:
-                logger.error(f"Scheduler error: {e}")
-                import traceback
-
-                traceback.print_exc()
-                logger.error(
-                    "Service will continue after error - waiting 60 seconds before retry..."
-                )
-                time.sleep(60)  # Wait a bit before retrying
+                    traceback.print_exc()
+                    logger.error(
+                        "Service will continue after error - waiting 60 seconds before retry..."
+                    )
+                    time.sleep(60)  # Wait a bit before retrying
+        finally:
+            self._release_scheduler_lock()
 
     def shutdown(self):
         """Graceful shutdown"""

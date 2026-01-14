@@ -1685,14 +1685,25 @@ class UnifiedOrderMonitor:
             self.load_pending_buy_orders()
 
         # Fetch broker orders once for both buy and sell order checking
+        # Note: get_orders() is already wrapped with timeout (30s) in orders.py
         broker_orders = None
         try:
             orders_response = self.orders.get_orders() if self.orders else None
-            broker_orders = orders_response.get("data", []) if orders_response else []
+            if orders_response is None:
+                # Timeout or error occurred - log and continue with empty orders list
+                logger.warning(
+                    "get_orders() returned None (likely timeout or error). "
+                    "Continuing monitoring with empty orders list."
+                )
+                broker_orders = []
+            else:
+                broker_orders = orders_response.get("data", []) if orders_response else []
         except ValueError as e:
             logger.error(f"Invalid data when fetching broker orders: {e}", exc_info=True)
+            broker_orders = []
         except Exception as e:
             logger.error(f"Unexpected error fetching broker orders: {e}", exc_info=True)
+            broker_orders = []
 
         # Monitor buy orders (new functionality) - check for executions first
         buy_stats = self.check_buy_order_status(broker_orders=broker_orders)

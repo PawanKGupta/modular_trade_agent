@@ -37,6 +37,82 @@ from src.infrastructure.persistence.user_trading_config_repository import (
 )
 
 
+def _is_sell_monitor_running(db_session, user_id: int) -> bool:
+    """
+    Check if sell_monitor task is currently running by querying the database.
+
+    This prevents overlapping executions when the scheduler runs every minute.
+
+    Args:
+        db_session: Database session
+        user_id: User ID
+
+    Returns:
+        True if task is running, False otherwise
+    """
+    try:
+        from src.infrastructure.persistence.individual_service_task_execution_repository import (
+            IndividualServiceTaskExecutionRepository,
+        )
+
+        execution_repo = IndividualServiceTaskExecutionRepository(db_session)
+        running_executions = execution_repo.get_running_tasks_raw(
+            user_id, "sell_monitor"
+        )
+
+        return len(running_executions) > 0
+    except Exception:
+        # If check fails, assume not running to avoid blocking
+        return False
+
+
+def _try_acquire_paper_scheduler_lock(db_session, user_id: int) -> tuple[bool, int | None]:
+    """
+    Ensure only ONE paper-trading scheduler loop runs per user across processes.
+
+    Uses PostgreSQL advisory locks when available.
+    Returns (acquired, lock_key).
+    """
+    try:
+        bind = getattr(db_session, "bind", None)
+        dialect_name = getattr(getattr(bind, "dialect", None), "name", "")
+
+        # Deterministic 64-bit key: (namespace << 32) | user_id
+        # Namespace "PSD1" = Paper Scheduler Daemon v1
+        namespace = 0x50534431
+        key = (namespace << 32) | (int(user_id) & 0xFFFFFFFF)
+
+        if dialect_name != "postgresql":
+            return True, None
+
+        from sqlalchemy import text  # noqa: PLC0415
+
+        acquired = bool(
+            db_session.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": key}).scalar()
+        )
+        return acquired, key
+    except Exception:
+        # Fail open: don't block scheduler on unexpected DB issues
+        return True, None
+
+
+def _release_paper_scheduler_lock(db_session, lock_key: int | None) -> None:
+    """Release Postgres advisory lock if held (best-effort)."""
+    if lock_key is None:
+        return
+    try:
+        bind = getattr(db_session, "bind", None)
+        dialect_name = getattr(getattr(bind, "dialect", None), "name", "")
+        if dialect_name != "postgresql":
+            return
+        from sqlalchemy import text  # noqa: PLC0415
+
+        db_session.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": lock_key})
+        db_session.commit()
+    except Exception:
+        pass
+
+
 class MultiUserTradingService:
     """
     Manages trading services for multiple users.
@@ -104,7 +180,17 @@ class MultiUserTradingService:
 
         thread_db = SessionLocal()
 
+        lock_key: int | None = None
         try:
+            acquired, lock_key = _try_acquire_paper_scheduler_lock(thread_db, user_id)
+            if not acquired:
+                user_logger.warning(
+                    "Another paper-trading scheduler instance is already running for this user; "
+                    "exiting this scheduler thread",
+                    action="scheduler",
+                )
+                return
+
             # Create thread-local ScheduleManager to avoid session conflicts
             # CRITICAL: Use thread_db instead of main thread's session
             thread_schedule_manager = ScheduleManager(thread_db)
@@ -199,14 +285,21 @@ class MultiUserTradingService:
                         if current_time >= dt_time(
                             start_time.hour, start_time.minute
                         ) and current_time <= dt_time(end_time.hour, end_time.minute):
-                            try:
-                                service.run_sell_monitor()
-                            except Exception as e:
-                                user_logger.error(
-                                    f"Sell monitoring failed: {e}",
-                                    exc_info=True,
+                            # Check if sell_monitor is already running before calling
+                            if _is_sell_monitor_running(thread_db, user_id):
+                                user_logger.debug(
+                                    "Skipping sell_monitor - previous execution still running",
                                     action="scheduler",
                                 )
+                            else:
+                                try:
+                                    service.run_sell_monitor()
+                                except Exception as e:
+                                    user_logger.error(
+                                        f"Sell monitoring failed: {e}",
+                                        exc_info=True,
+                                        action="scheduler",
+                                    )
 
                     # 4:00 PM - Analysis (check custom schedule from DB and trigger via
                     # Individual Service Manager)
@@ -349,6 +442,7 @@ class MultiUserTradingService:
             service.running = False
             user_logger.info("Paper trading scheduler stopped", action="scheduler")
         finally:
+            _release_paper_scheduler_lock(thread_db, lock_key)
             # Clean up thread-local session
             # Ensure any pending transactions are handled before closing
             try:
