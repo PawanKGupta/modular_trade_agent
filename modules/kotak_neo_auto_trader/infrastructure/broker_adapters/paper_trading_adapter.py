@@ -695,7 +695,13 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
                 for pos in open_positions:
                     # Normalize symbol (remove -EQ suffix for PortfolioManager)
-                    symbol = pos.symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+                    symbol = (
+                        pos.symbol.replace("-EQ", "")
+                        .replace("-BE", "")
+                        .replace("-BL", "")
+                        .replace("-BZ", "")
+                        .upper()
+                    )
 
                     holding = Holding(
                         symbol=symbol,
@@ -707,7 +713,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                     )
                     self.portfolio._holdings[symbol] = holding
 
-                logger.info(f"✅ Restored {len(self.portfolio._holdings)} holdings from database for user {self.user_id}")
+                logger.info(
+                    f"✅ Restored {len(self.portfolio._holdings)} holdings from database for user {self.user_id}"
+                )
             except Exception as e:
                 logger.error(f"Failed to restore holdings from database: {e}", exc_info=True)
                 # Fallback to file-based (for backward compatibility during migration)
@@ -1182,33 +1190,65 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             return self.portfolio.can_sell(symbol, quantity)
 
         try:
-            from src.infrastructure.persistence.positions_repository import PositionsRepository
             from sqlalchemy import select
+
             from src.infrastructure.db.models import Positions
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
 
             positions_repo = PositionsRepository(self.db_session)
 
-            # Try exact symbol match first
-            position = positions_repo.get_by_symbol(self.user_id, symbol)
+            # Debug: Log what we're searching for
+            logger.debug(
+                f"[PaperTrading] Validating sell order: symbol={symbol}, quantity={quantity}, user_id={self.user_id}"
+            )
+
+            # Normalize symbol to uppercase for consistent matching
+            symbol_upper = symbol.upper()
+
+            # Try exact symbol match first (case-insensitive)
+            position = positions_repo.get_by_symbol(self.user_id, symbol_upper)
+            if position:
+                logger.debug(
+                    f"[PaperTrading] Found position with exact match: {position.symbol}, qty={position.quantity}"
+                )
 
             # If not found, try with -EQ suffix (database stores with suffix)
-            if not position and not symbol.endswith("-EQ"):
-                position = positions_repo.get_by_symbol(self.user_id, f"{symbol}-EQ")
+            if not position and not symbol_upper.endswith("-EQ"):
+                try_symbol = f"{symbol_upper}-EQ"
+                position = positions_repo.get_by_symbol(self.user_id, try_symbol)
+                if position:
+                    logger.debug(
+                        f"[PaperTrading] Found position with -EQ suffix: {position.symbol}, qty={position.quantity}"
+                    )
 
             # If still not found, try without suffix (in case database has base symbol)
             if not position:
-                base_symbol = symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
-                if base_symbol != symbol:
+                base_symbol = (
+                    symbol_upper.replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                )
+                if base_symbol != symbol_upper:
                     position = positions_repo.get_by_symbol(self.user_id, base_symbol)
+                    if position:
+                        logger.debug(
+                            f"[PaperTrading] Found position without suffix: {position.symbol}, qty={position.quantity}"
+                        )
 
             # If still not found, try fuzzy match using LIKE (for edge cases)
             if not position:
-                base_symbol = symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+                base_symbol = (
+                    symbol_upper.replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                )
                 stmt = (
                     select(Positions)
                     .where(
                         Positions.user_id == self.user_id,
-                        Positions.symbol.like(f"{base_symbol}%"),
+                        Positions.symbol.ilike(f"{base_symbol}%"),  # Case-insensitive LIKE
                         Positions.closed_at.is_(None),
                     )
                     .order_by(Positions.opened_at.desc())
@@ -1216,18 +1256,37 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 )
                 result = self.db_session.execute(stmt).first()
                 position = result[0] if result else None
+                if position:
+                    logger.debug(
+                        f"[PaperTrading] Found position with LIKE match: {position.symbol}, qty={position.quantity}"
+                    )
 
             if not position or position.closed_at is not None:
+                # Debug: List all open positions for this user to help diagnose
+                all_positions = positions_repo.list(self.user_id)
+                open_positions = [p for p in all_positions if p.closed_at is None]
+                logger.warning(
+                    f"[PaperTrading] No holding found for {symbol} (user_id={self.user_id}). "
+                    f"Open positions: {[f'{p.symbol}(qty={p.quantity})' for p in open_positions]}"
+                )
                 return False, f"No holding found for {symbol}"
 
             if position.quantity < quantity:
+                logger.warning(
+                    f"[PaperTrading] Insufficient quantity for {symbol}: Have {position.quantity}, trying to sell {quantity}"
+                )
                 return False, (
                     f"Insufficient quantity: Have {position.quantity}, trying to sell {quantity}"
                 )
 
+            logger.debug(
+                f"[PaperTrading] Sell validation passed: {symbol}, qty={quantity}, available={position.quantity}"
+            )
             return True, ""
         except Exception as e:
-            logger.warning(f"Error checking database for sell validation: {e}, falling back to PortfolioManager")
+            logger.warning(
+                f"Error checking database for sell validation: {e}, falling back to PortfolioManager"
+            )
             # Fallback to PortfolioManager
             return self.portfolio.can_sell(symbol, quantity)
 
@@ -1252,7 +1311,13 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             holdings = []
             for pos in open_positions:
                 # Normalize symbol (remove -EQ suffix for Holding object)
-                symbol = pos.symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+                symbol = (
+                    pos.symbol.replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                    .upper()
+                )
 
                 holding = Holding(
                     symbol=symbol,
@@ -1266,7 +1331,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
             return holdings
         except Exception as e:
-            logger.warning(f"Error loading holdings from database: {e}, falling back to PortfolioManager")
+            logger.warning(
+                f"Error loading holdings from database: {e}, falling back to PortfolioManager"
+            )
             # Fallback to PortfolioManager
             return self.portfolio.get_all_holdings()
 
@@ -1285,9 +1352,10 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             return self.portfolio.get_holding(symbol)
 
         try:
-            from src.infrastructure.persistence.positions_repository import PositionsRepository
             from sqlalchemy import select
+
             from src.infrastructure.db.models import Positions
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
 
             positions_repo = PositionsRepository(self.db_session)
 
@@ -1300,13 +1368,25 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
             # If still not found, try without suffix (in case database has base symbol)
             if not position:
-                base_symbol = symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+                base_symbol = (
+                    symbol.replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                    .upper()
+                )
                 if base_symbol != symbol:
                     position = positions_repo.get_by_symbol(self.user_id, base_symbol)
 
             # If still not found, try fuzzy match using LIKE (for edge cases)
             if not position:
-                base_symbol = symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+                base_symbol = (
+                    symbol.replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                    .upper()
+                )
                 stmt = (
                     select(Positions)
                     .where(
@@ -1324,7 +1404,13 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 return None
 
             # Normalize symbol (remove -EQ suffix for Holding object)
-            holding_symbol = position.symbol.replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "").upper()
+            holding_symbol = (
+                position.symbol.replace("-EQ", "")
+                .replace("-BE", "")
+                .replace("-BL", "")
+                .replace("-BZ", "")
+                .upper()
+            )
 
             holding = Holding(
                 symbol=holding_symbol,
@@ -1337,7 +1423,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
             return holding
         except Exception as e:
-            logger.warning(f"Error loading holding from database for {symbol}: {e}, falling back to PortfolioManager")
+            logger.warning(
+                f"Error loading holding from database for {symbol}: {e}, falling back to PortfolioManager"
+            )
             # Fallback to PortfolioManager
             return self.portfolio.get_holding(symbol)
 
