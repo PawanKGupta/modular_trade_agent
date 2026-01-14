@@ -10,11 +10,9 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.dialect import is_postgresql
-
 from src.infrastructure.db.models import Orders, Positions, Signals, TradeMode, Users
 from src.infrastructure.persistence.export_job_repository import ExportJobRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
-from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 from ..core.deps import get_current_user, get_db
 
@@ -333,17 +331,10 @@ def export_signals_csv(
             # PostgreSQL: Convert to IST timezone before extracting date
             # This ensures we get the date in IST, not UTC
             # Format: DATE((ts AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')
-            tz_expr = (
-                "DATE((signals.ts AT TIME ZONE 'UTC') "
-                "AT TIME ZONE 'Asia/Kolkata')"
-            )
+            tz_expr = "DATE((signals.ts AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')"
             query = db.query(Signals).filter(
-                text(f"{tz_expr} >= :start_date").bindparam(
-                    start_date=start_date_str
-                ),
-                text(f"{tz_expr} <= :end_date").bindparam(
-                    end_date=end_date_str
-                ),
+                text(f"{tz_expr} >= :start_date").bindparam(start_date=start_date_str),
+                text(f"{tz_expr} <= :end_date").bindparam(end_date=end_date_str),
             )
         else:
             # SQLite: Direct date extraction (SQLite stores naive datetimes, assumed to be IST)
@@ -540,14 +531,13 @@ def export_portfolio_csv(
     """
     try:
         # Fetch open positions
-        positions_repo = PositionsRepository(db)
         open_positions = (
-            db.query(positions_repo.model)
+            db.query(Positions)
             .filter(
-                positions_repo.model.user_id == current.id,
-                positions_repo.model.closed_at.is_(None),
+                Positions.user_id == current.id,
+                Positions.closed_at.is_(None),
             )
-            .order_by(positions_repo.model.symbol)
+            .order_by(Positions.symbol)
             .all()
         )
 
