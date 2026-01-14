@@ -18,8 +18,8 @@ All other components receive the shared auth session and only handle re-authenti
 import argparse
 import signal
 import sys
-import time
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime

@@ -56,9 +56,7 @@ def _is_sell_monitor_running(db_session, user_id: int) -> bool:
         )
 
         execution_repo = IndividualServiceTaskExecutionRepository(db_session)
-        running_executions = execution_repo.get_running_tasks_raw(
-            user_id, "sell_monitor"
-        )
+        running_executions = execution_repo.get_running_tasks_raw(user_id, "sell_monitor")
 
         return len(running_executions) > 0
     except Exception:
