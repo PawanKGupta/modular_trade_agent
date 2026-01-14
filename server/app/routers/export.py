@@ -542,9 +542,8 @@ def export_portfolio_csv(
         )
 
         # Calculate total portfolio value for allocation percentages
-        total_value = sum(
-            pos.quantity * (pos.current_price or pos.entry_price or 0) for pos in open_positions
-        )
+        # Positions model does not store current_price; use avg_price as proxy
+        total_value = sum(pos.quantity * (pos.avg_price or 0) for pos in open_positions)
 
         # Create CSV
         output = io.StringIO()
