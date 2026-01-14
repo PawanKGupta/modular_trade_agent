@@ -99,12 +99,36 @@ class SharedSessionManager:
 
                         # Only clear if BOTH are false/None AND session actually expired
                         if not client:
-                            # Session valid but client None - don't clear, let it recover
-                            logger.warning(
-                                f"[SHARED_SESSION] Session valid but client None "
-                                f"for user {user_id}, attempting recovery"
+                            # Session valid but client None - check if cooldown expired
+                            # If cooldown expired, create fresh session instead of relying on recovery
+                            time_since_reauth = (
+                                time.time() - self._last_reauth_time.get(user_id, 0)
+                                if user_id in self._last_reauth_time
+                                else float("inf")  # No previous re-auth, allow immediate
                             )
-                            return auth  # Return existing, let API call handle via @handle_reauth
+
+                            if time_since_reauth >= self._REAUTH_COOLDOWN:
+                                # Cooldown expired - safe to create fresh session
+                                logger.warning(
+                                    f"[SHARED_SESSION] Cooldown expired, client None "
+                                    f"for user {user_id}, creating fresh session"
+                                )
+                                with self._manager_lock:
+                                    self._sessions.pop(user_id, None)
+                                # Clear cooldown to allow immediate re-auth
+                                if user_id in self._last_reauth_time:
+                                    del self._last_reauth_time[user_id]
+                                # Fall through to create new session (line 126)
+                            else:
+                                # Still in cooldown - return existing and let @handle_reauth fix it
+                                logger.warning(
+                                    f"[SHARED_SESSION] Session valid but client None "
+                                    f"for user {user_id}, cooldown active ({self._REAUTH_COOLDOWN - time_since_reauth:.0f}s remaining), "
+                                    "attempting recovery via @handle_reauth"
+                                )
+                                return (
+                                    auth  # Return existing, let API call handle via @handle_reauth
+                                )
                         else:
                             # Both authenticated and client available - reuse
                             logger.info(
