@@ -11,14 +11,16 @@ SOLID Principles:
 Phase 2 Feature: Automated order status verification every 30 minutes
 """
 
-import time
-import threading
-from datetime import datetime, timedelta, time as dt_time
-from typing import Optional, Dict, Any, List, Callable
-from pathlib import Path
-
 # Use existing project logger
 import sys
+import threading
+import time
+from collections.abc import Callable
+from datetime import datetime, timedelta
+from datetime import time as dt_time
+from pathlib import Path
+from typing import Any
+
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger
@@ -37,11 +39,11 @@ class OrderStatusVerifier:
     def __init__(
         self,
         broker_client,
-        order_tracker: Optional[OrderTracker] = None,
-        tracking_scope: Optional[TrackingScope] = None,
+        order_tracker: OrderTracker | None = None,
+        tracking_scope: TrackingScope | None = None,
         check_interval_seconds: int = 1800,  # 30 minutes
-        on_rejection_callback: Optional[Callable] = None,
-        on_execution_callback: Optional[Callable] = None
+        on_rejection_callback: Callable | None = None,
+        on_execution_callback: Callable | None = None,
     ):
         """
         Initialize order status verifier.
@@ -62,12 +64,12 @@ class OrderStatusVerifier:
         self.on_execution_callback = on_execution_callback
 
         self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._last_check_time: Optional[datetime] = None
+        self._thread: threading.Thread | None = None
+        self._last_check_time: datetime | None = None
 
         # Phase 3.2: Store verification results for sharing
-        self._verification_results: Dict[str, Dict[str, Any]] = {}  # order_id -> result
-        self._last_verification_counts: Dict[str, int] = {}  # Last verification counts
+        self._verification_results: dict[str, dict[str, Any]] = {}  # order_id -> result
+        self._last_verification_counts: dict[str, int] = {}  # Last verification counts
 
     def start(self, daemon: bool = True) -> None:
         """
@@ -85,8 +87,7 @@ class OrderStatusVerifier:
         self._thread.start()
 
         logger.info(
-            f"Order status verifier started "
-            f"(check interval: {self.check_interval_seconds}s)"
+            f"Order status verifier started (check interval: {self.check_interval_seconds}s)"
         )
 
     def stop(self) -> None:
@@ -125,7 +126,7 @@ class OrderStatusVerifier:
                 logger.error(f"Error in verification loop: {e}", exc_info=True)
                 time.sleep(60)  # Wait 1 minute before retrying on error
 
-    def verify_pending_orders(self) -> Dict[str, int]:
+    def verify_pending_orders(self) -> dict[str, int]:
         """
         Verify all pending orders with broker.
 
@@ -138,19 +139,17 @@ class OrderStatusVerifier:
                 'still_pending': int
             }
         """
-        pending_orders = self.order_tracker.get_pending_orders(
-            status_filter="PENDING"
-        )
+        pending_orders = self.order_tracker.get_pending_orders(status_filter="PENDING")
 
         if not pending_orders:
             logger.debug("No pending orders to verify")
             return {
-                'checked': 0,
-                'executed': 0,
-                'rejected': 0,
-                'cancelled': 0,
-                'partial': 0,
-                'still_pending': 0
+                "checked": 0,
+                "executed": 0,
+                "rejected": 0,
+                "cancelled": 0,
+                "partial": 0,
+                "still_pending": 0,
             }
 
         logger.info(f"Verifying {len(pending_orders)} pending order(s)")
@@ -161,42 +160,39 @@ class OrderStatusVerifier:
         except Exception as e:
             logger.error(f"Failed to fetch broker orders: {e}")
             return {
-                'checked': len(pending_orders),
-                'executed': 0,
-                'rejected': 0,
-                'cancelled': 0,
-                'partial': 0,
-                'still_pending': len(pending_orders)
+                "checked": len(pending_orders),
+                "executed": 0,
+                "rejected": 0,
+                "cancelled": 0,
+                "partial": 0,
+                "still_pending": len(pending_orders),
             }
 
         counts = {
-            'checked': len(pending_orders),
-            'executed': 0,
-            'rejected': 0,
-            'cancelled': 0,
-            'partial': 0,
-            'still_pending': 0
+            "checked": len(pending_orders),
+            "executed": 0,
+            "rejected": 0,
+            "cancelled": 0,
+            "partial": 0,
+            "still_pending": 0,
         }
 
         # Check each pending order
         for pending_order in pending_orders:
-            order_id = pending_order['order_id']
-            symbol = pending_order['symbol']
-            expected_qty = pending_order['qty']
+            order_id = pending_order["order_id"]
+            symbol = pending_order["symbol"]
+            expected_qty = pending_order["qty"]
 
             # Phase 3.2: Store initial state before verification
             initial_status = {
-                'order_id': order_id,
-                'symbol': symbol,
-                'expected_qty': expected_qty,
-                'status': 'PENDING'
+                "order_id": order_id,
+                "symbol": symbol,
+                "expected_qty": expected_qty,
+                "status": "PENDING",
             }
 
             # Find order in broker's order book
-            broker_order = self._find_order_in_broker_orders(
-                order_id,
-                broker_orders
-            )
+            broker_order = self._find_order_in_broker_orders(order_id, broker_orders)
 
             if not broker_order:
                 # Order not found in active orders - check if it was cancelled/executed
@@ -209,38 +205,26 @@ class OrderStatusVerifier:
 
                     # Phase 3.2: Store verification result for sharing
                     self._verification_results[order_id] = {
-                        'order_id': order_id,
-                        'symbol': symbol,
-                        'status': broker_status['status'],
-                        'executed_qty': broker_status.get('executed_qty', 0),
-                        'rejection_reason': broker_status.get('rejection_reason'),
-                        'verified_at': datetime.now().isoformat(),
-                        'broker_order': broker_order
+                        "order_id": order_id,
+                        "symbol": symbol,
+                        "status": broker_status["status"],
+                        "executed_qty": broker_status.get("executed_qty", 0),
+                        "rejection_reason": broker_status.get("rejection_reason"),
+                        "verified_at": datetime.now().isoformat(),
+                        "broker_order": broker_order,
                     }
 
-                    if broker_status['status'] == 'CANCELLED':
-                        self._handle_cancellation(
-                            pending_order,
-                            broker_order,
-                            broker_status
-                        )
-                        counts['cancelled'] += 1
+                    if broker_status["status"] == "CANCELLED":
+                        self._handle_cancellation(pending_order, broker_order, broker_status)
+                        counts["cancelled"] += 1
                         continue
-                    elif broker_status['status'] == 'EXECUTED':
-                        self._handle_execution(
-                            pending_order,
-                            broker_order,
-                            broker_status
-                        )
-                        counts['executed'] += 1
+                    elif broker_status["status"] == "EXECUTED":
+                        self._handle_execution(pending_order, broker_order, broker_status)
+                        counts["executed"] += 1
                         continue
-                    elif broker_status['status'] == 'REJECTED':
-                        self._handle_rejection(
-                            pending_order,
-                            broker_order,
-                            broker_status
-                        )
-                        counts['rejected'] += 1
+                    elif broker_status["status"] == "REJECTED":
+                        self._handle_rejection(pending_order, broker_order, broker_status)
+                        counts["rejected"] += 1
                         continue
 
                 # Still not found - check if we should assume cancellation based on time
@@ -252,44 +236,117 @@ class OrderStatusVerifier:
                     )
                     # Create a mock broker order with cancelled status for handling
                     mock_cancelled_order = {
-                        'nOrdNo': order_id,
-                        'orderStatus': 'cancelled',
-                        'ordSt': 'cancelled',
-                        'tradingSymbol': pending_order.get('symbol', ''),
-                        'quantity': pending_order.get('qty', 0)
+                        "nOrdNo": order_id,
+                        "orderStatus": "cancelled",
+                        "ordSt": "cancelled",
+                        "tradingSymbol": pending_order.get("symbol", ""),
+                        "quantity": pending_order.get("qty", 0),
                     }
                     broker_status = self._parse_broker_order_status(mock_cancelled_order)
 
                     # Phase 3.2: Store verification result for sharing
                     self._verification_results[order_id] = {
-                        'order_id': order_id,
-                        'symbol': symbol,
-                        'status': broker_status['status'],
-                        'executed_qty': 0,
-                        'rejection_reason': None,
-                        'verified_at': datetime.now().isoformat(),
-                        'broker_order': mock_cancelled_order
+                        "order_id": order_id,
+                        "symbol": symbol,
+                        "status": broker_status["status"],
+                        "executed_qty": 0,
+                        "rejection_reason": None,
+                        "verified_at": datetime.now().isoformat(),
+                        "broker_order": mock_cancelled_order,
                     }
 
-                    self._handle_cancellation(
-                        pending_order,
-                        mock_cancelled_order,
-                        broker_status
-                    )
+                    self._handle_cancellation(pending_order, mock_cancelled_order, broker_status)
 
                     # Phase 3.2: Store verification result for sharing
                     self._verification_results[order_id] = {
-                        'order_id': order_id,
-                        'symbol': symbol,
-                        'status': broker_status['status'],
-                        'executed_qty': 0,
-                        'rejection_reason': None,
-                        'verified_at': datetime.now().isoformat(),
-                        'broker_order': mock_cancelled_order
+                        "order_id": order_id,
+                        "symbol": symbol,
+                        "status": broker_status["status"],
+                        "executed_qty": 0,
+                        "rejection_reason": None,
+                        "verified_at": datetime.now().isoformat(),
+                        "broker_order": mock_cancelled_order,
                     }
 
-                    counts['cancelled'] += 1
+                    counts["cancelled"] += 1
                     continue
+
+                # Still not found - check if order is stale (>24 hours old)
+                # Only mark as FAILED if we got a successful API response (even if empty)
+                # This prevents marking orders as failed when broker API is down or returning errors
+                # (If API threw exception, we wouldn't reach here - caught at line 161)
+                should_mark_failed = False
+                age_hours = None
+
+                if pending_order.get("placed_at"):
+                    try:
+                        placed_at = datetime.fromisoformat(
+                            pending_order["placed_at"].replace("Z", "+00:00")
+                        )
+                        if placed_at.tzinfo:
+                            placed_at = placed_at.replace(tzinfo=None)
+                        age_hours = (datetime.now() - placed_at).total_seconds() / 3600
+
+                        # Only mark as stale if order is > 24 hours old
+                        if age_hours > 24:
+                            should_mark_failed = True
+                            logger.warning(
+                                f"Order {order_id} not found in broker and is {age_hours:.1f}h old. "
+                                f"Marking as FAILED in database."
+                            )
+                    except Exception as e:
+                        logger.debug(f"Error checking order age for {order_id}: {e}")
+
+                # Mark stale orders as FAILED in database
+                if (
+                    should_mark_failed
+                    and self.order_tracker.orders_repo
+                    and self.order_tracker.user_id
+                ):
+                    try:
+                        # Get database order
+                        db_order = self.order_tracker.orders_repo.get_by_broker_order_id(
+                            self.order_tracker.user_id, order_id
+                        ) or self.order_tracker.orders_repo.get_by_order_id(
+                            self.order_tracker.user_id, order_id
+                        )
+
+                        if db_order:
+                            # Check if order has execution_qty > 0 (already processed)
+                            if db_order.execution_qty and float(db_order.execution_qty) > 0:
+                                logger.debug(
+                                    f"Skipping marking order {order_id} as failed: "
+                                    f"Already has execution_qty ({db_order.execution_qty})"
+                                )
+                                counts["still_pending"] += 1
+                                continue
+
+                            # Mark as failed
+                            self.order_tracker.orders_repo.mark_failed(
+                                db_order,
+                                f"Stale order - not found in broker after {age_hours:.1f} hours",
+                            )
+
+                            # Phase 3.2: Store verification result
+                            self._verification_results[order_id] = {
+                                "order_id": order_id,
+                                "symbol": symbol,
+                                "status": "FAILED",
+                                "executed_qty": 0,
+                                "rejection_reason": f"Stale order - not found in broker after {age_hours:.1f} hours",
+                                "verified_at": datetime.now().isoformat(),
+                                "broker_order": None,
+                            }
+
+                            # Remove from pending tracking
+                            self.order_tracker.remove_pending_order(order_id)
+                            counts["rejected"] += 1  # Count as rejected for stats
+                            continue  # Skip the "still_pending" increment below
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error marking stale order {order_id} as failed: {e}", exc_info=True
+                        )
 
                 # Still not found - log warning and mark as still pending
                 logger.warning(
@@ -299,16 +356,16 @@ class OrderStatusVerifier:
 
                 # Phase 3.2: Store verification result even when not found
                 self._verification_results[order_id] = {
-                    'order_id': order_id,
-                    'symbol': symbol,
-                    'status': 'NOT_FOUND',
-                    'executed_qty': 0,
-                    'rejection_reason': None,
-                    'verified_at': datetime.now().isoformat(),
-                    'broker_order': None
+                    "order_id": order_id,
+                    "symbol": symbol,
+                    "status": "NOT_FOUND",
+                    "executed_qty": 0,
+                    "rejection_reason": None,
+                    "verified_at": datetime.now().isoformat(),
+                    "broker_order": None,
                 }
 
-                counts['still_pending'] += 1
+                counts["still_pending"] += 1
                 continue
 
             # Parse broker order status
@@ -316,57 +373,38 @@ class OrderStatusVerifier:
 
             # Phase 3.2: Store verification result for sharing
             self._verification_results[order_id] = {
-                'order_id': order_id,
-                'symbol': symbol,
-                'status': broker_status['status'],
-                'executed_qty': broker_status.get('executed_qty', 0),
-                'rejection_reason': broker_status.get('rejection_reason'),
-                'verified_at': datetime.now().isoformat(),
-                'broker_order': broker_order  # Store full broker order for reference
+                "order_id": order_id,
+                "symbol": symbol,
+                "status": broker_status["status"],
+                "executed_qty": broker_status.get("executed_qty", 0),
+                "rejection_reason": broker_status.get("rejection_reason"),
+                "verified_at": datetime.now().isoformat(),
+                "broker_order": broker_order,  # Store full broker order for reference
             }
 
-            if broker_status['status'] == 'EXECUTED':
-                self._handle_execution(
-                    pending_order,
-                    broker_order,
-                    broker_status
-                )
-                counts['executed'] += 1
+            if broker_status["status"] == "EXECUTED":
+                self._handle_execution(pending_order, broker_order, broker_status)
+                counts["executed"] += 1
 
-            elif broker_status['status'] == 'REJECTED':
-                self._handle_rejection(
-                    pending_order,
-                    broker_order,
-                    broker_status
-                )
-                counts['rejected'] += 1
+            elif broker_status["status"] == "REJECTED":
+                self._handle_rejection(pending_order, broker_order, broker_status)
+                counts["rejected"] += 1
 
-            elif broker_status['status'] == 'CANCELLED':
-                self._handle_cancellation(
-                    pending_order,
-                    broker_order,
-                    broker_status
-                )
-                counts['cancelled'] += 1
+            elif broker_status["status"] == "CANCELLED":
+                self._handle_cancellation(pending_order, broker_order, broker_status)
+                counts["cancelled"] += 1
 
-            elif broker_status['status'] == 'PARTIALLY_FILLED':
-                self._handle_partial_fill(
-                    pending_order,
-                    broker_order,
-                    broker_status
-                )
-                counts['partial'] += 1
+            elif broker_status["status"] == "PARTIALLY_FILLED":
+                self._handle_partial_fill(pending_order, broker_order, broker_status)
+                counts["partial"] += 1
 
-            elif broker_status['status'] in ['OPEN', 'PENDING']:
+            elif broker_status["status"] in ["OPEN", "PENDING"]:
                 # Still pending, no action needed
-                counts['still_pending'] += 1
+                counts["still_pending"] += 1
 
             else:
-                logger.warning(
-                    f"Unknown broker status for {order_id}: "
-                    f"{broker_status['status']}"
-                )
-                counts['still_pending'] += 1
+                logger.warning(f"Unknown broker status for {order_id}: {broker_status['status']}")
+                counts["still_pending"] += 1
 
         logger.info(
             f"Verification complete: "
@@ -382,7 +420,7 @@ class OrderStatusVerifier:
 
         return counts
 
-    def _fetch_broker_orders(self) -> List[Dict[str, Any]]:
+    def _fetch_broker_orders(self) -> list[dict[str, Any]]:
         """
         Fetch all orders from broker.
 
@@ -391,30 +429,36 @@ class OrderStatusVerifier:
         """
         try:
             # Handle both NeoAPI client and KotakNeoOrders wrapper
-            if hasattr(self.broker_client, 'order_report'):
+            if hasattr(self.broker_client, "order_report"):
                 # Direct NeoAPI client
                 response = self.broker_client.order_report()
-            elif hasattr(self.broker_client, 'get_orders'):
+            elif hasattr(self.broker_client, "get_orders"):
                 # KotakNeoOrders wrapper - use its get_orders() method
                 response = self.broker_client.get_orders()
-            elif hasattr(self.broker_client, 'auth') and hasattr(self.broker_client.auth, 'get_client'):
+            elif hasattr(self.broker_client, "auth") and hasattr(
+                self.broker_client.auth, "get_client"
+            ):
                 # KotakNeoOrders - access underlying client via auth
                 client = self.broker_client.auth.get_client()
-                if client and hasattr(client, 'order_report'):
+                if client and hasattr(client, "order_report"):
                     response = client.order_report()
                 else:
-                    logger.error(f"Could not access order_report from broker_client.auth.get_client()")
+                    logger.error(
+                        "Could not access order_report from broker_client.auth.get_client()"
+                    )
                     return []
             else:
-                logger.error(f"broker_client does not have order_report() or get_orders() method. Type: {type(self.broker_client)}")
+                logger.error(
+                    f"broker_client does not have order_report() or get_orders() method. Type: {type(self.broker_client)}"
+                )
                 return []
 
             if isinstance(response, list):
                 return response
             elif isinstance(response, dict):
                 # Handle dict response - check for 'data' key
-                if 'data' in response:
-                    data = response['data']
+                if "data" in response:
+                    data = response["data"]
                     if isinstance(data, list):
                         return data
                     elif isinstance(data, dict):
@@ -422,8 +466,8 @@ class OrderStatusVerifier:
                         return [data] if data else []
                     return []
                 # Check if response itself is structured as orders
-                if 'orders' in response:
-                    orders = response['orders']
+                if "orders" in response:
+                    orders = response["orders"]
                     return orders if isinstance(orders, list) else []
                 # Empty dict means no orders
                 return []
@@ -436,10 +480,8 @@ class OrderStatusVerifier:
             return []
 
     def _find_order_in_broker_orders(
-        self,
-        order_id: str,
-        broker_orders: List[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
+        self, order_id: str, broker_orders: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
         """
         Find order in broker's order list by order ID.
 
@@ -452,10 +494,10 @@ class OrderStatusVerifier:
         """
         for broker_order in broker_orders:
             broker_order_id = (
-                broker_order.get('nOrdNo') or
-                broker_order.get('neoOrdNo') or
-                broker_order.get('orderId') or
-                broker_order.get('order_id')
+                broker_order.get("nOrdNo")
+                or broker_order.get("neoOrdNo")
+                or broker_order.get("orderId")
+                or broker_order.get("order_id")
             )
 
             if broker_order_id and str(broker_order_id) == str(order_id):
@@ -463,7 +505,7 @@ class OrderStatusVerifier:
 
         return None
 
-    def _check_order_history(self, order_id: str) -> Optional[Dict[str, Any]]:
+    def _check_order_history(self, order_id: str) -> dict[str, Any] | None:
         """
         Check order history for cancelled/executed orders not in active list.
 
@@ -488,10 +530,10 @@ class OrderStatusVerifier:
             # Search for order matching order_id in all orders
             for order in all_orders_response:
                 broker_order_id = (
-                    order.get('nOrdNo') or
-                    order.get('neoOrdNo') or
-                    order.get('orderId') or
-                    order.get('order_id')
+                    order.get("nOrdNo")
+                    or order.get("neoOrdNo")
+                    or order.get("orderId")
+                    or order.get("order_id")
                 )
                 if broker_order_id and str(broker_order_id) == str(order_id):
                     return order
@@ -502,7 +544,7 @@ class OrderStatusVerifier:
             logger.debug(f"Error checking order history for {order_id}: {e}")
             return None
 
-    def _should_assume_cancelled(self, pending_order: Dict[str, Any]) -> bool:
+    def _should_assume_cancelled(self, pending_order: dict[str, Any]) -> bool:
         """
         Determine if an order should be assumed cancelled based on timing.
 
@@ -525,12 +567,12 @@ class OrderStatusVerifier:
             True if order should be assumed cancelled, False otherwise
         """
         try:
-            placed_at_str = pending_order.get('placed_at')
+            placed_at_str = pending_order.get("placed_at")
             if not placed_at_str:
                 return False
 
             # Parse placed_at timestamp
-            placed_at = datetime.fromisoformat(placed_at_str.replace('Z', '+00:00'))
+            placed_at = datetime.fromisoformat(placed_at_str.replace("Z", "+00:00"))
             if placed_at.tzinfo:
                 placed_at = placed_at.replace(tzinfo=None)
 
@@ -554,7 +596,9 @@ class OrderStatusVerifier:
 
             # Calculate time elapsed since market close
             time_since_close = now - market_close_datetime
-            grace_period_minutes = 30  # Wait 30 minutes after market close before assuming cancellation
+            grace_period_minutes = (
+                30  # Wait 30 minutes after market close before assuming cancellation
+            )
 
             # Check if enough time has passed since market close
             # This accounts for broker cancellations happening at various times:
@@ -580,10 +624,7 @@ class OrderStatusVerifier:
             logger.debug(f"Error checking if order should be assumed cancelled: {e}")
             return False
 
-    def _parse_broker_order_status(
-        self,
-        broker_order: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def _parse_broker_order_status(self, broker_order: dict[str, Any]) -> dict[str, Any]:
         """
         Parse order status from broker order dict.
 
@@ -599,37 +640,37 @@ class OrderStatusVerifier:
         """
         # Map broker status to our internal status
         status_map = {
-            'complete': 'EXECUTED',
-            'traded': 'EXECUTED',
-            'executed': 'EXECUTED',
-            'rejected': 'REJECTED',
-            'cancelled': 'CANCELLED',
-            'canceled': 'CANCELLED',  # American spelling
-            'open': 'OPEN',
-            'pending': 'PENDING',
-            'trigger pending': 'PENDING',
-            'after market order req received': 'PENDING',
-            'partial fill': 'PARTIALLY_FILLED',
-            'partially executed': 'PARTIALLY_FILLED',
+            "complete": "EXECUTED",
+            "traded": "EXECUTED",
+            "executed": "EXECUTED",
+            "rejected": "REJECTED",
+            "cancelled": "CANCELLED",
+            "canceled": "CANCELLED",  # American spelling
+            "open": "OPEN",
+            "pending": "PENDING",
+            "trigger pending": "PENDING",
+            "after market order req received": "PENDING",
+            "partial fill": "PARTIALLY_FILLED",
+            "partially executed": "PARTIALLY_FILLED",
         }
 
-        broker_status = str(broker_order.get('ordSt', '')).lower()
-        internal_status = status_map.get(broker_status, 'UNKNOWN')
+        broker_status = str(broker_order.get("ordSt", "")).lower()
+        internal_status = status_map.get(broker_status, "UNKNOWN")
 
-        executed_qty = int(broker_order.get('fldQty', 0) or broker_order.get('filledQty', 0) or 0)
-        rejection_reason = broker_order.get('rejRsn') or broker_order.get('rejectionReason')
+        executed_qty = int(broker_order.get("fldQty", 0) or broker_order.get("filledQty", 0) or 0)
+        rejection_reason = broker_order.get("rejRsn") or broker_order.get("rejectionReason")
 
         return {
-            'status': internal_status,
-            'executed_qty': executed_qty,
-            'rejection_reason': rejection_reason
+            "status": internal_status,
+            "executed_qty": executed_qty,
+            "rejection_reason": rejection_reason,
         }
 
     def _handle_execution(
         self,
-        pending_order: Dict[str, Any],
-        broker_order: Dict[str, Any],
-        broker_status: Dict[str, Any]
+        pending_order: dict[str, Any],
+        broker_order: dict[str, Any],
+        broker_status: dict[str, Any],
     ) -> None:
         """
         Handle successfully executed order.
@@ -639,19 +680,15 @@ class OrderStatusVerifier:
             broker_order: Order from broker
             broker_status: Parsed broker status
         """
-        order_id = pending_order['order_id']
-        symbol = pending_order['symbol']
-        executed_qty = broker_status['executed_qty'] or pending_order['qty']
+        order_id = pending_order["order_id"]
+        symbol = pending_order["symbol"]
+        executed_qty = broker_status["executed_qty"] or pending_order["qty"]
 
-        logger.info(
-            f"Order EXECUTED: {symbol} x{executed_qty} (order_id: {order_id})"
-        )
+        logger.info(f"Order EXECUTED: {symbol} x{executed_qty} (order_id: {order_id})")
 
         # Update order tracker
         self.order_tracker.update_order_status(
-            order_id=order_id,
-            status='EXECUTED',
-            executed_qty=executed_qty
+            order_id=order_id, status="EXECUTED", executed_qty=executed_qty
         )
 
         # Update tracking scope quantity
@@ -672,9 +709,9 @@ class OrderStatusVerifier:
 
     def _handle_rejection(
         self,
-        pending_order: Dict[str, Any],
-        broker_order: Dict[str, Any],
-        broker_status: Dict[str, Any]
+        pending_order: dict[str, Any],
+        broker_order: dict[str, Any],
+        broker_status: dict[str, Any],
     ) -> None:
         """
         Handle rejected order.
@@ -684,29 +721,23 @@ class OrderStatusVerifier:
             broker_order: Order from broker
             broker_status: Parsed broker status
         """
-        order_id = pending_order['order_id']
-        symbol = pending_order['symbol']
-        qty = pending_order['qty']
-        rejection_reason = broker_status['rejection_reason'] or 'Unknown reason'
+        order_id = pending_order["order_id"]
+        symbol = pending_order["symbol"]
+        qty = pending_order["qty"]
+        rejection_reason = broker_status["rejection_reason"] or "Unknown reason"
 
         logger.warning(
-            f"Order REJECTED: {symbol} x{qty} "
-            f"(order_id: {order_id}, reason: {rejection_reason})"
+            f"Order REJECTED: {symbol} x{qty} (order_id: {order_id}, reason: {rejection_reason})"
         )
 
         # Update order tracker
         self.order_tracker.update_order_status(
-            order_id=order_id,
-            status='REJECTED',
-            rejection_reason=rejection_reason
+            order_id=order_id, status="REJECTED", rejection_reason=rejection_reason
         )
 
         # Stop tracking this symbol (order failed)
         if self.tracking_scope.is_tracked(symbol):
-            self.tracking_scope.stop_tracking(
-                symbol,
-                reason=f"Order rejected: {rejection_reason}"
-            )
+            self.tracking_scope.stop_tracking(symbol, reason=f"Order rejected: {rejection_reason}")
 
         # Remove from pending (rejection finalized)
         self.order_tracker.remove_pending_order(order_id)
@@ -720,9 +751,9 @@ class OrderStatusVerifier:
 
     def _handle_cancellation(
         self,
-        pending_order: Dict[str, Any],
-        broker_order: Dict[str, Any],
-        broker_status: Dict[str, Any]
+        pending_order: dict[str, Any],
+        broker_order: dict[str, Any],
+        broker_status: dict[str, Any],
     ) -> None:
         """
         Handle cancelled order.
@@ -732,27 +763,18 @@ class OrderStatusVerifier:
             broker_order: Order from broker
             broker_status: Parsed broker status
         """
-        order_id = pending_order['order_id']
-        symbol = pending_order['symbol']
-        qty = pending_order['qty']
+        order_id = pending_order["order_id"]
+        symbol = pending_order["symbol"]
+        qty = pending_order["qty"]
 
-        logger.info(
-            f"Order CANCELLED: {symbol} x{qty} "
-            f"(order_id: {order_id})"
-        )
+        logger.info(f"Order CANCELLED: {symbol} x{qty} (order_id: {order_id})")
 
         # Update order tracker
-        self.order_tracker.update_order_status(
-            order_id=order_id,
-            status='CANCELLED'
-        )
+        self.order_tracker.update_order_status(order_id=order_id, status="CANCELLED")
 
         # Stop tracking this symbol (order cancelled)
         if self.tracking_scope.is_tracked(symbol):
-            self.tracking_scope.stop_tracking(
-                symbol,
-                reason="Order cancelled"
-            )
+            self.tracking_scope.stop_tracking(symbol, reason="Order cancelled")
 
         # Remove from pending (cancellation finalized)
         self.order_tracker.remove_pending_order(order_id)
@@ -763,9 +785,9 @@ class OrderStatusVerifier:
 
     def _handle_partial_fill(
         self,
-        pending_order: Dict[str, Any],
-        broker_order: Dict[str, Any],
-        broker_status: Dict[str, Any]
+        pending_order: dict[str, Any],
+        broker_order: dict[str, Any],
+        broker_status: dict[str, Any],
     ) -> None:
         """
         Handle partially filled order.
@@ -775,10 +797,10 @@ class OrderStatusVerifier:
             broker_order: Order from broker
             broker_status: Parsed broker status
         """
-        order_id = pending_order['order_id']
-        symbol = pending_order['symbol']
-        total_qty = pending_order['qty']
-        executed_qty = broker_status['executed_qty']
+        order_id = pending_order["order_id"]
+        symbol = pending_order["symbol"]
+        total_qty = pending_order["qty"]
+        executed_qty = broker_status["executed_qty"]
         remaining_qty = total_qty - executed_qty
 
         logger.info(
@@ -788,9 +810,7 @@ class OrderStatusVerifier:
 
         # Update order tracker
         self.order_tracker.update_order_status(
-            order_id=order_id,
-            status='PARTIALLY_FILLED',
-            executed_qty=executed_qty
+            order_id=order_id, status="PARTIALLY_FILLED", executed_qty=executed_qty
         )
 
         # Note: Tracking scope already has full quantity tracked
@@ -798,11 +818,10 @@ class OrderStatusVerifier:
         # (we track intent, not execution status)
 
         logger.debug(
-            f"Partial fill tracked for {symbol}: "
-            f"{executed_qty} filled, {remaining_qty} pending"
+            f"Partial fill tracked for {symbol}: {executed_qty} filled, {remaining_qty} pending"
         )
 
-    def verify_order_by_id(self, order_id: str) -> Optional[str]:
+    def verify_order_by_id(self, order_id: str) -> str | None:
         """
         Verify specific order by ID (on-demand check).
 
@@ -833,33 +852,33 @@ class OrderStatusVerifier:
             broker_status = self._parse_broker_order_status(broker_order)
 
             # Handle status update
-            if broker_status['status'] == 'EXECUTED':
+            if broker_status["status"] == "EXECUTED":
                 self._handle_execution(pending_order, broker_order, broker_status)
-            elif broker_status['status'] == 'REJECTED':
+            elif broker_status["status"] == "REJECTED":
                 self._handle_rejection(pending_order, broker_order, broker_status)
-            elif broker_status['status'] == 'CANCELLED':
+            elif broker_status["status"] == "CANCELLED":
                 self._handle_cancellation(pending_order, broker_order, broker_status)
-            elif broker_status['status'] == 'PARTIALLY_FILLED':
+            elif broker_status["status"] == "PARTIALLY_FILLED":
                 self._handle_partial_fill(pending_order, broker_order, broker_status)
 
-            return broker_status['status']
+            return broker_status["status"]
 
         except Exception as e:
             logger.error(f"Error verifying order {order_id}: {e}")
             return None
 
-    def get_last_check_time(self) -> Optional[datetime]:
+    def get_last_check_time(self) -> datetime | None:
         """Get timestamp of last verification check."""
         return self._last_check_time
 
-    def get_next_check_time(self) -> Optional[datetime]:
+    def get_next_check_time(self) -> datetime | None:
         """Get estimated timestamp of next verification check."""
         if not self._last_check_time:
             return None
 
         return self._last_check_time + timedelta(seconds=self.check_interval_seconds)
 
-    def get_verification_result(self, order_id: str) -> Optional[Dict[str, Any]]:
+    def get_verification_result(self, order_id: str) -> dict[str, Any] | None:
         """
         Get verification result for specific order.
 
@@ -873,7 +892,7 @@ class OrderStatusVerifier:
         """
         return self._verification_results.get(order_id)
 
-    def get_verification_results_for_symbol(self, symbol: str) -> List[Dict[str, Any]]:
+    def get_verification_results_for_symbol(self, symbol: str) -> list[dict[str, Any]]:
         """
         Get verification results for all orders matching symbol.
 
@@ -886,17 +905,30 @@ class OrderStatusVerifier:
             List of verification result dicts
         """
         # Normalize symbol for comparison
-        base_symbol = symbol.upper().replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "")
+        base_symbol = (
+            symbol.upper()
+            .replace("-EQ", "")
+            .replace("-BE", "")
+            .replace("-BL", "")
+            .replace("-BZ", "")
+        )
 
         results = []
         for order_id, result in self._verification_results.items():
-            result_symbol = result.get('symbol', '').upper().replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "")
+            result_symbol = (
+                result.get("symbol", "")
+                .upper()
+                .replace("-EQ", "")
+                .replace("-BE", "")
+                .replace("-BL", "")
+                .replace("-BZ", "")
+            )
             if result_symbol == base_symbol:
                 results.append(result)
 
         return results
 
-    def get_last_verification_counts(self) -> Dict[str, int]:
+    def get_last_verification_counts(self) -> dict[str, int]:
         """
         Get last verification counts.
 
@@ -938,13 +970,10 @@ class OrderStatusVerifier:
 
 
 # Singleton instance
-_verifier_instance: Optional[OrderStatusVerifier] = None
+_verifier_instance: OrderStatusVerifier | None = None
 
 
-def get_order_status_verifier(
-    broker_client,
-    **kwargs
-) -> OrderStatusVerifier:
+def get_order_status_verifier(broker_client, **kwargs) -> OrderStatusVerifier:
     """
     Get or create order status verifier singleton.
 
