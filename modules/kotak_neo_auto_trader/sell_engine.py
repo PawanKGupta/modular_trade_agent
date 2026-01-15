@@ -499,23 +499,27 @@ class SellOrderManager:
                 return True
             return False
 
-    @staticmethod
-    def round_to_tick_size(price: float, exchange: str = "NSE") -> float:
+    def round_to_tick_size(
+        self, price: float, exchange: str = "NSE", symbol: str | None = None
+    ) -> float:
         """
-        Round price to exchange-specific tick size
+        Round price to exchange-specific tick size.
 
-        NSE Tick Size Rules (Cash Equity Segment):
-        - All price ranges: Rs 0.05 (as per NSE circular)
+        Uses tick size from scrip master if available, otherwise falls back to
+        hardcoded exchange/price-based rules.
 
-        BSE Tick Size Rules:
+        NSE Tick Size Rules (Cash Equity Segment - Fallback):
+        - Price < Rs 1000: Rs 0.05
+        - Price >= Rs 1000: Rs 0.10
+
+        BSE Tick Size Rules (Fallback):
         - Rs 0 to Rs 10: Rs 0.01
-        - Rs 10+ to Rs 20: Rs 0.05
-        - Rs 20+ to Rs 50: Rs 0.05
-        - Rs 50+: Rs 0.05
+        - Rs 10+: Rs 0.05
 
         Args:
             price: Price to round
             exchange: Exchange name ("NSE" or "BSE")
+            symbol: Optional trading symbol (e.g., 'RELIANCE-EQ') to lookup tick size from scrip master
 
         Returns:
             Price rounded to valid tick size (rounded UP to next valid tick)
@@ -523,21 +527,29 @@ class SellOrderManager:
         if price <= 0:
             return price
 
-        # Determine tick size based on exchange and price
-        if exchange.upper() == "BSE":
-            # BSE has price-dependent tick sizes
-            if price < 10:
-                tick_size = 0.01
+        # Try to get tick size from scrip master if symbol is provided
+        tick_size = None
+        if symbol and self.scrip_master:
+            try:
+                tick_size = self.scrip_master.get_tick_size(symbol, exchange=exchange)
+            except Exception as e:
+                logger.debug(f"Error getting tick size from scrip master for {symbol}: {e}")
+
+        # Fall back to hardcoded rules if scrip master doesn't have tick size
+        if tick_size is None or tick_size <= 0:
+            if exchange.upper() == "BSE":
+                # BSE has price-dependent tick sizes
+                if price < 10:
+                    tick_size = 0.01
+                else:
+                    tick_size = 0.05
+            # NSE tick size rules (cash equity segment)
+            # 0-1000: Rs 0.05
+            # 1000+: Rs 0.10
+            elif price >= 1000:
+                tick_size = 0.10
             else:
                 tick_size = 0.05
-        # NSE tick size rules (cash equity segment)
-        # 0-100: Rs 0.05
-        # 100-1000: Rs 0.05
-        # 1000+: Rs 0.10
-        elif price >= 1000:
-            tick_size = 0.10
-        else:
-            tick_size = 0.05
 
         # Round UP to next valid tick (ceiling)
         # Use decimal arithmetic to avoid floating point precision issues
@@ -2440,8 +2452,8 @@ class SellOrderManager:
                 logger.warning(f"Invalid quantity {qty} for {symbol}")
                 return None
 
-            # Round price to valid tick size
-            rounded_price = self.round_to_tick_size(target_price)
+            # Round price to valid tick size (use symbol to get tick size from scrip master)
+            rounded_price = self.round_to_tick_size(target_price, exchange=exchange, symbol=symbol)
             if rounded_price != target_price:
                 logger.debug(
                     f"Rounded price from Rs {target_price:.4f} to Rs {rounded_price:.2f} (tick size)"
@@ -2611,8 +2623,15 @@ class SellOrderManager:
             True if successful
         """
         try:
-            # Round price to valid tick size
-            rounded_price = self.round_to_tick_size(new_price)
+            # Determine exchange from symbol or use default
+            exchange = (
+                self.strategy_config.default_exchange
+                if self.strategy_config
+                else config.DEFAULT_EXCHANGE
+            )
+
+            # Round price to valid tick size (use symbol to get tick size from scrip master)
+            rounded_price = self.round_to_tick_size(new_price, exchange=exchange, symbol=symbol)
             if rounded_price != new_price:
                 logger.debug(
                     f"Rounded price from Rs {new_price:.4f} to Rs {rounded_price:.2f} (tick size)"
@@ -4567,7 +4586,16 @@ class SellOrderManager:
             result["ema9"] = current_ema9
 
             # Round EMA9 to tick size BEFORE comparing (avoid unnecessary updates)
-            rounded_ema9 = self.round_to_tick_size(current_ema9)
+            # Use broker symbol (placed_symbol) if available, otherwise use symbol
+            symbol_for_tick_size = broker_sym or symbol
+            exchange_for_tick_size = (
+                self.strategy_config.default_exchange
+                if self.strategy_config
+                else config.DEFAULT_EXCHANGE
+            )
+            rounded_ema9 = self.round_to_tick_size(
+                current_ema9, exchange=exchange_for_tick_size, symbol=symbol_for_tick_size
+            )
 
             # Check if ROUNDED EMA9 is lower than lowest seen
             # Initialize lowest_ema9 from target_price if not set

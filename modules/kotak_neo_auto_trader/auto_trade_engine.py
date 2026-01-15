@@ -2529,52 +2529,30 @@ class AutoTradeEngine:
                 f"Market is closed - using {order_variety} order variety for {broker_symbol}"
             )
 
-        # Determine if this is a BE/BL/BZ segment stock (trade-to-trade)
-        # These segments require LIMIT orders, not MARKET orders
-        is_t2t_segment = any(broker_symbol.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"])
-
-        # For T2T segments, use limit order at current price + 1% buffer
-        use_limit_order = is_t2t_segment
-        limit_price = close * 1.01 if use_limit_order else 0.0
-
-        if use_limit_order:
-            logger.info(
-                f"Using LIMIT order for {broker_symbol} (T2T segment) @ Rs {limit_price:.2f}"
-            )
-
         # Symbol should already be resolved from place_new_entries() via scrip master
         # Scrip master is the SINGLE SOURCE OF TRUTH - use the resolved symbol directly
         # If symbol doesn't have suffix, it means resolution failed earlier - this is an error
         place_symbol = broker_symbol
 
         # Validate that symbol has suffix (means it was resolved by scrip master)
-        has_suffix = any(place_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"])
+        # T2T segment stocks (-BE, -BL, -BZ) are filtered out earlier in analysis phase
+        has_suffix = place_symbol.upper().endswith("-EQ")
         if not has_suffix:
             logger.error(
-                f"Symbol {place_symbol} does not have suffix. "
+                f"Symbol {place_symbol} does not have -EQ suffix. "
                 f"This indicates scrip master resolution failed earlier. "
                 f"Cannot place order without proper symbol resolution."
             )
             return (False, None)
 
-        # Place order with scrip master resolved symbol
-        if use_limit_order:
-            trial = self.orders.place_limit_buy(
-                symbol=place_symbol,
-                quantity=qty,
-                price=limit_price,
-                variety=order_variety,
-                exchange=config.DEFAULT_EXCHANGE,
-                product=config.DEFAULT_PRODUCT,
-            )
-        else:
-            trial = self.orders.place_market_buy(
-                symbol=place_symbol,
-                quantity=qty,
-                variety=order_variety,
-                exchange=config.DEFAULT_EXCHANGE,
-                product=config.DEFAULT_PRODUCT,
-            )
+        # Place order with scrip master resolved symbol (all MARKET orders - T2T support removed)
+        trial = self.orders.place_market_buy(
+            symbol=place_symbol,
+            quantity=qty,
+            variety=order_variety,
+            exchange=config.DEFAULT_EXCHANGE,
+            product=config.DEFAULT_PRODUCT,
+        )
 
         # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
         if isinstance(trial, dict) and "error" not in trial:
@@ -2709,18 +2687,17 @@ class AutoTradeEngine:
                 # Don't fail order placement if marking fails
                 logger.warning(f"Failed to mark signal as traded for {actual_symbol}: {mark_error}")
 
-        order_type = "LIMIT" if use_limit_order else "MARKET"
+        order_type = "MARKET"  # All buy orders are MARKET orders (T2T support removed)
 
         # Phase 9: Send notification for order placed successfully
         if self.telegram_notifier and self.telegram_notifier.enabled:
             try:
-                limit_price = limit_price if use_limit_order else None
                 self.telegram_notifier.notify_order_placed(
                     symbol=actual_symbol,  # Use actual resolved symbol format
                     order_id=order_id,
                     quantity=qty,
                     order_type=order_type,
-                    price=limit_price,
+                    price=None,  # MARKET orders don't have prices
                     user_id=self.user_id,
                 )
             except Exception as e:
@@ -2763,7 +2740,7 @@ class AutoTradeEngine:
                 qty=qty,
                 order_type=order_type,
                 variety=config.DEFAULT_VARIETY,
-                price=limit_price if use_limit_order else 0.0,
+                price=0.0,  # MARKET orders use price=0
                 entry_type=entry_type,
                 order_metadata=order_metadata,
             )
