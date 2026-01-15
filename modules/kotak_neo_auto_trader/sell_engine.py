@@ -3525,7 +3525,48 @@ class SellOrderManager:
                 if is_rejected or is_cancelled:
                     status = OrderStatusParser.parse_status(broker_order)
 
+                    # Update database order status first (before any special case handling)
+                    if self.orders_repo and self.user_id:
+                        try:
+                            # Find the database order
+                            db_order = self.orders_repo.get_by_broker_order_id(
+                                self.user_id, str(order_id)
+                            )
+                            if not db_order:
+                                # Try by order_id as fallback
+                                db_order = self.orders_repo.get_by_order_id(
+                                    self.user_id, str(order_id)
+                                )
+
+                            if db_order:
+                                if is_rejected:
+                                    rejection_reason = (
+                                        OrderFieldExtractor.get_rejection_reason(broker_order)
+                                        or "Rejected by broker"
+                                    )
+                                    self.orders_repo.mark_rejected(db_order, rejection_reason)
+                                    logger.info(
+                                        f"Updated sell order {order_id} status to FAILED in database: "
+                                        f"{rejection_reason}"
+                                    )
+                                elif is_cancelled:
+                                    cancelled_reason = (
+                                        OrderFieldExtractor.get_rejection_reason(broker_order)
+                                        or "Cancelled"
+                                    )
+                                    self.orders_repo.mark_cancelled(db_order, cancelled_reason)
+                                    logger.info(
+                                        f"Updated sell order {order_id} status to CANCELLED in database: "
+                                        f"{cancelled_reason}"
+                                    )
+                        except Exception as e:
+                            logger.error(
+                                f"Error updating sell order {order_id} status in database: {e}",
+                                exc_info=True,
+                            )
+
                     # For cancelled orders, check if position still exists
+                    cancelled_with_open_position = False
                     if is_cancelled and self.positions_repo and self.user_id:
                         try:
                             full_symbol = symbol.upper()
@@ -3533,15 +3574,19 @@ class SellOrderManager:
                             if position and position.closed_at is None:
                                 # Position still open - need to re-place sell order
                                 cancelled_symbols_with_positions.append((symbol, order_info))
+                                cancelled_with_open_position = True
                                 logger.info(
                                     f"Order {order_id} for {symbol} was cancelled but position still exists. "
                                     f"Will re-place sell order."
                                 )
-                                continue
                         except Exception as e:
                             logger.debug(
                                 f"Error checking position for cancelled order {symbol}: {e}"
                             )
+
+                    # Skip further processing if cancelled with open position (we'll re-place)
+                    if cancelled_with_open_position:
+                        continue
 
                     # Check if rejection is due to circuit limit breach (only for rejected, not cancelled)
                     if is_rejected:
@@ -3644,6 +3689,235 @@ class SellOrderManager:
 
         if rejected_symbols:
             logger.info(f"Cleaned up {len(rejected_symbols)} invalid orders from tracking")
+
+    def _reconcile_stale_pending_sell_orders(self) -> dict[str, int]:
+        """
+        Reconcile stale PENDING sell orders in database with broker status.
+
+        Only processes broker orders (TradeMode.BROKER or NULL for legacy).
+        Paper trading orders are excluded as they're handled separately by PaperTradingServiceAdapter.
+
+        This handles orders that are PENDING in database but may have been rejected/cancelled
+        at the broker (e.g., if service was restarted or order wasn't in active_sell_orders).
+
+        Edge Cases Handled:
+        - Orders executed but not in broker response: Check holdings/position status
+        - Broker API failures: Gracefully skip if API unavailable
+        - Recently placed orders (< 1 hour): Don't mark as stale
+        - Orders in active_sell_orders: Skip (already being monitored)
+        - Orders with executed quantity: Skip (already processed)
+        - Orders with closed positions: Likely executed, skip marking as failed
+        - Trade mode filtering: Only process broker orders, skip paper trading
+
+        Returns:
+            Dict with stats: {'checked': int, 'updated': int, 'skipped': int, 'failed': int}
+        """
+        stats = {"checked": 0, "updated": 0, "skipped": 0, "failed": 0}
+
+        if not self.orders_repo or not self.user_id:
+            return stats
+
+        try:
+            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+            from src.infrastructure.db.models import TradeMode
+
+            # Get all PENDING sell orders from database
+            pending_sell_orders = self.orders_repo.list(self.user_id, status=DbOrderStatus.PENDING)
+
+            # Filter for sell orders only
+            pending_sell_orders = [
+                o for o in pending_sell_orders if o.side and o.side.lower() == "sell"
+            ]
+
+            # EDGE CASE: Filter by trade_mode - only process broker orders
+            # SellOrderManager is for real broker trading, so skip paper trading orders
+            # Paper trading orders are handled by PaperTradingServiceAdapter separately
+            # Include orders with TradeMode.BROKER or NULL (legacy orders - assume broker)
+            broker_orders_only = [
+                o
+                for o in pending_sell_orders
+                if o.trade_mode is None or o.trade_mode == TradeMode.BROKER
+            ]
+
+            if not broker_orders_only:
+                logger.debug("No broker sell orders to reconcile (paper orders excluded)")
+                return stats
+
+            # Get set of order IDs already in active_sell_orders (skip these)
+            active_order_ids = {
+                str(info.get("order_id", ""))
+                for info in self.active_sell_orders.values()
+                if info.get("order_id")
+            }
+
+            # Filter out orders already in active tracking
+            pending_sell_orders = [
+                o
+                for o in broker_orders_only
+                if str(o.broker_order_id or o.order_id or "") not in active_order_ids
+            ]
+
+            if not pending_sell_orders:
+                return stats
+
+            # Fetch current orders from broker (with timeout handling)
+            try:
+                all_orders = self.orders.get_orders()
+                if not all_orders or "data" not in all_orders:
+                    logger.debug("Could not fetch broker orders for stale order reconciliation")
+                    return stats  # Don't update anything if broker API fails
+            except Exception as e:
+                logger.warning(f"Broker API failed during stale order reconciliation: {e}")
+                return stats  # Gracefully skip if API unavailable
+
+            broker_orders = all_orders["data"]
+            now = datetime.now()
+
+            for db_order in pending_sell_orders:
+                stats["checked"] += 1
+                order_id = db_order.broker_order_id or db_order.order_id
+                if not order_id:
+                    stats["skipped"] += 1
+                    continue
+
+                order_id_str = str(order_id)
+
+                try:
+                    # Edge Case: Check if order has execution_qty > 0 (already processed)
+                    if db_order.execution_qty and float(db_order.execution_qty) > 0:
+                        stats["skipped"] += 1
+                        logger.debug(
+                            f"Skipping order {order_id_str}: Already has execution_qty "
+                            f"({db_order.execution_qty}) - likely already processed"
+                        )
+                        continue
+
+                    # Edge Case: Check if position is closed (order likely executed)
+                    if self.positions_repo:
+                        try:
+                            position = self.positions_repo.get_by_symbol(
+                                self.user_id, db_order.symbol
+                            )
+                            if position and position.closed_at is not None:
+                                stats["skipped"] += 1
+                                logger.debug(
+                                    f"Skipping order {order_id_str} ({db_order.symbol}): "
+                                    f"Position is closed (order likely executed)"
+                                )
+                                continue
+                        except Exception as e:
+                            logger.debug(f"Error checking position for order {order_id_str}: {e}")
+
+                    # Edge Case: Don't check orders placed < 1 hour ago (too recent)
+                    if db_order.placed_at:
+                        age_hours = (now - db_order.placed_at).total_seconds() / 3600
+                        if age_hours < 1.0:
+                            stats["skipped"] += 1
+                            logger.debug(
+                                f"Skipping order {order_id_str}: Too recent ({age_hours:.1f}h old)"
+                            )
+                            continue
+
+                    # Find this order in broker orders
+                    broker_order = self._find_order_in_broker_orders(order_id_str, broker_orders)
+
+                    if broker_order:
+                        # Order exists in broker - check its status
+                        is_rejected = OrderStatusParser.is_rejected(broker_order)
+                        is_cancelled = OrderStatusParser.is_cancelled(broker_order)
+
+                        if is_rejected:
+                            rejection_reason = (
+                                OrderFieldExtractor.get_rejection_reason(broker_order)
+                                or "Rejected by broker"
+                            )
+                            self.orders_repo.mark_rejected(db_order, rejection_reason)
+                            stats["updated"] += 1
+                            logger.info(
+                                f"Reconciled stale sell order {order_id_str} ({db_order.symbol}): "
+                                f"Updated from PENDING to FAILED - {rejection_reason}"
+                            )
+                        elif is_cancelled:
+                            cancelled_reason = (
+                                OrderFieldExtractor.get_rejection_reason(broker_order)
+                                or "Cancelled"
+                            )
+                            self.orders_repo.mark_cancelled(db_order, cancelled_reason)
+                            stats["updated"] += 1
+                            logger.info(
+                                f"Reconciled stale sell order {order_id_str} ({db_order.symbol}): "
+                                f"Updated from PENDING to CANCELLED - {cancelled_reason}"
+                            )
+                        # If order is still PENDING/OPEN at broker, leave it as is
+                        else:
+                            stats["skipped"] += 1
+                            logger.debug(
+                                f"Skipping order {order_id_str}: Still PENDING/OPEN at broker"
+                            )
+                    # Order not found in broker - could be executed/rejected/cancelled
+                    # Only mark as stale if > 24 hours old (very conservative)
+                    elif db_order.placed_at:
+                        age_hours = (now - db_order.placed_at).total_seconds() / 3600
+
+                        if age_hours > 24:
+                            # Order is > 24h old and not in broker - likely failed
+                            # But first double-check: if position is closed, order was executed
+                            should_mark_failed = True
+                            if self.positions_repo:
+                                try:
+                                    position = self.positions_repo.get_by_symbol(
+                                        self.user_id, db_order.symbol
+                                    )
+                                    if position and position.closed_at is not None:
+                                        # Position closed - order likely executed
+                                        should_mark_failed = False
+                                        stats["skipped"] += 1
+                                        logger.debug(
+                                            f"Skipping order {order_id_str}: Position closed, "
+                                            f"order likely executed"
+                                        )
+                                except Exception:
+                                    pass  # Continue with marking as failed
+
+                            if should_mark_failed:
+                                self.orders_repo.mark_failed(
+                                    db_order,
+                                    f"Stale order - not found in broker after {age_hours:.1f} hours",
+                                )
+                                stats["updated"] += 1
+                                logger.warning(
+                                    f"Reconciled stale sell order {order_id_str} ({db_order.symbol}): "
+                                    f"Order >24h old and not found in broker - marked as FAILED"
+                                )
+                        else:
+                            stats["skipped"] += 1
+                            logger.debug(
+                                f"Skipping order {order_id_str}: Not in broker but only "
+                                f"{age_hours:.1f}h old (may be executing)"
+                            )
+                    else:
+                        stats["skipped"] += 1
+                        logger.debug(f"Skipping order {order_id_str}: No placed_at timestamp")
+
+                except Exception as e:
+                    stats["failed"] += 1
+                    logger.error(
+                        f"Error reconciling stale sell order {order_id_str}: {e}",
+                        exc_info=True,
+                    )
+
+            if stats["updated"] > 0:
+                logger.info(
+                    f"Reconciled {stats['updated']} stale pending sell orders "
+                    f"(checked {stats['checked']}, skipped {stats['skipped']}, "
+                    f"failed {stats['failed']})"
+                )
+
+            return stats
+
+        except Exception as e:
+            logger.error(f"Error during stale sell order reconciliation: {e}", exc_info=True)
+            return stats
 
     def _find_order_in_broker_orders(
         self, order_id: str, broker_orders: list[dict[str, Any]]
@@ -4596,6 +4870,14 @@ class SellOrderManager:
 
         # Clean up any rejected/cancelled orders before monitoring
         self._cleanup_rejected_orders()
+
+        # Reconcile stale pending sell orders from database
+        # (check orders in DB that aren't in active_sell_orders)
+        reconciliation_stats = self._reconcile_stale_pending_sell_orders()
+        if reconciliation_stats.get("updated", 0) > 0:
+            logger.info(
+                f"Reconciled {reconciliation_stats['updated']} stale pending sell orders from database"
+            )
 
         # Check for circuit expansion and retry waiting orders
         circuit_retried = self._check_and_retry_circuit_expansion()
