@@ -983,7 +983,9 @@ class AutoTradeEngine:
                         combined_score = row.get("combined_score")
                         if combined_score is not None:
                             try:
-                                priority_score = float(combined_score) if combined_score != "" else None
+                                priority_score = (
+                                    float(combined_score) if combined_score != "" else None
+                                )
                             except (ValueError, TypeError):
                                 priority_score = None
                         else:
