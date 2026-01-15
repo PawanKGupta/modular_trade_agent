@@ -10,8 +10,9 @@ Manages profit-taking sell orders with EMA9 target tracking:
 
 import re
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from datetime import time as dt_time
 from decimal import ROUND_UP, Decimal
 from pathlib import Path
@@ -43,13 +44,37 @@ except ImportError:
     send_telegram = None
 
 try:
-    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-    from src.infrastructure.db.timezone_utils import ist_now
+    import pandas as pd
+except ImportError:
+    pd = None
+
+try:
+    from src.infrastructure.persistence.targets_repository import TargetsRepository
+except ImportError:
+    TargetsRepository = None
+
+try:
+    from sqlalchemy import select
+
+    from src.infrastructure.db.models import (
+        Orders,
+        Positions,
+        TradeMode,
+    )
+    from src.infrastructure.db.models import (
+        OrderStatus as DbOrderStatus,
+    )
+    from src.infrastructure.db.timezone_utils import IST, ist_now
     from src.infrastructure.db.transaction import transaction
 except ImportError:
     DbOrderStatus = None
     ist_now = None
     transaction = None
+    Orders = None
+    Positions = None
+    TradeMode = None
+    IST = None
+    select = None
 
 try:
     from . import config
@@ -148,9 +173,8 @@ class SellOrderManager:
         self.targets_repo = None
         if self.positions_repo and hasattr(self.positions_repo, "db"):
             try:
-                from src.infrastructure.persistence.targets_repository import TargetsRepository
-
-                self.targets_repo = TargetsRepository(self.positions_repo.db)
+                if TargetsRepository is not None:
+                    self.targets_repo = TargetsRepository(self.positions_repo.db)
                 logger.debug("TargetsRepository initialized for sell order manager")
             except Exception as e:
                 logger.debug(f"TargetsRepository not available: {e}")
@@ -387,7 +411,6 @@ class SellOrderManager:
 
         side = (o.get("trnsTp") or "").upper()  # B/S
         order_type = o.get("prcTp")  # MKT/L
-        from .utils.order_field_extractor import OrderFieldExtractor
 
         filled_qty = int(OrderFieldExtractor.get_filled_quantity(o))
         cancelled_qty = int(o.get("cnlQty") or 0)
@@ -912,8 +935,6 @@ class SellOrderManager:
             existing_sell_symbols = set()
             if self.orders_repo:
                 try:
-                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                     # Get all pending/ongoing sell orders from database
                     all_orders = self.orders_repo.list(self.user_id)
                     for order in all_orders:
@@ -942,8 +963,6 @@ class SellOrderManager:
 
                 if self.orders_repo:
                     try:
-                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                         # Try to get ticker from most recent buy order
                         ongoing_orders = self.orders_repo.list(
                             self.user_id, status=DbOrderStatus.ONGOING
@@ -1168,10 +1187,6 @@ class SellOrderManager:
                 # Note: We only skip on the same day to avoid false positives from historical data
                 # that might have incorrect timestamps or be from previous trading sessions.
                 try:
-                    from datetime import datetime
-
-                    from src.infrastructure.db.timezone_utils import IST
-
                     sell_order_time = None
                     time_str = (
                         OrderFieldExtractor.get_order_time(order)
@@ -1299,9 +1314,6 @@ class SellOrderManager:
                     try:
                         # Get execution time from normalized/extracted fields
                         execution_time = None
-                        from datetime import datetime
-
-                        from src.infrastructure.db.timezone_utils import IST
 
                         # Prefer normalized executed_at (exCfmTm) if available
                         if "norm" in locals() and norm.get("executed_at"):
@@ -1573,8 +1585,6 @@ class SellOrderManager:
                                         order_execution_time = buy_order.filled_at
 
                                     if order_execution_time:
-                                        from src.infrastructure.db.timezone_utils import IST
-
                                         if order_execution_time.tzinfo is None:
                                             order_execution_time = order_execution_time.replace(
                                                 tzinfo=IST
@@ -1903,8 +1913,6 @@ class SellOrderManager:
             return False
 
         try:
-            from datetime import timedelta
-
             if not ist_now:
                 return False
 
@@ -2317,8 +2325,6 @@ class SellOrderManager:
         Returns:
             EMA9 value (current or yesterday's fallback) or None if all attempts fail
         """
-        import time
-
         # Try calculating EMA9 with retries
         for attempt in range(max_retries + 1):
             try:
@@ -3255,10 +3261,6 @@ class SellOrderManager:
             return
 
         try:
-            from sqlalchemy import select
-
-            from src.infrastructure.db.models import Orders, Positions
-
             # Find all cancelled sell orders that were executed (have execution_time)
             stmt = select(Orders).where(
                 Orders.user_id == self.user_id,
@@ -3718,9 +3720,6 @@ class SellOrderManager:
             return stats
 
         try:
-            from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-            from src.infrastructure.db.models import TradeMode
-
             # Get all PENDING sell orders from database
             pending_sell_orders = self.orders_repo.list(self.user_id, status=DbOrderStatus.PENDING)
 
@@ -4421,9 +4420,10 @@ class SellOrderManager:
             if previous_rsi is not None:
                 # Check if NaN - use simple check since pandas may not be imported
                 try:
-                    import pandas as pd
-
-                    is_na = pd.isna(previous_rsi)
+                    if pd is not None:
+                        is_na = pd.isna(previous_rsi)
+                    else:
+                        raise AttributeError("pandas not available")
                 except (ImportError, AttributeError):
                     # Fallback: check if value is None or NaN-like
                     is_na = previous_rsi is None or (
@@ -4469,9 +4469,10 @@ class SellOrderManager:
                     if current_rsi is not None:
                         # Check if NaN - use simple check since pandas may not be imported
                         try:
-                            import pandas as pd
-
-                            is_na = pd.isna(current_rsi)
+                            if pd is not None:
+                                is_na = pd.isna(current_rsi)
+                            else:
+                                raise AttributeError("pandas not available")
                         except (ImportError, AttributeError):
                             # Fallback: check if value is None or NaN-like
                             is_na = current_rsi is None or (
